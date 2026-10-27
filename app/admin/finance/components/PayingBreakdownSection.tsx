@@ -92,15 +92,16 @@ export function PayingBreakdownSection({
                   ? PAYING_BREAKDOWN.paidUnknown
                   : `${PAYING_BREAKDOWN.paid(n(trials.paid))} (${PAYING_BREAKDOWN.paidBeforeEnd(n(trials.paidBeforeEnd))})`}
               </p>
-              <p className={LINE} data-testid="paying-breakdown-rate">
-                {trials.rate !== null
-                  ? PAYING_BREAKDOWN.rate(formatCount(trials.rate.paid), formatCount(trials.rate.base), formatCount(trials.rate.percent))
-                  : !exact
-                    ? PAYING_BREAKDOWN.noRateCutOff
-                    : trials.paid === null
-                      ? PAYING_BREAKDOWN.paidUnknown
+              {/* MK9-FU-1 (SA-Q-FU-9): with Paid unknown there is no rate; the line above already says why. */}
+              {(trials.rate !== null || !exact || trials.paid !== null) && (
+                <p className={LINE} data-testid="paying-breakdown-rate">
+                  {trials.rate !== null
+                    ? PAYING_BREAKDOWN.rate(formatCount(trials.rate.paid), formatCount(trials.rate.base), formatCount(trials.rate.percent))
+                    : !exact
+                      ? PAYING_BREAKDOWN.noRateCutOff
                       : PAYING_BREAKDOWN.tooFew(formatCount(trials.minimumForRate))}
-              </p>
+                </p>
+              )}
               <p className={LINE} data-testid="paying-breakdown-running">
                 {PAYING_BREAKDOWN.stillRunning(n(trials.stillRunning))}
               </p>

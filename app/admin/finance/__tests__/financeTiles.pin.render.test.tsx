@@ -246,7 +246,6 @@ function plansPart(extra: Partial<FinancePlanRevenue> = {}): FinancePlanRevenue 
 function revenueSection(extra: Partial<FinanceRevenueSection> = {}, boosts: Partial<FinanceRevenueSection['boosts']> = {}): FinanceRevenueSection {
   return {
     status: 'ok',
-    state: 'none_yet',
     plans: plansPart(),
     totals: [],
     ...extra,

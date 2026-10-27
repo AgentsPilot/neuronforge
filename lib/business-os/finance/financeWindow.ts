@@ -80,17 +80,27 @@ export function resolveFinanceWindow(query: FinanceWindowQuery, now: Date): Reso
   return { preset: query.preset, from: dates.from, to: dates.to, start, end };
 }
 
-/** K-1's spans. `Date.UTC` rolls month −1 back into the previous year. */
+/**
+ * K-1's spans. `Date.UTC` rolls month −1 back into the previous year.
+ *
+ * MK2-FU-1 (SA-WP-FU SA-Q-FU-1): the CURRENT span ends at the next UTC
+ * midnight, the same instant This month's window ends (`windowInstants`), so
+ * F-K3 counts exactly what Section 3 and the AI cost page's A-K1 count. No
+ * ledger row is dated after the read, so it still means "month to date". The
+ * PREVIOUS span (the trend's fairness: the same elapsed time last month) is
+ * unchanged.
+ */
 export function k1Spans(now: Date): K1Spans {
   const year = now.getUTCFullYear();
   const month = now.getUTCMonth();
   const monthStart = Date.UTC(year, month, 1);
   const previousStart = Date.UTC(year, month - 1, 1);
+  const nextMidnight = Date.UTC(year, month, now.getUTCDate() + 1);
   const elapsed = now.getTime() - monthStart;
   const previousLength = monthStart - previousStart;
 
   return {
-    current: { from: new Date(monthStart), to: new Date(now.getTime()) },
+    current: { from: new Date(monthStart), to: new Date(nextMidnight) },
     previous: { from: new Date(previousStart), to: new Date(previousStart + Math.min(elapsed, previousLength)) },
     previousBeforeCutover: previousStart < CHARGING_CUTOVER_FLOOR_MS,
   };

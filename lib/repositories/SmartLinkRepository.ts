@@ -599,19 +599,38 @@ export class SmartLinkRepository {
       const since = new Date();
       since.setDate(since.getDate() - days);
 
-      const CAP = 20000;
-      const { data, error } = await this.supabase
-        .from('smart_link_clicks')
-        .select('smart_link_id, ip_hash')
-        .in('smart_link_id', linkIds)
-        .gte('clicked_at', since.toISOString())
-        .limit(CAP);
+      /*
+       * FF-3 tranche A (finance follow-ups bundle, SA-WP-FU FU-C3): read in pages
+       * of at most 1,000 rows. PostgREST returns at most `max-rows` (1,000) per
+       * request and does not say it cut, so the single `.limit(20000)` this
+       * replaced stopped at 1,000 and the floor warning below could never fire.
+       * The ceiling is unchanged. Every page carries the same link scope and a
+       * total order (`id` breaks clicked_at ties, SA-Q-FU-7); a page error
+       * throws, so the catch below returns no figure, never a partial one.
+       */
+      const CLICK_SCAN_CEILING = 20000;
+      const CLICK_PAGE = 1000;
+      const data: Array<{ smart_link_id: unknown; ip_hash: unknown }> = [];
+      for (let offset = 0; offset < CLICK_SCAN_CEILING; offset += CLICK_PAGE) {
+        const size = Math.min(CLICK_PAGE, CLICK_SCAN_CEILING - offset);
+        const { data: page, error } = await this.supabase
+          .from('smart_link_clicks')
+          .select('smart_link_id, ip_hash')
+          .in('smart_link_id', linkIds)
+          .gte('clicked_at', since.toISOString())
+          .order('clicked_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(offset, offset + size - 1);
 
-      if (error) throw error;
+        if (error) throw error;
 
-      if ((data?.length ?? 0) >= CAP) {
+        data.push(...(page ?? []));
+        if ((page?.length ?? 0) < size) break;
+      }
+
+      if (data.length >= CLICK_SCAN_CEILING) {
         logger.warn(
-          { userId, cap: CAP },
+          { userId, cap: CLICK_SCAN_CEILING },
           'Unique visitor counts are a floor: the click read hit its cap'
         );
       }
@@ -638,7 +657,7 @@ export class SmartLinkRepository {
        */
       const seen = new Map<string, Set<string>>();
 
-      (data ?? []).forEach(row => {
+      data.forEach(row => {
         const id = row.smart_link_id as string;
         if (!seen.has(id)) seen.set(id, new Set());
         seen.get(id)!.add((row.ip_hash as string | null) || 'unknown');
