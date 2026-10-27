@@ -94,7 +94,6 @@ These enhance functionality but aren't critical:
 - `NODE_ENV` - Set to `production`
 - `NEXTAUTH_SECRET` - NextAuth encryption
 - `NEXTAUTH_URL` - NextAuth callback URL
-- `ENCRYPTION_SECRET` - Credential encryption
 
 ---
 
@@ -292,3 +291,4 @@ If you're still experiencing issues after following this guide:
 |------|--------|---------|
 | 2026-09-27 | `/api/run-scheduled-agents` schedule retired | Removed from `vercel.json` with the other two AgentsPilot crons (admin reorganisation slice 5, part A; OQ-4). The route and its variables are unchanged; re-adding the `vercel.json` entry re-enables it |
 | 2026-09-28 | Resend variables documented | `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` were set (or needed) in Vercel and named in no doc and no `.env.example`, which is how the delivery webhook shipped without its endpoint ever being registered — all 87 `email_sends` rows had a null `delivered_at`. Setup: [Resend webhook guide](/docs/RESEND_WEBHOOK_SETUP_GUIDE.md) |
+| 2026-10-27 | `ENCRYPTION_SECRET` removed from the list | Its only reader was deleted with the unused username/password `POST /api/plugin-connections` |

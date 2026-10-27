@@ -44,11 +44,24 @@ describe('planManageOffer', () => {
     }
   });
 
-  it('a renewal failure open → payment_failed (the column OR the status branch)', () => {
-    expect(planManageOffer(facts({ subscriptionStatus: 'past_due' }), ON, NOW)).toEqual({ kind: 'none', reason: 'payment_failed' });
-    expect(planManageOffer(facts({ subscriptionStatus: 'unpaid' }), ON, NOW)).toEqual({ kind: 'none', reason: 'payment_failed' });
-    expect(planManageOffer(facts({ failedAttempts: 1 }), ON, NOW)).toEqual({ kind: 'none', reason: 'payment_failed' });
-    expect(planManageWire({ kind: 'none', reason: 'payment_failed' })).toEqual({ cancel: false, reactivate: false, paymentFailed: true });
+  it('P-7a.4: a renewal failure open → failing, Cancel offered (the column OR the status branch)', () => {
+    expect(planManageOffer(facts({ subscriptionStatus: 'past_due' }), ON, NOW)).toEqual({ kind: 'failing' });
+    expect(planManageOffer(facts({ subscriptionStatus: 'unpaid' }), ON, NOW)).toEqual({ kind: 'failing' });
+    expect(planManageOffer(facts({ failedAttempts: 1 }), ON, NOW)).toEqual({ kind: 'failing' });
+    expect(planManageOffer(facts({ subscriptionStatus: 'trialing', failedAttempts: 1 }), ON, NOW)).toEqual({ kind: 'failing' });
+    // No Reactivate there, even with the flag set (nothing to keep: the renewal is unpaid).
+    expect(planManageOffer(facts({ subscriptionStatus: 'past_due', cancelAtPeriodEnd: true }), ON, NOW)).toEqual({ kind: 'failing' });
+    expect(planManageWire({ kind: 'failing' })).toEqual({ cancel: true, reactivate: false, paymentFailed: true });
+  });
+
+  it('P-7a.4: a failure count left on a status that is not live offers nothing', () => {
+    for (const status of ['canceled', 'incomplete', 'incomplete_expired', 'paused', null, 'something_new']) {
+      expect(planManageOffer(facts({ subscriptionStatus: status, failedAttempts: 2 }), ON, NOW)).toEqual({ kind: 'none', reason: 'not_active' });
+    }
+    // Ended wins over everything.
+    expect(planManageOffer(facts({ subscriptionStatus: 'past_due', endedAt: PAST }), ON, NOW)).toEqual({ kind: 'none', reason: 'not_active' });
+    // The switch still wins.
+    expect(planManageOffer(facts({ subscriptionStatus: 'past_due' }), { pricesEnabled: false }, NOW)).toEqual({ kind: 'none', reason: 'switch_off' });
   });
 
   it('active, renewing → cancel', () => {

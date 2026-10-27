@@ -19,8 +19,10 @@
  * user's own Stripe plugin (`lib/server/stripe-plugin-executor.ts`) and the
  * repositories (column writes, not Stripe calls).
  *
- * When P-7a.4 adds its immediate-cancel StripeService method, it is listed in
- * ENGINE_ONLY below with the same single allowed caller (SA W-7).
+ * P-7a.4 (SA W-7 carry-over): the immediate-cancel method
+ * `cancelBusinessOsSubscriptionNow` and C-11's invoice void
+ * `voidBusinessOsInvoice` are listed in ENGINE_ONLY with the same single
+ * allowed caller.
  *
  * Pure fs read; milliseconds; no added CI time.
  */
@@ -33,12 +35,21 @@ const SCANNED = ['lib/business-os', 'app/api/business-os'];
 const ENGINE = 'lib/business-os/billing/planSubscriptionManage.ts';
 
 /** StripeService methods only the engine may call. */
-const ENGINE_ONLY = ['setBusinessOsCancelAtPeriodEnd'];
+// P-7a.4 SA code review: the C-11 sweep's read joins the list, so the void
+// sweep has one home with its cross-checks.
+const ENGINE_ONLY = [
+  'setBusinessOsCancelAtPeriodEnd',
+  'cancelBusinessOsSubscriptionNow',
+  'voidBusinessOsInvoice',
+  'listBusinessOsOpenSubscriptionInvoices',
+];
 
 /** Calls no scanned file may make at all. */
 const FORBIDDEN: Array<[string, RegExp]> = [
   ['Stripe SDK subscriptions.update(', /\bsubscriptions\s*\.\s*update\s*\(/],
   ['Stripe SDK subscriptions.cancel(', /\bsubscriptions\s*\.\s*cancel\s*\(/],
+  // P-7a.4 SA code review: a plan invoice is voided only through voidBusinessOsInvoice.
+  ['Stripe SDK invoices.voidInvoice(', /\binvoices\s*\.\s*voidInvoice\s*\(/],
   ['legacy StripeService cancelSubscription(', /\bcancelSubscription\s*\(/],
   ['legacy StripeService reactivateSubscription(', /\breactivateSubscription\s*\(/],
 ];

@@ -14,8 +14,16 @@
  * unparsable JSON is a 400 too.
  *
  * 200 → { success: true, data: { outcome: 'cancelled', endsOn } }
+ *     | { success: true, data: { outcome: 'cancelled', endsOn, mode: 'immediate' } }
+ *       (P-7a.4: a failed renewal at Stripe; the plan ended NOW, `endsOn` = when)
  *     | { success: true, data: { outcome: 'unchanged', state, date } }
- *       (already set to end; nothing written, nothing audited).
+ *       (already set to end, or P-7a.4 `state: 'ended'`; nothing written, nothing audited).
+ *
+ * P-7a.4 (workplan §4.3; BQ-3 = A; SA C-11, TQ-12): while a renewal payment is
+ * failing AT STRIPE (fresh `past_due` / `unpaid`, never our row's count), the
+ * cancel ends the subscription now and voids its open invoice(s), so the old
+ * hosted "Pay now" link cannot put the tier back. Same audit key, with
+ * `details.mode = 'immediate'` and the void counts.
  * Refusals answer { success: false, error, code } from PLAN_MANAGE_REFUSALS.
  * A `stripe_error` with `outcomeUnknown: true` means the write was attempted
  * and its answer was lost: the screen re-reads, never "nothing changed".
@@ -111,6 +119,9 @@ export async function POST(request: NextRequest) {
             outcome: facts.outcome,
             endsOn: facts.endsOn,
             mode: facts.mode,
+            // P-7a.4 (C-11): present on the immediate end only.
+            ...(facts.invoicesVoided !== undefined ? { invoicesVoided: facts.invoicesVoided } : {}),
+            ...(facts.invoicesLeftOpen !== undefined ? { invoicesLeftOpen: facts.invoicesLeftOpen } : {}),
             livemode: facts.livemode,
             reasonCode: facts.reasonCode,
             actor: 'owner',
@@ -145,7 +156,10 @@ export async function POST(request: NextRequest) {
       throw new Error('unexpected_manage_outcome');
     }
     await audit(result.audit);
-    return NextResponse.json({ success: true, data: { outcome: 'cancelled', endsOn: result.endsOn } });
+    return NextResponse.json({
+      success: true,
+      data: { outcome: 'cancelled', endsOn: result.endsOn, ...(result.mode === 'immediate' ? { mode: 'immediate' } : {}) },
+    });
   } catch (error) {
     requestLogger.error({ err: error }, 'Plan cancel failed');
     return NextResponse.json(

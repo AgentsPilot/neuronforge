@@ -9,6 +9,11 @@
  *   - `manage.cancel`     ⇔ the cancel action writes at Stripe;
  *   - `manage.reactivate` ⇔ the reactivate action writes at Stripe;
  *   - no control          ⇔ both actions are refused before any Stripe call.
+ *
+ * P-7a.4: a write is EITHER Stripe write: `cancel_at_period_end` or the
+ * immediate end (`cancelBusinessOsSubscriptionNow`), so a failed renewal's
+ * Cancel (past_due / unpaid → immediate; a cured row → period end) is in the
+ * same equivalence.
  */
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: { marker: 'service-role-default' } }));
@@ -131,6 +136,19 @@ async function writes(r: Row | null, action: 'cancel' | 'reactivate', pricesEnab
         stripeCalls += 1;
         wrote = true;
         return { id: 'sub_own', status: 'active', customerId: 'cus_own', livemode: false, cancelAtPeriodEnd: value, cancelAt: value ? FUTURE_UNIX : null, endedAt: null, currentPeriodEnd: FUTURE_UNIX };
+      },
+      // P-7a.4: the immediate end and C-11's sweep (nothing open here).
+      cancelBusinessOsSubscriptionNow: async () => {
+        stripeCalls += 1;
+        wrote = true;
+        return { id: 'sub_own', status: 'canceled', customerId: 'cus_own', livemode: false, cancelAtPeriodEnd: false, cancelAt: null, endedAt: Math.floor(NOW.getTime() / 1000), currentPeriodEnd: FUTURE_UNIX };
+      },
+      listBusinessOsOpenSubscriptionInvoices: async () => {
+        stripeCalls += 1;
+        return { invoices: [], hasMore: false };
+      },
+      voidBusinessOsInvoice: async () => {
+        throw new Error('nothing to void in the matrix');
       },
     },
   } as unknown as PlanManageDeps;

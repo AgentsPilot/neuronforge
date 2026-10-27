@@ -284,7 +284,6 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   secret('WHATSAPP_CLIENT_SECRET', 'plugins', 'Meta app secret for the WhatsApp Business plugin.'),
   config('WHATSAPP_CONFIG_ID', 'plugins', 'The Meta sign-in configuration the WhatsApp Business plugin connects with.', 'identifier'),
   secret('WHATSAPP_VERIFY_TOKEN', 'plugins', 'Answers Meta\'s check when the WhatsApp webhook is registered.'),
-  secret('ENCRYPTION_SECRET', 'plugins', 'Key used to encrypt plugin credentials stored in the database.', exp('R', 'R', 'R')),
 
   // 6b. Other external services (SA ruling Q-3)
   secret('AWS_ACCESS_KEY_ID', 'external', `Access key for AWS Textract, which extracts text from documents. ${AWS_CAVEAT}`),

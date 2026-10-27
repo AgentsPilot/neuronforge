@@ -323,7 +323,7 @@ describe('SA-C7 serialisation gate', () => {
       ['unknown', { NODE_ENV: 'test' }],
     ];
     const PADDED_SECRET = 'STRIPE_SECRET_KEY';
-    const REQUIRED_REMOVED = 'ENCRYPTION_SECRET';
+    const REQUIRED_REMOVED = 'SUPABASE_SERVICE_ROLE_KEY';
     let savedVercelEnv: string | undefined;
 
     type Row = { name: string; display: unknown; diagnostics: string[] };

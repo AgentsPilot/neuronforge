@@ -23,6 +23,12 @@
  * ("Our customers' revenue, not ours"). Absent, nothing renders, so the
  * existing callers' markup is byte-identical (CPU-5, the hash test). It is
  * content of the group, not part of its accessible name.
+ *
+ * Block KPI 5-grid (2026-10-27, SA-CR-KPIGRID G-1, SA-R-KPIGRID-2): the frame
+ * is the top tile's (`rounded-xl p-4`). Section rows are narrower than the top
+ * strip on a phone (131 px), so below `sm` the pill sits in the flow above the
+ * label (frame `pr-4`), the value is `text-xl`, and the chip has its own line
+ * and may wrap. From `sm` up the pill is the top tile's corner pill (`pr-20`).
  */
 
 import { KpiIndicator, type KpiIndicatorSpec } from './KpiStrip';
@@ -45,25 +51,32 @@ export function BlockKpi({ label, value, indicator, chip, note, testId }: BlockK
       role="group"
       aria-label={`${label}, ${value}`}
       data-testid={`${testId}-kpi`}
-      className="relative rounded-lg border border-slate-700 bg-slate-800 p-3 pr-20"
+      className="relative flex flex-col rounded-xl border border-slate-700 bg-slate-800 p-4 pr-4 sm:pr-20"
     >
       <span className="block text-sm font-medium text-white">{label}</span>
-      <span className="mt-1 flex flex-wrap items-center gap-2">
-        <span className="text-2xl font-semibold tabular-nums text-white" data-testid={testId}>
-          {value}
-        </span>
-        {chip && (
+      <span className="mt-1 block text-xl font-semibold tabular-nums text-white sm:text-2xl" data-testid={testId}>
+        {value}
+      </span>
+      {chip && (
+        // SA-R-KPIGRID-2 (B-1, B-3): the chip on its own line under the value, allowed to wrap, as KpiTile's status line does.
+        <span className="mt-1 block max-w-full [&>span]:whitespace-normal">
           <StatusChip tone={chip.tone} testId={`${testId}-chip`}>
             {chip.label}
           </StatusChip>
-        )}
-      </span>
+        </span>
+      )}
       {note && (
         <span className="mt-1 block text-[11px] text-slate-400" data-testid={`${testId}-note`}>
           {note}
         </span>
       )}
-      <KpiIndicator indicator={indicator} testId={`${testId}-indicator`} className="absolute right-2 top-2" />
+      {/* SA-R-KPIGRID-2 (B-2): below sm the pill is in the flow, above the label (order-first; DOM order unchanged);
+          from sm up it is the top tile's corner pill. */}
+      <KpiIndicator
+        indicator={indicator}
+        testId={`${testId}-indicator`}
+        className="order-first mb-1 self-start sm:absolute sm:right-2 sm:top-2 sm:mb-0"
+      />
     </div>
   );
 }

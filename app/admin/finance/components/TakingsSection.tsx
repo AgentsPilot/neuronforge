@@ -106,6 +106,7 @@ import {
 } from '../financeCopy';
 import { atLeast, formatApproxDollars, formatApproxWholeDollars, formatMoney } from '../financeFormat';
 import { BlockKpi } from '@/app/admin/components/layout/BlockKpi';
+import { KpiStrip } from '@/app/admin/components/layout/KpiStrip';
 import { FinanceSection } from './FinanceSection';
 import { ClientPaymentProblems } from './PaymentProblemsSection';
 import { businessTargetOf, useBusinessRowOpen } from './BusinessDrawer';
@@ -197,11 +198,12 @@ function TakingsBody({ f, usd }: { f: FinanceTakingsFigures; usd?: FinanceClient
 
   return (
     <div className="space-y-4" data-testid="takings-body">
-      {/* BD-56 (slice 1b): with the approximate-dollar figure, two headlines side by side; without it, today's block. */}
+      {/* BD-56 (slice 1b): with the approximate-dollar figure, two headlines side by side; without it, today's block.
+          Either way on the page-top strip's five-column grid (user, 2026-10-27): each headline is one tile of five. */}
       {usd ? (
         <ClientPaymentsUsd usd={usd} f={f} businessesKpi={businessesKpi} count={count} currencyLabel={currencyLabel} />
       ) : (
-        businessesKpi
+        <KpiStrip>{businessesKpi}</KpiStrip>
       )}
       {/* Each partial cause says so on its own (L-5, S2-FR-8). */}
       {!f.paymentsExact && <AdminNotice testId="takings-notice-payments-cut">{TAKINGS_NOTICE_PAYMENTS_CUT}</AdminNotice>}
@@ -457,16 +459,18 @@ function ClientPaymentsUsd({
 
   return (
     <div className="space-y-3" data-testid="takings-usd-block">
-      <div className="grid gap-3 sm:grid-cols-2" data-testid="takings-headlines">
-        {businessesKpi}
-        <BlockKpi
-          label={CLIENT_PAYMENTS_USD.label}
-          value={usdHeadline(usd)}
-          indicator={{ kind: 'lagging', definition: CLIENT_PAYMENTS_USD.definition }}
-          note={CLIENT_PAYMENTS_USD.note}
-          chip={usd.stale ? { tone: 'warn', label: CLIENT_PAYMENTS_USD.staleChip } : null}
-          testId="takings-usd"
-        />
+      <div data-testid="takings-headlines">
+        <KpiStrip>
+          {businessesKpi}
+          <BlockKpi
+            label={CLIENT_PAYMENTS_USD.label}
+            value={usdHeadline(usd)}
+            indicator={{ kind: 'lagging', definition: CLIENT_PAYMENTS_USD.definition }}
+            note={CLIENT_PAYMENTS_USD.note}
+            chip={usd.stale ? { tone: 'warn', label: CLIENT_PAYMENTS_USD.staleChip } : null}
+            testId="takings-usd"
+          />
+        </KpiStrip>
       </div>
       <p className="text-xs text-slate-400" data-testid="takings-usd-line">
         {CLIENT_PAYMENTS_USD.convertedLine(usd.converted.payments, usd.converted.currencies)}

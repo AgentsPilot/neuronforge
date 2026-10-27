@@ -153,10 +153,11 @@ describe('PlanManage', () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
-  it('a failed renewal shows the contact line and no button (P-7a.4 adds Cancel here)', () => {
-    render(<PlanManage plan={plan({ cancel: false, reactivate: false, paymentFailed: true })} />);
-    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations.en['plan.manage.payment_failed_contact']);
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  it('P-7a.4: a failed renewal shows the "cancel to end it now" line and Cancel', () => {
+    render(<PlanManage plan={plan({ cancel: true, reactivate: false, paymentFailed: true })} />);
+    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations.en['plan.manage.payment_failed_cancel_now']);
+    expect(screen.getByTestId('plan-manage-cancel')).toBeInTheDocument();
+    expect(screen.queryByTestId('plan-manage-reactivate')).not.toBeInTheDocument();
   });
 
   it('every plan.manage key has a Hebrew and a Spanish draft', () => {
