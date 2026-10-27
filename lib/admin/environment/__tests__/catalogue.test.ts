@@ -53,6 +53,7 @@ const READERS: Record<string, Array<() => boolean>> = {
   ADMIN_BUSINESS_DELETE_ENABLED: [featureFlags.isAdminBusinessDeleteEnabled],
   BUSINESS_OS_CREDITS_BOOST_ENABLED: [featureFlags.isBusinessOsCreditsBoostEnabled],
   BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED: [featureFlags.isAccountSelfDeleteEnabled],
+  BUSINESS_OS_MODULE_EXPORT_ENABLED: [featureFlags.isModuleExportEnabled],
   NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME: [featureFlags.isEarlySessionOutcomeEnabled],
   BUSINESS_OS_PLAN_CHECKOUT_ENABLED: [isPlanCheckoutEnabled],
   BUSINESS_OS_PLAN_PRICES_ENABLED: [isPlanPriceRecognitionEnabled],

@@ -3,7 +3,7 @@
  * durable-queue-drain step 10).
  *
  * A recording SupabaseClient is injected through the constructor. Each test
- * pins the exact query: the user_id filter and the DTO of the history, the
+ * pins the exact query: the user_id filter and the rows of the history (MX-1b), the
  * claim and reap RPCs, the per-row parse that drops a bad row by id, and that
  * a double claim (modelled SKIP LOCKED) never hands one job to two runners.
  * The real SKIP LOCKED is QA 4 on the local replica.
@@ -26,10 +26,10 @@ jest.mock('@/lib/logger', () => {
 
 import {
   BusinessOsExportModuleJobRepository,
-  HISTORY_LIMIT_MAX,
+  HISTORY_REQUEST_IDS_MAX,
   MODULE_JOB_CLAIM_FUNCTION,
   MODULE_JOB_ERROR,
-  MODULE_JOB_HISTORY_SELECT,
+  MODULE_JOB_HISTORY_COLUMNS,
   MODULE_JOB_REAP_FUNCTION,
 } from '../BusinessOsExportModuleJobRepository';
 import { MODULE_EXPORT_POLICY } from '@/lib/business-os/data-export/moduleExportPolicy';
@@ -42,7 +42,7 @@ function client(...results: Result[]) {
   let next = 0;
   const take = () => results[Math.min(next++, results.length - 1)] ?? { data: null, error: null };
   const builder: Record<string, unknown> = {};
-  for (const method of ['select', 'eq', 'order', 'limit']) {
+  for (const method of ['select', 'eq', 'in', 'order', 'limit']) {
     builder[method] = (...args: unknown[]) => {
       calls.push({ method, args });
       return builder;
@@ -102,7 +102,8 @@ beforeEach(() => {
   logged.length = 0;
 });
 
-describe('listHistoryForUser', () => {
+describe('listForRequestsOfUser (MX-1b history, §5 step 2)', () => {
+  const REQUEST2 = '77777777-7777-4777-8777-777777777777';
   const historyRow = {
     id: JOB(1),
     request_id: REQUEST,
@@ -113,53 +114,65 @@ describe('listHistoryForUser', () => {
       { n: 2, state: 'accepted', resend_id: 're_2', at: T },
     ],
     sent_at: T,
-    created_at: T,
-    business_os_export_requests: { requested_at: T, origin: 'admin' },
   };
 
-  it('filters on user_id, newest first, and embeds the request through the named foreign key', async () => {
+  it('filters on user_id AND the given request ids, with no row limit, and maps each row', async () => {
     const { c, calls } = client({ data: [historyRow], error: null });
-    const result = await repo(c).listHistoryForUser(OWNER, { limit: 20 });
+    const result = await repo(c).listForRequestsOfUser(OWNER, [REQUEST, REQUEST2, REQUEST]);
     expect(calls).toEqual([
       { method: 'from', args: ['business_os_export_module_jobs'] },
-      { method: 'select', args: [MODULE_JOB_HISTORY_SELECT] },
+      { method: 'select', args: [MODULE_JOB_HISTORY_COLUMNS] },
       { method: 'eq', args: ['user_id', OWNER] },
-      { method: 'order', args: ['created_at', { ascending: false }] },
-      { method: 'limit', args: [20] },
+      { method: 'in', args: ['request_id', [REQUEST, REQUEST2]] },
     ]);
-    expect(MODULE_JOB_HISTORY_SELECT).toContain('business_os_export_requests!business_os_export_module_jobs_request_id_fkey(requested_at, origin)');
+    expect(calls.some((call) => call.method === 'limit')).toBe(false);
     expect(result).toEqual({
-      data: [{ requestId: REQUEST, module: 'bookings', status: 'sent', requestedAt: T, sentAt: T, emailCount: 2, origin: 'admin' }],
+      data: [{ id: JOB(1), requestId: REQUEST, module: 'bookings', status: 'sent', sentAt: T, emailCount: 2 }],
       error: null,
     });
   });
 
-  it('the DTO never carries a Resend id, a claim field or an error code, and the select never asks for them', async () => {
+  it('the rows never carry a Resend id, a claim field or an error code, and the select never asks for them', async () => {
     const { c } = client({ data: [historyRow], error: null });
-    const result = await repo(c).listHistoryForUser(OWNER);
-    const text = JSON.stringify(result.data);
-    expect(text).not.toMatch(/re_1|resend|claimed|error_code|failure|user_id/);
-    expect(MODULE_JOB_HISTORY_SELECT).not.toMatch(/claimed|resend|error_code|failure_code|\*/);
+    const result = await repo(c).listForRequestsOfUser(OWNER, [REQUEST]);
+    expect(JSON.stringify(result.data)).not.toMatch(/re_1|resend|claimed|error_code|failure|user_id/);
+    expect(MODULE_JOB_HISTORY_COLUMNS).not.toMatch(/claimed|resend|error_code|failure_code|\*/);
   });
 
-  it.each([
-    [undefined, HISTORY_LIMIT_MAX],
-    [0, 1],
-    [-5, 1],
-    [1000, HISTORY_LIMIT_MAX],
-    [2.5, HISTORY_LIMIT_MAX],
-  ])('limit %p is clamped to %p', async (limit, expected) => {
-    const { c, calls } = client({ data: [], error: null });
-    await repo(c).listHistoryForUser(OWNER, limit === undefined ? {} : { limit });
-    expect(calls.find((call) => call.method === 'limit')?.args).toEqual([expected]);
+  it('a part with no resend_id or at still counts (QA MX-1a finding 1); only accepted parts count', async () => {
+    const odd = { ...historyRow, status: 'working', sent_at: null, parts: [{ n: 1, state: 'accepted' }, { n: 2, state: 'sending' }] };
+    const { c } = client({ data: [odd], error: null });
+    const result = await repo(c).listForRequestsOfUser(OWNER, [REQUEST]);
+    expect(result.data).toEqual([{ id: JOB(1), requestId: REQUEST, module: 'bookings', status: 'working', sentAt: null, emailCount: 1 }]);
   });
 
-  it('refuses a non-uuid user id before any call, and returns a database error, never a throw', async () => {
-    const bad = client({ data: [], error: null });
-    expect((await repo(bad.c).listHistoryForUser('nope')).error).toMatchObject({ code: MODULE_JOB_ERROR.INVALID_INPUT });
-    expect(bad.calls).toEqual([]);
+  it('a malformed row is dropped and logged by id; the other rows are returned (per-row parse)', async () => {
+    const bad = { ...historyRow, id: JOB(2), status: 'delivered' };
+    const { c } = client({ data: [bad, historyRow], error: null });
+    const result = await repo(c).listForRequestsOfUser(OWNER, [REQUEST]);
+    expect(result.data?.map((row) => row.id)).toEqual([JOB(1)]);
+    expect(logged.some((args) => (args[0] as Record<string, unknown>).jobId === JOB(2))).toBe(true);
+  });
+
+  it('no request ids is an empty list with no call', async () => {
+    const { c, calls } = client({ data: [historyRow], error: null });
+    expect(await repo(c).listForRequestsOfUser(OWNER, [])).toEqual({ data: [], error: null });
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses a bad user id, a bad request id or too many ids before any call; a DB error is { error }, never a throw', async () => {
+    const tooMany = Array.from({ length: HISTORY_REQUEST_IDS_MAX + 1 }, (_, n) => JOB(n + 1));
+    for (const [user, ids] of [
+      ['nope', [REQUEST]],
+      [OWNER, ['nope']],
+      [OWNER, tooMany],
+    ] as const) {
+      const bad = client({ data: [], error: null });
+      expect((await repo(bad.c).listForRequestsOfUser(user, ids)).error).toMatchObject({ code: MODULE_JOB_ERROR.INVALID_INPUT });
+      expect(bad.calls).toEqual([]);
+    }
     const failing = client({ data: null, error: { code: 'XX000', message: 'boom' } });
-    expect(await repo(failing.c).listHistoryForUser(OWNER)).toEqual({ data: null, error: expect.objectContaining({ code: 'XX000' }) });
+    expect(await repo(failing.c).listForRequestsOfUser(OWNER, [REQUEST])).toEqual({ data: null, error: expect.objectContaining({ code: 'XX000' }) });
   });
 });
 
