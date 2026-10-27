@@ -353,7 +353,7 @@ Relevant SA findings: F-5 (receipt facts read the DE-8a table), F-7 (`emailTrans
 
 > **This section is identical** in [BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md) (EXPORT) and [BUSINESS_OS_ACCOUNT_DELETION_LIFECYCLE_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_ACCOUNT_DELETION_LIFECYCLE_REQUIREMENT.md) (DELETE). Change it in both files in the same PR, or not at all.
 
-Two Claude sessions build in parallel. **EXPORT** builds MX-0 to MX-7 (MX-3.1 added and MX-6 folded by the user's decision of 2026-10-27). **DELETE** builds SX-1, SX-2, SX-3, SX-5, DL-1a to DL-5 and DL-4b, and also built LX-1 before the split. Every reservation, claim, hand-off and question between them goes through the shared coordination file (B.5).
+Two Claude sessions build in parallel. **EXPORT** builds MX-0 to MX-7 (MX-3.1 added and MX-6 folded by the user's decision of 2026-10-27). Dated records are not edited for this change (the SA Split Review, its frozen interface spec and SR-1…SR-12, and the §10 XC copies): where they say MX-6, `isModuleExportEnabled()` or "switch-on", the amended §11 lines win. **DELETE** builds SX-1, SX-2, SX-3, SX-5, DL-1a to DL-5 and DL-4b, and also built LX-1 before the split. Every reservation, claim, hand-off and question between them goes through the shared coordination file (B.5).
 
 ### B.1 Ownership
 
@@ -414,7 +414,7 @@ Two Claude sessions build in parallel. **EXPORT** builds MX-0 to MX-7 (MX-3.1 ad
 | **EXPORT MX-3.1 / MX-7 wait for nothing from DELETE** (MX-6 folded, 2026-10-27) | Apart from the S-1 serialisation of MX-7's regeneration |
 | MX-5 "works in stage D" | Tested against a banned user directly; does not wait for DL-4 |
 | LX-1 | Built in the DELETE session on `fix/crm-export-safety-lx1` and merged **before** the split; afterwards the CRM / Orders list export code belongs to EXPORT |
-| Ops gates | Resend domain verification and the sender / support address (open issue 1) serve both scopes; whoever reaches switch-on first raises them in the coordination file |
+| Ops gates | Resend domain verification and the sender / support address (open issue 1, answered 2026-10-27: `notifications@agentspilot.ai`) serve both scopes; EXPORT raises them in the coordination file before MX-3.1 merges (go-live, 2026-10-27), DELETE before its own switch-on |
 
 ### B.5 Coordination file
 
@@ -661,3 +661,4 @@ If EXPORT finds it must edit a file that this table says it does not, it records
 | 2026-10-27 | BQ-E5-1/2/3 answered (EXPORT TL, E5) | Support-sent exports show in the drawer's history list (like invites / top-up payments); "Export data" wording from MX-4 switch-on; nothing pre-ticked, pop-up confirmation after Export ("started, files sent to your email once ready") |
 | 2026-10-27 | User decision: E6.1 = MX-3.1 removes the export switch and the ZIP download code (SA amendment) | The user decided on 2026-10-27: drop `BUSINESS_OS_MODULE_EXPORT_ENABLED` and all code tied to it, and the ZIP download, right after E6, because the platform is in testing mode. §6: decision note (it wins over §1/§3/§5/§9/§10 where they still speak of switch-on, ready ZIPs, 72 h or MX-6); E numbers and ✅ for E1, E2, E4 and E5. New MX-3.1 row (2.5 d, go-live gate, no migration). MX-3: definitions with the first write, C-10 merge gate. MX-4: no switch-on, gains the contents doc. MX-5: no admin ZIP 404. MX-6 folded. MX-7 1.5 d. Total 18 → 19.5 d. New order. Ops gates before MX-3.1. New BQ-E6.1-1 (admin export gap) and BQ-E6.1-2 (questions that waited for switch-on). §7: new MX-3.1 AC; MX-3, MX-4, MX-5 and MX-7 AC amended; MX-6 AC struck. §11 (**mirror into the DELETE file**): intro, B.1 Routes and Flags, S-4, S-11, B.4 rows 1, 2 and 6, B.6 both paragraphs, B.7 `featureFlags.ts` / `FEATURE_FLAGS.md` / `vercel.json` rows. Plan: §4.6a rulings R-1…R-7 |
 | 2026-10-27 | BQ-E6.1-1 and BQ-E6.1-2 answered (EXPORT TL) | User accepted both suggestions: the admin export gap until MX-5 is accepted (MX-3.1 removes the admin ZIP, `/admin/users` shows a one-line placeholder); go-live ships the defaults (13 modules, no Excel, `notifications@agentspilot.ai`), closing BQ-25, BQ-27 and open issue 1; legal open issue 2 becomes a launch gate before the first real customer |
+| 2026-10-27 | §11 alignment with DELETE (EXPORT TL) | Ops gates row: open issue 1 answered, EXPORT raises the gates before MX-3.1 merges; §11 intro: dated records (SA Split Review incl. frozen spec and SR-10 anchors, §10 XC copies) are not edited and the amended §11 lines win over them |
