@@ -8,6 +8,7 @@ import { buildJourney, daysSince } from '@/lib/business-os/insight/journeyTimeli
 import { getProcess } from '@/lib/business-os/insight/kernel/TriggerableProcesses';
 import { localizeStageLabel } from '@/lib/business-os/stageLabels';
 import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
+import { SUPPORTED_PROVIDERS } from '@/lib/business-os/leads/inboxProviders';
 import {
   resolveSetup,
   isReadyForClients,
@@ -841,10 +842,26 @@ export function LiveDashboard({
       ];
     }
 
-    /* `connectable` alone — it already means "a connected mailbox with no
-       channel", so a business that set up Gmail and still has Outlook
-       connected is offered the second one rather than counted as finished. */
-    if (inboxChannel.connectable.length > 0) {
+    /*
+     * OFFERED TO THE BUSINESS IT IS FOR, NOT ONLY TO ONE THAT ALREADY SIGNED IN.
+     *
+     * This asked for `connectable`, which holds mailboxes ALREADY CONNECTED and
+     * without a channel. A business that keeps its own website and has never
+     * connected Gmail saw nothing at all — the very business the feature
+     * exists for — because the row required the thing it was meant to help
+     * them set up. The Channels chip had the same bug and was fixed the same
+     * way; setup's first screen signs a mailbox in itself now.
+     *
+     * Still not offered to everyone. A business we are building a site for is
+     * reached through that site, and its form feeds the CRM directly, so the
+     * row would be noise. The population is: reached by a link rather than by
+     * our website, or already running one mailbox with another still unset.
+     */
+    const reachedByTheirOwnSite =
+      setupShape.presence === 'booking_only' || setupShape.presence === 'none';
+    const anyMailboxUnset = inboxChannel.channels.length < SUPPORTED_PROVIDERS.length;
+
+    if (anyMailboxUnset && (reachedByTheirOwnSite || inboxChannel.channels.length > 0)) {
       return [
         ...setupItems,
         {
@@ -861,7 +878,7 @@ export function LiveDashboard({
     }
 
     return setupItems;
-  }, [setupItems, inboxChannel, t]);
+  }, [setupItems, inboxChannel, setupShape, t]);
 
   /**
    * The journey, built from what happened rather than from how long it has been.

@@ -145,6 +145,8 @@ describe('section order', () => {
       '/admin/business-os-llm',
       '/admin/system-config',
       '/admin/settings',
+      // Admin environment view EC-2 (SA OQ-1, 2026-10-27): appended last.
+      '/admin/environment',
     ]);
   });
 
@@ -204,7 +206,8 @@ describe('every admin page is reachable, exactly once', () => {
     // payments P-8a.1) − Subscriptions (Money MK-4: a Finance tab now)
     // − Charge checks + AI cost (Money MK-3a: one replaces the other)
     // − AI calls & usage (Money MK-3b: the AI cost page's Calls tab).
-    expect(allHrefs).toHaveLength(27);
+    // + Environment (admin environment view EC-2, 2026-10-27).
+    expect(allHrefs).toHaveLength(28);
   });
 
   it('every nested listed page exists on disk (M-5)', () => {

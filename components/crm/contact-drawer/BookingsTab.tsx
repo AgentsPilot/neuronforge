@@ -1519,13 +1519,46 @@ export function BookingsTab({
        * Chasing a quote or an invoice both land on the payment manager, which
        * is where the document and its reminder live. Not `onSendInvoice`: that
        * sends a NEW invoice, and the move here is to chase one already out.
+       *
+       * `send_invoice` is NOT chasing, which is why it no longer sits here —
+       * see the case below.
        */
       case 'remind_quote':
       case 'remind_payment':
-      case 'send_invoice':
       case 'bill_next_stage':
         onManagePayment?.(session);
         return;
+      /*
+       * ── SEND MEANS SEND ──────────────────────────────────────────────────
+       *
+       * The button says "Send invoice" over a badge that says "Needs
+       * invoicing", and it opened the payment manager instead: the owner
+       * pressed Send and got a dialog about a payment plan, on a course that
+       * has no plan and nothing left to arrange.
+       *
+       * It is safe to send without asking. This action is offered in one
+       * state, `needs_invoice`, and `moneyStateFrom` only reaches it for a
+       * SINGLE payment that is neither paid nor refunded and whose invoice is
+       * neither `sent` nor `overdue` — so the document named here can only be
+       * a draft the client has never seen. Sending it is the whole of the
+       * owner's intent.
+       *
+       * Routed through `handleSendInvoice`, the same call the journey's own
+       * payment node makes, so the banner and the step cannot diverge.
+       *
+       * Where no invoice has been RAISED at all there is genuinely nothing to
+       * send, and the manager is where one is created. That case alone keeps
+       * the old behaviour.
+       */
+      case 'send_invoice': {
+        const draft = session.payment?.outstandingInvoiceId ?? session.payment?.invoiceId;
+        if (draft && onSendInvoice) {
+          void handleSendInvoice(draft, bookingId);
+          return;
+        }
+        onManagePayment?.(session);
+        return;
+      }
     }
   };
 
@@ -3892,8 +3925,23 @@ export function BookingsTab({
                                    * stops OFFERING them.
                                    * ─────────────────────────────────────────────────────────
                                    */
+                                  /*
+                                   * `sendable` is the SERVICE's answer, set by
+                                   * `buildJourneySteps` from the same rule the server
+                                   * refuses with. A quote request and a product have no
+                                   * occasion for a form however the business is
+                                   * configured, and this step can still be drawn for one
+                                   * when a form was already sent or answered — the record
+                                   * outlives the configuration. Offering Send there put
+                                   * the owner one click from "This service does not
+                                   * collect an intake form".
+                                   *
+                                   * Compared against `false` so a step built before this
+                                   * field existed still behaves as it did.
+                                   */
                                   const canSendIntake = Boolean(
-                                    isIntakeStep && !hasIntake && onSendIntake && !meetingSettled && !jobCalledOff
+                                    isIntakeStep && !hasIntake && onSendIntake && !meetingSettled && !jobCalledOff &&
+                                    step.metadata?.sendable !== false
                                   );
 
                                   const scheduleDetail =
@@ -5022,9 +5070,26 @@ export function BookingsTab({
                                                     className="text-[12.5px] font-medium tabular-nums"
                                                     style={{
                                                       color: 'var(--v2-text-secondary)',
-                                                      // Struck through, because this amount is
-                                                      // never going to be collected.
-                                                      textDecoration: stopped ? 'line-through' : undefined,
+                                                      /*
+                                                        Struck through when the business is not
+                                                        keeping this money.
+                                                        ──────────────────────────────────────
+                                                        `stopped` — it will never be collected.
+
+                                                        `fullyReturned` — it was collected and
+                                                        has gone back. This read `stopped` alone,
+                                                        so a period refunded in full went on
+                                                        printing its figure plainly while the
+                                                        strip above it said "You keep $0". The
+                                                        dot beside it already turns; the amount
+                                                        is the thing an owner actually reads.
+
+                                                        NOT a partial refund: money that is
+                                                        partly held is still collected, and the
+                                                        breakdown line below says how it split.
+                                                      */
+                                                      textDecoration:
+                                                        stopped || fullyReturned ? 'line-through' : undefined,
                                                     }}
                                                   >
                                                     {amountText}

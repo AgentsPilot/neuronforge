@@ -417,10 +417,30 @@ function BusinessOSContent() {
              */
             const hasDraftOnly = (s.website?.page_count ?? 0) > 0 && !s.website?.has_live_pages;
 
+            /*
+             * A business reached by a LINK is a third case, not the generic one.
+             *
+             * "A website, a landing page or a smart link, any one of them
+             * works" offers a choice to somebody who has already made it: they
+             * declined a website during onboarding, often because they keep
+             * their own. Listing the options again reads as though we had not
+             * been listening, and it hides the one short thing they actually
+             * have to do.
+             */
+            const linkOnly = !hasDraftOnly && !s.website?.wants_website;
+
             computedSetupItems.push({
               id: 'website',
-              title: hasDraftOnly ? t('setup.website.todo_publish') : t('setup.website.todo'),
-              description: hasDraftOnly ? t('setup.website.why_publish') : t('setup.website.why'),
+              title: hasDraftOnly
+                ? t('setup.website.todo_publish')
+                : linkOnly
+                  ? t('setup.website.todo_link')
+                  : t('setup.website.todo'),
+              description: hasDraftOnly
+                ? t('setup.website.why_publish')
+                : linkOnly
+                  ? t('setup.website.why_link')
+                  : t('setup.website.why'),
               completed: false,
               // Two different pieces of work behind one step: publishing a
               // site, or creating the link that stands in for one.

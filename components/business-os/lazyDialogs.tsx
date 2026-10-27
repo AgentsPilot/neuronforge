@@ -46,6 +46,7 @@ import type { ComponentProps, ComponentType } from 'react';
 import type { ConfigurationDialog as ConfigurationDialogComponent } from '@/components/business-os/ConfigurationDialog';
 import type { SchedulingDialog as SchedulingDialogComponent } from '@/components/business-os/SchedulingDialog';
 import type { StandaloneUpgradeModalProps } from '@/components/business-os/settings/StandaloneUpgradeModal';
+import type { PresenceTourProps } from '@/components/business-os/presence-tour';
 import { createLazyDialog } from '@/components/business-os/lazyDialogLoader';
 
 type ConfigurationDialogProps = ComponentProps<typeof ConfigurationDialogComponent>;
@@ -77,5 +78,26 @@ export const LazyUpgradeModal = createLazyDialog<StandaloneUpgradeModalProps>(
   () =>
     import('@/components/business-os/settings/StandaloneUpgradeModal').then(
       (mod): ComponentType<StandaloneUpgradeModalProps> => mod.StandaloneUpgradeModal
+    )
+);
+
+/*
+ * The Online presence tour.
+ *
+ * A 45-second walkthrough of the three routes to being findable, opened from
+ * the guidance card on `/business-os/website`. It recreates a dozen screen
+ * fragments and carries six scenes, so it is the clearest case on the page for
+ * loading after paint rather than with it: `app/business-os/website/page.tsx`
+ * is already 9,000+ lines, it had no dynamic imports at all, and most visits
+ * never open this.
+ *
+ * `import type` above, never a value import — `__tests__/lazyDialogs.guard.test.ts`
+ * fails if that slips, because a value import would undo the whole point.
+ */
+export const LazyPresenceTour = createLazyDialog<PresenceTourProps>(
+  'PresenceTour',
+  () =>
+    import('@/components/business-os/presence-tour').then(
+      (mod): ComponentType<PresenceTourProps> => mod.PresenceTour
     )
 );

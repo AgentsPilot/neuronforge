@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { busyMeetings } from '@/lib/scheduling/busyMeetings';
 import { wallClockToInstant } from '@/lib/scheduling/wallClock';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
-import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
+import { schedulingServiceRepository, schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { activitySentence, activityMoment } from '@/lib/business-os/activityText';
 import { shouldTakePayment } from '@/lib/business-os/clientJourney';
 import { openAttempt } from '@/lib/scheduling/abandonedBookings';
@@ -816,11 +816,40 @@ export async function POST(request: NextRequest) {
     // Note: client data is now stored only in crm_contacts (via contact_id)
     // For paid services: status is 'pending' until payment is confirmed
     // For non-scheduled bookings (courses, products): start_time and end_time are null
+    /*
+     * ── THROUGH THE REPOSITORY, NOT AROUND IT ────────────────────────────────
+     *
+     * This inserted with `supabaseServer` directly, and `syncMeeting()` is
+     * private to `SchedulingRepository` and runs only from its `create()` and
+     * `update()` — so every booking written here was born with NO
+     * `scheduling_meetings` row.
+     *
+     * `busyMeetings()` reads that table and nothing else, so the hour was
+     * invisible to every availability surface: the grid offered it, and the
+     * slot suggester went further and RECOMMENDED it. Only the database's
+     * exclusion constraint stood in the way, which is why the owner met it as
+     * a failed save rather than a slot that was never offered.
+     *
+     * Measured 2026-10-26 across 82 website bookings: 13 came through the
+     * attempt path and ALL had a meeting; 69 came through here and 20 had
+     * none. The same fault, and the same fix, that `materialiseAttempt`
+     * already carries — its note says the identical thing.
+     *
+     * Confirming the booking later does not repair it: `update()` only syncs
+     * when the payload names a MEETING_FIELD (`start_time`, `meeting_status`,
+     * …) and `finalize` writes `status`, `payment_status` and `contact_id`.
+     * So it has to be right at birth, which is here.
+     *
+     * Safe to route through: `create()` is the same insert plus `syncMeeting`,
+     * and `syncMeeting` returns early when `start_time` is null, so a course
+     * or a product still gets no meeting — correctly, it holds no hour. The
+     * `booking.created` event comes from a database trigger, so nothing is
+     * emitted twice. It also satisfies CLAUDE.md rule 1.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     const insertResult = reusable
       ? { data: reusable, error: null }
-      : await supabaseServer
-      .from('scheduling_bookings')
-      .insert({
+      : await schedulingBookingRepository.create({
         user_id: ownerId,
         service_id: data.service_id,
         contact_id: contactId,  // Required - client data is in crm_contacts
@@ -857,10 +886,8 @@ export async function POST(request: NextRequest) {
         payment_status: isQuoteRequest || (service.price || 0) > 0 ? 'pending' : 'paid',
         notes: data.notes || null,
         booking_source: 'website',
-        timezone: bookingTimezone
-      })
-      .select('id, start_time, end_time')
-      .single();
+        timezone: bookingTimezone,
+      } as Parameters<typeof schedulingBookingRepository.create>[0]);
 
     const { data: booking, error: bookingError } = insertResult;
 

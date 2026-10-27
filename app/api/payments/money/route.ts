@@ -326,6 +326,32 @@ export async function GET(request: NextRequest) {
       if (amount > 0) refundByInvoice.set(String(invoice.id), amount);
     }
 
+    /*
+     * And what came back per CHARGE, for the periods that raised no invoice.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The note above is right that a refund is derived onto the invoice a
+     * period raised — for a plan BILLED BY INVOICE. A plan charged to a card
+     * raises none: Stripe charges the subscription and the refund lands on the
+     * `payment_transactions` row, so `invoice_id` on the period is null and the
+     * invoice map can never answer for it.
+     *
+     * Measured 2026-10-26: booking f8df6318, period 1 of 2, $30 charged and
+     * returned in full as two refunds of $10 and $20. The drawer's own detail
+     * panel read "Refunded · $30.00" off the transaction, while the schedule
+     * above it showed "1/2 paid" with period 1 on a green dot — the two halves
+     * of one screen disagreeing about the same money.
+     *
+     * No extra query: `refunded_amount` is already in the transaction select,
+     * because the list rows need it too — the same reasoning as the invoice map.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const refundByTransaction = new Map<string, number>();
+    for (const transaction of transactions.data ?? []) {
+      const amount = Number(transaction.refunded_amount ?? 0);
+      if (amount > 0) refundByTransaction.set(String(transaction.id), amount);
+    }
+
     if (bookingIds.length > 0) {
       const { data: installments, error: installmentError } = await supabaseServer
         .from('payment_plan_installments')
@@ -371,11 +397,19 @@ export async function GET(request: NextRequest) {
           trigger: row.trigger,
           invoiceId: row.invoice_id,
           /* So the schedule can say WHICH period a refund came off, which a
-             single total on the row above can never answer. */
+             single total on the row above can never answer.
+
+             The invoice FIRST, because an invoiced period's refund is derived
+             onto it; then the charge, for a card-billed period that has no
+             invoice at all. Reading only the first left every plan charged to
+             a card showing its periods as plainly paid. */
           refundedAmount:
-            typeof row.invoice_id === 'string'
+            (typeof row.invoice_id === 'string'
               ? refundByInvoice.get(row.invoice_id) ?? null
-              : null,
+              : null) ??
+            (typeof row.transaction_id === 'string'
+              ? refundByTransaction.get(row.transaction_id) ?? null
+              : null),
         });
         plan.installmentCount = plan.periods.length;
         // Counted from the periods themselves rather than a stored figure, so
