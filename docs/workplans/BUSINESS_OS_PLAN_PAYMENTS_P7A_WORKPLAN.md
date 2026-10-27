@@ -809,6 +809,205 @@ Prerequisites as §10 "Before the demo" items 1, 3, 4 and 5 (price and checkout 
 
 ---
 
+## Workplan: FU-P7a4-1 (alert on a plan invoice paid after its subscription ended)
+
+**Status:** Code complete, uncommitted (2026-10-27); SA workplan review APPROVED WITH CHANGES (R-1 to R-6, applied). Awaiting SA code review. **Branch:** `feature/bos-plan-payments-fu-p7a4-1` (worktree `neuronforge-fu1`, stacked on P-7a.4 = PR #540; `git branch --show-current` checked). No migration, no wording, no UI.
+
+**Scope (SA, deviation 1 ruling + D3.1 review):** alert-only. On `invoice.paid` for a subscription that ended before the invoice's period end, APPLY exactly as today and log `error` + `alert: true`, event `bos_billing_paid_after_end`, so an operator decides honour vs refund. No refusal, no reinstatement, no undo, no audit row, no new DB read.
+
+### Trigger
+
+All of these, computed by one pure exported helper `paidAfterEnd(facts, subscription)` in `planPaymentApply.ts` (returns `null` or the alert facts; never throws: an unparseable time gives `null`):
+
+1. `subscription.endedAt !== null`: the subscription ended (Stripe's `ended_at`).
+2. `facts.periodEnd > endedAt`: it ended before the period the invoice pays for was over. A period-end cancel's last invoice has `periodEnd <= ended_at`, so it never fires (SA ruling 1 c).
+3. `facts.paidAt > endedAt`: the money came after the end. Without this, a late or replayed delivery of an invoice paid while the subscription was live would alert falsely (the event's name says "paid after end").
+4. The apply returned `applied` or `recorded` (a new money row). `already_applied` / `already_recorded` replays, refusals, `subscription_conflict` and the retry throws never alert, so one paid invoice alerts once.
+
+**Which fact says "ended": Stripe's, from the read the apply already makes** (step 9, `retrieveBusinessOsSubscription(facts.subscriptionId)`), not our billing row. No extra call. Our row is not reliable here: Stripe does not order `customer.subscription.deleted` before `invoice.paid`, and a Stripe dunning end (one of the two cases SA named) reaches our row only through that `.deleted` delivery. Our row's `ended_at` is logged beside it (`recordEndedAt`, only when the row holds the same subscription id) as context; it decides nothing. See Q-1.
+
+### Where it sits
+
+- `applyPaidPlanInvoice`: after the existing fresh read and the U-4 guard, `const lateEnd = paidAfterEnd(facts, subscription)`. Nothing passed to `applyPlanPayment` changes.
+- `afterApply`, `applied` / `recorded` case: immediately after the existing `bos_billing_invoice_applied` line (so the alert is written at the commit, before the post-commit chain, as SA F-1 placed that line), `if (extra.paidAfterEnd) log.error(...)`. `extra` gains one optional field. Nothing else in `afterApply` reads it.
+- `planBillingHandler.ts`: no change (the deps are unchanged).
+
+### Log line (ids only, no owner text, no PII, no metadata values)
+
+```typescript
+log.error(
+  {
+    event: 'bos_billing_paid_after_end', alert: true,
+    accountId, billingRowId: account.id, invoiceId, subscriptionId, livemode, stripeEventId,
+    status: result.status, planWritten: result.planWritten, tier: facts.tier, billingReason: facts.billingReason,
+    amountMinor: facts.amountMinor, currency: 'usd',
+    periodEnd: facts.periodEnd, paidAt: facts.paidAt, subscriptionEndedAt /* ISO */, subscriptionStatus,
+    recordEndedAt /* our row, same sub only, else null */, cancellationReason /* Q-2 */,
+  },
+  'Business OS plan invoice paid after its subscription ended; applied as usual, operator to decide honour or refund'
+);
+```
+
+No customer id (the existing `ids` omit it; kept so). No email, no name, no `bos_user_id` value.
+
+### Files
+
+| File | Action | Reason |
+|---|---|---|
+| `lib/business-os/billing/planPaymentApply.ts` | modify | `paidAfterEnd` helper; one `extra` field; the log line; header comment step 10a |
+| `lib/stripe/StripeService.ts` | modify, only if Q-2 = yes | `retrieveBusinessOsSubscription` gains optional `cancellationReason?: string \| null` from the SAME retrieve (`cancellation_details.reason`, filtered to the mirror's three known values, else null). Optional so existing fakes stay valid |
+| `lib/business-os/billing/__tests__/planPaymentApply.paidAfterEnd.test.ts` | create | Below |
+| the existing `retrieveBusinessOsSubscription` suite under `lib/stripe/` | modify, only if Q-2 = yes | The reason is read and filtered |
+| this workplan, the requirement | modify | Status |
+
+### Tests (`planPaymentApply.paidAfterEnd.test.ts`, the fakes of `planPaymentApply.test.ts`)
+
+1. **Fires:** Stripe `canceled`, `endedAt` after the period start, `paidAt` after `endedAt` (the X-4d shape): exactly one `bos_billing_paid_after_end` line at `error` with `alert: true`, the fields above, and the apply still `applied` with the tier written (as today, SA ruling 1 b).
+2. **Fires for a Stripe dunning end** (`cancellationReason: 'payment_failed'`, invoice paid later): one line (SA ruling 1 c: the operator decides).
+3. **Does not fire for a live subscription** (`active`, `endedAt` null), nor for `past_due`.
+4. **Does not fire for a period-end cancel's last invoice** (`periodEnd === endedAt`), nor for an invoice paid before the end and delivered late (`paidAt < endedAt`).
+5. **Does not fire on a replay** (`already_applied`), a refusal, or `subscription_conflict`.
+6. **Our row says ended, Stripe says live: no alert; our row says live, Stripe says ended: alert** (Stripe's fresh read decides, Q-1).
+7. **Apply outcome byte-identical:** the same event run with the subscription ended and with it live (same status passed through): the `applyPlanPayment` argument, the `recordPlanChange` calls, the `recordEvent` calls, the cure call and the return value are deep-equal; only the log differs.
+8. **Never throws:** `endedAt` / `paidAt` / `periodEnd` unparseable or `NaN`: resolves, no alert, apply unchanged.
+9. **No PII:** the line's keys are exactly the allow-list above (pinned with `Object.keys(...).sort()`), and no value equals the fixture's email or metadata.
+10. Unit tests for `paidAfterEnd` itself: each of conditions 1 to 3 flipped alone returns `null`.
+
+Gates: `lib/business-os/billing` and `app/api/stripe` folders, `lib/stripe` (if Q-2), `npm run test:bos-entitlements` (the file imports from entitlements), the Connect characterisation snapshot md5 unchanged, typecheck 0 errors on the touched files, ESLint on them.
+
+### Task list
+
+- ✅ 1. SA workplan review; apply rulings on Q-1 to Q-3.
+- ✅ 2. `paidAfterEnd` helper + its unit tests.
+- ✅ 3. Wire into `applyPaidPlanInvoice` / `afterApply`; integration tests 1 to 9.
+- ✅ 4. (Q-2 = yes) `cancellationReason` on the subscription read + its test.
+- ✅ 5. Gates above; status in this workplan and the requirement.
+
+### Open questions for SA
+
+- **Q-1 (the deciding fact).** The brief said "decide from our own billing row". This plan decides from Stripe's fresh read that `applyPaidPlanInvoice` already makes (no new call, no new DB read), because our row lags the `.deleted` webhook and a Stripe dunning end only reaches it that way; SA's ruling 1 also says "Stripe reports ended". Our row is logged, not used. Confirm, or rule "row OR Stripe".
+- **Q-2 (`cancellation_details.reason`).** SA's ruling 1 lists it in the line. The current `retrieveBusinessOsSubscription` result does not carry it. Adding it is one optional field on the same retrieve (no new call), so the line tells `cancellation_requested` (ours, P-7a.4's residual windows) from `payment_failed` (Stripe's dunning end). Yes (recommended) or log without it?
+- **Q-3 (condition 3, `paidAt > endedAt`).** Not in SA's ruling text; added to keep a late delivery of a pre-end payment from alerting. Confirm.
+
+### SA review: FU-P7a4-1 workplan
+
+**Reviewed by SA, 2026-10-27. Status: APPROVED WITH CHANGES.** Checked against `planPaymentApply.ts` (`applyPaidPlanInvoice`, `afterApply`), `StripeService.retrieveBusinessOsSubscription` and the apply function in `20261028_business_os_first_payment_stamp.sql`.
+
+**D3.1 trace.** SX-2b moves the account to free on `.deleted` but leaves our billing row on the same subscription id, so a later `invoice.paid` for that sub (an `uncollectible` invoice paid afterwards) takes `v_subscription = p_stripe_subscription_id`, no conflict, and returns `applied` (its period end is past `current_period_end`, so the paid tier is written over the free cohort) or `recorded`. Conditions 1 to 3 hold, so the alert fires in exactly the case it exists for. The gap is an owner who re-subscribed before paying the old invoice: the row holds the new live sub, the function returns `subscription_conflict`, and the plan never emits `bos_billing_paid_after_end`.
+
+| # | Ruling |
+|---|---|
+| R-1 | **Q-1: Stripe's fresh read alone decides.** Not "row OR Stripe": our row lags `.deleted`, and a row-only end against a live Stripe sub is no late payment. Our row stays as context (`recordEndedAt`). |
+| R-2 | **Q-2: yes.** Optional `cancellationReason` from the SAME retrieve, `cancellation_details?.reason` filtered to the three known values, else null. No new call. Add its unit test. |
+| R-3 | **Q-3: confirmed.** `paidAt > endedAt` stays. |
+| R-4 | **Binding change:** also emit the line on `subscription_conflict` when `eventRowId !== null` (a NEW refusal row, so it fires once), with `status: 'subscription_conflict'` and `planWritten: false`. Add a test for it. Replays and `already_*` stay silent. |
+| R-5 | Add `tierBefore` / `tierAfter` (from `result`, `applied` / `recorded` only, else null) to the allow-list: the operator needs to see the free cohort being overwritten. |
+| R-6 | Apply-path safety: the helper is pure, uses no `await`, and never throws. Nothing it returns reaches `applyPlanPayment` or the `upgradeGuard` / held-subscription logic. Test 7 (byte-identical outcome) is binding. |
+
+### Implementation notes (FU-P7a4-1, 2026-10-27)
+
+**Code complete, uncommitted**, on `feature/bos-plan-payments-fu-p7a4-1`. No migration, no wording, no UI, no new Stripe call, no new DB read. SA R-1 to R-6 applied.
+
+- **`planPaymentApply.ts`**: the pure `paidAfterEnd(facts, subscription)` (no `await`, whole body in `try`, anything unreadable answers `null`) decides on Stripe's step-9 read alone (R-1): `endedAt` a positive finite unix time, `periodEnd > endedAt`, `paidAt > endedAt` (R-3). It is called **after** `applyPlanPayment` returned (R-6), so nothing it answers can reach the apply, the U-4 guard or the held-subscription logic. Its answer, plus `billingRowId` and our row's `ended_at` (only when the row holds this invoice's subscription; context only), rides on `afterApply`'s `extra.paidAfterEnd`. One `logPaidAfterEnd` writes the line at `error` + `alert: true`: in `applied` / `recorded` immediately after `bos_billing_invoice_applied` (before the post-commit chain), with `tierBefore` / `tierAfter` from the result (R-5); in `subscription_conflict` only when `eventRowId !== null`, with `planWritten: false` and both tiers null (R-4). Replays, `already_*` and refusals stay silent. Header step 10a added.
+- **`StripeService.ts`** (R-2): `retrieveBusinessOsSubscription` gains optional `cancellationReason` from the SAME retrieve, `cancellation_details?.reason` kept to the exported `BUSINESS_OS_CANCELLATION_REASONS` (`payment_failed`, `cancellation_requested`, `payment_disputed`, the mirror's three), else null. The comment and feedback text are never read.
+- **Log keys (pinned):** `event`, `alert`, `accountId`, `billingRowId`, `invoiceId`, `subscriptionId`, `livemode`, `stripeEventId`, `eventRowId`, `status`, `planWritten`, `tierBefore`, `tierAfter`, `tier`, `billingReason`, `amountMinor`, `currency`, `periodEnd`, `paidAt`, `subscriptionEndedAt`, `subscriptionStatus`, `cancellationReason`, `recordEndedAt`. No customer id, email, name or metadata value.
+
+**Deviations for SA**
+1. `eventRowId` is in the line (not in the workplan's list): it names the money row (new `invoice_paid` or refusal) the operator acts on. An id, no PII.
+2. The tests sit in a new `describe` pair at the end of `planPaymentApply.test.ts`, not in a new file: they need that file's fake of the apply function (about 300 lines), which is not exported.
+3. The mirror keeps its own copy of the three reasons (`planSubscriptionMirror.ts` untouched, to keep this slice to the apply path); the lists are identical.
+
+**Tests:** `planPaymentApply.test.ts` 67 → 84 (+17): helper 5 (fires; each condition flipped; absent reason; 11 unreadable inputs incl. a throwing getter and a time `toISOString` cannot hold, no throw; pure, frozen inputs); webhook 12: 9 (X-4d shape fires once at `error`, keys pinned, placed right after the applied line; no PII with the fixture's email and metadata text; Stripe dunning end with our row's end as context; live `active` / `past_due` silent; period-end last invoice and late pre-end payment silent; row ended + Stripe live silent (R-1); replay and refusal silent; R-4 conflict fires once and its replay is silent; R-4 conflict with `eventRowId` null silent) and R-6 test 7 twice (applied and conflict paths: the apply argument, `recordEvent`, audits, order, cure calls, money rows, billing row, plan row, return value and every other log line deep-equal with and without Stripe's end), plus unreadable Stripe times never throw. `businessOsPlanWebhookReads.test.ts` 16 → 17 (R-2: the three reasons pass, five other shapes are null, the comment never leaves the read, one retrieve each).
+
+**Gates (run one after another, 2026-10-27)**
+
+| Gate | Result |
+|---|---|
+| `lib/business-os/billing` | 49 / 3 795 passed |
+| `app/api/stripe` | 22 / 581 passed |
+| `lib/stripe` | 10 / 104 passed |
+| `lib/admin/environment` | 4 / 122 passed |
+| `lib/server` | 11 / 148 passed |
+| `npm run test:bos-entitlements` | 319 suites / 9 559 tests passed |
+| Connect `connectPath.characterisation.test.ts.snap` md5 | `ab7528ea68309cffb309ffbd46c455ab`, unchanged (never `-u`) |
+| Typecheck (`tsc --noEmit`, 8 GB heap) | Completed, no OOM; **0 errors in the touched files** (1 849 pre-existing elsewhere, the same count as on P-7a.4) |
+| ESLint on the 4 touched files | 0 errors, 0 warnings |
+| `npm run build` | Not run (no `.env.local` in this worktree, as P-7a.1 to P-7a.4) |
+
+### SA code review: FU-P7a4-1
+
+**Code Review by SA — 2026-10-27**
+**Status:** ✅ Code Approved
+
+| Check | Result |
+|---|---|
+| R-1 to R-6 | ✅ Stripe's step-9 read alone decides; `cancellationReason` from the same retrieve, three values else null; `paidAt > endedAt`; conflict line only when `eventRowId !== null`; tiers from `result`; helper pure, in `try`, called after the apply; test 7 present on both paths |
+| Pino | ✅ context first, `error` + `alert: true`; no `console.*` in the diff |
+| PII | ✅ ids, amounts, dates, enums only; Stripe's free-text comment / feedback never read |
+| Supabase | ✅ no new DB call, no new Stripe call |
+| TypeScript | ✅ no `any`; `eventRowId` narrowed to `string` before the conflict call |
+| `StripeService` field | ✅ optional and additive; other callers (`planInvoiceResolver`, `planSubscriptionManage`) unaffected |
+| Untouched files | ✅ `planBillingHandler.ts` and `planSubscriptionMirror.ts` have no diff |
+| Jest (SA rerun) | ✅ the two suites, 101 / 101 |
+
+**Deviations**
+1. **Accepted.** `eventRowId` is the id an operator needs; no PII.
+2. **Accepted.** Reusing the unexported fake beats duplicating ~300 lines.
+3. **Accepted, no pin test now.** D3.1 touches the mirror next and is **bound** to delete its local `CANCELLATION_REASONS` and import `BUSINESS_OS_CANCELLATION_REASONS` from `StripeService.ts`. One list then exists, so no pin test is needed.
+
+### Code Approved for QA: Yes
+
+### QA report: FU-P7a4-1
+
+**QA — 2026-10-27**
+**Test mode:** full · **Strategy used:** A (Jest, in-memory; the alert is log-only, no DB or Stripe call) · **Focus:** api, security (PII) · **Skipped:** live Stripe / DB (forbidden by brief; not needed) · **Input source:** TL brief
+
+New QA file: `lib/business-os/billing/__tests__/planPaymentApply.paidAfterEnd.qa.test.ts` (45 tests, harness copied from `planPaymentApply.test.ts`).
+
+#### Test Coverage
+
+| Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| Strict `>`: `endedAt == paidAt`, `endedAt == periodEnd` | ✅ | Pass | Both null; 1 s before fires; 1 ms after fires, same ms does not |
+| Seconds vs milliseconds | ✅ | Pass | Seconds echoed as the right ISO; a ms value reads as far future, never fires, never throws |
+| `paidAt` null / '' / malformed / number | ✅ | Pass | null, no throw |
+| `endedAt` 0, negative, NaN, -Infinity, string, boolean, object | ✅ | Pass | null |
+| Malformed `periodEnd`, null facts object | ✅ | Pass | null, no throw |
+| `cancellationReason` three values pass; undefined / null → null | ✅ | Pass | |
+| `cancellationReason` outside the three ('other', '', new) → null | ⚠️ | Pass at the read | `cancellationReasonOf` filters (Dev test covers `something_new`, 42, null); `paidAfterEnd` itself does not (E-1) |
+| Fires on `applied` and `recorded` (planWritten false) | ✅ | Pass | once, `error`, `alert: true` |
+| `subscription_conflict`: fires with a row, silent with `eventRowId` null | ✅ | Pass | |
+| Silent on `already_applied`, `already_recorded`, `customer_mismatch`, `plan_row_missing`, `billing_row_missing` | ✅ | Pass | |
+| `endedAt` == paid_at / 0 / negative through the webhook | ✅ | Pass | applied as usual, no alert |
+| PII | ✅ | Pass | no email, name, `@`, customer id, metadata or owner text in the line; no such keys |
+
+#### Issues Found
+
+**Bugs:** none.
+
+**Edge cases (nice to fix):**
+1. **E-1: `paidAfterEnd` passes `cancellationReason` through unchecked** — File: `lib/business-os/billing/planPaymentApply.ts` (`cancellationReason: subscription.cancellationReason ?? null`) — Severity: Low. Repro: `paidAfterEnd(facts, { endedAt: <before paid>, status: 'canceled', cancellationReason: 'other' })` returns `'other'` (likewise `''`). Not reachable today: the only producer, `retrieveBusinessOsSubscription`, maps anything outside the three to null, and the type forbids it. Optional hardening: filter against `BUSINESS_OS_CANCELLATION_REASONS` in the helper too.
+
+#### Test Outputs / Counts (run sequentially)
+
+| Suite | Result |
+|---|---|
+| QA file | 45 / 45 |
+| `lib/business-os/billing` | 50 suites, 3 840 / 3 840 (incl. the QA file) |
+| `lib/stripe` | 10 suites, 104 / 104 |
+| `app/api/stripe` | 22 suites, 581 / 581 |
+| `lib/admin/environment` (CI guards) | 4 suites, 122 / 122 |
+| `lib/server` (CI guards) | 11 suites, 148 / 148 |
+| Connect harness `connectPath.characterisation.test.ts.snap` | md5 `ab7528ea68309cffb309ffbd46c455ab`, unchanged; never `-u` |
+| `tsc --noEmit` filtered to touched files + QA file | 0 errors (repo pre-existing errors only; no OOM) |
+
+#### Final Status
+
+- [x] All acceptance criteria pass — ready for commit (E-1 is Low and optional)
+- [ ] Issues found — Dev must address before commit
+
+---
+
 ## SA Review Notes
 
 ### SA Workplan Review — P-7a (2026-10-25)
@@ -1508,3 +1707,5 @@ Not run by SA: `tsc` (Dev reports 0 errors in the touched files, no OOM) and `np
 | 2026-10-27 | SA code review of P-7a.4 (SA) | APPROVED WITH FIXES, approved for QA. Ordering, Stripe-decided mode, call shape (no `cancellation_details`), void scope and per-invoice cross-checks, keys never logged, audit, CAS mirror, tenant isolation, i18n verified. Deviation 1: voiding + alert meets C-11; the apply-path refusal is rejected (it would take money and give nothing, and would refuse a legitimate late payment after a Stripe dunning end); replaced by alert-only FU-P7a4-1, not blocking the price switch. Deviations 2–8 accepted (4 corrected, F-4). F-3: the guard's engine-only list gains the open-invoice list, and the SDK `invoices.voidInvoice(` is forbidden in the scanned tree. Follow-ups FU-P7a4-1 to -4. SA runs: 12 sets all green (`test:bos-entitlements` 313 / 9 401), Connect md5 unchanged, 7 / 7 mutations caught |
 | 2026-10-27 | QA E-1 / E-2 closed by TL ruling (Dev) | E-1: a cancel on a row our record shows ended answers `unchanged` / `ended` from the row (no Stripe call, no write, no audit); reactivate unchanged. E-2: `payment_failed_contact_us` server message = the en `plan.manage.refusal.payment_failed` line (code kept). Two QA pins and one engine test updated, two route tests added. Re-run: all requested sets green, `test:bos-entitlements` 313 / 9 401. Uncommitted; deviation 8's Founding Partner hunk waits for RM's merge of `main` |
 | 2026-10-27 | `origin/main` (P-7a.3, #534) merged into P-7a.4; SA dev-8 built (Dev) | Hand-merged the key-count pin (now 28: P-7a.1 21 + P-7a.2 2 + P-7a.3 1 + P-7a.4 +5 −1) and the status text in this workplan and the requirement. Dev-8: the "ends now" confirmation (`plan-manage-confirm-now`) shows P-7a.3's Founding Partner sentence (`plan.manage.cancel_confirm_founding`, no new key), one render test. Uncommitted, awaiting SA re-review |
+| 2026-10-27 | FU-P7a4-1 workplan written (Dev) | Alert-only `bos_billing_paid_after_end` on `invoice.paid` for a subscription that ended before the invoice's period end and was paid after the end; applied exactly as today. Decided from the fresh Stripe read the apply already makes (no new call or DB read); fires once on `applied` / `recorded`. Q-1 to Q-3 for SA. No code yet |
+| 2026-10-27 | FU-P7a4-1 code complete, uncommitted (Dev) | SA R-1 to R-6 applied: pure `paidAfterEnd` on Stripe's step-9 read, called after the apply; `bos_billing_paid_after_end` (`error`, `alert: true`) on `applied` / `recorded` and on `subscription_conflict` with a new row, with `tierBefore` / `tierAfter`; optional `cancellationReason` on `retrieveBusinessOsSubscription` (same call). +18 tests incl. R-6 byte-identical outcome on both paths. Gates green; Connect md5 unchanged. Deviations 1-3 for SA |

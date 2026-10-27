@@ -451,3 +451,123 @@ describe('MK-8b QA B-1: "(differs)" follows the period check, never a partial re
     expect(within(body).queryByText('60')).toBeNull();
   });
 });
+
+// ── Finance follow-ups bundle 2 (SA-WP-FU2) ───────────────────────────────────
+
+describe('FU2 item 7a: the platform notice follows the read\'s kind, never its wording', () => {
+  it('T7a-3: a 400 whose reason IS the platform sentence shows as an error, not the platform notice', async () => {
+    drawerAnswer = { status: 400, body: { success: false, error: COSTS_PLATFORM_ACCOUNT } };
+    open();
+    await loaded();
+    fireEvent.click(within(periodRow(A)).getByTestId('row-open'));
+    expect(await screen.findByTestId('ai-cost-drawer-error', undefined, WAIT)).toHaveTextContent(COSTS_PLATFORM_ACCOUNT);
+    expect(screen.queryByTestId('ai-cost-drawer-platform')).toBeNull();
+  });
+});
+
+describe('FU2 item 7a: source (T7a-4)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- a source scan in a jsdom suite
+  const fs = require('fs') as typeof import('fs');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const path = require('path') as typeof import('path');
+  const comparesWording = (code: string) => /[=!]==\s*COSTS_PLATFORM_ACCOUNT\b|\bCOSTS_PLATFORM_ACCOUNT\s*[=!]==/.test(code);
+
+  it('the drawer never compares a message with the platform sentence', () => {
+    const code = fs.readFileSync(path.join(__dirname, '..', 'components', 'AiCostDrawers.tsx'), 'utf8');
+    expect(code).toContain('COSTS_PLATFORM_ACCOUNT'); // non-vacuity: it still SHOWS the sentence
+    expect(comparesWording(code)).toBe(false);
+  });
+
+  it('the rule bites (planted controls)', () => {
+    expect(comparesWording("state.message === COSTS_PLATFORM_ACCOUNT ? a : b")).toBe(true);
+    expect(comparesWording("COSTS_PLATFORM_ACCOUNT !== message")).toBe(true);
+    expect(comparesWording("<AdminNotice>{COSTS_PLATFORM_ACCOUNT}</AdminNotice>")).toBe(false);
+  });
+});
+
+describe('FU2 item 7b: "Open full view" switches the page in place', () => {
+  let scrolled: string[];
+  let replaceSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    scrolled = [];
+    // jsdom has no scrollIntoView; record which element the switch lands on.
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
+      scrolled.push(this.id);
+    } as typeof Element.prototype.scrollIntoView;
+    replaceSpy = jest.spyOn(window.history, 'replaceState');
+  });
+
+  afterEach(() => {
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  });
+
+  async function openPeriodA() {
+    open();
+    await loaded();
+    fireEvent.click(within(periodRow(A)).getByTestId('row-open'));
+    return screen.findByTestId('ai-cost-period-drawer-body', undefined, WAIT);
+  }
+
+  it('T7b-1/T7b-5: business drawer, plain click: no document load, the drawer closes, that business is picked with ONE request (Pin C row 7), no openers after', async () => {
+    open();
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Run leak check' }));
+    await screen.findByTestId('leak-accounts', undefined, WAIT);
+    fireEvent.click(screen.getByTestId(`leak-account-${A}`).querySelector('td:nth-child(3)') as Element);
+    const body = await screen.findByTestId('ai-cost-business-drawer-body', undefined, WAIT);
+    const link = within(body).getByTestId('ai-cost-drawer-open-full');
+    expect(link).toHaveAttribute('href', `/admin/ai-cost?account=${A}`);
+    replaceSpy.mockClear();
+
+    const notPrevented = fireEvent.click(link);
+    expect(notPrevented).toBe(false); // preventDefault: the browser does not load the address
+    await waitFor(() => expect(screen.queryByTestId('ai-cost-business-drawer-body')).toBeNull(), WAIT);
+    await waitFor(() => expect(callsTo(REPORT_PATH)).toHaveLength(3), WAIT);
+    // Load, the drawer's read, and exactly one more: the page with that business picked (Pin C row 7).
+    expect(callsTo(REPORT_PATH)).toEqual([PINNED_CHARGE_REQUESTS[0].report, ROW7.report, ROW7.report]);
+    expect(window.location.search).toBe(`?account=${A}`);
+    expect(replaceSpy).toHaveBeenCalled();
+    await act(async () => {});
+    expect(screen.queryAllByTestId('row-open')).toHaveLength(0);
+    expect(callsTo(REPORT_PATH)).toHaveLength(3);
+  });
+
+  it('T7b-2: period drawer, plain click: the same switch, landing on the period table', async () => {
+    const body = await openPeriodA();
+    fireEvent.click(within(body).getByTestId('ai-cost-drawer-open-full'));
+    await waitFor(() => expect(callsTo(REPORT_PATH)).toHaveLength(3), WAIT);
+    expect(callsTo(REPORT_PATH)[2]).toBe(ROW7.report);
+    expect(window.location.search).toBe(`?account=${A}`);
+    await waitFor(() => expect(scrolled).toContain('costs-periods'), WAIT);
+  });
+
+  it.each([
+    ['ctrl', { ctrlKey: true }],
+    ['meta', { metaKey: true }],
+    ['shift', { shiftKey: true }],
+  ])('T7b-3: a %s click is left to the browser: not prevented, the drawer stays, no request', async (_name, modifier) => {
+    const body = await openPeriodA();
+    const before = callsTo(REPORT_PATH).length;
+    const notPrevented = fireEvent.click(within(body).getByTestId('ai-cost-drawer-open-full'), modifier);
+    expect(notPrevented).toBe(true);
+    await act(async () => {});
+    expect(screen.getByTestId('ai-cost-period-drawer-body')).toBeInTheDocument();
+    expect(callsTo(REPORT_PATH)).toHaveLength(before);
+    expect(window.location.search).toBe('');
+  });
+
+  it('T7b-3: a non-left button is left alone', async () => {
+    const body = await openPeriodA();
+    const notPrevented = fireEvent.click(within(body).getByTestId('ai-cost-drawer-open-full'), { button: 1 });
+    expect(notPrevented).toBe(true);
+    await act(async () => {});
+    expect(screen.getByTestId('ai-cost-period-drawer-body')).toBeInTheDocument();
+  });
+
+  it('T7b-4: after a full view, focus is on the Summary & checks tab (the opener row is gone)', async () => {
+    const body = await openPeriodA();
+    fireEvent.click(within(body).getByTestId('ai-cost-drawer-open-full'));
+    await waitFor(() => expect(document.activeElement).toBe(document.getElementById('ai-cost-tab-checks')), WAIT);
+  });
+});
