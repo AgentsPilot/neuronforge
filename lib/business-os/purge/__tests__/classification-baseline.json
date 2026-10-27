@@ -1,6 +1,6 @@
 {
   "generated": "2026-10-04",
-  "count": 162,
+  "count": 164,
   "levels": {
     "abandoned_bookings": "reset",
     "admin_users": "never",
@@ -57,6 +57,8 @@
     "business_os_deletion_receipts": "never",
     "business_os_entitlement_overrides": "never",
     "business_os_entitlement_shadow_events": "never",
+    "business_os_export_module_jobs": "never",
+    "business_os_export_requests": "never",
     "business_os_finance_snapshots": "never",
     "business_os_invites": "never",
     "business_profiles": "purge",
@@ -175,6 +177,8 @@
     "business_os_boost_reversal_events": "2026-10-17 finance 4b.1: new table (migration 20261076, first numbered 20261072). No user_id; purchase_id -> business_os_boost_purchases CASCADE, no inbound FK, no trigger. Dated refund and dispute history of a boost purchase: never, excluded from export as billing.",
     "business_os_data_exports": "2026-10-17 DE-8a: added by 20261074_business_os_data_exports.sql; user_id -> auth.users CASCADE (no FK to business_profiles: an agent-platform user may export too), requested_by has no FK, no inbound FK, no trigger. The account's Download my data jobs: kept by Reset (an owner may export, then start over), removed by Purge and account deletion. purge/LEAF, snapshot ids (the snapshot never copies another copy of the business).",
     "business_os_deletion_receipts": "2026-10-18 DE-10b.1: new table (migration 20261080_business_os_deletion_receipts.sql). No user_id, no owner_user_id, no FK in or out, no trigger; subject_user_id is a bare uuid on purpose. The proof that an account deletion committed, inserted only by the cleanup function inside its transaction: never, excluded from export as platform data.",
+    "business_os_export_module_jobs": "2026-10-27 MX-1a: new table (migration 20261095_business_os_export_requests.sql). user_id -> auth.users CASCADE, request_id -> business_os_export_requests CASCADE, no inbound FK, no trigger. One module job per export request: never on purpose, a business Reset or Purge must not erase the export history or reset the daily limit (SA MX1A-2). Removed by step B of the test-account cleanup in both modes; excluded from export as the export history itself.",
+    "business_os_export_requests": "2026-10-27 MX-1a: new table (migration 20261095_business_os_export_requests.sql). user_id -> auth.users CASCADE, admin_actor_id has no FK, one inbound FK (business_os_export_module_jobs.request_id CASCADE), no trigger. One row per export click: never on purpose, the daily limit counts these rows (SA MX1A-2). Removed by step B of the test-account cleanup in both modes; excluded from export as the export history itself.",
     "business_os_finance_snapshots": "2026-10-17 8.1: new table (migration 20261078_business_os_finance_snapshots.sql). No user_id, no FK in or out, no trigger. Platform aggregates (plan mix, credit positions), counts and credits only, no money: never, excluded from export as platform data.",
     "business_subscribers": "2026-10-07: measured live (purge_schema_introspect): FK business_profiles CASCADE (business_subscribers_business_fk), promoted_contact_id -> crm_contacts SET NULL, no inbound FK, no trigger. The newsletter audience is business data a rebuilt business must earn again: reset/LEAF. Added late; it predates the freeze but was never entered (c1a427e6).",
     "exchange_rate_history": "2026-10-04 AD-1a SC-8: no tenancy column; changed_by -> auth.users NO ACTION. Actor reference on platform data: never. FU-9 must handle the NO ACTION FK.",
