@@ -70,6 +70,15 @@
  * `converted` after `paying`. The Overview's expected calls gain the one
  * first-payment read with exactly the plan-row ids; with `converted`
  * stripped the payload gives MK-5's `a13f1ccd…0060`.
+ *
+ * Client payments in approximate dollars (FIN BD-56, slice 1a, SA-RR-CPU
+ * SA-Q-4, CPU-6): the rates wiring is faked at its module and joins
+ * `allReads()`. The AC-145 baseline gets ONE ruled update: the rates read in
+ * `EXPECTED_CALLS`, `takings.usd` stated exactly, and a new hash; with
+ * `takings.usd` stripped the payload gives MK-9's `333407…2215`. AC-48's money
+ * key count (8 → 9, the usd row's own-currency `gross`) and AC-66's exact
+ * takings object (it gains `usd`, unknown) also move: unforeseen by the
+ * workplan, recorded for SA.
  */
 
 import * as fs from 'fs';
@@ -108,6 +117,13 @@ jest.mock('@/lib/admin/billing/financeMrr', () => ({
       },
     });
   },
+}));
+
+// BD-56 (client payments in approximate dollars, slice 1a): the rates wiring, faked at its module
+// like MRR. The answer is set in seed(); the calls are recorded on mockReadClientPaymentRates.
+const mockReadClientPaymentRates = jest.fn();
+jest.mock('@/lib/admin/exchangeRates/clientPaymentRates', () => ({
+  readClientPaymentRates: (...args: unknown[]) => mockReadClientPaymentRates(...args),
 }));
 
 jest.mock('@/lib/repositories/UserProfileRepository', () => ({
@@ -390,7 +406,20 @@ function seed() {
   // Money MK-5b: no first payment by default (no converted row, so no extra names call); the MK-5b describe seeds its own.
   mockDeps.converted.firstPlanPayments.mockResolvedValue({ data: [], error: null });
   mockDeps.converted.signupSources.mockResolvedValue({ data: [], error: null });
+  // BD-56: the current rates, as the wiring narrows them (rates as text). ILS converts the fixture's payment.
+  mockReadClientPaymentRates.mockResolvedValue(CLIENT_PAYMENT_RATES);
 }
+
+/** BD-56: a rate and a converted figure that must never reach a log line (EX-4). */
+const ILS_RATE = '3.700000';
+const CLIENT_PAYMENT_RATES = {
+  status: 'ok',
+  rates: [
+    { code: 'EUR', rate: '0.920000', enabled: true, lastUpdatedAt: '2026-10-10T00:00:00+00:00' },
+    { code: 'ILS', rate: ILS_RATE, enabled: true, lastUpdatedAt: '2026-10-10T00:00:00+00:00' },
+    { code: 'USD', rate: '1.000000', enabled: true, lastUpdatedAt: null },
+  ],
+};
 
 /** Money M-4: a recorded cost, a feature value and a session id that must never reach a log line or the payload (AC-164). */
 const RECORDED_COST = '1.9876543';
@@ -421,6 +450,8 @@ const allReads = () => [
   // Money M-4: both recorded reads (AC-157).
   mockRecordedAllAccounts,
   mockRecordedForAccount,
+  // BD-56 (slice 1a): the rates read.
+  mockReadClientPaymentRates,
 ];
 const noReadHappened = () => {
   for (const fn of allReads()) expect(fn).not.toHaveBeenCalled();
@@ -745,7 +776,9 @@ describe('slice 2a: takings through the route', () => {
     };
     walk(takings, 0);
     // lines (3) + refund line (1) + fee line (1) + row (3).
-    expect(moneyKeys).toBe(8);
+    // BD-56 (slice 1a, pending SA ruling as an unforeseen pin move): + the `takings.usd` row's own-currency
+    // `gross` (1), beside its currency like every other. The rule itself is unchanged.
+    expect(moneyKeys).toBe(9);
   });
 
   it('AC-65 through the route: R-e′ and R-f′ get exactly the id; R-e and R-f are never called; names only [id]', async () => {
@@ -768,7 +801,14 @@ describe('slice 2a: takings through the route', () => {
     const res = await call();
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.data.takings).toEqual({ status: 'unknown', scope: 'all', figures: null });
+    // BD-56 (slice 1a, pending SA ruling as an unforeseen pin move): the takings section gains `usd`, unknown with it.
+    expect(body.data.takings).toEqual({
+      status: 'unknown', scope: 'all', figures: null,
+      usd: {
+        status: 'unknown', totalUsd: null, rows: [], converted: { payments: 0, currencies: 0 },
+        notConverted: { payments: 0, currencies: 0 }, ratesRead: 'ok', stale: false,
+      },
+    });
     expect(body.data.accounts.status).toBe('ok');
     expect(body.data.aiCost.status).toBe('ok');
     expect(body.data.credits.status).toBe('ok');
@@ -1242,6 +1282,8 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     // E-55 (M-4).
     'recorded.allAccounts': mockRecordedAllAccounts,
     'recorded.forAccount': mockRecordedForAccount,
+    // BD-56 (slice 1a, ruled re-freeze SA-RR-CPU SA-Q-4).
+    'rates.clientPayments': mockReadClientPaymentRates,
   });
 
   const RANGE = { from: '2026-10-01T00:00:00.000Z', to: '2026-10-15T00:00:00.000Z' };
@@ -1300,6 +1342,8 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
       ],
     ],
     'recorded.forAccount': [],
+    // BD-56 (slice 1a, ruled): the rates read, once, with no argument, in the same request.
+    'rates.clientPayments': [[]],
   };
   // Section 3's top accounts, the plans by business (none here), Section 4's rows, takings and overdue rows.
   const EXPECTED_NAME_CALLS = [[[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]]];
@@ -1322,7 +1366,10 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
   // 39b35743…, 6761620e…, b4d10bc1….
   // Money MK-9 (ruled re-freeze, SA-WP-MK9): with `payingBreakdown`. AFTER_MK5B is the hash it replaces
   // (the credits re-size's `5e911c70…`); stripping the key gives it back.
-  const EXPECTED_SHA256 = '333407516ae0d081d59e8372a499cf305c207adeebf931fd363b62e58f632215';
+  // BD-56 client payments in approximate dollars (slice 1a, ruled re-freeze SA-RR-CPU SA-Q-4, CPU-6): with
+  // `takings.usd`. AFTER_MK9 is the MK-9 hash it replaces; deleting `takings.usd` gives it back.
+  const EXPECTED_SHA256 = 'aebc22cbbb234106b92ff83c99cee138b4b8701d46f700254d1bc048e92597ca';
+  const AFTER_MK9_SHA256 = '333407516ae0d081d59e8372a499cf305c207adeebf931fd363b62e58f632215';
   const AFTER_MK5B_SHA256 = '5e911c70805e03ea6cc2740a1760ee4458d8145d80769ed1e2065df39f6f9b17';
   const AFTER_MK5_SHA256 = '029bff1146cd17747357bc71b87602f1230a1607dbe5ecea9c285ff9ec39629b';
   const AFTER_MK4_SHA256 = '5ee0556ba4fdbfdca97c4d700259a96f9f56f6d3fb3dfb6f3b057c209c8d2d02';
@@ -1349,7 +1396,24 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     // MK-4: the only change to the bytes is the two MRR keys at the end. Strip them: the 4b.2 bytes come back.
     // MK-5: the only change to the bytes is the two builder keys. Strip them: the MK-4 bytes come back.
     // MK-9: the only change to the bytes is `payingBreakdown`. Strip it: the MK-5b bytes come back.
-    const withMk9 = { ...(body.data as Json) };
+    // BD-56: the only change to the bytes is `takings.usd` (last inside takings). Strip it: the MK-9 bytes come back.
+    expect(body.data.takings.usd).toEqual({
+      status: 'ok',
+      totalUsd: 2669.34,
+      rows: [
+        { currency: 'ILS', payments: 1, gross: 9876.54, rate: '3.700000', rateUpdatedAt: '2026-10-10T00:00:00+00:00', state: 'converted', usd: 2669.34 },
+      ],
+      converted: { payments: 1, currencies: 1 },
+      notConverted: { payments: 0, currencies: 0 },
+      ratesRead: 'ok',
+      stale: false,
+    });
+    const takingsWithoutUsd = { ...(body.data.takings as Json) };
+    delete takingsWithoutUsd.usd;
+    const withUsdStripped: Json = { ...(body.data as Json), takings: takingsWithoutUsd };
+    const shaAfterMk9 = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
+    expect(shaAfterMk9.update(JSON.stringify(withUsdStripped)).digest('hex')).toBe(AFTER_MK9_SHA256);
+    const withMk9 = { ...withUsdStripped };
     expect(withMk9.payingBreakdown).toEqual(expect.objectContaining({ trials: expect.objectContaining({ minimumForRate: 10 }) }));
     delete withMk9.payingBreakdown;
     const shaAfterMk5b = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
@@ -1408,6 +1472,108 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     const without = { ...before4b2, aiCost: section3 };
     const sha6a = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
     expect(sha6a.update(JSON.stringify(without)).digest('hex')).toBe(SLICE_6A_SHA256);
+  });
+});
+
+// ── BD-56 (slice 1a): client payments in approximate dollars through the route ──
+describe('BD-56: takings.usd through the route (workplan §9.3)', () => {
+  const FROZEN_NOW = new Date('2026-10-14T12:00:00.000Z');
+  beforeEach(() => {
+    jest.useFakeTimers({
+      now: FROZEN_NOW,
+      doNotFake: [
+        'nextTick', 'setImmediate', 'clearImmediate', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
+        'queueMicrotask', 'hrtime', 'performance',
+      ],
+    });
+    asAdmin();
+  });
+  afterEach(() => jest.useRealTimers());
+
+  type Json = Record<string, unknown>;
+  const withoutUsd = (data: Json): Json => {
+    const takings = { ...(data.takings as Json) };
+    delete takings.usd;
+    return { ...data, takings };
+  };
+
+  it('R-2: the Overview converts the lowercase ils payment at the current rate; the read starts before the builder reads', async () => {
+    const body = await (await call()).json();
+    expect(body.data.takings.usd).toMatchObject({ status: 'ok', totalUsd: 2669.34, ratesRead: 'ok', stale: false });
+    expect(mockReadClientPaymentRates).toHaveBeenCalledTimes(1);
+    expect(mockReadClientPaymentRates.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeps.finance.listClientPaymentsAllAccountsPaidInRange.mock.invocationCallOrder[0]
+    );
+    // The takings key keeps its place among the top-level keys.
+    expect(Object.keys(body.data).indexOf('takings')).toBe(8);
+  });
+
+  it('R-3: a failed rates read leaves the rest of the page intact; the figure is partial, ILS not converted', async () => {
+    const happy = (await (await call()).json()).data as Json;
+    mockReadClientPaymentRates.mockResolvedValue({ status: 'failed' });
+    const res = await call();
+    expect(res.status).toBe(200);
+    const data = (await res.json()).data as Json;
+    expect((data.takings as Json).usd).toEqual({
+      status: 'partial',
+      totalUsd: 0,
+      rows: [{ currency: 'ILS', payments: 1, gross: 9876.54, rate: null, rateUpdatedAt: null, state: 'no_rate', usd: null }],
+      converted: { payments: 0, currencies: 0 },
+      notConverted: { payments: 1, currencies: 1 },
+      ratesRead: 'failed',
+      stale: false,
+    });
+    expect(withoutUsd(data)).toEqual(withoutUsd(happy));
+  });
+
+  it('R-3b: a stale rate is still converted and flagged (D-5)', async () => {
+    mockReadClientPaymentRates.mockResolvedValue({
+      status: 'ok',
+      rates: [{ code: 'ils', rate: '3.700000', enabled: true, lastUpdatedAt: '2026-09-01T00:00:00+00:00' }],
+    });
+    const usd = (await (await call()).json()).data.takings.usd;
+    expect(usd).toMatchObject({ status: 'ok', totalUsd: 2669.34, stale: true });
+    expect(usd.rows[0].state).toBe('stale');
+  });
+
+  it('R-4: a picked business narrows the figure; the read starts only once its plan row is found', async () => {
+    const body = await (await call(`?accountId=${ACCOUNT}`)).json();
+    expect(body.data.takings.scope).toBe('one');
+    expect(body.data.takings.usd).toMatchObject({ status: 'ok', totalUsd: 2669.34 });
+    expect(mockReadClientPaymentRates).toHaveBeenCalledTimes(1);
+    expect(mockReadClientPaymentRates.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockDeps.findPlanForAccount.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('R-4b: an id with no plan row is a 404 and makes no rates read', async () => {
+    mockDeps.findPlanForAccount.mockResolvedValue({ data: { plan: null }, error: null });
+    expect((await call(`?accountId=${ACCOUNT}`)).status).toBe(404);
+    expect(mockReadClientPaymentRates).not.toHaveBeenCalled();
+  });
+
+  it('R-5: the Accounts tab makes no rates read, carries no takings.usd, and logs takingsUsd as not_built', async () => {
+    const body = await (await call('?tab=accounts')).json();
+    expect(body.data.takings).not.toHaveProperty('usd');
+    expect(mockReadClientPaymentRates).not.toHaveBeenCalled();
+    const line = mockLog.info.mock.calls.find((c) => c[1] === 'Admin read the Business OS finance page');
+    expect(line?.[0].takingsUsd).toBe('not_built');
+  });
+
+  it('R-6: a failed payments read makes the figure unknown', async () => {
+    mockDeps.finance.listClientPaymentsAllAccountsPaidInRange.mockResolvedValue({ data: null, error: new Error('down') });
+    const body = await (await call()).json();
+    expect(body.data.takings.usd).toMatchObject({ status: 'unknown', totalUsd: null, rows: [] });
+  });
+
+  it('R-7 (EX-4): the log line carries status, flags and counts only; no converted figure, rate or code in any log call', async () => {
+    await call();
+    const line = mockLog.info.mock.calls.find((c) => c[1] === 'Admin read the Business OS finance page');
+    expect(line?.[0].takingsUsd).toEqual({
+      status: 'ok', ratesRead: 'ok', currencies: 1, notConverted: { payments: 0, currencies: 0 }, stale: false,
+    });
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls, mockLog.debug.mock.calls]);
+    for (const secret of ['2669.34', '266934', ILS_RATE, '3.7', 'ILS', TAKINGS_FIGURE]) expect(logged).not.toContain(secret);
   });
 });
 

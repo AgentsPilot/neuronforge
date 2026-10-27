@@ -1,7 +1,9 @@
 /**
  * DE-8b T-3 (workplan §7; TL default BC-1): the CSV writer.
  */
-import { cellText, toCsv, toCsvText } from '../csv';
+import { CSV_BOM, CSV_EOL, cellText, csvHeaderLine, csvLine, csvPartText, neutralise, toCsv, toCsvText } from '@/lib/business-os/data-export/csv';
+import { PURGE_DESCRIPTORS } from '@/lib/business-os/purge/descriptors';
+import { FILE_INDEX_COLUMNS } from '@/lib/business-os/data-export/payload';
 
 const decode = (bytes: Uint8Array) => new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes);
 
@@ -79,5 +81,59 @@ describe('CSV injection (BC-1): formula-looking STRINGS get a leading apostrophe
 
   it('negative control: an ordinary string is untouched', () => {
     expect(cellText('Noga 1=1')).toBe('Noga 1=1');
+  });
+});
+
+// ── MX-2a (BUSINESS_OS_EXPORT_MX2A_WORKPLAN.md §2.3, T-14, T-17; SA C-6, C-7) ──
+
+describe('MX-2a line helpers (one encoder for the ZIP and the module CSV)', () => {
+  it('CSV_BOM is the UTF-8 BOM and CSV_EOL is CRLF', () => {
+    expect(Array.from(new TextEncoder().encode(CSV_BOM))).toEqual([0xef, 0xbb, 0xbf]);
+    expect(CSV_EOL).toBe(String.fromCharCode(13, 10));
+  });
+
+  it('csvLine: every value through cellText (BC-1), then quoting; numbers untouched', () => {
+    expect(csvLine(['=1+1', -5, '-5', null, true, ['a'], 'a,b'])).toBe(`'=1+1,-5,'-5,,true,"[""a""]","a,b"`);
+  });
+
+  it('csvHeaderLine: labels get BC-1 and quoting', () => {
+    expect(csvHeaderLine(['id', '=x', 'a,b'])).toBe(`id,'=x,"a,b"`);
+  });
+
+  it('csvPartText(header, []) is BOM + header + CRLF (an empty part is its header row only)', () => {
+    expect(csvPartText('a,b', [])).toBe(`${CSV_BOM}a,b\r\n`);
+  });
+
+  it('csvPartText(header, lines) puts CRLF after every line, the last too', () => {
+    expect(csvPartText('a', ['1', '2'])).toBe(`${CSV_BOM}a\r\n1\r\n2\r\n`);
+  });
+});
+
+describe('MX-2a ZIP byte identity (T-17, SA C-6)', () => {
+  it('toCsvText equals the pre-refactor bytes for a fixed fixture', () => {
+    const text = toCsvText(
+      ['id', 'name', 'amount', 'tags', 'note', 'flag'],
+      [
+        { id: 'r1', name: '=cmd', amount: -5, tags: ['a', 'b'], note: 'line\nbreak', flag: true, secret: 'x' },
+        { id: 'r2', name: 'סטודיו', amount: null, tags: {}, note: ' x', flag: false },
+      ]
+    );
+    // Captured from the pre-MX-2a toCsvText on 2026-10-26.
+    expect(text).toBe(
+      `${CSV_BOM}id,name,amount,tags,note,flag\r\nr1,'=cmd,-5,"[""a"",""b""]","line\nbreak",true\r\nr2,סטודיו,,{}," x",false\r\n`
+    );
+  });
+
+  it('every header key the ZIP writes is unchanged by neutralise, so csvHeaderLine is a no-op for the ZIP', () => {
+    const keys = new Set<string>(['id', 'email', 'created_at', ...FILE_INDEX_COLUMNS]);
+    for (const d of PURGE_DESCRIPTORS) if (d.export.kind === 'include') for (const c of d.export.columns) keys.add(c);
+    expect(keys.size).toBeGreaterThan(100);
+    const changed = [...keys].filter((k) => neutralise(k) !== k);
+    expect(changed).toEqual([]);
+    expect(csvHeaderLine([...keys])).toBe([...keys].join(','));
+  });
+
+  it('negative control: a key starting with - would be changed (so the guard can fail)', () => {
+    expect(neutralise('-key')).not.toBe('-key');
   });
 });

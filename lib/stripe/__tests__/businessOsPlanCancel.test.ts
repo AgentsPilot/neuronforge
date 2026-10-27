@@ -4,7 +4,8 @@
  *
  * What matters: the ONE write sends exactly `{ cancel_at_period_end }` (asserted
  * as a whole object, so a metadata, anchor or proration key added later fails
- * here), with NO idempotency key (TQ-3); it returns the mirror's facts from the
+ * here), with NO idempotency key unless the caller passes a per-attempt one
+ * (TQ-3; D2 SX C-4, last describe); it returns the mirror's facts from the
  * update's own answer, never the raw Stripe object (C-2); and the fresh read
  * reports a `cancel_at` set without the flag (C-3, X-2).
  *
@@ -97,6 +98,25 @@ describe('setBusinessOsCancelAtPeriodEnd (C-2, TQ-3)', () => {
     const err = Object.assign(new Error('boom'), { type: 'StripeAPIError' });
     mockSubscriptionsUpdate.mockRejectedValue(err);
     await expect(service().setBusinessOsCancelAtPeriodEnd('sub_1', true)).rejects.toBe(err);
+  });
+});
+
+describe('setBusinessOsCancelAtPeriodEnd: the per-attempt key (D2, SX C-4; SA Q-3, W-4)', () => {
+  it('forwards a given key as the request option, and the params stay exactly the flag', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue(answered());
+    const key = 'bos-plan-manage:sub_1:cancel:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    await service().setBusinessOsCancelAtPeriodEnd('sub_1', true, { idempotencyKey: key });
+    expect(mockSubscriptionsUpdate.mock.calls[0]).toEqual(['sub_1', { cancel_at_period_end: true }, { idempotencyKey: key }]);
+  });
+
+  it('an empty options object, or an empty key, sends no request options', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue(answered());
+    await service().setBusinessOsCancelAtPeriodEnd('sub_1', false, {});
+    await service().setBusinessOsCancelAtPeriodEnd('sub_1', false, { idempotencyKey: '' });
+    expect(mockSubscriptionsUpdate.mock.calls).toEqual([
+      ['sub_1', { cancel_at_period_end: false }],
+      ['sub_1', { cancel_at_period_end: false }],
+    ]);
   });
 });
 

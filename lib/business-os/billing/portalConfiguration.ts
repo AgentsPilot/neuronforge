@@ -91,7 +91,13 @@ export function portalConfigurationProblems(config: PortalConfigurationFacts, ex
 }
 
 /** The configured id, or `null` when it is missing or not a `bpc_…` id. */
-export function readPortalConfigurationId(env: Readonly<Record<string, string | undefined>> = process.env): string | null {
+export function readPortalConfigurationId(
+  // A named read, not the whole of `process.env`, so the environment catalogue
+  // drift guard (EC-3) can resolve it.
+  env: Readonly<Record<string, string | undefined>> = {
+    [PORTAL_CONFIGURATION_ENV]: process.env.STRIPE_BOS_PORTAL_CONFIGURATION_ID,
+  },
+): string | null {
   const value = env[PORTAL_CONFIGURATION_ENV]?.trim();
   return value && CONFIGURATION_ID_PATTERN.test(value) ? value : null;
 }

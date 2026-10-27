@@ -409,17 +409,6 @@ Redirect URLs:
 
 See [VERCEL_DEPLOYMENT_SETUP.md](./VERCEL_DEPLOYMENT_SETUP.md) for detailed OAuth setup.
 
-### 3. Nango Configuration
-
-If using Nango for OAuth:
-
-1. Update callback URLs in Nango dashboard
-2. Set in both Vercel projects:
-   ```bash
-   NANGO_PUBLIC_KEY=your_key
-   NANGO_CALLBACK_URL=https://app.agentspilot.com/oauth/callback
-   ```
-
 ---
 
 ## Testing Checklist

@@ -28,6 +28,8 @@ export const PLAN_MANAGE_REFUSAL_KEYS: Readonly<Record<PlanManageRefusalCode | '
   payment_failed_contact_us: 'plan.manage.payment_failed_contact',
   billing_record_mismatch: 'plan.manage.refusal.support',
   upgrade_pending: 'plan.manage.refusal.upgrade_pending',
+  // D2 / SX-1 (SA F-1): an existing line, so no new wording; D3 may give it its own.
+  change_pending: 'plan.manage.refusal.unavailable',
   stripe_error: 'plan.manage.refusal.stripe_error',
 };
 

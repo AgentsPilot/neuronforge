@@ -95,6 +95,19 @@
  * `sections.converted` (a status) and `counts.converted` (counts only, never
  * an id, a date or a name). The query schema is unchanged.
  *
+ * Client payments in approximate US dollars (FIN BD-56, slice 1a, SA-RR-CPU):
+ * the Exchange rates tab's current rates are read by
+ * `lib/admin/exchangeRates/clientPaymentRates` BESIDE the builder, in this
+ * same request (no cache), and the pure converter `clientPaymentsUsd` turns
+ * the takings lines into one optional key, `takings.usd`. The builder and the
+ * finance lib never see a rate (CUR-3). As MRR: all businesses, the read
+ * starts beside the builder; a picked business, only once the builder has
+ * found its plan row; the Accounts tab, never (the key is absent there). A
+ * failed rates read is the section's own `partial`, never a failed page. The
+ * line gains `usd`: its status, whether the rates were read, and counts and
+ * flags only, never an amount, a rate or a currency (EX-4). The query schema
+ * is unchanged.
+ *
  * @module app/api/admin/business-os/finance
  */
 
@@ -106,6 +119,8 @@ import { isPlatformAccount } from '@/lib/business-os/llm/callCatalog';
 import { buildFinanceHealth } from '@/lib/business-os/finance/financeHealth';
 import { financeHealthDeps } from '@/lib/business-os/finance/financeHealthDeps';
 import { readFinanceMrr } from '@/lib/admin/billing/financeMrr';
+import { readClientPaymentRates } from '@/lib/admin/exchangeRates/clientPaymentRates';
+import { buildClientPaymentsUsd } from '@/lib/admin/exchangeRates/clientPaymentsUsd';
 import { resolveFinanceWindow } from '@/lib/business-os/finance/financeWindow';
 import { ADMIN_WINDOW_CHOICES, customRangeProblem, isRealDate } from '@/app/admin/components/adminWindowPresets';
 import { FINANCE_ACCOUNTS_SHOWS, FINANCE_ACCOUNTS_SORTS, FINANCE_GROUP_SHAPE } from '@/app/admin/finance/financeUrl';
@@ -267,6 +282,9 @@ export async function GET(request: NextRequest) {
     // MK-4: all businesses, started beside the builder; a picked business only once the builder
     // has found its plan row (no read for an id that is not a business). Never rejects.
     const mrrRead = accountId === null ? readFinanceMrr(null) : null;
+    // BD-56: the rates for client payments in approximate dollars, the same pattern. Never on the
+    // Accounts tab (the key is absent there). Never rejects.
+    const ratesRead = accountsTab === null && accountId === null ? readClientPaymentRates() : null;
 
     const result = await buildFinanceHealth({ window, accountId, now, accountsTab }, requestLogger, {
       ...financeHealthDeps(),
@@ -287,7 +305,16 @@ export async function GET(request: NextRequest) {
 
     const { payload: built, counts } = result;
     const { mrr, stripeMode } = await (mrrRead ?? readFinanceMrr(accountId));
-    const payload = { ...built, mrr, stripeMode };
+    // BD-56: merged here, never by the builder; `takings` keeps its place in the payload.
+    const usd =
+      accountsTab === null
+        ? buildClientPaymentsUsd({
+            takings: built.takings,
+            rates: await (ratesRead ?? readClientPaymentRates()),
+            readAt: now.toISOString(),
+          })
+        : null;
+    const payload = { ...built, takings: usd ? { ...built.takings, usd } : built.takings, mrr, stripeMode };
     // Ids, filters, statuses and counts only: never a business name, never a
     // figure (no credit figure either). `counts.creditAccounts` and
     // `counts.creditsPass` make the credit pass's scale trigger visible from
@@ -336,6 +363,16 @@ export async function GET(request: NextRequest) {
           k5: payload.tiles.k5.status,
         },
         counts,
+        // BD-56: status, flags and counts only; never an amount, a rate or a currency (EX-4).
+        takingsUsd: usd
+          ? {
+              status: usd.status,
+              ratesRead: usd.ratesRead,
+              currencies: usd.rows.length,
+              notConverted: { payments: usd.notConverted.payments, currencies: usd.notConverted.currencies },
+              stale: usd.stale,
+            }
+          : 'not_built',
         coverage: payload.aiCost.coverage,
         durationMs: Date.now() - startedAt,
       },

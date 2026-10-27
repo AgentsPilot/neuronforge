@@ -683,7 +683,7 @@ export class StripeService {
     };
   }
 
-  // ── Business OS plan cancel / reactivate (plan payments P-7a.1; SA C-2, TQ-3) ──
+  // ── Business OS plan cancel / reactivate (plan payments P-7a.1; P-7a C-2, TQ-3; D2 SX C-4) ──
 
   /**
    * THE cancel / reactivate write: `cancel_at_period_end` on OUR row's
@@ -691,13 +691,24 @@ export class StripeService {
    * request value). Returns the facts the status mirror needs, from the
    * update's own answer (SA C-2: no second retrieve).
    *
-   * No idempotency key (SA TQ-3): setting a boolean is idempotent, and a key
-   * would replay a stale answer on cancel → reactivate → cancel within 24 h.
+   * Idempotency (P-7a TQ-3, SX C-4; D2 workplan §3.3, SA Q-3 / W-4): never a
+   * FIXED key, because a key derived from the ids would replay a stale answer
+   * on cancel → reactivate → cancel within 24 h. The caller may pass a key
+   * that is fresh PER ATTEMPT (`planManageAttemptKey`, a random uuid suffix):
+   * a network retry inside that attempt reuses it, the next attempt never
+   * does. Without one, the request carries no options (as P-7a.1 built it).
    * X-2 (2026-10-26, sandbox): `true` also sets `cancel_at` to the period end;
    * `false` clears both, including a `cancel_at` set without the flag.
    */
-  async setBusinessOsCancelAtPeriodEnd(subscriptionId: string, cancelAtPeriodEnd: boolean): Promise<BusinessOsCancelFacts> {
-    const subscription = await this.stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: cancelAtPeriodEnd });
+  async setBusinessOsCancelAtPeriodEnd(
+    subscriptionId: string,
+    cancelAtPeriodEnd: boolean,
+    options?: { idempotencyKey?: string }
+  ): Promise<BusinessOsCancelFacts> {
+    const params = { cancel_at_period_end: cancelAtPeriodEnd };
+    const subscription = options?.idempotencyKey
+      ? await this.stripe.subscriptions.update(subscriptionId, params, { idempotencyKey: options.idempotencyKey })
+      : await this.stripe.subscriptions.update(subscriptionId, params);
     const customer = subscription.customer;
     const periodEnds = (subscription.items?.data ?? [])
       .map((item) => unixOrNull(item.current_period_end))
