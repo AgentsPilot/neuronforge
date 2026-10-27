@@ -17,6 +17,12 @@
  * The value arrives formatted by the caller ("at least" included). Every
  * string comes from the caller's copy module; the indicator's definition is
  * that KPI's one copy constant (LL-4).
+ *
+ * Client payments in approximate dollars (FIN BD-56, slice 1b, SA-RR-CPU
+ * SA-Q-5): an optional `note`, a small line inside the tile under the figure
+ * ("Our customers' revenue, not ours"). Absent, nothing renders, so the
+ * existing callers' markup is byte-identical (CPU-5, the hash test). It is
+ * content of the group, not part of its accessible name.
  */
 
 import { KpiIndicator, type KpiIndicatorSpec } from './KpiStrip';
@@ -28,10 +34,12 @@ export interface BlockKpiProps {
   indicator: KpiIndicatorSpec;
   /** A chip in words beside the figure; absent when there is nothing to flag. */
   chip?: { tone: StatusTone; label: string } | null;
+  /** SA-Q-5: a small line inside the tile, under the figure; absent, nothing renders. */
+  note?: string;
   testId: string;
 }
 
-export function BlockKpi({ label, value, indicator, chip, testId }: BlockKpiProps) {
+export function BlockKpi({ label, value, indicator, chip, note, testId }: BlockKpiProps) {
   return (
     <div
       role="group"
@@ -50,6 +58,11 @@ export function BlockKpi({ label, value, indicator, chip, testId }: BlockKpiProp
           </StatusChip>
         )}
       </span>
+      {note && (
+        <span className="mt-1 block text-[11px] text-slate-400" data-testid={`${testId}-note`}>
+          {note}
+        </span>
+      )}
       <KpiIndicator indicator={indicator} testId={`${testId}-indicator`} className="absolute right-2 top-2" />
     </div>
   );
