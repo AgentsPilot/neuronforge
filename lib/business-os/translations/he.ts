@@ -2629,7 +2629,8 @@ export const he = {
     'settings.account_delete.what_we_keep': 'מה נשמר: רשומות החיוב שלנו בלי הפרטים האישיים שלכם, אישור מחיקה קצר, ורשומות ההסכמה לדיוור של הלקוחות שלכם.',
     'settings.account_delete.not_available': 'מחיקת החשבון אינה זמינה כרגע. כתבו לנו לכתובת {support}.',
     'settings.account_delete.blockers_title': 'לפני שאפשר למחוק את החשבון:',
-    'settings.account_delete.blocker.plan_running': 'המנוי שלכם עדיין פעיל. כתבו לנו לכתובת {support} כדי לבטל אותו, ואז תוכלו למחוק את החשבון.',
+    // Plan payments P-7a.3 (PF-14): points at Settings → Plan. Approved by the user 2026-10-27 (G-5).
+    'settings.account_delete.blocker.plan_running': 'התוכנית שלכם עדיין פעילה. מבטלים אותה בהגדרות ← תוכנית, ואפשר למחוק את החשבון אחרי שהיא מסתיימת.',
     'settings.account_delete.blocker.stripe_connected': 'חשבון ה-Stripe שלכם עדיין מחובר לתשלומי לקוחות. נתקו אותו בהגדרות ← תשלומים.',
     'settings.account_delete.blocker.client_plans_running': '{n} תוכניות תשלום של לקוחות עדיין פעילות. סיימו אותן קודם.',
     'settings.account_delete.blocker.client_payments_pending': '{n} תשלומים או החזרים של לקוחות עדיין בתהליך. המתינו שיסתיימו.',
@@ -3202,6 +3203,8 @@ export const he = {
     'plan.manage.cancel_button': 'ביטול התוכנית',
     'plan.manage.cancel_confirm_body': '{plan} תישאר פעילה עד {date}. לאחר מכן היא לא תתחדש, ולא יינתן החזר.',
     'plan.manage.cancel_confirm_body_nodate': '{plan} תישאר פעילה עד סוף התקופה ששולמה. לאחר מכן היא לא תתחדש, ולא יינתן החזר.',
+    // P-7a.3 (BQ-5): approved by the user 2026-10-27 (G-5).
+    'plan.manage.cancel_confirm_founding': 'לאחר מכן חוזרים לגישה החינמית של Founding Partner, שבתוקף עד {freeUntil}.',
     'plan.manage.cancel_confirm': 'כן, לבטל',
     'plan.manage.keep': 'להשאיר את התוכנית',
     'plan.manage.cancelling': 'מבטלים…',

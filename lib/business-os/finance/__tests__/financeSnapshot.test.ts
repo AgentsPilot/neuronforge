@@ -214,7 +214,6 @@ describe('AC-280 against the page itself: buildFinanceHealth, all businesses, th
       finance: {
         listBillingStatusesAllAccounts: () => ok(BILLING),
         findBillingStatusForAccount: () => ok(null),
-        countRevenueRows: () => ok({ planInvoicesPaid: 0, boostsPaid: 0 }),
         listClientPaymentsAllAccountsPaidInRange: empty,
         listClientPaymentsForAccountPaidInRange: empty,
         listClientRefundsAllAccountsCreatedInRange: empty,

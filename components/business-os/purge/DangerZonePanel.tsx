@@ -76,7 +76,8 @@ const FALLBACK_COPY: Record<string, string> = {
   'settings.account_delete.what_we_keep': 'What we keep: our billing records without your personal details, a short deletion receipt, and the marketing consent records of your clients.',
   'settings.account_delete.not_available': 'Deleting your account is not available right now. Contact us at {support}.',
   'settings.account_delete.blockers_title': 'Before you can delete your account:',
-  'settings.account_delete.blocker.plan_running': 'Your plan is still running. Contact us at {support} to cancel it, then you can delete your account.',
+  // Plan payments P-7a.3 (C-10): the same words as the en dictionary.
+  'settings.account_delete.blocker.plan_running': 'Your plan is still running. Cancel it in Settings → Plan. You can delete your account once it has ended.',
   'settings.account_delete.blocker.stripe_connected': 'Your Stripe account is still connected for client payments. Disconnect it in Settings → Payments.',
   'settings.account_delete.blocker.client_plans_running': '{n} client payment plans are still running. End them first.',
   'settings.account_delete.blocker.client_payments_pending': '{n} client payments or refunds are still pending. Wait for them to finish.',

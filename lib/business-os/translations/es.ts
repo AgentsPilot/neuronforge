@@ -399,6 +399,8 @@ export const es = {
     'plan.manage.cancel_button': 'Cancelar plan',
     'plan.manage.cancel_confirm_body': 'Conservas {plan} hasta el {date}. Después no se renovará y no se reembolsa nada.',
     'plan.manage.cancel_confirm_body_nodate': 'Conservas {plan} hasta el final del periodo pagado. Después no se renovará y no se reembolsa nada.',
+    // P-7a.3 (BQ-5): approved by the user 2026-10-27 (G-5).
+    'plan.manage.cancel_confirm_founding': 'Después vuelves a tu acceso gratuito de Founding Partner, que dura hasta el {freeUntil}.',
     'plan.manage.cancel_confirm': 'Sí, cancelar',
     'plan.manage.keep': 'Mantener mi plan',
     'plan.manage.cancelling': 'Cancelando…',
@@ -4227,7 +4229,8 @@ export const es = {
     'settings.account_delete.what_we_keep': 'Lo que conservamos: nuestros registros de facturación sin tus datos personales, un breve comprobante de eliminación y los registros de consentimiento de marketing de tus clientes.',
     'settings.account_delete.not_available': 'Eliminar tu cuenta no está disponible en este momento. Escríbenos a {support}.',
     'settings.account_delete.blockers_title': 'Antes de poder eliminar tu cuenta:',
-    'settings.account_delete.blocker.plan_running': 'Tu plan sigue activo. Escríbenos a {support} para cancelarlo y después podrás eliminar tu cuenta.',
+    // Plan payments P-7a.3 (PF-14): points at Settings → Plan. Approved by the user 2026-10-27 (G-5).
+    'settings.account_delete.blocker.plan_running': 'Tu plan sigue activo. Cancélalo en Configuración → Plan. Podrás eliminar tu cuenta cuando haya terminado.',
     'settings.account_delete.blocker.stripe_connected': 'Tu cuenta de Stripe sigue conectada para pagos de clientes. Desconéctala en Configuración → Pagos.',
     'settings.account_delete.blocker.client_plans_running': '{n} planes de pago de clientes siguen activos. Finalízalos primero.',
     'settings.account_delete.blocker.client_payments_pending': '{n} pagos o reembolsos de clientes siguen pendientes. Espera a que terminen.',

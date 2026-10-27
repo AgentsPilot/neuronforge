@@ -289,3 +289,49 @@ describe('the balance seam (A-2 step c)', () => {
     expect((await service.check('acct-1', 'credits.allowance', { surfaceKind: 'owner_ai' })).outcome).toBe('allowed');
   });
 });
+
+describe('getFreeAccessAfterPaidTier (plan payments P-7a.3, BQ-5)', () => {
+  // Production config (the cohorts are found by STRUCTURE, never by name).
+  const { COHORTS } = jest.requireActual('@/lib/business-os/entitlements/config/cohorts') as typeof import('@/lib/business-os/entitlements/config/cohorts');
+  const { TIER_ORDER } = jest.requireActual('@/lib/business-os/entitlements/config/tierMatrix') as typeof import('@/lib/business-os/entitlements/config/tierMatrix');
+  const ADMIN_DATED = Object.entries(COHORTS).find(([, c]) => !(c as { durationHistory?: unknown }).durationHistory)![0];
+  const PAID_THROUGH = '2026-10-10T00:00:00.000Z';
+  const FREE_UNTIL = '2027-03-01T00:00:00.000Z';
+  const foundingPartnerPaying = () =>
+    planRow({ tier: TIER_ORDER[0], tier_expires_at: PAID_THROUGH, cohort: ADMIN_DATED, cohort_expires_at: FREE_UNTIL });
+
+  it('answers from the inputs getSnapshot cached: no second database read', async () => {
+    const repo = fakeRepository({ plan: foundingPartnerPaying(), overrides: [] });
+    const service = new EntitlementService({ repository: repo, now: fakeClock().now });
+
+    await service.getSnapshot('acct-1');
+    await expect(service.getFreeAccessAfterPaidTier('acct-1')).resolves.toEqual({ endsAt: FREE_UNTIL });
+    expect(repo.state.calls).toBe(1);
+  });
+
+  it('reads (and caches) when nothing fresh is cached', async () => {
+    const repo = fakeRepository({ plan: foundingPartnerPaying(), overrides: [] });
+    const clock = fakeClock();
+    const service = new EntitlementService({ repository: repo, now: clock.now });
+
+    await service.getSnapshot('acct-1');
+    clock.advanceSeconds(CACHE_TTL_SECONDS + 1);
+    await expect(service.getFreeAccessAfterPaidTier('acct-1')).resolves.toEqual({ endsAt: FREE_UNTIL });
+    expect(repo.state.calls).toBe(2);
+    await service.getSnapshot('acct-1');
+    expect(repo.state.calls).toBe(2);
+  });
+
+  it('a failed read is null (say nothing), never a throw', async () => {
+    const repo = fakeRepository();
+    repo.state.error = new Error('db down');
+    const service = new EntitlementService({ repository: repo, now: fakeClock().now });
+    await expect(service.getFreeAccessAfterPaidTier('acct-1')).resolves.toBeNull();
+  });
+
+  it('a paying account with no free access underneath: null', async () => {
+    const repo = fakeRepository({ plan: planRow({ tier: TIER_ORDER[0], tier_expires_at: PAID_THROUGH }), overrides: [] });
+    const service = new EntitlementService({ repository: repo, now: fakeClock().now });
+    await expect(service.getFreeAccessAfterPaidTier('acct-1')).resolves.toBeNull();
+  });
+});

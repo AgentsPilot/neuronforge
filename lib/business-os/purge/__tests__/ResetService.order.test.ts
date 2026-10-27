@@ -41,6 +41,22 @@ jest.mock('@/lib/repositories/BusinessPurgeRepository', () => ({
   ),
 }));
 
+/*
+ * Plan payments P-7a.3 (PF-14; SA C-9): control 3 reads the plan billing
+ * account, both Stripe modes, through `hasLivePlanSubscription`. Faked at the
+ * repository and recorded in the SAME call log as `billingRead`, so its place
+ * in the order is assertable. Default: no billing row in either mode.
+ */
+const billing = { findByUser: jest.fn() };
+jest.mock('@/lib/repositories/BusinessOsBillingAccountRepository', () => ({
+  businessOsBillingAccountRepository: {
+    findByUser: (...args: unknown[]) => {
+      calls.push('billingRead');
+      return billing.findByUser(...args);
+    },
+  },
+}));
+
 const auditLog = jest.fn().mockResolvedValue(undefined);
 jest.mock('@/lib/services/AuditTrailService', () => ({
   AuditTrailService: { getInstance: () => ({ log: auditLog }) },
@@ -119,6 +135,7 @@ function happyPath() {
 beforeEach(() => {
   calls.length = 0;
   jest.clearAllMocks();
+  billing.findByUser.mockResolvedValue({ data: null, error: null });
   // Recorded in the same call log, so "audit after commit" is assertable.
   auditLog.mockImplementation(async () => {
     calls.push('audit');
@@ -684,5 +701,100 @@ describe('SA G-3 — local_unreadable keeps raw read text off the client', () =>
     } finally {
       env.NODE_ENV = was;
     }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Plan payments P-7a.3 (PF-14; SA C-9, TQ-11): control 3, a live plan
+// subscription, refuses BEFORE control 1 and before the snapshot, on Reset and
+// Purge alike. "Live" is `hasLivePlanSubscription`: either mode, the shared
+// predicate, and a failed read refuses.
+// ────────────────────────────────────────────────────────────────────────────
+
+const LIVE_ROW = { subscriptionStatus: 'active', stripeSubscriptionId: 'sub_live1', endedAt: null };
+const ENDED_ROW = { subscriptionStatus: 'canceled', stripeSubscriptionId: 'sub_old1', endedAt: '2026-10-01T00:00:00.000Z' };
+
+/** Our billing rows by mode: `test` for livemode false, `live` for true. */
+function billingRows(rows: { test?: unknown; live?: unknown; error?: boolean }) {
+  billing.findByUser.mockImplementation(async (_userId: string, livemode: boolean) => {
+    if (rows.error) return { data: null, error: new Error('billing read failed') };
+    return { data: (livemode ? rows.live : rows.test) ?? null, error: null };
+  });
+}
+
+describe('P-7a.3 control 3 — a live plan subscription refuses first (PF-14)', () => {
+  it('reads the billing rows after the probe and BEFORE resolveConnectAccounts', async () => {
+    happyPath();
+    const outcome = await run();
+
+    expect(outcome.status).toBe('completed');
+    const first = (name: string) => calls.indexOf(name);
+    expect(first('billingRead')).toBeGreaterThan(first('purgeFunctionExists'));
+    expect(first('billingRead')).toBeLessThan(first('resolveConnectAccounts'));
+    // Both Stripe modes, for the TARGET account only.
+    expect(billing.findByUser.mock.calls.map((c) => c[1]).sort()).toEqual([false, true]);
+    expect(billing.findByUser.mock.calls.every((c) => c[0] === USER)).toBe(true);
+  });
+
+  it.each([
+    ['a live-mode subscription', { live: LIVE_ROW }],
+    ['a test-mode subscription', { test: LIVE_ROW }],
+    ['a cancelling subscription (still active until Stripe ends it, BQ-2)', { test: { ...LIVE_ROW, subscriptionStatus: 'active' } }],
+    ['a subscription with no mirrored status that Stripe has not ended', { live: { subscriptionStatus: null, stripeSubscriptionId: 'sub_x', endedAt: null } }],
+  ])('Reset: %s → subscription_live, no Connect read, no snapshot, audited', async (_label, rows) => {
+    happyPath();
+    billingRows(rows);
+
+    const outcome = await run();
+
+    expect(outcome).toMatchObject({ status: 'refused', reason: 'subscription_live', snapshotWritten: false, rowsDeleted: 0 });
+    if (outcome.status === 'refused') expect(outcome.message).toContain('Settings → Plan');
+    expect(calls).not.toContain('resolveConnectAccounts');
+    expect(calls).not.toContain('countLocalBlockingState');
+    expect(calls).not.toContain('writeSnapshot');
+    expect(calls).not.toContain('executePurge');
+    expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'BUSINESS_DATA_PURGE_BLOCKED', entityId: USER }));
+  });
+
+  it('Purge: the same refusal, at the same place', async () => {
+    happyPath();
+    billingRows({ live: LIVE_ROW });
+
+    const outcome = await purge({ integrations: true });
+
+    expect(outcome).toMatchObject({ status: 'refused', reason: 'subscription_live', snapshotWritten: false });
+    expect(calls).toContain('introspectSchema');
+    expect(calls).not.toContain('resolveConnectAccounts');
+    expect(calls).not.toContain('writeSnapshot');
+  });
+
+  it('an unreadable billing read is subscription_unreadable — a failed read is not a "no"', async () => {
+    happyPath();
+    billingRows({ error: true });
+
+    const outcome = await run();
+
+    expect(outcome).toMatchObject({ status: 'refused', reason: 'subscription_unreadable', snapshotWritten: false });
+    expect(calls).not.toContain('resolveConnectAccounts');
+    expect(calls).not.toContain('writeSnapshot');
+  });
+
+  it('an ENDED subscription is clear: the run reaches control 1 and completes', async () => {
+    happyPath();
+    billingRows({ test: ENDED_ROW, live: ENDED_ROW });
+
+    const outcome = await run();
+
+    expect(outcome.status).toBe('completed');
+    expect(calls).toContain('resolveConnectAccounts');
+  });
+
+  it('on a database without the function, control 3 never runs (the inactive proof holds)', async () => {
+    happyPath();
+    repo.purgeFunctionExists.mockResolvedValue(false);
+
+    await run();
+
+    expect(calls).not.toContain('billingRead');
   });
 });

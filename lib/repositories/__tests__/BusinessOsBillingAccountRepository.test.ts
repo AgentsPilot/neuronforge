@@ -945,9 +945,17 @@ describe('source guards', () => {
       // plan billing account (findByUser only); the evaluator imports the status
       // type. Their tests name it to fake it. No entitlements import.
       'lib/business-os/purge/__tests__/AdminDeletionPreview.test.ts',
+      // Plan payments P-7a.3 (PF-14, SA C-9): the Reset guard's control 3 reads
+      // the plan billing rows through hasLivePlanSubscription, so the purge
+      // orchestration suites (both surfaces) fake the repository module by name.
+      'lib/business-os/purge/__tests__/ResetService.adminSurface.test.ts',
+      'lib/business-os/purge/__tests__/ResetService.order.test.ts',
       'lib/business-os/purge/__tests__/adminDeletionRefusals.test.ts',
       // P-3b.1 (QA Bug 1): fakes the repository to test hasLivePlanSubscription.
       'lib/business-os/purge/__tests__/hasLivePlanSubscription.test.ts',
+      // Plan payments P-7a.3: the PF-14 cross-path pin fakes the repository and
+      // imports the status TYPE to enumerate every row the rule distinguishes.
+      'lib/business-os/purge/__tests__/planSubscriptionLive.paths.test.ts',
       // AD-2a: the read moved verbatim to adminDeletionFacts.ts (shared by the
       // preview and the commit gate). Kept in sorted order: the guard compares
       // against found.sort().
@@ -1361,7 +1369,7 @@ describe('current_period_end is written only by the paid apply path (SA C-1 ruli
     expect(code).toMatch(/current_period_end: null,/);
   });
 
-  it('no other application file opens a query on the billing table, and the finance read repository only reads it', () => {
+  it('no other application file opens a query on the billing table, and the finance read repository no longer opens it', () => {
     const offenders: string[] = [];
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -1378,10 +1386,11 @@ describe('current_period_end is written only by the paid apply path (SA C-1 ruli
     };
     for (const dir of ['app', 'lib', 'components', 'hooks']) walk(path.join(ROOT, dir));
     // Plan payments P-8a.1: the admin Subscriptions read joins as a third, read-only reader (one mode per read, PF-15).
+    // R4-FU-1 (finance follow-ups bundle, SA-WP-FU, ruled): the finance read repository LEAVES the list
+    // (R-c and R-c′ removed; Finance reads status through the admin read repository's current-mode reader).
     expect(offenders.sort()).toEqual([
       'lib/repositories/BusinessOsBillingAccountRepository.ts',
       'lib/repositories/BusinessOsBillingAdminReadRepository.ts',
-      'lib/repositories/BusinessOsFinanceReadRepository.ts',
     ]);
     const finance = fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsFinanceReadRepository.ts'), 'utf8');
     expect(finance).not.toMatch(/\.(update|insert|upsert|delete|rpc)\(/);

@@ -240,8 +240,14 @@ const TOKENS =
  * cost `aboveCharged.usd`): that is not this section.
  */
 const REACHES_TAKINGS = /\btakings\b|\bFinanceTakingsSection\b|\bFinancePayload\b/;
+/**
+ * CPU1A-FU-1 (SA-WP-FU FU-C2): the last branch is a TYPED destructure ending a parameter, so a
+ * `function` declaration or a method (`f({ usd }: T) {`, no `=` after it) is caught too, nested
+ * (`{ takings: { usd } }: FinancePayload`) and not-last (`({ usd }: T, n)`) included. Still ANDed
+ * with REACHES_TAKINGS, so it only counts in a file that reaches the takings section.
+ */
 const READS_USD =
-  /\??\.\s*usd\b|\[\s*['"`]usd['"`]\s*\]|\{[^{}]*\busd\b[^{}]*\}(?:\s*\})*\s*(?::[^=;]*)?=|\busd\?\s*:/;
+  /\??\.\s*usd\b|\[\s*['"`]usd['"`]\s*\]|\{[^{}]*\busd\b[^{}]*\}(?:\s*\})*\s*(?::[^=;]*)?=|\busd\?\s*:|\{[^{}]*\busd\b[^{}]*\}(?:\s*\})*\s*:[^=;{)]*[,)]/;
 const TYPED_USD = (code: string) => REACHES_TAKINGS.test(code) && READS_USD.test(code);
 const ALLOWED = [
   TYPES,
@@ -316,7 +322,39 @@ describe('L-1: the section never leaves the admin Client payments path', () => {
     ['indexed payload type', 'type U = FinancePayload["takings"]["usd"];'],
     ['aliased destructure', 'const { usd: approx } = data.takings;'],
     ['typed nested destructure', 'const { takings: { usd } }: FinancePayload = data;'],
+    // CPU1A-FU-1 (SA-WP-FU FU-C2): typed destructures in a parameter list, with no `=` after them.
+    ['function parameter destructure', 'function f({ usd }: FinancePayload["takings"]) { return usd; }'],
+    ['aliased, not-last function parameter', 'function g({ usd: approx }: FinancePayload["takings"], n: number) { return [approx, n]; }'],
+    ['method parameter destructure', 'class K { m({ usd }: FinancePayload["takings"]) { return usd; } }'],
+    ['nested function parameter destructure', 'function h({ takings: { usd } }: FinancePayload) { return usd; }'],
   ];
+
+  /** CPU1A-FU-1: the four parameter forms above, which the guard before FU-C2 let through. */
+  const PARAMETER_FORMS = MISSED_FORMS.filter(([name]) => /parameter/.test(name));
+  const READS_USD_BEFORE_FU1 =
+    /\??\.\s*usd\b|\[\s*['"`]usd['"`]\s*\]|\{[^{}]*\busd\b[^{}]*\}(?:\s*\})*\s*(?::[^=;]*)?=|\busd\?\s*:/;
+
+  it('CPU1A-FU-1: the parameter forms slipped past the previous matcher, and the new branch is what catches them', () => {
+    expect(PARAMETER_FORMS).toHaveLength(4);
+    for (const [name, form] of PARAMETER_FORMS) {
+      const snippet = `${PAYLOAD_IMPORT}\n${form}`;
+      expect({ name, before: READS_USD_BEFORE_FU1.test(snippet), now: READS_USD.test(snippet) }).toEqual({ name, before: false, now: true });
+    }
+  });
+
+  it('CPU1A-FU-1 precision: no takings reach, no usd, a type literal or a plain parameter is not a leak', () => {
+    // A typed parameter destructure in a file that does not reach takings.
+    expect(TYPED_USD('function f({ usd }: Other) { return usd; }')).toBe(false);
+    // In a file that reaches takings: a destructure with no usd, a type literal holding usd, a plain usd parameter.
+    for (const form of [
+      'function f({ amount }: FinancePayload["takings"]) { return amount; }',
+      'const x: Array<{ usd: number }> = [];',
+      'function f(usd: number) { return usd; }',
+    ]) {
+      const snippet = `${PAYLOAD_IMPORT}\n${form}`;
+      expect({ form, caught: TOKENS.test(snippet) || TYPED_USD(snippet) }).toEqual({ form, caught: false });
+    }
+  });
 
   it.each(Object.keys(ZONES).flatMap((zone) => MISSED_FORMS.map(([name, form]) => [zone, name, form] as const)))(
     'B-1 planted (%s zone): %s is caught',

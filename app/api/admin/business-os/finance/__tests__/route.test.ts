@@ -45,8 +45,8 @@
  * (AC-123, SA-Q35; the 4a "R-d with no argument" pins are rewritten). The
  * payload's plans, totals and K-5 money keep every money key beside its
  * currency, with no Stripe, refusal, plan_written or mode key (AC-127), and the
- * info line carries `sections.revenuePlans`, `counts.plans` and
- * `counts.revenueExistence` with no amount, currency or tier.
+ * info line carries `sections.revenuePlans` and `counts.plans` with no amount,
+ * currency or tier (`counts.revenueExistence` went with R-d, R4-FU-1 bundle).
  *
  * Money M-4 (OV-5, T7-B): the two usage-log readers are faked at the
  * repository boundary (their limits stay real) and join `allReads()`, so every
@@ -157,7 +157,6 @@ const mockDeps = {
   finance: {
     listBillingStatusesAllAccounts: jest.fn(),
     findBillingStatusForAccount: jest.fn(),
-    countRevenueRows: jest.fn(),
     listClientPaymentsAllAccountsPaidInRange: jest.fn(),
     listClientPaymentsForAccountPaidInRange: jest.fn(),
     listClientRefundsAllAccountsCreatedInRange: jest.fn(),
@@ -368,7 +367,6 @@ function seed() {
   mockDeps.ledger.findChargesByActionIds.mockResolvedValue({ data: [], error: null });
   mockDeps.finance.listBillingStatusesAllAccounts.mockResolvedValue({ data: [], error: null });
   mockDeps.finance.findBillingStatusForAccount.mockResolvedValue({ data: null, error: null });
-  mockDeps.finance.countRevenueRows.mockResolvedValue({ data: { planInvoicesPaid: 0, boostsPaid: 0 }, error: null });
   const payments = { data: { rows: [clientPayment(ACCOUNT, TAKINGS_FIGURE, 'ils')], reachedCeiling: false }, error: null };
   const refunds = { data: { rows: [clientRefund(ACCOUNT, '76.54', 'ILS')], reachedCeiling: false }, error: null };
   mockDeps.finance.listClientPaymentsAllAccountsPaidInRange.mockResolvedValue(payments);
@@ -627,7 +625,6 @@ describe('200', () => {
     expect(mockDeps.finance.findBillingStatusForAccount).toHaveBeenCalledWith(ACCOUNT);
     for (const [id] of mockDeps.ledger.listRowsForAccountCreatedInRange.mock.calls) expect(id).toBe(ACCOUNT);
     // SA-Q35 (slice 5a): no platform-wide read with a business picked; R-m′ gets exactly the id.
-    expect(mockDeps.finance.countRevenueRows).not.toHaveBeenCalled();
     expect(mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
     for (const [id] of mockDeps.finance.listPlanPaymentsForAccountPaidInRange.mock.calls) expect(id).toBe(ACCOUNT);
     expect(mockFindNames).toHaveBeenCalledWith([ACCOUNT]);
@@ -745,8 +742,8 @@ describe('slice 2a: takings through the route', () => {
   it('AC-45: the four takings reads are in allReads(), so every 401 / 403 / 400 case proves zero calls on them', () => {
     for (const fn of Object.values(mockDeps.finance)) expect(allReads()).toContain(fn);
     // Slice 2b: the six overdue and plan reads joined the seven (thirteen); slice 4a: R-k and R-k′ (fifteen); slice 5a: R-m and R-m′ (seventeen);
-    // slice 4b.2: R-n, R-n′, R-l and R-l′ (twenty-one).
-    expect(Object.keys(mockDeps.finance)).toHaveLength(21);
+    // slice 4b.2: R-n, R-n′, R-l and R-l′ (twenty-one); R4-FU-1 bundle: R-d removed (twenty).
+    expect(Object.keys(mockDeps.finance)).toHaveLength(20);
   });
 
   it('the payload carries takings; AC-48: every money key sits beside a currency, and no money key is top-level', async () => {
@@ -1017,7 +1014,8 @@ describe('slice 4a: our revenue through the route', () => {
   it('the payload: revenue with plans and boosts; K-5 money; AC-92: every money key sits beside a currency; AC-98: no Stripe or lot field', async () => {
     const body = await (await call()).json();
     const revenue = body.data.revenue;
-    expect(Object.keys(revenue).sort()).toEqual(['boosts', 'plans', 'state', 'status', 'totals']);
+    // R4-FU-1 bundle (SA-Q-FU-3): `state` removed with R-d.
+    expect(Object.keys(revenue).sort()).toEqual(['boosts', 'plans', 'status', 'totals']);
     expect(revenue).toMatchObject({ status: 'ok', plans: { status: 'ok', lines: [] }, boosts: { status: 'ok', scope: 'all', deletedAccounts: [] } });
     expect(revenue.boosts.lines).toEqual([
       // Slice 4b.2: no window `held` (held is now its own list), `unreadableEvents` added.
@@ -1062,7 +1060,6 @@ describe('slice 4a: our revenue through the route', () => {
     expect(id).toBe(ACCOUNT);
     const body = await res.json();
     expect(range).toEqual({ from: new Date(body.data.window.start), to: new Date(body.data.window.end) });
-    expect(mockDeps.finance.countRevenueRows.mock.calls).toEqual([]);
     expect(body.data.revenue.boosts).toMatchObject({ scope: 'one', deletedAccounts: null });
     expect(body.data.tiles.k5.money).toEqual({ kind: 'one', currency: 'USD', net: 1234.57 });
   });
@@ -1171,13 +1168,12 @@ describe('slice 5a: our plan revenue through the route', () => {
     }
   });
 
-  it('AC-123 through the route: with accountId, R-m′ gets exactly the id and the window; R-m and R-d have ZERO calls; the payment list, no table', async () => {
+  it('AC-123 through the route: with accountId, R-m′ gets exactly the id and the window; R-m has ZERO calls (R-d removed, R4-FU-1); the payment list, no table', async () => {
     seedPlans([planPayment(ACCOUNT)]);
     const res = await call(`?accountId=${ACCOUNT}`);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
-    expect(mockDeps.finance.countRevenueRows).not.toHaveBeenCalled();
     expect(mockDeps.finance.listPlanPaymentsForAccountPaidInRange).toHaveBeenCalledTimes(1);
     const [id, range] = mockDeps.finance.listPlanPaymentsForAccountPaidInRange.mock.calls[0];
     expect(id).toBe(ACCOUNT);
@@ -1186,7 +1182,8 @@ describe('slice 5a: our plan revenue through the route', () => {
     expect(body.data.revenue.plans.payments).toEqual([
       { id: 'efefefef-0000-4000-8000-000000000001', paidAt: '2026-10-02T10:00:00+00:00', planLabel: null, received: 987.61, tax: 0, currency: 'USD', periodStart: '2026-10-02T10:00:00+00:00', periodEnd: '2026-11-02T10:00:00+00:00' },
     ]);
-    expect(body.data.revenue.state).toBe('recorded');
+    // R4-FU-1 bundle (SA-Q-FU-3): the section carries no `state` any more.
+    expect(body.data.revenue).not.toHaveProperty('state');
   });
 
   it('AC-126 through the route: R-m fails → 200, plans unknown, the section partial, K-5 Unknown, every other section renders', async () => {
@@ -1199,14 +1196,14 @@ describe('slice 5a: our plan revenue through the route', () => {
     for (const section of ['accounts', 'aiCost', 'credits', 'takings']) expect(body.data[section].status).not.toBe('unknown');
   });
 
-  it('AC-127: the info line carries sections.revenuePlans, counts.plans and counts.revenueExistence; no plan amount, currency or tier in any log call', async () => {
+  it('AC-127: the info line carries sections.revenuePlans and counts.plans (no revenueExistence since R4-FU-1); no plan amount, currency or tier in any log call', async () => {
     seedPlans([planPayment(ACCOUNT)]);
     await call();
     const lines = mockLog.info.mock.calls.filter((c) => c[1] === 'Admin read the Business OS finance page');
     expect(lines).toHaveLength(1);
     const [ctx] = lines[0];
     expect(ctx.sections.revenuePlans).toBe('ok');
-    expect(ctx.counts.revenueExistence).toBe('read');
+    expect(ctx.counts).not.toHaveProperty('revenueExistence');
     expect(ctx.counts.plans).toEqual({
       rows: 1, ceiling: false, payments: 1, zeroAmount: 0, unreadable: 0, otherKind: 0, currencies: 1,
       accountsShown: 1, accountsTotal: 1, deletedAccountPayments: 0, paymentsTotal: 0, namesFound: 1,
@@ -1221,7 +1218,7 @@ describe('slice 5a: our plan revenue through the route', () => {
     asAdmin();
     await call(`?accountId=${ACCOUNT}`);
     const picked = mockLog.info.mock.calls.filter((c) => c[1] === 'Admin read the Business OS finance page');
-    expect(picked[0][0].counts.revenueExistence).toBe('not_called');
+    expect(picked[0][0].counts).not.toHaveProperty('revenueExistence');
   });
 });
 
@@ -1291,15 +1288,14 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
   const EXPECTED_CALLS = {
     'plans.pagePlans': [[{ afterUserId: null, limit: 500 }]],
     findPlanForAccount: [],
-    'ledger.listRowsOfAllAccountsCreatedInRange': [
-      [RANGE, LEDGER_OPTS],
-      [{ from: '2026-10-01T00:00:00.000Z', to: '2026-10-14T12:00:00.000Z' }, LEDGER_OPTS],
-    ],
+    // MK2-FU-1 (finance follow-ups bundle, SA-WP-FU, ruled): K-1's current span IS This month's window
+    // ([Oct 1, Oct 15)), so F-K3 shares Section 3's read. The second call (to "now", 2026-10-14T12:00) is gone.
+    'ledger.listRowsOfAllAccountsCreatedInRange': [[RANGE, LEDGER_OPTS]],
     'ledger.listRowsForAccountCreatedInRange': [],
     'ledger.findChargesByActionIds': [],
     'finance.listBillingStatusesAllAccounts': [[]],
     'finance.findBillingStatusForAccount': [],
-    'finance.countRevenueRows': [[]],
+    // R4-FU-1 bundle (SA-Q-FU-3, ruled): R-d removed, so the key is gone from the named reads.
     'finance.listClientPaymentsAllAccountsPaidInRange': [[RANGE]],
     'finance.listClientPaymentsForAccountPaidInRange': [],
     'finance.listClientRefundsAllAccountsCreatedInRange': [[RANGE]],
@@ -1368,7 +1364,12 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
   // (the credits re-size's `5e911c70…`); stripping the key gives it back.
   // BD-56 client payments in approximate dollars (slice 1a, ruled re-freeze SA-RR-CPU SA-Q-4, CPU-6): with
   // `takings.usd`. AFTER_MK9 is the MK-9 hash it replaces; deleting `takings.usd` gives it back.
-  const EXPECTED_SHA256 = 'aebc22cbbb234106b92ff83c99cee138b4b8701d46f700254d1bc048e92597ca';
+  // Finance follow-ups bundle, R4-FU-1 + R-d (ruled re-freeze SA-WP-FU, SA-Q-FU-3, BQ-FU-2): without
+  // `revenue.state`. AFTER_CPU1A is the BD-56 hash it replaces; putting `revenue.state` back (after
+  // `revenue.status`, its old position) gives it back, and the older chain then runs from that object.
+  // MK2-FU-1 (K-1 shares Section 3's read) does not move the bytes: the ledger mock ignores the range.
+  const EXPECTED_SHA256 = '38897cd3295ae0c5e865503cf0394453c38f532b0ec87866610126281b1e4edf';
+  const AFTER_CPU1A_SHA256 = 'aebc22cbbb234106b92ff83c99cee138b4b8701d46f700254d1bc048e92597ca';
   const AFTER_MK9_SHA256 = '333407516ae0d081d59e8372a499cf305c207adeebf931fd363b62e58f632215';
   const AFTER_MK5B_SHA256 = '5e911c70805e03ea6cc2740a1760ee4458d8145d80769ed1e2065df39f6f9b17';
   const AFTER_MK5_SHA256 = '029bff1146cd17747357bc71b87602f1230a1607dbe5ecea9c285ff9ec39629b';
@@ -1408,9 +1409,16 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
       ratesRead: 'ok',
       stale: false,
     });
-    const takingsWithoutUsd = { ...(body.data.takings as Json) };
+    // R4-FU-1 bundle: the only change to the bytes is `revenue.state` gone. Put it back where it was
+    // ('none_yet': R-d's mocked counts were 0 / 0): the BD-56 bytes come back, and the chain below runs on them.
+    expect(body.data.revenue).not.toHaveProperty('state');
+    const { status: revenueStatus, ...revenueRest } = body.data.revenue as Json;
+    const restored: Json = { ...(body.data as Json), revenue: { status: revenueStatus, state: 'none_yet', ...revenueRest } };
+    const shaAfterCpu1a = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
+    expect(shaAfterCpu1a.update(JSON.stringify(restored)).digest('hex')).toBe(AFTER_CPU1A_SHA256);
+    const takingsWithoutUsd = { ...(restored.takings as Json) };
     delete takingsWithoutUsd.usd;
-    const withUsdStripped: Json = { ...(body.data as Json), takings: takingsWithoutUsd };
+    const withUsdStripped: Json = { ...restored, takings: takingsWithoutUsd };
     const shaAfterMk9 = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
     expect(shaAfterMk9.update(JSON.stringify(withUsdStripped)).digest('hex')).toBe(AFTER_MK9_SHA256);
     const withMk9 = { ...withUsdStripped };
@@ -2016,7 +2024,6 @@ describe('DF-6: since_start through the route', () => {
       mockDeps.plans.pagePlans,
       mockDeps.ledger.listRowsOfAllAccountsCreatedInRange,
       mockDeps.finance.listBillingStatusesAllAccounts,
-      mockDeps.finance.countRevenueRows,
       mockDeps.finance.listClientPaymentsAllAccountsPaidInRange,
       mockDeps.finance.listClientRefundsAllAccountsCreatedInRange,
       mockDeps.finance.listOverdueClientInvoicesAllAccounts,

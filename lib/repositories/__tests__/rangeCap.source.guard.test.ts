@@ -76,15 +76,14 @@ const BASELINE: ReadonlyArray<{ file: string; text: string; count: number }> = [
   { file: 'lib/business-os/bizql/compiler.ts', text: '.limit(AGGREGATE_SCAN_CAP+1)', count: 3 },
   // FF-3: BizQL compiler, ANTI_JOIN_CAP = 10_000 plus one; same cap-plus-one probe problem.
   { file: 'lib/business-os/bizql/compiler.ts', text: '.limit(ANTI_JOIN_CAP+1)', count: 1 },
-  // FF-3: insight repository, VISITOR_SCAN_LIMIT = 5000; page it.
-  { file: 'lib/business-os/insight/repository/InsightRepository.ts', text: '.limit(VISITOR_SCAN_LIMIT)', count: 1 },
-  // FF-3: audit trail repository, OWNER_ACTIVITY_SCAN_CAP = 5000; page it.
-  { file: 'lib/repositories/AuditTrailRepository.ts', text: '.limit(OWNER_ACTIVITY_SCAN_CAP)', count: 1 },
+  // FF-3 tranche A (finance follow-ups bundle, SA-WP-FU, 2026-10-27): the insight repository's
+  // VISITOR_SCAN_LIMIT read and the audit trail repository's OWNER_ACTIVITY_SCAN_CAP read now page at
+  // 1,000 and left this list.
   // FF-3: purge repository, VIA_PARENT_CAP = 5000, two calls; a purge that reads a cut list
   // may leave rows behind, so its owner must page it.
   { file: 'lib/repositories/BusinessPurgeRepository.ts', text: '.limit(VIA_PARENT_CAP)', count: 2 },
-  // FF-3: smart link repository, local CAP = 20000; page it.
-  { file: 'lib/repositories/SmartLinkRepository.ts', text: '.limit(CAP)', count: 1 },
+  // FF-3 tranche A: the smart link repository's local CAP = 20000 read now pages at 1,000 and left too.
+  // The rest is FF-3b (entries above, repositories first) and B-1 / B-2 (the compiler and purge entries).
 ];
 
 /**
@@ -92,8 +91,9 @@ const BASELINE: ReadonlyArray<{ file: string; text: string; count: number }> = [
  * Removing an entry or lowering a count after a fix means LOWERING these pins in
  * the same change. They are never raised without an SA ruling.
  */
-const BASELINE_ENTRIES = 14;
-const BASELINE_CALL_SITES = 20;
+// FF-3 tranche A (SA-WP-FU, ruled): 14 → 11 entries, 20 → 17 call sites.
+const BASELINE_ENTRIES = 11;
+const BASELINE_CALL_SITES = 17;
 
 const toNumber = (s: string): number => Number(s.replace(/_/g, ''));
 
@@ -191,7 +191,7 @@ describe('FF-1d: no single read above 1,000 rows (FF1-R1)', () => {
     expect(FILES.some((f) => f.includes('__tests__'))).toBe(false);
   });
 
-  it('the baseline cannot grow: pinned at 14 entries and 20 call sites, no duplicate entry (QA-FF1-1)', () => {
+  it('the baseline cannot grow: pinned at 11 entries and 17 call sites, no duplicate entry (QA-FF1-1; FF-3 tranche A)', () => {
     const keys = BASELINE.map((b) => key(b.file, b.text));
     expect({
       entries: BASELINE.length,

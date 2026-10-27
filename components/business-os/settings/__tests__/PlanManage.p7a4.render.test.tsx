@@ -149,6 +149,32 @@ describe('PlanManage — P-7a.4 failed payment', () => {
     host.remove();
   });
 
+  it('SA deviation 8: a Founding Partner (server sent freeAccessAfter) reads the BQ-5 sentence in the "ends now" confirmation; a non-founding account does not', () => {
+    const FREE_UNTIL = '2100-03-01T12:00:00.000Z';
+    const founding = failing();
+    (founding.purchase as unknown as { manage: unknown }).manage = {
+      cancel: true,
+      reactivate: false,
+      paymentFailed: true,
+      freeAccessAfter: { endsAt: FREE_UNTIL },
+    };
+    const sentence = translations.en['plan.manage.cancel_confirm_founding'].replace('{freeUntil}', 'March 1, 2100');
+    const endsNow = translations.en['plan.manage.cancel_now_body'].replace('{plan}', 'Essentials');
+
+    const { unmount } = render(<PlanManage plan={founding} />);
+    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
+    const text = screen.getByTestId('plan-manage-confirm-now').textContent ?? '';
+    expect(text).toContain(endsNow);
+    expect(text).toContain(sentence);
+    // "Ends now" first, then where the owner lands.
+    expect(text.indexOf(endsNow)).toBeLessThan(text.indexOf(sentence));
+    unmount();
+
+    render(<PlanManage plan={failing()} />);
+    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
+    expect(screen.getByTestId('plan-manage-confirm-now')).not.toHaveTextContent('Founding Partner');
+  });
+
   it('the retired P-7a.1 "contact us" key is gone from every dictionary', () => {
     for (const lang of ['en', 'he', 'es'] as const) expect(translations[lang]['plan.manage.payment_failed_contact']).toBeUndefined();
   });

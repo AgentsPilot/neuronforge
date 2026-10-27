@@ -55,7 +55,9 @@ export function compedSplit(input: {
     const row = rowOf.get(accountId);
     // "Billed" (MK9-R4): a row with a subscription status. Without one, nothing was ever subscribed.
     if (!row || row.subscription_status === null) assignedNoSubscription += 1;
-    // Comped means not paying already; a paying row here would be a classifier fault, so it is not hidden.
+    // Unreachable for a paying row: an account is Comped only when the classifier found it NOT paying,
+    // by this same isPaying predicate (planGroups.groupFor). Were it reached, the account would count
+    // in `total` but in neither line, so the two lines would no longer add up to Comped (MK9-FU-3).
     else if (!input.isPaying(row)) endedOrNotPaying += 1;
   }
   return { total, assignedNoSubscription, endedOrNotPaying };

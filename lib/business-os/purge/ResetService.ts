@@ -8,7 +8,8 @@
 //   PRE      1. RPC-existence probe                (refuse if not applied)
 //            2. agents option                      (refused permanently, OQ-1 (c))
 //            3. delete-graph check                 (refuse unless `ok`; SA C-5)
-//            4. Reset guard — control 1, control 2 (refuse on either)
+//            4. Reset guard — control 3 (live plan subscription, P-7a.3),
+//               control 1, control 2 (refuse on any)
 //   PHASE 1  5. snapshot, VERIFIED by read-back    (abort on failure, AC-35)
 //            5a. admin surface only: `preCommitGate` (verdict only; AD-2a)
 //   PHASE 2  6. purge_business_data RPC            (one transaction)
@@ -76,6 +77,10 @@ export type ResetRefusal =
   | 'agents_option_refused'
   | 'delete_graph_refused'
   | 'delete_graph_unreadable'
+  /** Plan payments P-7a.3 (PF-14, SA C-9): a plan subscription Stripe may still bill, either mode. */
+  | 'subscription_live'
+  /** P-7a.3: the plan subscription could not be read, so the run refuses rather than assume none. */
+  | 'subscription_unreadable'
   | 'stripe_connected'
   | 'stripe_unreadable'
   | 'local_blocking'
@@ -358,7 +363,8 @@ export async function runPurgeCommit(params: PurgeCommitParams): Promise<ResetOu
     );
   }
 
-  // ── 4. The two pre-delete controls ──────────────────────────────────────
+  // ── 4. The pre-delete controls (3, then 1 and 2) ────────────────────────
+  // P-7a.3: control 3 (a live plan subscription) runs first, inside the guard.
   // AC-33 (ordering half): control 1 reads the integration connections for
   // Stripe account ids HERE, before phase 2 deletes them (`integrations`).
   const guard = await evaluateResetGuard({ userId, correlationId });

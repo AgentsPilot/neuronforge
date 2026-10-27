@@ -122,8 +122,14 @@ export function isPlanSubscriptionLive(row: PlanBillingRowFact): boolean {
   return row.stripeSubscriptionId !== null && row.endedAt === null;
 }
 
-const R3_CLEARING =
-  'Cancel the subscription in the Stripe dashboard, in the mode shown (test or live). In-app cancel arrives with plan payments P-7a.';
+/**
+ * Plan payments P-7a.3 (PF-14, C-10): the owner can now cancel in-app (P-7a.1),
+ * so the admin is pointed there first. The SQL G-6 guard's operator text in the
+ * applied cleanup function still names the Stripe dashboard only: changing it
+ * would be a migration, so it stays.
+ */
+export const R3_CLEARING =
+  'The owner cancels it in Settings → Plan, or cancel it in the Stripe dashboard, in the mode shown (test or live). Deletion is possible once the subscription has ended.';
 
 function evaluateR1(facts: AdminDeletionFacts): AdminDeletionRefusal {
   if (facts.targetId.toLowerCase() === facts.adminId.toLowerCase()) {

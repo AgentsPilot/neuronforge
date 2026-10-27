@@ -334,8 +334,10 @@ describe('finance slice 2a source guards (layer B, S2-F1, §12.1)', () => {
 
   /** Slice 2b (S2-F1): the five of 1a / 2a plus the client invoices, plan instalments and client plans. Slice 4a: R-k and R-k′ read the boost table too (already here for R-d). Slice 5a: R-m and R-m′ read the billing events too (already here for R-d). */
   // Slice 4b.2 (§11I.8): the table set grows by ONE, the reversal events (R-n, R-n′, and R-l's opened dates).
+  // R4-FU-1 (finance follow-ups bundle, SA-WP-FU, ruled): the set SHRINKS by one. R-c and R-c′, the only
+  // readers of `business_os_billing_accounts`, are removed; billing status comes from the current-mode
+  // reader in lib/admin/billing (Finance R4). Nine tables → eight.
   const REPOSITORY_TABLES = [
-    'business_os_billing_accounts',
     'business_os_billing_events',
     'business_os_boost_purchases',
     'business_os_boost_reversal_events',
@@ -346,10 +348,13 @@ describe('finance slice 2a source guards (layer B, S2-F1, §12.1)', () => {
     'payment_transactions',
   ];
 
-  it('the repository reads exactly its nine tables, and every .from( names its table as a literal', () => {
+  it('the repository reads exactly its eight tables, and every .from( names its table as a literal', () => {
     const code = codeOf(REPOSITORY);
     const tables = tablesOf(code);
-    expect(tables.length).toBeGreaterThanOrEqual(9);
+    expect(tables.length).toBeGreaterThanOrEqual(8);
+    // R4-FU-1: the billing-account table and the removed reads are gone (code AND comments).
+    expect(tables).not.toContain('business_os_billing_accounts');
+    expect(read(REPOSITORY)).not.toMatch(/listBillingStatusesAllAccounts|findBillingStatusForAccount|countRevenueRows/);
     // SA-WR-16: a .from(TABLE) with a non-literal argument cannot escape the set below.
     expect(fromCallsOf(code)).toBe(tables.length);
     expect([...new Set(tables)].sort()).toEqual(REPOSITORY_TABLES);

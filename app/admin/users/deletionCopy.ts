@@ -245,6 +245,12 @@ export const DELETION_COMMIT_REFUSAL_COPY: Record<DeletionCommitCodeView, string
     'The database would remove data the safety snapshot does not cover, so the deletion was stopped. Nothing was deleted. This is a platform problem.',
   delete_graph_unreadable:
     'The database’s delete rules could not be checked, so the deletion was stopped. Nothing was deleted.',
+  // Plan payments P-7a.3 (PF-14): the purge engine's own control 3. R-3 refuses
+  // the same subscription at the preview, so this is reached only if one
+  // started between the preview and the delete.
+  subscription_live:
+    'This business has a live plan subscription. Nothing was deleted. The owner cancels it in Settings → Plan, or cancel it in the Stripe dashboard; deletion is possible once it has ended.',
+  subscription_unreadable: 'Whether this business has a live plan subscription could not be checked. Nothing was deleted. Try again.',
   stripe_connected: 'A Stripe account is connected to this business. Nothing was deleted. Disconnect it first.',
   stripe_unreadable: 'Whether Stripe is connected could not be checked. Nothing was deleted. Try again.',
   local_blocking: 'A billing or money check blocks this deletion. Nothing was deleted. Reopen the preview to see which.',

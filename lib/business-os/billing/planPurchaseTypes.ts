@@ -109,4 +109,12 @@ export interface PlanManageWireShape {
   paymentFailed: boolean;
   /** P-7a.2: "Update card" (Stripe's portal) and "Invoices". Present only when true. */
   cardAndInvoices?: true;
+  /**
+   * P-7a.3 (BQ-5): set only beside Cancel or Reactivate, and only when the
+   * account goes back to admin-dated free access (a Founding Partner) when the
+   * paid plan lapses, and that free access ends LATER than the paid-through
+   * date plus the renewal settlement margin. ISO `endsAt` is the free-access
+   * end. Absent otherwise, so older payloads read the same.
+   */
+  freeAccessAfter?: { endsAt: string };
 }

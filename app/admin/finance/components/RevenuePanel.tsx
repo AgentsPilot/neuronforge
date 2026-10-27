@@ -134,7 +134,7 @@ export function RevenuePanel({
       onRetry={onRetry}
       alsoWhenUnknown={ourProblems}
     >
-      <div className="space-y-4" data-testid="revenue-body" data-state={revenue.state}>
+      <div className="space-y-4" data-testid="revenue-body">
         <div className="space-y-2" data-testid="revenue-plans-part">
           <h3 className={SUBHEAD}>{REVENUE_PLANS_HEADING}</h3>
           <PlanRevenuePart plans={revenue.plans} />

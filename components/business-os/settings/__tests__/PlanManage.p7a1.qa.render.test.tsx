@@ -256,10 +256,11 @@ describe('QA focus 8 + 7: upgrade_pending, and he / es at 360 px in RTL', () => 
   it('every plan.manage value keeps the English placeholders, in he and es', () => {
     const slots = (s: string) => (s.match(/\{\w+\}/g) ?? []).sort().join(',');
     const keys = Object.keys(translations.en).filter((key) => key.startsWith('plan.manage.'));
-    // 21 from P-7a.1, plus P-7a.2's `plan.manage.update_card` and `plan.manage.opening_stripe`;
+    // 21 from P-7a.1, plus P-7a.2's `plan.manage.update_card` and `plan.manage.opening_stripe`,
+    // plus P-7a.3's `plan.manage.cancel_confirm_founding` (BQ-5);
     // P-7a.4: + payment_failed_cancel_now, cancel_now_body, cancel_now_confirm, ended_now,
     // refusal.payment_failed, − payment_failed_contact.
-    expect(keys).toHaveLength(27);
+    expect(keys).toHaveLength(28);
     for (const key of keys) {
       for (const lang of ['he', 'es'] as const) {
         expect(`${key}:${slots(translations[lang][key] ?? '')}`).toBe(`${key}:${slots(translations.en[key])}`);
