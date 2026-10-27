@@ -111,6 +111,7 @@ function payload(overrides: Partial<EnvironmentViewPayload> = {}, label: Environ
       shouldNotBeSet: checked === null ? null : 0,
       unrecognisedFlags: 0,
       surroundingWhitespace: 0,
+      supabaseUrlMismatch: 0,
     },
     generatedAt: '2026-01-02T03:04:05.000Z',
     ...overrides,
@@ -633,5 +634,83 @@ describe('Environment page', () => {
     await screen.findByTestId('environment-card');
     await act(async () => first(okAnswer(payload({}, 'unknown'))));
     expect(screen.getByTestId('environment-chip')).toHaveTextContent('Production');
+  });
+});
+
+describe('EC-6: Supabase project label (workplan §8.4 S6-10; SA OQ-1, OQ-3, SA-L6)', () => {
+  function supabasePayload(): EnvironmentViewPayload {
+    const base = payload({}, 'production');
+    return {
+      ...base,
+      groups: [
+        {
+          id: 'database',
+          label: 'Database',
+          description: 'Database settings.',
+          rows: [
+            row(
+              'FAKE_PUBLIC_DB_URL',
+              { kind: 'shown', text: 'https://fakeref1.supabase.co' },
+              {
+                group: 'database',
+                scope: 'browser-inlined',
+                diagnostics: ['supabase-url-mismatch'],
+                supabaseProject: { kind: 'known', label: 'Fake-dev-project', role: 'development-staging' },
+              }
+            ),
+            row(
+              'FAKE_SERVER_DB_URL',
+              { kind: 'shown', text: 'https://fakeref2.supabase.co' },
+              { group: 'database', diagnostics: ['supabase-url-mismatch'], supabaseProject: { kind: 'unknown' } }
+            ),
+            row('FAKE_PLAIN_URL', { kind: 'shown', text: 'https://db.example.test' }, { group: 'database' }),
+          ],
+        },
+      ],
+      counts: { ...base.counts, rows: 3, set: 3, notSet: 0, requiredNotSet: 0, shouldNotBeSet: 0, supabaseUrlMismatch: 1 },
+    };
+  }
+
+  it('shows the label then the role words beside the origin, "Unknown project" as neutral text, and nothing on a plain row', async () => {
+    await renderReady(supabasePayload());
+    expect(valueText('FAKE_PUBLIC_DB_URL')).toBe(
+      'https://fakeref1.supabase.coFake-dev-project Development and stagingNot the same address as the other Supabase URL'
+    );
+    const known = valueCell('FAKE_PUBLIC_DB_URL').getByTestId('env-supabase-project');
+    expect(known).toHaveTextContent('Fake-dev-project Development and staging');
+    // Origin first, then the label (OQ-1).
+    const origin = valueCell('FAKE_PUBLIC_DB_URL').getByText('https://fakeref1.supabase.co');
+    expect(origin.compareDocumentPosition(known) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const unknown = valueCell('FAKE_SERVER_DB_URL').getByTestId('env-supabase-project');
+    expect(unknown).toHaveTextContent(/^Unknown project$/);
+    // OQ-3: not a chip, not amber.
+    expect(unknown.closest('[data-tone]')).toBeNull();
+    expect(unknown.querySelector('[data-tone]')).toBeNull();
+
+    expect(valueCell('FAKE_PLAIN_URL').queryByTestId('env-supabase-project')).toBeNull();
+    expect(valueText('FAKE_PLAIN_URL')).toBe('https://db.example.test');
+  });
+
+  it('the mismatch is an amber chip in words on both rows, and counts in "Values to check"', async () => {
+    await renderReady(supabasePayload());
+    for (const name of ['FAKE_PUBLIC_DB_URL', 'FAKE_SERVER_DB_URL']) {
+      const chip = valueCell(name).getByText('Not the same address as the other Supabase URL');
+      expect(chip.closest('[data-tone]')).toHaveAttribute('data-tone', 'warn');
+      expect(chip.closest('[data-testid="env-diagnostic"]')).toHaveAttribute('data-code', 'supabase-url-mismatch');
+    }
+    const tile = screen.getByTestId('kpi-values-to-check');
+    expect(tile).toHaveAttribute('data-status', 'amber');
+    expect(tile).toHaveTextContent('1 Supabase address mismatch');
+    expect(tile).toHaveAttribute('href', '#env-row-FAKE_PUBLIC_DB_URL');
+  });
+
+  it('a payload with a malformed project is the fallback, not a crash', async () => {
+    const data = supabasePayload();
+    (data.groups[0].rows[0] as unknown as Record<string, unknown>).supabaseProject = { kind: 'known', label: 'FAKE-x', role: 'FAKE-role' };
+    stubFetch(okAnswer(data));
+    render(<AdminEnvironmentPage />);
+    await screen.findByTestId('environment-error');
+    expect(document.body.textContent).not.toContain('FAKE-role');
   });
 });
