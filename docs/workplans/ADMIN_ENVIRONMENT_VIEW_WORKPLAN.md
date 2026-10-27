@@ -2220,6 +2220,140 @@ The guard's own cost is about 3 s here; Dev measured 1.8 to 2.0 s. The standalon
 
 ---
 
+## 8. EC-6: Supabase project label
+
+**Branch:** `feature/admin-environment-supabase-label` · **Requirement:** [ADMIN_ENVIRONMENT_SUPABASE_PROJECT_LABEL_REQUIREMENT.md](/docs/requirements/ADMIN_ENVIRONMENT_SUPABASE_PROJECT_LABEL_REQUIREMENT.md) (binding: its SA Review, OQ-1 to OQ-6 and SA-L1 to SA-L9) · **Status:** Code Complete, awaiting SA code review
+
+> Public-repo rule (OQ-5, SA-C14): this section quotes no project ref, no real origin and no label as seen on a real deployment. Test refs are made up.
+
+### 8.1 Approach
+
+The two Supabase URL rows (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_URL`) gain an optional `supabaseProject` field, derived after the catalogue loop from the row's `shown` origin only (SA-L1): one anchored regex `^https://([a-z0-9]+)\.supabase\.co$` (OQ-6) and one `ReadonlyMap` lookup (SA-L3), with no try/catch (SA-L4). When both rows are `shown` and their origins differ, `supabase-url-mismatch` is appended to both rows after the existing codes (SA-L6), and `counts.supabaseUrlMismatch` is set to 1 from the pair (OQ-4, SA-L7). The page shows the label and the role words, muted, after the origin (OQ-1), "Unknown project" in the same muted style (OQ-3), and counts the mismatch in "Values to check".
+
+Test seam: `ClassifyEnvironmentOptions.supabaseProjects` (a substitute table), like the existing `catalogue` and `isNoise` seams, so classifier tests use made-up refs for the "known" case. The serialisation gate mocks the table module with a made-up ref.
+
+### 8.2 Files to create / modify
+
+| File | Action | Reason |
+|---|---|---|
+| `lib/admin/environment-types.ts` | modify | `EnvSupabaseRole`, `EnvSupabaseProject`, row field, new code, new count |
+| `lib/admin/environment/supabaseProjects.ts` | create | The table (OQ-2): pure data, type-only imports, `ReadonlyMap` |
+| `lib/admin/environment/classifyEnvironment.ts` | modify | Label derivation, mismatch code and count, tally key, test seam |
+| `app/admin/environment/environmentDisplay.ts` | modify | Role words `Record`, mismatch words, `isRow` / `isCounts` guards, value-cell words, KPI tile and sub-line, `firstVisible` codes |
+| `app/admin/environment/components/EnvironmentView.tsx` | modify | Label and muted role / "Unknown project" in the value cell |
+| `lib/admin/environment/__tests__/classifyEnvironment.test.ts` | modify | SA-L8 classifier cases, code order and DTO key lists |
+| `lib/admin/environment/__tests__/serialisation.test.ts` | modify | User-info fixture on a Supabase host; code and audit key lists |
+| `app/admin/environment/__tests__/environmentDisplay.test.ts` | modify | Guard rejections, words, tile value and sub-line |
+| `app/admin/environment/__tests__/page.render.test.tsx` | modify | Render of label, "Unknown project", no label, mismatch chip |
+| `app/api/admin/environment/__tests__/route.test.ts` | modify | Audit key list gains `supabaseUrlMismatch` (no route code change) |
+
+### 8.3 Task list
+
+- ✅ T6-1 Types: role union, project field, `supabase-url-mismatch`, `supabaseUrlMismatch`
+- ✅ T6-2 `supabaseProjects.ts` with the one initial entry (role `development-staging`)
+- ✅ T6-3 Classifier: label from the shown origin, mismatch on both rows after existing codes, count from the pair, tally key initialised and not read
+- ✅ T6-4 Page words: `SUPABASE_ROLE_WORDS`, mismatch chip words, guards, tile and sub-line, `firstVisible`
+- ✅ T6-5 Value cell render
+- ✅ T6-6 Tests (§8.4)
+- ✅ T6-7 Jest run and focused typecheck (§8.5)
+
+### 8.4 Test plan
+
+| Id | Where | Case |
+|---|---|---|
+| S6-1 | classifier | Known ref (made-up, injected table): both rows carry the label and role |
+| S6-2 | classifier | Unknown ref reads `{ kind: 'unknown' }`; `https://constructor.supabase.co` reads unknown (SA-L3) |
+| S6-3 | classifier | No label: custom domain, `127.0.0.1:54321`, `:8443`, extra subdomain, `http://` Supabase host; upper-case input shows the lower-case origin with its label (SA-L2) |
+| S6-4 | classifier | Hidden URL (does not parse, fails a global gate) and unset URL: no label, no mismatch |
+| S6-5 | classifier | One row set only: label, no mismatch; same origin on both: no mismatch |
+| S6-6 | classifier | Different origins: code on both rows after existing codes; `supabaseUrlMismatch` is 1, not 2; `http` against `https` raises it; uncategorised rows never carry it |
+| S6-7 | display | Guard rejects a bad `kind`, an unknown role, a non-string, empty or 61-character label; accepts absent and valid |
+| S6-8 | display | "Values to check" value adds the count; sub-line gains ", 1 Supabase address mismatch" only above 0; the tile links to the mismatched row |
+| S6-9 | serialisation | User-info credential on a Supabase host: label shows, no 8-character window of the credential in any sink |
+| S6-10 | render | Label and role words; "Unknown project"; no label on a plain row; mismatch chip in words |
+
+### 8.5 Implementation notes and results
+
+**Delivered as planned.** The route has no code change; its response gains the optional row field and the new count through the types. The audit row gains `supabaseUrlMismatch` through the existing `...payload.counts` spread (OQ-4).
+
+| Ruling | Where it is met |
+|---|---|
+| OQ-1 | `EnvSupabaseRole` in the types; `SUPABASE_ROLE_WORDS` (a `Record`) in `environmentDisplay.ts`; the cell reads origin, label, role words (muted) |
+| OQ-2 | `lib/admin/environment/supabaseProjects.ts`, type-only import; the client-boundary guard stays green |
+| OQ-3 | "Unknown project" is muted text, not a chip and not a code (render test checks there is no `data-tone`) |
+| OQ-4 | `counts.supabaseUrlMismatch` from the pair; tile value and sub-line; `isCounts` and `firstVisible` extended |
+| OQ-5 | Code comments state the intended role only |
+| OQ-6 | `^https://([a-z0-9]+)\.supabase\.co$` against the shown origin |
+| SA-L1 | Derived only for `display.kind === 'shown'`; the page also shows a label only beside a shown origin |
+| SA-L2 | Test S6-3b (upper case and `:443` normalised); `:8443` is in the no-label list |
+| SA-L3 | `ReadonlyMap`; `constructor`, `tostring`, `hasownproperty`, `valueof` read unknown against the injected table and the real one |
+| SA-L4 | No try/catch, no `rowErrors` entry |
+| SA-L5 | Field omitted when no label applies; built field by field; `isRow` checks it (closed `kind`, role is a key of the words map, label 1 to 60 characters) |
+| SA-L6 | Appended to both rows after existing codes; independent of `checkedAgainst`; never on uncategorised rows |
+| SA-L7 | Tally key initialised, never read |
+| SA-L8 | All tests listed in §8.4; refs are made up; the serialisation gate mocks the table with a made-up ref |
+| SA-L9 | No drift guard. A small table-shape test (refs fit the pattern, labels fit the guard, type-only imports) is not a drift guard: it never compares the table with any deployment |
+
+**Deviations.** (1) A test seam, `ClassifyEnvironmentOptions.supabaseProjects`, so that classifier tests use made-up refs for the known case instead of the real entry. It follows the existing `catalogue`, `groups`, `isNoise` and `now` seams. (2) The table-shape test above, for SA review. (3) The sub-line says "mismatches" for a count above 1, which cannot happen today (the count is 0 or 1).
+
+**Results (2026-10-27, worktree, Windows).**
+
+| Check | Result |
+|---|---|
+| `npx jest lib/admin/environment app/admin/environment app/api/admin/environment` | 8 suites, 218 of 218 pass (EC-6 adds 21 tests) |
+| Other suites that pin the codes or the response shape (`git grep surrounding-whitespace`) | All within the 8 suites above; their key and code lists were updated |
+| `npx eslint` on the touched directories | Clean |
+| `tsc --noEmit -p .` (8 GB heap) | Ran to completion with no out-of-memory crash; 1,849 errors, all pre-existing elsewhere, 0 in touched files |
+
+### 8.6 SA code review (2026-10-27)
+
+**Reviewed by SA, 2026-10-27.** **Status:** Approved with notes. Read against `git diff HEAD` plus the new `supabaseProjects.ts`, and checked against OQ-1 to OQ-6 and SA-L1 to SA-L9.
+
+**Rulings on the deviations**
+
+| # | Ruling |
+|---|---|
+| D-1 test seam `ClassifyEnvironmentOptions.supabaseProjects` | **Accepted.** Same shape as the `catalogue`, `isNoise` and `now` seams. The route never passes it, so production always gets `SUPABASE_PROJECTS` (`classifyEnvironment.ts`, the `??` default). It keeps real refs out of classifier tests, which OQ-5 requires. |
+| D-2 table-shape self-check | **Accepted.** It is not a drift guard under SA-L9: it never reads a deployment's env and never fails because a ref is missing. It checks only that the table fits the regex, the payload guard and the type-only rule. Its assertions are booleans, so a failure prints no ref. |
+| D-3 plural "mismatches" | **Accepted.** It is cheap, it is correct if the rule ever widens, and it changes nothing today. |
+
+**Conditions checked**
+
+| Ruling | Result |
+|---|---|
+| OQ-5 public repo | Pass. In this diff the real ref appears only in `supabaseProjects.ts`. The diff has no "live", "current", "for now", "temporary" or deployment wording. Tests use made-up refs only, and the serialisation gate mocks the table module. |
+| SA-L1 fail-closed | Pass. Derivation reads only `display.text` of a `shown` catalogued row. Uncategorised rows are never visited. On the page, `rowValueWords` shows a project only when `mono` is non-null, which happens only for `shown`. |
+| SA-L3 prototype-safe | Pass. `ReadonlyMap` with `.get`. Prototype names are tested against both the injected table and the real one. The page guard uses `hasOwnProperty.call` on `SUPABASE_ROLE_WORDS`. |
+| SA-L4 | Pass. No try/catch and no `rowErrors` entry. |
+| SA-L5 payload guard | Pass. The field is omitted, never null, and is built field by field. `isSupabaseProject` checks the closed `kind`, a label of 1 to 60 characters, and that the role is one of the role-words keys. |
+| SA-L6 | Pass. The words are right, `detail` is null, and the code is appended after the existing codes on both rows, independent of `checkedAgainst`. |
+| OQ-4 / SA-L7 | Pass. The count comes from the pair (0 or 1). The tally key is initialised and never read. `isCounts`, the tile value, the sub-line and `firstVisible` are all extended. |
+| Client boundary (OQ-2, SA-C11) | Pass. Nothing under `app/admin/environment/` imports `supabaseProjects.ts`. The existing guard is green. |
+
+**Notes (non-blocking)**
+
+1. `supabaseProjects.ts:36`: `SUPABASE_URL_ROW_NAMES` could be `as const`. Style only. Low.
+2. `classifyEnvironment.test.ts:723`: the role list is written out by hand. The compile-time `EnvSupabaseRole` already covers it, so this is fine. Low.
+3. Test stability: in the SA re-run of the 8 environment suites in parallel, 217 of 218 passed. One `page.render.test.tsx` case failed under load (about 81 s wall time). The suite passed 47 of 47 when run alone. This looks like timing sensitivity in the render suite, not an EC-6 defect. QA should re-run the full set once and record the result. Low.
+
+### EC-6 code approved for QA: Yes
+
+---
+
+
+### 8.7 QA report (2026-10-27)
+
+**Verdict: PASS.** No bugs.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Environment suites (8) | ✅ 218/218, four full runs. SA's one load-related render failure did not reproduce (likely a `findByTestId` timeout under load) |
+| 2 | Known ref on both URLs | ✅ both rows labelled, no mismatch, count 0 |
+| 3 | Unknown ref; differing URLs; one URL unset; user-info URL; `constructor`; `http`, `:8443`, `127.0.0.1` | ✅ `unknown`; code on both rows with count 1; set row labelled and no mismatch; clean origin labelled; `unknown`; no label |
+| 4 | Negative controls: plain-object lookup; count read from tally | ✅ the `constructor` test fails, and three count tests fail; the file was byte-identical after restore |
+| 5 | Leak gate with a credential-bearing Supabase URL | ✅ only the origin and the label leave the server |
+| 6 | Public repo: within this diff the real ref is only in `supabaseProjects.ts`; no wording about which deployment uses it | ✅ |
+
 ## Change History
 
 | Date | Change | Details |
@@ -2232,4 +2366,7 @@ The guard's own cost is about 3 s here; Dev measured 1.8 to 2.0 s. The standalon
 | 2026-10-27 | RM: commit, PR and auto-merge | EC-1 and EC-2 committed (`7d3b89a0`, `657f10b8`, `c866088e`), synced with `main` without conflicts, PR #522 opened on auto-merge. §7 filled in. |
 | 2026-10-27 | EC-3 and EC-4 workplans written | Dev, on `feature/admin-environment-view-2`. §3: the drift guard as one Jest file with pure scanner functions, plugin JSON and constant resolution (SA Q-2), the timing plan with a measured 1.24 to 1.32 s local scan, negative controls N-1 to N-14, questions Q3-1 to Q3-8. §4: closed diagnostic codes with `checkedAgainst` and null counts when not checked, the boost count through its reader (QA-3), the whitespace check, a five-tile KPI strip, search and a URL group filter, tests D/S-7/P4, questions Q4-1 to Q4-12. Header, overview and ToC updated. |
 | 2026-10-27 | EC-3 implemented: Code Complete | Dev. The drift guard with E3-1 (pinned sites with a count, no console output), E3-3 (byte prefilter; N-15 template-literal read) and Q3-2 to Q3-5. The 133 pin removed; docs step and `.env.example` pointer added. Guard about 1.8 to 2.0 s marginal locally, 3.1 s inside the full gate. Full local gate: 13 failing suites, all of them local-only, shown unchanged without the guard; no exemption needed. §3.6 ticked, §3.9 added. Requirement fold gaps closed (E4-6). |
+| 2026-10-27 | EC-6 workplan and implementation: Code Complete | Dev, on `feature/admin-environment-supabase-label`. §8 added: approach, files, tasks, test plan S6-1 to S6-10, rulings map, deviations (test seam for the table, a table-shape test, the plural sub-line), results: 218 of 218 environment tests, 0 tsc errors in touched files. |
+| 2026-10-27 | SA code review EC-6: approved with notes | §8.6 added. Deviations D-1 to D-3 accepted. OQ-5, SA-L1, L3, L4, L5, L6, OQ-4/L7 and the client boundary all pass. Three low notes, one of them a load-related render-suite flake for QA to re-run. |
 | 2026-10-27 | RM: PR 2 commit, PR and auto-merge | EC-3 and EC-4 committed (`4de3f0a7`, `587cb3a7`, docs `3b596527`), synced with `main` without conflicts (`f7cacd57`), PR #524 opened on auto-merge. §7 PR 2 block added. |
+| 2026-10-27 | EC-6 QA report | §8.7: PASS, 218/218, negative controls prove the lookup and count tests bite |
