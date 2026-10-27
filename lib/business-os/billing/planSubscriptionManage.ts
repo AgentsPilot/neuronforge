@@ -13,7 +13,8 @@
  *   3  price-recognition switch off, key mode unknown  → manage_unavailable
  *   4  billing row (session user, key mode)            → billing_row_unreadable
  *   5  planManageOffer (our data, the screen's rule)   → not_subscribed / subscription_not_active /
- *                                                        payment_failed_contact_us / manage_unavailable
+ *                                                        payment_failed_contact_us / manage_unavailable /
+ *                                                        change_pending (D2, cancel only: SA W-3)
  *   6  Stripe: the subscription, fresh; C-4 cross-checks
  *        (id, customer, mode, `bos_user_id`)            → billing_record_mismatch (alert, nothing written)
  *        its status                                     → payment_failed_contact_us / subscription_not_active
@@ -21,7 +22,9 @@
  *                                                      → `unchanged`, no write, no audit; heals our row
  *                                                        when it disagrees with Stripe (C-2)
  *   8  a pending upgrade update                        → upgrade_pending (TQ-5, whatever Stripe allows: X-3)
- *   9  Stripe: THE write (`setBusinessOsCancelAtPeriodEnd`)
+ *   9  Stripe: THE write (`setBusinessOsCancelAtPeriodEnd`), with a key fresh
+ *        PER CALL of this function (D2, SX C-4; SA Q-3 / W-4: `planManageAttemptKey`,
+ *        a random uuid suffix, never derived from ids or time alone, never logged)
  *  10  mirror Stripe's own answer onto our row (CAS); a failure is a warn, the webhook converges (C-2)
  *
  * It assigns no plan and invalidates no entitlement: access follows the plan
@@ -39,8 +42,18 @@
  *
  * Imports nothing from the entitlements module (TQ-13).
  *
+ * D2 / SX-1 (workplan docs/workplans/BUSINESS_OS_D2_PLAN_CANCEL_ENGINE_WORKPLAN.md;
+ * SA W-1 to W-12): this is THE one "don't renew" engine for both the plain
+ * cancel and, from D6, the deletion request. It is route-agnostic; D6 adds the
+ * `origin` input with its first real caller (W-5) and calls this function,
+ * never the Stripe method (pinned by oneDontRenewPath.guard.test.ts, W-7). A
+ * cancel may carry a reason CODE (`planLeaveReasons.ts`, SX C-10 / SA-4): it
+ * reaches the audit facts only, never a log line as free text.
+ *
  * @module lib/business-os/billing/planSubscriptionManage
  */
+
+import { randomUUID } from 'crypto';
 
 import { getStripeService, type BusinessOsCancelFacts, type StripeService } from '@/lib/stripe/StripeService';
 import {
@@ -51,10 +64,21 @@ import {
 } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 import { isPlanPriceRecognitionEnabled } from '@/lib/business-os/billing/planPricesFlag';
 import { MANAGEABLE_STATUSES, PAYMENT_FAILED_STATUSES, planManageOffer, type PlanManageSwitches } from '@/lib/business-os/billing/planManageOffer';
+import type { PlanLeaveReasonCode } from '@/lib/business-os/billing/planLeaveReasons';
 import { BOS_USER_ID_METADATA_KEY } from '@/lib/business-os/billing/stripeMetadataKeys';
 import { currentStripeMode, isLiveMode, type StripeMode } from '@/lib/business-os/billing/stripeMode';
 
 export type PlanManageAction = 'cancel' | 'reactivate';
+
+/**
+ * D2 (SX C-4; SA Q-3, W-4): the Stripe idempotency key of ONE attempt. The
+ * `attemptId` is a fresh random uuid per call of `managePlanSubscription`, so a
+ * network retry inside the attempt reuses the key and the next attempt
+ * (cancel → reactivate → cancel within 24 h) never does (P-7a TQ-3's concern).
+ */
+export function planManageAttemptKey(subscriptionId: string, action: PlanManageAction, attemptId: string): string {
+  return `bos-plan-manage:${subscriptionId}:${action}:${attemptId}`;
+}
 
 // ── Refusals ────────────────────────────────────────────────────────────────
 
@@ -66,6 +90,7 @@ export type PlanManageRefusalCode =
   | 'payment_failed_contact_us'
   | 'billing_record_mismatch'
   | 'upgrade_pending'
+  | 'change_pending'
   | 'stripe_error';
 
 /** HTTP status and owner-facing message per refusal. Never a Stripe or database message. */
@@ -77,6 +102,7 @@ export const PLAN_MANAGE_REFUSALS: Readonly<Record<PlanManageRefusalCode, { stat
   payment_failed_contact_us: { status: 409, message: 'Your payment failed. Update your card, or contact us to cancel.' },
   billing_record_mismatch: { status: 409, message: 'We could not change your plan. Please contact support.' },
   upgrade_pending: { status: 409, message: 'An upgrade is waiting for payment. Finish or wait for it first.' },
+  change_pending: { status: 409, message: 'A plan change is in progress. Try again once it is finished.' },
   stripe_error: { status: 502, message: 'The payment provider did not respond. Please try again.' },
 };
 
@@ -122,6 +148,8 @@ export interface PlanManageDeps {
   switches?: () => PlanManageSwitches;
   mode?: () => StripeMode;
   now?: () => Date;
+  /** D2 (SA W-4): the attempt id of the idempotency key. Default `randomUUID` (node `crypto`). */
+  newAttemptId?: () => string;
 }
 
 export interface PlanManageInput {
@@ -130,6 +158,8 @@ export interface PlanManageInput {
   userId: string;
   /** The session account (`resolveAccountId`), for the `bos_user_id` cross-check (C-4). */
   accountId: string;
+  /** D2 (SX C-10, SA-4; SA Q-5): why the owner cancels, a code only. Ignored on reactivate. */
+  reasonCode?: PlanLeaveReasonCode | null;
 }
 
 // ── Results ─────────────────────────────────────────────────────────────────
@@ -148,6 +178,8 @@ export interface PlanManageAuditFacts {
   livemode: boolean;
   /** At the period end (P-7a.4 adds `immediate`, TQ-12). */
   mode: 'period_end';
+  /** D2 (SA Q-4): the cancel's reason code, or null (always null on reactivate). */
+  reasonCode: PlanLeaveReasonCode | null;
 }
 
 export type PlanManageRefusal = {
@@ -260,9 +292,16 @@ export async function managePlanSubscription(input: PlanManageInput, deps: PlanM
         return refuse('subscription_not_active', { source: 'record', reason: offer.reason, subscriptionStatus: row?.subscriptionStatus ?? null });
       case 'payment_failed':
         return refuse('payment_failed_contact_us', { source: 'record' });
+      case 'change_pending':
+        // D2 (SA W-3): refuses a CANCEL only. A reactivate goes on (our row says
+        // renewing, but it may be stale, P-7a C-2): Keep is never refused for this.
+        if (action === 'cancel') return refuse('change_pending', { source: 'record' });
+        break;
     }
   }
-  // `planManageOffer` answered renewing / cancelling, so the row and its subscription id exist.
+  // `planManageOffer` answered renewing / cancelling (or change_pending on a
+  // reactivate, which follows only the live-row rules), so the row and its
+  // subscription id exist.
   const ownRow = row as BusinessOsBillingAccount & { stripeSubscriptionId: string };
   const subscriptionId = ownRow.stripeSubscriptionId;
 
@@ -317,11 +356,13 @@ export async function managePlanSubscription(input: PlanManageInput, deps: PlanM
     return refuse('upgrade_pending', { subscriptionId }, retryAfter ? { retryAfter } : {});
   }
 
-  // 9. THE write.
-  const auditBase = { action, subscriptionId, livemode, mode: 'period_end' as const };
+  // 9. THE write, under a key fresh for this attempt (D2, SX C-4). The key is never logged.
+  const reasonCode = wantCancelling ? input.reasonCode ?? null : null;
+  const auditBase = { action, subscriptionId, livemode, mode: 'period_end' as const, reasonCode };
+  const idempotencyKey = planManageAttemptKey(subscriptionId, action, (deps.newAttemptId ?? randomUUID)());
   let after: BusinessOsCancelFacts;
   try {
-    after = await stripe.setBusinessOsCancelAtPeriodEnd(subscriptionId, wantCancelling);
+    after = await stripe.setBusinessOsCancelAtPeriodEnd(subscriptionId, wantCancelling, { idempotencyKey });
   } catch (err) {
     const type = errorType(err);
     if (type !== null && NOT_EXECUTED_ERROR_TYPES.includes(type)) {

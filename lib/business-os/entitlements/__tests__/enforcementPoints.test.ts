@@ -514,6 +514,11 @@ describe('backward: a gate cannot ship unregistered', () => {
       why: 'Plan payments P-7a.1 (workplan §4.2, §4.8; SA C-1, TQ-13): the reactivate route. `resolveAccountId` is the account seam for the session account (the audit entity id and the `bos_user_id` cross-check). It removes a pending cancellation through planSubscriptionManage.ts and refuses a billing ACTION; it grants or withholds no capability, writes no plan and calls no `check()` / `decide()`. If it ever does, it moves to ENFORCEMENT_POINTS.',
     },
     {
+      file: 'lib/business-os/billing/planBillingDocuments.ts',
+      symbols: ['TIER_MATRIX'],
+      why: 'Plan payments P-7a.2 (workplan §4.4, §4.5; SA C-1, TQ-6): the "Update card" (Stripe portal) and invoice-list orchestration behind the portal and invoices routes. `TIER_MATRIX.presentation` gives the plan LABEL printed on an invoice row (lookup key → tier through the plan price catalog; G5-7: no literal on the screen). Whether the controls are offered is decided by `planCardAndInvoicesOffer` (planManageOffer.ts, import-free) on our billing row; it refuses a billing READ or a portal session, never a capability, writes nothing and calls no `check()` / `decide()`. The two routes import nothing from this module. If it ever does, it moves to ENFORCEMENT_POINTS.',
+    },
+    {
       file: 'app/api/business-os/billing/plan/upgrade/route.ts',
       symbols: ['TIER_ORDER', 'resolveAccountId'],
       why: 'Plan payments P-7b.1a (SA V-10, V-11): the upgrade confirm route. `TIER_ORDER` builds the body schema and `resolveAccountId` is the account seam for the session account (the audit entity id). It swaps the price on the owner subscription through planUpgrade.ts and refuses an upgrade SALE; the plan changes later from the webhook. It grants or withholds no capability and calls no `check()` / `decide()`. If it ever does, it moves to ENFORCEMENT_POINTS.',

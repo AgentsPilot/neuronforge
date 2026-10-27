@@ -95,9 +95,9 @@ describe('environment catalogue', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('K-3 browser-inlined scope is exactly the NEXT_PUBLIC_ names plus both Nango names', () => {
+  it('K-3 browser-inlined scope is exactly the NEXT_PUBLIC_ names', () => {
     for (const entry of ENVIRONMENT_CATALOGUE) {
-      const expected = entry.name.startsWith('NEXT_PUBLIC_') || entry.name === 'NANGO_PUBLIC_KEY' || entry.name === 'NANGO_SECRET_KEY';
+      const expected = entry.name.startsWith('NEXT_PUBLIC_');
       expect({ name: entry.name, browser: entry.scope === 'browser-inlined' }).toEqual({ name: entry.name, browser: expected });
     }
   });

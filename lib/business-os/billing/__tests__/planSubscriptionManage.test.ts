@@ -300,6 +300,8 @@ describe('the write', () => {
         renewsOn: null,
         livemode: false,
         mode: 'period_end',
+        // D2 (SA Q-4): no reason given → null.
+        reasonCode: null,
       },
     });
     expect(h.calls).toEqual(['mode', `db:findByUser:${USER}:false`, 'stripe:retrieve:sub_own', 'stripe:update:sub_own:true', 'db:mirror']);
