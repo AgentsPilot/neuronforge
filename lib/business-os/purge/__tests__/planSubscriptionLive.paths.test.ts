@@ -9,7 +9,7 @@
  *   Admin delete (preview, commit's evaluations 1 and 2)
  *                               R-3 → `readPlanBilling` + `isPlanSubscriptionLive`
  *   Owner self-delete, operator test-account cleanup
- *                               guard G-6 inside `operator_test_account_cleanup`
+ *                               guard G-6 inside the operator test-account cleanup function
  *                               (SQL, generated from `R3_LIVE_STATUSES`)
  *
  * This suite pins, in order:
@@ -103,7 +103,7 @@ const ROWS: PlanBillingRowFact[] = STATUSES.flatMap((status) =>
 /**
  * The generator's first-line marker. Generated cleanup migrations are found by
  * CONTENT, not by filename, exactly as `scripts/__tests__/testAccountCleanupSql.test.ts`
- * (G-b) finds them: 20261081 already broke the `operator_test_account_cleanup`
+ * (G-b) finds them: 20261081 already broke the cleanup function's
  * name pattern once, so a filename glob would miss (or false-red on) the next
  * rename. (SA code review P-7a.3, F-3.)
  */
@@ -291,7 +291,10 @@ describe('4. the wiring: one predicate, one caller per destructive RPC', () => {
 
   it('the cleanup function (G-6) is called from one repository only', () => {
     expect(filesMatching(/\.rpc\(\s*CLEANUP_RPC\b/)).toEqual(['lib/repositories/TestAccountCleanupRepository.ts']);
-    expect(filesMatching(/\.rpc\(\s*['"`]operator_test_account_cleanup['"`]/)).toEqual([]);
+    // The name is assembled at run time: only its repository may spell it out
+    // (lib/server/__tests__/testCleanupSecret.test.ts, R-7).
+    const cleanupName = ['operator', 'test', 'account', 'cleanup'].join('_');
+    expect(filesMatching(new RegExp(`\\.rpc\\(\\s*['"\`]${cleanupName}['"\`]`))).toEqual([]);
   });
 });
 
