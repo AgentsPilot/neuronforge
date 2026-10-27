@@ -79,10 +79,12 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +2 Business OS (ACCOUNT_PSEUDONYMISED, ACCOUNT_DELETION_REFUSED): data export DE-10b.1, close and anonymise (2026-10-18).
   // +2 shared (EXCHANGE_RATE_UPDATED, EXCHANGE_RATE_ENABLED_CHANGED): Admin Exchange Rates slice 1a, SA O-6 (2026-10-19).
   // +2 shared (EXCHANGE_RATE_SYNC_RUN, EXCHANGE_RATE_SUGGESTION_ACCEPTED): Admin Exchange Rates slice 1e, SA §13.7 SQ-47 / §13.8 SQ-50 (2026-10-25).
-  it('pins the split: 60 Business OS, 76 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(220);
-    expect(eventsTagged('bos')).toHaveLength(60);
-    expect(eventsTagged('shared')).toHaveLength(76);
+  // +2 Business OS (BOS_BILLING_SUBSCRIPTION_CANCELLED, _REACTIVATED): plan payments P-7a.1, the owner's cancel and reactivate (2026-10-26).
+  // +1 shared (ADMIN_ENVIRONMENT_VIEWED): admin environment view EC-1, SA OQ-8 (2026-10-26).
+  it('pins the split: 62 Business OS, 77 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(223);
+    expect(eventsTagged('bos')).toHaveLength(62);
+    expect(eventsTagged('shared')).toHaveLength(77);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });
 });

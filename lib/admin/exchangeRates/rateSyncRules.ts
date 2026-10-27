@@ -18,11 +18,18 @@
  * page guard (`ALLOWED_FETCH`) accepts only literal `/api/admin/exchange-rates`
  * targets. The XML feed URL is not here: it lives only in the server-only
  * `ecbFeed.ts`.
+ *
+ * Slice 1f (SA §13.9 SQ-54, SQ-55): the "Rates last checked" tile also names
+ * WHO ran that sync. The route reads the actor as a `LastRateSyncRecord` and
+ * labels it with the same `editorLabel` rule and the same one lookup as the
+ * history (`labelLastSync`); right after a sync the page takes the name from
+ * the plain GET's `viewer` (`lastSyncFromSync(answer, viewer)`), with no new
+ * request.
  */
 
 import { z } from 'zod';
 
-import type { ExchangeRatesPayload } from './exchangeRateRules';
+import { editorLabel, type EditorLookup, type ExchangeRatesPayload } from './exchangeRateRules';
 
 // ── The request ─────────────────────────────────────────────────────────────
 
@@ -121,19 +128,70 @@ export const ECB_SOURCE_NOTE = 'Published by the ECB for information only.';
  * `unavailable`: the audit trail could not be read.
  */
 export type LastRateSyncWire =
-  | { status: 'ok'; checkedAt: string; rateDate: string }
+  | {
+      status: 'ok';
+      checkedAt: string;
+      rateDate: string;
+      /** The admin who ran the sync (slice 1f, SQ-53); null when the audit entry has no actor. */
+      checkedBy: string | null;
+      /**
+       * Their name, else admin email, else "Unknown user" (`editorLabel`). Null
+       * only when the name lookup failed for a known actor; the page then shows
+       * the short id (SQ-54).
+       */
+      checkedByLabel: string | null;
+    }
   | { status: 'none' }
   | { status: 'unavailable' };
 
-/** The plain GET's answer: today's payload plus `lastSync`. `ExchangeRatesPayload` itself is unchanged. */
-export type ExchangeRatesReadPayload = ExchangeRatesPayload & { lastSync: LastRateSyncWire };
+/**
+ * The sync as the route reads it, before the label is resolved (slice 1f,
+ * SQ-54): the same three states, `ok` carrying the actor and no label. Only
+ * `labelLastSync` turns it into the wire type.
+ */
+export type LastRateSyncRecord =
+  | { status: 'ok'; checkedAt: string; rateDate: string; checkedBy: string | null }
+  | { status: 'none' }
+  | { status: 'unavailable' };
+
+/**
+ * The signed-in admin of the page (slice 1f, SQ-55 (a')): the id from the
+ * session gate, never from the request, and its label from the same one
+ * lookup (null when that lookup failed).
+ */
+export interface RateViewerWire {
+  userId: string;
+  label: string | null;
+}
+
+/** The plain GET's answer: today's payload plus `lastSync` and `viewer`. `ExchangeRatesPayload` itself is unchanged. */
+export type ExchangeRatesReadPayload = ExchangeRatesPayload & { lastSync: LastRateSyncWire; viewer: RateViewerWire };
+
+/** Label the sync actor with the one lookup (SQ-54). `none` and `unavailable` pass through. */
+export function labelLastSync(record: LastRateSyncRecord, lookup: EditorLookup): LastRateSyncWire {
+  if (record.status !== 'ok') return record;
+  return { ...record, checkedByLabel: editorLabel(record.checkedBy, lookup) };
+}
 
 /**
  * The tile's value straight from a sync answer (SQ-51 (5)): `ok` only when the
  * sync succeeded and named its rate date, else null (a failed sync leaves the
- * tile as it was).
+ * tile as it was). Slice 1f (SQ-55 (a')): the checker is the page's viewer,
+ * because the admin who posts to `/sync` is the signed-in admin of the page,
+ * so the tile reads exactly what a reload will show. With no viewer (not
+ * reachable: Sync stays disabled until a plain read succeeded) both fields
+ * are null, which shows "Unknown user".
  */
-export function lastSyncFromSync(answer: ExchangeRateSyncPayload): LastRateSyncWire | null {
+export function lastSyncFromSync(
+  answer: ExchangeRateSyncPayload,
+  viewer: RateViewerWire | null
+): LastRateSyncWire | null {
   if (answer.outcome !== 'ok' || answer.rateDate === null) return null;
-  return { status: 'ok', checkedAt: answer.fetchedAt, rateDate: answer.rateDate };
+  return {
+    status: 'ok',
+    checkedAt: answer.fetchedAt,
+    rateDate: answer.rateDate,
+    checkedBy: viewer?.userId ?? null,
+    checkedByLabel: viewer?.label ?? null,
+  };
 }

@@ -38,6 +38,21 @@
  * Amended 2026-10-20 (user request): the Last rate change tile rounds each rate to 3 decimals, so the three Exchange rates cases that show a rate are re-hashed; no other case or hash touched.
  * Amended by Exchange rates 1d: fixtures gain `lastChange`; no case or hash changed.
  * Amended 2026-10-25 by Exchange rates 1e (SA §13.8 SQ-51 (7)): a third tile, "Rates last checked", so the five ExchangeRatesKpis cases are re-hashed (loading has 3 placeholders; the four payload cases pass `lastSync` ok, names kept) and two cases are appended (none, unavailable); no other case or hash touched.
+ * RE-FROZEN ONCE by Money MK-3a (SA-WP-MK3 condition 1): Charge checks' strip `CostsKpis` was
+ * replaced by the AI cost page's strip `AiCostKpis` (A-K1 to A-K5) and the file deleted, so its three
+ * cases (`A2 CostsKpis loading`, `A2 CostsKpis`, `A2 CostsKpis no sections`) and their fixture are
+ * removed (the component no longer exists, so the cases cannot run) and five `A2 AiCostKpis` cases
+ * are appended. No other case or hash touched. Old and new SHA-256 of this file are in
+ * docs/workplans/ADMIN_MONEY_MK3_AI_COST_PAGE_WORKPLAN.md.
+ * RE-FROZEN ONCE by Money MK-3b (SA-WP-MK3 condition 1, SA-CR-MK3A): AI calls & usage became the AI
+ * cost page's Calls tab and its strip `AnalyticsKpis` was deleted (one strip per page; its figures are
+ * the Calls tab's summary cards, SA-Q-MK3-6), so its four cases and their fixtures are removed (the
+ * component no longer exists, so the cases cannot run). The strip is now the page's on both tabs: its
+ * A-K2 opens the Calls tab in place and, on the Calls tab, the check tiles open Summary & checks, so
+ * the four `A2 AiCostKpis` cases with figures are re-hashed (their props gain `tab` and `tabLink`;
+ * the loading case is byte-identical) and one Calls-tab case is appended (DV-3). No other case or
+ * hash touched. Old and new SHA-256 of this file are in the MK-3 workplan.
+ * Amended 2026-10-25 by Exchange rates 1f (SA §13.9 SQ-57): `FX_LAST_SYNC_OK` gains its checker (Anna Admin), so the four payload cases that draw it are re-hashed (two tiles, no history, name lookup failed, old rate null); loading, last sync none and last sync unavailable keep their hashes; two cases are appended (checker label failed, no checker); no other case or hash touched.
  */
 
 import React from 'react';
@@ -46,9 +61,6 @@ import { createHash } from 'crypto';
 
 import { KpiStrip, KpiTile } from '@/app/admin/components/layout/KpiStrip';
 
-import { AnalyticsKpis } from '@/app/admin/analytics/components/AnalyticsKpis';
-import type { AnalyticsFilters } from '@/app/admin/analytics/analyticsFilters';
-import type { CategoryTotals, PeriodComparison } from '@/app/admin/analytics/analyticsTypes';
 import { ArchivingKpis } from '@/app/admin/archiving/components/ArchivingKpis';
 import type { ArchivingOverview } from '@/lib/archiving/types';
 import { InviteKpis } from '@/app/admin/business-os-invites/components/InviteKpis';
@@ -56,7 +68,7 @@ import type { InvitesPayload } from '@/app/admin/business-os-invites/types';
 import { ActivityKpis } from '@/app/admin/business-os-llm/components/activity/ActivityKpis';
 import type { ActivityFilters } from '@/app/admin/business-os-llm/activityFilters';
 import type { ActivityPayload } from '@/app/admin/business-os-llm/activityTypes';
-import { CostsKpis } from '@/app/admin/business-os-llm/components/costs/CostsKpis';
+import { AiCostKpis } from '@/app/admin/business-os-llm/components/costs/AiCostKpis';
 import type { CostReportPayload } from '@/app/admin/business-os-llm/costTypes';
 import { SettingsKpis } from '@/app/admin/business-os-llm/components/SettingsKpis';
 import type { SettingsPayload } from '@/app/admin/business-os-llm/types';
@@ -90,15 +102,11 @@ const noop = () => undefined;
 // only the listed fields, so a double assertion through `unknown` is used
 // instead of building every unrelated field (test-only; no `any`).
 
-const analyticsTile = (patch: Partial<AnalyticsFilters>) => ({ href: `/admin/analytics?p=${Object.keys(patch).join(',')}`, apply: noop });
-const ANALYTICS_TOTALS = { cost: 4.25, tokens: 900, inputTokens: 600, outputTokens: 300, calls: 12 };
-const ANALYTICS_CATEGORIES = {
-  creation: { cost: 1, tokens: 100, calls: 2 },
-  execution: { cost: 2, tokens: 200, calls: 4 },
-  memory: { cost: 0.25, tokens: 50, calls: 1 },
-  system: { cost: 1, tokens: 550, calls: 5 },
-} as unknown as CategoryTotals;
-const ANALYTICS_COMPARISON = { changes: { costPct: 12.5 } } as unknown as PeriodComparison;
+// Money MK-3b: the AI cost strip's same-page tab links (a real link, the switch applied).
+const aiCostTabLink = (tab: 'checks' | 'calls', anchor: `#${string}` | null) => ({
+  href: `/admin/ai-cost${tab === 'calls' ? '?tab=calls' : ''}${anchor ?? ''}`,
+  apply: noop,
+});
 
 const ARCHIVING: ArchivingOverview = {
   generatedAt: '2026-10-09T10:00:00.000Z',
@@ -142,13 +150,42 @@ const ACTIVITY = {
   cutover: { coverage: 'after_cutover' },
 } as unknown as ActivityPayload;
 
-const COSTS = {
+// Money MK-3a: the AI cost strip's fixtures (A-K1 to A-K5).
+const AI_COST = {
+  window: { from: '2026-10-01', to: '2026-10-16' },
+  accountFilter: null,
   sections: { totals: 'ok', rows: 'ok' },
   incomplete: true,
-  grandTotal: { stored: { creditsTotal: 1500, costUsd: 3.25, charges: 40 } },
   periods: [{ matches: true }, { matches: false }, { matches: null }],
   mismatchedPeriods: 1,
   fallback: { count: 2, reconciled: 1 },
+  chargedInWindow: { status: 'ok', costUsd: 2.5 },
+  recorded: { status: 'ok', recordedUsd: 3.25, recordedExact: true, aboveCharged: { state: 'figure', usd: 0.75 }, chargedAboveUsd: null },
+} as unknown as CostReportPayload;
+const AI_COST_AT_LEAST = {
+  ...AI_COST,
+  incomplete: false,
+  chargedInWindow: { status: 'partial', costUsd: 2.5 },
+  recorded: { status: 'partial', recordedUsd: 3.25, recordedExact: false, aboveCharged: { state: 'unknown', usd: null }, chargedAboveUsd: null },
+} as unknown as CostReportPayload;
+const AI_COST_UNKNOWN = {
+  ...AI_COST,
+  incomplete: false,
+  sections: { totals: 'ok', rows: 'failed' },
+  periods: [{ matches: null }],
+  mismatchedPeriods: 0,
+  chargedInWindow: { status: 'unknown', costUsd: null },
+  recorded: { status: 'unknown', recordedUsd: null, recordedExact: false, aboveCharged: { state: 'unknown', usd: null }, chargedAboveUsd: null },
+} as unknown as CostReportPayload;
+const AI_COST_BEFORE_CUTOVER = {
+  ...AI_COST,
+  incomplete: false,
+  accountFilter: '1a2b3c4d-1111-4111-8111-abcdefabcdef',
+  mismatchedPeriods: 0,
+  periods: [{ matches: true }],
+  fallback: { count: 0, reconciled: 0 },
+  chargedInWindow: { status: 'ok', costUsd: 0 },
+  recorded: { status: 'partial', recordedUsd: 0.5, recordedExact: true, aboveCharged: { state: 'not_available', usd: null }, chargedAboveUsd: null },
 } as unknown as CostReportPayload;
 
 const SETTINGS = {
@@ -220,7 +257,16 @@ const FX_PAYLOAD_NO_HISTORY: ExchangeRatesPayload = { ...FX_PAYLOAD, history: []
 const FX_PAYLOAD_LOOKUP_FAILED: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, changedByLabel: null }], lastChange: { ...FX_CHANGE, changedByLabel: null }, nameLookup: 'failed' };
 const FX_PAYLOAD_OLD_RATE_NULL: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, oldRate: null }], lastChange: { ...FX_CHANGE, oldRate: null } };
 // Exchange rates 1e (SQ-51 (7)): the "Rates last checked" tile's three states.
-const FX_LAST_SYNC_OK: LastRateSyncWire = { status: 'ok', checkedAt: '2026-10-25T09:14:03.000Z', rateDate: '2026-10-23' };
+// Exchange rates 1f (SQ-57): the `ok` state names who ran it (the fixture admin).
+const FX_LAST_SYNC_OK: LastRateSyncWire = {
+  status: 'ok',
+  checkedAt: '2026-10-25T09:14:03.000Z',
+  rateDate: '2026-10-23',
+  checkedBy: 'aaaaaaaa-1111-4111-8111-111111111111',
+  checkedByLabel: 'Anna Admin',
+};
+const FX_LAST_SYNC_LABEL_FAILED: LastRateSyncWire = { ...FX_LAST_SYNC_OK, checkedByLabel: null };
+const FX_LAST_SYNC_NO_CHECKER: LastRateSyncWire = { ...FX_LAST_SYNC_OK, checkedBy: null, checkedByLabel: 'Unknown user' };
 const FX_LAST_SYNC_NONE: LastRateSyncWire = { status: 'none' };
 const FX_LAST_SYNC_UNAVAILABLE: LastRateSyncWire = { status: 'unavailable' };
 
@@ -274,10 +320,6 @@ const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   ],
 
   // ── A2: the real callers ──────────────────────────────────────────────────
-  ['A2 AnalyticsKpis loading bos', () => <AnalyticsKpis scope="bos" totals={ANALYTICS_TOTALS} categoryTotals={null} comparison={null} possiblyIncomplete={false} category="all" firstLoad tile={analyticsTile} />],
-  ['A2 AnalyticsKpis loading all', () => <AnalyticsKpis scope="all" totals={ANALYTICS_TOTALS} categoryTotals={null} comparison={null} possiblyIncomplete={false} category="all" firstLoad tile={analyticsTile} />],
-  ['A2 AnalyticsKpis bos', () => <AnalyticsKpis scope="bos" totals={ANALYTICS_TOTALS} categoryTotals={null} comparison={ANALYTICS_COMPARISON} possiblyIncomplete category="all" firstLoad={false} tile={analyticsTile} />],
-  ['A2 AnalyticsKpis all', () => <AnalyticsKpis scope="all" totals={ANALYTICS_TOTALS} categoryTotals={ANALYTICS_CATEGORIES} comparison={null} possiblyIncomplete={false} category="memory" firstLoad={false} tile={analyticsTile} />],
   ['A2 ArchivingKpis loading', () => <ArchivingKpis overview={null} loading retention={{}} />],
   ['A2 ArchivingKpis', () => <ArchivingKpis overview={ARCHIVING} loading={false} retention={{}} />],
   ['A2 ArchivingKpis failed run', () => <ArchivingKpis overview={ARCHIVING_FAILED_RUN} loading={false} retention={{}} />],
@@ -285,9 +327,6 @@ const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   ['A2 InviteKpis', () => <InviteKpis payload={INVITES} stoppedCount={1} loading={false} />],
   ['A2 ActivityKpis loading', () => <ActivityKpis payload={null} firstLoad filters={ACTIVITY_FILTERS} tile={activityTile} />],
   ['A2 ActivityKpis', () => <ActivityKpis payload={ACTIVITY} firstLoad={false} filters={ACTIVITY_FILTERS} tile={activityTile} />],
-  ['A2 CostsKpis loading', () => <CostsKpis report={null} firstLoad sectionsShown={false} />],
-  ['A2 CostsKpis', () => <CostsKpis report={COSTS} firstLoad={false} sectionsShown />],
-  ['A2 CostsKpis no sections', () => <CostsKpis report={COSTS} firstLoad={false} sectionsShown={false} />],
   ['A2 SettingsKpis loading', () => <SettingsKpis payload={null} firstLoad />],
   ['A2 SettingsKpis', () => <SettingsKpis payload={SETTINGS} firstLoad={false} />],
   ['A2 SettingsKpis quiet', () => <SettingsKpis payload={SETTINGS_QUIET} firstLoad={false} />],
@@ -306,12 +345,22 @@ const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   ['A2 ExchangeRatesKpis old rate null', () => <ExchangeRatesKpis payload={FX_PAYLOAD_OLD_RATE_NULL} loading={false} lastSync={FX_LAST_SYNC_OK} />],
   ['A2 ExchangeRatesKpis last sync none', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} lastSync={FX_LAST_SYNC_NONE} />],
   ['A2 ExchangeRatesKpis last sync unavailable', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} lastSync={FX_LAST_SYNC_UNAVAILABLE} />],
+  ['A2 ExchangeRatesKpis last sync checker label failed', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} lastSync={FX_LAST_SYNC_LABEL_FAILED} />],
+  ['A2 ExchangeRatesKpis last sync no checker', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} lastSync={FX_LAST_SYNC_NO_CHECKER} />],
   // ── A3 (Money MK-5): the Finance strip's shapes, each with its leading / lagging indicator ──
   ['A3 Finance anchor lagging with status and detail', () => <KpiTile testId="tile-fk3_ai_cost" label="Charged AI cost this month" value="At least $12.50" sub="This month vs last month, UTC · Same days last month: $10.00" status="amber" detail="A lower bound" indicator={{ kind: 'lagging', definition: 'What it costs us.' }} href="#ai-cost" />],
   ['A3 Finance anchor leading with sub and detail', () => <KpiTile testId="tile-fk2_mrr" label="MRR now" value="$49.00" sub="Monthly, at list price, today" detail="Stripe test mode" indicator={{ kind: 'leading', definition: 'The monthly price.' }} href="#revenue-mrr" />],
   ['A3 Finance tab filter current lagging', () => <KpiTile testId="tile-fk4_ai_margin" label="AI margin" value="$85.50" sub="Revenue after tax minus Charged AI cost" detail="After Stripe fees (estimate): $82.32" indicator={{ kind: 'lagging', definition: 'A partial gross margin.' }} filter={{ href: '/admin/finance?tab=accounts', apply: noop, current: true }} />],
   ['A3 Finance tab filter lagging', () => <KpiTile testId="tile-fk5_paying" label="Paying accounts" value="18%" sub="9 of 50 accounts" indicator={{ kind: 'lagging', definition: 'What share pays.' }} filter={{ href: '/admin/finance?tab=plans', apply: noop }} />],
   ['A3 Finance no target lagging (a business picked)', () => <KpiTile testId="tile-fk5_paying" label="Paying accounts" value="Paying" sub="This business, now" indicator={{ kind: 'lagging', definition: 'What share pays.' }} />],
+  // Money MK-3a (SA-WP-MK3 condition 1): the AI cost strip, appended once.
+  ['A2 AiCostKpis loading', () => <AiCostKpis report={null} firstLoad sectionsShown={false} tab="checks" tabLink={aiCostTabLink} />],
+  ['A2 AiCostKpis', () => <AiCostKpis report={AI_COST} firstLoad={false} sectionsShown tab="checks" tabLink={aiCostTabLink} />],
+  ['A2 AiCostKpis at least', () => <AiCostKpis report={AI_COST_AT_LEAST} firstLoad={false} sectionsShown tab="checks" tabLink={aiCostTabLink} />],
+  ['A2 AiCostKpis unknown and not checked', () => <AiCostKpis report={AI_COST_UNKNOWN} firstLoad={false} sectionsShown tab="checks" tabLink={aiCostTabLink} />],
+  ['A2 AiCostKpis no sections, before the cut-over, one business', () => <AiCostKpis report={AI_COST_BEFORE_CUTOVER} firstLoad={false} sectionsShown={false} tab="checks" tabLink={aiCostTabLink} />],
+  // Money MK-3b (DV-3): on the Calls tab, A-K2 is the current tab and the check tiles open Summary & checks.
+  ['A2 AiCostKpis on the Calls tab', () => <AiCostKpis report={AI_COST} firstLoad={false} sectionsShown tab="calls" tabLink={aiCostTabLink} />],
 ];
 
 /** Recorded on the unchanged tree (447d17a2) at Step 0. */
@@ -339,10 +388,6 @@ const EXPECTED: Record<string, string> = {
   'A1 strip loading default': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
   'A1 strip loading with children (Jobs)': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
   'A1 strip not loading with children (Jobs)': '25c330ce9bfa26195e48c1ab327223453f19ff4f8bdf5e489fe29b619d4e2c27',
-  'A2 AnalyticsKpis loading bos': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
-  'A2 AnalyticsKpis loading all': 'c5bb805961ec8cb19fe5a0978668a5be0cbc9a0b7986c96b20876c7568cc86cc',
-  'A2 AnalyticsKpis bos': '5bbe567eea8c70900962b5fffa266205fcdb071a9c72cbe1dd435c3404c9a985',
-  'A2 AnalyticsKpis all': 'a9bbfb89dd2c4b036561724fe48cc06650c192629d3e2bd01540236949535bba',
   'A2 ArchivingKpis loading': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
   'A2 ArchivingKpis': 'eb5d340a074e57e1592ed65cba0adbae8a6d26dee4cb2400e4795c4709ecfc6b',
   'A2 ArchivingKpis failed run': 'a2ed84979c2d347650b4ef81858e132247d8784555e637819e7e8bfbaf949819',
@@ -350,9 +395,6 @@ const EXPECTED: Record<string, string> = {
   'A2 InviteKpis': '150679220b4584492a66f6ba0b129e20f5b990bf21e4c90328813b9d28c5ac2b',
   'A2 ActivityKpis loading': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
   'A2 ActivityKpis': 'a9e127f5ddf66d23d5a85f44a62841b0a294a0ffa26e874a3d2078151878ff58',
-  'A2 CostsKpis loading': 'c5bb805961ec8cb19fe5a0978668a5be0cbc9a0b7986c96b20876c7568cc86cc',
-  'A2 CostsKpis': 'e22045d420bf86b846dbb75148b11d5db550ac05cca812e1f81bc816973d1248',
-  'A2 CostsKpis no sections': 'e8d692a0abc2ce67f01800166cc086d5fff93aa01b1ce3e11c6cb08d936a2a0a',
   'A2 SettingsKpis loading': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
   'A2 SettingsKpis': '2ba767a09c3960540b554ec09800a4523688e7a53b283281e3bf3029ea36d1e4',
   'A2 SettingsKpis quiet': 'ad762af1dcd97b350361a77614cc443052f145bf0db8afa5921446453fe00e0e',
@@ -367,19 +409,31 @@ const EXPECTED: Record<string, string> = {
   // Exchange rates 1a (SQ-7), recorded on first render.
   // Exchange rates 1c.1 (SQ-15): re-pinned and appended, recorded on first render.
   // Exchange rates 1e (SQ-51 (7), 2026-10-25): the five re-hashed for the third tile, two appended.
+  // Exchange rates 1f (SQ-57, 2026-10-25): two tiles, no history, name lookup failed and old rate null
+  // re-hashed for "by {who} · ECB rates of …"; loading, none and unavailable unchanged; two appended.
   'A2 ExchangeRatesKpis loading': 'aa4935d00b1352556b02c0083ab94de58a9ae2e7587678635659c6e46403ea8f',
-  'A2 ExchangeRatesKpis two tiles': '932e504c55866e22589238c4b769f5095adac145a4287ddbc5453acde51053c5',
-  'A2 ExchangeRatesKpis no history': '486416d27266baab1ff8022ce92cb64a10f92409137fd1abbb9cc57043b47726',
-  'A2 ExchangeRatesKpis name lookup failed': 'e6872b2c5651a00352ae15390ee85cf02e23acebc4a3a0e5027483d5e9e06d9d',
-  'A2 ExchangeRatesKpis old rate null': '11e5e00f77e77d259cfb6f67966d9f61fb48b8496fd91ae552ab4354d7065413',
+  'A2 ExchangeRatesKpis two tiles': '806e7a9d76cc04f8d17a6eedde469a4d9ebc66eee3b3fa918d42233debe5178a',
+  'A2 ExchangeRatesKpis no history': '006b781ffb9f917c6be027f67d024677cfbf88c4d160734236d9c306ba55054d',
+  'A2 ExchangeRatesKpis name lookup failed': '406405e8d9294093607e3ce35bed3b6e73c81641b5de9aa47283afa5a24af11c',
+  'A2 ExchangeRatesKpis old rate null': '4c6d30593ce5ad2fd56f126fbd8ccdde4405830aadd64e30a0b9bdc17b119b4d',
   'A2 ExchangeRatesKpis last sync none': 'f64686d1fffe169e2803a5a20e695fb5961b90bfd820332ac39357c7538e56cd',
   'A2 ExchangeRatesKpis last sync unavailable': '118ffdf4174a67801aac84cb7b0ad2b56ac031281453dcfb10bc694997f985e3',
+  'A2 ExchangeRatesKpis last sync checker label failed': '6533379681b22a1d0b30c84eeddb1c1704d228096f0c1890421393852202b868',
+  'A2 ExchangeRatesKpis last sync no checker': '471653ff167baa07d34f48c2939b27d6b95ce054bfade7fed3666e9c916f9163',
   // A3 (Money MK-5): recorded at MK-5's handover.
   'A3 Finance anchor lagging with status and detail': '34166a30ada773fc7c5e7ca8dd90fb66b989d022bfc3b3eefaa1dbaf6fe83358',
   'A3 Finance anchor leading with sub and detail': '33106345987463ab9685bc4fed4a427e5e2e752a216cffdd7562707b82356a71',
   'A3 Finance tab filter current lagging': '9d94402070f3187e444af27a7d8ef5b8abe5c793674473d204cbe79d56944922',
   'A3 Finance tab filter lagging': '5ae604690d8a359e8e904557359e6a9943918b53fd166703309d2321194efc7c',
   'A3 Finance no target lagging (a business picked)': '876167dd1a46e911165ffa38004875214a463aa6eaafc4a8a80c6b5b8d4c434a',
+  // Money MK-3a (SA-WP-MK3 condition 1): recorded on first render; the four with figures re-hashed by MK-3b (tab links).
+  'A2 AiCostKpis loading': 'c5bb805961ec8cb19fe5a0978668a5be0cbc9a0b7986c96b20876c7568cc86cc',
+  'A2 AiCostKpis': '9f6382387ba0e669cd4481345e36abd5e6cf18a3c4bbe243e134f8b041ac762b',
+  'A2 AiCostKpis at least': 'f668d34d03af8cbea89a494a665afa6b2a68eaa3959a31abb68a15e04da18559',
+  'A2 AiCostKpis unknown and not checked': 'c8c606588f5920352f46134e61210ffc8e3ff92a15056ac6a3151d8b000e59c5',
+  'A2 AiCostKpis no sections, before the cut-over, one business': '3d9745841376ccdde08cb4b760f89ce24e2fb306085a2b99a8e0f9c12f03b631',
+  // Money MK-3b: recorded on first render.
+  'A2 AiCostKpis on the Calls tab': '8673b5fe4185daadb9f5f61acf105743c8d2b9e3b1df9e7ef5d3ec7524736452',
 };
 
 describe('Finance F-5 Pin A: the existing KpiTile / KpiStrip callers render byte-identically', () => {

@@ -17,6 +17,23 @@ export const LEAK_RUN = 'Run leak check';
 export const LEAK_RUNNING = 'Checking…';
 export const LEAK_NOT_RUN = 'Not run yet. Choose up to 7 days (UTC) and run the check.';
 
+/**
+ * Money MK-3 (KPI restructure review §4.2 and §5): the Leak check's block KPI.
+ * Counted from the check's own result (findings with an uncharged call), so it
+ * needs no read; platform accounts are reported apart and never counted.
+ */
+export const LEAK_KPI_LABEL = 'Businesses with uncharged calls';
+export const LEAK_KPI_DEFINITION =
+  'Businesses with at least one AI call recorded but not charged in the days the Leak check covered. Platform accounts are listed apart, never counted.';
+/** Before a check has run there is no figure (§5: "shown only after a check has run"). */
+export const LEAK_KPI_NOT_RUN = 'Not run yet';
+export const LEAK_KPI_AT_LEAST = (count: string) => `At least ${count}`;
+/** QA B-1: a run that may have missed businesses and found none has no count to show. */
+export const LEAK_KPI_UNKNOWN = 'Unknown';
+export const LEAK_KPI_NOT_ALL_CHECKED = 'Not every business was checked';
+/** QA B-2: the run was tried and failed; the error below says why. */
+export const LEAK_KPI_COULD_NOT_CHECK = 'Could not check';
+
 export const LEAK_SCOPE = (accountLabel: string | null) =>
   accountLabel ? `Checking one business: ${accountLabel}` : 'Checking every Business OS business';
 

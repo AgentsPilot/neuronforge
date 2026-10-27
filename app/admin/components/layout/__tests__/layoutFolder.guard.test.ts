@@ -96,6 +96,19 @@
  * is removed and its five non-page files move to the Finance entry, listed
  * there and only there. Registration only: no rule change and no shared source
  * change.
+ *
+ * Amended by Money MK-3a (SA-WP-MK3 condition 7, ruled): `BlockKpi.tsx` joins
+ * the expected files (promoted from Finance, SA-Q-MK3-8; it imports its
+ * siblings only, both on the S-3 allow-list, and never fetches). Charge checks
+ * became the AI cost page: its entry `/admin/finance/charges (Charge checks)`
+ * is renamed `/admin/ai-cost (AI cost)`, the deleted page and `CostsKpis.tsx`
+ * leave it, and the new page, `AiCostKpis.tsx` and `RecordedSection.tsx` join.
+ * MK-3b adds the Calls tab's files to the same entry.
+ *
+ * Amended by Money MK-3b (ruled): the AI calls & usage entry is removed and its
+ * files, less the deleted page and `AnalyticsKpis.tsx`, join the AI cost entry
+ * with `CallsTab.tsx`, `CallsSummary.tsx` and the page's view, tabs, spec and
+ * report read. No rule change and no shared source change.
  */
 
 import * as fs from 'fs';
@@ -135,6 +148,8 @@ const EXPECTED_SOURCES = [
   'AdminFilterBar.tsx',
   'AdminPageHeader.tsx',
   'AdminStates.tsx',
+  // Money MK-3 (SA-Q-MK3-8, MK-1 ruling): the block KPI, promoted from Finance; imports siblings only.
+  'BlockKpi.tsx',
   'DatePresets.tsx',
   'KpiStrip.tsx',
   'OpenRowButton.tsx',
@@ -552,23 +567,6 @@ const MIGRATED_PAGES = [
     files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
   },
   {
-    // L-2a (part a): header, KPI strip, filter bar, states, URL. L-2b (part b):
-    // the table, the call drawer, the run card and the summary cards.
-    page: '/admin/analytics (AI calls & usage (detail))',
-    files: [
-      'app/admin/analytics/page.tsx',
-      'app/admin/analytics/analyticsTypes.ts',
-      'app/admin/analytics/analyticsFilters.ts',
-      'app/admin/analytics/analyticsCall.ts',
-      'app/admin/analytics/components/AnalyticsKpis.tsx',
-      'app/admin/analytics/components/AnalyticsFilterBar.tsx',
-      'app/admin/analytics/components/AnalyticsTable.tsx',
-      'app/admin/analytics/components/AnalyticsCallDetails.tsx',
-      'app/admin/analytics/components/AnalyticsExecutionCard.tsx',
-      'app/admin/analytics/components/AnalyticsSummaryCards.tsx',
-    ],
-  },
-  {
     // L-3: header with the Runs off badge, KPI strip, Refresh-only bar, states,
     // the run history table and the confirm dialog class.
     page: '/admin/archiving (Archiving)',
@@ -700,6 +698,22 @@ const MIGRATED_PAGES = [
     files: ['app/admin/settings/page.tsx'],
   },
   {
+    // Admin environment view EC-2 (FR-11, as L-12): header with the Read-only
+    // badge, shared states, the read on readAdminResponse, tables on the shared
+    // adminTable constants. EC-4 (FR-20, FR-21): the KPI strip on the shared
+    // tiles (anchor mode), and the shared filter bar with the URL hook (group in
+    // the URL, the name search page-only) and Clear. No drawer, no dialog: the
+    // page is read-only.
+    page: '/admin/environment (Environment)',
+    files: [
+      'app/admin/environment/page.tsx',
+      'app/admin/environment/components/EnvironmentView.tsx',
+      'app/admin/environment/components/EnvironmentKpis.tsx',
+      'app/admin/environment/environmentDisplay.ts',
+      'app/admin/environment/environmentFilters.ts',
+    ],
+  },
+  {
     // Finance F-2: the shared header (h1 "Finance") and states; the read on
     // readAdminResponse since F-3. Finance F-4: the shared filter bar and the
     // URL hook; DV-1 ended in F-4 (Refresh moved from the header to the bar).
@@ -727,13 +741,38 @@ const MIGRATED_PAGES = [
     // Money M-5 (finance health §11H.4, AC-200): the cost report and its Leak
     // check (L-9a / L-9b), moved from the Business OS AI page's Costs & credits
     // tab. The page imports the header; the report's files stay where they are
-    // (SA-Q59) and are listed here, and only here.
-    page: '/admin/finance/charges (Charge checks)',
+    // (SA-Q59) and are listed here, and only here. Money MK-3a (ruled): Charge
+    // checks became the AI cost page's Summary & checks content, so the entry is
+    // the AI cost page's, with its strip (A-K1 to A-K5) and the recorded block (C-7).
+    // Money MK-3b (ruled): the AI calls & usage entry (L-2a / L-2b) joins it as the Calls tab: its
+    // page file is deleted (the old address redirects), `AnalyticsKpis.tsx` is deleted (its figures are
+    // `CallsSummary.tsx`), and the tab body is `CallsTab.tsx`. The page's view, tabs, spec and read join.
+    // Money MK-8b (ruled): the two drawers (business, billing period), their row opener, read and words.
+    page: '/admin/ai-cost (AI cost)',
     files: [
-      'app/admin/finance/charges/page.tsx',
+      'app/admin/ai-cost/page.tsx',
+      'app/admin/ai-cost/components/AiCostView.tsx',
+      'app/admin/ai-cost/components/AiCostTabs.tsx',
+      'app/admin/ai-cost/aiCostFilters.ts',
+      'app/admin/ai-cost/useCostReport.ts',
+      'app/admin/ai-cost/components/AiCostDrawers.tsx',
+      'app/admin/ai-cost/components/aiCostRowOpen.tsx',
+      'app/admin/ai-cost/aiCostDrawerReads.ts',
+      'app/admin/ai-cost/aiCostDrawerCopy.ts',
+      'app/admin/analytics/analyticsTypes.ts',
+      'app/admin/analytics/analyticsFilters.ts',
+      'app/admin/analytics/analyticsCall.ts',
+      'app/admin/analytics/components/CallsTab.tsx',
+      'app/admin/analytics/components/CallsSummary.tsx',
+      'app/admin/analytics/components/AnalyticsFilterBar.tsx',
+      'app/admin/analytics/components/AnalyticsTable.tsx',
+      'app/admin/analytics/components/AnalyticsCallDetails.tsx',
+      'app/admin/analytics/components/AnalyticsExecutionCard.tsx',
+      'app/admin/analytics/components/AnalyticsSummaryCards.tsx',
       'app/admin/business-os-llm/costsFilters.ts',
       'app/admin/business-os-llm/components/costs/CostsTab.tsx',
-      'app/admin/business-os-llm/components/costs/CostsKpis.tsx',
+      'app/admin/business-os-llm/components/costs/AiCostKpis.tsx',
+      'app/admin/business-os-llm/components/costs/RecordedSection.tsx',
       'app/admin/business-os-llm/components/costs/CostsFilterBar.tsx',
       'app/admin/business-os-llm/components/costs/CostsSections.tsx',
       'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',
@@ -781,9 +820,10 @@ describe('C-14 part (b): the registry itself (Money M-5, AC-200)', () => {
     expect(twice).toEqual([]);
   });
 
-  it('Charge checks is registered with its page and the report files', () => {
-    const entry = MIGRATED_PAGES.find((e) => e.page === '/admin/finance/charges (Charge checks)');
-    expect(entry?.files).toEqual(expect.arrayContaining(['app/admin/finance/charges/page.tsx', 'app/admin/business-os-llm/components/costs/CostsTab.tsx']));
+  it('the AI cost page is registered with its page and the report files (Money MK-3a, ruled)', () => {
+    const entry = MIGRATED_PAGES.find((e) => e.page === '/admin/ai-cost (AI cost)');
+    expect(entry?.files).toEqual(expect.arrayContaining(['app/admin/ai-cost/page.tsx', 'app/admin/business-os-llm/components/costs/CostsTab.tsx']));
+    expect(MIGRATED_PAGES.some((e) => e.page.startsWith('/admin/finance/charges'))).toBe(false);
     const bosAi = MIGRATED_PAGES.find((e) => e.page === '/admin/business-os-llm (Business OS AI)');
     expect(bosAi?.files.some((file) => file.includes('/costs/') || file.endsWith('costsFilters.ts'))).toBe(false);
   });

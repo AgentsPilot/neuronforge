@@ -30,9 +30,9 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, type
 
 import { AdminDrawer, DrawerField, DrawerFields, DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
 import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
-import { OpenRowButton } from '@/app/admin/components/layout/OpenRowButton';
-import { ADMIN_TD_OPEN, ADMIN_TH_OPEN, formatShortId } from '@/app/admin/components/layout/adminTable';
-import { ROW_OPEN_TEST_ID, rowOpenTarget } from '@/app/admin/components/layout/rowOpenClick';
+import { OpenRowButton, OpenRowHeader } from '@/app/admin/components/layout/OpenRowButton';
+import { ADMIN_TD_OPEN, formatShortId } from '@/app/admin/components/layout/adminTable';
+import { ROW_OPEN_TEST_ID, openableRowClass, rowOpenTarget } from '@/app/admin/components/layout/rowOpenClick';
 import { useDrawerResource } from '@/app/admin/components/layout/useDrawerResource';
 import type { FinancePayload } from '@/lib/business-os/finance/financeTypes';
 import { PlanBillingBlock } from '@/app/admin/users/components/PlanBillingBlock';
@@ -73,19 +73,11 @@ export function useOpenBusinessAccountId(): string | null {
   return useContext(BusinessDrawerContext)?.openAccountId ?? null;
 }
 
-/** The Businesses page's row classes (D-17): hover and pointer, and the open row highlighted. */
-export function openableRowClass(isOpen: boolean): string {
-  return `hover:bg-slate-700/30 transition-colors cursor-pointer ${isOpen ? 'bg-slate-700/20' : ''}`;
-}
+// Re-export of the shared `openableRowClass` (app/admin/components/layout/rowOpenClick.ts); new code imports it from there.
+export { openableRowClass };
 
-/** MK-10: the narrow Open column's header, exactly the Businesses page's (LF-8). */
-export function BusinessOpenHeader() {
-  return (
-    <th scope="col" className={ADMIN_TH_OPEN}>
-      <span className="sr-only">Details</span>
-    </th>
-  );
-}
+// Re-export of the shared `OpenRowHeader` (app/admin/components/layout/OpenRowButton.tsx); new code imports it from there.
+export const BusinessOpenHeader = OpenRowHeader;
 
 /**
  * Money MK-10 (user comment 2026-10-25; SA-Q-MK10-1, MK10-R1 to R3): a Finance

@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: 2026-10-21
-> **Version**: 1.13.0
+> **Last Updated**: 2026-10-27
+> **Version**: 1.14.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-10-27 | 1.14.0 | Dev | Added "Adding an environment variable" and step 5 of "Adding a New Feature Flag" (admin environment view EC-3): every new environment variable gets an entry in `lib/admin/environment/catalogue.ts` in the same PR, which the catalogue drift guard enforces in the Jest gate. |
 | 2026-10-21 | 1.13.0 | Dev | Added `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` (data export DE-10b.2): the customer self-delete's off switch. Server-only, **default off**, on only for the exact string `true`. While off the Danger Zone is unchanged (`GET /api/business-os/account/deletion-check` answers `{ enabled: false }`) and `POST /api/business-os/account/delete` answers 404. Reader `isAccountSelfDeleteEnabled()`. |
 | 2026-10-20 | 1.12.0 | Dev | Added `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED` (upgrade modal UM-2, TEST ONLY): server-only, default off. While off `/business-os/upgrade-modal-demo` answers 404. Developer `.env.local` only, never Vercel. |
 | 2026-10-18 | 1.11.0 | Dev | Listed `DELETION_RECEIPT_FINGERPRINT_KEY` (data export DE-10b.1). **An env secret, not a flag**, listed here because operators look here. Server-only. Missing or under 32 characters: every admin delete answers 503 `not_configured`. Set in Vercel Production and Preview before the deploy, and keep a copy: losing it makes old receipts unsearchable. |
@@ -914,7 +915,28 @@ NEXT_PUBLIC_MY_NEW_FEATURE=false
 
 4. **Add tests** to [featureFlags.test.ts](lib/utils/__tests__/featureFlags.test.ts)
 
-5. **Update this documentation**
+5. **Add a catalogue entry** for the variable, in the same PR. See [Adding an environment variable](#adding-an-environment-variable) below; the drift guard fails the Jest gate without it.
+
+6. **Update this documentation**
+
+---
+
+## Adding an environment variable
+
+This applies to **every** new environment variable, not only flags. The admin Environment page (`/admin/environment`) lists every variable the app reads, from one catalogue: `lib/admin/environment/catalogue.ts`.
+
+1. **Add one entry to the catalogue in the same PR** as the code that reads the variable. Pick:
+   - its **group** (where it shows on the page);
+   - a one-sentence **role**: what it is for and what happens when it is missing. No value, and no remark about any deployment;
+   - its **class**: `flag`, `secret`, `config` or `personal`. A name containing `KEY`, `SECRET`, `TOKEN`, `PASS`, `AUTH` or a similar word is always shown as Set / Not set, so catalogue it as `secret` unless it is a flag;
+   - for `config`, its **shape** (`url`, `host`, `integer`, `enum`, `gitSha`, `region`, `identifier`);
+   - for a flag, its **parser and default**, matching the reader;
+   - its **`expectedIn`**: `required`, `optional` or `forbidden` on production, preview and local. Use `optional` when unsure.
+2. **A variable no app code reads** (read only by a library, by the platform itself, or only by the Environment page) gets `consumedBy: { by: 'sdk' | 'platform' | 'environment-page', note }`. Do not add the marker to a name that code does read.
+3. **Read it by its literal name** (`process.env.NAME`), or through a string constant declared in the same file or exported from one imported file. Any other computed read (`process.env[someVariable]`) fails the guard until it is resolvable or pinned with a reason in the guard's list.
+4. **Run the guard:** `npx jest lib/admin/environment/__tests__/catalogueDrift.guard.test.ts`. It runs in the PR Jest gate anyway, and fails when code reads a name the catalogue lacks, when an entry is read by nothing and has no marker, when a marker is stale, or when a new unresolved read appears that is not pinned in the guard's list. That last case covers a computed read, a new use of the whole object (`const e = process.env`, `const { env } = process`, passing `process.env` to a function) and a `...rest` destructuring from `process.env`; a pinned one that disappears fails too.
+
+Plugin definition placeholders (`${NAME}` in `lib/plugins/definitions/*.json`) and `…EnvVar` fields in `lib/plugins/v2/configs/*.json` count as reads too.
 
 ---
 

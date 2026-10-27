@@ -74,6 +74,10 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   // P-7b.1a (workplan BUSINESS_OS_PLAN_PAYMENTS_P7B1_WORKPLAN.md §3.9): the
   // upgrade orchestration reads the session user's billing row (findByUser).
   'planUpgrade.ts': [BILLING_ACCOUNTS],
+  // P-7a.1 (workplan BUSINESS_OS_PLAN_PAYMENTS_P7A_WORKPLAN.md §4.2; SA C-2): the
+  // cancel / reactivate orchestration reads the SESSION user's billing row
+  // (findByUser) and mirrors Stripe's answer onto it (mirrorSubscriptionState).
+  'planSubscriptionManage.ts': [BILLING_ACCOUNTS],
   'planTestClock.ts': [BILLING_ACCOUNTS, ACCOUNT_PLANS],
   // P-6a.2 (workplan §5.6, SA C-13): the owner banner reads the SESSION
   // account's billing row for the current mode (findByUser only).

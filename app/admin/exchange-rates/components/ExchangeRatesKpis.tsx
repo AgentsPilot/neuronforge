@@ -27,6 +27,11 @@
  *                       status when the audit trail could not be read. Fed by
  *                       the `lastSync` prop: the view passes the visit's own
  *                       sync answer ahead of the GET's value.
+ *                       Slice 1f (D-11, SA §13.9 SQ-56): the sub-line also
+ *                       names who ran it, "by {who} · ECB rates of
+ *                       {rateDate}", through `changedByText` like the Last
+ *                       rate change tile (the short id when the name lookup
+ *                       failed, "Unknown user" when there is no actor).
  *
  * The first two tiles count the WHOLE plain-GET payload, never a filtered view and
  * never the one-currency history read (SA-1c-2). The tile never reads the
@@ -58,7 +63,11 @@ export interface ExchangeRatesKpisProps {
 function lastCheckedTile(lastSync: LastRateSyncWire) {
   const common = { testId: 'kpi-rates-last-checked', label: 'Rates last checked' } as const;
   if (lastSync.status === 'ok') {
-    return <KpiTile {...common} value={formatUtc(lastSync.checkedAt)} sub={`ECB rates of ${lastSync.rateDate}`} />;
+    // Slice 1f (SQ-56): `?? null` maps an answer from before 1f (deploy skew) to "Unknown user".
+    const who = changedByText({ changedBy: lastSync.checkedBy ?? null, changedByLabel: lastSync.checkedByLabel ?? null });
+    return (
+      <KpiTile {...common} value={formatUtc(lastSync.checkedAt)} sub={`by ${who} · ECB rates of ${lastSync.rateDate}`} />
+    );
   }
   if (lastSync.status === 'none') return <KpiTile {...common} value="No sync on record" />;
   return <KpiTile {...common} status="unavailable" sub="The audit trail could not be read" />;

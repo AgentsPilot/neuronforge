@@ -116,6 +116,9 @@ const SCOPED_DIRS = [
   // Test-account cleanup slice 2: ONE file. The Danger Zone panel re-declares
   // the cleanup routes' payloads client-side; this test pins the two together.
   'lib/business-os/test-account-cleanup/__tests__/cleanupApiTypes.wireTypes.test.ts',
+  // Money MK-3 (SA-Q-MK3-12): ONE file. The AI cost report's `recorded` type is
+  // declared in the credits module and pinned equal to Finance's here.
+  'lib/business-os/finance/__tests__/recordedInWindow.wireTypes.test.ts',
 ];
 
 const ATTRIBUTION_TEST = /attribution[^/]*\.test\.tsx?$/;

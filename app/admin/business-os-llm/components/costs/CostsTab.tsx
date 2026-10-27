@@ -1,148 +1,79 @@
 'use client';
 
 /**
- * The Costs & credits tab of the Business OS AI admin page (credit deduction
- * slice 4a, workplan §4.6): the operator cost report.
+ * The AI cost page's Summary & checks tab (credit deduction slice 4a, workplan
+ * §4.6, the operator cost report; Money M-5 Charge checks; Money MK-3).
  *
- * Read-only: one `GET` to `/api/admin/business-os/credits/report`, the shared
- * business picker's own `GET`, and the leak check panel's own `GET` (slice 4b),
- * run only when its button is pressed. No `@/lib/` import (the page's source
- * guard): the payload types are re-declared in `../../costTypes.ts`.
+ * Money MK-3b (SA-CR-MK3A DV-1): presentational. The report read lives in the
+ * page (`app/admin/ai-cost/useCostReport.ts`), because the strip A-K1 to A-K5
+ * above both tabs needs it; the URL state lives in the page's one spec
+ * (`app/admin/ai-cost/aiCostFilters.ts`), so the window and the business are
+ * one value on both tabs. This tab gets both as props and renders, in order:
+ * its bar, the report's states and sections, then the recorded AI cost block
+ * (C-7) and the Leak check under one anchor, `#costs-leak` (A-K3's target),
+ * always drawn so that tile always has a target.
  *
- * Only the NEWEST request may set the screen (SA CR-N2): each read takes a
- * sequence number and aborts the one before it, so a slow earlier response can
- * never overwrite a later window. A failed read clears the report instead of
- * leaving the previous window's figures under the error, where they would read
- * as current.
+ * Reads of its own: only the shared business picker's search and the Leak
+ * check panel's `GET`, run only when its button is pressed. No `@/lib/` import
+ * (the business-os-llm page's source guard): the payload types are re-declared
+ * in `../../costTypes.ts`.
  *
- * Admin Layout Standard L-9a: every filter is in the URL through the shared
- * `useAdminFilters` (spec in `../../costsFilters.ts`), parsed before the first
- * read, so an inbound link reads its own view once. The route's query is
- * resolved ONCE per filter change (memoised on the identity-stable `filters`),
- * so Refresh and "Try again" re-send the same dates even across midnight. The
- * page passes `active` (F-113): while another tab is shown this tab's hook
- * neither re-reads nor writes, so a tab switch starts no read here. The account
- * `<select>` gave way to the shared business picker (SA-R-11), which searches
- * every business; one with no charges in the window gets the empty state.
- *
- * A platform account chosen in the picker is refused by the route (409); the
- * tab says why in its own words instead of a generic error (SA M-2, the
- * Activity precedent L-8 Q-12). That code must be seen before any generic
- * copy, so the read keeps its own branching on `readJsonBody` rather than
- * `readAdminResponse`.
+ * A platform account chosen in the picker is refused by the report route
+ * (409); the tab says why in its own words instead of a generic error (SA M-2).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useState } from 'react';
 
 import { AdminEmpty, AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
-import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
-import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
-import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
+import type { AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
 
 import { formatCount } from '../../costFormat';
 import {
   COSTS_EMPTY,
   COSTS_EMPTY_HINT,
-  COSTS_ERROR_FALLBACK,
   COSTS_INCOMPLETE,
   COSTS_PERIOD_RULE,
-  COSTS_PLATFORM_ACCOUNT,
   COSTS_WHAT,
   INCOMPLETE_REASON_TEXT,
   NAMES_FAILED,
   SECTION_FAILED,
   UNREADABLE_AMOUNTS,
 } from '../../costCopy';
-import { COSTS_FILTER_SPEC, costsRouteSearch } from '../../costsFilters';
 import type { CostReportPayload } from '../../costTypes';
 import { CostsFilterBar } from './CostsFilterBar';
-import { CostsKpis } from './CostsKpis';
-import { BreakdownsSection, FallbackSection, PeriodsSection, SpreadSection } from './CostsSections';
+import { BreakdownsSection, ChargedInWindowSection, FallbackSection, PeriodsSection, SpreadSection } from './CostsSections';
 import { LeakCheckPanel } from './LeakCheckPanel';
+import { RecordedSection } from './RecordedSection';
 
-const REPORT_URL = '/api/admin/business-os/credits/report';
-
-interface CostsError {
-  kind: 'platform_account' | 'other';
-  message: string;
+/** The report read's state, from the page (`useCostReport`). */
+export interface CostsReportState {
+  report: CostReportPayload | null;
+  loading: boolean;
+  error: { kind: 'platform_account' | 'other'; message: string } | null;
+  reread: () => void;
 }
 
-export function CostsTab({ active = true }: { active?: boolean } = {}) {
-  const { filters, setFilters, clear, isDefault } = useAdminFilters(COSTS_FILTER_SPEC, { active });
-  /**
-   * The route's query, resolved once per filter change. An object, not the
-   * string, so the read effect is keyed on the filters' identity: a change of
-   * filters reads, and nothing else does.
-   */
-  const request = useMemo(() => ({ search: costsRouteSearch(filters, new Date()) }), [filters]);
+export interface CostsTabProps {
+  /** The page's window and business (one value on both tabs). */
+  filters: { window: AdminWindowValue; account: string };
+  setFilters: (patch: { window?: AdminWindowValue; account?: string }) => void;
+  onClear: () => void;
+  canClear: boolean;
+  state: CostsReportState;
+}
 
-  const [payload, setPayload] = useState<CostReportPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<CostsError | null>(null);
+/** The report is drawn as sections (the anchors of the strip have somewhere to go). */
+export function costsSectionsShown(report: CostReportPayload | null): boolean {
+  if (report === null || report.sections.totals === 'failed') return false;
+  return !(report.sections.totals === 'ok' && report.periods.length === 0);
+}
+
+export function CostsTab({ filters, setFilters, onClear, canClear, state }: CostsTabProps) {
+  const { report, loading, error, reread } = state;
   /** The business last picked, with the name the picker showed (not in the URL). */
   const [picked, setPicked] = useState<{ accountId: string; name: string | null } | null>(null);
-  const sequence = useRef(0);
-  const inFlight = useRef<AbortController | null>(null);
 
-  const load = useCallback(async (search: string) => {
-    const mine = ++sequence.current;
-    inFlight.current?.abort();
-    const controller = new AbortController();
-    inFlight.current = controller;
-    const isCurrent = () => mine === sequence.current;
-
-    setLoading(true);
-    setError(null);
-    try {
-      let response: Response;
-      try {
-        response = await fetch(`${REPORT_URL}?${search}`, { signal: controller.signal });
-      } catch {
-        // A superseded (or aborted) request says nothing about the screen. A
-        // network failure says the shared words, never the browser's (§5.10).
-        if (!isCurrent()) return;
-        setPayload(null);
-        setError({ kind: 'other', message: ADMIN_NETWORK_ERROR });
-        return;
-      }
-      // A non-JSON body (a proxy's HTML error page) reads as null, so the tab
-      // shows its own words, never a parser message. A JSON error body still
-      // gives the route's reason (400, 409). Newest wins before any setState (SA S-7).
-      const body = await readJsonBody(response);
-      if (!isCurrent()) return;
-      if (!response.ok || body === null || body.success !== true) {
-        setPayload(null);
-        setError(
-          body?.error === 'platform_account'
-            ? { kind: 'platform_account', message: COSTS_PLATFORM_ACCOUNT }
-            : { kind: 'other', message: typeof body?.error === 'string' ? body.error : COSTS_ERROR_FALLBACK }
-        );
-        return;
-      }
-      setPayload(body.data as CostReportPayload);
-    } finally {
-      if (isCurrent()) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load(request.search);
-  }, [load, request]);
-
-  // Unmounting abandons the last read; nothing may set state afterwards.
-  useEffect(
-    () => () => {
-      sequence.current += 1;
-      inFlight.current?.abort();
-    },
-    []
-  );
-
-  const reread = useCallback(() => void load(request.search), [load, request]);
-
-  const report = payload;
   const isEmpty = report !== null && report.sections.totals === 'ok' && report.periods.length === 0;
-  const sectionsShown = report !== null && report.sections.totals !== 'failed' && !isEmpty;
 
   // The chip's name: the picked name, else the report's own name for that
   // account, else none (the short id; RC-6, no lookup).
@@ -154,13 +85,11 @@ export function CostsTab({ active = true }: { active?: boolean } = {}) {
 
   return (
     <div className="space-y-4" data-testid="costs-tab">
-      <CostsKpis report={report} firstLoad={loading && !report && !error} sectionsShown={sectionsShown} />
-
       <CostsFilterBar
         filters={filters}
         setFilters={setFilters}
-        onClear={clear}
-        canClear={!isDefault}
+        onClear={onClear}
+        canClear={canClear}
         businessName={businessName}
         onPickBusiness={(accountId, name) => {
           setPicked({ accountId, name });
@@ -206,9 +135,7 @@ export function CostsTab({ active = true }: { active?: boolean } = {}) {
             )}
 
             {/* L-10 task 9 (F-120, SA L-10 Q-7): each partial fact is its own
-                shared notice, same words and test ids, after the incomplete one.
-                Separate boxes, not one merged notice: each says a different
-                thing is missing (§5.10 Partial), and no copy changes. */}
+                shared notice, same words and test ids, after the incomplete one. */}
             {report.unreadableAmounts > 0 && (
               <AdminNotice testId="costs-unreadable">{UNREADABLE_AMOUNTS(report.unreadableAmounts)}</AdminNotice>
             )}
@@ -226,10 +153,11 @@ export function CostsTab({ active = true }: { active?: boolean } = {}) {
                 message={COSTS_EMPTY}
                 hint={COSTS_EMPTY_HINT}
                 testId="costs-empty"
-                onClear={isDefault ? undefined : clear}
+                onClear={canClear ? onClear : undefined}
               />
             ) : (
               <>
+                <ChargedInWindowSection report={report} />
                 <PeriodsSection report={report} />
                 <BreakdownsSection report={report} />
                 <FallbackSection report={report} />
@@ -240,9 +168,13 @@ export function CostsTab({ active = true }: { active?: boolean } = {}) {
         )}
       </div>
 
-      {/* Slice 4b: the on-demand leak check. Its own window (at most 7 days) and
-          button; it follows the business chosen above. */}
-      <LeakCheckPanel accountId={filters.account} accountLabel={businessName} />
+      {/* MK-3a (C-7, A-K3): the recorded AI cost beside the charged one, then the Leak check, which
+          says which calls. One anchor for both, always drawn. Slice 4b: the on-demand leak check has
+          its own window (at most 7 days) and button; it follows the business chosen above. */}
+      <div id="costs-leak" data-testid="costs-leak" className="space-y-4">
+        {report && <RecordedSection recorded={report.recorded} accountId={report.accountFilter} />}
+        <LeakCheckPanel accountId={filters.account} accountLabel={businessName} />
+      </div>
     </div>
   );
 }

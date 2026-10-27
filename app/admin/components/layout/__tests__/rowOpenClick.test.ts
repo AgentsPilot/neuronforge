@@ -7,7 +7,8 @@
  * or a row with no Open button.
  */
 
-import { ROW_CONTROL_SELECTOR, ROW_OPEN_TEST_ID, isSelectingIn, rowOpenTarget } from '../rowOpenClick';
+import { ROW_CONTROL_SELECTOR, ROW_OPEN_TEST_ID, isSelectingIn, openableRowClass, rowOpenTarget } from '../rowOpenClick';
+import { openableRowClass as financeOpenableRowClass } from '@/app/admin/finance/components/BusinessDrawer';
 
 function row(inner: string): HTMLTableRowElement {
   const table = document.createElement('table');
@@ -78,5 +79,16 @@ describe('rowOpenTarget', () => {
       'button, a, input, select, textarea, label, summary, [role="button"], [role="link"], [contenteditable="true"]'
     );
     expect(ROW_OPEN_TEST_ID).toBe('row-open');
+  });
+});
+
+describe('openableRowClass (moved unchanged from Finance, Money MK-8b SA-Q-MK8B-1)', () => {
+  it('is the Businesses-style row: hover and pointer, and the open row highlighted', () => {
+    expect(openableRowClass(false)).toBe('hover:bg-slate-700/30 transition-colors cursor-pointer ');
+    expect(openableRowClass(true)).toBe('hover:bg-slate-700/30 transition-colors cursor-pointer bg-slate-700/20');
+  });
+
+  it("Finance's name is the shared function itself (a re-export, never a copy)", () => {
+    expect(financeOpenableRowClass).toBe(openableRowClass);
   });
 });

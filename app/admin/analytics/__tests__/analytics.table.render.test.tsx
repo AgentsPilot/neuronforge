@@ -2,6 +2,16 @@
  * @jest-environment jsdom
  */
 
+/*
+ * Money MK-3b (ruled): AI calls & usage is now the AI cost page's Calls tab
+ * (`/admin/ai-cost?tab=calls`; `/admin/analytics` redirects there). These cases
+ * mount the AI cost page and arrive on the Calls tab: `useSearchParams` adds
+ * `tab=calls` when the arrival string has no tab, as the redirect does, and
+ * every address the page writes starts `?tab=calls`. The page also reads its
+ * report for the strip; the drill-down requests are filtered as before.
+ */
+
+
 /**
  * AI cost & usage on the Admin Layout Standard, part b (L-2b): the table on
  * the shared classes, drill links, call status chips, the call drawer opened
@@ -25,7 +35,11 @@ jest.mock('@/lib/logger/client', () => {
 
 let mockSearch = '';
 jest.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(mockSearch),
+  useSearchParams: () => {
+    const params = new URLSearchParams(mockSearch);
+    if (!params.has('tab')) params.set('tab', 'calls');
+    return params;
+  },
 }));
 
 /**
@@ -51,9 +65,9 @@ jest.mock('@/app/admin/components/layout/AdminDrawer', () => {
 
 import { BUSINESS_SEARCH_PATH } from '@/app/admin/components/layout/AdminBusinessPicker';
 
-import AdminCostAnalytics from '../page';
+import AdminCostAnalytics from '@/app/admin/ai-cost/page';
 
-const PATH = '/admin/analytics';
+const PATH = '/admin/ai-cost';
 const DRILL = '/api/admin/token-usage/drill-down?';
 const ACCOUNT = '99999999-9999-4999-8999-999999999999';
 const EXEC = '33333333-3333-4333-8333-333333333333';
@@ -230,7 +244,7 @@ const drillQueries = (): URLSearchParams[] =>
 const lastQuery = () => drillQueries()[drillQueries().length - 1];
 
 function arrive(search: string) {
-  window.history.replaceState(null, '', `${PATH}${search ? `?${search}` : ''}`);
+  window.history.replaceState(null, '', `${PATH}?tab=calls${search ? `&${search}` : ''}`);
   mockSearch = search;
 }
 
@@ -343,7 +357,7 @@ describe('aggregate rows drill through a real link (§5.8 D-3)', () => {
   it('T-3: a plain click is prevented and drills in place: one request, no reload', async () => {
     await renderAt('');
     const link = screen.getByRole('link', { name: 'Row provider' });
-    expect(link.getAttribute('href')).toBe(`${PATH}?group_by=model&provider=provider-1`);
+    expect(link.getAttribute('href')).toBe(`${PATH}?tab=calls&group_by=model&provider=provider-1`);
 
     const event = createEvent.click(link, { button: 0 });
     fireEvent(link, event);
@@ -351,7 +365,7 @@ describe('aggregate rows drill through a real link (§5.8 D-3)', () => {
     await waitFor(() => expect(lastQuery().get('breakdownBy')).toBe('model'));
     expect(lastQuery().get('provider')).toBe('provider-1');
     expect(drillQueries()).toHaveLength(2);
-    expect(window.location.search).toBe('?group_by=model&provider=provider-1');
+    expect(window.location.search).toBe('?tab=calls&group_by=model&provider=provider-1');
   });
 
   it.each<[string, MouseEventInit]>([
@@ -375,7 +389,7 @@ describe('aggregate rows drill through a real link (§5.8 D-3)', () => {
     expect(preventedByPage).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(drillQueries()).toHaveLength(1);
-    expect(window.location.search).toBe('');
+    expect(window.location.search).toBe('?tab=calls');
   });
 
   it('QA-B1: Enter on a focused row name drills once, and focus lands on the content area, never <body>', async () => {
@@ -575,7 +589,9 @@ describe('QA B-1: the open call leaves the data', () => {
     answer = { kind: 'deferred' };
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(screen.queryByTestId('analytics-error')).toBeNull());
-    expect(screen.getAllByTestId('kpi-placeholder')).toHaveLength(5);
+    // MK-3b (ruled): this tab's figures are content cards now (the page's strip is another read), so the
+    // first-read state shows "Reading…" and no cards, never zeros.
+    expect(screen.queryByTestId('calls-summary')).toBeNull();
     expect(screen.getByRole('status').textContent).toBe('Reading AI calls and usage…');
     expect(document.body.textContent).not.toContain('$0.00');
     expect(screen.queryByTestId('analytics-empty')).toBeNull();
@@ -653,7 +669,7 @@ describe('colour, the run card, the empty state, the footer and the cards', () =
     await renderAt('provider=openai');
     const filtered = screen.getByTestId('analytics-empty');
     fireEvent.click(within(filtered).getByRole('button', { name: 'Clear filters' }));
-    await waitFor(() => expect(window.location.search).toBe(''));
+    await waitFor(() => expect(window.location.search).toBe('?tab=calls'));
     await waitFor(() => expect(lastQuery().has('provider')).toBe(false));
   });
 

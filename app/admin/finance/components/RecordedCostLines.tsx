@@ -1,43 +1,36 @@
 'use client';
 
 /**
- * Section 3's recorded AI cost block (Money M-4, OV-5, §11F.6 M4-FR-1) and the
- * one renderer of "Recorded above charged" (`RecordedAboveValue`), which the
- * account summary uses too, so the two lines cannot differ (AC-158).
+ * Section 3's "Recorded above charged" line, and the one renderer of its
+ * value (`RecordedAboveValue`), which the account summary uses too, so the two
+ * lines cannot differ (AC-158).
  *
- * Two measures BESIDE each other, never added (BD-18): the recorded AI cost
- * (the usage log) and how far it is above the charged AI cost (the credit
- * ledger). Every value and state comes from the server (`aiCost.recorded`);
- * this file only formats (M4-FR-11): no addition, subtraction or comparison
- * of money.
+ * Money M-4 (OV-5, §11F.6 M4-FR-1) built a full recorded AI cost block here.
+ * Money MK-3a (C-7, KPI restructure review §6 item 11) moved that block to the
+ * AI cost page, where both measures are shown: Finance keeps ONE line,
+ * "Recorded above charged", which links to the AI cost page's recorded block
+ * and Leak check. The figure is still never added to the charged one (BD-18).
+ * Every value and state comes from the server (`aiCost.recorded`); this file
+ * only formats (M4-FR-11): no addition, subtraction or comparison of money.
  *
- * `AiCostSection` renders the block after the cut-over notice and OUTSIDE its
+ * `AiCostSection` renders the line after the cut-over notice and OUTSIDE its
  * figures guard (SA-W98), so it shows before the cut-over ("Not available")
  * and when Section 3 could not load ("Unknown").
  *
  * @module app/admin/finance/components/RecordedCostLines
  */
 
-import { AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import type { FinanceRecordedAiCost } from '@/lib/business-os/finance/financeTypes';
 import {
-  ABOVE_LABEL,
-  ABOVE_LEAK_LINK,
   ABOVE_NONE,
   ABOVE_NOT_AVAILABLE,
-  ABOVE_SOURCE,
+  ACCOUNT_RECORDED_ABOVE,
   aboveChargedAboveLine,
-  RECORDED_CAPTION,
-  RECORDED_DELETED_NOTE,
-  RECORDED_DISTORTIONS,
-  RECORDED_LABEL,
-  RECORDED_NOTICE,
-  RECORDED_NOTICE_PLAIN,
-  RECORDED_SOURCE,
+  RECORDED_ON_AI_COST_LINK,
   RECORDED_UNKNOWN,
 } from '../financeCopy';
-import { atLeast, formatUsd } from '../financeFormat';
-import { leakCheckHref } from '../financeLinks';
+import { formatUsd } from '../financeFormat';
+import { aiCostRecordedHref, type FinanceLinkWindow } from '../financeLinks';
 
 const NOTE = 'text-[11px] text-slate-400';
 
@@ -59,54 +52,29 @@ export function RecordedAboveValue({ recorded, testId }: { recorded: FinanceReco
   return <span data-testid={testId}>{RECORDED_UNKNOWN}</span>;
 }
 
-export function RecordedCostLines({
+/** MK-3a (C-7): Section 3's one line, linking to the AI cost page's recorded block and Leak check. */
+export function RecordedAboveLine({
   recorded,
   accountId,
-  chargedShown,
+  window,
 }: {
   recorded: FinanceRecordedAiCost;
   accountId: string | null;
-  /** Fix round 1: whether Section 3's charged figures rendered above; the notice names them only then. */
-  chargedShown: boolean;
+  window: FinanceLinkWindow;
 }) {
   return (
-    <div data-testid="ai-recorded" className="space-y-2 rounded-lg border border-slate-700/60 p-3">
-      <p className="text-xs font-medium text-slate-300">{RECORDED_CAPTION}</p>
-      <dl className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <dt className="text-xs text-slate-400">{RECORDED_LABEL}</dt>
-          <dd className="text-lg font-semibold text-white" data-testid="ai-recorded-total">
-            {recorded.recordedUsd === null ? RECORDED_UNKNOWN : atLeast(formatUsd(recorded.recordedUsd), recorded.recordedExact)}
-          </dd>
-          <dd className={NOTE}>{RECORDED_SOURCE}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-slate-400">{ABOVE_LABEL}</dt>
-          <dd className="text-lg font-semibold text-white">
-            <RecordedAboveValue recorded={recorded} testId="ai-recorded-above" />
-          </dd>
-          <dd className={NOTE}>
-            {ABOVE_SOURCE}{' '}
-            <a href={leakCheckHref(accountId)} data-testid="ai-recorded-leak-link" className="text-purple-300 underline hover:text-purple-200">
-              {ABOVE_LEAK_LINK}
-            </a>
-            .
-          </dd>
-        </div>
-      </dl>
-      {recorded.status === 'unknown' && <AdminNotice testId="ai-recorded-notice">{chargedShown ? RECORDED_NOTICE : RECORDED_NOTICE_PLAIN}</AdminNotice>}
-      {accountId === null && (
-        <p className={NOTE} data-testid="ai-recorded-deleted-note">
-          {RECORDED_DELETED_NOTE}
-        </p>
-      )}
-      <ul className="space-y-0.5" data-testid="ai-recorded-distortions">
-        {RECORDED_DISTORTIONS.map((sentence) => (
-          <li key={sentence} className={NOTE}>
-            {sentence}
-          </li>
-        ))}
-      </ul>
+    <div data-testid="ai-recorded" className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg border border-slate-700/60 p-3">
+      <span className="text-xs text-slate-400">{ACCOUNT_RECORDED_ABOVE}</span>
+      <span className="text-lg font-semibold text-white">
+        <RecordedAboveValue recorded={recorded} testId="ai-recorded-above" />
+      </span>
+      <a
+        href={aiCostRecordedHref(accountId, window)}
+        data-testid="ai-recorded-link"
+        className="text-xs text-purple-300 underline hover:text-purple-200"
+      >
+        {RECORDED_ON_AI_COST_LINK}
+      </a>
     </div>
   );
 }

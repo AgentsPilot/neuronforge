@@ -86,7 +86,7 @@ import {
   TAKINGS_UNKNOWN_CURRENCY,
 } from '../financeCopy';
 import { atLeast, formatMoney } from '../financeFormat';
-import { BlockKpi } from './BlockKpi';
+import { BlockKpi } from '@/app/admin/components/layout/BlockKpi';
 import { FinanceSection } from './FinanceSection';
 import { ClientPaymentProblems } from './PaymentProblemsSection';
 import { businessTargetOf, useBusinessRowOpen } from './BusinessDrawer';

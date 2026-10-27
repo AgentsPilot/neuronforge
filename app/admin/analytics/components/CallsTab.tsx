@@ -1,19 +1,39 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
+/**
+ * The AI cost page's Calls tab (Money MK-3b, KPI restructure review §4.2): the
+ * old AI calls & usage page (`/admin/analytics`, Admin Layout Standard L-2a /
+ * L-2b), moved into a tab. `/admin/analytics` now redirects to
+ * `/admin/ai-cost?tab=calls` with its query.
+ *
+ * What changed in the move:
+ *   - the URL state is the page's ONE spec (`app/admin/ai-cost/aiCostFilters.ts`):
+ *     this tab gets `filters`, `setFilters`, `hrefFor` and the page's Clear as
+ *     props, so the window and the business are the same value on both tabs;
+ *   - the header is the page's; the strip is the page's A-K1 to A-K5, so this
+ *     tab's own strip (`AnalyticsKpis`) is gone (one strip per page, max five
+ *     tiles): its figures are this tab's summary cards (`CallsSummary`, SA-Q-MK3-6);
+ *   - the read runs only while the tab is shown (`active`), and only when its
+ *     request changed since the last read, so a tab switch starts no read;
+ *   - the window is the page's: 7, 30 and 90 days are whole UTC days, and a
+ *     linked window (the Health tile's) is exact (SA-Q-MK3-3);
+ *   - the breadcrumb chevrons are slate-400 (the contrast guard joins this tab).
+ *
+ * Everything else is as it was: the drill-down route and its request, the
+ * scope switch, the breadcrumbs, the run card, the table, the call drawer.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 
 import { clientLogger } from '@/lib/logger/client';
 import { AdminDrawer } from '@/app/admin/components/layout/AdminDrawer';
-import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
 import { AdminEmpty, AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { ADMIN_COUNT_LINE } from '@/app/admin/components/layout/adminTable';
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
-import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 
 import {
-  ANALYTICS_FILTER_SPEC,
   ANALYTICS_PATH,
   DIMENSION_FIELD,
   analyticsRequestParams,
@@ -23,7 +43,7 @@ import {
   scopeSwitchPatch,
   type AnalyticsFilters,
   type DrillField,
-} from './analyticsFilters';
+} from '../analyticsFilters';
 import {
   UNPAGED_ROW_CAP,
   type BreakdownDimension,
@@ -33,19 +53,17 @@ import {
   type ExecutionDetails,
   type PeriodComparison,
   type Scope,
-} from './analyticsTypes';
-import { isDrilled, readMeta } from './analyticsCall';
-import { AnalyticsCallDetails } from './components/AnalyticsCallDetails';
-import { AnalyticsExecutionCard } from './components/AnalyticsExecutionCard';
-import { ANALYTICS_WHAT, AnalyticsFilterBar, drillValueLabel, type DrillLabels } from './components/AnalyticsFilterBar';
-import { AnalyticsKpis } from './components/AnalyticsKpis';
-import { AnalyticsSummaryCards } from './components/AnalyticsSummaryCards';
-import { AnalyticsTable } from './components/AnalyticsTable';
+} from '../analyticsTypes';
+import { isDrilled, readMeta } from '../analyticsCall';
+import { AnalyticsCallDetails } from './AnalyticsCallDetails';
+import { AnalyticsExecutionCard } from './AnalyticsExecutionCard';
+import { ANALYTICS_WHAT, AnalyticsFilterBar, drillValueLabel, type DrillLabels } from './AnalyticsFilterBar';
+import { CallsSummary } from './CallsSummary';
+import { AnalyticsSummaryCards } from './AnalyticsSummaryCards';
+import { AnalyticsTable } from './AnalyticsTable';
 
 // A client file logs through the client logger (F-56).
 const logger = clientLogger.child({ module: 'AdminCostAnalytics' });
-
-const PURPOSE = 'What Business OS and agent-platform AI calls cost, by provider, model and feature.';
 
 const EMPTY_TOTALS = { cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, calls: 0 };
 
@@ -66,21 +84,24 @@ const crumbProps = (isLast: boolean) => ({
   'aria-current': isLast ? ('true' as const) : undefined,
 });
 
-// useSearchParams needs a Suspense boundary in Next 14.
-export default function AdminCostAnalytics() {
-  return (
-    <Suspense fallback={null}>
-      <AdminCostAnalyticsContent />
-    </Suspense>
-  );
+export interface CallsTabProps {
+  /** The page's filters (the Calls keys, the window and the business). */
+  filters: AnalyticsFilters;
+  /** The page's one URL write. */
+  setFilters: (patch: Partial<AnalyticsFilters>) => void;
+  /** The page's Clear (every filter to its default, the tab kept). */
+  clear: () => void;
+  canClear: boolean;
+  /** The search string the URL would have after a patch ('' or '?a=b'); the page path is prepended here. */
+  hrefFor: (patch: Partial<AnalyticsFilters>) => string;
+  /** The tab is shown: only then may it read. */
+  active: boolean;
 }
 
-function AdminCostAnalyticsContent() {
+export function CallsTab({ filters, setFilters, clear, canClear, hrefFor, active }: CallsTabProps) {
   // The URL is the filter state's projection (Admin Layout Standard C-7): the
-  // first state is parsed from the URL synchronously, so the first read already
-  // sees an inbound link's filters, and drill clicks, breadcrumbs, the scope
-  // switch and the KPI tiles all write through this one hook (L-2a §2.3).
-  const { filters, setFilters, clear, isDefault, hrefFor } = useAdminFilters(ANALYTICS_FILTER_SPEC);
+  // page parses it before the first read, and drill clicks, breadcrumbs, the
+  // scope switch and the summary links all write through the page's one hook.
   /**
    * Readable labels for drilled values (an agent name, an account name), keyed
    * by filter and read only while their id is the applied value. Not in the
@@ -97,6 +118,9 @@ function AdminCostAnalyticsContent() {
   // Dates are at day precision, so the string is stable within a UTC day; the
   // read is keyed on it, so a change that yields the same request sends none.
   const query = analyticsRequestParams(effective, new Date()).toString();
+
+  /** The request last sent, so a tab switch back with the same request reads nothing (MK-3b). */
+  const lastRead = useRef<string | null>(null);
 
   const [possiblyIncomplete, setPossiblyIncomplete] = useState(false);
   const [items, setItems] = useState<DrillDownItem[]>([]);
@@ -173,9 +197,12 @@ function AdminCostAnalyticsContent() {
     }
   }, []);
 
+  // MK-3b: only while the tab is shown, and only when the request changed since the last read.
   useEffect(() => {
+    if (!active || lastRead.current === query) return;
+    lastRead.current = query;
     void fetchData(query);
-  }, [fetchData, query]);
+  }, [fetchData, query, active]);
 
   // A link may name what Business OS scope cannot hold (`?category=memory`,
   // `?group_by=agent`): converge the URL and the controls. The request was
@@ -255,7 +282,7 @@ function AdminCostAnalyticsContent() {
   /** A breadcrumb's text: the recorded label while its id is applied, else the value. */
   const labelOf = (field: DrillField) => drillValueLabel(labels, field, filters[field]);
 
-  /** A KPI tile's target: the filtered view's real link, and the same patch applied in place. */
+  /** A summary link's target: the filtered view's real link, and the same patch applied in place. */
   const tile = (patch: Partial<AnalyticsFilters>) => ({
     href: `${ANALYTICS_PATH}${hrefFor(patch)}`,
     apply: () => setFilters(patch),
@@ -285,27 +312,12 @@ function AdminCostAnalyticsContent() {
   const openCallTime = openCall ? readMeta(openCall).timestamp : null;
 
   return (
-    <div className="space-y-6">
-      <AdminPageHeader title="AI calls & usage (detail)" purpose={PURPOSE} />
-
-      {!error && (
-        <AnalyticsKpis
-          scope={scope}
-          totals={totals}
-          categoryTotals={categoryTotals}
-          comparison={comparison}
-          possiblyIncomplete={possiblyIncomplete}
-          category={effective.category}
-          firstLoad={!hasLoaded}
-          tile={tile}
-        />
-      )}
-
+    <div className="space-y-6" data-testid="calls-tab">
       <AnalyticsFilterBar
         filters={effective}
         setFilters={setFilters}
         onClear={clear}
-        canClear={!isDefault}
+        canClear={canClear}
         onScopeToggle={handleScopeToggle}
         labels={labels}
         pickedBusiness={pickedBusiness}
@@ -345,7 +357,7 @@ function AdminCostAnalyticsContent() {
                   <p>
                     Recorded AI cost, Business OS only: every AI call in the usage log, charged or not, including calls
                     before charging started on 29 Sep 2026 and legacy-tagged Business OS rows. USD, priced from the
-                    model price table. The charged cost is on Finance.
+                    model price table. The charged cost is on the Summary & checks tab.
                   </p>
                 ) : (
                   <p>Recorded AI cost, both products: every AI call in the usage log. USD, priced from the model price table.</p>
@@ -354,6 +366,17 @@ function AdminCostAnalyticsContent() {
               </div>
             </div>
 
+            {/* MK-3b (SA-Q-MK3-6): the old strip's figures, as this tab's summary cards. */}
+            <CallsSummary
+              scope={scope}
+              totals={totals}
+              categoryTotals={categoryTotals}
+              comparison={comparison}
+              possiblyIncomplete={possiblyIncomplete}
+              category={effective.category}
+              link={tile}
+            />
+
             {/* Breadcrumb trail (rewired in L-2a, SA M-1; L-2b class edits only). */}
             <div className="flex items-center gap-2 text-sm flex-wrap">
               <button type="button" onClick={clearAllFilters} {...crumbProps(!hasDeeperCrumb)}>
@@ -361,7 +384,7 @@ function AdminCostAnalyticsContent() {
               </button>
               {filters.provider && (
                 <>
-                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" aria-hidden="true" />
                   <button
                     type="button"
                     onClick={() => {
@@ -375,7 +398,7 @@ function AdminCostAnalyticsContent() {
               )}
               {filters.model && (
                 <>
-                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" aria-hidden="true" />
                   <button
                     type="button"
                     onClick={() => {
@@ -389,7 +412,7 @@ function AdminCostAnalyticsContent() {
               )}
               {filters.activity && (
                 <>
-                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" aria-hidden="true" />
                   <button
                     type="button"
                     onClick={() => {
@@ -403,7 +426,7 @@ function AdminCostAnalyticsContent() {
               )}
               {filters.account && (
                 <>
-                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" aria-hidden="true" />
                   <button
                     type="button"
                     onClick={() => {
@@ -417,7 +440,7 @@ function AdminCostAnalyticsContent() {
               )}
               {filters.requestType && (
                 <>
-                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" aria-hidden="true" />
                   <button
                     type="button"
                     onClick={() => {
@@ -431,7 +454,7 @@ function AdminCostAnalyticsContent() {
               )}
               {filters.feature && (
                 <>
-                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" aria-hidden="true" />
                   <button
                     type="button"
                     onClick={() => {
@@ -445,7 +468,7 @@ function AdminCostAnalyticsContent() {
               )}
               {filters.component && (
                 <>
-                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" aria-hidden="true" />
                   <button
                     type="button"
                     onClick={() => {
@@ -459,7 +482,7 @@ function AdminCostAnalyticsContent() {
               )}
               {filters.endpoint && (
                 <>
-                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" aria-hidden="true" />
                   <button
                     type="button"
                     onClick={() => {
@@ -473,7 +496,7 @@ function AdminCostAnalyticsContent() {
               )}
               {scope === 'all' && filters.agent && (
                 <>
-                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" aria-hidden="true" />
                   <button
                     type="button"
                     onClick={() => {
@@ -487,7 +510,7 @@ function AdminCostAnalyticsContent() {
               )}
               {scope === 'all' && filters.execution && (
                 <>
-                  <ChevronRight className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" aria-hidden="true" />
                   <span className="text-white" aria-current="true" title={`Execution: ${filters.execution}`}>
                     {labelOf('execution')}
                   </span>
@@ -519,7 +542,7 @@ function AdminCostAnalyticsContent() {
                 testId="analytics-empty"
                 message="No AI usage matches this window and these filters."
                 hint="Try a longer window, the other scope or fewer filters."
-                onClear={isDefault ? undefined : clear}
+                onClear={canClear ? clear : undefined}
               />
             )}
 

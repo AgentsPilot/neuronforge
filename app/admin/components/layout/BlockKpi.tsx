@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * A block KPI: the headline figure of a Finance block (Money MK-1, KPI
+ * A block KPI: the headline figure of a block on a page (Money MK-1, KPI
  * restructure review §3.2 and §5; LL-1 to LL-4). Not a strip tile and not a
  * link: a `div role="group"` named "label, value" (never a landmark, never a
  * button, A-9), with MK-0's leading / lagging `KpiIndicator` in its top corner
@@ -9,13 +9,18 @@
  * MK-0a: the indicator is the word pill; its tooltip opens below this box
  * (it is the box's `relative` anchor), and `pr-20` keeps the label clear of it.
  *
+ * Money MK-3 (SA-Q-MK3-8, MK-1 ruling): promoted from Finance to this shared
+ * folder, byte-identical markup, because a second page uses it (the AI cost
+ * page's Leak check, "Businesses with uncharged calls"). Callers: Finance's
+ * Credits and Client payments blocks, and the Leak check panel.
+ *
  * The value arrives formatted by the caller ("at least" included). Every
- * string comes from `financeCopy.ts`; the indicator's definition is that KPI's
- * one copy constant (LL-4).
+ * string comes from the caller's copy module; the indicator's definition is
+ * that KPI's one copy constant (LL-4).
  */
 
-import { KpiIndicator, type KpiIndicatorSpec } from '@/app/admin/components/layout/KpiStrip';
-import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
+import { KpiIndicator, type KpiIndicatorSpec } from './KpiStrip';
+import { StatusChip, type StatusTone } from './StatusChip';
 
 export interface BlockKpiProps {
   label: string;

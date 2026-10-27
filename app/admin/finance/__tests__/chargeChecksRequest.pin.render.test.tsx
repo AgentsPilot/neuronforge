@@ -9,17 +9,22 @@
  * edited again. Its SHA-256, and its helper's, are recorded in the M-5
  * workplan's Implementation Notes at Step 0 and at handover; they must be equal.
  *
- * The same file runs on either side: when `app/admin/finance/charges/page.tsx`
- * exists it mounts that page at `/admin/finance/charges?<state>`; otherwise it
- * mounts the Business OS AI page at `/admin/business-os-llm?tab=costs&<state>`.
  * Only `Date` is faked (no timer faking, the #399 lesson), and every wait has an
  * explicit 10 s timeout (the F-4 amendment lesson).
+ *
+ * RE-FROZEN ONCE by Money MK-3a (SA-WP-MK3 condition 2, SA-Q-MK3-11): the
+ * report and its Leak check moved again, to the AI cost page's Summary &
+ * checks tab, so the file now mounts `app/admin/ai-cost/page.tsx` at
+ * `/admin/ai-cost?tab=checks&<state>`. Its two older sides (the Charge checks
+ * page and the Business OS AI `tab=costs` tab) are removed: neither exists any
+ * more. Nothing else changed: the table `chargeChecksRequestPins.ts` is
+ * byte-identical (`64a565e9`), which is the proof that the merge sends the
+ * same requests. Old and new SHA-256 of this file are in
+ * docs/workplans/ADMIN_MONEY_MK3_AI_COST_PAGE_WORKPLAN.md.
  */
 
 import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import * as fs from 'fs';
-import * as path from 'path';
 import type { ComponentType } from 'react';
 
 jest.mock('next/navigation', () => ({
@@ -29,17 +34,10 @@ jest.mock('next/navigation', () => ({
 import { LEAK_PATH, PIN_NOW, PINNED_CHARGE_REQUESTS, REPORT_PATH } from './chargeChecksRequestPins';
 
 const WAIT = { timeout: 10_000 };
-const NEW_PAGE_FILE = path.join(process.cwd(), 'app', 'admin', 'finance', 'charges', 'page.tsx');
-const isNewSide = fs.existsSync(NEW_PAGE_FILE);
-
-/** The page that serves the report on this tree, and the address a state opens at. */
+/** The page that serves the report (MK-3a: the AI cost page), and the address a state opens at. */
 function target(state: string): { Page: ComponentType; href: string } {
-  if (isNewSide) {
-    const { default: Page } = jest.requireActual<{ default: ComponentType }>('@/app/admin/finance/charges/page');
-    return { Page, href: `/admin/finance/charges${state ? `?${state}` : ''}` };
-  }
-  const { default: Page } = jest.requireActual<{ default: ComponentType }>('@/app/admin/business-os-llm/page');
-  return { Page, href: `/admin/business-os-llm?tab=costs${state ? `&${state}` : ''}` };
+  const { default: Page } = jest.requireActual<{ default: ComponentType }>('@/app/admin/ai-cost/page');
+  return { Page, href: `/admin/ai-cost?tab=checks${state ? `&${state}` : ''}` };
 }
 
 function stub() {
@@ -47,7 +45,7 @@ function stub() {
     const url = String(input);
     const base = url.split('?')[0];
     // The report and the leak check answer with a refusal (only their URLs are
-    // pinned); anything else (the settings read on the old side) answers empty.
+    // pinned); anything else answers empty.
     const body =
       base === REPORT_PATH
         ? { success: false, error: 'pinned' }

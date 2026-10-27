@@ -207,6 +207,10 @@ export const AUDIT_EVENTS = {
   SYSTEM_CONFIG_CHANGED: 'SYSTEM_CONFIG_CHANGED',
   SYSTEM_MAINTENANCE_STARTED: 'SYSTEM_MAINTENANCE_STARTED',
   SYSTEM_MAINTENANCE_ENDED: 'SYSTEM_MAINTENANCE_ENDED',
+  // Admin environment view (EC-1, SA OQ-8): an admin opened the read-only
+  // Environment page. Details carry the environment label and counts only,
+  // never a variable name or value.
+  ADMIN_ENVIRONMENT_VIEWED: 'ADMIN_ENVIRONMENT_VIEWED',
 
   // ==========================================
   // BUSINESS OS ENTITLEMENTS (admin-only)
@@ -494,6 +498,21 @@ export const AUDIT_EVENTS = {
   // Stripe's cancellation reason when given (payment_failed or
   // cancellation_requested), livemode, event id, money history row id.
   BOS_BILLING_SUBSCRIPTION_ENDED: 'BOS_BILLING_SUBSCRIPTION_ENDED',
+  // Plan payments P-7a.1 (workplan §4.2, §4.9; AM-7): an owner set their plan
+  // subscription to cancel at the period end, from Settings → Plan. Written by
+  // the cancel route once per request that reached the Stripe write (outcome
+  // 'cancelled', or 'unknown' when Stripe's answer was lost), with logAndFlush
+  // before the response (WC-7). Never for a refusal or an 'unchanged' answer.
+  // Entity type 'business_os_billing_account', id = the ACCOUNT id; actor =
+  // the owner. Details: subscription id, endsOn, livemode, mode 'period_end'
+  // (P-7a.4 adds 'immediate'), outcome, actor 'owner', correlation id. Nothing
+  // is refunded and the plan row is not written: access follows paid-through.
+  BOS_BILLING_SUBSCRIPTION_CANCELLED: 'BOS_BILLING_SUBSCRIPTION_CANCELLED',
+  // Plan payments P-7a.1: an owner removed a pending cancellation before the
+  // period end (reactivate). Same writer rules, entity and actor as
+  // BOS_BILLING_SUBSCRIPTION_CANCELLED. Details: subscription id, renewsOn,
+  // livemode, outcome, actor 'owner', correlation id. Nothing is charged now.
+  BOS_BILLING_SUBSCRIPTION_REACTIVATED: 'BOS_BILLING_SUBSCRIPTION_REACTIVATED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -1205,6 +1224,18 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: "Stripe ended a Business OS plan subscription (Stripe's reason recorded when given)",
   },
+  // Plan payments P-7a.1. 'info': an owner's own choice, needing no operator
+  // action; SOC2, as every Business OS billing event.
+  [AUDIT_EVENTS.BOS_BILLING_SUBSCRIPTION_CANCELLED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner set their plan subscription to cancel at the period end (nothing refunded; access continues to the paid-through date)',
+  },
+  [AUDIT_EVENTS.BOS_BILLING_SUBSCRIPTION_REACTIVATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner removed the pending cancellation of their plan subscription (it renews as before; nothing charged now)',
+  },
   [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
     severity: 'warning',
     complianceFlags: ['SOC2'],
@@ -1321,6 +1352,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['SOC2'],
     description: 'Admin stopped impersonating user',
+  },
+  // Not "all critical" like its neighbours: a read of the Environment page
+  // changes nothing (SA OQ-8 ruled severity info).
+  [AUDIT_EVENTS.ADMIN_ENVIRONMENT_VIEWED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Admin viewed the environment configuration page',
   },
 
   // Security events - all critical

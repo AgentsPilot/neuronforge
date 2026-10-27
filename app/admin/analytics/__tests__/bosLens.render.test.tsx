@@ -2,6 +2,16 @@
  * @jest-environment jsdom
  */
 
+/*
+ * Money MK-3b (ruled): AI calls & usage is now the AI cost page's Calls tab
+ * (`/admin/ai-cost?tab=calls`; `/admin/analytics` redirects there). These cases
+ * mount the AI cost page and arrive on the Calls tab: `useSearchParams` adds
+ * `tab=calls` when the arrival string has no tab, as the redirect does, and
+ * every address the page writes starts `?tab=calls`. The page also reads its
+ * report for the strip; the drill-down requests are filtered as before.
+ */
+
+
 /**
  * AI cost & usage — the Business OS lens (ADMIN_BOS_CLEANUP slice 3).
  *
@@ -36,11 +46,15 @@ jest.mock('@/lib/logger/client', () => {
 
 let mockSearch = '';
 jest.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(mockSearch),
+  useSearchParams: () => {
+    const params = new URLSearchParams(mockSearch);
+    if (!params.has('tab')) params.set('tab', 'calls');
+    return params;
+  },
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 
-import AdminCostAnalytics from '../page';
+import AdminCostAnalytics from '@/app/admin/ai-cost/page';
 
 const ACCOUNT = '99999999-9999-4999-8999-999999999999';
 const EXEC = '33333333-3333-4333-8333-333333333333';
@@ -147,8 +161,13 @@ function stubRoute(options: StubOptions = {}): jest.Mock {
 }
 
 let fetchMock: jest.Mock;
+// MK-3b: the page also reads its report (the strip, re-read when a drill picks a business); only the
+// drill-down requests are this tab's.
 const queries = (): URLSearchParams[] =>
-  fetchMock.mock.calls.map(([u]) => new URL(String(u), 'http://x').searchParams);
+  fetchMock.mock.calls
+    .map(([u]) => String(u))
+    .filter((u) => u.startsWith('/api/admin/token-usage/drill-down'))
+    .map((u) => new URL(u, 'http://x').searchParams);
 const lastQuery = () => queries()[queries().length - 1];
 
 /**

@@ -47,3 +47,13 @@ export function rowOpenTarget(event: { currentTarget: HTMLElement; target: Event
   if (isSelectingIn(row)) return null;
   return row.querySelector<HTMLButtonElement>(`[data-testid="${ROW_OPEN_TEST_ID}"]`);
 }
+
+/**
+ * The classes of a row that opens (D-17): hover and pointer, and the open row
+ * highlighted. Moved here unchanged from Finance's business drawer (Money
+ * MK-8b, SA-Q-MK8B-1) so every page that opens rows like the Businesses page
+ * uses one string.
+ */
+export function openableRowClass(isOpen: boolean): string {
+  return `hover:bg-slate-700/30 transition-colors cursor-pointer ${isOpen ? 'bg-slate-700/20' : ''}`;
+}

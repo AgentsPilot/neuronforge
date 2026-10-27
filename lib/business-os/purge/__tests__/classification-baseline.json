@@ -1,6 +1,6 @@
 {
   "generated": "2026-10-04",
-  "count": 161,
+  "count": 162,
   "levels": {
     "abandoned_bookings": "reset",
     "admin_users": "never",
@@ -48,6 +48,7 @@
     "business_os_boost_cap_overrides": "never",
     "business_os_boost_purchases": "never",
     "business_os_boost_reversal_events": "never",
+    "business_os_account_closures": "never",
     "business_os_credit_charges": "never",
     "business_os_credit_lot_draws": "never",
     "business_os_credit_lots": "never",
@@ -170,6 +171,7 @@
     "ais_system_config": "2026-10-04 AD-1a SC-8: no tenancy column; updated_by -> auth.users SET NULL. Actor reference on platform data: never.",
     "auth_handoff_codes": "2026-10-04 AD-1a SC-8: live user_id column, user_id -> auth.users CASCADE, no inbound FK. Ephemeral identity-level sign-in handoff, not business data: never.",
     "business_addresses": "2026-10-06: added by 20261036_business_addresses_book.sql; FK business_profiles CASCADE (20261037); inbound FKs business_profiles.address_id / invoice_address_id SET NULL. Business configuration kept by Reset with its profile: purge/CONFIG.",
+    "business_os_account_closures": "2026-10-25 DL-1a: new table (migration 20261093_business_os_account_closures.sql). user_id -> auth.users CASCADE, no inbound FK, no trigger. The deletion request of the account (stages A to D): never on purpose, a business Reset or Purge must not cancel it (SA O-2). Removed by step B of the test-account cleanup in both modes; excluded from export as the deletion request itself.",
     "business_os_boost_reversal_events": "2026-10-17 finance 4b.1: new table (migration 20261076, first numbered 20261072). No user_id; purchase_id -> business_os_boost_purchases CASCADE, no inbound FK, no trigger. Dated refund and dispute history of a boost purchase: never, excluded from export as billing.",
     "business_os_data_exports": "2026-10-17 DE-8a: added by 20261074_business_os_data_exports.sql; user_id -> auth.users CASCADE (no FK to business_profiles: an agent-platform user may export too), requested_by has no FK, no inbound FK, no trigger. The account's Download my data jobs: kept by Reset (an owner may export, then start over), removed by Purge and account deletion. purge/LEAF, snapshot ids (the snapshot never copies another copy of the business).",
     "business_os_deletion_receipts": "2026-10-18 DE-10b.1: new table (migration 20261080_business_os_deletion_receipts.sql). No user_id, no owner_user_id, no FK in or out, no trigger; subject_user_id is a bare uuid on purpose. The proof that an account deletion committed, inserted only by the cleanup function inside its transaction: never, excluded from export as platform data.",

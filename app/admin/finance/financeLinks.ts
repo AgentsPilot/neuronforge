@@ -9,11 +9,14 @@
  *     7d, 30d and This month (both resolve a preset through the same
  *     `resolveAdminWindow` Finance uses), and `range=custom&from&to` for custom.
  *     Charge checks (`/admin/finance/charges`) took over the Business OS AI
- *     "Costs & credits" tab in Money M-5, so its links carry no `tab`.
- *   - AI calls & usage: `range=today` / `range=this_month` are equal presets
- *     there; its 7d and 30d are ROLLING (`period=N`), not Finance's whole UTC
- *     days, so 7d, 30d and custom go out as `range=custom` with the payload's
- *     own dates, which that page sends as whole UTC days.
+ *     "Costs & credits" tab in Money M-5; since Money MK-3a it is the AI cost
+ *     page's Summary & checks tab, `/admin/ai-cost?tab=checks` (SA-6: no
+ *     internal link relies on the redirect from the old address).
+ *   - AI calls & usage: since Money MK-3b the AI cost page's Calls tab,
+ *     `/admin/ai-cost?tab=calls`. Its 7d and 30d are whole UTC days now, as
+ *     Finance's (SA-Q-MK3-3), so the window goes out exactly as for Summary &
+ *     checks: the same preset, or the custom dates. The old per-page mapping
+ *     (7d and 30d as custom dates, because that page's were rolling) is gone.
  *   - Businesses: `status=all` (so a business with no recent sign-in is on the
  *     list) and the one-shot `account` key (SA-Q33, SA-W67). No window.
  *
@@ -68,30 +71,16 @@ function wholeDayWindow(params: URLSearchParams, window: FinanceLinkWindow): voi
   }
 }
 
-/** AI calls & usage: equal presets where they exist, otherwise the exact dates (SA-W56). */
-function analyticsWindow(params: URLSearchParams, window: FinanceLinkWindow): void {
-  switch (window.preset) {
-    case 'today':
-    case 'this_month':
-      params.set('range', window.preset);
-      return;
-    case '7d':
-    case '30d':
-    case 'custom':
-      setDates(params, window);
-      return;
-    case 'since_start':
-      if (sinceStartFitsLinks(window)) setDates(params, window);
-      return;
-    default: {
-      const unreachable: never = window.preset;
-      return unreachable;
-    }
-  }
-}
-
-/** The page that runs the cost report and the Leak check (Money M-5, R-3, R-4). */
-const CHARGE_CHECKS_PATH = '/admin/finance/charges';
+/**
+ * The page that runs the cost report and the Leak check (Money M-5, R-3, R-4):
+ * since Money MK-3a the AI cost page, on its Summary & checks tab.
+ */
+const AI_COST_PATH = '/admin/ai-cost';
+const CHECKS_TAB = 'checks';
+/** Money MK-3b: the AI cost page's Calls tab (the old AI calls & usage). */
+const CALLS_TAB = 'calls';
+/** The AI cost page's anchor for the recorded block and the Leak check (MK-3a, A-K3's target). */
+const LEAK_ANCHOR = '#costs-leak';
 
 export function activityHref(accountId: string, window: FinanceLinkWindow): string {
   const params = new URLSearchParams();
@@ -101,23 +90,43 @@ export function activityHref(accountId: string, window: FinanceLinkWindow): stri
   return `/admin/business-os-llm?${params.toString()}`;
 }
 
-/** Charge checks for this business on the same window, in that page's own keys; no `tab` (M-5 R-3). */
+/** AI cost, Summary & checks, for this business on the same window, in that page's own keys (MK-3a). */
 export function costsHref(accountId: string, window: FinanceLinkWindow): string {
   const params = new URLSearchParams();
+  params.set('tab', CHECKS_TAB);
   wholeDayWindow(params, window);
   params.set('account', accountId);
-  return `${CHARGE_CHECKS_PATH}?${params.toString()}`;
+  return `${AI_COST_PATH}?${params.toString()}`;
 }
 
-/** An AI calls & usage address (F-5: typed, so the K-1 tile can take it as a cross-page link). */
-export type AnalyticsHref = `/admin/analytics?${string}`;
-
-/** AI calls & usage. `scope` is left out: its default is `bos`. */
-export function analyticsHref(accountId: string, window: FinanceLinkWindow): AnalyticsHref {
+/**
+ * Money MK-3a (C-7): Section 3's "Recorded above charged" line → the AI cost
+ * page's recorded block and Leak check, on the same window, and the business
+ * when one is picked. Same keys as `costsHref`.
+ */
+export function aiCostRecordedHref(accountId: string | null, window: FinanceLinkWindow): string {
   const params = new URLSearchParams();
-  analyticsWindow(params, window);
-  params.set('account', accountId);
-  return `/admin/analytics?${params.toString()}`;
+  params.set('tab', CHECKS_TAB);
+  wholeDayWindow(params, window);
+  if (accountId !== null) params.set('account', accountId);
+  return `${AI_COST_PATH}?${params.toString()}${LEAK_ANCHOR}`;
+}
+
+/** An AI cost Calls address (F-5: typed, so the K-1 tile can take it as a cross-page link). */
+export type AnalyticsHref = `/admin/ai-cost?${string}`;
+
+/** The Calls tab with the window and, when given, the business. `scope` is left out: its default is `bos`. */
+function callsHref(accountId: string | null, window: FinanceLinkWindow): AnalyticsHref {
+  const params = new URLSearchParams();
+  params.set('tab', CALLS_TAB);
+  wholeDayWindow(params, window);
+  if (accountId !== null) params.set('account', accountId);
+  return `${AI_COST_PATH}?${params.toString()}`;
+}
+
+/** AI cost, Calls (the old AI calls & usage), for this business on the same window (MK-3b). */
+export function analyticsHref(accountId: string, window: FinanceLinkWindow): AnalyticsHref {
+  return callsHref(accountId, window);
 }
 
 /** Businesses, with this business's drawer opened once on arrival (SA-Q33, SA-W67). */
@@ -128,12 +137,9 @@ export function businessesHref(accountId: string): string {
   return `/admin/users?${params.toString()}`;
 }
 
-/** Section 3's "AI calls & usage" link (CR G-8): the window always, the account when one is picked. */
+/** Section 3's Calls link (CR G-8; MK-3b: the AI cost page's Calls tab): the window always, the account when one is picked. */
 export function section3AnalyticsHref(accountId: string | null, window: FinanceLinkWindow): AnalyticsHref {
-  if (accountId !== null) return analyticsHref(accountId, window);
-  const params = new URLSearchParams();
-  analyticsWindow(params, window);
-  return `/admin/analytics?${params.toString()}`;
+  return callsHref(accountId, window);
 }
 
 /** K-1 always measures this calendar month in UTC, whatever the page window is. */
@@ -148,20 +154,6 @@ const K1_WINDOW: FinanceLinkWindow = { preset: 'this_month', from: '', to: '' };
  */
 export function k1AnalyticsHref(accountId: string | null): AnalyticsHref {
   return section3AnalyticsHref(accountId, K1_WINDOW);
-}
-
-/**
- * Money M-4 (M4-FR-1, SA-W99): Section 3's "Leak check" link, to the page that
- * runs the Leak check: Charge checks since Money M-5 (R-4; before, the Business
- * OS AI "Costs & credits" tab). No window travels (the Leak check takes at most
- * 7 days); the business does, in that page's own `account` key, when one is
- * picked. Literal keys, so this file still imports only the wire types.
- */
-export function leakCheckHref(accountId: string | null): string {
-  if (accountId === null) return CHARGE_CHECKS_PATH;
-  const params = new URLSearchParams();
-  params.set('account', accountId);
-  return `${CHARGE_CHECKS_PATH}?${params.toString()}`;
 }
 
 /**

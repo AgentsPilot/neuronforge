@@ -68,6 +68,8 @@ describe('retrieveBusinessOsSubscription', () => {
       customerId: 'cus_1',
       billingCycleAnchor: 1_790_000_000,
       cancelAtPeriodEnd: false,
+      // P-7a.1 (SA C-3): additive; the fixture sets no `cancel_at`.
+      cancelAt: null,
       endedAt: null,
       livemode: false,
       metadata: { product: 'business_os_plan' },

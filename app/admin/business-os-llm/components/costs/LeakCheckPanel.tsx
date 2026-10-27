@@ -26,12 +26,32 @@
  * The account table is on the shared table classes (F-71, F-72) and its
  * statuses are `StatusChip`s (Q-5); the four verdict boxes stay as they are:
  * they are results of the run, not page states (Q-7).
+ *
+ * Money MK-3 (§4.2, §5, SA-Q-MK3-5): the block KPI "Businesses with uncharged
+ * calls" heads the panel, on the shared `BlockKpi` with its leading pill. It
+ * is counted from this run's own result (no read): findings with at least one
+ * uncharged call; platform accounts are reported apart and never counted.
+ * "At least n" when the run did not see every business (an incomplete or
+ * unchecked account, accounts left, the deadline, a failed listing) and found
+ * at least one; Unknown with the chip "Not every business was checked" when
+ * such a run found none (QA B-1); "Could not check" after a failed run (QA
+ * B-2); "Not run yet" before a run.
+ *
+ * Money MK-8b (§4.2, MK-10): on the AI cost page with every business shown,
+ * each result row opens the AI cost business drawer the Businesses way (a
+ * narrow "Details" column with the row's Open button, and a mouse-only row
+ * click); the examples row and the platform line open nothing. Inside that
+ * drawer the panel runs for one business with `variant="drawer"`: the same
+ * controls and result, without the block KPI (a count over businesses, not one
+ * business's figure; SA-Q-MK8B-5), and with no openers (the drawer mounts no
+ * provider for its content).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Play, RefreshCw } from 'lucide-react';
 
 import { ADMIN_FIELD_CONTROL, ADMIN_FIELD_LABEL } from '@/app/admin/components/layout/AdminFilterBar';
+import { BlockKpi } from '@/app/admin/components/layout/BlockKpi';
 import { AdminError, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import {
@@ -47,6 +67,7 @@ import {
 import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
 import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
+import { useAiCostRowOpen, type AiCostRowOpen } from '@/app/admin/ai-cost/components/aiCostRowOpen';
 
 import { COSTS_PLATFORM_ACCOUNT } from '../../costCopy';
 import { formatCount, formatDay, formatUsd, utcDateDaysAgo } from '../../costFormat';
@@ -63,6 +84,13 @@ import {
   LEAK_FOUND,
   LEAK_INTRO,
   LEAK_KNOWN_PATHS_TITLE,
+  LEAK_KPI_AT_LEAST,
+  LEAK_KPI_COULD_NOT_CHECK,
+  LEAK_KPI_DEFINITION,
+  LEAK_KPI_LABEL,
+  LEAK_KPI_NOT_ALL_CHECKED,
+  LEAK_KPI_NOT_RUN,
+  LEAK_KPI_UNKNOWN,
   LEAK_LISTING_FAILED,
   LEAK_NOT_RUN,
   LEAK_PARTIAL,
@@ -82,6 +110,31 @@ import type { LeakAccountFindingWire, LeakCheckPayload, LeakGroupExampleWire } f
 
 const LEAK_URL = '/api/admin/business-os/credits/leak-check';
 
+/**
+ * MK-3: the block KPI's value and chip. A count of findings with an uncharged
+ * call; "At least n" whenever the run may have missed a business and found at
+ * least one. A run that may have missed businesses and found none says
+ * Unknown with a chip, never "At least 0", which reads as "none" (QA B-1). A
+ * failed run says "Could not check", not "Not run yet" (QA B-2). Exported for
+ * its test.
+ */
+export function unchargedBusinessesKpi(
+  result: LeakCheckPayload | null,
+  failed: boolean
+): { value: string; chip: { tone: StatusTone; label: string } | null } {
+  if (!result) return { value: failed ? LEAK_KPI_COULD_NOT_CHECK : LEAK_KPI_NOT_RUN, chip: null };
+  const found = result.accounts.filter((finding) => finding.counts.uncharged > 0).length;
+  const complete =
+    result.accountsIncomplete === 0 &&
+    result.accountsNotChecked === 0 &&
+    result.accountsRemaining === 0 &&
+    !result.deadlineReached &&
+    !result.listingFailed;
+  if (complete) return { value: formatCount(found), chip: null };
+  if (found === 0) return { value: LEAK_KPI_UNKNOWN, chip: { tone: 'warn', label: LEAK_KPI_NOT_ALL_CHECKED } };
+  return { value: LEAK_KPI_AT_LEAST(formatCount(found)), chip: null };
+}
+
 /** Kept words: the panel's fallback when the route gives no reason of its own. */
 const LEAK_ERROR_FALLBACK = 'Could not run the leak check';
 
@@ -90,6 +143,8 @@ export interface LeakCheckPanelProps {
   accountId: string;
   /** Its business name, for the scope line. */
   accountLabel: string | null;
+  /** MK-8b: `drawer` inside the AI cost business drawer drops the block KPI. Default `page`. */
+  variant?: 'page' | 'drawer';
 }
 
 /**
@@ -129,7 +184,8 @@ function ExampleList({ title, items }: { title: string; items: LeakGroupExampleW
   );
 }
 
-function AccountRow({ finding }: { finding: LeakAccountFindingWire }) {
+function AccountRow({ finding, opener }: { finding: LeakAccountFindingWire; opener: AiCostRowOpen | null }) {
+  const target = { kind: 'business' as const, accountId: finding.accountId, name: finding.companyName };
   const c = finding.counts;
   // QA4b-E1: an account can be listed only for these, with every column at zero.
   const note = LEAK_ROW_NOTE(c);
@@ -141,7 +197,7 @@ function AccountRow({ finding }: { finding: LeakAccountFindingWire }) {
     0;
   return (
     <>
-      <tr data-testid={`leak-account-${finding.accountId}`}>
+      <tr data-testid={`leak-account-${finding.accountId}`} {...opener?.rowProps(target)}>
         <td className={`${ADMIN_TD} text-slate-200`}>{finding.companyName ?? finding.accountId}</td>
         <td className={ADMIN_TD}>
           <StatusChip tone={STATUS_TONE[finding.status]} testId="leak-status">
@@ -170,10 +226,11 @@ function AccountRow({ finding }: { finding: LeakAccountFindingWire }) {
         </td>
         <td className={ADMIN_TD_NUM}>{formatCount(c.knownPathCalls)}</td>
         <td className={ADMIN_TD_NUM}>{formatUsd(finding.usd.totalUncharged)}</td>
+        {opener?.cell(target)}
       </tr>
       {hasExamples && (
         <tr>
-          <td colSpan={9} className={ADMIN_TD}>
+          <td colSpan={opener ? 10 : 9} className={ADMIN_TD}>
             <details className="rounded border border-slate-800 bg-slate-900/40 p-2">
               <summary className="cursor-pointer text-[11px] text-slate-400">{LEAK_EXAMPLES_TITLE}</summary>
               <div className="mt-2 space-y-2">
@@ -191,6 +248,7 @@ function AccountRow({ finding }: { finding: LeakAccountFindingWire }) {
 }
 
 function Result({ result }: { result: LeakCheckPayload }) {
+  const opener = useAiCostRowOpen();
   const partial =
     result.accountsIncomplete > 0 || result.accountsNotChecked > 0 || result.accountsRemaining > 0 || result.listingFailed;
   // CR4b-N2 / QA4b-E2: the settle clamp can pull the end back to the start
@@ -286,11 +344,12 @@ function Result({ result }: { result: LeakCheckPayload }) {
                   <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.pending}</th>
                   <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.known}</th>
                   <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.usd}</th>
+                  {opener?.header}
                 </tr>
               </thead>
               <tbody className={ADMIN_TBODY}>
                 {result.accounts.map((finding) => (
-                  <AccountRow key={finding.accountId} finding={finding} />
+                  <AccountRow key={finding.accountId} finding={finding} opener={opener} />
                 ))}
               </tbody>
             </table>
@@ -331,7 +390,7 @@ function Result({ result }: { result: LeakCheckPayload }) {
   );
 }
 
-export function LeakCheckPanel({ accountId, accountLabel }: LeakCheckPanelProps) {
+export function LeakCheckPanel({ accountId, accountLabel, variant = 'page' }: LeakCheckPanelProps) {
   const yesterday = utcDateDaysAgo(1);
   const [from, setFrom] = useState(yesterday);
   const [to, setTo] = useState(yesterday);
@@ -392,12 +451,24 @@ export function LeakCheckPanel({ accountId, accountLabel }: LeakCheckPanelProps)
     []
   );
 
+  const kpi = unchargedBusinessesKpi(result, error !== null);
+
   return (
     <section className="space-y-3 rounded-xl border border-slate-700 bg-slate-800/30 p-4" data-testid="leak-panel">
       <div>
         <h3 className="text-sm font-semibold text-slate-100">{LEAK_TITLE}</h3>
         <p className="mt-1 max-w-3xl text-xs text-slate-400">{LEAK_INTRO}</p>
       </div>
+
+      {variant === 'page' && (
+        <BlockKpi
+          label={LEAK_KPI_LABEL}
+          value={kpi.value}
+          chip={kpi.chip}
+          indicator={{ kind: 'leading', definition: LEAK_KPI_DEFINITION }}
+          testId="leak-kpi-uncharged"
+        />
+      )}
 
       <div className="flex flex-wrap items-end gap-3">
         <label>

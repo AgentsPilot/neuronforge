@@ -87,4 +87,24 @@ export interface PlanPurchaseWire {
   endsFreeAccessOnPurchase: EndsFreeAccessOnPurchaseWire;
   /** P-7b.1b: `null` unless `planUpgradeOffer` answers `upgrade`. */
   upgrade: PlanUpgradeWire | null;
+  /**
+   * P-7a.1 (workplan §4.1; SA C-1): `planManageOffer`'s answer for the screen.
+   * Absent when there is nothing to manage (no paid subscription, or the
+   * price-recognition switch is off), so older payloads are unchanged.
+   */
+  manage?: PlanManageWireShape;
+}
+
+/**
+ * Which plan-management control the screen shows (P-7a.1). Built by
+ * `planManageWire` (planManageOffer.ts) and repeated here so this file keeps
+ * no import; `planPurchaseView.ts` assigns one to the other.
+ */
+export interface PlanManageWireShape {
+  /** Renewing: "Cancel plan". */
+  cancel: boolean;
+  /** Set to end, before the end date: "Reactivate". */
+  reactivate: boolean;
+  /** A renewal failed: "update your card, or contact us to cancel" (P-7a.4 offers Cancel here later). */
+  paymentFailed: boolean;
 }
