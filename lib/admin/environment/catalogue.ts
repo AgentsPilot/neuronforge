@@ -357,6 +357,7 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   flag('NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY', 'features', 'Shows the owner\'s Credit history on the Credits card.', 'lenient', false, OPTIONAL, { docLink: FLAGS_DOC }),
   flag('ADMIN_BUSINESS_DELETE_ENABLED', 'features', 'Lets an admin delete a business from Businesses.', 'lenient', false, OPTIONAL, { docLink: FLAGS_DOC }),
   flag('BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED', 'features', 'Lets an owner delete their own Business OS account; only the exact word true turns it on.', 'strict-true', false),
+  flag('BUSINESS_OS_MODULE_EXPORT_ENABLED', 'features', 'Lets an owner request the per-module data export by email; while off, "Download my data" builds the ZIP as before. Only the exact word true turns it on; never on in Preview before MX-4.', 'strict-true', false, OPTIONAL, { docLink: FLAGS_DOC }),
   configEnum('BOS_ENTITLEMENTS_MODE', 'features', 'How Business OS plan limits are applied: off, shadow (measured, not enforced) or enforce. A launch check can downgrade enforce to shadow, so this shows what was asked for.', ['off', 'shadow', 'enforce']),
   flag('V6_SEMANTIC_SKELETON_ENABLED', 'features', 'V6 pipeline: builds a semantic skeleton before formalising; only the exact word true turns it on.', 'strict-true', false),
   flag('V6_VALIDATION_DRIVEN_ENABLED', 'features', 'V6 pipeline: validation-driven formalising; only the exact word true turns it on.', 'strict-true', false),
