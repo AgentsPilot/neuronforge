@@ -421,7 +421,12 @@ export const en = {
     'plan.manage.reactivating': 'Reactivating…',
     'plan.manage.reactivated': 'Your plan will renew on {date}.',
     'plan.manage.reactivated_nodate': 'Your plan will renew as before.',
-    'plan.manage.payment_failed_contact': 'Your payment failed. Update your card, or contact us to cancel.',
+    // P-7a.4 (BQ-3 = A): a failed renewal; Cancel ends the plan NOW (it replaces P-7a.1's "contact us" line).
+    'plan.manage.payment_failed_cancel_now': 'Your payment failed. Update your card to keep your plan, or cancel it to end it now.',
+    'plan.manage.cancel_now_body': "Your last payment didn't go through. If you cancel, {plan} ends now and we stop trying to charge your card. The unpaid invoice is cancelled, so there is nothing left to pay.",
+    'plan.manage.cancel_now_confirm': 'Yes, end it now',
+    'plan.manage.ended_now': 'Cancelled. {plan} has ended, and your card will not be charged again.',
+    'plan.manage.refusal.payment_failed': 'Your payment failed. Update your card first, or cancel your plan.',
     'plan.manage.refusal.unavailable': 'This is not available right now. Please try again later.',
     'plan.manage.refusal.not_subscribed': 'There is no paid plan on your account.',
     'plan.manage.refusal.not_active': 'Your subscription is not active right now.',

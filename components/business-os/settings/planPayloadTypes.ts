@@ -119,9 +119,11 @@ export interface PlanPayload {
   comparison?: PlanComparison | null;
   /**
    * SX-2 (D3): what changes when the paid plan ends, for the Cancel drawer's
-   * "What changes" step (`planEndingView`). Set only where Cancel is offered
-   * and our billing record says renewing; `null` otherwise or when it could
-   * not be built. Optional: an older payload has none.
+   * "What changes" step (`planEndingView`). Set only where Cancel is offered:
+   * from the period end when our billing record says renewing, or from today
+   * when a renewal payment is failing (P-7a.4 ends the plan now; D3 T-13);
+   * `null` otherwise or when it could not be built. Optional: an older payload
+   * has none.
    */
   ending?: PlanEndingWire | null;
   problem: PlanSentence | null;

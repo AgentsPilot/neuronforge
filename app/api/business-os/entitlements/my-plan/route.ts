@@ -144,13 +144,27 @@ export async function GET(request: NextRequest) {
      * Display only (`planEndingView` refuses and writes nothing). A failure
      * never hides the plan: `ending: null`, and the drawer says it could not
      * work out what changes.
+     *
+     * D3 T-13 (P-7a.4, SA ruling 6): while a renewal payment is failing, Cancel
+     * ends the plan NOW (the drawer's `now` mode), so the view is built from
+     * TODAY, this server's clock, not the period end. Still never a request
+     * value (R-8). The route decides the real mode on Stripe's fresh status;
+     * the view only describes the expected one.
      */
     // Typed through the function, so the route imports exactly one new symbol (SA R-6).
     let ending: Awaited<ReturnType<typeof readPlanEndingView>> = null;
     const billing = purchase?.billing ?? null;
-    if (purchase?.manage?.cancel === true && billing !== null && billing.state === 'renewing' && billing.date) {
+    const endingFrom =
+      purchase?.manage?.cancel !== true
+        ? null
+        : purchase.manage.paymentFailed === true
+          ? new Date().toISOString()
+          : billing !== null && billing.state === 'renewing' && billing.date
+            ? billing.date
+            : null;
+    if (endingFrom !== null) {
       try {
-        ending = await readPlanEndingView({ accountId, endsAt: billing.date, locale });
+        ending = await readPlanEndingView({ accountId, endsAt: endingFrom, locale });
       } catch (err) {
         requestLogger.warn({ err, event: 'bos_plan_ending_view_failed' }, 'Plan ending view unavailable; Cancel drawer shows the fallback');
       }

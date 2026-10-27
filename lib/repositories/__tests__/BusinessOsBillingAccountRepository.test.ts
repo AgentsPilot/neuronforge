@@ -851,6 +851,12 @@ describe('source guards', () => {
       // D2 / SX-1 QA (2026-10-27): the gap tests over the same two routes fake
       // the repository module by name, as route.test.ts below. Test file only.
       'app/api/business-os/billing/plan/cancel/__tests__/route.d2.qa.test.ts',
+      // Plan payments P-7a.4 QA (2026-10-27): the two-tab / cured-row / void-failure
+      // gap tests fake the repository module by name (stateful). Test file only.
+      'app/api/business-os/billing/plan/cancel/__tests__/route.p7a4.qa.test.ts',
+      // Plan payments P-7a.4: the immediate-cancel route test fakes the repository
+      // module by name, as route.test.ts below. Test file only.
+      'app/api/business-os/billing/plan/cancel/__tests__/route.p7a4.test.ts',
       // Plan payments P-7a.1: the cancel / reactivate routes' integration test
       // fakes the repository module by name. The routes themselves do not name it.
       'app/api/business-os/billing/plan/cancel/__tests__/route.test.ts',

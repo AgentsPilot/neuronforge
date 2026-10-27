@@ -31,14 +31,16 @@
  * The answer goes to `PlanManage` (`onFinished`), which closes this drawer and
  * then shows the outcome on the card and asks the host to re-read, once.
  *
- * ── MODE: 'period_end' | 'now' (a seam for P-7a.4, TL 2026-10-27) ──────────
- * Today only `period_end` is used: the plan runs to the date the owner paid
- * for. P-7a.4 (merging to main before D3) adds an "ends now" cancel (and a
- * Cancel on failing-payment rows). After D3 merges main, both of its confirm
- * variants move in here as `mode="now"`: steps 3 and 4 read the `_now` copy
- * ("ends today"), the Founding Partner sentence stays in both modes, and
- * `requestExtra` carries whatever P-7a.4's route body adds beside the
- * `reasonCode`. Nothing passes `now` yet; the wiring is the follow-up.
+ * ── MODE: 'period_end' | 'now' (P-7a.4, wired by D3 T-13) ──────────────────
+ * `period_end`: the plan runs to the date the owner paid for. `now`: a
+ * renewal payment is failing, and P-7a.4's cancel ends the plan today;
+ * `PlanManage` passes it on `manage.paymentFailed`. Steps 3 and 4 then read
+ * the `_now` copy ("ends today"; step 4 adds P-7a.4's user-approved
+ * `plan.manage.cancel_now_body`: the unpaid invoice is cancelled), step 2's view is built from today by the
+ * my-plan route, the reason step stays required and the Founding Partner
+ * sentence stays in both modes. `requestExtra` carries any body field the
+ * cancel route adds beside the `reasonCode`; P-7a.4 adds none (the route
+ * decides the mode on Stripe's fresh status), so nothing passes it today.
  *
  * Imports nothing from the entitlements module (upgrade modal C-6): the reason
  * codes come from the import-free `planLeaveReasons.ts`, the ending from the
@@ -342,6 +344,12 @@ function PlanCancelSteps({
             : t('settings.plan_cancel.confirm.body_nodate')}
         {foundingLine && <> {foundingLine}</>}
       </p>
+      {/* P-7a.4 (C-11), user-approved: a failing-payment owner learns the open invoice goes away. */}
+      {mode === 'now' && (
+        <p className={BODY} data-testid="plan-cancel-confirm-invoice">
+          {fill(t('plan.manage.cancel_now_body'), { plan: planName })}
+        </p>
+      )}
       {busy && (
         <p role="status" className={`flex items-center gap-2 ${MUTED}`} data-testid="plan-cancel-busy">
           <Loader2 aria-hidden="true" className="w-3.5 h-3.5 animate-spin" />

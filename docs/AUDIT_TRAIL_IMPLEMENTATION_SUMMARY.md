@@ -140,24 +140,24 @@ One audit entry per Business OS AI action or background job, summarising its LLM
 ### 3. Plugin Connection Audit Trail (100% Complete)
 
 #### ✅ Plugin Connection Established
-**Location:** `app/api/plugin-connections/route.ts:41-65`
-**Event:** `PLUGIN_CONNECTED`
+**Location:** `lib/server/user-plugin-connections.ts`
+**Event:** `PLUGIN_CONNECTED` (`PLUGIN_RECONNECTED` when the connection already existed)
 **Severity:** info
-**Compliance:** SOC2, GDPR (Article 30 - third-party data access)
+**Compliance:** SOC2
 
 **Captured Data:**
 - Plugin key (e.g., 'google-sheets', 'slack')
 - User ID
-- Plugin display name
-- Has access token (boolean)
-- Connection type ('oauth' or 'credentials')
+- Granted scopes
+- Provider account email and username
+- Auth type
 - IP address
 - User agent
 
-**Trigger:** POST `/api/plugin-connections`
+**Trigger:** the OAuth connect flow in `lib/server/user-plugin-connections.ts` (the old username/password `POST /api/plugin-connections` was removed on 2026-10-27)
 
 #### ✅ Plugin Disconnection
-**Location:** `app/api/plugin-connections/route.ts:97-120`
+**Location:** `app/api/plugin-connections/route.ts` (`DELETE` handler)
 **Event:** `PLUGIN_DISCONNECTED`
 **Severity:** warning
 **Compliance:** SOC2, GDPR
@@ -524,8 +524,8 @@ try {
    - Added payment success/failure logging
    - Captures full financial transaction details
 
-2. ✅ **`app/api/plugin-connections/route.ts`** - Lines 41-65, 97-120
-   - Added plugin connection/disconnection logging
+2. ✅ **`app/api/plugin-connections/route.ts`** - `DELETE` handler
+   - Added plugin disconnection logging (connection logging now lives in `lib/server/user-plugin-connections.ts`)
    - Captures third-party data access for GDPR
 
 ### Already Had Audit Logging (Pre-existing)
@@ -621,3 +621,4 @@ For questions or issues:
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-09-19 | Business OS AI activity (Layer 3) | Added the section on the two `BUSINESS_AI_ACTION_*` events, the `ai_action` entity, what is and is not recorded, owner visibility (D-6) and the known risk KI-B |
+| 2026-10-27 | Plugin connection entry corrected | The username/password `POST /api/plugin-connections` was removed. `PLUGIN_CONNECTED` is written by the OAuth flow in `lib/server/user-plugin-connections.ts`; its compliance flag and captured fields now match that emitter. Line numbers dropped |

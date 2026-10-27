@@ -225,9 +225,10 @@ describe.each([
     expect(state.audits).toEqual([]);
   });
 
-  it('a failed renewal on our record → 409 payment_failed_contact_us, zero Stripe calls', async () => {
+  // P-7a.4: the CANCEL now ends the plan (route.p7a4.test.ts); a REACTIVATE is still refused on our data.
+  it('a failed renewal on our record → reactivate 409 payment_failed_contact_us, zero Stripe calls', async () => {
     state.row = billingRow({ subscriptionStatus: 'past_due', failedAttempts: 1 });
-    const response = await send({});
+    const response = await reactivatePost({});
     expect(response.status).toBe(409);
     expect((await response.json()).code).toBe('payment_failed_contact_us');
     expect(stripeCalls()).toEqual([]);

@@ -25,14 +25,23 @@
  * shows itself comes from the route's own answer, so a failed re-read never
  * hides what happened.
  *
+ * P-7a.4 (BQ-3 = A; SA C-11, TQ-12): with `manage.paymentFailed` the Cancel
+ * drawer opens in `mode="now"` (D3 T-13): its review and confirm steps say the
+ * plan ENDS TODAY, not "until {date}", and the reason step is still required
+ * (D3 SA ruling 6). The body is the same `{ reasonCode }` (P-7a.4 adds no body
+ * field, so no `requestExtra`): the route decides the real mode on Stripe's
+ * fresh status, and the line after the press says what happened
+ * (`mode: 'immediate'` / `state: 'ended'` → "has ended").
+ *
  * P-7a.2: "Update card" and "Invoices" (`PlanCardAndInvoices`) render here
  * too, where `manage.cardAndInvoices` is set; the hosts are unchanged.
  *
  * P-7a.3 (BQ-5): where the server sends `manage.freeAccessAfter` (a Founding
  * Partner whose free access outlives the paid plan by more than the 24 h
  * margin), one sentence names the return to free access and its end date: in
- * the Cancel drawer (steps 2 and 4, D3 SA R-4c), and under "Keep my plan"
- * while the plan is set to end.
+ * the Cancel drawer (steps 2 and 4, D3 SA R-4c), in both of its modes (the
+ * "until {date}" one and the P-7a.4 "ends now" one, SA P-7a.4 deviation 8),
+ * and under "Keep my plan" while the plan is set to end.
  * The server decides when it is true; this island only formats the date.
  *
  * Imports nothing from the entitlements module and no server file (the copy
@@ -93,6 +102,8 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
   if (!manage && notice === null) return null;
 
   const planName = plan.name ?? '';
+  // P-7a.4: a failed renewal; Cancel ends the plan now (the drawer's `now` mode).
+  const endsNow = manage?.paymentFailed === true && manage.cancel;
   const day = (iso: string | null) => (iso ? formatAccountDay(iso, language, timezone) : null);
   // P-7a.3 (BQ-5): the free-access end, only when the server sent it.
   const freeUntil = day(manage?.freeAccessAfter?.endsAt ?? null);
@@ -117,7 +128,10 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
       // says what Stripe holds, from the route's own answer, so a stale
       // re-read never leaves the press with no visible result.
       const state = outcome === 'unchanged' ? data.state : null;
-      if (outcome === 'cancelled' || state === 'cancelling') {
+      if ((outcome === 'cancelled' && data.mode === 'immediate') || state === 'ended') {
+        // P-7a.4: ended now (or already ended at Stripe).
+        setNotice({ kind: 'done', text: fill(t('plan.manage.ended_now'), { plan: planName }) });
+      } else if (outcome === 'cancelled' || state === 'cancelling') {
         const ends = day(stringOrNull(outcome === 'cancelled' ? data.endsOn : data.date));
         setNotice({
           kind: 'done',
@@ -165,7 +179,7 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
     <div className="space-y-2 pt-2" data-testid="plan-manage">
       {manage?.paymentFailed && (
         <p className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-manage-payment-failed">
-          {t('plan.manage.payment_failed_contact')}
+          {t('plan.manage.payment_failed_cancel_now')}
         </p>
       )}
 
@@ -192,6 +206,7 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
           plan={plan}
           onFinished={onCancelFinished}
           returnFocusRef={drawerReturnFocusRef}
+          mode={endsNow ? 'now' : 'period_end'}
         />
       )}
 

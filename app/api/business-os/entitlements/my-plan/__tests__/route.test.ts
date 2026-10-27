@@ -836,9 +836,9 @@ describe('ending: the Cancel drawer\'s "What changes" (SX-2 / D3; SA Q-6, R-8, R
     expect(state.endingAsks).toEqual([]);
   });
 
-  it('no paid plan, a failed payment, or the price switch off: ending null, nothing asked', async () => {
-    for (const billing of [{ data: null, error: null }, paying({ subscriptionStatus: 'past_due' })]) {
-      state.billing = billing;
+  it('no paid plan, or the price switch off: ending null, nothing asked', async () => {
+    state.billing = { data: null, error: null };
+    {
       const body = await (await GET(request())).json();
       expect(body.data.ending).toBeNull();
     }
@@ -847,6 +847,25 @@ describe('ending: the Cancel drawer\'s "What changes" (SX-2 / D3; SA Q-6, R-8, R
     const body = await (await GET(request())).json();
     expect(body.data.ending).toBeNull();
     expect(state.endingAsks).toEqual([]);
+  });
+
+  it.each([
+    ['past_due', { subscriptionStatus: 'past_due', failedAttempts: 1 }],
+    ['unpaid', { subscriptionStatus: 'unpaid', failedAttempts: 2 }],
+    ['active + failed_attempts', { subscriptionStatus: 'active', failedAttempts: 1 }],
+  ])('D3 T-13: a failed payment (%s) ends NOW, so the view is built from TODAY (server clock), never the period end or the request', async (_label, extra) => {
+    state.billing = paying(extra);
+    const before = Date.now();
+    const body = await (await GET(new NextRequest(`http://localhost/api/business-os/entitlements/my-plan?endsAt=2000-01-01`))).json();
+    const after = Date.now();
+    expect(body.data.purchase.manage).toMatchObject({ cancel: true, paymentFailed: true });
+    expect(state.endingAsks).toHaveLength(1);
+    const asked = state.endingAsks[0];
+    expect(asked.accountId).toBe(CUSTOMER);
+    expect(asked.endsAt).not.toBe(PERIOD_END);
+    expect(Date.parse(asked.endsAt)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(asked.endsAt)).toBeLessThanOrEqual(after);
+    expect(body.data.ending).toEqual(FREE_PLAN);
   });
 
   it('a throwing ending view never hides the plan: 200, ending null, the purchase intact', async () => {
@@ -868,8 +887,12 @@ describe('ending: the Cancel drawer\'s "What changes" (SX-2 / D3; SA Q-6, R-8, R
     expect(body.data.ending).toBeNull();
   });
 
-  it('the source takes the date from the purchase view\'s billing, never from the request', () => {
+  it('the source takes the date from the purchase view\'s billing (or today, T-13), never from the request', () => {
     const source = codeOnly(readFileSync(join(process.cwd(), 'app', 'api', 'business-os', 'entitlements', 'my-plan', 'route.ts'), 'utf8'));
-    expect(source).toMatch(/readPlanEndingView\(\{\s*accountId,\s*endsAt:\s*billing\.date,\s*locale\s*\}\)/);
+    expect(source).toMatch(/readPlanEndingView\(\{\s*accountId,\s*endsAt:\s*endingFrom,\s*locale\s*\}\)/);
+    const from = source.slice(source.indexOf('const endingFrom'), source.indexOf('if (endingFrom !== null)'));
+    expect(from).toMatch(/new Date\(\)\.toISOString\(\)/);
+    expect(from).toMatch(/billing\.date/);
+    expect(from).not.toMatch(/request|searchParams|nextUrl/);
   });
 });
