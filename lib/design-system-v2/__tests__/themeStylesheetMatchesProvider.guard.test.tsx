@@ -195,10 +195,21 @@ describe('T-T1 the default sheet equals the provider with no custom tokens', () 
     expect(DEFAULT_SHEET.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/@/);
   });
 
-  it.each(['light', 'dark'] as const)('(1)(2) %s: exactly equal, 43 names', async (mode) => {
+  /*
+   * 45 since `--v2-warning` and `--v2-success` joined. They were in
+   * `globals-v2.css` only, which `/v2` and `/business-os/crm` load and
+   * `/business-os` does not — so on the dashboard the variable was undefined,
+   * and an unresolvable `var()` in a `color` is invalid at computed-value time:
+   * the element inherits rather than falling back. The Needs-you card's urgent
+   * line painted in the inherited muted grey.
+   *
+   * The number is deliberate, not incidental: it is what makes a token added
+   * to one side and not the other fail here rather than in a screenshot.
+   */
+  it.each(['light', 'dark'] as const)('(1)(2) %s: exactly equal, 45 names', async (mode) => {
     const provider = await providerOutput(mode, {});
     const sheet = resolve([defaultSheet], mode);
-    expect(Object.keys(provider)).toHaveLength(43);
+    expect(Object.keys(provider)).toHaveLength(45);
     expect(sheet).toEqual(provider);
   });
 

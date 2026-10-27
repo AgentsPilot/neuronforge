@@ -232,6 +232,8 @@ interface PreviewData {
      */
     service_count?: number;
     online_presence_mode?: 'full_website' | 'booking_only' | 'website_only' | 'none';
+    /** They told us they already have a site. Null means "not established". */
+    has_website?: boolean | null;
     /** How money actually arrives — the answer that decides whether Stripe is needed at all. */
     collection_method?: 'card_online' | 'invoice' | 'in_person' | 'mixed' | 'none';
     payment_mode?: 'none' | 'upfront' | 'invoicing' | 'installments';
@@ -1459,6 +1461,22 @@ export default function OnboardingChatPage() {
         : selectedLanguage === 'es'
           ? 'Construiré tu sitio y lo dejaré listo para publicar. Es donde te encuentran y te escriben, y cada consulta entra en tus contactos.'
           : "I'll build your site and leave it ready for you to publish. That is where clients find you and get in touch, and every enquiry lands in your contacts.";
+    }
+
+    /*
+     * "No website" is only half the truth for somebody who HAS one.
+     *
+     * A business keeping its own site shares `booking_only` with one that has
+     * no web presence at all — the mode records what WE build, not what they
+     * own. Telling an owner who just said "I already have a website" that they
+     * have no website reads as though we had not listened.
+     */
+    if (configuration?.has_website === true) {
+      return selectedLanguage === 'he'
+        ? 'לינק להזמנות להדביק באתר שלך, ואקרא משם את הפניות שמגיעות למייל.'
+        : selectedLanguage === 'es'
+          ? 'Un enlace de reserva para pegar en tu sitio, y leeré las consultas que llegan a tu correo.'
+          : "A booking link to paste into your own site, and I'll read the enquiries it emails you.";
     }
 
     return selectedLanguage === 'he'

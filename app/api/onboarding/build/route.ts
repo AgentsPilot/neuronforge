@@ -155,6 +155,11 @@ const computedConfigurationSchema = z.object({
   /** The business-wide appointments answer, for services it has to invent. */
   sells_scheduled: z.boolean().optional(),
   online_presence_mode: z.enum(['full_website', 'booking_only', 'website_only', 'none']),
+  /* They already have a site. Separate from the mode above, which records only
+     what WE are asked to build: a business keeping its own site and one with no
+     web presence share `booking_only`. Nullable — "not established" is a real
+     answer and the common one. */
+  has_website: z.boolean().nullish(),
   payment_mode: z.enum(['none', 'upfront', 'invoicing', 'installments']),
   needs_stripe_connect: z.boolean(),
   /** Clients fill in a form before their appointment. */
@@ -528,7 +533,16 @@ export async function POST(request: NextRequest) {
       tools,
       pain_points: painPoints,
       goals,
-      has_website: configuration?.online_presence_mode === 'full_website' ||
+      /*
+       * What they SAID wins over what we inferred from the mode.
+       *
+       * This read the presence mode alone, which can only ever mean "we are
+       * building them one". A business that keeps its own site is on
+       * `booking_only` and was therefore reported as having no website at all —
+       * the precise confusion the new chip exists to end.
+       */
+      has_website: configuration?.has_website === true ||
+                   configuration?.online_presence_mode === 'full_website' ||
                    configuration?.online_presence_mode === 'website_only' ||
                    profile?.has_website
     };

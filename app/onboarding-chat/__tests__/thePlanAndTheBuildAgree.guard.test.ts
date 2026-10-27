@@ -411,7 +411,16 @@ describe('what the one list actually decides', () => {
   it('speaks every language the chat does, with no gaps', () => {
     for (const language of ['en', 'he', 'es'] as const) {
       const tasks = ownerTasks(
-        { serviceCount: 1, sellsScheduled: true, collectionMethod: 'mixed', needsIntake: true },
+        /* EVERY key, which is what this asserts — so the input has to ask for
+           every one of them. `hasOwnWebsite` joined the list on 2026-10-26
+           with the mailbox lead channel. */
+        {
+          serviceCount: 1,
+          sellsScheduled: true,
+          collectionMethod: 'mixed',
+          needsIntake: true,
+          hasOwnWebsite: true,
+        },
         language
       );
       expect(tasks).toHaveLength(OWNER_TASK_KEYS.length);

@@ -14,6 +14,9 @@ import { getUser } from '@/lib/auth';
 import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
 import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { busyMeetings, overlapsBusy } from '@/lib/scheduling/busyMeetings';
+/* The owner's synced calendar holds their time too — the same read the
+   sibling availability routes make. */
+import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
 import { windowsForDate, hasAnyAvailability, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
@@ -313,7 +316,46 @@ export async function GET(request: NextRequest) {
        * what occupies time, and reads `scheduling_meetings` — see that file for
        * why a job's cancellation needs no join to be visible here.
        */
-      const busy = await busyMeetings(supabaseServer, ownerId, startDate, endDate);
+      const meetings = await busyMeetings(supabaseServer, ownerId, startDate, endDate);
+
+      /*
+       * ── AND THE OWNER'S OWN CALENDAR ─────────────────────────────────────
+       *
+       * A synced Google or Outlook event holds the owner's time as surely as a
+       * meeting booked here does, and this endpoint was the one surface that
+       * never read them. The other three all do — `website/scheduling/
+       * availability`, the owner's `scheduling/free-slots`, and the portal's
+       * reschedule — so a client booking through `/site/{subdomain}/book` was
+       * offered hours the owner was already busy in, while the same hour on
+       * the same business's main booking flow was correctly withheld.
+       *
+       * `getBusySlots` uses overlap semantics (start < dayEnd AND end >
+       * dayStart), so an all-day or multi-hour event spanning into the window
+       * counts — the same call and the same reasoning as the sibling routes.
+       *
+       * Fails soft, like `busyMeetings`: a calendar that cannot be read must
+       * not take down the booking page, so an error leaves the meetings as the
+       * answer rather than returning none.
+       */
+      let externalEvents: Array<{ start_time: string; end_time: string }> = [];
+      try {
+        const { data: busySlots } = await externalCalendarEventRepository.getBusySlots(
+          ownerId,
+          startDate,
+          endDate
+        );
+        externalEvents = (busySlots || []).map(slot => ({
+          start_time: slot.start,
+          end_time: slot.end,
+        }));
+      } catch (calendarError) {
+        requestLogger.error(
+          { err: calendarError, ownerId },
+          'Could not read the owner calendar; offering slots from the meetings alone'
+        );
+      }
+
+      const busy = [...meetings, ...externalEvents];
 
       // Mark overlapping slots as unavailable
       if (busy.length > 0) {
