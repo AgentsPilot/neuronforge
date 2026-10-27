@@ -78,6 +78,26 @@ describe('PayingBreakdownSection', () => {
     expect(screen.getByTestId('paying-breakdown-rate')).toHaveTextContent(PAYING_BREAKDOWN.noRateCutOff);
   });
 
+  // MK9-FU-2 (SA-WP-FU2, option A): Comped rests on the same plan walk as the trial counts, so a cut walk
+  // makes it a lower bound too. The flag is the walk's own, carried on `trials.status`.
+  it('MK9-FU-2: a cut walk makes Comped and both its parts "At least"', () => {
+    show({ ...READY, trials: { ...READY.trials, status: 'partial', rate: null } });
+    expect(screen.getByTestId('paying-breakdown-comped-line')).toHaveTextContent(
+      'Comped: At least 6 · Assigned, no subscription At least 4 · Subscription ended or not paying At least 2'
+    );
+  });
+
+  it('MK9-FU-2: an exact walk shows the Comped figures plain, with no "At least"', () => {
+    show(READY);
+    expect(screen.getByTestId('paying-breakdown-comped-line')).not.toHaveTextContent(/At least/i);
+  });
+
+  it('MK9-FU-2: a cut walk with the paying read failed still says "Could not check", never "At least"', () => {
+    show({ comped: null, trials: { ...READY.trials, status: 'partial', rate: null } });
+    expect(screen.getByTestId('paying-breakdown-comped-unknown')).toHaveTextContent('Comped: Could not check');
+    expect(screen.getByTestId('paying-breakdown-comped')).not.toHaveTextContent(/At least/i);
+  });
+
   it('Paying unknown is said in words', () => {
     show(READY, { scope: 'all', status: 'unknown', paying: null, accounts: null });
     expect(screen.getByTestId('paying-breakdown-paying')).toHaveTextContent('Paying: Unknown');

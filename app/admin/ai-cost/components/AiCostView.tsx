@@ -74,7 +74,7 @@ import {
   type AiCostTab,
 } from '../aiCostFilters';
 import { useCostReport } from '../useCostReport';
-import { AiCostDrawerProvider, type AiCostFullViewHref } from './AiCostDrawers';
+import { AiCostDrawerProvider, type AiCostFullViewHref, type AiCostOpenFullView } from './AiCostDrawers';
 import { AiCostTabPanel, AiCostTabs } from './AiCostTabs';
 
 /** The patch a tab choice writes: leaving Calls resets its own keys. */
@@ -125,6 +125,18 @@ export function AiCostView() {
   const fullViewHref = useCallback<AiCostFullViewHref>(
     (accountId, anchor) => `${AI_COST_PATH}${hrefFor({ ...tabPatch('checks'), account: accountId })}${anchor ?? ''}`,
     [hrefFor]
+  );
+  // The same switch in place (MK8B note, SA-WP-FU2): the page's own `setFilters`, so one report
+  // request for the picked business (Pin C row 7) and a replaced history entry, then the anchor,
+  // exactly as a strip tile's `apply` lands on a block.
+  const openFullView = useCallback<AiCostOpenFullView>(
+    (accountId, anchor) => {
+      setFilters({ ...tabPatch('checks'), account: accountId });
+      if (anchor && typeof window !== 'undefined') {
+        window.requestAnimationFrame(() => document.getElementById(anchor.slice(1))?.scrollIntoView?.());
+      }
+    },
+    [setFilters]
   );
 
   return (
@@ -177,7 +189,7 @@ export function AiCostView() {
 
       <AiCostTabPanel id="checks" hidden={tab !== 'checks'}>
         {tab === 'checks' && (
-          <AiCostDrawerProvider window={drawerWindow} pageError={error?.message ?? null} fullViewHref={fullViewHref}>
+          <AiCostDrawerProvider window={drawerWindow} pageError={error?.message ?? null} fullViewHref={fullViewHref} openFullView={openFullView}>
             <CostsTab
               filters={{
                 window: filters.window,
