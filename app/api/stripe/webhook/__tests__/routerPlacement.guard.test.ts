@@ -78,6 +78,10 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   // cancel / reactivate orchestration reads the SESSION user's billing row
   // (findByUser) and mirrors Stripe's answer onto it (mirrorSubscriptionState).
   'planSubscriptionManage.ts': [BILLING_ACCOUNTS],
+  // P-7a.2 (workplan BUSINESS_OS_PLAN_PAYMENTS_P7A_WORKPLAN.md §4.4, §4.5): Update
+  // card and the invoice list read the SESSION user's billing row (findByUser
+  // only) and use `isHostedInvoiceUrl` for the invoice links.
+  'planBillingDocuments.ts': [BILLING_ACCOUNTS],
   'planTestClock.ts': [BILLING_ACCOUNTS, ACCOUNT_PLANS],
   // P-6a.2 (workplan §5.6, SA C-13): the owner banner reads the SESSION
   // account's billing row for the current mode (findByUser only).

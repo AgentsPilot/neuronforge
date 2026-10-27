@@ -22,6 +22,9 @@
  * shows itself comes from the route's own answer, so a failed re-read never
  * hides what happened.
  *
+ * P-7a.2: "Update card" and "Invoices" (`PlanCardAndInvoices`) render here
+ * too, where `manage.cardAndInvoices` is set; the hosts are unchanged.
+ *
  * Imports nothing from the entitlements module and no server file (the copy
  * map type-imports the refusal codes only).
  */
@@ -32,6 +35,7 @@ import { Loader2 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
 
+import { PlanCardAndInvoices } from './PlanCardAndInvoices';
 import type { PlanPayload } from './planPayloadTypes';
 import { PLAN_CANCEL_PATH, PLAN_REACTIVATE_PATH, planManageRefusalKey } from './planManageCopy';
 import { fill } from './planText';
@@ -171,6 +175,9 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
           <span>{t(phase.action === 'cancel' ? 'plan.manage.cancelling' : 'plan.manage.reactivating')}</span>
         </p>
       )}
+
+      {/* P-7a.2: Update card and Invoices, exactly where `manage.cardAndInvoices` says. */}
+      {manage?.cardAndInvoices && <PlanCardAndInvoices />}
 
       {notice?.kind === 'done' && (
         <p role="status" className="text-xs text-[var(--v2-text-primary)]" data-testid="plan-manage-done">

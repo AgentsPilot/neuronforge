@@ -1,13 +1,13 @@
 # Workplan: Business OS Plan Payments, P-7a (Card, invoices, cancel and reactivate)
 
-> **Last Updated**: 2026-10-26
+> **Last Updated**: 2026-10-27
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md): §9.1 P-7a row; F8 (cancel and reactivate), F9 (card, invoices, receipts), F10 / §9.1.2 F-3; §6 (cancel, reactivate, refunds, receipts); PF-14 + C-11; SA-P1, SA-P8, SA-P10, SA-P16; the tenant-isolation ruling under SA-2; SR-8, SR-11, SR-12, SR-16, SR-17; AC-F8.1 to AC-F8.3, AC-F9.1, AC-F9.2; §9.5 go-live rows 1, 10, 13 and 15.
 **Depends on:** P-6a merged (#405, P-6a.2: renewal failure columns, `subscription_ended` row, `planPaymentNotice`, the `/test-business-os` test clock). P-3b.2 mirror (`customer.subscription.updated` already copies `cancel_at_period_end`). P-7b.1 merged (the owner-facing billing-mutation route pattern). P-8a merged (admin Subscriptions list and the Businesses-drawer Plan billing block).
 **Date:** 2026-10-25
 **Branch:** `feature/bos-plan-payments-p7a`, worktree `neuronforge-p7a`, fresh from `origin/main` `10761291` (#509). Confirmed with `git branch --show-current` on 2026-10-25. Highest migration on that main: `20261092`.
-**Status:** SA reviewed 2026-10-25: APPROVED WITH CONDITIONS C-1 to C-12 (SA Review Notes). User decisions 2026-10-26 (§14.1): BQ-3 = A (P-7a.4 in scope), BQ-2 after month ends, BQ-1 yes. **P-7a.1:** SA code review APPROVED WITH FIXES (F-1 applied), QA PASS (no bugs), G-5 (he / es wording) approved by the user 2026-10-26 with the Hebrew fix ("מבטלים…" / "מחדשים…"). Committed, PR #519 open; merge gate: the user's live demo (do not merge until the user confirms).
+**Status:** SA reviewed 2026-10-25: APPROVED WITH CONDITIONS C-1 to C-12 (SA Review Notes). User decisions 2026-10-26 (§14.1): BQ-3 = A (P-7a.4 in scope), BQ-2 after month ends, BQ-1 yes. **P-7a.1:** SA code review APPROVED WITH FIXES (F-1 applied), QA PASS (no bugs), G-5 (he / es wording) approved by the user 2026-10-26 with the Hebrew fix ("מבטלים…" / "מחדשים…"). Merged to `main` as PR #519. **P-7a.2:** SA code review APPROVED WITH FIXES (F-2, doc only), QA PASS (all 10, no bugs), G-5 (he / es wording) approved by the user 2026-10-27 including FU-P7a2-1 ("Pay now" on a Due row). Committed on `feature/bos-plan-payments-p7a2`, PR #TBD open to `main`; no migration; merge gate: the user's live demo (do not merge until the user confirms; auto-merge off).
 
 ## Overview
 
@@ -317,10 +317,10 @@ New importers of `lib/business-os/entitlements/`: the three or four new routes (
 | ✅ T2 | `setBusinessOsCancelAtPeriodEnd`; `planSubscriptionManage.ts` (order contract, refusals, mirror, audit facts) + tests with fakes | 0.4d | .1 |
 | ✅ T3 | Cancel and reactivate routes per `new-api-route`; audit keys; coverage pin; entitlements registration | 0.25d | .1 |
 | ✅ T4 | `PlanManage` cancel / reactivate UI, confirmation, re-read, refusals; en text + he/es drafts; RTL check (the island inherits the section's `dir`; no direction-specific class) | 0.3d | .1 |
-| ⬜ T5 | Portal script (test + `--live`), dry run on the sandbox, `--apply`, id into `.env.local` (never committed) | 0.35d | .2 |
-| ⬜ T6 | Configuration reader + check; portal route; `createBusinessOsPortalSession` + tests | 0.35d | .2 |
-| ⬜ T7 | Invoice list mapping + route + `listBusinessOsInvoices` + tests (U-10 voided invoice, non-USD dropped, bad URL dropped) | 0.4d | .2 |
-| ⬜ T8 | `PlanManage` Update card + Invoices UI (lazy load, empty, error, "See all"); wording; entitlements doc row | 0.4d | .2 |
+| ✅ T5 | Portal script (test + `--live`), dry run on the sandbox, `--apply`, id into `.env.local` (never committed). **Done 2026-10-27:** test configuration `bpc_1UUv5MC7KDUGYIcA3O6iIzRJ`, also in `.env.example` (the test id only) | 0.35d | .2 |
+| ✅ T6 | Configuration reader + check; portal route; `createBusinessOsPortalSession` + tests. X-1 and X-5 run first | 0.35d | .2 |
+| ✅ T7 | Invoice list mapping + route + `listBusinessOsInvoices` + tests (U-10 voided invoice, non-USD dropped, bad URL dropped) | 0.4d | .2 |
+| ✅ T8 | `PlanManage` Update card + Invoices UI (lazy load, empty, error, "See all"); wording; entitlements doc row | 0.4d | .2 |
 | ⬜ T9 | `ResetGuard` control 3 + tests; Danger Zone message | 0.3d | .3 |
 | ⬜ T10 | R-3 text, self-delete blocker (en/he/es + fallback), cross-path pin | 0.3d | .3 |
 | ⬜ T11 | AC-F8.3 lifecycle walk; demo on the sandbox with a test clock (§10) | 0.2d | .3 |
@@ -558,6 +558,100 @@ One throwaway customer `cus_VVnFz501MTeZl0` with subscription `sub_1UUleiC7KDUGY
 
 ---
 
+## Implementation Notes (P-7a.2)
+
+**Code complete 2026-10-27, uncommitted**, on `feature/bos-plan-payments-p7a2` (worktree `neuronforge-p7a`, created by RM on top of P-7a.1 `131a46b1`; `git branch --show-current` checked). Not stacked for review: RM merges `origin/main` (with #519) before the PR, which targets `main`. No migration. No webhook change.
+
+### Sandbox experiments (standard sandbox `acct_1UPKR4C7KDUGYIcA`, test mode, 2026-10-26/27)
+
+Every customer was a throwaway created and deleted in the same run (`cus_VVx2ootQjFpa6L`, `cus_VVx2JQT2UZbB6n`, `cus_VVx4bNMX8GexwY`, `cus_VVx615iwKAhBpZ`, `cus_VVx7LpmjK6cINC`, `cus_VVx9srVKPCkpYM` on test clock `clock_1UUvEpC7KDUGYIcACXP3vTCj` (deleted), `cus_VVxcYFlNv7iV5c`); subscriptions cancelled first. `cus_VQf9jX6fnfVlkK` was not touched. The key was read from the env file outside the repo and never printed. The portal page was driven in headless Chrome over the DevTools protocol from a scratch script (no Playwright in the repo; nothing added to it).
+
+| # | Finding | Consequence |
+|---|---|---|
+| X-1 | A subscription set up as Checkout does (card `4242` as the **subscription's** `default_payment_method`, customer default empty). A portal session on our configuration, `flow_data.type = payment_method_update` with `after_completion` redirect; card `5555 5555 5555 4444` added and confirmed. Afterwards: `customer.invoice_settings.default_payment_method` = the new Mastercard, and the **subscription's `default_payment_method` was cleared to null**, so the next renewal falls back to the customer default, the new card. The redirect landed on the `return_url` | **The portal moves the renewal to the new card. C-7 is not triggered** (no webhook handler, no extra step) |
+| X-1b | Same, on a test clock, after a renewal failed (`pm_card_chargeCustomerFail`, subscription `past_due`, renewal invoice `open`, `attempt_count` 1). After the card change in the portal: the invoice stayed `open`, `attempt_count` 1, `next_payment_attempt` unchanged (checked about 3 s later; on a test clock a retry may only run when the clock advances) | **Not retried at once.** §4.4's "Stripe retries the open invoice" is not immediate: the banner clears at Stripe's next scheduled retry, or when the owner pays the open invoice from the list ("Due", **View invoice and receipt**). Recorded for SA (deviation 9); no code change |
+| X-5 | `billingPortal.sessions.create` with `locale`: `es` and `en` accepted (`auto` too); `he` and `he-IL` **refused** (`Invalid locale`) | TQ-8: the body accepts `en` / `he` / `es` (strict enum); `he` is sent to Stripe as `auto` (`portalLocaleFor`) |
+| Configuration | The script's first `--apply` created `bpc_1UUv5MC7KDUGYIcA3O6iIzRJ` (card update and invoice history on; cancel, plan switching and customer edits off; default return URL `http://localhost:3000/business-os/settings?section=plan`). **Stripe made it the sandbox's DEFAULT configuration**, being the account's first (no `is_default` parameter was sent). Re-runs: "OK … matches" (idempotent); a different `--return-origin` stops; `--live` with a test key and a wrong `--expect-account` are refused before any write | The script reports this as a NOTE, not a stop (deviation 4). Go-live row 13 now names the command |
+| Live check | The real `StripeService` methods and the real orchestration (fake repository, no database) against the sandbox, 10 / 10: configuration read; one paid `usd` invoice of 7900 with its line price read through clover's `pricing.price_details.price`; hosted link on `https://invoice.stripe.com/`; invoice PDF on `https://pay.stripe.com/`; the plan label "Essentials" from the catalog; portal URLs for `update_card` (`he` → `auto`) and `invoices`; no bearer link in any log line; an unknown customer refused `stripe_error` | — |
+
+### What was built
+
+- `lib/business-os/billing/portalConfiguration.ts`: the specification `BOS_PORTAL_FEATURES` (shared by the script and the runtime), `readPortalConfigurationId` (env, `bpc_…` only), `ensurePortalConfiguration` (retrieve and check features, mode and active once per instance; success only cached, C-6; every refusal alerted), `PORTAL_RETURN_PATH` (pinned equal to the checkout's `settings_plan` path).
+- `scripts/setup-bos-portal-configuration.ts` (C-8, TQ-7): `stripe-script-guards` for `--env`, key kind and `--expect-account`; test by default (`sk_test` only), `--live` accepts only `sk_live` / `rk_live`; dry run by default; finds ours by metadata `product: business_os_portal`; creates once (idempotency key per mode); compare-and-stop on any drift, never edits; every listed object checked for mode; prints the `bpc_…` id, never the key.
+- `StripeService`: `retrieveBusinessOsPortalConfiguration`; `createBusinessOsPortalSession` (configuration, customer, `return_url`, `locale`; `update_card` adds `flow_data` `payment_method_update` with an `after_completion` redirect to the same URL, C-6); `listBusinessOsInvoices` (one `invoices.list` call, the caller's limit clamped to 1..100, no paging; facts only). The legacy agent-platform `createPortalSession` / `listInvoices` are untouched and unused.
+- `planManageOffer.ts`: `planCardAndInvoicesOffer` (price switch on, and our row holds a customer **and** a subscription id, ended included) and `cardAndInvoices` on `planManageWire` (present only when true). `planPurchaseView` feeds it from the same row read: no new read on the drawer open.
+- `lib/business-os/billing/planInvoiceList.ts` (pure, one type import) and `planBillingDocuments.ts` (orchestration of both routes over injected ports; one refusal table; our data before any Stripe call; the session's customer, mode and configuration checked before a portal URL is returned; the plan label from the plan price catalog, cosmetic; invoices for another customer or mode, or not USD, dropped and alerted by id).
+- Routes `POST /api/business-os/billing/plan/portal` (strict body `{ intent, locale? }`) and `GET /api/business-os/billing/plan/invoices` (any query parameter is a 400), per `new-api-route`: price-switch 404 first, `getUser()`, Zod, Pino with `correlationId`, the `development` guard on `details`, **`Cache-Control: no-store` on every answer** (C-6). Not audited (TQ-9); logged with ids and counts only.
+- UI: `components/business-os/settings/PlanCardAndInvoices.tsx`, mounted by `PlanManage` where `manage.cardAndInvoices` is set (the drawer and the Settings pop-up's "Your plan" strip; hosts unchanged). Update card navigates in the same tab (one request even on a double click; reset when the page is restored from the back/forward cache). Invoices loads only when opened, once per open: rows with date, what it was for, plan, USD amount, status, **View invoice and receipt** in a new tab (**Pay now** on a Due (`open`) row, same hosted link: FU-P7a2-1, G-5 2026-10-27); empty; "could not load" with Try again; **See all in Stripe** when there are more. `PlanBillingNotices` hides "use the link in Stripe's email" where the button is offered. `PlanPaymentBanner` comment updated. Refusals map by code to the shipped `plan.manage.refusal.*` lines (`planManageCopy.ts`).
+- Wording: 19 keys in en, he / es (below), **approved by the user 2026-10-27 (G-5)**, plus `plan.invoices.pay_now` for FU-P7a2-1 (20 keys). Docs: `BUSINESS_OS_ENTITLEMENTS.md` § Billing env row and Change History; `.env.example` (the TEST id only); requirement P-7a row, §9.5 row 13 and Change History.
+- Guards updated (registrations, not loosened): billing-repository callers (`routerPlacement.guard`, and `BusinessOsBillingAccountRepository.test` for `planBillingDocuments.ts` and the new route test); entitlements non-gate importer `planBillingDocuments.ts` (`TIER_MATRIX`, label only); the `PlanManage.p7a1.qa` `plan.manage.*` key count 21 → 23.
+
+### Deviations for SA
+
+1. **One orchestration file, `planBillingDocuments.ts`,** beside the pure `planInvoiceList.ts` (§5 listed only the latter and the routes). Both routes share the row read, the predicate and the refusal table, as P-7a.1's `planSubscriptionManage.ts` does for cancel and reactivate.
+2. **`cardAndInvoices` needs a subscription id as well as a customer** (§4.1 said "customer exists"). The customer is created when a checkout starts, so an owner who opened a checkout and never paid would otherwise see "Update card" for a plan they never had. Ended subscriptions still qualify (receipts). One flag, not separate `portal` / `invoices` booleans: they are always equal.
+3. **No `invoicePdfUrl` on the wire** (§4.5 listed it). Stripe's hosted page already offers "Download invoice" and "Download receipt", and the screen shows one link. The PDF URL is read into the `StripeService` facts only.
+4. **Default configuration is a NOTE, not a stop.** Stripe makes an account's first configuration its default. Ours being the default is harmless for Business OS (every session names its configuration) but narrows any portal opened without one (the parked agent platform's legacy `create-portal`) to card and invoices; on the sandbox that is now the case. In live mode, if the account already has a configuration, ours does not become the default. The script never edits the default.
+5. **Negative invoice totals are kept** (a credit), shown as "-$5.00"; §4.5 gave no sign rule. A non-integer total is dropped as unreadable.
+6. **The routes do not import `resolveAccountId`**: the billing row is keyed on the session user (as `my-plan` and the cancel route's `findByUser`), there is no `bos_user_id` cross-check (no subscription is written) and nothing is audited. So the routes import nothing from the entitlements module, and §4.8's route registrations are not needed; `planBillingDocuments.ts` is registered instead (`TIER_MATRIX`, for the label).
+7. **Strict invoice query:** `GET …/invoices` refuses any query parameter (a strict empty Zod object over the search params), so an injected `customerId` is a visible 400 rather than silently ignored.
+8. **`plan.update_card_email` stays where no button is offered** (switch off, or a row without a subscription id) rather than being removed; its tests are unchanged. While an upgrade flow is open in the pop-up (or a checkout is processing in the drawer) `PlanManage` is hidden and so is the email line: transient, and an owner in a failed renewal is not offered an upgrade.
+9. **X-1b (a past-due invoice is not retried at once)** changes what the demo should expect after a card update during a failed renewal: the banner stays until Stripe's next retry, unless the owner pays the "Due" invoice from the list. No code change proposed; SA may want a Settings line later (not built).
+
+### Wording (P-7a.2; he / es approved by the user 2026-10-27, G-5)
+
+Hebrew follows the shipped "תוכנית" wording and the plural present ("פותחים", "טוענים") of the G-5 fix, not the §11 drafts' "מינוי". **G-5 approved by the user 2026-10-27** as drafted, with TL's recommendation FU-P7a2-1 accepted: a Due (`open`) row's link reads **Pay now** (`plan.invoices.pay_now`), the same hosted-invoice URL in a new tab with `noopener noreferrer`; every other status keeps "View invoice and receipt". The he / es comments in the dictionaries say "approved by the user 2026-10-27 (G-5)".
+
+| Key | en | he | es |
+|---|---|---|---|
+| `plan.manage.update_card` | Update card | עדכון כרטיס | Actualizar tarjeta |
+| `plan.manage.opening_stripe` | Opening Stripe… | פותחים את Stripe… | Abriendo Stripe… |
+| `plan.invoices.title` | Invoices | חשבוניות | Facturas |
+| `plan.invoices.show` | Show invoices | הצגת חשבוניות | Ver facturas |
+| `plan.invoices.hide` (new) | Hide invoices | הסתרת חשבוניות | Ocultar facturas |
+| `plan.invoices.loading` (new) | Loading invoices… | טוענים חשבוניות… | Cargando facturas… |
+| `plan.invoices.empty` | No invoices yet. | אין עדיין חשבוניות. | Todavía no hay facturas. |
+| `plan.invoices.unavailable` | We could not load your invoices right now. Please try again. | לא הצלחנו לטעון את החשבוניות כרגע. כדאי לנסות שוב. | No pudimos cargar tus facturas ahora. Inténtalo de nuevo. |
+| `plan.invoices.retry` (new) | Try again | לנסות שוב | Reintentar |
+| `plan.invoices.view` | View invoice and receipt | צפייה בחשבונית ובקבלה | Ver factura y recibo |
+| `plan.invoices.pay_now` (new, FU-P7a2-1; Due rows only) | Pay now | לתשלום עכשיו | Pagar ahora |
+| `plan.invoices.see_all` | See all in Stripe | לכל החשבוניות ב־Stripe | Ver todas en Stripe |
+| `plan.invoices.reason.subscription_create` | Plan started | תחילת התוכנית | Inicio del plan |
+| `plan.invoices.reason.subscription_cycle` | Monthly renewal | חידוש חודשי | Renovación mensual |
+| `plan.invoices.reason.subscription_update` | Plan change | שינוי תוכנית | Cambio de plan |
+| `plan.invoices.reason.other` | Invoice | חשבונית | Factura |
+| `plan.invoices.status.paid` | Paid | שולם | Pagada |
+| `plan.invoices.status.open` | Due | לתשלום | Pendiente |
+| `plan.invoices.status.void` | Not charged | לא חויב | No cobrada |
+| `plan.invoices.status.uncollectible` | Unpaid | לא שולם | Impagada |
+
+Refusals reuse the shipped `plan.manage.refusal.*` lines (no new refusal copy).
+
+### FU-P7a2-1 "Pay now" on a Due row (CLOSED 2026-10-27)
+
+User decision 2026-10-27 (G-5), accepting TL's recommendation: the link on an `open` row reads **Pay now**; no extra line under Update card. Built: `PlanCardAndInvoices.tsx` picks `plan.invoices.pay_now` when `invoice.status === 'open'`, else `plan.invoices.view`; the `href`, `target="_blank"` and `rel="noopener noreferrer"` are unchanged. Key counts pinned at 20 (was 19) in `PlanCardAndInvoices.render.test.tsx` and `PlanCardAndInvoices.p7a2.qa.render.test.tsx`; the QA RTL test now expects "Pay now" on its Due row and "View invoice and receipt" on its paid row; one new render test (en + he): open row "Pay now", paid row "View invoice and receipt", same link attributes. SA code review comment 3 and deviation 9's follow-up are thereby resolved. **C-11 still binds P-7a.4** (the Due link is the path by which an owner could pay after an immediate cancel).
+
+| Gate (2026-10-27, FU-P7a2-1) | Result |
+|---|---|
+| `components/business-os/settings`, `components/business-os/billing`, `lib/business-os/billing`, `app/api/business-os/billing` | **100 suites, 4 869 tests, all passed** |
+| `npm run test:bos-entitlements` | 308 suites, 9 270 tests: **9 269 passed, 1 failed**, not from this change: `BusinessOsBillingAccountRepository.test` "only the listed files name the repository" finds the uncommitted QA file `app/api/business-os/billing/plan/portal/__tests__/route.p7a2.qa.test.ts`, which is not in its `ALLOWED` list (registration owed; left for TL to route) |
+| Typecheck (`tsc --noEmit`, 8 GB heap) | Completed; 0 errors in the touched files (1 864 pre-existing elsewhere) |
+
+### Test and gate results (2026-10-27)
+
+| Gate | Result |
+|---|---|
+| New suites | portal + invoices routes 44, `PlanCardAndInvoices.render` 19, `planBillingDocuments` 9, `planInvoiceList` 17, `portalConfiguration` 14, `planCardAndInvoicesOffer` 6, `businessOsPlanPortal` (StripeService) 5, `setupBosPortalConfiguration` (script) 20 (134 in all) |
+| Requested set: `app/api/stripe`, `lib/business-os/billing`, `app/api/business-os/billing`, `components/business-os/settings`, `components/business-os/billing`, `lib/stripe`, `lib/audit`, `lib/business-os/purge`, `app/api/business-os/entitlements`, the billing repository suite, the two script suites (`--ci`) | **165 suites, 6 296 tests, all passed** |
+| `npm run test:bos-entitlements` | **308 suites, 9 270 tests, all passed** |
+| Connect harness `connectPath.characterisation.test.ts.snap` | md5 `ab7528ea68309cffb309ffbd46c455ab` before and after (git shows it unmodified); never `-u` |
+| Typecheck (`tsc --noEmit`, 8 GB heap) | Completed, no OOM; **0 errors in the 31 touched / new `.ts(x)` files** (1 864 pre-existing elsewhere, including stale `.next/types`) |
+| ESLint on the 24 touched / new source and test files | 0 findings |
+| Sandbox live check (scratch script, not in the repo) | 10 / 10; throwaway customer deleted |
+| `npm run build` | Not run in this slice (P-7a.1's build stop was the worktree's missing `.env.local`, accepted as environmental); compile-affecting changes are covered by the typecheck |
+
+---
+
 ## SA Review Notes
 
 ### SA Workplan Review — P-7a (2026-10-25)
@@ -721,6 +815,94 @@ Reviewed in the worktree `neuronforge-p7a`, branch `feature/bos-plan-payments-p7
 
 #### Code Approved for QA: Yes (with F-1 applied)
 
+### SA Code Review — P-7a.2 (2026-10-27)
+
+**Code Review by SA — 2026-10-27**
+**Status:** ✅ APPROVED WITH FIXES (one documentation fix, F-2, applied by SA in the worktree; uncommitted. No code change)
+
+Reviewed in the worktree `neuronforge-p7a`, branch `feature/bos-plan-payments-p7a2` (base `131a46b1` = P-7a.1), all uncommitted: 20 tracked files (+433 / −25) and 15 new files.
+
+#### Conditions verified
+
+| Condition | Verdict | Evidence |
+|---|---|---|
+| C-1: one switch, 404 before any read | ✅ | Both routes answer 404 on `isPlanPriceRecognitionEnabled()` before `getUser()`, the body, the database or Stripe, with `no-store`. `readOwnCustomer` checks the same switch again, and `planCardAndInvoicesOffer` takes it as its first rule, so the screen never offers a button the route refuses. Route test: the checkout switch off still works (BQ-1 "Yes, always") |
+| C-6: return URL | ✅ | `portalReturnUrl(platformOrigin())`, a fixed path pinned equal to the checkout's `settings_plan` path. Nothing in the route reads `Host`, `Origin` or `Referer`, and a route test sends all three and asserts they are ignored. (The legacy agent-platform `create-portal` still prefers `origin`. It is untouched and out of scope) |
+| C-6: `update_card` flow | ✅ | `flow_data: { type: 'payment_method_update', after_completion: { type: 'redirect', redirect: { return_url } } }`. The `invoices` intent sends no flow. Mutation M5 (removing `after_completion`) is caught |
+| C-6: success-only cache | ✅ | `verified` is set only after a pass, keyed by `id:livemode`. A failed retrieve, a mismatch or an id that differs is never cached. Mutation M3 (caching a failed retrieve) is caught by 2 suites |
+| C-6: `Cache-Control: no-store` | ✅ | Every answer of both routes goes through the `json()` helper with `NO_STORE`, including 404, 401, 400, refusals and 500. Mutation M2 is caught |
+| C-6: no bearer links in logs | ✅ | Logs carry ids, counts, reasons and booleans only. Stripe errors are reduced by `safeErr`. The client logs `{ err, intent }`, never the URL. Route tests assert that no log line holds the portal URL or an invoice link |
+| C-7: X-1 evidence | ✅ **not triggered** | X-1 (sandbox, Checkout-shaped subscription): after a portal card change, the customer's invoice default is the new card and the subscription's own `default_payment_method` was cleared, so the next renewal uses the new card. There is no webhook handler and no `payment_method.*` / `customer.updated` change. The Connect snapshot is unchanged |
+| C-8: script | ✅ | Uses `stripe-script-guards` for everything: `--env` outside every checkout, `--expect-account` checked with `accounts.retrieve()` before any other call, and the key kind checked before any network call. Test mode by default (`sk_test` only); `--live` accepts `sk_live` / `rk_live` only. Dry run unless `--apply`. Our configuration is found by metadata `product`. Any drift, two of ours, or an archived one gives STOP and no edit. Every listed and created object is checked for mode. The created configuration is re-checked against the specification. The `bpc_…` id is printed; the key never is. **Never Stripe's default:** the runtime refuses `portal_unavailable` (503 + alert) on a missing or malformed id, and every session names its configuration |
+| TQ-6: invoice source | ✅ | One `invoices.list({ customer: <our row>, limit: 12 })` call. `limit` is clamped to 1..100 and there is no paging loop (`hasMore` → "See all in Stripe"). Nothing reads `billing_events`, `user_subscriptions` or any money-history table. The list loads only when the owner opens it (render test: no fetch on mount) |
+| TQ-8 / X-5: locale | ✅ | A strict body enum `en` / `he` / `es`. `portalLocaleFor` sends `he` (and an absent locale) as `auto`, because X-5 shows that Stripe refuses `he` / `he-IL`. Mutation M7 (sending `he` through) is caught |
+| Tenant isolation (`tenant-isolation-guard`) | ✅ | The account comes from the session only (`getUser()` → `findByUser(user.id, <server key mode>)`), and the bodies and query are strict. The customer id is **our row's**, never a request value. The row's own `livemode` must equal the key mode. The portal session that Stripe returns must name our customer, mode and configuration with an `https` URL, or the URL is withheld (502 + alert; mutation M4 is caught). Invoices for another customer or mode, or not in USD, are dropped and alerted by id (mutation M6 is caught). No service-role path is added: `findByUser` is the repository's existing documented read |
+| Zod strict | ✅ | Portal: `z.object({ intent, locale? }).strict()`, and unparsable JSON is a 400. Invoices: `z.object({}).strict()` over the search params (deviation 7) |
+| `new-api-route` | ✅ | Gate, then auth, then Zod, then the orchestration over the repository. `createLogger` + `child({ correlationId })`. Error format with the `development` guard on `details`. `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`. Refusal text comes from a fixed table, never from Stripe. Not audited (TQ-9) |
+| Pino, no `console.*` | ✅ | No `console.*` in any touched or new file (the script writes to `process.stdout`, as its siblings do) |
+| Entitlements (`business-os-entitlements` review checklist) | ✅ | The only new importer in the diff is `planBillingDocuments.ts` → `TIER_MATRIX` (`config/tierMatrix`). It is registered in `KNOWN_NON_GATE_IMPORTERS` with exactly that symbol, and it is truly a non-gate: label only, no `check()` / `decide()`, no refusal by plan. Both routes, `PlanCardAndInvoices.tsx`, `planInvoiceList.ts`, `portalConfiguration.ts` and `planManageOffer.ts` import nothing from the module. No tier literal, no capability change, no snapshot change. `npm run test:bos-entitlements` is green (SA run) |
+| i18n en / he / es | ✅ | 19 keys in each language, with placeholder parity pinned by test. The `plan.manage.*` count is 23 (the QA pin was raised, not loosened). Hebrew uses the plural present ("פותחים", "טוענים"), like the G-5 fix, and "תוכנית". Amounts sit in `<bdi>` so RTL keeps the sign in place. he / es are drafts for the user's G-5 pass |
+| Coordination with D2 | ✅ | `planSubscriptionManage.ts`, the cancel route and the reactivate route are **not** in the diff. `planManageOffer.ts` only gains a new export plus an optional second argument on `planManageWire`, defaulting to `false`, so existing callers read the same. `planPurchaseView.ts` only feeds that argument from the row it already reads. D2 can rebase onto this without conflict in those code paths |
+
+#### Deviation rulings
+
+| # | Ruling |
+|---|---|
+| 1 | **Accepted.** `planBillingDocuments.ts` mirrors `planSubscriptionManage.ts`: one order, one refusal table, injected ports. The pure mapper stays separate |
+| 2 | **Accepted, and the better rule.** A customer exists from checkout *start*, so "customer only" would offer Update card to someone who never paid. Ended subscriptions still qualifying is right for receipts. Update card on an ended subscription is harmless: it only sets the card on a customer with nothing to renew. One flag is right while the two answers are always equal. If they ever differ (for example "invoices only once ended"), split the flag then. Not now |
+| 3 | **Accepted.** Stripe's hosted page offers both the invoice and the receipt download. One link is simpler, and the PDF URL never leaves `StripeService` |
+| 4 | **Accepted, with F-2 below.** It is no regression in either mode. Stripe creates no portal session without a configuration on an account that has no default, so before `bpc_1UUv5MC7KDUGYIcA3O6iIzRJ` existed, the parked agent platform's `create-portal` already failed in this sandbox. It now opens card-and-invoices only, the safer direction. **Live:** the script must **not** try to make ours non-default or to edit any other configuration (it cannot, and must not). If the live account has no configuration, ours becomes the default and that is accepted. The real live hazard is different: once ours is the default, the Stripe dashboard's *Customer portal* settings page edits **our** configuration. F-2 adds that warning to §9.5 row 13 |
+| 5 | **Accepted.** A negative total is a real credit note on the customer. An unreadable total is dropped, not guessed |
+| 6 | **Accepted; verified against the skill.** The routes key the billing row on `user.id`, exactly as the cancel route's `findByUser(user.id, …)`, the drawer view and `my-plan` do. With no write, no audit entity and no `bos_user_id` cross-check, there is nothing for `resolveAccountId` to feed. The routes therefore import nothing from the module and correctly need no registration. `planBillingDocuments.ts` is registered instead with `TIER_MATRIX`, and the symbol list matches its import exactly. §4.8's "routes register `resolveAccountId`" is superseded for P-7a.2 |
+| 7 | **Accepted.** The client calls the bare path with `cache: 'no-store'`, and nothing adds parameters to a same-origin `fetch`. A visible 400 for an injected `customerId` is better than silently ignoring it |
+| 8 | **Accepted.** The email line stays exactly where no button is offered. The transient hide during an open upgrade flow does not matter in practice, because an owner in a failed renewal is not offered an upgrade |
+| 9 | **Accepted as a recorded follow-up; nothing needed in P-7a.2.** SA checked the shipped copy: `billing.notice.payment_failed*` says "Please update your card to keep your plan", and `plan.payment_failed_on` says "Stripe will try again automatically". Neither promises an immediate clear, so nothing is false after X-1b. The owner already has a "pay now" route: the open invoice is in the list as "Due", with Stripe's hosted page. **Follow-up FU-P7a2-1 (for P-7a.4, or a copy pass before the price switch goes on in production):** on an `open` row, label the link "Pay now" instead of "View invoice and receipt", and/or add one line under Update card during `payment_failed`: "After updating your card, pay the due invoice below to clear this now; otherwise Stripe retries on its schedule." This is a wording decision (G-5), not a defect. **C-11 still binds P-7a.4:** that hosted "Due" link is exactly the path by which an owner could pay after an immediate cancel |
+
+#### Code Review Comments
+
+1. `docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` §9.5 row 13: the row said only that ours may become the default. It did not say what that means for operators. **Fix F-2 (applied by SA):** the row now records that the default is accepted (no regression), that the dashboard's Customer portal page then edits **our** configuration, so features must never be changed there, that a drift closes Update card (503 + alert) only from the next cold start because a warm instance keeps its pass (the success-only cache by design, TQ-7), and that branding there is fine. Priority: **Medium**
+2. `lib/business-os/billing/portalConfiguration.ts`: the once-per-instance pass means a configuration edited in the dashboard after a warm instance verified it keeps being used until that instance recycles. This is accepted, because TQ-7 chose once per instance and the worst case is a portal that also offers cancel, which the webhook records. It is recorded through F-2. No change. Priority: **Low (accepted)**
+3. `components/business-os/settings/PlanCardAndInvoices.tsx`: an `open` ("Due") row's link reads "View invoice and receipt". See deviation 9, FU-P7a2-1. Priority: **Low (follow-up)**
+4. `app/api/business-os/billing/plan/invoices/__tests__/` is an empty directory. Both routes are tested in `portal/__tests__/route.test.ts`. Git does not track it, so it is harmless. Dev may remove it or leave it. Priority: **Low**
+5. `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md`: "Last Updated 2026-10-26", while the change was completed on 2026-10-27. Cosmetic, for RM to align if wanted. Priority: **Low**
+
+#### SA verification runs (2026-10-27)
+
+| Gate | Result |
+|---|---|
+| `app/api/stripe`, `lib/business-os/billing`, `app/api/business-os/billing`, `components/business-os/settings`, `components/business-os/billing`, `lib/stripe`, `lib/audit`, `lib/business-os/purge`, `app/api/business-os/entitlements`, billing repository suite, `scripts/__tests__` (`--ci`) | 172 suites / 6 712 tests: 6 709 passed. 3 failed in `PlanUpgrade.render.test.tsx`, which took 166 s under the full parallel load; that file is **not in the diff**. Re-run alone: **76 / 76 passed**. This is a load timeout and not a regression. QA should note it if it recurs |
+| `npm run test:bos-entitlements` | **308 suites, 9 270 tests, all passed** |
+| Connect harness snapshot md5 | `ab7528ea68309cffb309ffbd46c455ab` before, after and after every mutation; git shows it unmodified; never `-u` |
+| Mutation checks (one at a time, each restored by Edit and the md5 re-verified) | M1: the subscription id removed from `planCardAndInvoicesOffer`, 3 fail. M2: `no-store` removed from the invoices route, 2 fail. M3: a failed configuration retrieve cached, 2 fail. M4: the portal-session customer cross-check removed, 1 fails. M5: `after_completion` removed, 1 fails. M6: the other-customer invoice filter removed, 1 fails. M7: `he` sent to Stripe, 2 fail. **Every mutation was caught**, and all 6 files are back to their pre-review md5 |
+| Typecheck / ESLint / build | Not re-run by SA. Dev's record (0 type errors in 31 touched files, no OOM; ESLint 0) is accepted. The local build follows P-7a.1's environmental ruling; the required CI Build job is the gate |
+
+#### Optimisation Suggestions (non-blocking)
+
+- The script's dry run could also say, before `--apply`, whether the account has any configuration yet ("ours will become the default"). Today the NOTE appears only after creation or on a re-run. F-2 covers the operator, so this is optional.
+- `isInvoiceRow` on the client does not check `planLabel` / `currency`. The server's mapper is the authority, so this is fine.
+
+#### For QA (focus)
+
+1. **Sandbox walk, test mode, price switch on:** a paid owner opens Settings → Plan → **Update card**, lands on Stripe's card form (not the portal home), adds `5555…4444`, and is redirected straight back to `/business-os/settings?section=plan`. In Stripe, check that the subscription's `default_payment_method` is null and the customer's invoice default is the new card (X-1).
+2. **Checkout switch off, price switch on:** Update card and Invoices still work (BQ-1). **Price switch off:** no buttons, and both routes 404 with `Cache-Control: no-store`.
+3. **Invoices:** opening the list issues exactly one `GET` (DevTools), and closing then opening issues one more. The rows show date, reason, plan label, USD amount and status. "View invoice and receipt" opens `invoice.stripe.com` in a new tab. With more than 12 invoices (a test clock), **See all in Stripe** opens the portal home. A declined upgrade's voided invoice reads "Plan change · Not charged".
+4. **Failed renewal (X-1b):** with a `past_due` test-clock subscription, the "use the link in Stripe's email" line is replaced by the button. After a card update the banner **stays** until the next Stripe retry. Paying the "Due" row's hosted page clears it through `invoice.paid`. Record this as expected behaviour, not a bug (deviation 9).
+5. **Owner without a paid plan / a checkout started and abandoned:** no Update card and no Invoices; a direct POST answers 409 `no_billing_account`. **Ended subscription:** only Update card and Invoices are shown, and old receipts are visible.
+6. **Injection:** POST `{ intent: 'update_card', customerId: 'cus_x' }` → 400. `GET …/invoices?customerId=cus_x` → 400. Neither reads anything.
+7. **Configuration faults:** unset `STRIPE_BOS_PORTAL_CONFIGURATION_ID` (or set it to a non-`bpc_` value) → "not available right now" and an `error` log with `alert: true`. The portal never opens on Stripe's default.
+8. **Logs:** in the server output for a full walk, no line contains `billing.stripe.com` or `invoice.stripe.com`.
+9. **Hebrew (RTL) and Spanish at 360 px:** buttons and rows wrap. A credit reads "-$5.00" with the sign kept in place in RTL. The Hebrew portal opens in Stripe's `auto` language, the Spanish one in Spanish. Record the he / es drafts for the user's G-5 pass.
+10. **Script:** re-run the dry run against the sandbox: "OK … matches" plus the default NOTE. A wrong `--expect-account` and `--live` with a test key are both refused before any write.
+
+#### Carried forward
+
+- FU-P7a2-1: the "Pay now" wording on a Due row and/or the clear-now line (deviation 9). It is a G-5 wording decision, to settle before the price switch goes on in production.
+- P-7a.4: C-11 still binds. The invoice list's "Due" link is one of the paths it must make safe after an immediate cancel.
+- §9.5 row 13 (F-2): the live run and the warning against editing features in the dashboard.
+- C-12 for RM: merge `origin/main` (with #519) before the PR, never stack, and re-run the C-12 suites after the merge-in. D2's `planSubscriptionManage.ts` / cancel / reactivate changes land after this PR merges.
+
+#### Code Approved for QA: Yes (with F-2 applied)
+
 ---
 
 ## QA Testing Report
@@ -784,6 +966,69 @@ Reviewed in the worktree `neuronforge-p7a`, branch `feature/bos-plan-payments-p7
 - [x] All acceptance criteria in QA scope pass — ready for commit (after the user's diff view; demo steps above owed)
 - [ ] Issues found — Dev must address before commit
 
+### QA Report — P-7a.2
+
+**QA — 2026-10-27**
+**Test mode:** full (SA "For QA (focus)" 1–10; the live browser walk in the app is the user's demo)
+**Strategy used:** A + B (Jest: the REAL routes and orchestration with fakes at the edges; render on the REAL Settings view through `readPlanPurchaseView`) + C (a scratch sandbox script on the standard sandbox `acct_1UPKR4C7KDUGYIcA`, test mode: the REAL `StripeService` and the REAL orchestration over a fake repository, with Stripe's portal page driven in headless Chrome over the DevTools protocol; nothing added to the repo; no database at all)
+**Focus:** api, ui, security, i18n
+**Skipped:** the in-app browser walk (Settings → Plan with the dev server, the banner clearing through the webhook): user's demo. No production database touched
+**Input source:** TL prompt + SA "For QA (focus)"
+
+#### Results per focus item
+
+| # | Focus item | Result | Evidence |
+|---|---|---|---|
+| 1 | Update card → card form → straight back; Stripe's state after (X-1) | ✅ PASS (Stripe side) / ⚠️ in-app click owed (demo) | Sandbox: Checkout-shaped subscription (card on the **subscription**, customer default empty). `openPlanBillingPortal` (`update_card`, `en`) returned a `billing.stripe.com` session; headless Chrome landed on the **card form** directly (inputs `number`, `expiry`, `cvc`), `5555…4444` added, **Add**, and the next top-level document was `localhost:3000/business-os/settings?section=plan`. Afterwards: subscription `default_payment_method` = **null**, customer invoice default = **Mastercard 4444** |
+| 2 | Checkout switch off / price switch off | ✅ PASS | Routes, all four switch combinations: prices off → **404** on both routes with `no-store` and nothing read (no session, no row, no Stripe); prices on + checkout off → **200** on both. Real view: prices off → no `manage` at all, no button; checkout off + prices on → `{ cancel, cardAndInvoices: true }`, both buttons render |
+| 3 | Invoice list | ✅ PASS | Render: open → exactly **one** `GET` (bare path, `cache: 'no-store'`), close → none, open again → two; the toggle is disabled while loading (double click = one `GET`); a voided `subscription_update` row reads "Plan change" and "$41.00 · Not charged", no "fail"; link `target="_blank"`, `rel="noopener noreferrer"`, "View invoice and receipt"; 12 rows + `hasMore` → **See all in Stripe** posts `{ intent: 'invoices', locale }`. Route: Stripe asked for exactly `limit 12`, one page; no PDF URL on the wire; a non-Stripe hosted link withheld. Sandbox: 12 extra invoices on the customer → `hasMore: true`, drafts dropped, void rows present, every link `invoice.stripe.com`; the first plan invoice maps to "Plan started · Essentials · Paid · 7900". **See E-1** (drafts take slots) |
+| 4 | Failed renewal (X-1b) | ✅ PASS (Stripe side + UI) / ⚠️ banner clear owed (demo) | Sandbox test clock: renewal on `pm_card_chargeCustomerFail` → subscription `past_due`, renewal invoice `open`, `attempt_count` 1; our list shows it as `subscription_cycle` / `open` ("Monthly renewal · Due") with an `invoice.stripe.com` link. Card changed in the portal (`he` → `auto`), redirected back. About 4 s later: invoice still `open`, `attempt_count` 1 (**not retried at once — expected, deviation 9**). Paying the Due invoice → `paid`, subscription `active`. Real view render (`past_due`, and `active` with failed attempts): "use the link in Stripe's email" gone (billing state asserted `payment_failed`, so not vacuous), the manage line and **Update card** shown. The `invoice.paid` → banner clear needs the webhook and a database: demo |
+| 5 | No paid plan / abandoned checkout / ended | ✅ PASS | Real view: customer without a subscription id → no `cardAndInvoices`, nothing rendered; ended (`canceled`, `endedAt`) → `manage` = `{ cancel: false, reactivate: false, paymentFailed: false, cardAndInvoices: true }`, the only buttons are Update card and Show invoices, an old receipt lists. Routes: abandoned → **409** `no_billing_account` on both, zero Stripe calls; a row whose own `livemode` differs from the key → 409, zero Stripe calls |
+| 6 | Injection | ✅ PASS | POST: `customerId`, `configuration`, `flow_data`, `locale: 'he-IL'`, an array intent, a `null` body, a string body, a raw `"__proto__"` key → **400**, nothing read. GET: `?customerId=cus_x`, `?customerId=` (empty), `?userId=`, `?limit=`, `?starting_after=` → **400** with `no-store`, nothing read |
+| 7 | Configuration faults | ✅ PASS | Unset, `pc_123`, whitespace only, `bpc_abc/def` → **503** `portal_unavailable`, the owner's "not available right now" line (also checked in the UI: the dictionary line, never server English), an `error` log `bos_billing_portal_configuration_missing` with `alert: true`, **no** Stripe call (no retrieve, no session: never the default configuration). A failed retrieve → `…_unreadable` with `alert: true`; a retrieve answering another id → mismatch, no session. The invoice list does not depend on the configuration |
+| 8 | No Stripe link in logs | ✅ PASS | Route walk over every path (both intents × 4 locales, a session for another customer, Stripe errors whose **message holds the portal URL / invoice URL**, an invoice list with other-customer / EUR / draft rows): **0** log lines with `billing|invoice|pay|checkout.stripe.com`; the responses carry none either; the drop alert names ids and reasons only. Sandbox: the whole run's stdout (StripeService's own Pino output included) and the orchestration log: **0** full Stripe URLs |
+| 9 | Hebrew (RTL) and Spanish at 360 px | ✅ PASS (structural) / ⚠️ visual owed | 19 keys in en / he / es, non-empty, none equal to English, every he value Hebrew script. Render in a `dir="rtl"` 360 px container and in es: rows read the drafts, a credit renders `-$5.00` inside `<bdi>`, no raw key and no English word in the island, the button row is `flex-wrap`, no physical-direction class in `PlanCardAndInvoices.tsx`; the POST sends `locale: 'he'` / `'es'`. Sandbox: Stripe's portal opened for `es` at `lang="es-ES"` ("Volver a …", "Condiciones"); for `he` (sent as `auto`) at `en-US` in headless Chrome. he / es remain **drafts** for the user's G-5 pass |
+| 10 | Script | ✅ PASS | Sandbox dry run: "OK configuration `bpc_1UUv5MC7KDUGYIcA3O6iIzRJ` matches" + the DEFAULT NOTE + the env line, exit 0 (same with `--return-origin http://localhost:3000`). Refused before any write: wrong `--expect-account` (names the real account), `--live` with a test key ("accepts only sk_live, rk_live keys", exit 2), `--env` inside the checkout, no `--expect-account`. The key never printed |
+| — | SA note: `PlanUpgrade.render.test.tsx` under load | ✅ Load-only | Passed inside the full parallel run this time (170 / 170 suites) and alone (76 / 76, 51 s). Not in the diff |
+
+#### Issues Found
+
+**Bugs (must fix before commit):** none.
+
+**Performance issues:** none (the list loads only on open, one Stripe page; no new read on the drawer open).
+
+**Edge cases (nice to fix / record):**
+
+1. **E-1 — drafts use slots of the 12** (Low). The route asks Stripe for 12 and drops drafts afterwards, so while a renewal draft exists (about an hour each cycle) the owner sees 11 rows; in the sandbox, 4 drafts among 12 gave 8 rows with "See all in Stripe". Harmless; if wanted later, ask Stripe for 13 or filter by status. Not a P-7a.2 blocker.
+2. **E-2 — plan label is always the English label** (Low). `labelForPriceId` reads `TIER_MATRIX.presentation[tier].labels.en`; today en / he / es labels are identical ("Essentials", "Autopilot"), so nothing shows wrong. If the labels are ever localised, the invoice rows will not follow.
+3. **E-3 — the Hebrew portal opens in the browser's language** (expected, X-5). Stripe has no Hebrew portal, so `auto` showed English in headless Chrome; a Hebrew-browser owner gets Stripe's fallback. Record for the G-5 pass, not a defect.
+4. The `invoices/__tests__/` empty directory (SA comment 4) is still there; harmless.
+
+#### Test Outputs / Counts
+
+| Run | Result |
+|---|---|
+| Requested set `app/api/stripe lib/business-os/billing app/api/business-os/billing components/business-os/settings components/business-os/billing lib/stripe lib/audit lib/business-os/purge scripts/__tests__` (`--ci`, before the QA files) | **170 suites, 6 544 tests, all passed** (PlanUpgrade.render included) |
+| `npm run test:bos-entitlements` | **308 suites, 9 270 tests, all passed** |
+| QA files (new, uncommitted): `app/api/business-os/billing/plan/portal/__tests__/route.p7a2.qa.test.ts` (31), `components/business-os/settings/__tests__/PlanCardAndInvoices.p7a2.qa.render.test.tsx` (14) | **2 suites, 45 tests, all passed**; ESLint clean; `tsc --noEmit` (8 GB heap, no OOM): **0 errors** in the touched and QA files (1 864 pre-existing elsewhere, same as Dev's count) |
+| Sandbox script (scratchpad, not in the repo) | **20 / 20 passed**. Throwaway `cus_VVzUK4IEc4bdLL` (focus 1, 3, 9), `cus_VVzVAiE6NMPXgx` on test clock `clock_1UUxWwC7KDUGYIcAuiOSRE4m` (focus 4): subscriptions cancelled, customers and clock **deleted**; two earlier aborted runs' customers (`cus_VVzGZYiIlScWn0`, `cus_VVzIeM8AqjBDKZ`) deleted in their own `finally`. A final listing found **0** QA customers and **0** QA clocks left. Account id asserted first; `cus_VQf9jX6fnfVlkK` not touched; key never printed; dummy Supabase URL (127.0.0.1:9), no database |
+| Connect harness snapshot md5 | `ab7528ea68309cffb309ffbd46c455ab` before and after; never `-u` |
+| CRLF | The new files are CRLF in this Windows checkout (`core.autocrlf=true`); every source scan in the requested set passed on them |
+
+#### Owed demo steps (user, sandbox test mode, price switch on locally, `STRIPE_BOS_PORTAL_CONFIGURATION_ID=bpc_1UUv5MC7KDUGYIcA3O6iIzRJ`)
+
+1. Paying owner → Settings → Plan → **Update card**: Stripe opens on the card form; add `5555 5555 5555 4444`; you come straight back to Settings → Plan.
+2. **Show invoices**: DevTools shows one `GET` per open; rows show date, reason, plan, USD amount, status; **View invoice and receipt** opens `invoice.stripe.com` in a new tab.
+3. Failed renewal (test clock, `past_due`): the "Stripe email" line is replaced by Update card; after a card update the banner **stays** (expected, X-1b); pay the **Due** row's hosted page → the banner clears through `invoice.paid`.
+4. Checkout switch off: both buttons still there. Price switch off: no buttons, both routes 404.
+5. Unset `STRIPE_BOS_PORTAL_CONFIGURATION_ID`, press Update card: "not available right now"; the server log has an `error` line with `alert: true`. Grep the dev-server output of the whole walk for `billing.stripe.com` / `invoice.stripe.com`: no hits.
+6. Hebrew and Spanish at 360 px: buttons and rows wrap; a credit (if any) reads `-$5.00` in RTL; the Spanish portal opens in Spanish. Settle the he / es drafts and FU-P7a2-1 ("Pay now" on a Due row) in the G-5 pass.
+
+#### Final Status
+
+- [x] All acceptance criteria in QA scope pass — ready for commit (after the user's diff view; demo steps above owed)
+- [ ] Issues found — Dev must address before commit
+
 ---
 
 ## Commit Info
@@ -810,3 +1055,6 @@ Reviewed in the worktree `neuronforge-p7a`, branch `feature/bos-plan-payments-p7
 | 2026-10-26 | SA code review of P-7a.1 (SA) | APPROVED WITH FIXES. C-1 to C-5, CAS, tenant isolation, entitlements registrations, audit and i18n verified. Deviations 1–9 accepted (5: the BQ-5 sentence binds P-7a.3 before the price switch goes on in production; 4: P-7a.4 decides the immediate path on the fresh status). F-1 applied: `unchanged` shows Stripe's state from the route answer (+2 render tests). SA runs: 154 suites / 6 103 tests, `test:bos-entitlements` 306 / 9 227, Connect md5 unchanged, 7 + 1 mutations all caught, 0 type errors in touched files. Local build stop on missing `.env.local` accepted as environmental |
 | 2026-10-26 | QA of P-7a.1 (QA); TL decision on deviation 6 recorded | PASS, no bugs. Focus 2–8 covered (Jest + 16/16 sandbox checks on a throwaway customer, deleted); focus 1 and the live half of 4 owed as demo. Requested suites 152 / 5 937, `test:bos-entitlements` 306 / 9 227, QA files 2 / 24, Connect md5 unchanged. Edge E-1 (`cancel_at`-only: UI cannot reach Reactivate) added to the C-3 follow-up. "Reactivate your plan to upgrade" DROPPED (TL): §2.1, §5, §11, deviation 6 updated |
 | 2026-10-26 | G-5 approved; committed, PR opened (RM) | User approved the wording with the Hebrew fix (`plan.manage.cancelling` "מבטלים…", `plan.manage.reactivating` "מחדשים…"); he / es draft comments marked approved. Committed on `feature/bos-plan-payments-p7a`, `origin/main` merged in, PR #519 opened; auto-merge off, live demo owed before merge |
+| 2026-10-27 | P-7a.2 code complete, uncommitted (Dev) | On `feature/bos-plan-payments-p7a2` (on top of `131a46b1`). T5 to T8: portal configuration script and reader, portal and invoices routes, `planCardAndInvoicesOffer`, Update card and Invoices in Settings → Plan. X-1 (the portal moves the renewal to the new card: C-7 not triggered; a past-due invoice is not retried at once) and X-5 (`he` refused → `auto`); test configuration `bpc_1UUv5MC7KDUGYIcA3O6iIzRJ` (became the sandbox default). 9 deviations for SA in Implementation Notes (P-7a.2). Requested suites 165 / 6 296 and `test:bos-entitlements` 308 / 9 270 passed; Connect harness md5 unchanged; 0 type errors in the 31 touched files; no migration, no webhook change |
+| 2026-10-27 | SA code review of P-7a.2 (SA) | APPROVED WITH FIXES. C-1, C-6, C-7 (X-1: not triggered), C-8, TQ-6, TQ-8 / X-5, tenant isolation, entitlements (one non-gate `TIER_MATRIX` importer), Zod strict and i18n verified; D2 cancel / reactivate paths untouched. Deviations 1–9 accepted (4: the sandbox default is no regression, live hazard is dashboard edits of our default, so F-2; 9: no false promise in shipped copy, follow-up FU-P7a2-1 "Pay now" wording). F-2 applied: §9.5 row 13 warning. SA runs: 172 suites / 6 712 (3 load timeouts in the untouched `PlanUpgrade.render`, 76 / 76 alone), `test:bos-entitlements` 308 / 9 270, Connect md5 unchanged, 7 mutations all caught |
+| 2026-10-27 | G-5 approved for P-7a.2; FU-P7a2-1 built and closed (Dev) | User approved the P-7a.2 he / es wording (G-5) and accepted TL's FU-P7a2-1: a Due (`open`) invoice row's link reads "Pay now" (`plan.invoices.pay_now`: en "Pay now", he "לתשלום עכשיו", es "Pagar ahora"), same hosted URL, new tab, `noopener`. he / es comments marked approved. Key pins 19 → 20, QA RTL test updated, one new render test (en + he). Runs: 4 requested dirs 100 / 4 869 passed; `test:bos-entitlements` 9 269 / 9 270 (the one failure is the unregistered QA portal route test in the billing-repository caller guard, not this change); 0 type errors in touched files. Uncommitted |

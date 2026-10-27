@@ -27,6 +27,10 @@
  * | `active` / `trialing`, cancel flag set | `cancelling`: may reactivate |
  * | `active` / `trialing` | `renewing`: may cancel |
  *
+ * P-7a.2 adds `planCardAndInvoicesOffer` (below): "Update card" and
+ * "Invoices", behind the same switch, for any row with a Business OS
+ * subscription on it, ended included.
+ *
  * It refuses a billing ACTION, never a capability: nothing here calls the
  * entitlements module.
  *
@@ -86,11 +90,47 @@ export interface PlanManageWire {
   reactivate: boolean;
   /** A renewal failed: Cancel is not offered yet; the screen says "update your card, or contact us". */
   paymentFailed: boolean;
+  /**
+   * P-7a.2: "Update card" and "Invoices" (`planCardAndInvoicesOffer`). Present
+   * only when true, so a payload from before P-7a.2 reads the same.
+   */
+  cardAndInvoices?: true;
 }
 
-export function planManageWire(offer: PlanManageOffer): PlanManageWire | null {
-  if (offer.kind === 'renewing') return { cancel: true, reactivate: false, paymentFailed: false };
-  if (offer.kind === 'cancelling') return { cancel: false, reactivate: true, paymentFailed: false };
-  if (offer.reason === 'payment_failed') return { cancel: false, reactivate: false, paymentFailed: true };
+/**
+ * The wire for the screen. `cardAndInvoices` is `planCardAndInvoicesOffer`'s
+ * answer for the same row (P-7a.2); it may be the only control (an ended
+ * subscription still has its receipts).
+ */
+export function planManageWire(offer: PlanManageOffer, cardAndInvoices = false): PlanManageWire | null {
+  const docs = cardAndInvoices ? { cardAndInvoices: true as const } : {};
+  if (offer.kind === 'renewing') return { cancel: true, reactivate: false, paymentFailed: false, ...docs };
+  if (offer.kind === 'cancelling') return { cancel: false, reactivate: true, paymentFailed: false, ...docs };
+  if (offer.reason === 'payment_failed') return { cancel: false, reactivate: false, paymentFailed: true, ...docs };
+  if (cardAndInvoices) return { cancel: false, reactivate: false, paymentFailed: false, ...docs };
   return null;
+}
+
+// ── Card and invoices (P-7a.2; workplan §4.1, §4.4, §4.5; SA C-1, TQ-6) ─────
+
+/** The facts the card-and-invoices rule reads: OUR billing row only. */
+export interface PlanCardAndInvoicesFacts {
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+}
+
+/**
+ * THE ONE PREDICATE behind "Update card" / "Invoices" on the screen and the
+ * portal and invoices routes' our-data step: the price-recognition switch on
+ * (C-1, BQ-1: never the checkout switch, so pausing sales never hides a
+ * payer's card or receipts), and our row holds a Business OS customer AND a
+ * subscription id, live or ended (an ex-customer may still want a receipt).
+ *
+ * The subscription id is required as well as the customer (a deliberate
+ * narrowing of workplan §4.1's "customer exists"): the customer is created
+ * when a checkout STARTS, so an owner who opened a checkout and never paid
+ * would otherwise be offered "Update card" for a plan they never had.
+ */
+export function planCardAndInvoicesOffer(facts: PlanCardAndInvoicesFacts | null, switches: PlanManageSwitches): boolean {
+  return switches.pricesEnabled && !!facts && !!facts.stripeCustomerId && !!facts.stripeSubscriptionId;
 }
