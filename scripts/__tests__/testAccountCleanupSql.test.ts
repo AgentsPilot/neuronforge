@@ -506,12 +506,12 @@ describe('audit row (SA TQ-5, C-7)', () => {
     // operator_sql: the pasted file never sets an actor or a source, so user_id = actor_id = NULL.
     expect(deleteSql).not.toMatch(/set_config\('cleanup\.(actor_id|source)'/);
     // The rollback restores the previous function (PREVIOUS_FUNCTION_MIGRATION). Since
-    // 20261075 (data export DE-8a) that names the admin too; since 20261092 the previous
-    // function is DE-10b.1's 20261081. The 20261046 shape (user_id NULL) is gone from it.
+    // 20261075 (data export DE-8a) that names the admin too; since DL-1a's 20261094 the previous
+    // function is 20261092 (the meeting links). The 20261046 shape (user_id NULL) is gone from it.
     expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,
     ${ACTOR}, ${ACTOR},`);
     expect(rollbackSql).not.toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
-    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261081_operator_account_cleanup_anonymise');
+    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261092_operator_test_account_cleanup_meeting_links');
   });
 });
 
@@ -772,9 +772,14 @@ describe('applied history: a function migration is never edited once applied', (
     // plan with that stamp). 20261092 replaces it, and its rollback restores these bytes. Never regenerate it.
     ['supabase/migrations/20261081_operator_account_cleanup_anonymise.sql', 'e08f76aa400e964de6fa980f24507e82c4b72fb53aedbff483e6da6cf0e5c5e1'],
     ['supabase/SQL Scripts/20261081_operator_account_cleanup_anonymise_rollback.sql', 'd7ecfbeecc64c29b589655a172a4e1bdd11b068c1773e55cb350be1776c3918d'],
+    // 20261092 (the meeting and abandoned-booking links, stamp ec34d5604055abfe). Confirmed live on
+    // prod by TL 2026-10-25 (DL-1a schema check Q-5). DL-1a's 20261094 replaces it, and its rollback
+    // restores these bytes. Never regenerate it.
+    ['supabase/migrations/20261092_operator_test_account_cleanup_meeting_links.sql', 'e858e9ae1bc1e1e2a3f934cf563e2fecfadc5a682a43a9bfdec229ab3feec088'],
+    ['supabase/SQL Scripts/20261092_operator_test_account_cleanup_meeting_links_rollback.sql', 'f86ef4e22c0bf2b625c771033f047a2a5e6cfc53f51ba42386f5c51ced16b43f'],
   ];
 
-  /** Nothing pending: 20261081 is applied (2026-10-23), so it sits in APPLIED directly. */
+  /** Nothing pending: 20261092 is applied (confirmed 2026-10-25), so it sits in APPLIED directly. */
   const PENDING_PREVIOUS: ReadonlyArray<[string, string]> = [];
 
   /**
@@ -786,8 +791,9 @@ describe('applied history: a function migration is never edited once applied', (
    * its bytes are final. If a pin fails, put the change in a NEW dated FUNCTION_MIGRATION.
    */
   const APPLIED_TARGET: ReadonlyArray<[string, string]> = [
-    [MIGRATION_FILE, 'e858e9ae1bc1e1e2a3f934cf563e2fecfadc5a682a43a9bfdec229ab3feec088'],
-    [ROLLBACK_FILE, 'f86ef4e22c0bf2b625c771033f047a2a5e6cfc53f51ba42386f5c51ced16b43f'],
+    // DL-1a's 20261094 (business_os_account_closures in step B), stamp 792d801e13101316.
+    [MIGRATION_FILE, 'eb04be0682923bfebe093ba83b1b2c8901cd1530eb9006eb734406b8a169ea33'],
+    [ROLLBACK_FILE, '9e79c08b2c55e7ed840adb34c3a36794b5689e7a50d1853b5700a2927ef119dd'],
   ];
 
   it.each([...APPLIED, ...PENDING_PREVIOUS, ...APPLIED_TARGET])('%s is byte-identical to what was applied', (file, sha256) => {
@@ -847,7 +853,7 @@ describe('paste safety of the migration and rollback (SA C-6, R-1)', () => {
   const SQL: ReadonlyArray<[string, string, number, number]> = [
     // The hard delete and the anonymise each write one audit row; the receipt is inserted once, after both (W-9).
     [MIGRATION_FILE, migrationSql, 2, 1],
-    // The restored previous function is 20261081's: the same two audit inserts and one receipt.
+    // The restored previous function is 20261092's: the same two audit inserts and one receipt.
     [ROLLBACK_FILE, rollbackSql, 2, 1],
   ];
 
@@ -1446,10 +1452,18 @@ describe('20261092: the meeting and abandoned-booking links are reviewed (G-18)'
   ];
   /** The stamp of 20261081 as applied, and of the 2026-10-23 bridge that kept it. */
   const APPLIED_81_STAMP = '2bd40a46795e4555';
+  /**
+   * SA W-8 (DL-1a): every reference that moves with the generator is a literal here, because
+   * CLEANUP_FUNCTION_VERSION, migrationSql, rollbackSql and previousMigrationSql now mean 20261094.
+   */
+  const STAMP_92 = 'ec34d5604055abfe';
+  const MIGRATION_92 = readSql('supabase/migrations/20261092_operator_test_account_cleanup_meeting_links.sql');
+  const ROLLBACK_92 = readSql('supabase/SQL Scripts/20261092_operator_test_account_cleanup_meeting_links_rollback.sql');
+  const PREVIOUS_81 = readSql('supabase/migrations/20261081_operator_account_cleanup_anonymise.sql');
 
   it.each(MEETING_LINKS)('%s.%s is reviewed, owned by %s', (table, constraint, owner) => {
     expect(INBOUND_FOREIGN_KEYS).toContainEqual([table, constraint, owner]);
-    for (const sql of [checkSql, deleteSql, migrationSql]) expect(sql).toContain(`'${constraint}'`);
+    for (const sql of [checkSql, deleteSql, MIGRATION_92, migrationSql]) expect(sql).toContain(`'${constraint}'`);
   });
 
   it('both tables are in the plan this fix completes', () => {
@@ -1458,22 +1472,23 @@ describe('20261092: the meeting and abandoned-booking links are reviewed (G-18)'
   });
 
   it('chains on 20261081 as applied: its stamp, without the links, and the rollback restores exactly that', () => {
-    expect(PREVIOUS_MIGRATION_FILE).toBe('supabase/migrations/20261081_operator_account_cleanup_anonymise.sql');
-    expect(previousMigrationSql).toContain(`'version', '${APPLIED_81_STAMP}'`);
+    expect(MIGRATION_92).toContain('restores the function of 20261081_operator_account_cleanup_anonymise');
+    expect(MIGRATION_92).toContain(`'version', '${STAMP_92}'`);
+    expect(PREVIOUS_81).toContain(`'version', '${APPLIED_81_STAMP}'`);
     for (const [, constraint] of MEETING_LINKS) {
-      expect([constraint, previousMigrationSql.includes(`'${constraint}'`)]).toEqual([constraint, false]);
+      expect([constraint, PREVIOUS_81.includes(`'${constraint}'`)]).toEqual([constraint, false]);
     }
-    expect(rollbackSql).toContain(`'version', '${APPLIED_81_STAMP}'`);
+    expect(ROLLBACK_92).toContain(`'version', '${APPLIED_81_STAMP}'`);
     // A new stamp: the deployed build must change with the function, and the bridge stamp never returns from here.
-    expect(CLEANUP_FUNCTION_VERSION).not.toBe(APPLIED_81_STAMP);
-    expect(migrationSql).not.toContain(APPLIED_81_STAMP);
+    expect(STAMP_92).not.toBe(APPLIED_81_STAMP);
+    expect(MIGRATION_92).not.toContain(APPLIED_81_STAMP);
   });
 
   it('keeps the 8-argument signature, and still drops only the retired 6-argument one', () => {
     expect(PREVIOUS_FUNCTION_SIGNATURE).toBe(FUNCTION_SIGNATURE);
     expect(RETIRED_FUNCTION_SIGNATURE).toBe('public.operator_test_account_cleanup(text, text, text, text, uuid, text)');
-    expect(migrationSql.match(/^DROP FUNCTION .*$/gm)).toEqual([`DROP FUNCTION IF EXISTS ${RETIRED_FUNCTION_SIGNATURE};`]);
-    expect(rollbackSql.match(/^DROP FUNCTION .*$/gm)).toEqual([`DROP FUNCTION IF EXISTS ${FUNCTION_SIGNATURE};`]);
+    expect(MIGRATION_92.match(/^DROP FUNCTION .*$/gm)).toEqual([`DROP FUNCTION IF EXISTS ${RETIRED_FUNCTION_SIGNATURE};`]);
+    expect(ROLLBACK_92.match(/^DROP FUNCTION .*$/gm)).toEqual([`DROP FUNCTION IF EXISTS ${FUNCTION_SIGNATURE};`]);
   });
 
   const PRECHECK_92 = readSql('scripts/precheck-test-account-cleanup-meeting-links.sql');
@@ -1482,13 +1497,13 @@ describe('20261092: the meeting and abandoned-booking links are reviewed (G-18)'
   it('the pre-check requires the 20261081 stamp live and this stamp absent; the checker requires this build stamp', () => {
     // C-3: absent, so the NOT EXISTS form exactly. A bare position() match would pass inside EXISTS too.
     expect(PRECHECK_92).toContain(
-      `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${CLEANUP_FUNCTION_VERSION}' in p.prosrc) > 0)`
+      `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${STAMP_92}' in p.prosrc) > 0)`
     );
-    expect(PRECHECK_92).not.toMatch(new RegExp(`(?<!NOT )EXISTS \\(SELECT 1 FROM pg_catalog\\.pg_proc AS p WHERE p\\.oid = \\(SELECT fn\\.oid FROM fn\\) AND position\\('${CLEANUP_FUNCTION_VERSION}'`));
+    expect(PRECHECK_92).not.toMatch(new RegExp(`(?<!NOT )EXISTS \\(SELECT 1 FROM pg_catalog\\.pg_proc AS p WHERE p\\.oid = \\(SELECT fn\\.oid FROM fn\\) AND position\\('${STAMP_92}'`));
     expect(PRECHECK_92).toContain(
       `  SELECT 2, 'its body holds the 20261081 stamp 2bd40a46795e4555, the one the deployed build pins',\n    EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${APPLIED_81_STAMP}' in p.prosrc) > 0)`
     );
-    expect(CHECKER_92).toContain(`AND position('${CLEANUP_FUNCTION_VERSION}' in p.prosrc) > 0)
+    expect(CHECKER_92).toContain(`AND position('${STAMP_92}' in p.prosrc) > 0)
   UNION ALL`);
     expect(CHECKER_92).toContain(`NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${APPLIED_81_STAMP}' in p.prosrc) > 0)`);
     for (const sql of [PRECHECK_92, CHECKER_92]) {
@@ -1500,8 +1515,8 @@ describe('20261092: the meeting and abandoned-booking links are reviewed (G-18)'
 
   it('the checker information row carries the md5 of the committed function body (SA optional)', () => {
     const tag = '$operator_cleanup$';
-    const start = migrationSql.indexOf(tag) + tag.length;
-    const body = migrationSql.slice(start, migrationSql.indexOf(tag, start));
+    const start = MIGRATION_92.indexOf(tag) + tag.length;
+    const body = MIGRATION_92.slice(start, MIGRATION_92.indexOf(tag, start));
     const md5 = createHash('md5').update(body).digest('hex');
     expect(CHECKER_92).toContain(`AND pg_catalog.md5(p.prosrc) = '${md5}')`);
     expect(CHECKER_92).toContain(`'information only. md5 of the body is ${md5}, the committed 20261092 body'`);
@@ -1510,6 +1525,110 @@ describe('20261092: the meeting and abandoned-booking links are reviewed (G-18)'
   it.each([
     ['pre-check', PRECHECK_92],
     ['checker', CHECKER_92],
+  ])('the %s is read-only and paste-safe', (_name, sql) => {
+    expect(sql).not.toMatch(/^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|GRANT|REVOKE|TRUNCATE|DO|BEGIN)\b/im);
+    expect(sql).not.toMatch(/\bset_config\(/i);
+    expect(sql.match(/\binto\b/gi)).toBeNull();
+    expect(scan(sql).unterminated).toBe(false);
+    for (const token of scan(sql).tokens) {
+      if (token.kind === 'comment') expect(token.text).not.toMatch(/[;']/);
+      else expect(token.text).not.toMatch(/;|--/);
+    }
+    expect(sql.trimEnd().endsWith('ORDER BY checks.ord;')).toBe(true);
+    expect(sql.split(';').length - 1).toBe(1);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// 20261094: the deletion request of the account (DL-1a, XC-1, SA O-2, O-3, W-8)
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('20261094: business_os_account_closures joins step B (DL-1a)', () => {
+  /** The stamp of 20261092 as applied (DL-1a TL Q-5), literal so it never moves with the generator. */
+  const STAMP_92 = 'ec34d5604055abfe';
+  const CLOSURES = 'business_os_account_closures';
+  const MIGRATION_94 = readSql('supabase/migrations/20261094_operator_test_account_cleanup_account_closures.sql');
+  const ROLLBACK_94 = readSql('supabase/SQL Scripts/20261094_operator_test_account_cleanup_account_closures_rollback.sql');
+  const MIGRATION_92 = readSql('supabase/migrations/20261092_operator_test_account_cleanup_meeting_links.sql');
+
+  it('is the generator target and chains on 20261092', () => {
+    expect(MIGRATION_FILE).toBe('supabase/migrations/20261094_operator_test_account_cleanup_account_closures.sql');
+    expect(PREVIOUS_MIGRATION_FILE).toBe('supabase/migrations/20261092_operator_test_account_cleanup_meeting_links.sql');
+    expect(MIGRATION_94).toBe(migrationSql);
+    expect(ROLLBACK_94).toBe(rollbackSql);
+    expect(MIGRATION_92).toContain(`'version', '${STAMP_92}'`);
+    expect(ROLLBACK_94).toContain(`'version', '${STAMP_92}'`);
+    expect(ROLLBACK_94).toContain(`\n${previousFunctionSql(MIGRATION_92)};\n`);
+  });
+
+  it('has a new stamp, never the 20261092 one', () => {
+    expect(CLEANUP_FUNCTION_VERSION).not.toBe(STAMP_92);
+    expect(MIGRATION_94).toContain(`'version', '${CLEANUP_FUNCTION_VERSION}'`);
+    expect(MIGRATION_94).not.toContain(STAMP_92);
+    expect(MIGRATION_92).not.toContain(`'${CLOSURES}'`);
+  });
+
+  it('removes the closure row in step B of both modes, and never keeps it (not in KEEP_SET)', () => {
+    expect(FULL_REMOVAL_EXTRAS.map((entry) => entry.table)).toContain(CLOSURES);
+    expect(KEEP_SET.map((entry) => entry.table)).not.toContain(CLOSURES);
+    for (const mode of ['hard', 'anonymise'] as const) {
+      const entry = buildCleanupPlan(mode).find((e) => e.table === CLOSURES);
+      expect([mode, entry]).toEqual([mode, { step: 'B', table: CLOSURES, column: 'user_id', parent: null }]);
+    }
+    for (const sql of [checkSql, deleteSql, MIGRATION_94]) expect(sql).toContain(`'B', '${CLOSURES}', 'user_id', NULL)`);
+  });
+
+  it('its link to the login is a tenancy key the plan knows, so G-10 accepts it once this is live (SA F-A)', () => {
+    for (const sql of [checkSql, deleteSql, MIGRATION_94]) expect(sql).toContain(`('public', '${CLOSURES}', 'user_id', 'tenancy', NULL)`);
+  });
+
+  it('is a user-scoped never descriptor, so a business Reset or Purge never removes it (SA O-2)', () => {
+    const descriptor = PURGE_DESCRIPTORS.find((d) => d.table === CLOSURES);
+    expect(descriptor?.level).toBe('never');
+    expect(descriptor?.scope).toEqual({ kind: 'user_id' });
+    for (const level of ['reset', 'purge'] as const) {
+      expect(descriptorsForRun(level, { integrations: true, agents: true, activityHistory: true }).map((d) => d.table)).not.toContain(CLOSURES);
+    }
+  });
+
+  it('does not require the table at apply time (SA O-3): step B names it only as a literal, skipped while absent', () => {
+    expect(FUNCTION_REQUIRED_TABLES.map((entry) => entry.table)).not.toContain(CLOSURES);
+    expect(MIGRATION_94).not.toContain(`pg_catalog.to_regclass('public.${CLOSURES}') IS NULL`);
+  });
+
+  const CHECKER_94 = readSql('scripts/check-test-account-cleanup-account-closures-migration.sql');
+  const PRECHECK = readSql('scripts/precheck-account-closures.sql');
+
+  it('the pre-check requires the 20261092 stamp live and this stamp absent; the checker requires this stamp and the table', () => {
+    expect(PRECHECK).toContain(
+      `EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${STAMP_92}' in p.prosrc) > 0)`
+    );
+    expect(PRECHECK).toContain(
+      `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${CLEANUP_FUNCTION_VERSION}' in p.prosrc) > 0)`
+    );
+    expect(PRECHECK).not.toMatch(new RegExp(`(?<!NOT )EXISTS \\(SELECT 1 FROM pg_catalog\\.pg_proc AS p WHERE p\\.oid = \\(SELECT fn\\.oid FROM fn\\) AND position\\('${CLEANUP_FUNCTION_VERSION}'`));
+    expect(CHECKER_94).toContain(`AND position('${CLEANUP_FUNCTION_VERSION}' in p.prosrc) > 0)\n  UNION ALL`);
+    expect(CHECKER_94).toContain(`NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${STAMP_92}' in p.prosrc) > 0)`);
+    expect(CHECKER_94).toContain(`position(pg_catalog.quote_literal('${CLOSURES}') in p.prosrc) > 0)`);
+    expect(CHECKER_94).toContain(`pg_catalog.to_regclass('public.${CLOSURES}') IS NOT NULL`);
+    for (const sql of [PRECHECK, CHECKER_94]) {
+      expect(sql).toContain(`pg_catalog.to_regprocedure('${FUNCTION_SIGNATURE}')`);
+      expect(sql).toContain(`pg_catalog.to_regprocedure('${RETIRED_FUNCTION_SIGNATURE}') IS NULL`);
+    }
+  });
+
+  it('the checker information row carries the md5 of the committed function body', () => {
+    const tag = '$operator_cleanup$';
+    const start = MIGRATION_94.indexOf(tag) + tag.length;
+    const body = MIGRATION_94.slice(start, MIGRATION_94.indexOf(tag, start));
+    const md5 = createHash('md5').update(body).digest('hex');
+    expect(CHECKER_94).toContain(`AND pg_catalog.md5(p.prosrc) = '${md5}')`);
+    expect(CHECKER_94).toContain(`'information only. md5 of the body is ${md5}, the committed 20261094 body'`);
+  });
+
+  it.each([
+    ['pre-check', PRECHECK],
+    ['checker', CHECKER_94],
   ])('the %s is read-only and paste-safe', (_name, sql) => {
     expect(sql).not.toMatch(/^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|GRANT|REVOKE|TRUNCATE|DO|BEGIN)\b/im);
     expect(sql).not.toMatch(/\bset_config\(/i);

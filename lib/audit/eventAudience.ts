@@ -133,6 +133,7 @@ export const AUDIT_EVENT_AUDIENCE = {
   [AUDIT_EVENTS.SYSTEM_CONFIG_CHANGED]: 'shared',
   [AUDIT_EVENTS.SYSTEM_MAINTENANCE_STARTED]: 'shared',
   [AUDIT_EVENTS.SYSTEM_MAINTENANCE_ENDED]: 'shared',
+  [AUDIT_EVENTS.ADMIN_ENVIRONMENT_VIEWED]: 'shared',
   // Admin Archiving is platform maintenance, serving both products.
   [AUDIT_EVENTS.ARCHIVE_RUN_STARTED]: 'shared',
   [AUDIT_EVENTS.ARCHIVE_RUN_COMPLETED]: 'shared',

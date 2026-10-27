@@ -118,12 +118,18 @@ describe('PERF-1: configuration and scheduling dialogs load lazily', () => {
    * retry, visible error, nothing cached, nothing server-rendered — is pinned in
    * `lazyDialogLoader.test.tsx`.
    */
-  it('loads both dialogs through the retrying loader, not next/dynamic', () => {
+  it('loads every lazy dialog through the retrying loader, not next/dynamic', () => {
     const code = stripComments(fs.readFileSync(path.join(ROOT, LAZY_MODULE), 'utf8'));
     expect(code).toContain("import('@/components/business-os/ConfigurationDialog')");
     expect(code).toContain("import('@/components/business-os/SchedulingDialog')");
     expect(code).toContain("import('@/components/business-os/settings/StandaloneUpgradeModal')");
-    expect(code.match(/createLazyDialog</g)?.length).toBe(3);
+    expect(code).toContain("import('@/components/business-os/presence-tour')");
+    /*
+     * The count is pinned so a new dialog cannot be added without someone
+     * reading this test and the rules above it. Raised from 3 to 4 when the
+     * Online presence tour was registered.
+     */
+    expect(code.match(/createLazyDialog</g)?.length).toBe(4);
     expect(code).not.toContain('next/dynamic');
     expect(code).not.toMatch(/\.catch\(/);
   });

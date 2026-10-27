@@ -153,18 +153,26 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * (this plan with the 20261081 stamp swapped in), so the live body is neither
  * file. The rollback restores 20261081 as committed, see
  * docs/workplans/TEST_ACCOUNT_CLEANUP_MEETINGS_FK_FIX_WORKPLAN.md.
+ * 20261094 (account deletion lifecycle DL-1a): business_os_account_closures,
+ * created by 20261093, joins step B. It is removed in the hard delete and in
+ * the anonymise (it is not in KEEP_SET): at stage E the engine deletes the
+ * deletion request with the account (XC-1). Its user_id link to the login is
+ * then a tenancy key the plan knows, so G-10 accepts it. Chained on 20261092,
+ * stamp ec34d5604055abfe, confirmed live on prod 2026-10-25 (DL-1a TL Q-5).
+ * Not in FUNCTION_REQUIRED_TABLES (SA O-3): step B names the table only as a
+ * VALUES literal and skips it while absent, so the order rests on the apply plan.
  */
-export const FUNCTION_MIGRATION = '20261092_operator_test_account_cleanup_meeting_links';
+export const FUNCTION_MIGRATION = '20261094_operator_test_account_cleanup_account_closures';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261081_operator_account_cleanup_anonymise';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261092_operator_test_account_cleanup_meeting_links';
 /**
  * What this migration changes, for its header (comment lines, no semicolons or
  * apostrophes: the file must stay paste-safe). Rewritten with each new
  * FUNCTION_MIGRATION; the applied files keep their own.
  */
 export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
-  'Reviews for G-18 the eight links to and from abandoned_bookings and scheduling_meetings, which joined the plan without them',
-  'Without them G-18 refuses every check and delete. Nothing else in the plan changes. Same 8 argument signature as 20261081',
+  'Adds business_os_account_closures to step B, removed in the hard delete and in the anonymise',
+  'Nothing else in the plan changes. Same 8 argument signature as 20261092',
 ];
 /**
  * What running this migration's rollback means beyond restoring the previous
@@ -172,8 +180,10 @@ export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
  * each new FUNCTION_MIGRATION.
  */
 export const ROLLBACK_CONSEQUENCE: ReadonlyArray<string> = [
-  'The restored 20261081 function lacks the eight reviewed links, so G-18 refuses every check and delete again until this file is reapplied',
-  'That fails closed. It removes nothing. It is NOT the hand made bridge of 2026-10-23, which carried the same stamp with the links',
+  'The restored 20261092 function does not remove closure rows, so a test account cleanup or an anonymise would leave its closure row behind',
+  'That leaves an orphan row under a closed login. It removes nothing',
+  'While the table of 20261093 exists, G-10 of the restored function refuses every check and delete on its link to the login',
+  'A full restore is this file, then the 20261093 rollback, then the PR revert'
 ];
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
@@ -287,6 +297,7 @@ export const FULL_REMOVAL_EXTRAS: ReadonlyArray<{ table: string; reason: string 
   { table: 'api_keys', reason: 'Account configuration of the test login.' },
   { table: 'audit_logs', reason: 'Legacy user-scoped log, distinct from audit_trail.' },
   { table: 'auth_handoff_codes', reason: 'Short-lived sign-in codes. Cascade with the login anyway, removed explicitly so the count is reported.' },
+  { table: 'business_os_account_closures', reason: 'The deletion request of the account (DL-1a, XC-1). Removed in both modes: at E the engine deletes it.' },
   // Agent platform and kernel learning.
   { table: 'agent_configurations', reason: 'Agent platform.' },
   { table: 'agent_execution_logs', reason: 'Agent platform.' },

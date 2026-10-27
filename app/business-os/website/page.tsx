@@ -8,7 +8,7 @@ import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { wantsWebsite } from '@/lib/business-os/onlinePresence';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
-import { AlertCircle, Globe, Layout, Settings, Eye, EyeOff, Palette, ExternalLink, Copy, Check, Loader2, Rocket, PenLine, LayoutTemplate, RefreshCw, Plus, FileText, Trash2, X, Target, List, Megaphone, MessageCircle, Mail, DollarSign, HelpCircle, User, Sparkles, Calendar, CreditCard, Users, RotateCcw, Image as ImageIcon, Newspaper, Video, BarChart3, Package, ChevronDown, ChevronUp, Save, Wand2, Link2, Brain, Dumbbell, Hand, Flower2, Camera, Scale, Code, BookOpen, Music, Scissors, Heart, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, TrendingUp, ShoppingCart, Apple, Star, Building, GripVertical, ArrowRight, type LucideIcon } from 'lucide-react';
+import { AlertCircle, Globe, Layout, Settings, Eye, EyeOff, Palette, ExternalLink, Copy, Check, Loader2, Rocket, PenLine, LayoutTemplate, RefreshCw, Plus, FileText, Trash2, X, Target, List, Megaphone, MessageCircle, Mail, DollarSign, HelpCircle, User, Sparkles, Calendar, CreditCard, Users, RotateCcw, Image as ImageIcon, Newspaper, Video, BarChart3, Package, ChevronDown, ChevronUp, Save, Wand2, Link2, Brain, Dumbbell, Hand, Flower2, Camera, Scale, Code, BookOpen, Music, Scissors, Heart, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, TrendingUp, ShoppingCart, Apple, Star, Building, GripVertical, ArrowRight, PlayCircle, type LucideIcon } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
@@ -34,6 +34,8 @@ import { Switch } from '@/components/ui/switch';
 import { HEADING_FONTS, BODY_FONTS, carriesHebrew } from '@/lib/website-builder/fontCatalogue';
 import { openingHoursRows } from '@/lib/branding/openingHours';
 import { onlinePresenceGuidance } from '@/lib/business-os/onlinePresenceGuidance';
+import { LazyPresenceTour } from '@/components/business-os/lazyDialogs';
+import type { TourContext } from '@/components/business-os/presence-tour';
 import { WebsiteSetupWizard, type WizardResult } from '@/components/business-os/WebsiteSetupWizard';
 import { LandingPageWizard, type LandingPageWizardResult } from '@/components/business-os/LandingPageWizard';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
@@ -1198,6 +1200,38 @@ export default function WebsiteManagementPage() {
   // Settings form state
   const [subdomain, setSubdomain] = useState('');
   const [subdomainAvailable, setSubdomainAvailable] = useState<boolean | null>(null);
+
+  /*
+   * The Online presence tour.
+   *
+   * The guidance card above says which of the three routes to do NEXT. It has
+   * never said what the three routes ARE — which is the gap its own module
+   * header describes ("three routes satisfy that step and nothing on screen
+   * names them"). This opens the walkthrough that does.
+   *
+   * Every fact it needs is already computed on this page for the guidance
+   * itself, so the tour reads nothing of its own: no fetch, no repository, no
+   * route. It is presentational.
+   */
+  const [tourOpen, setTourOpen] = useState(false);
+
+  const tourCtx: TourContext = useMemo(
+    () => ({
+      guidanceState: presenceGuidance.state,
+      wantsWebsite: offerWebsite,
+      hasWebsite: Boolean(page),
+      websitePublished: page?.status === 'live',
+      livePages: allPages.filter(p => p.page_type === 'landing' && p.status === 'live').length,
+      draftPages: allPages.filter(p => p.page_type === 'landing' && p.status !== 'live').length,
+      bookingLinkExists: smartLinks.some(l => l.destination_type === 'booking'),
+      bookingLinkActive: smartLinks.some(l => l.destination_type === 'booking' && l.is_active),
+      // Real codes where the links exist, so the stage is the owner's own.
+      bookingCode: smartLinks.find(l => l.destination_type === 'booking')?.code || '',
+      contactCode: smartLinks.find(l => l.destination_type === 'form')?.code || '',
+      subdomain: subdomain || undefined,
+    }),
+    [presenceGuidance.state, offerWebsite, page, allPages, smartLinks, subdomain]
+  );
   const [checkingSubdomain, setCheckingSubdomain] = useState(false);
   const [settingsForm, setSettingsForm] = useState({
     title: '',
@@ -1610,15 +1644,51 @@ export default function WebsiteManagementPage() {
           return;
         }
 
-        // Check for ?view=links, from the dashboard's "give clients a way to
-        // book" step on an account that declined a website. It opens the
-        // acquisition wizard — where a booking link is made — instead of
-        // falling through to the site builder below, which is the one thing
-        // this business has already said it does not want.
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * `?view=links`, from the dashboard's "how clients reach you" step on an
+         * account that declined a website.
+         *
+         * It used to open the CREATE wizard unconditionally, which assumed the
+         * business had no link yet. It almost always has: the onboarding build
+         * creates a booking link and a contact link for every account, inactive,
+         * and the dashboard sends people here precisely because the booking one
+         * is not live. So pressing "Publish" was answered with "what do you want
+         * to create?" over a list already holding the thing they meant — and
+         * creating a second link would have been the wrong way to fix it.
+         *
+         * The links are fetched before deciding. One already there means the
+         * work is to ACTIVATE it, so the overview is what opens; the wizard is
+         * kept for the account that genuinely has nothing.
+         * ─────────────────────────────────────────────────────────────────────
+         */
         if (searchParams.get('view') === 'links') {
           setViewMode('overview');
-          setShowLandingPageWizard(true);
           router.replace('/business-os/website', { scroll: false });
+
+          try {
+            const linksResponse = await fetch('/api/smart-links?active=false');
+            const linksData = await linksResponse.json();
+            const links = (linksData?.success && linksData.links) || [];
+            setSmartLinks(links);
+
+            if (links.length === 0) {
+              /* Nothing to activate is the only case the wizard answers. */
+              setShowLandingPageWizard(true);
+            } else {
+              /* Land on the links themselves. One frame's delay so the section
+                 has rendered before we scroll to it. */
+              requestAnimationFrame(() => {
+                document
+                  .getElementById('customer-acquisition')
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              });
+            }
+          } catch (err) {
+            /* Unreadable is not the same as absent: offering to create a second
+               link because a request failed is the worse of the two mistakes. */
+            logger.warn({ err }, 'Could not read smart links for ?view=links');
+          }
           return;
         }
 
@@ -4192,6 +4262,11 @@ export default function WebsiteManagementPage() {
     <>
       {/* Row 2: Lead Generation Section (Landing Pages + Lead Capture) */}
       <div
+        /* Anchored so `?view=links` can land ON the links rather than at the
+           top of the page with them below the fold — the dashboard sends
+           people here to activate one, and a section they have to go looking
+           for is the same dead end as the create wizard that used to open. */
+        id="customer-acquisition"
         className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
         style={{ borderRadius: 'var(--v2-radius-card)' }}
       >
@@ -5161,7 +5236,6 @@ export default function WebsiteManagementPage() {
                 : 'bg-[var(--v2-surface)] border-[var(--v2-border)]'
             }`}
             style={{ borderRadius: 'var(--v2-radius-card)' }}
-            role="status"
           >
             <div className="flex items-start gap-3">
               <div
@@ -5176,7 +5250,15 @@ export default function WebsiteManagementPage() {
                   ? <Target className="w-4 h-4" />
                   : <Check className="w-4 h-4" />}
               </div>
-              <div className="min-w-0">
+              {/*
+                * `role="status"` sits HERE, on the text, not on the card.
+                *
+                * It was on the wrapper, which now also holds a button. A live
+                * region re-announces its whole contents whenever they change,
+                * so a screen reader would hear the walkthrough button read out
+                * again every time the guidance sentence changed.
+                */}
+              <div className="min-w-0" role="status">
                 <p className="text-sm font-semibold text-[var(--v2-text-primary)]">
                   {t('presence.guide.title')}
                 </p>
@@ -5210,10 +5292,61 @@ export default function WebsiteManagementPage() {
                     {t('presence.guide.also_link')}
                   </p>
                 )}
+
+                {/*
+                  * After the advice, because it explains the advice rather
+                  * than replacing it, and inside the text column so a screen
+                  * reader reaches it in reading order.
+                  *
+                  * Violet, not the page's blue: blue is this page's ACTION
+                  * colour and watching a walkthrough is not an action on the
+                  * business. It also pairs it with the ShareGuide megaphone,
+                  * the other "explain this to me" affordance on this page.
+                  *
+                  * No `ap-attention` pulse. The card already draws the eye and
+                  * up to three other surfaces here can be pulsing at once.
+                  */}
+                <button
+                  type="button"
+                  onClick={() => setTourOpen(true)}
+                  className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-opacity hover:opacity-80"
+                  style={{
+                    borderRadius: 'var(--v2-radius-button)',
+                    border: '1px solid #8B5CF666',
+                    background: '#8B5CF61A',
+                    color: '#8B5CF6',
+                  }}
+                >
+                  <PlayCircle className="w-3.5 h-3.5" />
+                  {/*
+                    * No length on the label.
+                    *
+                    * Each chapter now runs as long as its script takes to
+                    * speak, and the script is translated — so the Hebrew film
+                    * is a different length from the English one and neither is
+                    * known until the strings are resolved. A fixed "45
+                    * seconds" was a claim that went stale the moment a caption
+                    * was edited. The transport shows the real total.
+                    */}
+                  {t('presence.tour.open')}
+                </button>
               </div>
             </div>
           </div>
         )}
+
+        {/*
+          * Mounted closed, beside the button that opens it.
+          *
+          * `LazyPresenceTour` fetches its chunk on mount — after the page has
+          * painted, with no click needed — so the first open is same-frame
+          * while none of the tour's weight is in this page's first download.
+          */}
+        <LazyPresenceTour
+          isOpen={tourOpen}
+          onClose={() => setTourOpen(false)}
+          ctx={tourCtx}
+        />
 
         {!loading && !page && viewMode === 'overview' && (
           <div
