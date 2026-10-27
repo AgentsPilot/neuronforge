@@ -145,7 +145,7 @@ function plans(extra: Partial<FinancePlanRevenue> = {}): FinancePlanRevenue {
 function revenue(b: FinanceBoostRevenue, p: FinancePlanRevenue = plans(), totals: FinanceRevenueSection['totals'] = [
   { currency: 'USD', boostsNet: 10, plansReceived: 79, total: 89 },
 ]): FinanceRevenueSection {
-  return { status: 'ok', state: 'recorded', plans: p, boosts: b, totals };
+  return { status: 'ok', plans: p, boosts: b, totals };
 }
 
 function renderSummary(parts: Partial<{ ai: FinanceAiCostSection; b: FinanceBoostRevenue; p: FinancePlanRevenue; t: FinanceRevenueSection['totals']; c: FinanceCreditsSection; acc: FinanceAccountsSection }> = {}) {

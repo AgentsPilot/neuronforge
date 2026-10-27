@@ -423,7 +423,6 @@ const PLANS_FAILED: FinancePlanRevenue = plansPart({ status: 'unknown', lines: n
 function revenueSection(extra: Partial<FinanceRevenueSection> = {}, boosts: Partial<FinanceRevenueSection['boosts']> = {}): FinanceRevenueSection {
   return {
     status: 'ok',
-    state: 'none_yet',
     plans: plansPart(),
     totals: [],
     ...extra,
@@ -450,7 +449,7 @@ function boostLine(extra: Partial<FinanceBoostLine> = {}): FinanceBoostLine {
 /** "Our revenue" with the given lines (one package row per line), as the builder would send it. */
 function paidRevenue(lines: FinanceBoostLine[], notes: Partial<NonNullable<FinanceRevenueSection['boosts']['notes']>> = {}, extra: Partial<FinanceRevenueSection> = {}): FinanceRevenueSection {
   return revenueSection(
-    { state: 'recorded', ...extra },
+    { ...extra },
     {
       lines,
       packages: lines.map((l) => ({
@@ -1397,7 +1396,7 @@ describe('Our revenue (slice 4a)', () => {
   });
 
   it('SA-W61 (M-2 meaning of S4-FR-4): plans received, then credit boosts, under their own headings; no "later update" wording', async () => {
-    serve({ success: true, data: payload({ revenue: revenueSection({ state: 'recorded', plans: paidPlans() }) }) });
+    serve({ success: true, data: payload({ revenue: revenueSection({ plans: paidPlans() }) }) });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
     const plans = within(panel).getByTestId('revenue-plans-part');
@@ -1462,7 +1461,7 @@ describe('Our revenue (slice 4a)', () => {
 
   it('AC-120 / AC-124: all businesses → the per-currency line (Received header, "$79.00"), the by-business table, the deleted line in words', async () => {
     const plans = paidPlans({ deletedAccounts: [{ currency: 'USD', payments: 1, received: 49, exact: true }] });
-    serve({ success: true, data: payload({ revenue: revenueSection({ state: 'recorded', plans }) }) });
+    serve({ success: true, data: payload({ revenue: revenueSection({ plans }) }) });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
     const line = within(panel).getByTestId('revenue-plans-line-USD');
@@ -1477,7 +1476,7 @@ describe('Our revenue (slice 4a)', () => {
   });
 
   it('AC-124: no deleted-account payment → "No plan payments from deleted accounts"', async () => {
-    serve({ success: true, data: payload({ revenue: revenueSection({ state: 'recorded', plans: paidPlans() }) }) });
+    serve({ success: true, data: payload({ revenue: revenueSection({ plans: paidPlans() }) }) });
     render(<FinanceView />);
     expect(await screen.findByTestId('revenue-plans-deleted')).toHaveTextContent(REVENUE_PLANS_DELETED_NONE);
   });
@@ -1634,7 +1633,7 @@ describe('Our revenue (slice 4a)', () => {
   });
 
   it('both reads failed → the section says it could not load, with Try again', async () => {
-    const revenue = revenueSection({ status: 'unknown', state: 'unknown', plans: PLANS_FAILED, totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null });
+    const revenue = revenueSection({ status: 'unknown', plans: PLANS_FAILED, totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null });
     serve({ success: true, data: payload({ revenue }) });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
@@ -1648,7 +1647,7 @@ describe('Our revenue (slice 4a)', () => {
     ['cut off', paidRevenue([boostLine({ net: null })], { exact: false })],
     ['boosts failed', revenueSection({ status: 'partial', plans: paidPlans(), totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null })],
     ['plans failed', revenueSection({ status: 'partial', plans: PLANS_FAILED, totals: null })],
-    ['both failed', revenueSection({ status: 'unknown', state: 'unknown', plans: PLANS_FAILED, totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null })],
+    ['both failed', revenueSection({ status: 'unknown', plans: PLANS_FAILED, totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null })],
   ] as const)('AC-81 (unchanged rule): in the %s state the section and K-5 name no mode and no webhook', async (_name, revenue) => {
     serve({ success: true, data: payload({ revenue }) });
     render(<FinanceView />);

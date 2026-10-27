@@ -41,9 +41,9 @@
  * (S4-FR-10, SEC-8). Still no new query parameter.
  *
  * Slice 5a adds the platform's plan payments received to that section. Its
- * status (`revenuePlans`), its counts (`counts.plans`) and whether the
- * platform-wide revenue head count ran (`counts.revenueExistence`: it is not
- * called with a business picked, SA-Q35) join the same line: counts, booleans
+ * status (`revenuePlans`) and its counts (`counts.plans`) join the same line
+ * (the revenue head count, `counts.revenueExistence`, went with R-d in the
+ * R4-FU-1 bundle): counts, booleans
  * and state words only, never an amount, a currency, a tier or a name
  * (M2-FR-11). Still no new query parameter.
  *
@@ -321,7 +321,7 @@ export async function GET(request: NextRequest) {
     // this route too (SA-WR-13). `counts.takings` (slice 2a) and
     // `counts.paymentProblems` (slice 2b) are counts, booleans and state
     // words only (S2-FR-12); so are `counts.boosts` (slice 4a, S4-FR-10),
-    // `counts.plans` and `counts.revenueExistence` (slice 5a, M2-FR-11), and
+    // `counts.plans` (slice 5a, M2-FR-11), and
     // `counts.accountEconomics` (slice 6a, M3-FR-14: `group` as its kind), and
     // `counts.aiRecorded` (M-4, M4-FR-9: which read, how it ended, counts and flags).
     requestLogger.info(

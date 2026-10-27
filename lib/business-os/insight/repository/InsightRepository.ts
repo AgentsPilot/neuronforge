@@ -293,6 +293,14 @@ interface VectorThreshold {
  */
 const VISITOR_SCAN_LIMIT = 5000;
 
+/**
+ * FF-3 tranche A (finance follow-ups bundle, SA-WP-FU FU-C3): the scan is read
+ * in pages of at most 1,000 rows. PostgREST returns at most `max-rows` (1,000)
+ * per request and does not say it cut, so the single `.limit(5000)` this
+ * replaced stopped at 1,000 and the floor warning could never fire.
+ */
+const VISITOR_SCAN_PAGE = 1000;
+
 /** One page-view row, reduced to what identifies the person who made it. */
 interface VisitorIdentityRow {
   session_id?: string | null;
@@ -3789,6 +3797,35 @@ Generate in ${langName}. Respond with ONLY a JSON object:
   // ===========================
 
   /**
+   * The page-view identity rows of ONE account, up to `VISITOR_SCAN_LIMIT`, in
+   * pages of at most 1,000 (FF-3 tranche A). Every page carries the same
+   * `user_id` filter and a total order (`id`, SA-Q-FU-7). A page error returns
+   * `{ data: null, error }`, exactly the shape the single read returned, so the
+   * caller's "source query failed" path is unchanged and no partial count is
+   * ever presented. `count` stays null, as the single read (no count option)
+   * gave it; its one reader is left exactly as it was.
+   */
+  private async readVisitorIdentityRows(
+    userId: string
+  ): Promise<{ data: VisitorIdentityRow[] | null; error: { message: string } | null; count: number | null }> {
+    const rows: VisitorIdentityRow[] = [];
+    for (let offset = 0; offset < VISITOR_SCAN_LIMIT; offset += VISITOR_SCAN_PAGE) {
+      const size = Math.min(VISITOR_SCAN_PAGE, VISITOR_SCAN_LIMIT - offset);
+      const { data, error } = await this.supabase
+        .from('website_page_views')
+        .select('session_id, ip_hash, is_owner_view')
+        .eq('user_id', userId)
+        .order('id', { ascending: true })
+        .range(offset, offset + size - 1);
+      if (error) return { data: null, error, count: null };
+      const page = (data ?? []) as VisitorIdentityRow[];
+      rows.push(...page);
+      if (page.length < size) break;
+    }
+    return { data: rows, error: null, count: null };
+  }
+
+  /**
    * Calculate the maturity state of all 7 business vectors
    * This drives the progressive disclosure UI - showing users what's being watched vs. active
    */
@@ -3826,11 +3863,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
          * DISTINCT and the identity has to be resolved per row — see
          * `countUniqueVisitors`.
          */
-        this.supabase
-          .from('website_page_views')
-          .select('session_id, ip_hash, is_owner_view')
-          .eq('user_id', userId)
-          .limit(VISITOR_SCAN_LIMIT),
+        this.readVisitorIdentityRows(userId),
 
         // Total bookings
         this.supabase

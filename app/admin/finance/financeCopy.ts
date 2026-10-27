@@ -870,7 +870,8 @@ export const PAYING_BREAKDOWN = {
   endedInWindow: (count: string) => `Trials ended in this window: ${count}`,
   paid: (count: string) => `Paid: ${count}`,
   paidBeforeEnd: (count: string) => `of which before the trial ended: ${count}`,
-  paidUnknown: 'Paid: Unknown',
+  // MK9-FU-1: said once, with its reason (the rate line is not shown then).
+  paidUnknown: 'Paid: Unknown (first payments could not be read)',
   rate: (paid: string, base: string, percent: string) => `Rate: ${paid} of ${base} (${percent}%)`,
   tooFew: (minimum: string) => `Too few trials for a rate (a rate needs at least ${minimum})`,
   noRateCutOff: 'No rate: not every account could be read',

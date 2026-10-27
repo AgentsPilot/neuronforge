@@ -2,7 +2,8 @@
 //
 // READ-ONLY access for the admin finance & business health page (slice 1a,
 // workplan docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md,
-// reads R-c, R-c′ and R-d; slice 2a, workplan
+// whose reads R-c, R-c′ and R-d were removed by the finance follow-ups bundle,
+// R4-FU-1, docs/workplans/FINANCE_FOLLOWUPS_BUNDLE_WORKPLAN.md; slice 2a, workplan
 // docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md, reads R-e,
 // R-e′, R-f and R-f′: the businesses' client payments and refunds, layer B;
 // slice 2b, workplan docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md,
@@ -71,8 +72,7 @@
 // before querying (CLAUDE.md rule 4). A read that is not scoped to one account
 // is reached only by calling a differently NAMED method, never by leaving an
 // argument out (the TokenUsageRepository convention):
-//   - ALL ACCOUNTS: `listBillingStatusesAllAccounts` (R-c),
-//     `listClientPaymentsAllAccountsPaidInRange` (R-e),
+//   - ALL ACCOUNTS: `listClientPaymentsAllAccountsPaidInRange` (R-e),
 //     `listClientRefundsAllAccountsCreatedInRange` (R-f),
 //     `listOverdueClientInvoicesAllAccounts` (R-g),
 //     `listOverdueClientInstalmentsAllAccounts` (R-h),
@@ -81,8 +81,7 @@
 //     `listPlanPaymentsAllAccountsPaidInRange` (R-m),
 //     `listBoostReversalEventsAllAccountsRecordedInRange` (R-n) and
 //     `listBoostPurchasesNeedingAttentionAllAccounts` (R-l). Logged at info.
-//   - ONE ACCOUNT: `findBillingStatusForAccount` (R-c′),
-//     `listClientPaymentsForAccountPaidInRange` (R-e′),
+//   - ONE ACCOUNT: `listClientPaymentsForAccountPaidInRange` (R-e′),
 //     `listClientRefundsForAccountCreatedInRange` (R-f′),
 //     `listOverdueClientInvoicesForAccount` (R-g′),
 //     `listOverdueClientInstalmentsForAccount` (R-h′),
@@ -93,21 +92,17 @@
 //     `.eq('user_id')` on every page; and
 //     `listBoostReversalEventsForAccountRecordedInRange` (R-n′), scoped
 //     through the account's own purchases (see THE REVERSAL EVENTS).
-//   - PLATFORM-WIDE EXISTENCE: `countRevenueRows` (R-d), two head counts
-//     that read no account and no amount.
 //
 // ── TEST AND LIVE MODE (BD-13, BD-14, BD-16) ─────────────────────────────────
-// No read in this file filters by mode. Layer A (R-c, R-c′, R-d, R-k, R-k′,
-// R-m, R-m′) counts test and real Stripe rows together and treats them as real (BD-14, slice 1c);
-// layer B (R-e to R-i′) has no mode at all (BD-13). One billing record per
-// account is assumed (BD-16): if an account ever has two, R-c and R-c′ return
-// an ERROR, never a figure. This file's code never names the mode column
-// (pinned by the finance source guard).
+// No read in this file filters by mode. Layer A (R-k, R-k′, R-m, R-m′)
+// counts test and real Stripe rows together and treats them as real (BD-14, slice 1c);
+// layer B (R-e to R-i′) has no mode at all (BD-13). Billing STATUS, which is
+// read for the current mode only (Finance R4), is not read here: the finance
+// wiring takes it from `lib/admin/billing/currentModeBillingStatus.ts`. This
+// file's code never names the mode column (pinned by the finance source guard).
 //
 // ── PAGING ───────────────────────────────────────────────────────────────────
-// R-c pages by keyset on `user_id` (unique while one row per account holds),
-// and reaching its ceiling, or reading one `user_id` twice, is an ERROR. The
-// layer-B reads page by keyset on `id`, and at their ceiling (the `>=` rule)
+// The layer-B reads page by keyset on `id`, and at their ceiling (the `>=` rule)
 // return the rows read with `reachedCeiling: true`, so the page says "At
 // least". R-e to R-m′ use one pager, with the same CLIENT_* page size and
 // ceiling (SA-W49, SA-Q36): R-e / R-f / R-k filter a range and read every status (the
@@ -123,9 +118,12 @@ import { createLogger, type Logger } from '@/lib/logger';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
 
 /**
- * One billing-account row, as the finance page reads it: who, which status,
- * ended or not, which tier was bought. Test or real mode (BD-14), one per
- * account (BD-16).
+ * One billing-account status row, as the finance page uses it: who, which
+ * status, ended or not, which tier was bought. R4-FU-1 (SA-Q-FU-4): this file
+ * no longer reads it. The rows come from the CURRENT-mode reader
+ * (`lib/admin/billing/currentModeBillingStatus.ts`, Finance R4), injected as
+ * the finance deps' two billing-status keys; the shape stays here so the
+ * finance builder keeps one row type.
  */
 export interface FinanceBillingStatusRow {
   user_id: string;
@@ -143,19 +141,7 @@ export interface FinanceBillingStatusRow {
   bought_tier: string | null;
 }
 
-/** Whether any revenue row exists, platform-wide (BD-14). Counts only, never an amount. */
-export interface FinanceRevenueCounts {
-  planInvoicesPaid: number;
-  boostsPaid: number;
-}
-
-/** The only columns the billing-status reads select. Exported for the tests. */
-export const FINANCE_BILLING_STATUS_COLUMNS = 'user_id, subscription_status, ended_at, bought_tier';
-
 export const FINANCE_READ_LIMITS = {
-  /** PostgREST's default `max-rows`; a larger page would be silently cut. */
-  BILLING_PAGE_SIZE: 1000,
-  BILLING_CEILING: 20_000,
   /** Layer-B reads (slice 2a, SA-Q15): PostgREST's `max-rows` page; "At least" at the ceiling. */
   CLIENT_PAGE_SIZE: 1000,
   CLIENT_CEILING: 5_000,
@@ -417,30 +403,6 @@ class FinanceReadGuardError extends Error {
 }
 
 /**
- * The all-accounts billing read reached its ceiling. Returned as an ERROR, never
- * as a partial list: a cut list would silently turn paying accounts into
- * comped ones (workplan R-c).
- */
-export class FinanceReadCeilingError extends Error {
-  constructor(ceiling: number) {
-    super(`Billing rows reached the read ceiling of ${ceiling}`);
-    this.name = 'FinanceReadCeilingError';
-  }
-}
-
-/**
- * SA-WR-27 (BD-16): the all-accounts billing read met one account more than
- * once. One billing record per account is assumed, so a second row is
- * returned as an ERROR, never folded into a figure. Counts only, no id.
- */
-export class FinanceReadDuplicateError extends Error {
-  constructor(duplicateAccounts: number) {
-    super(`Billing rows named ${duplicateAccounts} account(s) more than once; one row per account is assumed`);
-    this.name = 'FinanceReadDuplicateError';
-  }
-}
-
-/**
  * Slice 4b.2 (§7, SA-W121): the reversal events table does not exist yet
  * (migration 20261076 not applied). A deploy state, not a failure: logged at
  * warn, and the page shows the dated figures as Unknown.
@@ -479,135 +441,6 @@ export class BusinessOsFinanceReadRepository {
       this.logger.error({ method, err: error }, 'Finance read failed');
     }
     return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
-  }
-
-  /**
-   * NOT WIRED since Finance R4 (2026-10-18): with a test row and a live row for
-   * one account this read fails on the duplicate (P8A-R4). The finance wiring
-   * now reads status for the current Stripe mode through
-   * `lib/admin/billing/currentModeBillingStatus.ts`. Kept only as the
-   * source of the deps type; removal is follow-up R4-FU-1.
-   *
-   * R-c. The billing status of EVERY account that has a billing row, test or
-   * real mode (BD-14), keyset-paged on `user_id`. Rows detached from a deleted
-   * account (`user_id` NULL) are skipped in the query: keyset paging cannot
-   * step over NULLs, and an unattributable row cannot classify an account.
-   *
-   * Reaching the ceiling is an ERROR (`FinanceReadCeilingError`), never a
-   * partial list. One row per account is assumed (BD-16): a `user_id` read
-   * twice is an ERROR too (`FinanceReadDuplicateError`, SA-WR-27), never a
-   * guess. Logged at info: it is a cross-account read.
-   */
-  async listBillingStatusesAllAccounts(opts?: {
-    pageSize?: number;
-    ceiling?: number;
-  }): Promise<RepositoryResult<FinanceBillingStatusRow[]>> {
-    const method = 'listBillingStatusesAllAccounts';
-    const startedAt = Date.now();
-    try {
-      const pageSize = opts?.pageSize ?? FINANCE_READ_LIMITS.BILLING_PAGE_SIZE;
-      const ceiling = opts?.ceiling ?? FINANCE_READ_LIMITS.BILLING_CEILING;
-      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > FINANCE_READ_LIMITS.BILLING_PAGE_SIZE) {
-        throw new FinanceReadGuardError(`pageSize must be an integer from 1 to ${FINANCE_READ_LIMITS.BILLING_PAGE_SIZE}`);
-      }
-      if (!Number.isInteger(ceiling) || ceiling < 1 || ceiling > FINANCE_READ_LIMITS.BILLING_CEILING) {
-        throw new FinanceReadGuardError(`ceiling must be an integer from 1 to ${FINANCE_READ_LIMITS.BILLING_CEILING}`);
-      }
-
-      const rows: FinanceBillingStatusRow[] = [];
-      let last: string | null = null;
-      for (;;) {
-        const size = Math.min(pageSize, ceiling - rows.length);
-        let query = this.supabase
-          .from('business_os_billing_accounts')
-          .select(FINANCE_BILLING_STATUS_COLUMNS)
-          .not('user_id', 'is', null);
-        if (last !== null) query = query.gt('user_id', last);
-        const { data, error } = await query.order('user_id', { ascending: true }).limit(size);
-        if (error) throw error;
-
-        const page = (data ?? []) as unknown as FinanceBillingStatusRow[];
-        rows.push(...page);
-        if (rows.length >= ceiling) throw new FinanceReadCeilingError(ceiling);
-        if (page.length < size) break;
-        last = page[page.length - 1].user_id;
-      }
-
-      // SA-WR-27. With `.gt('user_id', last)` paging a repeat is caught only
-      // within one page. Residual (recorded in the workplan): a second row just
-      // past a page boundary is skipped by `.gt` and not seen here.
-      const accounts = new Set(rows.map((row) => row.user_id));
-      if (accounts.size !== rows.length) throw new FinanceReadDuplicateError(rows.length - accounts.size);
-
-      this.logger.info({ method, rows: rows.length, durationMs: Date.now() - startedAt }, 'Billing statuses of all accounts read');
-      return { data: rows, error: null };
-    } catch (error) {
-      return this.fail(method, error);
-    }
-  }
-
-  /**
-   * NOT WIRED since Finance R4 (2026-10-18), for the same reason as R-c: with
-   * two rows `maybeSingle` errors (P8A-R4). Kept only as the deps type source;
-   * removal is follow-up R4-FU-1.
-   *
-   * R-c′. The billing status of ONE account, test or real mode (BD-14), or
-   * `null` when it has no billing row. One row per account is assumed (BD-16):
-   * with two, `maybeSingle` fails and the error is RETURNED, never thrown, so
-   * the page shows its fallback instead of a figure.
-   */
-  async findBillingStatusForAccount(accountId: string): Promise<RepositoryResult<FinanceBillingStatusRow | null>> {
-    const method = 'findBillingStatusForAccount';
-    try {
-      if (typeof accountId !== 'string' || !UUID_PATTERN.test(accountId)) {
-        throw new FinanceReadGuardError('An account id (UUID) is required');
-      }
-      const { data, error } = await this.supabase
-        .from('business_os_billing_accounts')
-        .select(FINANCE_BILLING_STATUS_COLUMNS)
-        .eq('user_id', accountId)
-        .maybeSingle();
-      if (error) throw error;
-
-      const row = (data ?? null) as unknown as FinanceBillingStatusRow | null;
-      this.logger.debug({ method, found: row !== null }, 'Billing status of one account read');
-      return { data: row, error: null };
-    } catch (error) {
-      return this.fail(method, error);
-    }
-  }
-
-  /**
-   * R-d. Whether ANY revenue row exists, platform-wide, test or real mode
-   * (BD-14): paid plan invoices and paid boost purchases. Two head counts —
-   * no row, no account and no amount is read. A count PostgREST did not
-   * return is an error, never a 0 (the page then says "Could not check").
-   */
-  async countRevenueRows(): Promise<RepositoryResult<FinanceRevenueCounts>> {
-    const method = 'countRevenueRows';
-    try {
-      const [invoices, boosts] = await Promise.all([
-        this.supabase
-          .from('business_os_billing_events')
-          .select('id', { count: 'exact', head: true })
-          .eq('kind', 'invoice_paid'),
-        this.supabase
-          .from('business_os_boost_purchases')
-          .select('id', { count: 'exact', head: true })
-          .not('paid_at', 'is', null),
-      ]);
-      if (invoices.error) throw invoices.error;
-      if (boosts.error) throw boosts.error;
-      if (typeof invoices.count !== 'number' || typeof boosts.count !== 'number') {
-        throw new Error('A revenue head count came back without a count');
-      }
-
-      const counts = { planInvoicesPaid: invoices.count, boostsPaid: boosts.count };
-      this.logger.info({ method, ...counts }, 'Revenue rows counted');
-      return { data: counts, error: null };
-    } catch (error) {
-      return this.fail(method, error);
-    }
   }
 
   /**

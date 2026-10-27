@@ -15,8 +15,7 @@
  *     CURRENT Stripe mode only (Finance R4, P8A-R4) through
  *     `currentModeBillingStatus`, which reuses the plan payments one-mode
  *     reader and its key resolution; R-c and R-c' are no longer wired;
- *   - the finance read repository: revenue head counts,
- *     the client payments and refunds (layer B, slice 2a), and the overdue
+ *   - the finance read repository: the client payments and refunds (layer B, slice 2a), and the overdue
  *     invoices and instalments, and client plans (layer B, slice 2b), and the
  *     boost purchases paid in the window (layer A, slice 4a), the paid
  *     plan invoices in the window (layer A, slice 5a), and the boost reversal
@@ -143,7 +142,6 @@ export function financeHealthDeps(): Omit<
       // Finance R4: billing STATUS is the current Stripe mode only (PF-15); revenue below still counts both (BD-14).
       listBillingStatusesAllAccounts: (opts) => listCurrentModeBillingStatusesAllAccounts(opts),
       findBillingStatusForAccount: (accountId) => findCurrentModeBillingStatusForAccount(accountId),
-      countRevenueRows: () => businessOsFinanceReadRepository.countRevenueRows(),
       listClientPaymentsAllAccountsPaidInRange: (range, opts) =>
         businessOsFinanceReadRepository.listClientPaymentsAllAccountsPaidInRange(range, opts),
       listClientPaymentsForAccountPaidInRange: (accountId, range, opts) =>
