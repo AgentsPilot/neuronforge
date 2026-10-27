@@ -1348,7 +1348,16 @@ The final code was tested after Dev's parallel changes to `classifyEnvironment.t
 
 ## 7. Commit Info
 
-*RM populates this section.*
+**Branch:** `feature/admin-environment-view` · **PR:** [#522](https://github.com/AgentsPilot/neuronforge/pull/522), EC-1 and EC-2 together, on auto-merge (merge commit) through the merge queue
+
+| Commit | Message |
+|---|---|
+| `7d3b89a0` | docs(admin): environment configuration view requirement and workplan |
+| `657f10b8` | feat(admin): environment catalogue, classifier and read-only route (EC-1) |
+| `c866088e` | feat(admin): environment configuration page and sidebar item (EC-2) |
+| `2bcde8fb` | Merge `origin/main` into the branch (no conflicts) |
+
+**Ship drill (RM, 2026-10-27):** `npm run build` passed. `tsc --noEmit` showed 0 errors in the touched files (1,860 pre-existing elsewhere) and did not run out of memory. Re-checked against `main` after the sync: register row 119 is the next free number, the audit split is 62 / 77 / 84 (223), and the nav total is 28. After the sync, 10 suites and 623 tests pass, and `test:authz-guard` passes 203. Secrets scan of the diff: clean.
 
 ---
 
@@ -1361,3 +1370,4 @@ The final code was tested after Dev's parallel changes to `classifyEnvironment.t
 | 2026-10-26 | EC-1 implemented: Code Complete | RC-1 to RC-8 applied; T-1 to T-17 ticked; final deny-list recorded in §1.5.2; §1.11 Implementation notes added (files, RC map, deviations, gate results). |
 | 2026-10-27 | SA code review EC-1: approved with changes | RC-1 to RC-8 and Q-1 to Q-10 verified; deviations 1 to 7 ruled; required CR-1 (serialisation gate must expand Error objects), CR-2 (unanchored JWT opening check), CR-3 (narrow four over-broad deny-list prefixes). Follow-up: six admin routes on `main` lack register rows. |
 | 2026-10-27 | SA: CR spot-check passed; EC-2 workplan approved with changes | CR-1 to CR-3 verified (90 tests re-run). EC-2: Q2-1 to Q2-4 ruled; E2-1 to E2-4 required; §2 sequencing corrected to one PR for EC-1 + EC-2; ToC anchor for §2 fixed. |
+| 2026-10-27 | RM: commit, PR and auto-merge | EC-1 and EC-2 committed (`7d3b89a0`, `657f10b8`, `c866088e`), synced with `main` without conflicts, PR #522 opened on auto-merge. §7 filled in. |
