@@ -890,6 +890,8 @@ describe('source guards', () => {
       'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
       // P-5b.1: the N-2 apply test imports the same TYPE for its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.n2.test.ts',
+      // FU-P7a4-1: the QA edge test imports the same TYPES for its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.paidAfterEnd.qa.test.ts',
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
       // P-6a.2: pins the notice's confirm prefix to this repository's HOSTED_INVOICE_URL_PREFIX.
       'lib/business-os/billing/__tests__/planPaymentNotice.test.ts',

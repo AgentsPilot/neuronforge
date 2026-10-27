@@ -477,6 +477,8 @@ describe('source rules', () => {
       'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
       // P-5b.1: the N-2 apply test imports the same TYPES for its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.n2.test.ts',
+      // FU-P7a4-1: the QA edge test imports the same TYPES for its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.paidAfterEnd.qa.test.ts',
       // P-3b.2: the apply use case's test imports the input and result TYPES to build its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
       // P-6a.2 (T10): the renewal captured-payload test imports the apply input and event TYPES for its fake.
