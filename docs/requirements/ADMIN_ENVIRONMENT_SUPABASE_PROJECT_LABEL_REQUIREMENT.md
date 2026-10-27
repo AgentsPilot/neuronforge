@@ -20,7 +20,7 @@ The Database group of `/admin/environment` shows `NEXT_PUBLIC_SUPABASE_URL` and 
 | # | Slice | Status | PR | Notes |
 |---|---|---|---|---|
 | 0 | This requirement | ✅ Approved 2026-10-27: SA approved with changes (OQ-1..OQ-6, SA-L1..L9) | — | Scope approved by the user in chat |
-| 6 | EC-6: Supabase project label + `supabase-url-mismatch` diagnostic | 🟡 Built 2026-10-27: SA code review approved with notes, QA PASS; awaiting user diff review | — | Full cycle: the route's response shape changes. Size 🟢 about half a day |
+| 6 | EC-6: Supabase project label + `supabase-url-mismatch` diagnostic | 🟡 In PR 2026-10-27: SA code review approved with notes, QA PASS, user approved the diff; auto-merge on | [#543](https://github.com/AgentsPilot/neuronforge/pull/543) | Full cycle: the route's response shape changes. Size 🟢 about half a day |
 
 ---
 
