@@ -348,6 +348,10 @@ describe('freeAccessAfter (P-7a.3, BQ-5): the Founding Partner sentence, only be
   it.each([
     ['renewing (Cancel offered)', subscribed()],
     ['cancelling (Reactivate offered)', subscribed({ cancelAtPeriodEnd: true })],
+    // P-7a.4 gives a failed renewal a Cancel that ends the plan now, and SA P-7a.4
+    // deviation 8 shows the same sentence in that "ends now" confirmation, so the
+    // port is asked here too (it was "no Cancel yet, never called" under P-7a.3).
+    ['a failed renewal (P-7a.4: Cancel ends now)', subscribed({ subscriptionStatus: 'past_due' })],
   ])('%s: the port answer is on manage', async (_label, billingRow) => {
     const { result, calls } = await withPort(billingRow, async () => ({ endsAt: FREE_UNTIL }));
     expect(result!.manage).toMatchObject({ freeAccessAfter: { endsAt: FREE_UNTIL } });
@@ -362,7 +366,6 @@ describe('freeAccessAfter (P-7a.3, BQ-5): the Founding Partner sentence, only be
 
   it.each([
     ['no subscription', null, {}],
-    ['a failed renewal (no Cancel yet)', subscribed({ subscriptionStatus: 'past_due' }), {}],
     ['an ended subscription (card and invoices only)', subscribed({ endedAt: PAST, subscriptionStatus: 'canceled' }), {}],
     ['the price switch off', subscribed(), { switches: { checkoutEnabled: true, pricesEnabled: false } }],
   ] as Array<[string, Row | null, Parameters<typeof harness>[0]]>)('%s: the port is never called, no field', async (_label, billingRow, options) => {

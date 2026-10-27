@@ -410,7 +410,12 @@ export const es = {
     'plan.manage.reactivating': 'Reactivando…',
     'plan.manage.reactivated': 'Tu plan se renovará el {date}.',
     'plan.manage.reactivated_nodate': 'Tu plan se renovará como antes.',
-    'plan.manage.payment_failed_contact': 'Tu pago no se realizó. Actualiza tu tarjeta o escríbenos para cancelar.',
+    // P-7a.4 (BQ-3 = A): DRAFT, awaiting G-5.
+    'plan.manage.payment_failed_cancel_now': 'Tu pago no se realizó. Actualiza tu tarjeta para conservar tu plan, o cancélalo para terminarlo ahora.',
+    'plan.manage.cancel_now_body': 'Tu último pago no se realizó. Si cancelas, {plan} termina ahora y dejamos de intentar cobrar tu tarjeta. La factura pendiente se anula, así que no queda nada por pagar.',
+    'plan.manage.cancel_now_confirm': 'Sí, terminarlo ahora',
+    'plan.manage.ended_now': 'Cancelado. {plan} ha terminado y no se volverá a cobrar tu tarjeta.',
+    'plan.manage.refusal.payment_failed': 'Tu pago no se realizó. Primero actualiza tu tarjeta, o cancela tu plan.',
     'plan.manage.refusal.unavailable': 'No está disponible ahora. Inténtalo de nuevo más tarde.',
     'plan.manage.refusal.not_subscribed': 'No hay un plan de pago en tu cuenta.',
     'plan.manage.refusal.not_active': 'Tu suscripción no está activa ahora.',

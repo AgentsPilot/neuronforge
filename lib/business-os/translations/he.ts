@@ -3214,7 +3214,12 @@ export const he = {
     'plan.manage.reactivating': 'מחדשים…',
     'plan.manage.reactivated': 'התוכנית תתחדש ב־{date}.',
     'plan.manage.reactivated_nodate': 'התוכנית תתחדש כרגיל.',
-    'plan.manage.payment_failed_contact': 'התשלום נכשל. אפשר לעדכן את הכרטיס, או לפנות אלינו כדי לבטל.',
+    // P-7a.4 (BQ-3 = A): DRAFT, awaiting G-5.
+    'plan.manage.payment_failed_cancel_now': 'התשלום נכשל. אפשר לעדכן את הכרטיס כדי להשאיר את התוכנית, או לבטל אותה ולסיים אותה עכשיו.',
+    'plan.manage.cancel_now_body': 'התשלום האחרון לא עבר. אם מבטלים, {plan} מסתיימת עכשיו ואנחנו מפסיקים לנסות לחייב את הכרטיס. החשבונית שלא שולמה מבוטלת, כך שאין מה לשלם.',
+    'plan.manage.cancel_now_confirm': 'כן, לסיים עכשיו',
+    'plan.manage.ended_now': 'התוכנית בוטלה. {plan} הסתיימה, והכרטיס לא יחויב שוב.',
+    'plan.manage.refusal.payment_failed': 'התשלום נכשל. קודם צריך לעדכן את הכרטיס, או לבטל את התוכנית.',
     'plan.manage.refusal.unavailable': 'האפשרות לא זמינה כרגע. כדאי לנסות שוב מאוחר יותר.',
     'plan.manage.refusal.not_subscribed': 'אין תוכנית בתשלום בחשבון.',
     'plan.manage.refusal.not_active': 'המינוי לא פעיל כרגע.',
