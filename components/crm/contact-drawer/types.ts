@@ -242,6 +242,16 @@ export interface Appointment {
   intake_sent_at?: string;
   intake_reminded_at?: string;
   created_at?: string;  // For product purchases, use created_at as the order date
+  /**
+   * When the row last changed.
+   *
+   * Declared because it is already READ — the journey dates a cancellation
+   * with `booking.updated_at ?? booking.created_at` when no cancellation email
+   * carries a timestamp. The column exists on `scheduling_bookings`; only the
+   * type was missing it, so that line was a type error the build happens to
+   * ignore, and the fallback it reaches for was `undefined` to TypeScript.
+   */
+  updated_at?: string;
   service?: {
     service_name: string;
     /**

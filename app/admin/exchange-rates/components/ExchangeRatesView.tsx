@@ -6,7 +6,8 @@
  * §5.5.3 to §5.5.5, SQ-12 to SQ-15).
  *
  * A manual, admin-only table of rates (units of each currency per 1 USD).
- * Nothing on the platform converts money with them (D-5). Rendered only by
+ * They convert one admin figure only (FIN BD-56): the approximate-dollar total
+ * of client payments on Finance; nothing else converts money (D-5). Rendered only by
  * Finance's Exchange rates tab (slice 2); the old URL `/admin/exchange-rates`
  * redirects there since slice 2b. It lives outside `app/admin/finance/` (SA-R13).
  *
@@ -146,7 +147,7 @@ export const REFRESH_AFTER_SAVE_FAILED = 'Saved; could not refresh history';
  * h1: the Finance tab (the standalone page was deleted in slice 2b).
  */
 export const EXCHANGE_RATES_PURPOSE =
-  'Rates an admin keeps by hand, in units of each currency per 1 USD. Nothing on the platform converts money with them.';
+  'Rates an admin keeps by hand, in units of each currency per 1 USD. They convert one admin figure only: the approximate-dollar total of client payments on Finance.';
 
 /** The selected currency's own history read (SQ-12). */
 interface CurrencyHistory {

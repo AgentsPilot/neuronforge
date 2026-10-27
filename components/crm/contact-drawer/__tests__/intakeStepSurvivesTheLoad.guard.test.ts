@@ -100,7 +100,21 @@ describe('the step itself is unchanged', () => {
      * would never be sent. `hasIntakeData` still wins on its own, so a response
      * already given survives the service changing shape.
      */
-    expect(code).toMatch(/if \(hasIntakeData \|\| \(collectsIntake && !isUnscheduled\)\) \{/);
+    /*
+     * `!isUnscheduled` became `intakeHasAnOccasion`, which is
+     * `intakeAppliesToService(booking.service) && !isUnscheduled` — the same
+     * condition with a service check in front of it, and a superset by the
+     * drawer's own comment. What this guard protects is unchanged: a purchase
+     * with no appointment still draws no intake step, and `hasIntakeData`
+     * still wins on its own.
+     */
+    expect(code).toMatch(
+      /if \(hasIntakeData \|\| \(collectsIntake && intakeHasAnOccasion\)\) \{/
+    );
+
+    /* And the occasion must still carry the unscheduled rule, or the rename
+       would have quietly dropped the thing this test exists for. */
+    expect(code).toMatch(/const intakeHasAnOccasion = [^;]*!isUnscheduled/);
   });
 
   it('a failed read still means no step, which is the safer mistake', () => {

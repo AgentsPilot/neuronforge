@@ -101,15 +101,32 @@ describe('the refund reaches the period it came off', () => {
     expect(items).toMatch(/refundedAmount\?: number \| null;/);
   });
 
-  it('the route joins it from invoices it had already read', () => {
+  it('the route joins it from the invoices AND the charges it had already read', () => {
     /*
      * `refunded_amount` is derived by trigger onto the INVOICE a period raised,
-     * never onto the installment row, so a join is the only way. It reuses the
-     * invoice select the list rows already need: no second query.
+     * never onto the installment row — `payment_plan_installments` has no such
+     * column — so a join is the only way. It reuses the invoice select the list
+     * rows already need: no second query.
+     *
+     * AND the transactions, which is the half that was missing. A plan billed
+     * to a CARD raises no invoice: Stripe charges the subscription and the
+     * refund lands on the `payment_transactions` row, so `invoice_id` on the
+     * period is null and the invoice map can never answer for it. Measured
+     * 2026-10-26: the drawer's detail panel read "Refunded $30.00" off the
+     * charge while the schedule above it showed the period on a green dot.
+     *
+     * Invoice first, charge second — an invoiced period's refund belongs to
+     * its document. Both maps are built from selects the route already makes.
      */
     expect(route).toMatch(/const refundByInvoice = new Map<string, number>\(\)/);
     expect(route).toMatch(/for \(const invoice of invoices\.data \?\? \[\]\)/);
-    expect(route).toMatch(/refundedAmount:\s*\n?\s*typeof row\.invoice_id === 'string'/);
+
+    expect(route).toMatch(/const refundByTransaction = new Map<string, number>\(\)/);
+    expect(route).toMatch(/for \(const transaction of transactions\.data \?\? \[\]\)/);
+
+    /* Both keys reach the period, in that order. */
+    expect(route).toMatch(/refundByInvoice\.get\(row\.invoice_id\)/);
+    expect(route).toMatch(/refundByTransaction\.get\(row\.transaction_id\)/);
   });
 
   it('the row reads it', () => {

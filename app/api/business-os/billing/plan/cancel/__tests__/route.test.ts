@@ -361,3 +361,64 @@ describe('reactivate', () => {
     expect(state.audits).toEqual([]);
   });
 });
+
+describe('D2 / SX-1: the reason code (SX C-10, SA-4; SA Q-4, Q-5, W-10)', () => {
+  it('cancel with a listed reason → 200; the audit details carry the code', async () => {
+    const response = await cancelPost({ reasonCode: 'too_expensive' });
+    expect(response.status).toBe(200);
+    expect(state.audits).toHaveLength(1);
+    expect(state.audits[0]).toMatchObject({ details: { outcome: 'cancelled', reasonCode: 'too_expensive', actor: 'owner' } });
+  });
+
+  it('cancel with {} still works (P-7a.1 screen) → reasonCode null', async () => {
+    const response = await cancelPost({});
+    expect(response.status).toBe(200);
+    expect((state.audits[0].details as Record<string, unknown>).reasonCode).toBeNull();
+  });
+
+  it.each([
+    ['an unlisted code', { reasonCode: 'because' }],
+    ['a free-text note beside a code (no free text, SX C-10)', { reasonCode: 'other', note: 'my clients left' }],
+    ['a label instead of a code', { reasonCode: 'Too expensive' }],
+    ['a non-string code', { reasonCode: 3 }],
+  ])('cancel with %s → 400 invalid_input, nothing read', async (_label, body) => {
+    const response = await cancelPost(body);
+    expect(response.status).toBe(400);
+    expect((await response.json()).code).toBe('invalid_input');
+    expect(state.log).toEqual([]);
+  });
+
+  it('reactivate with a reasonCode → 400 (its body stays {} strict), nothing read', async () => {
+    state.row = billingRow({ cancelAtPeriodEnd: true });
+    const response = await reactivatePost({ reasonCode: 'too_expensive' });
+    expect(response.status).toBe(400);
+    expect(state.log).toEqual([]);
+  });
+
+  it('the write receives a per-attempt idempotency key (SX C-4), never in the audit row', async () => {
+    await cancelPost({ reasonCode: 'too_expensive' });
+    expect(mockStripe.setBusinessOsCancelAtPeriodEnd).toHaveBeenCalledTimes(1);
+    const options = (mockStripe.setBusinessOsCancelAtPeriodEnd.mock.calls[0] as unknown[])[2] as { idempotencyKey: string };
+    expect(options.idempotencyKey).toMatch(/^bos-plan-manage:sub_own:cancel:[0-9a-f-]{36}$/);
+    expect(JSON.stringify(state.audits)).not.toContain(options.idempotencyKey);
+  });
+});
+
+describe('D2 / SX-1: change_pending (SA W-3)', () => {
+  it('cancel with a tier change pending on our record → 409 change_pending, zero Stripe calls, not audited', async () => {
+    state.row = billingRow({ pendingTier: 'tier_two' });
+    const response = await cancelPost({});
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe('change_pending');
+    expect(stripeCalls()).toEqual([]);
+    expect(state.audits).toEqual([]);
+  });
+
+  it('reactivate is not refused for it: a cancelling plan with a change pending is kept', async () => {
+    state.row = billingRow({ cancelAtPeriodEnd: true, pendingTier: 'tier_two' });
+    state.subscription = subscription({ cancelAtPeriodEnd: true, cancelAt: PERIOD_END });
+    const response = await reactivatePost({});
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.outcome).toBe('reactivated');
+  });
+});

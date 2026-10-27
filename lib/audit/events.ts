@@ -207,6 +207,10 @@ export const AUDIT_EVENTS = {
   SYSTEM_CONFIG_CHANGED: 'SYSTEM_CONFIG_CHANGED',
   SYSTEM_MAINTENANCE_STARTED: 'SYSTEM_MAINTENANCE_STARTED',
   SYSTEM_MAINTENANCE_ENDED: 'SYSTEM_MAINTENANCE_ENDED',
+  // Admin environment view (EC-1, SA OQ-8): an admin opened the read-only
+  // Environment page. Details carry the environment label and counts only,
+  // never a variable name or value.
+  ADMIN_ENVIRONMENT_VIEWED: 'ADMIN_ENVIRONMENT_VIEWED',
 
   // ==========================================
   // BUSINESS OS ENTITLEMENTS (admin-only)
@@ -503,6 +507,8 @@ export const AUDIT_EVENTS = {
   // the owner. Details: subscription id, endsOn, livemode, mode 'period_end'
   // (P-7a.4 adds 'immediate'), outcome, actor 'owner', correlation id. Nothing
   // is refunded and the plan row is not written: access follows paid-through.
+  // D2 / SX-1 (SA Q-4): also `reasonCode`, a planLeaveReasons.ts code or null,
+  // never a label or free text. P-7a.4's immediate cancel carries it too (W-6).
   BOS_BILLING_SUBSCRIPTION_CANCELLED: 'BOS_BILLING_SUBSCRIPTION_CANCELLED',
   // Plan payments P-7a.1: an owner removed a pending cancellation before the
   // period end (reactivate). Same writer rules, entity and actor as
@@ -1348,6 +1354,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['SOC2'],
     description: 'Admin stopped impersonating user',
+  },
+  // Not "all critical" like its neighbours: a read of the Environment page
+  // changes nothing (SA OQ-8 ruled severity info).
+  [AUDIT_EVENTS.ADMIN_ENVIRONMENT_VIEWED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Admin viewed the environment configuration page',
   },
 
   // Security events - all critical

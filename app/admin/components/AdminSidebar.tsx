@@ -28,7 +28,8 @@ import {
   Archive,
   Clock,
   MailPlus,
-  Wallet
+  Wallet,
+  SlidersHorizontal
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -214,6 +215,13 @@ const navigationSections: NavSection[] = [
         href: '/admin/settings',
         icon: Settings,
         description: 'People who can sign in to admin'
+      },
+      {
+        // Admin environment view EC-2 (FR-9, SA OQ-1): appended, nothing else moves.
+        name: 'Environment',
+        href: '/admin/environment',
+        icon: SlidersHorizontal,
+        description: 'How this deployment is configured, read-only'
       },
     ]
   },

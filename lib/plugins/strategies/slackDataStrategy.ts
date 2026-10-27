@@ -5,13 +5,17 @@
 
 // Required environment variables:
 // NEXT_PUBLIC_SLACK_CLIENT_ID - Slack OAuth client ID (public)
-// NEXT_PUBLIC_SLACK_CLIENT_SECRET - Slack OAuth client secret (server-side only)
+// SLACK_CLIENT_SECRET - Slack OAuth client secret (server-side only)
 // NEXT_PUBLIC_APP_URL - Base URL of the application
 
 // Make sure the file 'slackPluginStrategy.ts' exists in the same directory.
 // If it does not exist, create it or update the import path to the correct location.
 import { slackStrategy } from './slackPluginStrategy';
 import { SupabaseClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/logger';
+
+// Logs carry status, ids, counts and error codes only - never tokens or user content.
+const logger = createLogger({ module: 'SlackDataStrategyV1' });
 
 // CRITICAL: NO INTERFACES IN DATA STRATEGY FILE - Following breaking rule #1
 // NO INTERFACES - SIMPLE OBJECT EXPORT ONLY as specified
@@ -21,7 +25,7 @@ const SLACK_API_BASE = 'https://slack.com/api';
 
 // Helper functions
 const processGenericInputs = (input_variables: Record<string, any>): any => {
-  console.log('📱 Processing generic input variables dynamically');
+  logger.debug({ inputCount: Object.keys(input_variables).length }, 'Processing Slack input variables');
   
   const processed = {
     action: 'send_message',
@@ -69,7 +73,7 @@ const processGenericInputs = (input_variables: Record<string, any>): any => {
 };
 
 const sendMessage = async (accessToken: string, channel: string, text: string): Promise<any> => {
-  console.log('📱 Sending message to Slack');
+  logger.debug('Sending Slack message');
   
   const response = await fetch(`${SLACK_API_BASE}/chat.postMessage`, {
     method: 'POST',
@@ -96,7 +100,7 @@ const sendMessage = async (accessToken: string, channel: string, text: string): 
 };
 
 const getChannels = async (accessToken: string): Promise<any> => {
-  console.log('📱 Fetching channels from Slack');
+  logger.debug('Fetching Slack channels');
   
   const response = await fetch(`${SLACK_API_BASE}/conversations.list`, {
     headers: {
@@ -117,7 +121,7 @@ const getChannels = async (accessToken: string): Promise<any> => {
 };
 
 const getMessages = async (accessToken: string, channel: string, limit?: number): Promise<any> => {
-  console.log('📱 Fetching messages from Slack');
+  logger.debug({ limit: limit || 50 }, 'Fetching Slack messages');
   
   const params = new URLSearchParams({
     channel: channel,
@@ -143,7 +147,7 @@ const getMessages = async (accessToken: string, channel: string, limit?: number)
 };
 
 const getThread = async (accessToken: string, channel: string, threadTs: string): Promise<any> => {
-  console.log('📱 Fetching thread replies from Slack');
+  logger.debug('Fetching Slack thread replies');
   
   const params = new URLSearchParams({
     channel: channel,
@@ -169,7 +173,7 @@ const getThread = async (accessToken: string, channel: string, threadTs: string)
 };
 
 const summarizeThread = async (messages: any[]): Promise<string> => {
-  console.log('📱 Summarizing thread messages');
+  logger.debug({ messageCount: messages?.length ?? 0 }, 'Summarizing Slack thread');
   
   if (!messages || messages.length === 0) {
     return 'No messages found in thread';
@@ -186,7 +190,7 @@ const summarizeThread = async (messages: any[]): Promise<string> => {
 };
 
 const resolveChannelId = async (accessToken: string, channelName: string): Promise<string> => {
-  console.log('📱 Resolving channel ID for:', channelName);
+  logger.debug('Resolving Slack channel id');
   
   // If it's already a channel ID (starts with C), return as-is
   if (channelName.startsWith('C') || channelName.startsWith('D') || channelName.startsWith('G')) {
@@ -207,7 +211,7 @@ const resolveChannelId = async (accessToken: string, channelName: string): Promi
     // Fallback: return original name (might be a DM or valid ID)
     return channelName;
   } catch (error) {
-    console.warn('⚠️ Failed to resolve channel ID:', error);
+    logger.warn({ err: error }, 'Failed to resolve Slack channel id, using the supplied value');
     return channelName;
   }
 };
@@ -227,11 +231,11 @@ export const slackDataStrategy = {
     input_variables: Record<string, any>;
   }): Promise<any> => {
     try {
-      console.log('📱 Starting Slack operation for user:', userId);
+      logger.info({ userId }, 'Starting Slack operation');
       
       // Process generic inputs using dynamic detection
       const processedInputs = processGenericInputs(input_variables);
-      console.log('📋 Processed inputs:', processedInputs);
+      logger.debug({ userId, action: processedInputs.action }, 'Slack inputs processed');
       
       const { action, channel, message, limit } = processedInputs;
       const accessToken = connection.access_token;
@@ -338,11 +342,11 @@ export const slackDataStrategy = {
         }
       }
       
-      console.log('✅ Slack operation completed successfully');
+      logger.info({ userId, action }, 'Slack operation completed');
       return result;
       
     } catch (error) {
-      console.error('❌ Slack operation failed:', error);
+      logger.error({ userId, err: error }, 'Slack operation failed');
       // Return structured error objects with troubleshooting steps
       return {
         summary: "Unable to perform Slack operation at this time.",

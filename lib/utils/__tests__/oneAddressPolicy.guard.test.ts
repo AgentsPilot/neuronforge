@@ -54,6 +54,13 @@ const ALLOWED = [
 ];
 
 /**
+ * Files that list the variable's NAME as data and never build an address from
+ * it: the admin environment catalogue, which lets the read-only
+ * /admin/environment page describe the setting.
+ */
+const NAME_ONLY_LISTINGS = ['lib/admin/environment/catalogue.ts'];
+
+/**
  * An OAuth `redirect_uri` has to match the provider's registration, verbatim —
  * a per-deployment host would simply be rejected at the provider's end, so
  * these cannot follow the resolver and must keep reading the configured value.
@@ -120,7 +127,7 @@ describe('nobody hands out an address of their own', () => {
 
     for (const file of FILES) {
       const name = relative(file);
-      if (ALLOWED.includes(name) || OAUTH_FILES.includes(name)) continue;
+      if (ALLOWED.includes(name) || OAUTH_FILES.includes(name) || NAME_ONLY_LISTINGS.includes(name)) continue;
 
       const code = readFileSync(file, 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')

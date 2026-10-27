@@ -5,11 +5,15 @@
 
 // Required environment variables:
 // NEXT_PUBLIC_SLACK_CLIENT_ID - Slack OAuth client ID (public)
-// NEXT_PUBLIC_SLACK_CLIENT_SECRET - Slack OAuth client secret (server-side only)
+// SLACK_CLIENT_SECRET - Slack OAuth client secret (server-side only)
 // NEXT_PUBLIC_APP_URL - Base URL of the application
 
 import type { PluginStrategy } from '../pluginRegistry';
 import { SupabaseClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/logger';
+
+// Logs carry status, ids, counts and error codes only - never tokens, codes or user content.
+const logger = createLogger({ module: 'SlackPluginStrategyV1' });
 
 interface OAuthState {
   user_id: string;
@@ -78,7 +82,7 @@ const getBaseUrl = (): string => {
 // OAuth configuration constants
 const OAUTH_CONFIG = {
   clientId: process.env.NEXT_PUBLIC_SLACK_CLIENT_ID!,
-  clientSecret: process.env.NEXT_PUBLIC_SLACK_CLIENT_SECRET!,
+  clientSecret: process.env.SLACK_CLIENT_SECRET!,
   redirectUri: `${getBaseUrl()}/oauth/callback/slack`, // Exact pattern as specified
   scopes: [
     'channels:read',
@@ -130,10 +134,7 @@ const verifyAndDecodeState = (state: string): OAuthState => {
 const buildAuthUrl = (state: string): string => {
   const redirectUri = OAUTH_CONFIG.redirectUri;
   
-  // Add debug logging
-  console.log('Debug - Base URL:', getBaseUrl());
-  console.log('Debug - Redirect URI:', redirectUri);
-  console.log('Debug - Client ID:', OAUTH_CONFIG.clientId);
+  logger.debug({ hasRedirectUri: Boolean(redirectUri) }, 'Building Slack OAuth URL');
   
   const params = new URLSearchParams({
     client_id: OAUTH_CONFIG.clientId,
@@ -148,7 +149,7 @@ const buildAuthUrl = (state: string): string => {
 };
 
 const exchangeCodeForTokens = async (code: string): Promise<SlackTokenResponse> => {
-  console.log('🔗 Exchanging authorization code for tokens');
+  logger.info('Exchanging Slack authorization code');
   
   const tokenEndpoint = 'https://slack.com/api/oauth.v2.access';
   
@@ -160,11 +161,6 @@ const exchangeCodeForTokens = async (code: string): Promise<SlackTokenResponse> 
     grant_type: 'authorization_code', // Add this
   };
   
-  console.log('📤 Token request params:', {
-    ...requestBody,
-    client_secret: '[REDACTED]'
-  });
-  
   const response = await fetch(tokenEndpoint, {
     method: 'POST',
     headers: {
@@ -175,26 +171,23 @@ const exchangeCodeForTokens = async (code: string): Promise<SlackTokenResponse> 
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('❌ HTTP error:', response.status, response.statusText, errorText);
+    logger.error({ status: response.status, bodyLength: errorText.length }, 'Slack token exchange HTTP error');
     throw new Error(`Token exchange HTTP error: ${response.status} ${response.statusText}`);
   }
 
   const tokenData = await response.json();
   
-  // Log the full response for debugging (remove in production)
-  console.log('📥 Slack API response:', tokenData);
-  
   if (!tokenData.ok) {
-    console.error('❌ Slack API error:', tokenData.error);
+    logger.error({ slackError: tokenData.error }, 'Slack token exchange returned an error');
     throw new Error(`Slack API error: ${tokenData.error}`);
   }
 
-  console.log('✅ Tokens obtained successfully');
+  logger.info({ teamId: tokenData.team?.id }, 'Slack token exchange succeeded');
   return tokenData;
 };
 
 const fetchUserProfile = async (accessToken: string): Promise<SlackProfile> => {
-  console.log('👤 Fetching user profile');
+  logger.debug('Fetching Slack user profile');
   
   const profileEndpoint = 'https://slack.com/api/auth.test';
   
@@ -205,18 +198,18 @@ const fetchUserProfile = async (accessToken: string): Promise<SlackProfile> => {
   });
 
   if (!response.ok) {
-    console.error('❌ Profile fetch failed:', response.statusText);
+    logger.error({ status: response.status }, 'Slack profile fetch failed');
     throw new Error(`Failed to fetch user profile: ${response.statusText}`);
   }
 
   const profile = await response.json();
   
   if (!profile.ok) {
-    console.error('❌ Slack profile error:', profile.error);
+    logger.error({ slackError: profile.error }, 'Slack profile returned an error');
     throw new Error(`Slack profile error: ${profile.error}`);
   }
 
-  console.log('✅ User profile fetched successfully');
+  logger.debug('Slack user profile fetched');
   return profile;
 };
 
@@ -235,7 +228,7 @@ const handlePopupAuth = async (
     let timeoutId: NodeJS.Timeout;
     let checkClosedInterval: NodeJS.Timeout;
 
-    console.log('📨 Slack handlePopupAuth executed');
+    logger.debug('Slack popup auth started');
 
     // Cleanup function to prevent race conditions
     const cleanup = () => {
@@ -249,17 +242,13 @@ const handlePopupAuth = async (
         clearInterval(checkClosedInterval);
       }
       window.removeEventListener('message', messageHandler);
-      console.log('🧹 OAuth popup cleanup completed');
+      logger.debug('Slack OAuth popup cleanup completed');
     };
 
     
     // Message handler for popup communication with exact format requirement
     const messageHandler = async (event: MessageEvent) => {
-      console.log('📨 Slack - Message handler triggered');
-      console.log('📨 Event origin:', event.origin);
-      console.log('📨 Window origin:', window.location.origin);
-      console.log('📨 Event data:', event.data);
-      //console.log('📨 Slack - Message handler for popup communication', event);
+      logger.debug('Slack popup message received');
 
       // Strict origin validation for security
       const isValidOrigin = (origin: string): boolean => {
@@ -276,23 +265,23 @@ const handlePopupAuth = async (
       };
 
       if (!isValidOrigin(event.origin)) {
-        console.warn('🚫 Received message from invalid origin:', event.origin);
+        logger.warn('Ignored Slack popup message from an unexpected origin');
         return;
       }
 
       // Check for exact message format: { type: 'plugin-connected', plugin: 'slack', success: boolean, data/error }
       if (event.data.type !== 'plugin-connected' || event.data.plugin !== 'slack') {
-        console.log('📨 Message not for slack plugin:', event.data.type, event.data.plugin);
+        logger.debug('Ignored popup message not addressed to the Slack plugin');
         return;
       }
 
       if (resolved) {
-        console.log('📨 Already resolved, ignoring message');
+        logger.debug('Slack popup already resolved, ignoring message');
         return;
       }
 
       resolved = true;
-      console.log('📨 Valid plugin connection message received');
+      logger.debug('Slack plugin connection message accepted');
 
       try {
         const { success, data, error } = event.data;
@@ -301,12 +290,12 @@ const handlePopupAuth = async (
           throw new Error(error || 'OAuth failed');
         }
         
-        console.log('✅ OAuth completed successfully via message');
+        logger.info('Slack OAuth completed via popup message');
         cleanup();
         resolve(); // Simply resolve - the callback page already handled the token exchange
         
       } catch (error) {
-        console.error('❌ OAuth message processing failed:', error);
+        logger.error({ err: error }, 'Slack OAuth popup message reported failure');
         cleanup();
         reject(error);
       }
@@ -316,7 +305,7 @@ const handlePopupAuth = async (
     timeoutId = setTimeout(() => {
       if (!resolved) {
         resolved = true;
-        console.error('⏳ OAuth popup timeout after 5 minutes');
+        logger.error('Slack OAuth popup timed out');
         cleanup();
         reject(new Error('OAuth popup timeout after 5 minutes'));
       }
@@ -328,7 +317,7 @@ const handlePopupAuth = async (
     // Monitor popup closure with 1-second delay for race conditions
     checkClosedInterval = setInterval(() => {
       if (popupWindow?.closed) {
-        console.log('🚪 Popup window closed, waiting 1 second for late messages...');
+        logger.debug('Slack OAuth popup closed, waiting for late messages');
         clearInterval(checkClosedInterval);
         
         // Wait 1 second for potential late messages
@@ -344,10 +333,10 @@ const handlePopupAuth = async (
 
     // Navigate popup to OAuth URL
     try {
-      console.log('🔗 Navigating popup to OAuth URL');
+      logger.debug('Navigating Slack OAuth popup');
       popupWindow.location.href = authUrl;
     } catch (error) {
-      console.error('❌ Failed to navigate popup window:', error);
+      logger.error({ err: error }, 'Failed to navigate Slack OAuth popup');
       cleanup();
       reject(error);
     }
@@ -368,7 +357,7 @@ const storeConnection = async ({
   tokenData: SlackTokenResponse;
   profile: SlackProfile;
 }): Promise<any> => {
-  console.log('💾 Storing Slack connection to database');
+  logger.debug({ userId }, 'Storing Slack connection');
   
   const connectionData = {
     user_id: userId,
@@ -394,11 +383,11 @@ const storeConnection = async ({
     .single();
 
   if (error) {
-    console.error('❌ Failed to store Slack connection:', error);
+    logger.error({ userId, code: error.code }, 'Failed to store Slack connection');
     throw new Error(`Failed to store connection: ${error.message}`);
   }
 
-  console.log('✅ Slack connection stored successfully');
+  logger.info({ userId }, 'Slack connection stored');
   return data;
 };
 
@@ -416,7 +405,7 @@ export const slackStrategy: PluginStrategy = {
     userId: string; 
   }): Promise<void> => {
     try {
-      console.log('📱 Starting Slack OAuth connection for user:', userId);      
+      logger.info({ userId }, 'Starting Slack OAuth connection');
       
       if (!OAUTH_CONFIG.clientId || !OAUTH_CONFIG.clientSecret) {
         throw new Error('Missing required Slack OAuth environment variables');
@@ -431,12 +420,12 @@ export const slackStrategy: PluginStrategy = {
       
       // Build OAuth URL
       const authUrl = buildAuthUrl(state);
-      console.log('🔗 OAuth URL generated');
+      logger.debug('Slack OAuth URL generated');
       
       // Handle popup auth with provided Window object
       await handlePopupAuth(authUrl, state, supabase, userId, popup);
     } catch (error) {
-      console.error('❌ Slack OAuth connection failed:', error);
+      logger.error({ userId, err: error }, 'Slack OAuth connection failed');
       const errMsg = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to initiate Slack connection: ${errMsg}`);
     }
@@ -451,11 +440,11 @@ export const slackStrategy: PluginStrategy = {
     supabase: SupabaseClient; 
   }): Promise<any> => {
     try {
-      console.log('📱 Processing Slack OAuth callback');
+      logger.info('Processing Slack OAuth callback');
       
       // Verify and decode state parameter
       const stateData = verifyAndDecodeState(state);
-      console.log('✅ State parameter verified');
+      logger.debug({ userId: stateData.user_id }, 'Slack OAuth state verified');
       
       // Exchange code for tokens
       const tokenData = await exchangeCodeForTokens(code);
@@ -471,11 +460,11 @@ export const slackStrategy: PluginStrategy = {
         profile
       });
       
-      console.log('✅ Slack connection established successfully');
+      logger.info({ userId: stateData.user_id }, 'Slack connection established');
       return connection;
       
     } catch (error) {
-      console.error('❌ Slack OAuth callback failed:', error);
+      logger.error({ err: error }, 'Slack OAuth callback failed');
       const errMsg = error instanceof Error ? error.message : String(error);
       throw new Error(`OAuth callback failed: ${errMsg}`);
     }
