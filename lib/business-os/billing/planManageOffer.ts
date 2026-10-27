@@ -25,7 +25,19 @@
  * | a renewal failure open (`past_due`, `unpaid`, or `failed_attempts > 0`) | `none` / `payment_failed` (P-7a.4 turns Cancel on here; until then the screen says "contact us") |
  * | `active` / `trialing` (TQ-14: a trial behaves as active), cancel flag set, period end unknown or past | `none` / `period_over` |
  * | `active` / `trialing`, cancel flag set | `cancelling`: may reactivate |
+ * | `active` / `trialing`, a plan change pending (`pending_tier`, or an open checkout not yet expired) | `none` / `change_pending` (D2) |
  * | `active` / `trialing` | `renewing`: may cancel |
+ *
+ * `change_pending` (D2 / SX-1, workplan
+ * docs/workplans/BUSINESS_OS_D2_PLAN_CANCEL_ENGINE_WORKPLAN.md §3.2; SA-2, SA
+ * W-3) refuses the CANCEL side only: it sits after the cancelling branch, so a
+ * cancelling plan is always kept-able. Today neither state can occur: nothing
+ * writes `pending_tier` (P-7b.2's column), and no checkout lock can be open
+ * beside a live subscription (`planPurchaseOffer` refuses `paying`; the
+ * subscribed mirror clears it). It is P-7b.2's defence. An open checkout counts
+ * only while `open_checkout_expires_at` is later than `now`, as the
+ * repository's own `open_checkout_expires_at.lte.now` rule. `planManageWire`
+ * shows nothing for it, as for `period_over`.
  *
  * It refuses a billing ACTION, never a capability: nothing here calls the
  * entitlements module.
@@ -42,6 +54,12 @@ export interface PlanManageFacts {
   currentPeriodEnd: string | null;
   endedAt: string | null;
   failedAttempts: number;
+  /** D2 (SA W-3): `pending_tier`. Optional so callers that pass older shapes stay valid; absent = none. */
+  pendingTier?: string | null;
+  /** D2 (SA W-3): `open_checkout_session_id`. Absent = none. */
+  openCheckoutSessionId?: string | null;
+  /** D2 (SA W-3): `open_checkout_expires_at`, ISO. */
+  openCheckoutExpiresAt?: string | null;
 }
 
 export interface PlanManageSwitches {
@@ -49,7 +67,7 @@ export interface PlanManageSwitches {
   pricesEnabled: boolean;
 }
 
-export type PlanManageNoneReason = 'switch_off' | 'not_subscribed' | 'not_active' | 'payment_failed' | 'period_over';
+export type PlanManageNoneReason = 'switch_off' | 'not_subscribed' | 'not_active' | 'payment_failed' | 'period_over' | 'change_pending';
 
 export type PlanManageOffer = { kind: 'renewing' } | { kind: 'cancelling' } | { kind: 'none'; reason: PlanManageNoneReason };
 
@@ -73,7 +91,17 @@ export function planManageOffer(facts: PlanManageFacts | null, switches: PlanMan
     if (!Number.isFinite(periodEnd) || periodEnd <= now.getTime()) return { kind: 'none', reason: 'period_over' };
     return { kind: 'cancelling' };
   }
+  if (hasPendingChange(facts, now)) return { kind: 'none', reason: 'change_pending' };
   return { kind: 'renewing' };
+}
+
+/** D2 (SA W-3): a tier change waiting, or a checkout lock that has not expired yet. */
+function hasPendingChange(facts: PlanManageFacts, now: Date): boolean {
+  if (facts.pendingTier) return true;
+  if (!facts.openCheckoutSessionId) return false;
+  const expiresAt = facts.openCheckoutExpiresAt ? Date.parse(facts.openCheckoutExpiresAt) : Number.NaN;
+  // Unknown expiry with a session id set: treat as open (fail closed for a cancel; Keep is unaffected).
+  return !Number.isFinite(expiresAt) || expiresAt > now.getTime();
 }
 
 /**

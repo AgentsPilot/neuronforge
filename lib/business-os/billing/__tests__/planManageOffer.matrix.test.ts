@@ -85,6 +85,10 @@ const ROWS: Array<[string, Row | null]> = [
   ['canceled', row({ subscriptionStatus: 'canceled', endedAt: PAST })],
   ['incomplete', row({ subscriptionStatus: 'incomplete' })],
   ['paused', row({ subscriptionStatus: 'paused' })],
+  // D2 (SA W-3): a pending change refuses the CANCEL side only; a cancelling plan stays kept-able.
+  ['active, set to end, a tier change pending', row({ cancelAtPeriodEnd: true, pendingTier: TIER })],
+  ['active, set to end, a checkout lock open', row({ cancelAtPeriodEnd: true, openCheckoutSessionId: 'cs_open', openCheckoutExpiresAt: FUTURE })],
+  ['active, renewing, an EXPIRED checkout lock', row({ openCheckoutSessionId: 'cs_old', openCheckoutExpiresAt: PAST })],
 ];
 
 /** Stripe agrees with our row (the matrix is about OUR data; the fresh checks have their own tests). */
@@ -170,4 +174,25 @@ it('the matrix is not vacuous: each control is offered somewhere', async () => {
   expect(offered.some((m) => m.cancel)).toBe(true);
   expect(offered.some((m) => m.reactivate)).toBe(true);
   expect(offered.some((m) => m.paymentFailed)).toBe(true);
+});
+
+/**
+ * D2 (SA W-3): a renewing plan with a change pending. The screen shows no
+ * control; the cancel is refused on our data with zero Stripe calls; a
+ * reactivate is never refused for this reason (our row may be stale, P-7a C-2),
+ * so it reads Stripe, finds nothing to undo and writes nothing.
+ */
+describe('D2 change_pending (renewing side)', () => {
+  it.each([
+    ['a tier change pending', row({ pendingTier: TIER })],
+    ['a checkout lock open', row({ openCheckoutSessionId: 'cs_open', openCheckoutExpiresAt: FUTURE })],
+    ['a checkout lock with no expiry recorded', row({ openCheckoutSessionId: 'cs_open', openCheckoutExpiresAt: null })],
+  ])('%s: no control, cancel refused with zero Stripe calls, reactivate writes nothing', async (_name, r) => {
+    const manage = await screen(r, true);
+    expect(manage).toEqual({ cancel: false, reactivate: false, paymentFailed: false });
+    const cancel = await writes(r, 'cancel', true);
+    expect(cancel).toEqual({ wrote: false, stripeCalls: 0 });
+    const reactivate = await writes(r, 'reactivate', true);
+    expect(reactivate.wrote).toBe(false);
+  });
 });
