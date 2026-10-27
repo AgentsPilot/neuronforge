@@ -28,7 +28,7 @@ import type { DeletionCommitResultView, DeletionPreviewPayload, DeletionRefusalV
 const ACCOUNT = '99999999-9999-4999-8999-999999999999';
 const PREVIEW_URL = `/api/admin/users/${ACCOUNT}/deletion/preview`;
 const R3_CLEARING =
-  'Cancel the subscription in the Stripe dashboard, in the mode shown (test or live). In-app cancel arrives with plan payments P-7a.';
+  'The owner cancels it in Settings → Plan, or cancel it in the Stripe dashboard, in the mode shown (test or live). Deletion is possible once the subscription has ended.';
 
 beforeAll(() => {
   const proto = Element.prototype as unknown as Record<string, unknown>;

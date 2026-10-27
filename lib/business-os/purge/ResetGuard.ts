@@ -1,6 +1,7 @@
 // lib/business-os/purge/ResetGuard.ts
 //
-// Slice 2 — the two controls that must both clear before a Reset may proceed.
+// Slice 2 — the controls that must all clear before a Reset may proceed.
+// Plan payments P-7a.3 (PF-14) adds control 3, which runs FIRST.
 //
 // Neither subsumes the other, and the workplan says so explicitly because the
 // redundancy is only apparent:
@@ -26,6 +27,26 @@
 // It also makes slice 4 a MECHANICAL prerequisite rather than a remembered
 // one: slice 2 is honestly describable as "Reset, available only in the
 // skip-cleanly case", which is FR-8's own semantics.
+//
+// ── Control 3: a live platform plan subscription (plan payments P-7a.3) ───
+// PF-14: a customer is never charged for an account whose data is gone. A
+// Reset or Purge never deletes the billing record or the plan row (both are
+// `never` in `descriptors.ts`), but it would leave Stripe charging a business
+// whose books were wiped. So while the account holds a plan subscription
+// Stripe may still bill, in EITHER mode, the run is refused.
+//
+// "Live" is ONE rule on the platform (SA TQ-11, C-9): `hasLivePlanSubscription`
+// is the same reads and the same `isPlanSubscriptionLive` predicate as admin
+// delete's R-3, and the SQL guard G-6 of the account-cleanup function carries
+// the same status list (`planSubscriptionLive.paths.test.ts` pins all three).
+// A cancelling subscription is still `active`, so it still refuses until
+// Stripe ends it on the paid-through date (BQ-2, user 2026-10-26).
+//
+// It runs FIRST: two cheap reads that name the real blocker, before the
+// Connect resolver. A failed read is not a "no": `subscription_unreadable`.
+// It is commit-time only, before the snapshot, like controls 1 and 2 (the
+// preview never runs this guard). The admin surface passes through it too,
+// which agrees with R-3.
 
 import { createLogger } from '@/lib/logger';
 import {
@@ -34,6 +55,7 @@ import {
 } from './localPrecondition';
 import { businessPurgeRepository } from '@/lib/repositories/BusinessPurgeRepository';
 import { withDevDetail } from './devDetail';
+import { hasLivePlanSubscription } from './adminDeletionFacts';
 
 const logger = createLogger({ module: 'PurgeResetGuard' });
 
@@ -41,7 +63,13 @@ export type ResetGuardResult =
   | { outcome: 'clear' }
   | {
       outcome: 'refused';
-      control: 'stripe_connected' | 'stripe_unreadable' | 'local_blocking' | 'local_unreadable';
+      control:
+        | 'subscription_live'
+        | 'subscription_unreadable'
+        | 'stripe_connected'
+        | 'stripe_unreadable'
+        | 'local_blocking'
+        | 'local_unreadable';
       message: string;
       detail?: unknown;
       /** Server-side only: recorded in the audit row, never returned to the client (SA G-3). */
@@ -54,6 +82,38 @@ export async function evaluateResetGuard(params: {
 }): Promise<ResetGuardResult> {
   const { userId, correlationId } = params;
   const log = logger.child({ correlationId });
+
+  // ── Control 3 (P-7a.3, PF-14) — a live plan subscription, either mode ────
+  // First, by design (SA TQ-11). `hasLivePlanSubscription` never throws on a
+  // failed read (it answers `null`); the catch is for a throw it does not
+  // expect, which is a refusal all the same.
+  let subscribed: boolean | null;
+  try {
+    subscribed = await hasLivePlanSubscription(userId);
+  } catch (error) {
+    log.warn({ err: error, userId }, 'Reset refused — plan subscription read threw');
+    subscribed = null;
+  }
+
+  if (subscribed === null) {
+    log.warn({ userId }, 'Reset refused — could not read the plan subscription');
+    return {
+      outcome: 'refused',
+      control: 'subscription_unreadable',
+      message:
+        'Could not determine whether this business has a live plan subscription. Refusing rather than assuming it does not.',
+    };
+  }
+
+  if (subscribed) {
+    log.info({ userId }, 'Reset refused — a live plan subscription is present (PF-14)');
+    return {
+      outcome: 'refused',
+      control: 'subscription_live',
+      message:
+        'This business has a live plan subscription. Cancel it in Settings → Plan, and reset once it has ended.',
+    };
+  }
 
   // ── Control 1 — any Stripe Connect account at all ───────────────────────
   let accounts;
@@ -115,6 +175,6 @@ export async function evaluateResetGuard(params: {
     };
   }
 
-  log.info({ userId }, 'Reset guard clear — no Stripe account, no local blocking state');
+  log.info({ userId }, 'Reset guard clear — no live plan subscription, no Stripe account, no local blocking state');
   return { outcome: 'clear' };
 }

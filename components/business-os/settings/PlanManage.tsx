@@ -25,6 +25,12 @@
  * P-7a.2: "Update card" and "Invoices" (`PlanCardAndInvoices`) render here
  * too, where `manage.cardAndInvoices` is set; the hosts are unchanged.
  *
+ * P-7a.3 (BQ-5): where the server sends `manage.freeAccessAfter` (a Founding
+ * Partner whose free access outlives the paid plan by more than the 24 h
+ * margin), one sentence names the return to free access and its end date: in
+ * the cancel confirmation, and under Reactivate while the plan is set to end.
+ * The server decides when it is true; this island only formats the date.
+ *
  * Imports nothing from the entitlements module and no server file (the copy
  * map type-imports the refusal codes only).
  */
@@ -88,6 +94,9 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
   const billing = plan.purchase?.billing ?? null;
   const renewalDate = billing !== null && billing.state === 'renewing' ? billing.date : null;
   const renewsOn = day(renewalDate);
+  // P-7a.3 (BQ-5): the free-access end, only when the server sent it.
+  const freeUntil = day(manage?.freeAccessAfter?.endsAt ?? null);
+  const foundingLine = freeUntil ? fill(t('plan.manage.cancel_confirm_founding'), { freeUntil }) : null;
 
   const run = async (action: Action) => {
     setPhase({ kind: 'busy', action });
@@ -151,6 +160,7 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
             {renewsOn
               ? fill(t('plan.manage.cancel_confirm_body'), { plan: planName, date: renewsOn })
               : fill(t('plan.manage.cancel_confirm_body_nodate'), { plan: planName })}
+            {foundingLine && <> {foundingLine}</>}
           </p>
           <div className="flex flex-wrap gap-2">
             <button type="button" className={PRIMARY_BUTTON} onClick={() => void run('cancel')} data-testid="plan-manage-cancel-confirm">
@@ -161,6 +171,12 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
             </button>
           </div>
         </div>
+      )}
+
+      {manage?.reactivate && phase.kind === 'idle' && foundingLine && (
+        <p className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-manage-founding">
+          {foundingLine}
+        </p>
       )}
 
       {manage?.reactivate && phase.kind === 'idle' && (

@@ -52,6 +52,9 @@ const state = {
   switchesThrow: false,
   /** Any attempt to reach Stripe. Must stay 0: this route makes no Stripe call (SR-11). */
   stripeCalls: 0,
+  /** P-7a.3 (BQ-5): which accounts the free-access-after read was asked about, and its answer. */
+  freeAccessAskedFor: [] as string[],
+  freeAccessAfter: null as { endsAt: string } | null,
 };
 
 jest.mock('@/lib/auth', () => ({
@@ -64,6 +67,10 @@ jest.mock('@/lib/business-os/entitlements/EntitlementService', () => ({
       state.askedFor.push(accountId);
       if (state.throws) throw new Error('database on fire');
       return { resolution: state.snapshot, unavailable: state.unavailable, stale: false };
+    },
+    getFreeAccessAfterPaidTier: async (accountId: string) => {
+      state.freeAccessAskedFor.push(accountId);
+      return state.freeAccessAfter;
     },
   }),
 }));
@@ -731,5 +738,41 @@ describe('comparison: the plans side by side (upgrade modal UM-0, C-16)', () => 
     const missing = await (await GET(request())).json();
     expect(missing.data.status).toBe('no_plan_record');
     expect(missing.data.comparison).toBeNull();
+  });
+});
+
+describe('freeAccessAfter (plan payments P-7a.3, BQ-5)', () => {
+  const paying = (extra: Record<string, unknown> = {}) => ({
+    data: {
+      id: 'b1', accountId: CUSTOMER, livemode: false, stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1',
+      subscriptionStatus: 'active', boughtTier: buyableTiers()[0], currentPeriodEnd: '2099-10-27T00:00:00.000Z',
+      cancelAtPeriodEnd: false, pendingTier: null, openCheckoutSessionId: null, openCheckoutExpiresAt: null,
+      lastInvoiceId: null, lastPaidAt: null, lastPaymentFailedAt: null, failedAttempts: 0,
+      actionRequiredInvoiceUrl: null, founderDiscountAppliedAt: null, endedAt: null,
+      createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', ...extra,
+    },
+    error: null,
+  });
+
+  beforeEach(() => {
+    state.user = { id: CUSTOMER };
+    state.snapshot = resolutionFor(buyableTiers()[0]);
+    state.freeAccessAskedFor = [];
+    state.freeAccessAfter = null;
+  });
+
+  it('asks about the SESSION account only, and puts the answer beside Cancel', async () => {
+    state.billing = paying();
+    state.freeAccessAfter = { endsAt: '2027-03-01T00:00:00.000Z' };
+    const res = await GET(new NextRequest(`http://localhost/api/business-os/entitlements/my-plan?accountId=${SOMEBODY_ELSE}`));
+    const body = await res.json();
+    expect(state.freeAccessAskedFor).toEqual([CUSTOMER]);
+    expect(body.data.purchase.manage).toMatchObject({ cancel: true, freeAccessAfter: { endsAt: '2027-03-01T00:00:00.000Z' } });
+  });
+
+  it('not asked at all when there is nothing to cancel or reactivate', async () => {
+    state.billing = { data: null, error: null };
+    await GET(new NextRequest('http://localhost/api/business-os/entitlements/my-plan'));
+    expect(state.freeAccessAskedFor).toEqual([]);
   });
 });

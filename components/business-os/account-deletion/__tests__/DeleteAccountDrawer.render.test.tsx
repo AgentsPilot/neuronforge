@@ -134,11 +134,13 @@ describe('the statement box', () => {
 
 describe('blockers and availability', () => {
   it('blockers → listed in plain words with the support mailto, and no statement box', () => {
-    renderDrawer({ blockers: [{ code: 'plan_running' }, { code: 'client_plans_running', count: 2 }] });
+    renderDrawer({ blockers: [{ code: 'plan_running' }, { code: 'client_plans_running', count: 2 }, { code: 'contact_support' }] });
     expect(screen.queryByLabelText(en['settings.account_delete.statement_label'])).toBeNull();
     expect(screen.queryByRole('button', { name: en['settings.account_delete.delete_button'] })).toBeNull();
     const list = screen.getByTestId('delete-account-blockers');
-    expect(list).toHaveTextContent('Your plan is still running. Contact us at');
+    // P-7a.3 (PF-14, C-10): the running plan points at Settings → Plan, not at us.
+    expect(list).toHaveTextContent('Your plan is still running. Cancel it in Settings → Plan.');
+    expect(list).toHaveTextContent('We need to finish something on our side first. Contact us at');
     expect(list).toHaveTextContent('2 client payment plans are still running');
     expect(list.querySelector(`a[href="mailto:${PLACEHOLDER_ERASURE_CONTACT}"]`)).not.toBeNull();
   });
