@@ -156,10 +156,7 @@ describe('order contract (C-4): our-data refusals make zero Stripe calls', () =>
     ['billing row unreadable', { row: 'error' as const }, 'billing_row_unreadable'],
     ['no billing row', { row: null }, 'not_subscribed'],
     ['no subscription id', { row: row({ stripeSubscriptionId: null }) }, 'not_subscribed'],
-    ['ended on our record', { row: row({ endedAt: '2026-10-01T00:00:00.000Z' }) }, 'subscription_not_active'],
     ['canceled on our record', { row: row({ subscriptionStatus: 'canceled' }) }, 'subscription_not_active'],
-    ['payment failed on our record', { row: row({ failedAttempts: 2 }) }, 'payment_failed_contact_us'],
-    ['past_due on our record', { row: row({ subscriptionStatus: 'past_due' }) }, 'payment_failed_contact_us'],
     ['set to end, end passed', { row: row({ cancelAtPeriodEnd: true, currentPeriodEnd: '2026-10-01T00:00:00.000Z' }) }, 'subscription_not_active'],
   ])('%s → %s', async (_name, options, code) => {
     for (const action of ['cancel', 'reactivate'] as const) {
@@ -170,6 +167,32 @@ describe('order contract (C-4): our-data refusals make zero Stripe calls', () =>
       expect(h.mirrors).toEqual([]);
       expect('audit' in result && result.audit).toBeFalsy();
     }
+  });
+
+  // P-7a.4: a failed renewal on our record admits a CANCEL (decided on Stripe's
+  // fresh status, planCancelNow.p7a4.test.ts); a REACTIVATE is still refused on our data.
+  it.each([
+    ['payment failed on our record', row({ failedAttempts: 2 })],
+    ['past_due on our record', row({ subscriptionStatus: 'past_due' })],
+  ])('%s → reactivate payment_failed_contact_us, zero Stripe calls', async (_name, r) => {
+    const h = harness({ row: r });
+    const result = await run(h, 'reactivate');
+    expect(result).toMatchObject({ ok: false, code: 'payment_failed_contact_us' });
+    expect(stripeCalls(h)).toEqual([]);
+    expect(h.mirrors).toEqual([]);
+  });
+
+  // P-7a.4 (TL ruling on QA E-1): a CANCEL on a row our record shows ended answers
+  // `unchanged` / `ended` from the row; a REACTIVATE keeps the refusal. Neither calls Stripe.
+  it('ended on our record → cancel unchanged / ended, reactivate subscription_not_active; zero Stripe calls, nothing written', async () => {
+    const endedAt = '2026-10-01T00:00:00.000Z';
+    const c = harness({ row: row({ endedAt, subscriptionStatus: 'canceled' }) });
+    expect(await run(c, 'cancel')).toEqual({ ok: true, outcome: 'unchanged', state: 'ended', date: endedAt });
+    expect(stripeCalls(c)).toEqual([]);
+    expect(c.mirrors).toEqual([]);
+    const r = harness({ row: row({ endedAt }) });
+    expect(await run(r, 'reactivate')).toMatchObject({ ok: false, code: 'subscription_not_active' });
+    expect(stripeCalls(r)).toEqual([]);
   });
 
   it('the billing row is read by the SESSION user in the server key mode', async () => {
@@ -208,9 +231,10 @@ describe('C-4 cross-checks: nothing written, alerted', () => {
 });
 
 describe('fresh Stripe status', () => {
-  it('past_due at Stripe → payment_failed_contact_us, no write', async () => {
-    const h = harness({ fresh: fresh({ status: 'past_due' }) });
-    expect(await run(h)).toMatchObject({ ok: false, code: 'payment_failed_contact_us' });
+  // P-7a.4: a CANCEL at past_due ends the plan now (planCancelNow.p7a4.test.ts).
+  it('past_due at Stripe → reactivate payment_failed_contact_us, no write', async () => {
+    const h = harness({ row: row({ cancelAtPeriodEnd: true }), fresh: fresh({ status: 'past_due', cancelAtPeriodEnd: true, cancelAt: PERIOD_END }) });
+    expect(await run(h, 'reactivate')).toMatchObject({ ok: false, code: 'payment_failed_contact_us' });
     expect(stripeCalls(h)).toEqual(['stripe:retrieve:sub_own']);
   });
 

@@ -22,7 +22,7 @@
  * | switch off | `none` / `switch_off` |
  * | no row, no subscription id | `none` / `not_subscribed` |
  * | `ended_at` set, or a status that is not live (`canceled`, `incomplete`, `incomplete_expired`, `paused`, unknown) | `none` / `not_active` |
- * | a renewal failure open (`past_due`, `unpaid`, or `failed_attempts > 0`) | `none` / `payment_failed` (P-7a.4 turns Cancel on here; until then the screen says "contact us") |
+ * | a renewal failure open (`past_due`, `unpaid`, or `failed_attempts > 0` on a live status) | `failing`: may cancel, and the cancel ENDS THE PLAN NOW (P-7a.4, BQ-3 = A) |
  * | `active` / `trialing` (TQ-14: a trial behaves as active), cancel flag set, period end unknown or past | `none` / `period_over` |
  * | `active` / `trialing`, cancel flag set | `cancelling`: may reactivate |
  * | `active` / `trialing`, a plan change pending (`pending_tier`, or an open checkout not yet expired) | `none` / `change_pending` (D2) |
@@ -38,6 +38,13 @@
  * only while `open_checkout_expires_at` is later than `now`, as the
  * repository's own `open_checkout_expires_at.lte.now` rule. `planManageWire`
  * shows nothing for it, as for `period_over`.
+ *
+ * P-7a.4 (workplan §4.3; BQ-3 = A, user 2026-10-26; SA C-11, TQ-12): a failed
+ * renewal no longer hides Cancel. `failing` is OUR row's guess only: the
+ * engine decides immediate vs period end on Stripe's FRESH status (SA's
+ * P-7a.1 binding note), so a row Stripe already cured gets a period-end
+ * cancel, never an immediate end of a paid-up plan. `failing` offers no
+ * Reactivate (nothing to keep: the renewal is unpaid).
  *
  * P-7a.2 adds `planCardAndInvoicesOffer` (below): "Update card" and
  * "Invoices", behind the same switch, for any row with a Business OS
@@ -71,9 +78,10 @@ export interface PlanManageSwitches {
   pricesEnabled: boolean;
 }
 
-export type PlanManageNoneReason = 'switch_off' | 'not_subscribed' | 'not_active' | 'payment_failed' | 'period_over' | 'change_pending';
+export type PlanManageNoneReason = 'switch_off' | 'not_subscribed' | 'not_active' | 'period_over' | 'change_pending';
 
-export type PlanManageOffer = { kind: 'renewing' } | { kind: 'cancelling' } | { kind: 'none'; reason: PlanManageNoneReason };
+/** P-7a.4: `failing` replaces P-7a.1's `none` / `payment_failed`: Cancel is offered, and ends the plan now. */
+export type PlanManageOffer = { kind: 'renewing' } | { kind: 'cancelling' } | { kind: 'failing' } | { kind: 'none'; reason: PlanManageNoneReason };
 
 /** Stripe statuses in which a subscription renews (TQ-14: `trialing` as `active`). */
 export const MANAGEABLE_STATUSES: readonly string[] = ['active', 'trialing'];
@@ -86,8 +94,13 @@ export function planManageOffer(facts: PlanManageFacts | null, switches: PlanMan
   if (facts.endedAt !== null) return { kind: 'none', reason: 'not_active' };
 
   const status = facts.subscriptionStatus;
-  const failureOpen = (status !== null && PAYMENT_FAILED_STATUSES.includes(status)) || facts.failedAttempts > 0;
-  if (failureOpen) return { kind: 'none', reason: 'payment_failed' };
+  // P-7a.4: a failure counts only on a status that is still live; `failed_attempts`
+  // left on a `canceled` / `paused` / unknown row offers nothing (as before P-7a.4,
+  // where it offered only the "contact us" line).
+  const failureOpen =
+    (status !== null && PAYMENT_FAILED_STATUSES.includes(status)) ||
+    (facts.failedAttempts > 0 && status !== null && MANAGEABLE_STATUSES.includes(status));
+  if (failureOpen) return { kind: 'failing' };
   if (status === null || !MANAGEABLE_STATUSES.includes(status)) return { kind: 'none', reason: 'not_active' };
 
   if (facts.cancelAtPeriodEnd) {
@@ -116,7 +129,11 @@ function hasPendingChange(facts: PlanManageFacts, now: Date): boolean {
 export interface PlanManageWire {
   cancel: boolean;
   reactivate: boolean;
-  /** A renewal failed: Cancel is not offered yet; the screen says "update your card, or contact us". */
+  /**
+   * A renewal failed. P-7a.4: set together with `cancel`, and the screen's
+   * confirmation says the plan ENDS NOW (BQ-3 = A). Stripe's fresh status
+   * decides the real mode; the route's answer says which happened.
+   */
   paymentFailed: boolean;
   /**
    * P-7a.2: "Update card" and "Invoices" (`planCardAndInvoicesOffer`). Present
@@ -134,7 +151,7 @@ export function planManageWire(offer: PlanManageOffer, cardAndInvoices = false):
   const docs = cardAndInvoices ? { cardAndInvoices: true as const } : {};
   if (offer.kind === 'renewing') return { cancel: true, reactivate: false, paymentFailed: false, ...docs };
   if (offer.kind === 'cancelling') return { cancel: false, reactivate: true, paymentFailed: false, ...docs };
-  if (offer.reason === 'payment_failed') return { cancel: false, reactivate: false, paymentFailed: true, ...docs };
+  if (offer.kind === 'failing') return { cancel: true, reactivate: false, paymentFailed: true, ...docs };
   if (cardAndInvoices) return { cancel: false, reactivate: false, paymentFailed: false, ...docs };
   return null;
 }
