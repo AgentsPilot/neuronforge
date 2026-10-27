@@ -161,18 +161,30 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * stamp ec34d5604055abfe, confirmed live on prod 2026-10-25 (DL-1a TL Q-5).
  * Not in FUNCTION_REQUIRED_TABLES (SA O-3): step B names the table only as a
  * VALUES literal and skips it while absent, so the order rests on the apply plan.
+ * 20261096 (module export MX-1a): business_os_export_module_jobs and
+ * business_os_export_requests, created by 20261095, join step B, the jobs
+ * first. Both are removed in the hard delete and in the anonymise (neither is
+ * in KEEP_SET): a business Reset or Purge keeps the export history and the
+ * daily limit counter, the account deletion removes them. Their user_id links
+ * to the login become tenancy keys the plan knows, so G-10 accepts them, and
+ * the link from the jobs to their request is reviewed for G-18 (owner column
+ * user_id), so a job of another account pointing at the request of the target
+ * blocks. Chained on 20261094, stamp 792d801e13101316, live since 2026-10-26.
+ * Not in FUNCTION_REQUIRED_TABLES (SA O-3, MX1A-3): step B names both only as
+ * VALUES literals and skips them while absent.
  */
-export const FUNCTION_MIGRATION = '20261094_operator_test_account_cleanup_account_closures';
+export const FUNCTION_MIGRATION = '20261096_operator_test_account_cleanup_export_requests';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261092_operator_test_account_cleanup_meeting_links';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261094_operator_test_account_cleanup_account_closures';
 /**
  * What this migration changes, for its header (comment lines, no semicolons or
  * apostrophes: the file must stay paste-safe). Rewritten with each new
  * FUNCTION_MIGRATION; the applied files keep their own.
  */
 export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
-  'Adds business_os_account_closures to step B, removed in the hard delete and in the anonymise',
-  'Nothing else in the plan changes. Same 8 argument signature as 20261092',
+  'Adds business_os_export_module_jobs and business_os_export_requests to step B, removed in the hard delete and in the anonymise',
+  'Reviews the link from the module jobs to their request for G-18',
+  'Nothing else in the plan changes. Same 8 argument signature as 20261094',
 ];
 /**
  * What running this migration's rollback means beyond restoring the previous
@@ -180,10 +192,9 @@ export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
  * each new FUNCTION_MIGRATION.
  */
 export const ROLLBACK_CONSEQUENCE: ReadonlyArray<string> = [
-  'The restored 20261092 function does not remove closure rows, so a test account cleanup or an anonymise would leave its closure row behind',
-  'That leaves an orphan row under a closed login. It removes nothing',
-  'While the table of 20261093 exists, G-10 of the restored function refuses every check and delete on its link to the login',
-  'A full restore is this file, then the 20261093 rollback, then the PR revert'
+  'The restored 20261094 function does not remove export history rows',
+  'While the tables of 20261095 exist, G-10 of the restored function refuses every check and delete on their links to the login',
+  'A full restore is this file, then the 20261095 rollback, then the PR revert',
 ];
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
@@ -298,6 +309,9 @@ export const FULL_REMOVAL_EXTRAS: ReadonlyArray<{ table: string; reason: string 
   { table: 'audit_logs', reason: 'Legacy user-scoped log, distinct from audit_trail.' },
   { table: 'auth_handoff_codes', reason: 'Short-lived sign-in codes. Cascade with the login anyway, removed explicitly so the count is reported.' },
   { table: 'business_os_account_closures', reason: 'The deletion request of the account (DL-1a, XC-1). Removed in both modes: at E the engine deletes it.' },
+  // Module export (MX-1a, migration 20261095). The jobs first: each points at its request (ON DELETE CASCADE).
+  { table: 'business_os_export_module_jobs', reason: 'The module jobs of the account export history (MX-1a, XC-7). Removed in both modes: the history goes with the account at stage E.' },
+  { table: 'business_os_export_requests', reason: 'The export requests of the account (MX-1a, XC-7). Kept by a business Reset or Purge so the daily limit holds, removed in both modes here.' },
   // Agent platform and kernel learning.
   { table: 'agent_configurations', reason: 'Agent platform.' },
   { table: 'agent_execution_logs', reason: 'Agent platform.' },
@@ -481,6 +495,7 @@ export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, strin
   ['business_os_credit_charges', 'business_os_credit_charges_adjusts_action_id_fkey', 'user_id'],
   ['business_os_credit_lot_draws', 'business_os_credit_lot_draws_lot_id_fkey', 'user_id'],
   ['business_os_entitlement_overrides', 'business_os_entitlement_overrides_user_id_fkey', 'user_id'],
+  ['business_os_export_module_jobs', 'business_os_export_module_jobs_request_id_fkey', 'user_id'],
   ['business_profiles', 'business_profiles_address_id_fkey', 'user_id'],
   ['business_profiles', 'business_profiles_invoice_address_id_fkey', 'user_id'],
   ['business_subscribers', 'business_subscribers_business_fk', 'user_id'],
