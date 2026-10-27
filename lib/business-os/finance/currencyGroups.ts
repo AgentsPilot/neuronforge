@@ -16,7 +16,8 @@
  *   - One line per normalised currency, sorted by code, the Unknown line last.
  *     NOTHING here adds two lines together (S2-CUR-1, BD-12): the module's
  *     exports are pinned by its test, and none returns a cross-currency total.
- *     No exchange rate exists anywhere in the platform (CUR-3).
+ *     No exchange rate is read anywhere in the finance lib (CUR-3); the one
+ *     conversion (BD-56) lives outside it.
  *
  * @module lib/business-os/finance/currencyGroups
  */
