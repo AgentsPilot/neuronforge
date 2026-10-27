@@ -10,6 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import { isTestCleanupConfigured, readTestCleanupSecret } from '@/lib/server/testCleanupSecret';
+import { ENVIRONMENT_CATALOGUE } from '@/lib/admin/environment/catalogue';
 
 const ENV_NAME = ['TEST', 'CLEANUP', 'SECRET'].join('_');
 const FUNCTION_NAME = ['operator', 'test', 'account', 'cleanup'].join('_');
@@ -44,10 +45,14 @@ describe('single readers', () => {
   });
 
   it('the secret is named only by lib/server/testCleanupSecret.ts, which is server-only', () => {
-    expect(naming(ENV_NAME)).toEqual(['lib/server/testCleanupSecret.ts']);
+    // The admin environment catalogue lists the name (never the value) so the
+    // read-only /admin/environment page can show Set / Not set; it is
+    // catalogued as a `secret`, which is pinned below.
+    expect(naming(ENV_NAME)).toEqual(['lib/admin/environment/catalogue.ts', 'lib/server/testCleanupSecret.ts']);
     const source = fs.readFileSync(path.join(REPO_ROOT, 'lib/server/testCleanupSecret.ts'), 'utf8');
     expect(source).toMatch(/^import 'server-only';$/m);
     expect(naming(`NEXT_PUBLIC_${ENV_NAME}`)).toEqual([]);
+    expect(ENVIRONMENT_CATALOGUE.find((entry) => entry.name === ENV_NAME)?.sensitivity).toBe('secret');
   });
 
   it('the cleanup function is named only by the repository (R-7)', () => {
