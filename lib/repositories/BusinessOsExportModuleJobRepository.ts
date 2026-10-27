@@ -13,8 +13,11 @@
 //
 // - There is no insert method: only the database start function inserts jobs,
 //   with the request id and user id from one set of arguments (D-4).
-// - `listHistoryForUser` filters on user_id and returns a DTO that never
-//   carries a Resend id, a claim field or an error code.
+// - `listForRequestsOfUser` (MX-1b history) filters on user_id AND takes only
+//   request ids the user-scoped request read returned, and its rows carry no
+//   Resend id, claim field or error code. The history is limited by REQUEST in
+//   the request repository's listRecentForUser, never by job row
+//   (SA MX-1a code review comment 1), and parsed one row at a time.
 // - `claimDue` and `reapStale` are ⟨unscoped-by-design⟩: the worker claims and
 //   reaps rows of every account, the PluginConnectionRepository precedent.
 //   Every later effect of the worker is scoped to the claimed row's user_id
@@ -45,12 +48,10 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, type Logger } from '@/lib/logger';
 import {
   CODE_SHAPE,
-  EXPORT_REQUEST_ORIGINS,
   MODULE_EXPORT_POLICY,
   MODULE_JOB_STATUSES,
   NOTICE_STATES,
   PART_STATES,
-  type ExportRequestOrigin,
   type ModuleJobStatus,
   type NoticeState,
 } from '@/lib/business-os/data-export/moduleExportPolicy';
@@ -60,13 +61,11 @@ import type { AgentRepositoryResult as RepositoryResult } from './types';
 export const MODULE_JOB_CLAIM_FUNCTION = 'business_os_export_module_jobs_claim_due';
 export const MODULE_JOB_REAP_FUNCTION = 'business_os_export_module_jobs_reap';
 
-/** The history read: the job columns the DTO needs, and its request through the named foreign key (M-3). */
-export const MODULE_JOB_HISTORY_SELECT =
-  'id, request_id, module, status, parts, sent_at, created_at, ' +
-  'business_os_export_requests!business_os_export_module_jobs_request_id_fkey(requested_at, origin)';
+/** The history read (MX-1b §5 step 2): only the columns the history line needs. */
+export const MODULE_JOB_HISTORY_COLUMNS = 'id, request_id, module, status, parts, sent_at';
 
-/** The most history rows one read returns. */
-export const HISTORY_LIMIT_MAX = 100;
+/** The most request ids one history read takes (SA MX1B-9: the request read's ceiling). */
+export const HISTORY_REQUEST_IDS_MAX = 50;
 
 const uuid = z.string().uuid();
 const timestamp = z.string().min(1).max(64);
@@ -111,27 +110,31 @@ export const moduleJobRowSchema = z.object({
 });
 export type ModuleJob = z.infer<typeof moduleJobRowSchema>;
 
+/**
+ * A part as the HISTORY reads it: the state only (QA MX-1a finding 1). The SQL
+ * CHECK proves only `n` and `state`, so a part written without `resend_id` or
+ * `at` must still count, and never blank the owner's history.
+ */
+const historyPartSchema = z.object({ state: z.enum(PART_STATES) }).passthrough();
+
 const historyRowSchema = z.object({
   id: uuid,
   request_id: uuid,
   module: code,
   status: z.enum(MODULE_JOB_STATUSES),
-  parts: z.array(modulePartSchema),
+  parts: z.array(historyPartSchema),
   sent_at: timestamp.nullable(),
-  created_at: timestamp,
-  business_os_export_requests: z.object({ requested_at: timestamp, origin: z.enum(EXPORT_REQUEST_ORIGINS) }),
 });
 
-/** One line of the export history (requirement §3.7). Never a Resend id, a claim field or an error code. */
-export interface ModuleJobHistoryItem {
+/** One module job as the history shows it. Never a Resend id, a claim field or an error code. */
+export interface ModuleJobHistoryRow {
+  id: string;
   requestId: string;
   module: string;
   status: ModuleJobStatus;
-  requestedAt: string;
   sentAt: string | null;
-  /** How many emails of this module were accepted by the mail provider. */
+  /** How many emails of this module the mail provider accepted. */
   emailCount: number;
-  origin: ExportRequestOrigin;
 }
 
 /** What the reaper changed, for the worker log. */
@@ -192,37 +195,49 @@ export class BusinessOsExportModuleJobRepository {
 
   // ============ Per-account reads ============
 
-  /** The account's export history, newest first. `limit` is clamped to 1..100. */
-  async listHistoryForUser(userId: string, options: { limit?: number } = {}): Promise<RepositoryResult<ModuleJobHistoryItem[]>> {
-    if (!uuid.safeParse(userId).success) {
-      return { data: null, error: coded(MODULE_JOB_ERROR.INVALID_INPUT, 'Invalid input: user id') };
+  /**
+   * The module jobs of the given requests of this account (MX-1b §5 step 2).
+   * `requestIds` come from `listRecentForUser`, which already counted the limit
+   * in requests, so there is no row limit here and no request is cut in half.
+   * Rows are parsed one at a time: a bad row is logged by id and dropped.
+   */
+  async listForRequestsOfUser(userId: string, requestIds: ReadonlyArray<string>): Promise<RepositoryResult<ModuleJobHistoryRow[]>> {
+    const ids = Array.from(new Set(requestIds));
+    if (
+      !uuid.safeParse(userId).success ||
+      ids.length > HISTORY_REQUEST_IDS_MAX ||
+      !ids.every((id) => uuid.safeParse(id).success)
+    ) {
+      return { data: null, error: coded(MODULE_JOB_ERROR.INVALID_INPUT, 'Invalid input: history') };
     }
-    const requested = Number.isInteger(options.limit) ? (options.limit as number) : HISTORY_LIMIT_MAX;
-    const limit = Math.min(Math.max(requested, 1), HISTORY_LIMIT_MAX);
+    if (ids.length === 0) return { data: [], error: null };
     try {
       const { data, error } = await this.supabase
         .from('business_os_export_module_jobs')
-        .select(MODULE_JOB_HISTORY_SELECT)
+        .select(MODULE_JOB_HISTORY_COLUMNS)
         .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(limit);
+        .in('request_id', ids);
       if (error) throw error;
-      const rows = z.array(historyRowSchema).parse(data ?? []);
-      return {
-        data: rows.map((row) => ({
-          requestId: row.request_id,
-          module: row.module,
-          status: row.status,
-          requestedAt: row.business_os_export_requests.requested_at,
-          sentAt: row.sent_at,
-          emailCount: row.parts.filter((part) => part.state === 'accepted').length,
-          origin: row.business_os_export_requests.origin,
-        })),
-        error: null,
-      };
+      const out: ModuleJobHistoryRow[] = [];
+      for (const row of Array.isArray(data) ? data : []) {
+        const parsed = historyRowSchema.safeParse(row);
+        if (!parsed.success) {
+          this.logger.error({ method: 'listForRequestsOfUser', userId, jobId: idOf(row) }, 'Dropped a module job history row that failed its parse');
+          continue;
+        }
+        out.push({
+          id: parsed.data.id,
+          requestId: parsed.data.request_id,
+          module: parsed.data.module,
+          status: parsed.data.status,
+          sentAt: parsed.data.sent_at,
+          emailCount: parsed.data.parts.filter((part) => part.state === 'accepted').length,
+        });
+      }
+      return { data: out, error: null };
     } catch (err) {
       const safe = toError(err);
-      this.logger.error({ err: safe, method: 'listHistoryForUser', userId }, 'Failed to read the export history');
+      this.logger.error({ err: safe, method: 'listForRequestsOfUser', userId, requestCount: ids.length }, 'Failed to read the export history');
       return { data: null, error: safe };
     }
   }

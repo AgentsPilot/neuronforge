@@ -22,6 +22,8 @@
 
 import { z } from 'zod';
 import { createLogger } from '@/lib/logger';
+// Type only: a pure file with no imports, so nothing server-side reaches the bundle.
+import type { ExportHistoryRequest } from '@/lib/business-os/data-export/exportHistory';
 
 const logger = createLogger({ module: 'BusinessOsDataExportClient' });
 
@@ -277,4 +279,175 @@ export function saveSignedDownload(verdict: DataExportReady): boolean {
   }
   browserNavigation.assign(verdict.downloadUrl);
   return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Module export (export redesign MX-1b; workplan §8; SA workplan review C-1).
+//
+// The same seam, so `oneExportControl.guard.test.ts` check 4 still finds one
+// browser file that names an export route. Pure fetch functions that never
+// throw and never take a user id or an email address; `sentTo` (the owner's
+// own login email, for the confirmation) is never logged.
+//
+// C-1: ONLY THE ROUTE'S OWN 404 MEANS "OFF". The probe has four answers:
+//   - `off`:     404 with our JSON body. The switch is off: the ZIP control stays.
+//   - `ok`:      200 with a valid history. The switch is on.
+//   - `error`:   any other answer WITH A JSON BODY from our route (401, 429,
+//                500, a 200 of the wrong shape). The switch is on; the drawer
+//                says the history could not be loaded, with Try again.
+//   - `unknown`: a network error, the 5 s timeout, or a non-JSON platform page
+//                (502 / 504, or a 404 page that is not ours). The button falls
+//                back to the ZIP path, as today.
+// From MX-4 the ZIP start answers 404 while the switch is on, so a server error
+// must never be read as "off" and send the owner into a flow that refuses them.
+// ════════════════════════════════════════════════════════════════════════════
+
+export const MODULE_EXPORT_URL = '/api/business-os/export-requests';
+
+/** How long the switch probe may take before the button falls back to the ZIP (D-3). */
+export const MODULE_EXPORT_PROBE_TIMEOUT_MS = 5_000;
+
+export type { ExportHistoryRequest };
+
+export type ModuleExportHistoryVerdict =
+  | { kind: 'off' }
+  | { kind: 'ok'; requests: ExportHistoryRequest[] }
+  | { kind: 'error' }
+  | { kind: 'unknown' };
+
+export type ModuleExportRefusalCode =
+  | 'in_progress'
+  | 'daily_limit'
+  | 'no_login_email'
+  | 'invalid'
+  | 'off'
+  | 'throttled'
+  | 'unauthorized'
+  | 'network'
+  | 'failed';
+
+export type ModuleExportStartVerdict =
+  | { kind: 'started'; requestId: string; sentTo: string; requestedEmailSent: boolean }
+  | { kind: 'refused'; code: ModuleExportRefusalCode; retryAt?: string };
+
+const HISTORY_STATUSES = ['waiting', 'working', 'sent', 'failed', 'interrupted'] as const;
+
+const historyBody = z.object({
+  success: z.literal(true),
+  data: z.object({
+    requests: z.array(
+      z.object({
+        requestId: z.string().uuid(),
+        requestedAt: z.string().min(1),
+        origin: z.enum(['owner', 'admin']),
+        modules: z.array(
+          z.object({
+            module: z.string().min(1),
+            status: z.enum(HISTORY_STATUSES),
+            sentAt: z.string().min(1).nullable(),
+            emailCount: z.number().int().nonnegative(),
+          })
+        ),
+      })
+    ),
+  }),
+});
+
+const startedBody = z.object({
+  success: z.literal(true),
+  data: z.object({ requestId: z.string().uuid(), sentTo: z.string().min(1), requestedEmailSent: z.boolean() }),
+});
+
+/** Our route's own error shape: `{ success: false, … }`. Anything else is not ours. */
+const ourErrorBody = z.object({ success: z.literal(false) }).passthrough();
+
+/** The switch probe and the drawer's history read: GET, never throws (C-1). */
+export async function fetchModuleExportHistory(
+  options: { timeoutMs?: number } = {}
+): Promise<ModuleExportHistoryVerdict> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? MODULE_EXPORT_PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(MODULE_EXPORT_URL, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const body = await readJson(response);
+    if (body === undefined) {
+      logger.warn({ status: response.status }, 'Module export: the history answer was not JSON');
+      return { kind: 'unknown' };
+    }
+    if (response.status === 404) {
+      // Only OUR 404 (our JSON error body) means off; anything else is unknown.
+      return ourErrorBody.safeParse(body).success ? { kind: 'off' } : { kind: 'unknown' };
+    }
+    if (response.ok) {
+      const parsed = historyBody.safeParse(body);
+      if (parsed.success) return { kind: 'ok', requests: parsed.data.data.requests };
+      logger.error({ status: response.status }, 'Module export: the history answer had an unexpected shape');
+      return { kind: 'error' };
+    }
+    logger.warn({ status: response.status }, 'Module export: the history could not be read');
+    return { kind: 'error' };
+  } catch (err) {
+    logger.warn({ timedOut: isAbort(err) }, 'Module export: the history could not be reached');
+    return { kind: 'unknown' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Start an export of the ticked modules: POST, never throws. */
+export async function startModuleExport(modules: readonly string[]): Promise<ModuleExportStartVerdict> {
+  try {
+    const response = await fetch(MODULE_EXPORT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modules }),
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (response.status === 401) return { kind: 'refused', code: 'unauthorized' };
+    if (response.status === 429) return { kind: 'refused', code: 'throttled' };
+
+    const body = await readJson(response);
+    if (body === undefined) {
+      logger.warn({ status: response.status }, 'Module export: the start answer was not JSON');
+      return { kind: 'refused', code: 'failed' };
+    }
+    if (response.ok) {
+      const parsed = startedBody.safeParse(body);
+      if (parsed.success) {
+        const { requestId, sentTo, requestedEmailSent } = parsed.data.data;
+        return { kind: 'started', requestId, sentTo, requestedEmailSent };
+      }
+      logger.error({ status: response.status }, 'Module export: the start answer had an unexpected shape');
+      return { kind: 'refused', code: 'failed' };
+    }
+
+    const refusal = refusalBody.safeParse(body);
+    const code = refusal.success ? refusal.data.code : undefined;
+    const retryAt = refusal.success ? refusal.data.retryAt ?? undefined : undefined;
+    if (response.status === 409 && code === 'export_in_progress') return { kind: 'refused', code: 'in_progress' };
+    if (response.status === 409 && code === 'export_daily_limit') {
+      // SA CR-2: with no time to show, "already running" would be false; the generic failure is honest.
+      if (retryAt) return { kind: 'refused', code: 'daily_limit', retryAt };
+      logger.error({ status: 409 }, 'Module export: a daily limit refusal came without a retry time');
+      return { kind: 'refused', code: 'failed' };
+    }
+    if (response.status === 409 && code === 'export_no_login_email') return { kind: 'refused', code: 'no_login_email' };
+    if (response.status === 404) return { kind: 'refused', code: 'off' };
+    if (response.status === 400) {
+      // Only our own drawer sends this body: a module switched off since the page loaded, or a bug.
+      logger.error({ status: 400 }, 'Module export: the server refused the request as invalid');
+      return { kind: 'refused', code: 'invalid' };
+    }
+    logger.warn({ status: response.status, code: code ?? null }, 'Module export: the server could not start the export');
+    return { kind: 'refused', code: 'failed' };
+  } catch {
+    logger.warn({}, 'Module export: the server could not be reached');
+    return { kind: 'refused', code: 'network' };
+  }
 }
