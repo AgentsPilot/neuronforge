@@ -309,6 +309,7 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   config('NEXT_PUBLIC_STRIPE_CLIENT_ID', 'payments', 'A Stripe Connect client ID read by the Stripe plugin definition.', 'identifier'),
   flag('BUSINESS_OS_PLAN_PRICES_ENABLED', 'payments', 'Lets the webhook recognise Business OS plan prices; off means every plan invoice is treated as unknown.', 'lenient', false, OPTIONAL, { docLink: FLAGS_DOC }),
   flag('BUSINESS_OS_PLAN_CHECKOUT_ENABLED', 'payments', 'Opens the Business OS plan checkout; needs plan price recognition on.', 'lenient', false, OPTIONAL, { docLink: FLAGS_DOC }),
+  config('STRIPE_BOS_PORTAL_CONFIGURATION_ID', 'payments', 'The Stripe customer portal configuration (card and invoices only) that Settings → Plan opens; unset means Update card is not offered. Created by scripts/setup-bos-portal-configuration.ts.', 'identifier'),
   flag('BUSINESS_OS_CREDITS_BOOST_ENABLED', 'payments', 'Lets owners buy a credits boost.', 'lenient', false, OPTIONAL, { docLink: FLAGS_DOC }),
   personal('BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS', 'payments', 'Optional list of accounts allowed to buy a boost; unset means every account when the boost switch is on. Only valid account ids count, as the checkout counts them; a list that holds none closes the boost to every account.', 'list-boost-accounts'),
   config('INVOICE_BARE_URL_GRACE_DAYS', 'payments', 'How many days an invoice link without a signed token keeps working; 0 requires a signed link for every invoice, unset uses the token lifetime.', 'integer'),
