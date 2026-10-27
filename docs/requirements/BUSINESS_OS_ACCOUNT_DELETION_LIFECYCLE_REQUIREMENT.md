@@ -1,6 +1,6 @@
 # Requirement: Business OS — Account Deletion Lifecycle (request, grace, lock, delete), Keep My Account, Cancel Plan
 
-> **Last Updated**: 2026-10-25
+> **Last Updated**: 2026-10-27
 
 **Created by:** BA
 **Date:** 2026-10-25
@@ -83,18 +83,26 @@ A Business OS owner can ask for their account to be deleted, keep using what the
 |---|---|---|---|
 | **A. Request** | Owner confirms in the deletion drawer | Everything as normal. A paid plan is set **not to renew** (same engine as §5) | **"Deletion requested"**: the plan runs to {date}, then 14 days to export, then the account closes on {lock date}. "Keep my account" link |
 | **B. Rest of the paid period** (paid only) | At once | The full plan | — |
-| **C. 14-day grace** | When the paid period ends (Stripe `ended_at`); at once for an account with no paid plan | What the account normally has once a plan ends (BQ-20, §3.2). Can always sign in, view and **export** | **"Your plan has ended. Your account closes on {lock date}"** at the start of C (paid only). **Reminder 3 days before the lock** |
+| **C. 14-day grace** | When the paid period ends (Stripe `ended_at`); at once for an account with no paid plan | The free cohort (Test Flight) once a paid plan ends, or Founding Partner if that runs on (BQ-20, §3.2). Can always sign in, view and **export** | **"Your plan has ended. Your account closes on {lock date}"** at the start of C (paid only). **Reminder 3 days before the lock** |
 | **D. Locked** | Start of local day 15 of C in `user_preferences.timezone` (UTC when NULL), fixed when C starts (XC-4, BQ-24) | Cannot sign in | **"Your account is closed"**, accepted by Resend **before** the lock |
 | **E. Deleted** | An admin runs "close and anonymise" from the ready list on `/admin/users` | — | None. No undo (UD-6). The email can sign up again |
 
 ### 3.2 What the account has in stage C (R-3, BQ-20)
 
-There is no free tier. Suggested meaning: what the account would normally have once its plan ends, with no new level built.
+**User's answer, 2026-10-27 (BQ-20).** It replaces suggestion (a) ("what the account normally has once a plan ends, with no new level built"). When an **owner-started end** finishes the paid plan, the account moves to the **free cohort** (code `trial`, "Test Flight"). For this purpose it overrides SA K-1's "there is no free tier" framing: no new tier is built, but the existing free cohort is granted.
+
+- **Owner-started end** means: a period-end cancel (§5), P-7a.4's immediate "Ends now" (including during a failed payment), or a deletion request (§3.3).
+- **Length:** 14 days (config), counted from the period end, with a **fresh 1,000 credits**.
+- **Already used the trial:** the account still gets it.
+- **Repeat cancels:** each one halves the period, down to a 1-day minimum (14 → 7 → 4 → 2 → 1; SA decides the rounding).
+- **After the free period:** the normal cohort lapse applies (the trial's own grace, then paused).
+- The write is slice **SX-2b** (§6.2), in the Stripe webhook.
 
 | Account | During the 14 days |
 |---|---|
-| Founding Partner cohort still running | Keeps its free Founding Partner access |
-| Everyone else | Today's rule: 5 days read-only (website still up, with a warning), then paused (website and new bookings stop). Data is kept |
+| Founding Partner whose free access runs past the period end | Goes back to Founding Partner (BQ-5), never down to Test Flight |
+| Paid plan ended by an owner-started end | Test Flight for 14 days (halved on repeat cancels), with a fresh 1,000 credits. Then the normal cohort lapse |
+| Paid plan Stripe ended after failed retries (`cancellation_details.reason = 'payment_failed'`) | Today's path: 5 days read-only (website still up, with a warning), then paused (website and new bookings stop). Data is kept |
 | Already lapsed or paused when they asked | Stays as it is |
 | **In every case** | Can sign in, see everything and **export** (entitlements §9 "view and export only"; export is never gated, XC-19) |
 
@@ -158,12 +166,13 @@ Enforcement is off (`shadow`, K-2), so nothing is actually limited today. Copy s
 
 Carried from the parent §6 with SA rulings SA-1, SA-2, SA-3, SA-5, C-4, C-9.
 
-- Settings → Plan → **"Cancel plan"** (quiet link) opens a drawer: **reason** (list only, BQ-7 / BQ-17) → **what changes** (back to Founding Partner, or features you'll lose from `planComparison.ts` plus the read-only-then-paused sentence, computed by `planEndingView`, built in SX-2 inside the entitlements module, XC-19) → **review** ("Last day {date}", "You will not be charged again", "No refund for the current month", link to Export data) → **confirm**.
+- Settings → Plan → **"Cancel plan"** (quiet link) opens a drawer: **reason** (list only, BQ-7 / BQ-17) → **what changes** (back to Founding Partner when its free access runs past the period end, BQ-5; otherwise "moves to Test Flight until {date}" with the features you'll lose from `planComparison.ts`, then the normal cohort lapse (BQ-20, §3.2); computed by `planEndingView`, built in SX-2 inside the entitlements module, XC-19; the move itself is written by SX-2b) → **review** ("Last day {date}", "You will not be charged again", "No refund for the current month", link to Export data) → **confirm**.
 - Stripe: cancel at period end, never at once. Card: "Ends on {date}. It will not renew." with **"Keep my plan"** until that date.
 - No offer to stay.
 - Refused: failed last payment, upgrade waiting for card confirmation, `trialing` (SA-2), already ended, no Stripe subscription (cohort or admin-given access).
 - Emails: "Plan cancelled", "Plan kept", reminder 3 days before the plan ends (BQ-36).
-- At period end nothing is deleted. The account follows the after-plan rule (§3.2).
+- At period end nothing is deleted. The account follows the after-plan rule (§3.2): Test Flight for 14 days (halved on each repeat cancel, 1-day minimum) with a fresh 1,000 credits, or back to Founding Partner (BQ-5).
+- **"Reactivate" is relabelled "Keep my plan"** in D3 (user approved 2026-10-27; the user reviews the he/es copy in the D3 diff).
 
 **Side by side in Settings:**
 
@@ -193,10 +202,18 @@ Each slice is its own PR from `main`, never stacked, at most 2.5 days. A slice w
 |---|---|---|---|---|---|
 | **SX-1** | Cancel and keep engine | `StripeService.setBusinessOsPlanCancelAtPeriodEnd`, `planCancellation.ts` (in the `planUpgrade.ts` shape), routes `…/plan/cancel` and `…/plan/keep`, SA-2 eligibility, fresh attempt key (C-4), mirror write (SA-3), audit, `isPlanSelfCancelEnabled()` off + `FEATURE_FLAGS.md` row | — | — | 🟡 2.5 d |
 | **SX-2** | Cancel drawer | Builds `planEndingView` in `lib/business-os/entitlements/` with registrations (XC-19); reason, what changes, review, confirm; en/he/es | SX-1 | — | 🟡 2.5 d |
+| **SX-2b** | After-plan move to the free cohort (D3.1 in the coordination file; SA R-3, Q-9 to Q-11) | The write that moves the account to the free cohort (BQ-20, §3.2). Runs in the Stripe webhook on `customer.subscription.deleted` when `cancellation_details.reason = 'cancellation_requested'` (verified on the sandbox for P-7a.4's immediate cancel and a P-7a.1 period-end cancel). Finds the account from **our billing row by subscription id** (never Stripe metadata), acts only if that subscription is still the current one, writes through `BusinessOsAccountPlanRepository` with `afterPlanAccount` + `recordPlanChange` (system actor, audit marks it automatic). Config `afterPlan` names the cohort and is in the entitlements drift snapshot. Tracks repeat cancels for the halving rule. Webhook files belong to PLAN PAYMENTS: own coordination row | SX-2 (D3's `planEndingView`), P-7a.4 merged | none expected (the cohort and trial-pin columns exist); the workplan confirms where the repeat-cancel count lives | 🟡 ≈ 1.5 d |
 | **SX-3** | Cancel emails, switch on | Cancelled, kept, 3-day reminder (BQ-36); R-3 refusal text in `adminDeletionRefusals.ts`; P-7a note (C-1); switch on | SX-2 | — | 🟢 1.5 d |
 | **SX-5** | Stripe Connect fixes | C-5: delete only on Stripe's confirmed deletion, OAuth deauthorize for Standard, D-2 refusal via the check (SA-14), G-8 wording | — | only if needed | 🟡 2 d |
 
 **SX-1 as built (D2, 2026-10-26; [D2 workplan](/docs/workplans/BUSINESS_OS_D2_PLAN_CANCEL_ENGINE_WORKPLAN.md), SA workplan review W-1 to W-12).** Plan payments P-7a.1 (PR #519) had already shipped the engine, so SX-1 extends it rather than building a second one (SX C-1). Names as on `main` (SA Q-2): `StripeService.setBusinessOsCancelAtPeriodEnd`, `lib/business-os/billing/planSubscriptionManage.ts` (`managePlanSubscription`), routes `/api/business-os/billing/plan/cancel` and `/plan/reactivate`. There is no `/plan/keep`: "Keep my plan" is D3's label over `/plan/reactivate`. `trialing` stays manageable for the plain cancel (P-7a TQ-14, SA Q-1), which amends §5 "Refused: … `trialing`" and the §7 AC; D6 rules `trialing` for the deletion request separately. **`isPlanSelfCancelEnabled()` is superseded for the plan cancel** by plan-payments P-7a C-1 / BQ-1 (2026-10-26): cancel follows `BUSINESS_OS_PLAN_PRICES_ENABLED` only. XC-15 and the SR-10 anchor row for it no longer apply to the cancel (SA W-1). BA carries this into §11 of both files at the next joint splice; §11 is not edited here. D2 adds: a fresh Stripe idempotency key per attempt (SX C-4, never logged); `change_pending` (a `pending_tier` or an unexpired open checkout) refusing the cancel side only (SA-2, W-3); an optional `reasonCode` from `planLeaveReasons.ts` (BQ-7 TL default) in `details.reasonCode` of the existing P-7a audit key `BOS_BILLING_SUBSCRIPTION_CANCELLED` (SA-16 names not used, Q-4); and `oneDontRenewPath.guard.test.ts`, which makes D6 call the engine. `origin` moves to **D6 (DL-1b)** (W-5), and so does **SX C-3** (the mirror clears a pending deletion on a Stripe-side reactivation). D6's detection must read `cancel_at` as well as `cancel_at_period_end`, because P-7a's open C-3 follow-up says the webhook mirrors only the flag (Q-10). **BQ-11** now covers only the deletion request: for the plain cancel, the user's P-7a BQ-3 ("Ends now", P-7a.4) applies.
+
+**SX-2 / SX-2b sequencing and hand-overs (user decisions 2026-10-27, D3 SA review Q-1, Q-9 to Q-11, R-2, R-3).**
+
+- **D3 (SX-2) merges only after SX-2b.** D3 is built, reviewed and tested in parallel, but its PR is opened **without auto-merge** and held until SX-2b is on `main`. Otherwise the drawer would promise a move to Test Flight that nothing writes (C-9). Until then owners keep P-7a.1's inline confirm.
+- **`reasonCode` hand-over (SA Q-1, amends D2 Q-5).** `reasonCode` stays optional in D3. The first slice that holds the cancel engine after D3 merges (P-7a.4 or D6) makes it required. If P-7a.4 merges before D3, it stays optional there and the flip goes to D6.
+- **"Reactivate" is relabelled "Keep my plan"** in D3 (approved; the user reviews the he/es copy in the D3 diff).
+- SX-2b is D3.1 in the coordination file and gets its own row there, because the webhook files belong to PLAN PAYMENTS.
 
 ### 6.3 Deletion track
 
@@ -210,9 +227,9 @@ Each slice is its own PR from `main`, never stacked, at most 2.5 days. A slice w
 | **DL-4b** | Website offline at the lock (if BQ-23 yes) | `isAccountClosedToPublic(userId)` at the four XC-14 call sites; `siteCache` revalidated at lock and unlock; source-scan test of the four sites; "no longer available online" for client links | DL-4 | — | 🟢 1.5 d |
 | **DL-5** | Ready list, E route, switch on | `/admin/users` ready list (locked, blocked owner / engineering, days since lock, overdue red); new `requireAdmin` E route reading the closure row on the server (XC-6); receipt via EXPORT's `buildOwnerReceipt` / `findDeletionFacts` (read-only); QA; `DELETION_RECEIPT_FINGERPRINT_KEY` checked (C-12); switch `isAccountSelfDeleteEnabled()` on **only after EXPORT MX-4 is switched on** | DL-4 (+ DL-4b if built); **EXPORT MX-4 live** | — | 🟡 2 d |
 
-**Totals:** cancel track **8.5 d** (SX-1 2.5 · SX-2 2.5 · SX-3 1.5 · SX-5 2); deletion track **13.5 d** (DL-1a 2 · DL-1b 2.5 · DL-2 2 · DL-3 2.5 · DL-4 2.5 · DL-5 2); website offline **+1.5 d** (DL-4b). **This scope: 22 working days, 23.5 with the website-offline step.** Plain cancel is live after SX-3; deletion is live after DL-5. Manual prod gates: DL-1a (and SX-5 only if it needs a migration).
+**Totals:** cancel track **10 d** (SX-1 2.5 · SX-2 2.5 · SX-2b 1.5 · SX-3 1.5 · SX-5 2); deletion track **13.5 d** (DL-1a 2 · DL-1b 2.5 · DL-2 2 · DL-3 2.5 · DL-4 2.5 · DL-5 2); website offline **+1.5 d** (DL-4b). **This scope: 23.5 working days, 25 with the website-offline step** (SX-2b added 2026-10-27). Plain cancel is live after SX-3; deletion is live after DL-5. Manual prod gates: DL-1a (and SX-5 only if it needs a migration).
 
-**Suggested order:** SX-1 → SX-2 → SX-3 (cancel live), with SX-5 and DL-1a in parallel → DL-1b → DL-2 → DL-3 → DL-4 → DL-4b → DL-5 (switch on after EXPORT MX-4).
+**Suggested order:** SX-1 → SX-2 (built) → SX-2b → SX-2 merges → SX-3 (cancel live), with SX-5 and DL-1a in parallel → DL-1b → DL-2 → DL-3 → DL-4 → DL-4b → DL-5 (switch on after EXPORT MX-4).
 
 **Ops gates before switch-on (not builds):** `agentspilot.ai` verified in Resend and `RESEND_FROM_EMAIL` set (before SX-3); support address `notifications@agentspilot.ai` replaces the personal Gmail and is used in the banned-login copy (before SX-3 / DL-4); `DELETION_RECEIPT_FINGERPRINT_KEY` set in Vercel and checked with one deletion-check call (before DL-5).
 
@@ -311,7 +328,7 @@ Plain language; each has a suggested answer. **Bold = needed before the slice it
 
 ### 9.1 From v2 and the SA review
 
-- [ ] **BQ-20 There is no free tier. What does the account have during the 14 days, and after a plain cancel?** **Suggestion: (a)** what it normally has once a plan ends. (status: pending user input; **before SX-2 and DL-2**)
+- [x] **BQ-20 There is no free tier. What does the account have during the 14 days, and after a plain cancel?** **Suggestion: (a)** what it normally has once a plan ends. (**before SX-2 and DL-2**) **Answered 2026-10-27:** suggestion (a) is **replaced**. When an owner-started end (period-end cancel, P-7a.4 "Ends now" including during a failed payment, or a deletion request) finishes the paid plan, the account moves to the **free cohort** (`trial`, "Test Flight") for **14 days** (config) with a **fresh 1,000 credits**, even if it already used its trial. Repeat cancels halve the period each time, to a 1-day minimum (14 → 7 → 4 → 2 → 1; rounding left to SA). A plan Stripe ends after failed retries (`payment_failed`) keeps today's path (5 days read-only, then paused). A Founding Partner whose free access runs past the period end goes back to Founding Partner (BQ-5). After the free period, the normal cohort lapse applies. Overrides SA K-1's "there is no free tier" framing for this purpose. Written by new slice SX-2b (§6.2); §3.2 and §5 updated. Closes D3's BA-10.2 to BA-10.6.
 - [ ] **BQ-21 Block the request at once if Stripe is connected or money is in flight?** (open issue 3) **Suggestion: yes.** (status: pending user input; **before DL-1b**)
 - [ ] **BQ-22 If money in flight appears during the 14 days, what happens at the lock date?** **Suggestion:** don't lock; email once; check again; admin sees "blocked". (**before DL-4**)
 - [ ] **BQ-23 Public website and booking pages offline at the lock?** **Suggestion: yes** (DL-4b, 1.5 d). (**before DL-4**)
@@ -319,7 +336,7 @@ Plain language; each has a suggested answer. **Bold = needed before the slice it
 - [ ] **BQ-32 A reason picker in the deletion drawer too?** **Suggestion:** yes, the same list as cancel, list only. (before DL-2)
 - [ ] **BQ-33 Owner cancelled earlier, then asked for deletion, then keeps. Does the plan renew?** **Suggestion:** no. (before DL-1b)
 - [ ] **BQ-34 Boost credits while deletion is pending?** **Suggestion:** no, "Keep your account first". (before DL-1b)
-- [ ] **BQ-35 (shared) Files reversal, confirm the record.** **Suggestion:** confirm; the deletion drawer says documents are downloaded one by one; the typed sentence stays "I have exported my data and downloaded my documents". (before DL-2)
+- [x] **BQ-35 (shared) Files reversal, confirm the record.** **Suggestion:** confirm; the deletion drawer says documents are downloaded one by one; the typed sentence stays "I have exported my data and downloaded my documents". (before DL-2) **Answered 2026-10-27:** confirmed; the 2026-10-25 record stands. Files are not exported, and client documents are downloaded one by one from each contact's record. The export drawer and the deletion drawer both say so plainly. The typed sentence stays "I have exported my data and downloaded my documents". Legal open issue 2 stays open.
 - [ ] **BQ-36 Reminder 3 days before a cancelled plan ends?** **Suggestion:** yes. (before SX-3)
 - [ ] **BQ-38 Operator reactivates the plan in Stripe while deletion is pending = "Keep my account"?** **Suggestion:** yes, with the "kept" email. (before DL-1b)
 - [ ] **BQ-39 Clients' future bookings when the account closes.** **Suggestion:** the deletion screen and the 3-day reminder show how many future bookings there are and the owner tells their clients; we do not cancel or email clients; client links show "no longer available online". (raised by: SA; **before DL-2**)
@@ -328,12 +345,12 @@ Plain language; each has a suggested answer. **Bold = needed before the slice it
 
 ### 9.2 Carried from v1, still open
 
-- [ ] **BQ-7 The reason list.** **Suggestion:** Too expensive · Not using it enough · Missing a feature I need · Moving to another tool · My business is closing or pausing · Technical problems · Other. (before SX-2)
+- [x] **BQ-7 The reason list.** **Suggestion:** Too expensive · Not using it enough · Missing a feature I need · Moving to another tool · My business is closing or pausing · Technical problems · Other. (before SX-2) **Answered 2026-10-27:** the suggested 7 reasons, as shipped in D2's `lib/business-os/billing/planLeaveReasons.ts`.
 - [ ] **BQ-9 Credits.** **Suggestion:** monthly credits work through the 5 read-only days and stop when paused (C-9); Boost credits stay until the account is deleted, then are lost, no refund.
 - [ ] **BQ-11 Failed last payment.** **Suggestion:** no self-service cancel or deletion request; "update your card, or contact support".
 - [ ] **BQ-12 Soft Disconnect of Stripe with running client plans.** **Suggestion:** warn, allow. (before SX-5)
 - [ ] **BQ-15 Switch on while plan limits are not enforced?** **Suggestion:** yes; the copy states the configured rule.
-- [ ] **BQ-17 List only, no free-text reason.** **Suggestion:** yes.
+- [x] **BQ-17 List only, no free-text reason.** **Suggestion:** yes. **Answered 2026-10-27:** yes, list only, no free text.
 - [ ] **BQ-18 Buy a plan while deletion is pending?** **Suggestion:** no, Keep first.
 - [ ] **BQ-19 Stripe connection delete refuses when Stripe won't let go.** **Suggestion:** yes, honest refusal. (before SX-5)
 - [ ] **Open issue 1 / BQ-3 (shared) Sender and support address.** **Suggestion:** `notifications@agentspilot.ai` for now, also in the banned-login copy. (before SX-3)
@@ -687,3 +704,4 @@ If EXPORT finds it must edit a file that this table says it does not, it records
 | 2026-10-25 | SA Split Review (SA) | `## SA Split Review — 2026-10-25` added, identical in the EXPORT and DELETE files: ⚠️ approved with conditions SR-1…SR-12. `receiptInput.ts` moves to DELETE, and EXPORT owns only `findDeletionFacts` (frozen interface spec). S-1 covers more files (`no-deletion-paths.guard.test.ts` allow-list, version file, pins). Regeneration order DL-1a → MX-1a → MX-7, with a pre-apply check. MX-7 is two migrations. Duplicate-number Jest guard in DL-1a. XC-4 now defers to BQ-41 (cap columns in DL-1a). `DownloadMyDataButton` is the frozen export entry. Hotspot anchors. Unlisted surfaces assigned. BQ-25 and BQ-27 move to before MX-4 switch-on. First slices: EXPORT MX-0, DELETE DL-1a (+ SX-1) |
 | 2026-10-25 | §11 updated with SA split rulings SR-1/3/9/10/11 (SR-12) | Spliced identically into §11 of the EXPORT and DELETE files; changed rows marked "(SR-n, 2026-10-25)". B.1: `receiptInput.ts` moved to DELETE (SR-1), guard rules vs regen allow-list and `SQL_AUTH_WRITE_ALLOW_LIST` (SR-3). B.2: S-1 lists every file under the cleanup-regen lock, order DL-1a → MX-1a → MX-7 and the pre-apply check (SR-3/4/5); S-2 adds `businessOwnedTables.ts`; S-3 now `findDeletionFacts` only; S-4 `DownloadMyDataButton variant="button"` (SR-9); S-5/S-6 DELETE only, EXPORT does not edit; S-7/8/9/11 own anchor (SR-10); new S-16/S-17 shared add-only (SR-11). B.3: reservation fields, MX-7 two migrations, duplicate-prefix guard (SR-6/7). B.4: rows updated. New B.6 frozen interfaces, B.7 hotspot anchors, B.8 more file assignments |
 | 2026-10-26 | SX-1 as-built note (Dev, D2) | §6.2: SX-1 extends P-7a.1's engine (names on `main`, no `/plan/keep`); `trialing` manageable (P-7a TQ-14); `isPlanSelfCancelEnabled()` superseded for the plan cancel by P-7a C-1 / BQ-1 (§11 to follow at the next joint splice); per-attempt key, cancel-side `change_pending`, optional `reasonCode` in the existing audit key, one-path guard; `origin` and SX C-3 (incl. `cancel_at`) move to D6; BQ-11 scoped to the deletion request |
+| 2026-10-27 | User decisions recorded (BA) | §9: BQ-7 (D2's 7 reasons), BQ-17 (list only), BQ-35 (shared; 2026-10-25 record stands, legal open issue 2 open) answered. BQ-20 answered, replacing suggestion (a): an owner-started end moves the account to the free cohort (`trial`, Test Flight) for 14 days with a fresh 1,000 credits, even after a used trial; repeat cancels halve it to a 1-day minimum; `payment_failed` keeps today's path; Founding Partner returns to Founding Partner; overrides SA K-1's "no free tier" framing for this purpose. §3.1 row C, §3.2 and §5 rewritten to match. §6.2: new slice **SX-2b** (D3.1, ≈ 1.5 d; webhook `customer.subscription.deleted` with `cancellation_requested`, billing-row lookup by subscription id, current-subscription check, repository + `recordPlanChange`, `afterPlan` config in the drift snapshot, repeat-cancel tracking, own coordination row); D3's PR held without auto-merge until SX-2b merges; `reasonCode` hand-over (SA Q-1, amends D2 Q-5); "Reactivate" → "Keep my plan". Totals 23.5 d / 25 d. §11 not edited |
