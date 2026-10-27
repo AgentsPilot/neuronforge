@@ -26,7 +26,10 @@ import {
   BusinessOsExportRequestRepository,
   EXPORT_REQUEST_COLUMNS,
   EXPORT_REQUEST_ERROR,
+  EXPORT_REQUEST_HISTORY_COLUMNS,
   EXPORT_REQUEST_START_FUNCTION,
+  HISTORY_REQUEST_LIMIT,
+  HISTORY_REQUEST_LIMIT_MAX,
 } from '../BusinessOsExportRequestRepository';
 import { START_OUTCOMES } from '@/lib/business-os/data-export/moduleExportPolicy';
 
@@ -39,7 +42,7 @@ function client(...results: Result[]) {
   let next = 0;
   const take = () => results[Math.min(next++, results.length - 1)] ?? { data: null, error: null };
   const builder: Record<string, unknown> = {};
-  for (const method of ['select', 'eq', 'maybeSingle']) {
+  for (const method of ['select', 'eq', 'maybeSingle', 'order', 'limit', 'update', 'is']) {
     builder[method] = (...args: unknown[]) => {
       calls.push({ method, args });
       return builder;
@@ -214,5 +217,91 @@ describe('findByIdForUser', () => {
     expect(bad.calls).toEqual([]);
     const failing = client({ data: null, error: { code: 'XX000', message: 'boom' } });
     expect((await repo(failing.c).findByIdForUser(REQUEST, OWNER)).error).toMatchObject({ code: 'XX000' });
+  });
+});
+
+describe('listRecentForUser (MX-1b history, §5 step 1)', () => {
+  const REQUEST2 = '44444444-4444-4444-8444-444444444444';
+  const row = (id: string, overrides: Record<string, unknown> = {}) => ({ id, origin: 'owner', modules: ['clients', 'quotes'], requested_at: T, ...overrides });
+
+  it('filters on user_id and orders requested_at DESC, then id DESC (the tie-break), then limits REQUESTS', async () => {
+    const { c, calls } = client({ data: [row(REQUEST2), row(REQUEST)], error: null });
+    const result = await repo(c).listRecentForUser(OWNER);
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_export_requests'] },
+      { method: 'select', args: [EXPORT_REQUEST_HISTORY_COLUMNS] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'order', args: ['requested_at', { ascending: false }] },
+      { method: 'order', args: ['id', { ascending: false }] },
+      { method: 'limit', args: [HISTORY_REQUEST_LIMIT] },
+    ]);
+    expect(result).toEqual({
+      data: [
+        { id: REQUEST2, origin: 'owner', modules: ['clients', 'quotes'], requestedAt: T },
+        { id: REQUEST, origin: 'owner', modules: ['clients', 'quotes'], requestedAt: T },
+      ],
+      error: null,
+    });
+    expect(EXPORT_REQUEST_HISTORY_COLUMNS).not.toMatch(/\*|admin_actor_id|user_id/);
+  });
+
+  it.each([
+    [undefined, HISTORY_REQUEST_LIMIT],
+    [0, 1],
+    [-3, 1],
+    [999, HISTORY_REQUEST_LIMIT_MAX],
+    [2.5, HISTORY_REQUEST_LIMIT],
+    [7, 7],
+  ])('limit %p is clamped to %p', async (limit, expected) => {
+    const { c, calls } = client({ data: [], error: null });
+    await repo(c).listRecentForUser(OWNER, limit === undefined ? {} : { limit });
+    expect(calls.find((call) => call.method === 'limit')?.args).toEqual([expected]);
+  });
+
+  it('a malformed row is dropped and logged by id; the rest are returned', async () => {
+    const { c } = client({ data: [row(REQUEST2, { origin: 'robot' }), row(REQUEST)], error: null });
+    const result = await repo(c).listRecentForUser(OWNER);
+    expect(result.data?.map((r) => r.id)).toEqual([REQUEST]);
+    expect(logged.some((args) => (args[0] as Record<string, unknown>).requestId === REQUEST2)).toBe(true);
+  });
+
+  it('refuses a non-uuid user id before any call; a DB error is { error }, never a throw', async () => {
+    const bad = client({ data: [], error: null });
+    expect((await repo(bad.c).listRecentForUser('nope')).error).toMatchObject({ code: EXPORT_REQUEST_ERROR.INVALID_INPUT });
+    expect(bad.calls).toEqual([]);
+    const failing = client({ data: null, error: { code: 'XX000', message: 'boom' } });
+    expect(await repo(failing.c).listRecentForUser(OWNER)).toEqual({ data: null, error: expect.objectContaining({ code: 'XX000' }) });
+  });
+});
+
+describe('markRequestedEmailSent (MX-1b, compare-and-set)', () => {
+  it('updates only the row of this account while the column is NULL, counted exactly, with no select after the update', async () => {
+    const { c, calls } = client({ error: null, count: 1 } as Result);
+    const result = await repo(c).markRequestedEmailSent(REQUEST, OWNER);
+    expect(result).toEqual({ data: { updated: true }, error: null });
+    expect(calls.map((call) => call.method)).toEqual(['from', 'update', 'eq', 'eq', 'is']);
+    expect(calls[0].args).toEqual(['business_os_export_requests']);
+    const [payload, options] = calls[1].args as [Record<string, unknown>, unknown];
+    expect(Object.keys(payload).sort()).toEqual(['requested_email_sent_at', 'updated_at']);
+    expect(options).toEqual({ count: 'exact' });
+    expect(calls[2].args).toEqual(['id', REQUEST]);
+    expect(calls[3].args).toEqual(['user_id', OWNER]);
+    expect(calls[4].args).toEqual(['requested_email_sent_at', null]);
+    expect(calls.some((call) => call.method === 'select')).toBe(false);
+  });
+
+  it('count 0 (already marked, or another account) is updated: false and not an error', async () => {
+    const { c } = client({ error: null, count: 0 } as Result);
+    expect(await repo(c).markRequestedEmailSent(REQUEST, OWNER)).toEqual({ data: { updated: false }, error: null });
+  });
+
+  it('refuses bad ids before any call; a DB error is { error }, never a throw', async () => {
+    for (const [requestId, userId] of [['nope', OWNER], [REQUEST, 'nope']]) {
+      const bad = client({ error: null });
+      expect((await repo(bad.c).markRequestedEmailSent(requestId, userId)).error).toMatchObject({ code: EXPORT_REQUEST_ERROR.INVALID_INPUT });
+      expect(bad.calls).toEqual([]);
+    }
+    const failing = client({ error: { code: 'XX000', message: 'boom' } });
+    expect(await repo(failing.c).markRequestedEmailSent(REQUEST, OWNER)).toEqual({ data: null, error: expect.objectContaining({ code: 'XX000' }) });
   });
 });

@@ -1,7 +1,7 @@
 # Feature Flags
 
 > **Last Updated**: 2026-10-27
-> **Version**: 1.14.0
+> **Version**: 1.15.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-10-27 | 1.15.0 | Dev | Added `BUSINESS_OS_MODULE_EXPORT_ENABLED` (export redesign MX-1b): the per-module export's switch. Server-only, **default off**, on only for the exact string `true`. While off `POST`/`GET /api/business-os/export-requests` answer 404 and "Download my data" builds the ZIP as before. Reader `isModuleExportEnabled()`. **Never on in Preview before MX-4.** |
 | 2026-10-27 | 1.14.0 | Dev | Added "Adding an environment variable" and step 5 of "Adding a New Feature Flag" (admin environment view EC-3): every new environment variable gets an entry in `lib/admin/environment/catalogue.ts` in the same PR, which the catalogue drift guard enforces in the Jest gate. |
 | 2026-10-21 | 1.13.0 | Dev | Added `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` (data export DE-10b.2): the customer self-delete's off switch. Server-only, **default off**, on only for the exact string `true`. While off the Danger Zone is unchanged (`GET /api/business-os/account/deletion-check` answers `{ enabled: false }`) and `POST /api/business-os/account/delete` answers 404. Reader `isAccountSelfDeleteEnabled()`. |
 | 2026-10-20 | 1.12.0 | Dev | Added `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED` (upgrade modal UM-2, TEST ONLY): server-only, default off. While off `/business-os/upgrade-modal-demo` answers 404. Developer `.env.local` only, never Vercel. |
@@ -66,6 +67,7 @@ Feature flag functions are defined in:
 | **Business OS: plan checkout** | `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/business-os/billing/plan/checkout` (refuses unless the price switch is also on) |
 | **Business OS: test harness credit tools (TEST ONLY)** | `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/admin/business-os/test/take-credits` ("Test credits" tab on `/test-business-os`) |
 | **Business OS: upgrade modal demo page (TEST ONLY)** | `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED` | **Server only** | `false` (unset = off) | `/business-os/upgrade-modal-demo` (linked from the "Upgrade modal" tab on `/test-business-os`) |
+| **Business OS: module export** | `BUSINESS_OS_MODULE_EXPORT_ENABLED` | **Server only** | `false` (unset = off; only the exact string `true` is on) | `POST`/`GET /api/business-os/export-requests`; "Download my data" opens the export drawer when on |
 
 ---
 
@@ -415,6 +417,25 @@ Remove it with the demo, at the latest when UM-F2 wires a real caller.
 ```bash
 # .env.local — on only for the end-of-stream upgrade modal run
 BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED=false
+```
+
+---
+
+### Business OS: module export — `BUSINESS_OS_MODULE_EXPORT_ENABLED`
+
+Export redesign MX-1b ([workplan](/docs/workplans/BUSINESS_OS_EXPORT_MX1B_WORKPLAN.md)). **Default: off. Server-only.** Reader:
+`isModuleExportEnabled()` in `lib/utils/featureFlags.ts`, read on every request. On **only** for the exact string `true`.
+
+| State | What happens |
+|---|---|
+| Off (default) | `POST` and `GET /api/business-os/export-requests` answer **404** before reading the session. "Download my data" (Settings, Danger Zone, `/settings`, `/v2/settings`) builds the ZIP exactly as before. The button learns the state from the GET's own 404 |
+| On | "Download my data" opens the export drawer: the owner ticks modules, the request is queued (2 per rolling 24 h, one at a time, held by the database) and an "Export requested" email is sent. The module emails come from the MX-3 worker |
+
+⚠️ **Never switch it on in Preview before MX-4.** Preview and Production share one database, and the deletion receipt reads only the old export table until MX-4. Rollback: unset it and redeploy; no data changes with it.
+
+```bash
+# Local only until MX-4
+BUSINESS_OS_MODULE_EXPORT_ENABLED=true
 ```
 
 ---
