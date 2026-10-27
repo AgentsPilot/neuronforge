@@ -135,3 +135,4 @@ No database tables are affected and there are no migrations.
 | 2026-10-27 | Created | BA draft: three hardening items, four open questions for SA |
 | 2026-10-27 | SA review | OQ-1..OQ-4 resolved; status SA-approved with conditions |
 | 2026-10-27 | Code complete | Dev, branch `fix/env-config-hardening`: FR-1 to FR-3 implemented per the [workplan](/docs/workplans/ENV_CONFIG_HARDENING_WORKPLAN.md); awaiting SA code review |
+| 2026-10-27 | In PR | RM: SA code review approved, QA passed, user approved the diff. Commits `7abf5260`, `3a689459`, `5da51290`, `b409b623`, `69a53bb0`, then a clean merge of `origin/main` (`398bc850`). [PR #530](https://github.com/AgentsPilot/neuronforge/pull/530) is open, without auto-merge. Owed before merge: the user’s OQ-4 check of the deployed `ENCRYPTION_SECRET`, and `oneAddressPolicy` green on CI |

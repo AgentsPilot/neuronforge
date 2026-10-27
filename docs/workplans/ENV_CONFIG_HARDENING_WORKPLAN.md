@@ -5,7 +5,7 @@
 **Developer:** Dev
 **Requirement:** [ENV_CONFIG_HARDENING_REQUIREMENT.md](/docs/requirements/ENV_CONFIG_HARDENING_REQUIREMENT.md) (SA-approved 2026-10-27; § SA Review rulings and conditions are binding)
 **Branch:** `fix/env-config-hardening` (created by TL; confirmed with `git branch --show-current`)
-**Status:** Code Complete
+**Status:** In PR (#530)
 
 ## Overview
 
@@ -199,6 +199,17 @@ None.
 
 ## Commit Info
 
+**Branch:** `fix/env-config-hardening` · **PR:** [#530](https://github.com/AgentsPilot/neuronforge/pull/530) (merge commit to `main`; auto-merge NOT enabled, the user runs a manual pre-merge check)
+
+| Commit | Message |
+|---|---|
+| `7abf5260` | chore(config): remove unused build-time env passthrough |
+| `3a689459` | fix(plugins): read the server-only Slack secret name in the V1 strategy |
+| `5da51290` | fix(security): fail closed when encryption secret or webhook verify token is unset |
+| `b409b623` | test: guard against reintroducing removed env config patterns |
+| `69a53bb0` | docs: add env config hardening requirement and workplan |
+| `398bc850` | Merge `origin/main` into the branch: no conflicts; 7 targeted suites (138 tests) re-run green after the merge |
+
 ## Change History
 
 | Date | Change | Details |
@@ -208,3 +219,4 @@ None.
 | 2026-10-27 | SA review | Approved with conditions (SA comments 2, 3, 5) |
 | 2026-10-27 | SA code review | Code approved for QA; Windows-only oneAddressPolicy failure confirmed pre-existing |
 | 2026-10-27 | QA | Pass: 146 of 147 targeted tests pass (only failure is the pre-existing Windows-only oneAddressPolicy case); mutation 15 of 16 red; 0 wording hits |
+| 2026-10-27 | Committed, PR opened | RM: 5 commits plus a clean merge of `origin/main`; PR #530 open, auto-merge not enabled (user pre-merge check owed) |
