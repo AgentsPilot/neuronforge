@@ -698,6 +698,18 @@ const MIGRATED_PAGES = [
     files: ['app/admin/settings/page.tsx'],
   },
   {
+    // Admin environment view EC-2 (FR-11, as L-12): header with the Read-only
+    // badge, the Refresh-only bar, shared states, the read on readAdminResponse,
+    // tables on the shared adminTable constants. No strip, no filters, no
+    // drawer, no dialog: the page is read-only.
+    page: '/admin/environment (Environment)',
+    files: [
+      'app/admin/environment/page.tsx',
+      'app/admin/environment/components/EnvironmentView.tsx',
+      'app/admin/environment/environmentDisplay.ts',
+    ],
+  },
+  {
     // Finance F-2: the shared header (h1 "Finance") and states; the read on
     // readAdminResponse since F-3. Finance F-4: the shared filter bar and the
     // URL hook; DV-1 ended in F-4 (Refresh moved from the header to the bar).
