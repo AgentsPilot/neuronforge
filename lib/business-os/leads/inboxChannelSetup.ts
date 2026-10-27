@@ -631,9 +631,18 @@ export async function enableInboxChannel(input: {
     mail_from: rule.from,
     mail_subject_prefix: rule.subjectPrefix,
     mail_since: rule.since,
-    /* Stored as JSON: the plan hands it to `crm.capture_enquiry`, which accepts
-       either an object or the string form. */
-    enquiry_template: JSON.stringify(template),
+    /*
+     * THE OBJECT, NOT A JSON STRING.
+     *
+     * This was `JSON.stringify(template)`, with a comment claiming the
+     * executor took either form. It does not: `crm.capture_enquiry` declares
+     * `template` as an object and the plugin layer validates it, so every run
+     * died with "Parameter template should be object, got string" — the scatter
+     * failed on item 0, no enquiry was ever filed, and the channel looked
+     * healthy throughout. `input_values` is JSONB, so an object stores and
+     * resolves as one.
+     */
+    enquiry_template: template,
   };
 
   if (current) {

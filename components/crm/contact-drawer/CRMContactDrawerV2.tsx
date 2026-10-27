@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useConfigurationDialogOpen } from '@/components/business-os/ConfigurationDialogProvider';
 import { NoShowConfirmDialog } from '@/components/scheduling/NoShowConfirmDialog';
-import { businessCollectsIntake } from '@/lib/business-os/intakeReach';
+import { businessCollectsIntake, intakeAppliesToService } from '@/lib/business-os/intakeReach';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
@@ -317,7 +317,13 @@ function proposalsFor(bookingId: string, proposals: DrawerProposal[]): DrawerPro
  * the refund fields were added to one and not the other.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-function quotedPayment(
+/*
+ * Exported for its test. Every figure a quoted job shows — the status pill, the
+ * refund chip, the totals strip, and through `moneyStateFrom` the card's whole
+ * next-step banner — is read off this one return value, so it is worth testing
+ * as behaviour rather than pinning its source.
+ */
+export function quotedPayment(
   proposal: DrawerProposal | null,
   currency: string
 ): SessionPayment | null {
@@ -373,8 +379,39 @@ function quotedPayment(
   const nextDue = stages.find(s => s.status !== 'paid') ?? null;
   const subject = lastPaid ?? nextDue ?? null;
 
+  /*
+   * ── MONEY THAT CAME BACK IS STILL MONEY THAT ARRIVED ────────────────────
+   *
+   * This asked `status === 'paid'`, and a fully refunded invoice's status is
+   * `refunded`. So a quote that was paid and then returned read as a quote
+   * nobody had ever paid, and ONE false answer here produced every wrong
+   * figure on the card at once:
+   *
+   *   · `collected` fell to 0, so `fullyRefunded` could not be true —
+   *     `collected > 0` is one of its clauses — and an $80 refund of an $80
+   *     invoice was labelled PARTIALLY refunded
+   *   · `status` fell through both branches to 'pending', so Manage payment
+   *     showed "Pending" over an $80 refund and offered "Mark as Paid"
+   *   · `moneyStateFrom` saw a pending single payment and said
+   *     `needs_invoice`, so the card asked the owner to collect payment for
+   *     a job whose money had already been collected and given back
+   *
+   * `outstandingInvoiceId` below was fixed for exactly this — "a refunded
+   * invoice is not an outstanding one" — and this line was left behind, which
+   * is why the card could know the invoice was not owed and still call the
+   * payment pending.
+   *
+   * Reading `refunded_amount` and not just the status, for the reason that
+   * fix gives: a refund can land on an invoice that was never marked paid,
+   * leaving `status` at `sent` while the money has genuinely gone back. A
+   * PARTIAL refund leaves the status at `paid` and is caught by the first
+   * clause either way.
+   */
   const anyMoneyCollected =
-    paidStages.length > 0 || (stages.length === 0 && proposal.invoice.status === 'paid');
+    paidStages.length > 0 ||
+    (stages.length === 0 &&
+      (proposal.invoice.status === 'paid' ||
+        Number(proposal.invoice.refunded_amount ?? 0) > 0));
 
   /*
    * WHAT CAME BACK, across the whole job.
@@ -1657,7 +1694,30 @@ export function buildJourneySteps(
    * a client already gave.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  if (hasIntakeData || (collectsIntake && !isUnscheduled)) {
+  /*
+   * ── THE OTHER HALF OF THE RULE ──────────────────────────────────────────
+   *
+   * The comment above already names TWO kinds of sale with no occasion for a
+   * form: "a quote request or a product". Only the product half was ever
+   * coded. `!isUnscheduled` catches the product; nothing caught the quote.
+   *
+   * So a scheduled QUOTE drew the step, offered "Send client form", and the
+   * server refused the send with "This service does not collect an intake
+   * form" — a button whose only outcome was a red banner. Seen on an owner's
+   * own booking: a quotation with a real meeting on Wed 28 Oct.
+   *
+   * Taken from `intakeAppliesToService` rather than written again here,
+   * because that is the function `resolveIntakeBlock` refuses with. Two
+   * copies of this rule is exactly how one came to be missing a clause.
+   *
+   * `!isUnscheduled` stays beside it: it carries a fallback the shared rule
+   * does not, treating a booking with no `is_scheduled` AND no start time as
+   * unscheduled. Together they are a superset of both, so this can only
+   * remove steps that had nothing to offer.
+   */
+  const intakeHasAnOccasion = intakeAppliesToService(booking.service) && !isUnscheduled;
+
+  if (hasIntakeData || (collectsIntake && intakeHasAnOccasion)) {
     /*
      * WHERE THE FORM ACTUALLY STANDS.
      *
@@ -1780,7 +1840,15 @@ export function buildJourneySteps(
               isUpcoming ? 'active' :
               isCompleted || isCancelled ? 'skipped' : 'pending',
       details: intakeRest,
-      metadata: { state: intakeState },
+      /*
+       * `sendable` is the gate above, carried to the surface that draws the
+       * button. The step can still appear when the rule says no — a form
+       * already sent or answered keeps its step, because the record outlives
+       * the configuration — and in exactly that case there is nothing left to
+       * send. Without this, a service switched to `proposal` after a send
+       * would keep offering a button the server refuses.
+       */
+      metadata: { state: intakeState, sendable: collectsIntake && intakeHasAnOccasion },
       /*
        * The form's own date, so the step files under the day it happened.
        *
@@ -2661,8 +2729,42 @@ export function buildSessionPlan(input: {
   serviceCurrency: string;
   /** What has actually arrived, from the transactions or a paid invoice. */
   collected: number;
+  /**
+   * The booking's charges, so a period can say what came back off ITSELF.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `moneyItems` documents where a period's refund lives: "the installment row
+   * does not carry it: `refunded_amount` is derived by trigger onto the INVOICE
+   * the period raised". True for an invoiced plan, and there is no other source
+   * for one — `payment_plan_installments` HAS no `refunded_amount` column.
+   *
+   * A plan billed to a card raises no invoice at all. Its periods are charged
+   * by Stripe against the subscription and the refund lands on the
+   * TRANSACTION, so the invoice join finds nothing and every period reported
+   * no refund.
+   *
+   * Measured 2026-10-26: booking f8df6318, period 1 of 2, $30 charged and $30
+   * refunded in full. The strip above read "Refunded $30 · You keep $0" while
+   * the period beneath it read "$30 Paid Oct 26" with nothing to say it had
+   * gone back — and the row went on offering to refund it.
+   *
+   * Matched by `transaction_id`, which the period already carries and which is
+   * this sale's own charge. Not inferred from amounts or dates.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /* `id` optional, because the two callers' local row types declare different
+     subsets of the same select. A charge with no id cannot be matched to a
+     period and is skipped rather than guessed at. */
+  payments?: Array<{ id?: string | null; refunded_amount?: number | string | null }>;
 }): SessionPaymentPlan | undefined {
-  const { planPeriods, service, servicePrice, serviceCurrency, collected } = input;
+  const { planPeriods, service, servicePrice, serviceCurrency, collected, payments } = input;
+
+  /** What each charge returned, by its own id. */
+  const refundedByTransaction = new Map<string, number>();
+  for (const pay of payments ?? []) {
+    const amount = Number(pay.refunded_amount ?? 0) || 0;
+    if (pay.id && amount > 0) refundedByTransaction.set(pay.id, amount);
+  }
 
   /*
    * Billed in full, whatever the service was configured to do. A path that
@@ -2755,6 +2857,12 @@ export function buildSessionPlan(input: {
           trigger: p.trigger ?? 'date',
           invoiceId: p.invoice_id ?? null,
           transactionId: p.transaction_id ?? null,
+          /* What came back off THIS period. The row reads it as
+             `stage.refundedAmount` to cross the line through and to stop
+             offering a refund on money already returned. */
+          refundedAmount: p.transaction_id
+            ? refundedByTransaction.get(p.transaction_id) ?? undefined
+            : undefined,
           dueDate: p.due_date,
           paidAt: p.paid_at ?? null,
         }))
@@ -3442,6 +3550,12 @@ export function CRMContactDrawerV2({
       const money = booking as SchedulingBooking & {
         invoice?: { amount?: number | null; paid_at?: string | null } | null;
         payments?: Array<{
+          /* The charge's own id and what came back off it. The query has
+             always selected both — `payments:payment_transactions(id, amount,
+             refunded_amount, …)` — and only this local type left them out, so
+             a period could not be matched to the refund on its own charge. */
+          id?: string | null;
+          refunded_amount?: number | string | null;
           amount?: number | null;
           status?: string | null;
           /* 'manual' when the owner recorded the money, not a processor. */
@@ -3488,6 +3602,10 @@ export function CRMContactDrawerV2({
          other card builder cannot drift from it again. */
       const sessionPlan = buildSessionPlan({
         planPeriods,
+        /* So a card-paid period can report its own refund — see `payments` on
+           the input. Passed at BOTH call sites: the note above records that
+           these two builders have already drifted once. */
+        payments: money.payments,
         service: bookingWithService.service,
         servicePrice,
         serviceCurrency,
@@ -4148,6 +4266,9 @@ export function CRMContactDrawerV2({
             payments?: Array<{
               id: string;
               status: string;
+              /* Selected by the query; declared here so this twin can answer
+                 the same question the primary path does. */
+              refunded_amount?: number | string | null;
               paid_at?: string | null;
               /* Needed to sum what has actually arrived. The query has always
                  selected it; only this local type left it out. */
@@ -4251,6 +4372,8 @@ export function CRMContactDrawerV2({
 
           const sessionPlan = buildSessionPlan({
             planPeriods,
+            /* The twin of the call above; both must pass this. */
+            payments: bookingMoney.payments,
             /* `?? undefined`: the join yields `null` for a booking whose service
                was deleted, and the helper's parameter is optional, not nullable. */
             service: booking.service ?? undefined,

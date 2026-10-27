@@ -70,7 +70,12 @@ describe('[smoke] setup graph — locking', () => {
   it('locks a step whose prerequisite is outstanding, and names the blocker', () => {
     const graph = resolveSetup(items(), CARD);
 
-    for (const id of ['availability', 'website', 'intake'] as StepId[]) {
+    /* `availability` was in this list until 2026-10-26, when its dependency on
+       `services` was removed: the two formed a circle with the publish gate —
+       hours were needed to publish a service, and services had to be done
+       before hours could be set. `website` and `intake` genuinely do wait for a
+       service, so they carry the case. */
+    for (const id of ['website', 'intake'] as StepId[]) {
       const step = find(graph, id);
       expect(step?.state).toBe('locked');
       expect(step?.blockedBy).toEqual(['services']);
@@ -119,7 +124,13 @@ describe('[smoke] setup graph — what to do next', () => {
     const next = allSteps(graph).filter(step => step.state === 'next');
 
     expect(next).toHaveLength(1);
-    expect(next[0].item.id).toBe('services');
+    /* `availability` since 2026-10-26, when the catalogue moved to the end of
+       the graph: the suggestion is the first compulsory ready step in array
+       order, and pointing a new account at services before it has hours, a tax
+       id or a bank account pointed it at the one task it could not finish —
+       `active_services_count` counts a service only once it is PUBLISHED, and
+       publishing is refused until those exist. */
+    expect(next[0].item.id).toBe('availability');
   });
 
   it('moves next along as steps are completed, skipping locked ones', () => {
@@ -163,7 +174,11 @@ describe('[smoke] setup graph — what to do next', () => {
     // Cash in the room: nothing about money is compulsory, so once the three
     // always-required steps are done the next suggestion is optional work.
     const graph = resolveSetup(items(['services', 'availability', 'website']), OFFLINE);
-    expect(nextStep(graph)?.item.id).toBe('intake');
+    /* `calendar` since the catalogue moved to the end: it belongs to
+       `availability` and so now precedes `intake`, which belongs to services.
+       The behaviour under test is "optional only after mandatory", and that is
+       unchanged — only which optional step comes first. */
+    expect(nextStep(graph)?.item.id).toBe('calendar');
   });
 
   it('offers nothing to do when everything is complete', () => {
@@ -220,9 +235,12 @@ describe('[smoke] setup graph — compulsory is conditional', () => {
 describe('[smoke] setup graph — a lock is a redirect, not a dead end', () => {
   it('points a locked step at the step that is blocking it', () => {
     const graph = resolveSetup(items(), CARD);
-    const availability = find(graph, 'availability')!;
+    /* `intake`, not `availability`: hours no longer wait for a service — see
+       the note on the list above. The behaviour under test is unchanged, only
+       the step that illustrates it. */
+    const intake = find(graph, 'intake')!;
 
-    expect(blockerFor(availability, graph)?.item.id).toBe('services');
+    expect(blockerFor(intake, graph)?.item.id).toBe('services');
   });
 
   it('has no blocker to point at once the step is unlocked', () => {
@@ -262,7 +280,9 @@ describe('[smoke] setup graph — shape', () => {
     const graph = resolveSetup(items([], ['services', 'availability']), CARD);
 
     expect(find(graph, 'payments')).toBeUndefined();
-    expect(allSteps(graph).map(step => step.item.id)).toEqual(['services', 'availability']);
+    /* Hours first since the catalogue moved to the end of the graph. The set is
+       unchanged; only the order is. */
+    expect(allSteps(graph).map(step => step.item.id)).toEqual(['availability', 'services']);
   });
 
   it('counts compulsory work separately from everything else', () => {
@@ -379,7 +399,9 @@ describe('[smoke] setup graph — how the money is collected', () => {
 
     expect(find(graph, 'payments')).toBeUndefined();
     expect(find(graph, 'invoicing')).toBeUndefined();
-    expect(graph.blocking.map(step => step.item.id)).toEqual(['services', 'availability', 'website']);
+    /* Same three, in the order the graph now presents them: hours, then the
+       catalogue, then the page that publishes it. */
+    expect(graph.blocking.map(step => step.item.id)).toEqual(['availability', 'services', 'website']);
   });
 
   it('offers a card processor to a mixed business without demanding it', () => {
@@ -691,7 +713,10 @@ describe('third-party channels are offered, not pressed', () => {
      */
     const graph = resolveSetup(items([], WITH_GA), CARD);
 
-    expect(nextStep(graph)?.item.id).toBe('services');
+    /* `availability`, for the same reason as the suggestion test above: real
+       work still wins over a third-party channel, and the first piece of real
+       work is now hours rather than the catalogue. */
+    expect(nextStep(graph)?.item.id).toBe('availability');
   });
 
   it('applies to meta as well, which has the same shape', () => {
@@ -774,5 +799,54 @@ describe('a business that sells nothing through the platform', () => {
 
     expect(sellsAnything(freeOnly)).toBe(true);
     expect(allSteps(resolveSetup(items([]), freeOnly)).map(s => s.item.id)).toContain('services');
+  });
+});
+
+/**
+ * The deadlock a real signup hit on 2026-10-26.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Three true statements that together left a new account with nowhere to go:
+ *
+ *   · the dashboard counts `services` done only when one is PUBLISHED
+ *     (`active_services_count` filters `status = 'active'`)
+ *   · publishing a scheduled service is refused while `hours` is missing —
+ *     `journeyReadiness` makes it a blocking gap
+ *   · `availability` required `services`
+ *
+ * The owner saw "Add services", with "Set availability · After Services"
+ * beneath it, and could complete neither. The onboarding build screen had the
+ * opposite — and correct — order all along, so the two surfaces contradicted
+ * each other.
+ *
+ * This guards the direction, not the wording: hours must be reachable before
+ * anything has been published.
+ */
+describe('[smoke] setup graph — hours are reachable before a service exists', () => {
+  it('does not lock availability behind services', () => {
+    const graph = resolveSetup(items(), CARD);
+    const availability = find(graph, 'availability');
+
+    expect(availability?.blockedBy).not.toContain('services');
+    expect(availability?.state).not.toBe('locked');
+  });
+
+  it('leaves nothing in the chain waiting on a service to set hours', () => {
+    /*
+     * The circle, stated as a reachability check rather than as one edge: from
+     * a standing start — no services, no hours — at least one mandatory step
+     * the OWNER can act on must be open. A graph where every compulsory step is
+     * locked is a graph with no way in, whatever the individual edges say.
+     */
+    const graph = resolveSetup(items(), CARD);
+    /* `next` counts as open: it is the suggested one of the ready steps, so
+       filtering on `ready` alone silently excludes the very step the graph is
+       pointing at. */
+    const open = allSteps(graph).filter(
+      step => step.mandatory && (step.state === 'ready' || step.state === 'next')
+    );
+
+    expect(open.length).toBeGreaterThan(0);
+    expect(open.map(step => step.item.id)).toEqual(expect.arrayContaining(['availability']));
   });
 });
