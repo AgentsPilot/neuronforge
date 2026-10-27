@@ -278,15 +278,12 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   config('SLACK_CLIENT_ID', 'plugins', 'OAuth client for the Slack plugin; the plugin cannot connect without it and its secret.', 'identifier'),
   secret('SLACK_CLIENT_SECRET', 'plugins', 'OAuth secret for the Slack plugin.'),
   config('NEXT_PUBLIC_SLACK_CLIENT_ID', 'plugins', 'Slack client ID read by the older (version 1) Slack plugin code.', 'identifier'),
-  secret('NEXT_PUBLIC_SLACK_CLIENT_SECRET', 'plugins', 'Slack client secret name read by the older (version 1) Slack plugin code.'),
   config('NGROK_SLACK_REDIRECT_URI', 'plugins', 'A tunnel address for testing the Slack sign-in redirect on a developer machine.', 'url', exp('X', 'X', 'O')),
   config('NEXT_PUBLIC_NGROK_SLACK_REDIRECT_URI', 'plugins', 'The Slack test tunnel address, built into the browser bundle; developer machines only.', 'url', exp('X', 'X', 'O')),
   config('WHATSAPP_CLIENT_ID', 'plugins', 'Meta app client for the WhatsApp Business plugin.', 'identifier'),
   secret('WHATSAPP_CLIENT_SECRET', 'plugins', 'Meta app secret for the WhatsApp Business plugin.'),
   config('WHATSAPP_CONFIG_ID', 'plugins', 'The Meta sign-in configuration the WhatsApp Business plugin connects with.', 'identifier'),
   secret('WHATSAPP_VERIFY_TOKEN', 'plugins', 'Answers Meta\'s check when the WhatsApp webhook is registered.'),
-  secret('NANGO_PUBLIC_KEY', 'plugins', 'Key for the Nango integration service, passed through the build configuration.', OPTIONAL, { scope: 'browser-inlined' }),
-  secret('NANGO_SECRET_KEY', 'plugins', 'Server key for the Nango integration service, passed through the build configuration.', OPTIONAL, { scope: 'browser-inlined' }),
   secret('ENCRYPTION_SECRET', 'plugins', 'Key used to encrypt plugin credentials stored in the database.', exp('R', 'R', 'R')),
 
   // 6b. Other external services (SA ruling Q-3)

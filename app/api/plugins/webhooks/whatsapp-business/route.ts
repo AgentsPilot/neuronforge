@@ -5,7 +5,6 @@ import { UserPluginConnections } from '@/lib/server/user-plugin-connections';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'WhatsAppWebhook' });
-const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'your-verify-token-here';
 
 // GET: Handle webhook verification from Meta
 export async function GET(request: NextRequest) {
@@ -19,8 +18,16 @@ export async function GET(request: NextRequest) {
 
     logger.info('Webhook verification request received');
 
+    // Read per request and fail closed when unset (an empty value counts as unset).
+    // The refusal is the same 403 as a wrong token, so a caller cannot tell the two apart.
+    const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
+    if (!verifyToken) {
+      logger.error('WHATSAPP_VERIFY_TOKEN is not set - refusing webhook verification');
+      return new Response('Forbidden', { status: 403 });
+    }
+
     // Verify the token matches
-    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    if (mode === 'subscribe' && token === verifyToken) {
       logger.info('Webhook verified successfully');
       // Respond with the challenge to complete verification
       return new Response(challenge, { status: 200 });
