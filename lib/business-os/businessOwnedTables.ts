@@ -241,6 +241,13 @@ export const USER_OWNED_TABLES: Record<string, string> = {
     'An export request belongs to the person; it survives a Reset (an owner may export, then ' +
     'start over); Purge and account deletion remove it. Not business-owned: an agent-platform ' +
     'user with no business_profiles row can export too.',
+  // Module export MX-1a (XC-7, migration 20261095).
+  business_os_export_requests:
+    'An export request and its module jobs belong to the person; a business Reset or Purge must not ' +
+    'erase the history or reset the daily limit; the account deletion removes them.',
+  business_os_export_module_jobs:
+    'An export request and its module jobs belong to the person; a business Reset or Purge must not ' +
+    'erase the history or reset the daily limit; the account deletion removes them.',
   // Account deletion lifecycle DL-1a (XC-1, migration 20261093).
   business_os_account_closures:
     'A deletion request belongs to the account, not to a business: a business Reset or Purge ' +

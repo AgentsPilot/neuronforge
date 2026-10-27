@@ -7,8 +7,11 @@
  * TQ-1 to TQ-5). Nothing is refunded (Q-B7); the plan keeps working to the
  * paid-through date, then does not renew.
  *
- * Body: `{}` (strict). Any key, such as an injected `userId` or
- * `subscriptionId`, is a 400 (SA C-5); unparsable JSON is a 400 too.
+ * Body: `{}` or `{ reasonCode }` (strict). `reasonCode` is one of
+ * `PLAN_LEAVE_REASON_CODES` (D2 / SX-1, SX C-10, SA-4; SA Q-5: optional until
+ * D3's drawer makes it required); there is no free-text field. Any other key,
+ * such as an injected `userId` or `subscriptionId`, is a 400 (P-7a C-5);
+ * unparsable JSON is a 400 too.
  *
  * 200 → { success: true, data: { outcome: 'cancelled', endsOn } }
  *     | { success: true, data: { outcome: 'unchanged', state, date } }
@@ -27,7 +30,8 @@
  *
  * Audit (AM-7, WC-7): BOS_BILLING_SUBSCRIPTION_CANCELLED once per request
  * that reached the Stripe write (outcome `cancelled` or `unknown`), flushed
- * before the response. Refusals and `unchanged` are logged, never audited. Two
+ * before the response; `details.reasonCode` is the code or null (D2, SA Q-4).
+ * Refusals and `unchanged` are logged, never audited. Two
  * tabs pressing at the same instant can both reach the write and write two
  * entries (SA note); the write itself is idempotent.
  */
@@ -41,6 +45,7 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import { PLAN_MANAGE_REFUSALS, managePlanSubscription, type PlanManageAuditFacts } from '@/lib/business-os/billing/planSubscriptionManage';
 import { isPlanPriceRecognitionEnabled } from '@/lib/business-os/billing/planPricesFlag';
+import { PLAN_LEAVE_REASON_CODES } from '@/lib/business-os/billing/planLeaveReasons';
 import { createLogger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -48,8 +53,8 @@ export const dynamic = 'force-dynamic';
 
 const logger = createLogger({ module: 'BosPlanCancelAPI' });
 
-/** SA C-5: the client always sends `{}`; nothing else is accepted. */
-const CancelBodySchema = z.object({}).strict();
+/** P-7a C-5 + D2 (SA Q-5): `{}` or a reason code from the list; nothing else is accepted. */
+const CancelBodySchema = z.object({ reasonCode: z.enum(PLAN_LEAVE_REASON_CODES).optional() }).strict();
 
 export async function POST(request: NextRequest) {
   // Off: the route looks absent, and nothing is read.
@@ -89,7 +94,10 @@ export async function POST(request: NextRequest) {
     const accountId = resolveAccountId(user.id);
     requestLogger.info({ userId: user.id, accountId }, 'Plan cancel requested');
 
-    const result = await managePlanSubscription({ action: 'cancel', userId: user.id, accountId }, { logger: requestLogger });
+    const result = await managePlanSubscription(
+      { action: 'cancel', userId: user.id, accountId, reasonCode: parsed.data.reasonCode ?? null },
+      { logger: requestLogger }
+    );
 
     const audit = (facts: PlanManageAuditFacts) =>
       logAndFlush(
@@ -104,6 +112,7 @@ export async function POST(request: NextRequest) {
             endsOn: facts.endsOn,
             mode: facts.mode,
             livemode: facts.livemode,
+            reasonCode: facts.reasonCode,
             actor: 'owner',
             correlationId,
           },

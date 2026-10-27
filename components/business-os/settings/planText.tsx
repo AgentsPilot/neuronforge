@@ -146,14 +146,16 @@ export function CategoryRowText({
  * B3 / B4, the failed-renewal lines (plan payments P-6a.2), in ONE place: the
  * drawer and the Settings pop-up (upgrade modal UM-D3, SA R-5 / D3-5) render the
  * same conditions, keys and test ids, so the two cannot disagree about when an
- * owner is told to act. No "Update card" button until P-7a (SA Q-6): Stripe's
- * email has the link.
+ * owner is told to act. "Use the link in Stripe's email" shows only where the
+ * screen offers no "Update card" button (P-7a.2: `manage.cardAndInvoices`,
+ * rendered by `PlanManage`); where it does, the button replaces the line.
  */
 export function PlanBillingNotices({ plan, t }: { plan: PlanPayload; t: (key: string) => string }) {
   const billing = plan.kind === 'tier' ? plan.purchase?.billing : undefined;
+  const offersUpdateCard = plan.purchase?.manage?.cardAndInvoices === true;
   return (
     <>
-      {billing?.state === 'payment_failed' && (
+      {billing?.state === 'payment_failed' && !offersUpdateCard && (
         <p className="text-xs text-[var(--v2-text-secondary)] mt-1" data-testid="plan-update-card-email">
           {t('plan.update_card_email')}
         </p>

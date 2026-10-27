@@ -11,8 +11,10 @@
  * direction (Hebrew right to left) like every other Business OS line.
  *
  * Links: `action_required` opens Stripe's hosted invoice page in a new tab
- * (`noopener noreferrer`); every other kind goes to Settings → Plan. Until
- * P-7a adds "Update card", Settings says where Stripe's link is.
+ * (`noopener noreferrer`); every other kind goes to Settings → Plan, which
+ * offers "Update card" (Stripe's portal, plan payments P-7a.2) whenever the
+ * owner has a Business OS subscription on our record, and otherwise says where
+ * Stripe's emailed link is.
  *
  * Imports nothing from the entitlements module and no server file: the type
  * comes from the import-free predicate module.

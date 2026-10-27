@@ -11,7 +11,7 @@
  * keeps "USD " money strings out of the page.
  */
 
-import { AT_LEAST, TAKINGS_UNKNOWN_CURRENCY } from './financeCopy';
+import { APPROX, AT_LEAST, TAKINGS_UNKNOWN_CURRENCY } from './financeCopy';
 
 /** The one currency code shown with a sign (BD-47). */
 const US_DOLLAR = 'USD';
@@ -51,6 +51,19 @@ export function formatUsd(value: number): string {
 export function formatUsdSign(line: { currency: string | null; amount: number }, opts: { maxDecimals?: 2 | 4 } = {}): string | null {
   if (!isUsDollar(line.currency) || !Number.isFinite(line.amount)) return null;
   return dollars(line.amount, 2, opts.maxDecimals ?? 2);
+}
+
+/**
+ * FIN BD-56 (slice 1b): the client payments approximate-dollar headline in WHOLE
+ * dollars ("≈ $12,346"). It formats the server's figure; it adds nothing (R-9).
+ */
+export function formatApproxWholeDollars(amount: number): string {
+  return `${APPROX} ${dollars(amount, 0, 0)}`;
+}
+
+/** FIN BD-56: one converted amount, or the total, to the cent ("≈ $12,224.32"). */
+export function formatApproxDollars(amount: number): string {
+  return `${APPROX} ${dollars(amount, 2, 2)}`;
 }
 
 export function formatCredits(value: number): string {

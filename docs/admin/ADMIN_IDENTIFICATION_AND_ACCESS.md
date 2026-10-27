@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-10-26
+> **Last Updated**: 2026-10-27
 
 ## Overview
 
@@ -40,139 +40,14 @@ It exists because, before this work, the system had **no trustworthy admin signa
 > version of it described an *intended* end state and a reader would have
 > concluded the system was protected when it was not.
 
-Re-derived **2026-10-18** (AI model price review slice 9, on `f7429b57` plus that slice): **111 handlers across 82
-route files = 105 `requireAdmin` + 6 inline + 0 open.** Slice 9 adds one file with one handler, row 118 (`model-pricing/history#GET`). Before that, **2026-10-18** (AI model price review slice 8, on `f7f69aaf` plus that slice): **110 handlers across 81
-route files = 104 `requireAdmin` + 6 inline + 0 open.** Slice 8 adds three files with one handler each, rows 111–113; three files with four handlers landed on main without a row (finance history, admin data exports) and are registered as rows 114–117, doc only. Before that, **2026-10-16** (AI model price review slice 6, on `447d17a2` plus that slice): **103 handlers across 75
-route files = 97 `requireAdmin` + 6 inline + 0 open.** Slice 6 deletes four pricing handlers and one route file (Sync, and the single-row `PUT`/`POST`/`DELETE`; rows 57, 59, 60 and 61 struck through) and registers `business-os/test/plan-test-clock#POST` (row 110), which landed on main in `be3eab13` (plan payments P-6a.1) without a row. Before that, **2026-10-15** (AI model price review slice 5, on `86dd3266` plus that slice): **106 handlers across 75
-route files = 100 `requireAdmin` + 6 inline + 0 open.** Slice 5 adds one file with two handlers, rows 108–109. Before that, **2026-10-14** (slice 3, on `799f8018` plus that slice): **104 handlers across 74
-route files = 98 `requireAdmin` + 6 inline + 0 open.** (2026-10-09: 100 across 70. Two handlers landed on main since without a register row, `business-os/finance#GET` and `business-os/test/take-credits#POST`, both `requireAdmin`; slice 3 adds two.) The split is measured, not
-asserted — re-run the census rather than trusting these figures if much time has
-passed.
-
-> **How 72/65/7 became 80/74/6.** The 2026-09-21 figures were correct then. Seven
-> handlers added since (the Business OS entitlements routes and the LLM settings
-> reads) were gated from birth but never added to the register below; the base of
-> slice 2 measured **79 / 72 + 7 / 50 files**. Slice 2 then converted
-> `audit-trail#GET` to `requireAdmin` (R1 and R2 caps 7 → 6, same commit) and
-> added `business-os/accounts/[accountId]/summary#GET`, gated from birth. The
-> register now lists all 80.
->
-> **80 → 82 (2026-09-26):** two handlers, both gated from birth, landed in parallel:
-> `health-summary#GET` (admin reorganisation slice 4, the Health landing) and
-> `archiving#GET` (Admin Archiving slice 1). Each branch measured 81 / 75 + 6 / 52
-> on its own; re-measured after the merge: **82 / 76 + 6 / 53 files**. No cap moved.
->
-> **82 → 83 (2026-09-26):** `archiving/runs#POST` (Admin Archiving slice 2b), gated
-> from birth with `requireAdmin` as its first statement. Re-measured on the branch:
-> **83 / 77 + 6 / 54 files**. No cap moved.
->
-> **83 → 84 (2026-09-27):** `jobs-queues#GET` (admin reorganisation slice 5, the
-> Scheduled jobs & queues page), gated from birth with `requireAdmin` as its first
-> statement. Re-measured from disk after merging `origin/main`: **84 / 78 + 6 / 55
-> files**; 26 `/admin` pages. No cap moved.
->
-> **84 → 89 → 87 (2026-10-02):** between 2026-09-27 and `main` `023dde98`, five
-> handlers landed, all gated from birth: rows 85 and 86 (credit deduction slices
-> 4a/4b) were registered; the three invite handlers were not. Measured on
-> `023dde98`: **89 / 83 + 6 / 59 files**. ADMIN_BOS_CLEANUP slice 1 then deleted
-> the two admin settings routes (three handlers, rows 47–49, admin-authz slice 7
-> folded in), added `admins#GET` (row 87), and registered the three invite
-> handlers (rows 88–90, doc only). Measured on the branch: **87 / 81 + 6 / 58
-> files**, and the register's live (non-struck) rows now equal that count.
-> **87 → 88 (2026-10-03):** `business-os/credits/accounts/[accountId]#GET` (credit
-> deduction slice 11c, the admin per-account credit view), gated from birth with
-> `requireAdmin` as its first statement (row 91). Re-measured from disk with the
-> method below: **88 / 82 + 6 / 59 files**. No cap moved: the guard's caps count
-> exemptions, and a handler gated from birth enters no exemption list (SA OP-34).
-> Re-measured again after merging `origin/main` `89dbc568` (ADMIN_BOS_CLEANUP
-> slice 2, credit deduction slice 8a): unchanged at **88 / 82 + 6 / 59 files**;
-> 28 `/admin` pages.
->
-> **Method:** a scratch Node script walks `app/api/admin/**/route.ts` (skipping
-> `__tests__`), strips comments, counts each exported `GET`/`POST`/`PUT`/
-> `PATCH`/`DELETE`/`HEAD`/`OPTIONS` function or const, and classifies a handler
-> as `requireAdmin` if its body calls `requireAdmin(`, otherwise inline if the
-> file names the access service. The register rows were diffed against that list
-> (on `023dde98` the only difference was the three invite handlers). The R4 cap
-> moved 2 → 0; no other cap moved.
->
-> **87 → 88 (2026-10-04):** `jobs-queues/drain#POST` (ADMIN_BOS_CLEANUP slice 7d,
-> "Drain now" on the Scheduled jobs & queues page), gated from birth with
-> `requireAdmin` as its first statement (row 91). Re-measured from disk by the
-> method above on `feature/admin-queue-actions` (base `5b26c361`): 58 / 87 = 81 + 6
-> before, **88 / 82 + 6 + 0 open / 59 files** after. `adminGate.writes` 57 → 58. No
-> cap moved, no exemption added. The headline above, "What is true" and the register
-> heading were updated to these figures in the same change.
->
-> **88 → 89 (2026-10-04):** `jobs-queues/items#GET` (ADMIN_BOS_CLEANUP slice 7a, the
-> read-only queue item list on the Scheduled jobs & queues page), gated from birth
-> with `requireAdmin` as its first statement (row 92). Re-measured from disk on
-> `feature/admin-queue-item-list` (base `61bda100`) with the authz guard's **own**
-> `scanHandlers`, `stripComments` and `blankStringLiterals` (a plain `grep` miscounts
-> here because of line endings): 59 / 88 = 82 + 6 before, **89 / 83 + 6 + 0 open /
-> 60 files** after. `adminGate.writes` unchanged at 58: this GET has its own four
-> denial cases in its route test, as `jobs-queues#GET` (row 84) does. No cap moved,
-> no exemption added. The headline above, "What is true" and the register heading
-> were updated to these figures in the same change.
-> **89 → 91 (2026-10-04, second merge into credit deduction slice 11c):** `main`
-> reached 89 (slice 7a added `jobs-queues/items#GET` as row 92). Slice 11c adds
-> `business-os/credits/accounts/[accountId]#GET`, renumbered **93**, and
-> `business-os/ai-activity#GET` (Admin AI Activity B1a, PR #195), gated from birth but
-> never registered, is row **94** (doc only). Re-measured on the merged tree with the
-> authz guard's own `scanHandlers`: **91 / 85 + 6 + 0 open / 62 files**; 28 `/admin`
-> pages. No cap moved, no exemption added. *(Superseded wording of the first merge note,
-> kept for the record: "7d's row stays 91, 11c's became 92, ai-activity is row 93".)*
->
-> **91 → 92 (2026-10-04):** `jobs-queues/items/action#POST` (ADMIN_BOS_CLEANUP
-> slice 7b, "Cancel item" on the queue item list), gated from birth with
-> `requireAdmin` as its first statement (row 95). Re-measured from disk on
-> `feature/admin-queue-cancel` (base `7eac5b98`) with the authz guard's **own**
-> `scanHandlers` and `stripComments`: 62 / 91 = 85 + 6 before, **92 / 86 + 6 + 0
-> open / 63 files** after. `adminGate.writes` 58 → 59 (the cancel POST). No cap
-> moved, no exemption added. The headline above, "What is true", the register
-> heading and its summary line were updated to these figures in the same change.
->
-> **92 → 94 (2026-10-04):** `users/[id]/deletion/preview#POST` (admin delete AD-1b, the
-> read-only deletion preview behind the Businesses page), gated from birth with
-> `requireAdmin` as its first statement (row **97**). Re-measured from disk on
-> `feature/admin-delete-ad1b-preview-route` (base `0db9da62`) with the authz guard's
-> **own** `scanHandlers` and `stripComments`: **94 / 88 + 6 + 0 open / 65 files**.
-> The base already held 93 / 64: `business-os/ai-activity/drill-down#GET` (Admin AI
-> Activity slice B2a, `5457e520`) was gated from birth but never registered, so it is
-> row **96** (doc only). `adminGate.writes` 59 → 60 (the preview POST). No cap moved,
-> no exemption added. The headline above, "What is true", the register heading and
-> its summary line were updated to these figures in the same change.
->
-> **94 → 95 (2026-10-06):** `users/[id]/deletion/commit#POST` (admin delete AD-2a, the
-> admin business-deletion commit; DESTRUCTIVE once active, shipped inactive behind the
-> `ADMIN_BUSINESS_DELETE_ENABLED` off switch and the held `purge_business_data`), gated
-> from birth with `requireAdmin` as its first statement (row **98**). Re-measured from
-> disk on `feature/admin-delete-ad2-commit` (base `4c1b630a`) with the authz guard's
-> **own** `scanHandlers` and `stripComments`: 94 / 88 + 6 / 65 files before, **95 / 89 +
-> 6 + 0 open / 66 files** after. `adminGate.writes` 60 → 61 (the commit POST). No cap
-> moved, no exemption added. The headline above, "What is true", the register heading
-> and its summary line were updated to these figures in the same change.
-
-> **95 → 98 → 99 (2026-10-09):** `main` `88b1938f` already held 98 handlers / 92 +
-> 6 / 68 files: the three test-account cleanup handlers (`test-account-cleanup/check#GET`,
-> `#POST` and `test-account-cleanup/delete#POST`, OX-1r, 2026-10-07) were gated from
-> birth but never registered, so they are rows **99–101** (doc only). Credits boost
-> slice 4b.2 adds `business-os/credits/boost/reconcile#POST` (run the boost reconcile
-> pass now), gated from birth with `requireAdmin` as its first statement (row **102**).
-> Re-measured from disk with a scratch script that strips comments and classifies
-> each exported handler as the guard does: **99 / 93 + 6 + 0 open / 69 files**.
-> `adminGate.writes` 64 → 65 (the reconcile POST). No cap moved, no exemption added.
-> The headline above, "What is true", the register heading and its summary line were
-> updated to these figures in the same change.
-
-> **99 → 100 (2026-10-09):** `business-os/credits/accounts/[accountId]/boost#GET` (credits
-> boost slice 6a, the read-only "Credit top-ups" block of the Businesses panel), gated from
-> birth with `requireAdmin` as its first statement (row **103**). Re-measured from disk with
-> the scratch script that strips comments and classifies each exported handler as the guard
-> does: 99 / 93 + 6 / 69 files before, **100 / 94 + 6 + 0 open / 70 files** after.
-> `adminGate.writes` unchanged (a GET with its own denial cases in its route test, as row 93
-> does). No cap moved, no exemption added. The headline above, "What is true", the register
-> heading and its summary line were updated in the same change.
+**Coverage is proved by CI, not by this document.** The `Admin authz surface guard`
+(see [CI enforcement](#ci-enforcement)) scans every `app/api/admin/**/route.ts` on every
+PR and fails, as a required check on `main`, when a handler has no `requireAdmin` call
+outside the parked exemption list. That run is the source of truth for "is every admin
+handler gated?". This document deliberately keeps **no hand-maintained totals**: they
+drifted every time a route landed without a doc edit, and they proved nothing the guard
+does not already prove on each build. For a figure, run the guard or count the route
+files.
 
 ### What is true
 
@@ -182,8 +57,8 @@ passed.
 | It derives admin identity **only** from `admin_users`, via `AdminAccessService` | ✅ True |
 | It fails closed, answers **401** signed-out / **403** non-admin, and never 500s on an authorization outcome | ✅ True |
 | No app-code access decision reads `profiles.role` — a repo-wide sweep returns **zero** hits | ✅ True, and CI rule R4 keeps it that way |
-| **Every one of the 103 `/api/admin/*` handlers requires an admin.** 97 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-16** (slices 2 + 3 of the unification; re-counted from disk in AI model price review slice 6) |
-| **All 28 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 7 added since inherited it without an edit: `business-os-tiers`, `business-os-llm`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page), `archiving` (Admin Archiving slice 1), `jobs-queues` (admin reorganisation slice 5, a client page), `business-os-invites` (invite-only signup slice 0) and `agentspilot-billing` (ADMIN_BOS_CLEANUP slice 2, a client page). 21 + 7 = 28. Re-counted 2026-09-27: 26 `page.tsx` files under `app/admin/`. Re-counted 2026-10-03 from disk: 27 on `5061489b`, 28 after ADMIN_BOS_CLEANUP slice 2 |
+| **Every `/api/admin/*` handler requires an admin.** All via `requireAdmin` except the 6 parked handlers (register rows 1, 3–7) that use their own equivalent check. **Zero open.** | ✅ **True while the guard is green** (slices 2 + 3 of the unification). R1 fails the build on any other handler without `requireAdmin` |
+| **Every `/admin` page is protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True while the guard is green** (since slice 5, 2026-09-21). R6 fails the build if the layout's first statement is not the page guard, and R8 if a server-rendered entry point under `app/admin/**` does not guard itself |
 | A **new** admin route cannot ship ungated | ✅ **True.** `Admin authz surface guard` is a **required status check** on `main` with `enforce_admins` and `strict` — a red guard blocks the merge |
 | A **new** `/admin` page is protected before its author writes a line of it | ✅ True — it renders as `children` of the guarded layout; there is no per-page opt-out |
 
@@ -198,18 +73,18 @@ the work mostly done, as it was when the work had barely started.
 | ~~"The admin surface is fully hardened"~~ | Every handler is gated, but most still construct a **service-role client inline**, bypassing RLS and the repository layer. **Gated, not isolated** — see Open Item 9. And **26 of 44 files** still return a raw error `.message` to the client with no `NODE_ENV` guard (Open Item 7). |
 | ~~"The admin Settings screen has been retired"~~ | **Still false, differently since 2026-10-02.** The screen is **not retired**: `app/admin/settings/page.tsx` ("Admin users" in the sidebar) is now a **truthful, read-only list** of who can open admin: the active rows of `admin_users`, plus addresses granted only by `ADMIN_EMAILS`, with a marker on a table admin who is also in `ADMIN_EMAILS` (removing the row alone does not revoke them). Its only request is `GET /api/admin/admins`. The two management routes (`settings/admin-users`, `settings/platform-users`) are **deleted** (ADMIN_BOS_CLEANUP slice 1, folding in admin-authz slice 7). There is **no add, remove or role control** anywhere: adding or removing an admin is the seed script or SQL, see [Bootstrapping Admins](#bootstrapping-admins). The old `system_settings_config.admin_users` key still holds rows that nothing reads or writes. |
 | ~~"The page guard makes the admin pages secure"~~ | The page guard is **defence-in-depth**; the **API gate is the security boundary**. Three escapes remain, by construction rather than oversight: **E1** a `route.ts` under `app/admin/` is not wrapped by layouts (zero exist; CI rule R3 keeps it so); **E2** layouts do not re-render on client-side soft navigation, so the guard runs on entry to the subtree and on full loads; **E3** admin content served from a URL outside `/admin` is outside the boundary. |
-| ~~"The guard proves every gate actually runs"~~ | R1 proves a gate is **present**, not that it runs **first** or runs at all. 77 handlers are gated (2026-09-26): the 65 counted on 2026-09-21 were verified by hand and by the oracle, the 12 added since only by their own route tests — measured, not enforced. See [Known gaps in the guard itself](#known-gaps-in-the-guard-itself) and Open Item 8. |
+| ~~"The guard proves every gate actually runs"~~ | R1 proves a gate is **present**, not that it runs **first** or runs at all. The handlers gated by 2026-09-21 were verified by hand and by the oracle; those added since only by their own route tests — measured, not enforced. See [Known gaps in the guard itself](#known-gaps-in-the-guard-itself) and Open Item 8. |
 | ~~"A refused admin access is recorded"~~ | **Only on three surfaces.** Since 2026-10-01 the shared gates write one `audit_trail` row with `action = SECURITY_UNAUTHORIZED_ACCESS` when they answer "no": `requireAdmin` (`lib/admin/requireAdminRoute.ts`), `requireAdminPage` (`lib/admin/requireAdminPage.ts`) and the refused act-as (`lib/server/route-identity.ts`). The **6 hand-rolled handlers above record NOTHING on refusal** — `agents`, `business-os/llm-usage`, `business-os/llm-usage/businesses`, `chat-usage`, `users/[id]/audit-logs`, `users/[id]/login-stats`. So filtering `/admin/audit-trail` by that action shows refusals on the counted surfaces only; an empty result means "nothing was refused on those three", never "nobody probed". Anonymous callers are also not recorded (401, no identity to refuse), and a refusal caused by the admin check **throwing** is deliberately not recorded either. Closing this is part of the **parked slice 4** conversion, which is also the only thing that can shorten the list of six. |
 | ~~"The published counts cannot drift"~~ | The equality caps stop the exemption lists getting **longer**. Nothing forces an entry to be deleted when its handler is gated, so the figures can still drift **conservatively** — understating how much is gated (OI-22). |
 
-### Every admin handler and its state (100)
+### Every admin handler and its state
 
 The unit is the **handler**, not the file: slice 1 gated write verbs and left read
 verbs open in the *same* files, so a file-level table would have been misleading.
 That asymmetry is gone now — every row below is gated — but the handler remains
 the right unit for the register.
 
-**105 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02, rows 91–97 on 2026-10-04, row 98 on 2026-10-06 rows 99–103 on 2026-10-09 rows 104–107 on 2026-10-14, rows 108–109 on 2026-10-15, row 110 on 2026-10-16, rows 111–113 on 2026-10-17 and rows 114–118 on 2026-10-18; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02; rows 57, 59, 60 and 61 likewise, deleted on 2026-10-16. **118 rows, 111 live**, equal to the measured handler count.)
+Rows 1–72 keep their original numbering so older references still resolve; later rows are numbered in the order they were registered. Struck-through rows are handlers that were deleted (rows 47–49 on 2026-10-02; rows 57, 59, 60 and 61 on 2026-10-16). A route without a row here is a missing note, not an ungated route: the guard decides that.
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
@@ -332,6 +207,12 @@ the right unit for the register.
 | 117 | `users/[id]/data-exports/[jobId]/parts/[partNo]/download` | `POST` | ✅ gated | `requireAdmin`. As row 115; registered 2026-10-18 (doc only) by the slice 8 re-count |
 | 118 | `model-pricing/history` | `GET` | ✅ gated | `requireAdmin` first statement, new in AI model price review slice 9: the read-only per-model price history (every stored price of one model, current and retired, and who changed it and why). Strict Zod query (`kind`, `provider` from the official list, `model` by the model id rule; an unknown or repeated key is 400). Reads only through repositories; the admin-only methods (`listHistoryExact`, `findAppliedLinesByIds`, `findBatchesByIds`, `listAdminPricingRowEvents`, `listAdminPricingSyncRuns`, `findEmailsByUserIds`) are pinned to `app/api/admin/**` by `adminReadMethods.guard`. Admin emails only, never an id. No audit (a read). 401/403 before the query is read or any repository is called, pinned by its route test |
 | 119 | `environment` | `GET` | ✅ gated | `requireAdmin` first statement, new in the admin environment view (EC-1): the read-only list of the environment variables this deployment uses. `GET` only, `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `Cache-Control: no-store` on every response including the gate's 401/403. Strict empty Zod query: any parameter is 400. Masking happens on the server before the response is built (`lib/admin/environment/classifyEnvironment.ts`): secrets and uncatalogued names are Set / Not set, switches On / Off, personal lists a count, plain settings shown only when they pass their shape gates, platform and OS names counted and not listed. Logs and the `ADMIN_ENVIRONMENT_VIEWED` audit row (non-blocking) carry the environment label and counts only, never a value. No database read besides the audit row. 401/403 before the query is read or anything is classified, pinned by its route test. Row number taken at writing; RM re-checks it against `main` at commit (SA RC-7) |
+| 120 | `business-os/billing/subscriptions` | `GET` | ✅ gated | `requireAdmin` first statement. Gated from birth by plan payments P-8a.1 (`5c31cb92`, the admin Subscriptions list and its totals, including MRR); read-only, `no-store`. Landed on main without a register row; registered 2026-10-27 (doc only) by the admin register census, so the register matches the measured census |
+| 121 | `business-os/billing/accounts/[accountId]` | `GET` | ✅ gated | `requireAdmin` first statement. Gated from birth by plan payments P-8a.2 (`56afcbe3`, one account's billing panel in the Businesses drawer); read-only, `no-store`, account only from the path (Zod uuid). Registered 2026-10-27 (doc only), idem |
+| 122 | `business-os/billing/plans/[planId]` | `GET` | ✅ gated | `requireAdmin` first statement. Gated from birth by Money MK-8 (`68f22190`, the Finance plan drawer: one plan's accounts, statuses and MRR); read-only, `no-store`, the plan must be a configured plan (404). Registered 2026-10-27 (doc only), idem |
+| 123 | `exchange-rates` | `GET` | ✅ gated | `requireAdmin` first statement. Gated from birth by Admin Exchange Rates slice 1a (`22d61fec`, the Exchange rates page's one read); read-only, through `ExchangeRatesRepository`. Registered 2026-10-27 (doc only), idem |
+| 124 | `exchange-rates/[currencyCode]` | `PATCH` | ✅ gated | `requireAdmin` first statement. Gated from birth by Admin Exchange Rates slice 1a (`22d61fec`): sets ONE currency's rate to USD or switches it on or off, through `ExchangeRatesRepository` with `updated_by` the admin from the gate; strict Zod body (no `updated_by` can be sent); audited `EXCHANGE_RATE_UPDATED` / `_ENABLED_CHANGED` / `_SUGGESTION_ACCEPTED` with `logAndFlush`. Registered 2026-10-27 (doc only), idem |
+| 125 | `exchange-rates/sync` | `POST` | ✅ gated | `requireAdmin` first statement. Gated from birth by Admin Exchange Rates slice 1e (`63fbcffb`, "Sync rates"): reads the ECB daily feed and answers a suggestion per enabled currency. Writes no rate (audited `EXCHANGE_RATE_SYNC_RUN`). Registered 2026-10-27 (doc only), idem |
 
 ### CI enforcement
 
@@ -739,3 +620,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-10-18 | Slice 8 re-count after merging `f7f69aaf`: rows 114–117, census 110 = 104 + 6 + 0, 81 files | Main added `business-os/finance/history#GET`, `users/[id]/data-exports#GET`, `#POST` and `users/[id]/data-exports/[jobId]/parts/[partNo]/download#POST`, all `requireAdmin`, without register rows; registered here (doc only). Re-counted from disk: 81 `route.ts` files, 110 handlers (HEAD included), 6 without `requireAdmin`. No guard cap moved |
 | 2026-10-18 | AI model price review slice 9: register row 118, census 111 = 105 + 6 + 0, 82 files | Row **118** `model-pricing/history#GET` (the read-only per-model price history), `requireAdmin` first statement. Census re-counted from disk on `f7429b57` plus the slice: 82 `route.ts` files under `app/api/admin/`, 111 exported handlers, 6 without `requireAdmin` (the 6 inline rows). The register summary line, stale since slice 6, corrected to 105 · 6 · 0 and 118 rows / 111 live. No guard cap moved |
 | 2026-10-26 | Admin environment view EC-1: register row 119 | Row **119** `environment#GET` (the read-only environment configuration view), `requireAdmin` first statement, `no-store` on every response. `npm run test:authz-guard` passes with no edit: its gated-handler checks are floors and its caps are on exemptions, so no cap moved. **Census not re-derived here:** 89 `route.ts` files are on disk under `app/api/admin/` against 82 at the last count, and six of them, all landed on `main` by other streams, have no register row yet (`business-os/billing/accounts/[accountId]`, `business-os/billing/plans/[planId]`, `business-os/billing/subscriptions`, `exchange-rates`, `exchange-rates/sync`, `exchange-rates/[currencyCode]`). Registering them and re-counting belongs to a census pass, not to this slice |
+| 2026-10-27 | Admin register census: rows 120–125; hand-maintained totals removed | Six handlers landed on main gated from birth with `requireAdmin` as their first statement, but without a register row: `business-os/billing/subscriptions#GET` (P-8a.1), `business-os/billing/accounts/[accountId]#GET` (P-8a.2), `business-os/billing/plans/[planId]#GET` (Money MK-8), `exchange-rates#GET`, `exchange-rates/[currencyCode]#PATCH` (Admin Exchange Rates slice 1a) and `exchange-rates/sync#POST` (slice 1e). Registered as rows **120–125**, doc only; a re-count on `554367c8` found no other handler without a row. **The handler and page totals, and the chain of dated re-count notes under As-Built State, were removed**: nothing reads them, they drifted whenever a route landed without a doc edit (this census is the latest instance), and the `Admin authz surface guard` already proves coverage on every PR. As-Built State and "What is true" now point at the guard as the source of truth; earlier Change History rows keep their figures as a record. No code, cap or exemption changed |

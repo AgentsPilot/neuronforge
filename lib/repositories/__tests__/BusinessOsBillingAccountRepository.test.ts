@@ -848,12 +848,21 @@ describe('source guards', () => {
       // Plan payments P-6a.1: the test-clock route suite fakes the repository
       // module by name. The route itself does not name it (planTestClock.ts does).
       'app/api/admin/business-os/test/plan-test-clock/__tests__/route.test.ts',
+      // D2 / SX-1 QA (2026-10-27): the gap tests over the same two routes fake
+      // the repository module by name, as route.test.ts below. Test file only.
+      'app/api/business-os/billing/plan/cancel/__tests__/route.d2.qa.test.ts',
       // Plan payments P-7a.1: the cancel / reactivate routes' integration test
       // fakes the repository module by name. The routes themselves do not name it.
       'app/api/business-os/billing/plan/cancel/__tests__/route.test.ts',
       // Plan payments P-3a: the checkout route's integration test fakes the
       // repository module by name. The route itself does not name it.
       'app/api/business-os/billing/plan/checkout/__tests__/route.test.ts',
+      // Plan payments P-7a.2: the portal / invoices routes' integration test
+      // fakes the repository module by name (and keeps the real
+      // `isHostedInvoiceUrl`). The routes themselves do not name it.
+      // Plan payments P-7a.2 QA: the extra route checks fake it the same way.
+      'app/api/business-os/billing/plan/portal/__tests__/route.p7a2.qa.test.ts',
+      'app/api/business-os/billing/plan/portal/__tests__/route.test.ts',
       // Plan payments P-7b.1a: the upgrade routes' integration test fakes the
       // repository module by name. The routes themselves do not name it.
       'app/api/business-os/billing/plan/upgrade/__tests__/route.test.ts',
@@ -892,6 +901,10 @@ describe('source guards', () => {
       // Plan payments P-5a.2 (workplan §3.3): the holding screen's model reads
       // the SESSION user's billing row for the current mode (findByUser only).
       'lib/business-os/billing/heldPaymentView.ts',
+      // Plan payments P-7a.2 (workplan §4.4, §4.5): Update card and the invoice
+      // list read the SESSION user's billing row for the current mode
+      // (findByUser only) and use `isHostedInvoiceUrl` for the invoice links.
+      'lib/business-os/billing/planBillingDocuments.ts',
       // Plan payments P-3b.2 (workplan §3.1, §3.5): the plan webhook handler
       // wires the singleton; its three use cases take it as a port TYPE
       // (findByStripeSubscription, findByStripeCustomer, linkCheckoutSession,
