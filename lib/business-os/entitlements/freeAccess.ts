@@ -30,7 +30,8 @@
  */
 
 import { COHORTS, type CohortConfig } from './config/cohorts';
-import type { EntitlementBasis } from './lifecycle';
+import type { EntitlementAccount } from './account';
+import { deriveLifecycle, tierSettlementEndsAt, type EntitlementBasis, type LifecycleInputs } from './lifecycle';
 
 /** The two facts of a resolution this reads. `EntitlementResolution` satisfies it. */
 export interface FreeAccessResolutionLike {
@@ -97,4 +98,56 @@ export function freeAccessEndedByPurchase(
   if (cohort?.durationHistory) return 'timed';
   // Admin-dated: with no end date this is BQ-P10's case, refused, so no sentence.
   return endsAtMs === null ? null : 'admin_dated';
+}
+
+/**
+ * The free access an account goes back to when its DATED paid tier lapses
+ * (plan payments P-7a.3, BQ-5; SA note on BQ-5 and deviation 5 of P-7a.1), for
+ * the sentence a cancelling owner reads in Settings → Plan: "Then you go back
+ * to your Founding Partner free access, which runs until {freeUntil}."
+ *
+ * Answered through the resolver's OWN lifecycle (`deriveLifecycle`) at the
+ * moment the tier really ends, its paid-through date plus the renewal
+ * settlement margin (`tierSettlementEndsAt`, PF-10), so the sentence can never
+ * promise what the lifecycle will not do (AC-F8.3). Not a second rule.
+ *
+ *   { endsAt }   at that moment the basis is an admin-dated cohort (no
+ *                duration in the config: the Founding Partner shape), it is
+ *                live (not grace / paused), and its end date is LATER than the
+ *                moment (BQ-5's "free-access end after paid-through + 24 h")
+ *   null         anything else: no dated tier, no cohort, a timed cohort (a
+ *                trial is not "Founding Partner free access"), an unknown
+ *                cohort, a cohort that has ended by then, or open-ended free
+ *                access (there is no date to name; BQ-P10 refuses selling a
+ *                plan to that account anyway)
+ *
+ * Pure. The structure is read, never a cohort id (the test checks this file).
+ */
+export interface FreeAccessAfterPaidTier {
+  /** ISO: when the free access the account returns to ends. */
+  endsAt: string;
+}
+
+export function freeAccessAfterPaidTier(
+  account: EntitlementAccount | null,
+  inputs: LifecycleInputs
+): FreeAccessAfterPaidTier | null {
+  if (!account || !account.tier || !account.tierExpiresAt || !account.cohort) return null;
+
+  const cohort = Object.prototype.hasOwnProperty.call(inputs.cohorts, account.cohort)
+    ? inputs.cohorts[account.cohort]
+    : undefined;
+  if (!cohort || cohort.durationHistory) return null;
+
+  const tierEndsAt = Date.parse(tierSettlementEndsAt(account.tierExpiresAt, inputs.renewalSettlementMarginHistory));
+  if (!Number.isFinite(tierEndsAt)) return null;
+
+  const after = deriveLifecycle(account, inputs, new Date(tierEndsAt));
+  if (after.basis.kind !== 'cohort' || after.state === 'grace' || after.state === 'paused' || after.anomaly) return null;
+
+  const endsAt = after.accessEndsAt;
+  if (endsAt === null) return null;
+  const endsAtMs = Date.parse(endsAt);
+  if (!Number.isFinite(endsAtMs) || endsAtMs <= tierEndsAt) return null;
+  return { endsAt };
 }

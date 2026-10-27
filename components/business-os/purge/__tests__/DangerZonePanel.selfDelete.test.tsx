@@ -142,7 +142,9 @@ describe('the boxed DangerZonePanel', () => {
   });
 
   it('ready with blockers → the mailto appears only inside the blocker list', async () => {
-    answer({ ...READY, blockers: [{ code: 'plan_running' }] });
+    // P-7a.3: `plan_running` now points at Settings → Plan and carries no
+    // address, so the blocker that still names {support} carries the mailto.
+    answer({ ...READY, blockers: [{ code: 'plan_running' }, { code: 'contact_support' }] });
     const { container } = render(<DangerZonePanel />);
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     const list = await screen.findByTestId('delete-account-blockers');

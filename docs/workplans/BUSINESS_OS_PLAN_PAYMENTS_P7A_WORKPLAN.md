@@ -7,7 +7,7 @@
 **Depends on:** P-6a merged (#405, P-6a.2: renewal failure columns, `subscription_ended` row, `planPaymentNotice`, the `/test-business-os` test clock). P-3b.2 mirror (`customer.subscription.updated` already copies `cancel_at_period_end`). P-7b.1 merged (the owner-facing billing-mutation route pattern). P-8a merged (admin Subscriptions list and the Businesses-drawer Plan billing block).
 **Date:** 2026-10-25
 **Branch:** `feature/bos-plan-payments-p7a`, worktree `neuronforge-p7a`, fresh from `origin/main` `10761291` (#509). Confirmed with `git branch --show-current` on 2026-10-25. Highest migration on that main: `20261092`.
-**Status:** SA reviewed 2026-10-25: APPROVED WITH CONDITIONS C-1 to C-12 (SA Review Notes). User decisions 2026-10-26 (§14.1): BQ-3 = A (P-7a.4 in scope), BQ-2 after month ends, BQ-1 yes. **P-7a.1:** SA code review APPROVED WITH FIXES (F-1 applied), QA PASS (no bugs), G-5 (he / es wording) approved by the user 2026-10-26 with the Hebrew fix ("מבטלים…" / "מחדשים…"). Merged to `main` as PR #519. **P-7a.2:** SA code review APPROVED WITH FIXES (F-2, doc only), QA PASS (all 10, no bugs), G-5 (he / es wording) approved by the user 2026-10-27 including FU-P7a2-1 ("Pay now" on a Due row). Committed on `feature/bos-plan-payments-p7a2`, PR #528 open to `main`; no migration; merge gate: the user's live demo (do not merge until the user confirms; auto-merge off).
+**Status:** SA reviewed 2026-10-25: APPROVED WITH CONDITIONS C-1 to C-12 (SA Review Notes). User decisions 2026-10-26 (§14.1): BQ-3 = A (P-7a.4 in scope), BQ-2 after month ends, BQ-1 yes. **P-7a.1:** SA code review APPROVED WITH FIXES (F-1 applied), QA PASS (no bugs), G-5 (he / es wording) approved by the user 2026-10-26 with the Hebrew fix ("מבטלים…" / "מחדשים…"). Merged to `main` as PR #519. **P-7a.2:** SA code review APPROVED WITH FIXES (F-2, doc only), QA PASS (all 10, no bugs), G-5 (he / es wording) approved by the user 2026-10-27 including FU-P7a2-1 ("Pay now" on a Due row). Merged to `main` as PR #528 (2026-10-27). **P-7a.3:** SA code review APPROVED WITH FIXES (F-3, F-4), QA PASS (no bugs), G-5 (he / es wording) approved by the user 2026-10-27 as drafted, "Founding Partner" kept in English in he / es. Committed on `feature/bos-plan-payments-p7a3`, `origin/main` merged in, PR #534 open to `main`; no migration; merge gate: the user's live demo (do not merge until the user confirms; auto-merge off). Open follow-up **FU-P7a3-1** (QA E-1): the P-4.2 pre-purchase line `plan.choose.free_access_ends_today` is unchanged; the user has not decided on rewording it.
 
 ## Overview
 
@@ -321,9 +321,9 @@ New importers of `lib/business-os/entitlements/`: the three or four new routes (
 | ✅ T6 | Configuration reader + check; portal route; `createBusinessOsPortalSession` + tests. X-1 and X-5 run first | 0.35d | .2 |
 | ✅ T7 | Invoice list mapping + route + `listBusinessOsInvoices` + tests (U-10 voided invoice, non-USD dropped, bad URL dropped) | 0.4d | .2 |
 | ✅ T8 | `PlanManage` Update card + Invoices UI (lazy load, empty, error, "See all"); wording; entitlements doc row | 0.4d | .2 |
-| ⬜ T9 | `ResetGuard` control 3 + tests; Danger Zone message | 0.3d | .3 |
-| ⬜ T10 | R-3 text, self-delete blocker (en/he/es + fallback), cross-path pin | 0.3d | .3 |
-| ⬜ T11 | AC-F8.3 lifecycle walk; demo on the sandbox with a test clock (§10) | 0.2d | .3 |
+| ✅ T9 | `ResetGuard` control 3 + tests; Danger Zone message (C-9: the server's own message, no client map) | 0.3d | .3 |
+| ✅ T10 | R-3 text, self-delete blocker (en/he/es + fallback), cross-path pin | 0.3d | .3 |
+| ✅ T11 | AC-F8.3 lifecycle walk; BQ-5 Founding Partner sentence (SA deviation-5 carry-forward); demo checklist for the sandbox with a test clock (Implementation Notes (P-7a.3)). The demo itself is owed by the user | 0.2d | .3 |
 | ⬜ T12 | (Only if BQ-3 = A) X-4; immediate cancel for a failed payment; tests; demo step 9 | 0.5d | .4 |
 
 Each slice ends with: `npm test` on the touched suites **plus `app/api/stripe`** locally, `npm run test:bos-entitlements`, the typecheck filtered to the touched files (check it did not OOM), `npm run build`, `git diff --stat` reviewed (no deletion-only file), then SA code review and QA. **Connect harness** (`app/api/stripe/webhook/__tests__/connectPath.characterisation.test.ts`): P-7a does not touch the webhook, so the harness must pass with its snapshot **unchanged** (md5 recorded before and after); never run with bare `-u`, never `--updateSnapshot`.
@@ -652,6 +652,79 @@ User decision 2026-10-27 (G-5), accepting TL's recommendation: the link on an `o
 
 ---
 
+## Implementation Notes (P-7a.3)
+
+**Code complete 2026-10-27, uncommitted**, on `feature/bos-plan-payments-p7a3` (worktree `neuronforge-p7a`, created by RM on top of P-7a.2 `f3176607`; `git branch --show-current` checked). RM merges `origin/main` (with #528, and its env-catalogue fix `663aa9b9`) before the PR, which targets `main`. **No migration. No webhook change.** No sandbox call was needed for this slice (everything is our own data and pure lifecycle); the live half is the demo below.
+
+### What was built
+
+- **Control 3 in `ResetGuard`** (PF-14; SA C-9, TQ-10, TQ-11): `hasLivePlanSubscription(userId)` (both modes, the shared `isPlanSubscriptionLive`) runs FIRST, before the Connect resolver. Live → refused, control `subscription_live`, message "This business has a live plan subscription. Cancel it in Settings → Plan, and reset once it has ended." `null` (or a throw) → `subscription_unreadable`. Commit time only, before the snapshot, like controls 1 and 2; the preview is unchanged. Both codes added to `ResetGuardResult['control']` and `ResetRefusal`. The Danger Zone prints the server's message (no client map, C-9).
+- **Admin surface** passes through control 3 (agrees with R-3). Because `AdminDeletionCommitCode` includes `ResetRefusal` and is pinned both ways against the client's `DeletionCommitCodeView`, the two codes were added to `app/admin/users/types.ts`, with a sentence each in `deletionCopy.ts` (reached only if a subscription starts between preview and delete; R-3 refuses it at the preview).
+- **Wording (C-10):** `R3_CLEARING` is now "The owner cancels it in Settings → Plan, or cancel it in the Stripe dashboard, in the mode shown (test or live). Deletion is possible once the subscription has ended." (exported). `settings.account_delete.blocker.plan_running` en + the `DangerZonePanel.tsx` fallback: "Your plan is still running. Cancel it in Settings → Plan. You can delete your account once it has ended." (no `{support}` slot any more); he / es drafts below. **G-6's operator `clears` text in the applied cleanup function is unchanged** ("Cancel the subscription in the Stripe dashboard …"): it is operator-facing and changing it is a migration (C-10).
+- **Cross-path pin** `lib/business-os/purge/__tests__/planSubscriptionLive.paths.test.ts` (119 tests): (1) every G-6 in the newest cleanup migration, chosen by the generator's filename pattern `^\d{8}[a-z]?_operator_(test_)?account_cleanup(_…)?\.sql$` (today `20261094`, asserted equal to the generator's `MIGRATION_FILE`), and in the operator check / delete scripts, lists exactly `R3_LIVE_STATUSES` plus the "subscription id, not ended" clause (with a non-vacuity drift check); (2) G-6 read as a predicate equals `isPlanSubscriptionLive` for all 8 statuses + null × subscription id × ended; (3) for each of those rows in either mode, the real `evaluateResetGuard`, the real R-3 (`evaluateAdminDeletionRefusals` over `readPlanBilling`) and `hasLivePlanSubscription` agree, and a failed read refuses on both TS paths; (4) source wiring: the guard imports the shared read and writes no status literal, R-3 and the read decide through `isPlanSubscriptionLive`, the generator builds G-6 from `R3_LIVE_STATUSES`, `executePurge(` has one engine caller (`ResetService`, after the guard), the cleanup RPC has one caller (`TestAccountCleanupRepository`). Repo-wide scans read RAW source (the comment-stripper hazard that `no-deletion-paths.guard.test.ts` documents bit the first draft on the generator).
+- **AC-F8.3 walk** `lib/business-os/entitlements/__tests__/acF83.foundingPartnerCancel.test.ts` (8 tests), all real functions: cancel recorded → `planManageOffer` "cancelling", "Ends on" the paid-through date, still the paid tier, no pill, no banner; through the paid-through date and the 24 h margin still the tier (FC-1); Stripe ends it, after the margin → Founding Partner basis with the pill, no "ended" banner, nothing to manage, while free access lives; when free access ends → grace, pill gone, "ended" banner. AC-F8.2 contrast (no cohort: grace then paused) and a cohort ending inside the paid period. Cohort and tier found by structure.
+- **BQ-5 Founding Partner sentence** (SA deviation-5 carry-forward; binding before the production price switch): `plan.manage.cancel_confirm_founding` "Then you go back to your Founding Partner free access, which runs until {freeUntil}." is shown in the cancel confirmation (after "You keep …") and beside Reactivate while the plan is set to end. It is shown only when `purchase.manage.freeAccessAfter` is sent, which is only:
+  - beside Cancel or Reactivate (the port is not even called otherwise);
+  - when `freeAccessAfterPaidTier` (new, pure, `lib/business-os/entitlements/freeAccess.ts`) answers: the account has a DATED tier and an admin-dated cohort (no duration), and `deriveLifecycle` at paid-through + the renewal settlement margin (`tierSettlementEndsAt`) puts it on that cohort, live, with an end date strictly later. The sentence is the lifecycle's own answer, never a second rule.
+  - **The read (smallest change):** `EntitlementService.getFreeAccessAfterPaidTier(accountId)` reads the same inputs `getSnapshot` reads, through the same 30 s cache. The my-plan route calls `getSnapshot` first, so this is a cache hit with no second DB read; on a miss it reads and caches like `getSnapshot`. A failed read is `null`. The route passes it to `readPlanPurchaseView` as a plain function port (`freeAccessAfterPaidTier`), session account only; a throwing port is a `warn`, never a failed view.
+
+### Deviations for SA
+
+1. **Admin client mirror touched** (`app/admin/users/types.ts`, `deletionCopy.ts`): not in §5, but required by the both-ways type pin of `AdminDeletionCommitCode` ↔ `DeletionCommitCodeView`. Two sentences, operator English.
+2. **The BQ-5 sentence is also shown in the cancelling state**, not only in the confirmation (§2.1 said confirmation; the brief said "on the plan screen after cancelling"). Same key, same rule; it stays visible until the end date, so an owner who cancelled yesterday still sees it. The key keeps §11's name `plan.manage.cancel_confirm_founding`.
+3. **The BQ-5 read lives in the entitlements module** (a new `EntitlementService` method and a pure helper beside `freeAccessEndedByPurchase`), not in the billing view. The lifecycle owns "which plan decides access when the tier lapses", the service is the only reader of the plan row, and the cache makes the read free after the snapshot. **Entitlements registrations: none needed.** No file outside the module gained an import from it: `planPurchaseView.ts` takes a function port typed locally, the my-plan route's imported symbols are unchanged, and tests are exempt. `npm run test:bos-entitlements` was run (below).
+4. **Open-ended free access gets no sentence** (there is no date to name). A paying account with open-ended free access cannot arise through the checkout (BQ-P10 refuses it). An admin could create one by hand; that owner then reads only "It will not renew".
+5. **"Founding Partner" is written in the copy** (en, he, es), as §11 drafted, while the rule is structural (admin-dated cohort). Today the only admin-dated cohort is the Founding Partner one, whose config label is "Founding Partner" in all three languages. If a second admin-dated cohort is ever added, the sentence should take the cohort's label from the server (a slot). Flagged, not built.
+6. **Existing tests edited** (assertions follow the new copy, none loosened): `adminDeletionRefusals.test.ts` (the R-3 clearing now expects "Settings → Plan" and no "arrives with"), `deleteBusinessDialog.render.test.tsx` (its R-3 fixture text), `DangerZonePanel.selfDelete.test.tsx` and `DeleteAccountDrawer.render.test.tsx` (`plan_running` no longer carries the mailto; a `contact_support` blocker now carries it, and the new text is asserted), `PlanManage.p7a1.qa.render.test.tsx` (`plan.manage.*` key count 23 → 24). `ResetService.order.test.ts` and `ResetService.adminSurface.test.ts` have additions only (0 `-` lines): the billing repository is faked and recorded in the same call log.
+7. **Guard registrations:** the billing-repository caller guard (`BusinessOsBillingAccountRepository.test.ts`) lists the three test files that fake the repository by name (`ResetService.order`, `ResetService.adminSurface`, `planSubscriptionLive.paths`). No product file gained a repository import (`ResetGuard` reaches it through `adminDeletionFacts.ts`, already listed).
+8. **The Spanish draft says "Configuración → Plan"**, not §11's "Ajustes → Plan", matching the shipped `stripe_connected` blocker ("Configuración → Pagos").
+
+### Wording (P-7a.3; he / es approved by the user 2026-10-27, G-5)
+
+**G-5 approved by the user 2026-10-27** as drafted; "Founding Partner" stays in English in he / es (the config label, as the pill shows it). The he / es comments in the dictionaries say "approved by the user 2026-10-27 (G-5)".
+
+| Key | en | he | es |
+|---|---|---|---|
+| `settings.account_delete.blocker.plan_running` (changed) | Your plan is still running. Cancel it in Settings → Plan. You can delete your account once it has ended. | התוכנית שלכם עדיין פעילה. מבטלים אותה בהגדרות ← תוכנית, ואפשר למחוק את החשבון אחרי שהיא מסתיימת. | Tu plan sigue activo. Cancélalo en Configuración → Plan. Podrás eliminar tu cuenta cuando haya terminado. |
+| `plan.manage.cancel_confirm_founding` (new, BQ-5) | Then you go back to your Founding Partner free access, which runs until {freeUntil}. | לאחר מכן חוזרים לגישה החינמית של Founding Partner, שבתוקף עד {freeUntil}. | Después vuelves a tu acceso gratuito de Founding Partner, que dura hasta el {freeUntil}. |
+
+Operator English (not translated): the Reset `subscription_live` / `subscription_unreadable` messages, `R3_CLEARING`, the admin commit copy for the two codes.
+
+### Demo checklist (P-7a.3; standard sandbox `acct_1UPKR4C7KDUGYIcA`, test mode, local `npm run dev` on this branch)
+
+Prerequisites as §10 "Before the demo" items 1, 3, 4 and 5 (price and checkout switches on locally, `stripe listen … --all-snapshot`, the webhook route warmed, a designated **test** owner on a fresh test clock from `/test-business-os`). Danger Zone Reset needs the internal purge surface for that account. Never commit a deletion on the demo account.
+
+| # | Do | Expect |
+|---|---|---|
+| 1 | Buy Essentials (`4242…`) | "Renews on {date}"; Cancel, Update card and Invoices shown |
+| 2 | Danger Zone → Reset (and Purge) → confirm | Refused: "This business has a live plan subscription. Cancel it in Settings → Plan, and reset once it has ended." No snapshot written; audit `BUSINESS_DATA_PURGE_BLOCKED` with reason `subscription_live` |
+| 3 | Settings → Delete my account | Blocker: "Your plan is still running. Cancel it in Settings → Plan. You can delete your account once it has ended." (no mailto on that line) |
+| 4 | `/admin/users` → this account → Delete (preview only) | R-3 applies; the clearing text names Settings → Plan and the Stripe dashboard |
+| 5 | Cancel → confirm | "Ends on {date}"; steps 2–4 **still refuse** (a cancelling subscription is live until Stripe ends it, BQ-2) |
+| 6 | Advance the test clock past the period end + 25 h | Webhook: subscription ended; Settings: ended; admin: Ended, In grace |
+| 7 | Advance 5 more days | Paused (recorded) |
+| 8 | Repeat steps 2–4 (up to the confirmation only) | None of the three refuses for the plan subscription any more (other refusals, such as a Connect account, may still apply). **Do not commit** |
+| 9 | Founding Partner variant: a test account with an admin-set Founding Partner end date well after the coming paid-through date; buy; Cancel | The confirmation adds "Then you go back to your Founding Partner free access, which runs until {date}."; after confirming, the same line shows under Reactivate |
+| 10 | The same, with the Founding Partner end date before the paid-through date (or within 24 h after it) | No Founding Partner sentence |
+| 11 | Step 9 account: advance the clock past the period end + 25 h | Back on Founding Partner: the pill in the header, no "Your subscription ended" banner; admin plan column Free access = Founding Partner (AC-F8.3) |
+| 12 | Step 11 account: advance past the Founding Partner end date | Grace (the cohort's grace), pill gone, "ended" banner |
+
+**After the demo, the same day:** cancel every demo subscription, delete test customers and clocks, switches off and sandbox keys out of `.env.local`; `cus_VQf9jX6fnfVlkK` untouched.
+
+### Test and gate results (2026-10-27)
+
+| Gate | Result |
+|---|---|
+| New / extended suites | `planSubscriptionLive.paths` 119 (new), `acF83.foundingPartnerCancel` 8 (new), `ResetService.order` +9, `ResetService.adminSurface` +2, `planPurchaseView` +10, `freeAccess` +10, `entitlementService` +4, `PlanManage.render` +5, my-plan route +2 |
+| Requested set: `app/api/stripe`, `lib/business-os/purge`, `lib/business-os/billing`, `app/api/business-os/billing`, `components/business-os/settings`, `components/business-os/billing`, `components/business-os/purge`, `components/business-os/account-deletion`, `lib/business-os/account-deletion`, `app/api/business-os/entitlements`, `app/api/business-os/account`, `app/api/business-os/purge`, `app/admin`, `lib/admin`, `lib/audit`, `lib/business-os/entitlements`, the billing repository suite, `testAccountCleanupSql` | 459 suites, 15 445 tests. First run (in parallel with `tsc` and `test:bos-entitlements`): 10 suites failed on load timeouts (130–170 s per suite). **Re-run alone: all pass except `lib/admin/environment/__tests__/catalogueDrift.guard.test.ts` G3-1f**, which flags `lib/business-os/billing/portalConfiguration.ts` (P-7a.2's whole-`process.env` read). Fixed on `feature/bos-plan-payments-p7a2` as `663aa9b9`; it arrives when RM merges `main`. Not this slice: this slice adds no env read |
+| `npm run test:bos-entitlements` | 314 suites, 9 423 tests: 9 421 passed. The 2 failures were `app/admin/users/__tests__/creditsBlock.render.test.tsx` under the same contention (133 s); it **passes alone** |
+| Connect harness `connectPath.characterisation.test.ts.snap` | md5 `ab7528ea68309cffb309ffbd46c455ab` before and after; file unmodified; never `-u` |
+| Typecheck (`tsc --noEmit`, 8 GB heap) | Completed, no OOM; **0 errors in the 30 touched / new `.ts(x)` files** (1 861 pre-existing elsewhere). Two earlier runs caught 4 errors in the new test files (literal widening, a cohort union), fixed |
+| ESLint on the touched / new `.ts(x)` files | 0 findings |
+| `npm run build` | Not run (as in P-7a.2: no `.env.local` in this worktree); compile-affecting changes are covered by the typecheck |
+
+---
+
 ## SA Review Notes
 
 ### SA Workplan Review — P-7a (2026-10-25)
@@ -903,6 +976,91 @@ Reviewed in the worktree `neuronforge-p7a`, branch `feature/bos-plan-payments-p7
 
 #### Code Approved for QA: Yes (with F-2 applied)
 
+### SA Code Review — P-7a.3 (2026-10-27)
+
+**Code Review by SA — 2026-10-27**
+**Status:** ✅ APPROVED WITH FIXES (two small test-only fixes, F-3 and F-4, applied by SA in the worktree; uncommitted. No product code changed)
+
+Reviewed: the uncommitted diff on `feature/bos-plan-payments-p7a3` (base `f3176607`), 30 modified files and 2 new test files.
+
+#### Conditions verified
+
+| Ruling | Verified | How |
+|---|---|---|
+| TQ-11 / C-9: control 3 FIRST in `ResetGuard` | ✅ | `hasLivePlanSubscription(userId)` runs before `resolveConnectAccounts`. Pinned by source order (paths test §4) and by call order (`ResetService.order`: `billingRead` after `purgeFunctionExists`, before `resolveConnectAccounts`; on refusal there is no Connect read, no local-state count, no snapshot, no `executePurge`) |
+| Both modes, shared predicate | ✅ | `hasLivePlanSubscription` reads `readPlanBilling` for test and live and decides through `isPlanSubscriptionLive`. The guard writes no status literal. Mutation M2 (live mode only) → 26 failures |
+| Unreadable = refuse | ✅ | `null` and an unexpected throw both give `subscription_unreadable`. Mutation M1 (unreadable passes) → 2 failures |
+| Commit time, before the snapshot; preview unchanged | ✅ | The guard is called only from `runPurgeCommit` step 4. `app/api/business-os/purge/preview` is not in the diff |
+| Types | ✅ | `subscription_live` / `subscription_unreadable` are in `ResetGuardResult['control']` and `ResetRefusal`. No `Record` over the refusal union elsewhere needed them except the admin client mirror (deviation 1) |
+| Admin path passes control 3 | ✅ | `AdminDeletionCommit` → `runPurgeCommit`. `ResetService.adminSurface` +2, additions only; the existing admin delete tests pass unchanged |
+| C-10: G-6 SQL text unchanged, no migration | ✅ | No file under `supabase/` in the diff. Only `R3_CLEARING`, the en/he/es `plan_running` blocker and the `DangerZonePanel.tsx` fallback changed |
+| Cross-path pin ties every path | ✅ (after F-3) | SQL (newest generated migration + the check and delete scripts) = `R3_LIVE_STATUSES` + the not-ended clause, with a non-vacuity check; G-6 as a predicate = `isPlanSubscriptionLive` over 8 statuses + null × id × ended; the guard, R-3 and `hasLivePlanSubscription` agree row by row in both modes; one engine caller of `executePurge`, after the guard; one caller of the cleanup RPC |
+| AC-F8.3 walk | ✅ | Real functions throughout: `planManageOffer`, `billingStateFromRecord`, `resolveEntitlements`, `planBadgeFor`, `planPaymentNotice`, `freeAccessAfterPaidTier`. It covers cancelling, the FC-1 margin, back on the cohort with the pill and no banner, cohort end → grace with the banner, and the AC-F8.2 contrast. Cohort and tier are found by structure |
+| P-7a.1 carry-forward: the BQ-5 sentence | ✅ | Built. It must be in production before the price switch is turned on there; this slice delivers it |
+| Files owned by D2 not touched | ✅ | `planSubscriptionManage.ts` and the cancel / reactivate routes are not in the diff |
+| No new env read (EC-3) | ✅ | No `process.env` in any added line. The local `catalogueDrift.guard` G3-1f red is P-7a.2's `portalConfiguration.ts`, fixed on `main` by `663aa9b9` |
+| Pino, no `console.*` | ✅ | No `console.*` call in any touched product file (the two hits in `adminDeletionRefusals.ts` are the words "admin console" in copy) |
+| i18n | ✅ | `plan.manage.cancel_confirm_founding` and the changed `plan_running` are in en, he and es. The `PlanManage` key-count pin went from 23 to 24 |
+| Entitlements registration (skill review checklist) | ✅ | No file outside the module gained an import from it. The my-plan route's imports from the module are byte-identical (it calls a new method on the already-imported `getEntitlementService`). `planPurchaseView.ts` takes a locally typed function port. There is no tier or cohort-id literal (the copy names the cohort's display label, see deviation 5). Tests are exempt |
+
+#### Deviation rulings
+
+| # | Ruling |
+|---|---|
+| 1 | **Accepted.** `AdminDeletionCommitCode` ⊇ `ResetRefusal` is pinned both ways against `DeletionCommitCodeView`, so the mirror must move. The two operator sentences are accurate: R-3 refuses first at the preview, and these are reached only in a race |
+| 2 | **Accepted.** The sentence is shown beside Reactivate as well as in the confirmation. It is the same key and the same server rule, and an owner who cancelled yesterday should still see where they land. It fits BQ-5's intent |
+| 3 | **Accepted.** The lifecycle owns "what decides access when the tier lapses", so the entitlements module is the right home, and the answer comes from `deriveLifecycle` itself, not from a second rule. **Cache hit confirmed:** `getSnapshot` stores the inputs, the new method reads the same entry within the TTL, and a test pins `calls === 1`. **Tenant isolation:** the route passes a closure over `accountId = resolveAccountId(user.id)` (session only). The view takes no account parameter, and the port is called only when Cancel or Reactivate is offered (mutation M5 → 2 failures). **Registration:** none needed (above). Note: on a cache miss it does not fall back to stale inputs as `getSnapshot` does. That is correct for display (`null` = say nothing) |
+| 4 | **Accepted.** There is no date to name. BQ-P10 refuses the checkout path, and an admin who creates one by hand gets the plain "It will not renew" |
+| 5 | **Accepted with a tripwire (F-4).** The rule is structural (any admin-dated cohort), but the copy names "Founding Partner". It is true today: there is exactly one admin-dated cohort, whose config label is "Founding Partner" in all three languages. F-4 makes the flag enforceable: a test fails if a second admin-dated cohort appears, or if the sentence in any language stops containing that cohort's label. At that point the sentence takes the label as a server slot. Note for the user's G-5 pass: §11 drafted "שותף מייסד" and "Socio Fundador"; the Dev used the config label (untranslated, as the pill shows it). The tripwire follows whichever the user picks only if the config label changes with it |
+| 6 | **Accepted.** I read every edited assertion. Each follows the new copy, and none is loosened. The self-delete tests now pin the mailto on `contact_support`, the blocker that still carries `{support}` |
+| 7 | **Accepted.** The billing-repository caller guard lists the three test fakes. No product file gained a repository import |
+| 8 | **Accepted.** "Configuración" is `settings.title` in es and matches the shipped `stripe_connected` blocker ("Configuración → Pagos") |
+
+#### Code Review Comments
+
+1. `lib/business-os/purge/__tests__/planSubscriptionLive.paths.test.ts` (`newestCleanupMigration`): selecting the newest cleanup migration by **filename pattern** repeated the trap that `scripts/__tests__/testAccountCleanupSql.test.ts` G-b records ("20261081 already broke the `operator_test_account_cleanup` name pattern, so a filename glob would miss the next one"). If another session generates a cleanup migration under a new name, the newest-by-pattern would stay `20261094` while the generator's `MIGRATION_FILE` moves, and this suite would go red on an unrelated PR. — Priority: Medium — **F-3, applied by SA:** select by the generator's first-line marker (`-- … GENERATED by scripts/generate-test-account-cleanup-sql.ts`), as G-b does, and keep the `=== MIGRATION_FILE` assertion. Today it selects the same 10 files, newest `20261094`. A new generated migration is picked up whatever its name, and an unrelated migration can never become "newest".
+2. `lib/business-os/entitlements/__tests__/freeAccess.test.ts`: deviation 5 was flagged but nothing enforced it. — Priority: Low — **F-4, applied by SA:** the tripwire test described in deviation 5.
+3. `lib/business-os/entitlements/freeAccess.ts:151` (`endsAtMs <= tierEndsAt`): a mutation removing this clause survives, because the lifecycle check above it already excludes a cohort that has ended by then. It is belt-and-braces and costs nothing. Keep it. — Priority: Low (information only)
+4. Copy: "Settings → Plan". The settings row and the drawer title are "Your plan" / "התוכנית שלך" / "Tu plan", so "→ Plan" is a close paraphrase rather than the literal label. English is consistent with the P-7a.1 / P-7a.2 copy. Leave it for the user's G-5 pass. — Priority: Low
+
+#### SA verification runs (2026-10-27, each alone, none in parallel)
+
+| Run | Result |
+|---|---|
+| Focused: `lib/business-os/purge`, `lib/business-os/billing`, `app/api/business-os/entitlements`, entitlements `freeAccess` / `acF83` / `entitlementService`, `PlanManage*` | 68 suites, 4 364 tests, all pass |
+| C-12 set: `app/api/stripe`, `lib/business-os/purge`, `lib/business-os/billing`, `app/api/business-os/billing`, `components/business-os/{settings,billing,purge,account-deletion}`, `app/admin`, `lib/admin`, `lib/audit`, `app/api/business-os/entitlements`, `lib/business-os/entitlements`, the billing repository suite, `testAccountCleanupSql` | 442 suites, 15 154 tests: 15 153 pass. **1 expected failure:** `catalogueDrift.guard` G3-1f on P-7a.2's `portalConfiguration.ts` ("found 1, pinned 0"), fixed on `main` by `663aa9b9`, arrives with RM's merge of `main` |
+| After F-3 / F-4 | `freeAccess` + `planSubscriptionLive.paths`: 148 tests, all pass |
+| `npm run test:bos-entitlements` (on the final diff, with F-3 / F-4) | 314 suites, 9 424 tests, all pass |
+| Connect harness snapshot | md5 `ab7528ea68309cffb309ffbd46c455ab`, unchanged; never `-u` |
+| Mutations (one at a time, each restored by Edit, md5 confirmed) | M1 unreadable → clear: 2 failures. M2 live mode only: 26 failures. M3 drop `endsAtMs <= tierEndsAt`: survives (comment 3). M4 allow a timed cohort: 1 failure. M5 call the port without Cancel / Reactivate: 2 failures |
+
+Not run by SA: `tsc` (Dev reports 0 errors in the touched files, no OOM) and `npm run build` (no `.env.local` in the worktree). F-3 and F-4 are test-only, and both ran under ts-jest.
+
+#### Optimisation Suggestions (non-blocking)
+
+- `getFreeAccessAfterPaidTier` does not "touch" the LRU entry on a hit, as `getSnapshot` does. That is harmless, because the route has just touched it.
+- If a second admin-dated cohort is ever added (F-4 fails), move the cohort label into the wire (`freeAccessAfter: { endsAt, cohortLabel }`) and make the copy a `{cohort}` slot.
+
+#### For QA (focus)
+
+1. **Control 3 on all three paths**, test mode, a designated test owner on a test clock: Danger Zone Reset **and** Purge refuse with the "Settings → Plan" message, write no snapshot, and audit `BUSINESS_DATA_PURGE_BLOCKED` with reason `subscription_live`. Self-delete shows the new `plan_running` line with no mailto. The admin delete preview shows R-3 with the new clearing text.
+2. **Cancelling is still live:** after Cancel (status `active`, `cancel_at_period_end`), all three still refuse (BQ-2).
+3. **Ended clears:** after the clock passes the end and the webhook mirrors `ended_at`, none of the three refuses for the subscription. Do not commit a deletion on the demo account.
+4. **Unreadable refuses:** a Jest-level check is enough (the paths test and `ResetService.order` cover it). Do not break the live database to test it.
+5. **BQ-5 sentence:** shown in the confirmation and under Reactivate only for an account with an admin-dated cohort ending later than paid-through + 24 h. It is absent at the boundary, absent for a trial cohort, absent for open-ended free access, absent with no cohort, and absent when the plan is past_due or ended or the price switch is off. Check the date in en, he and es, and RTL in he.
+6. **AC-F8.3 live (demo steps 11–12):** back on Founding Partner with the pill and no "ended" banner; then grace when the cohort ends.
+7. **Tenant isolation:** `GET /api/business-os/entitlements/my-plan?accountId=<other>` still answers for the session account only (the route's existing guard test). The new port has no input.
+8. **G-5 wording** (he / es drafts, deviation 5's "Founding Partner" vs "שותף מייסד" / "Socio Fundador", comment 4) goes to the user, not QA.
+
+#### Carried forward
+
+- G-5: the user approves the he / es drafts for `plan_running` and `cancel_confirm_founding`, including how "Founding Partner" is written in them (deviation 5).
+- BQ-5 is now built. It must be merged before the production price switch is turned on (P-7a.1 deviation 5 condition: met by this PR once it merges).
+- C-12 for RM: merge `origin/main` (with #528 and `663aa9b9`) before the PR, never stack, then re-run the C-12 suites; `catalogueDrift.guard` must be green after the merge.
+- P-7a.4: C-11 still binds.
+
+#### Code Approved for QA: Yes (with F-3 and F-4 applied)
+
 ---
 
 ## QA Testing Report
@@ -1029,6 +1187,63 @@ Reviewed in the worktree `neuronforge-p7a`, branch `feature/bos-plan-payments-p7
 - [x] All acceptance criteria in QA scope pass — ready for commit (after the user's diff view; demo steps above owed)
 - [ ] Issues found — Dev must address before commit
 
+### QA Report — P-7a.3
+
+**QA — 2026-10-27**
+**Test mode:** full (SA "For QA (focus)" 1–7; focus 8 is the user's G-5 pass)
+**Strategy used:** A + B (Jest: the REAL commit route → REAL `ResetService` → REAL `ResetGuard` with only repositories, auth, purge authz and audit faked; render on the real `PlanManage` and `DeleteAccountDrawer` with the real dictionaries) + C (a scratch sandbox script on the standard sandbox `acct_1UPKR4C7KDUGYIcA`, test mode: the REAL `StripeService` and the REAL `mirrorPlanSubscription` over a fake repository, a throwaway customer on a throwaway test clock; nothing added to the repo; no database at all)
+**Focus:** api, ui, security, i18n
+**Skipped:** the database halves of focus 1, 3 and 6 (the audit row in the table, the webhook writing our row, the live Settings and admin screens): the user's demo. No production database touched; no database at all
+**Input source:** TL prompt + SA "For QA (focus)"
+
+#### Results per focus item
+
+| # | Focus item | Result | Evidence |
+|---|---|---|---|
+| 1 | Control 3 on all three paths | ✅ PASS (code + copy) / ⚠️ live walk owed (demo) | QA scratch route test, **Reset and Purge** through `POST /api/business-os/purge/commit`: renewing (test), cancelling (test), cancelling (live mode), `past_due`, `trialing` → 200, `data` = `refused` / `subscription_live`, message exactly "This business has a live plan subscription. Cancel it in Settings → Plan, and reset once it has ended.", `snapshotWritten: false`, `rowsDeleted: 0`; no Connect read, no snapshot, no `executePurge`; exactly one audit `BUSINESS_DATA_PURGE_BLOCKED`, `severity: warning`, `details.reason: subscription_live`, `details.level` = the level. Billing read for the **session** user only, both modes (a `userId` in body or query not honoured). The Danger Zone prints the server's `message` as is (`PurgeDangerZone.tsx`, no client map). Self-delete: QA render in en / he / es: the dictionary `plan_running` line, **no mailto on it**, no `{support}` slot in any language, `dir="rtl"` in he; beside a `contact_support` blocker exactly one mailto. `DangerZonePanel` fallback = the en dictionary byte for byte. `blockerCopy` maps G-6 → `plan_running` (unchanged). Admin: `R3_CLEARING` names Settings → Plan and the Stripe dashboard, no "arrives with P-7a" |
+| 2 | Cancelling is still live (BQ-2) | ✅ PASS | **Sandbox:** real `setBusinessOsCancelAtPeriodEnd(sub, true)` → Stripe `status: active`, `cancelAtPeriodEnd: true`, `endedAt: null`; the cancel's own `customer.subscription.updated` through the real mirror wrote `active` / `true` / `null`; that row → `isPlanSubscriptionLive` true, R-3 **applies** with the Settings → Plan clearing. Jest: the same row refuses on the Reset **and** Purge route (focus 1 row), and the paths suite's row matrix covers G-6 = the same predicate |
+| 3 | Ended clears | ✅ PASS (Stripe side + our mapping) / ⚠️ DB half owed (demo) | **Sandbox:** test clock advanced to period end + 25 h → `retrieveBusinessOsSubscription` `canceled`, `endedAt` = the period end (to the second); Stripe sent `customer.subscription.deleted`; the real mirror on that event wrote `canceled` + `endedAtIso` `2026-11-27T10:40:45.000Z` and one `subscription_ended` history row; that row → `isPlanSubscriptionLive` false, R-3 **clear**. Jest route: the ended row passes control 3 and reaches control 1 (a faked Connect account then refuses `stripe_connected`; nothing deleted), billing read strictly before the Connect read. No deletion committed anywhere |
+| 4 | Unreadable refuses | ✅ PASS (Jest only, as ruled) | Route: billing read error → `subscription_unreadable`, no Connect read. Dev's paths suite and `ResetService.order` re-run green; SA mutation M1 recorded |
+| 5 | BQ-5 sentence | ✅ PASS | Server rule (Dev suites re-run): boundary paid-through + 24 h exclusive, timed cohort, open-ended free access, no cohort, unknown cohort → none; `past_due`, ended, price switch off → the port is not even called. QA render, en / he / es (he inside `dir="rtl"`, 360 px): in the confirmation the sentence comes **after** "You keep {plan} until {date}"; beside Reactivate while ending; the date is the account-day format: "March 1, 2100" / "1 במרץ 2100" / "1 de marzo de 2100"; exactly one `{freeUntil}` slot per language, no raw key or slot rendered; follows the account clock like "Ends on" (Jerusalem: 23:00 UTC reads the next day); a stray field beside a failed payment or an unreadable date renders nothing; no physical-direction class on the new line |
+| 6 | AC-F8.3 live (demo 11–12) | ✅ PASS (logic, Dev's walk re-run) / ⚠️ live owed (demo) | `acF83.foundingPartnerCancel` (8) green in the entitlements set. The webhook + database walk is the user's demo |
+| 7 | Tenant isolation, my-plan | ✅ PASS | Route suite re-run (40 / 40): `?accountId=<other>` → the port asked for the session account only; nothing to cancel → not asked. The port takes no input |
+
+#### Issues Found
+
+**Bugs (must fix before commit):** none.
+
+**Performance issues:** none (the BQ-5 read is a cache hit after `getSnapshot`; control 3 is two indexed reads before the Connect resolver).
+
+**Edge cases (nice to fix / record):**
+
+1. **E-1 — the pre-purchase line overstates for a dated Founding Partner** (Low; P-4.2 copy, not this slice). Before buying, `plan.choose.free_access_ends_today` says "Buying ends your free access today…", yet AC-F8.3 (pinned here) returns them to Founding Partner when the paid plan lapses, and the new BQ-5 sentence says so after cancelling. The same owner reads both. For the G-5 pass or P-11. **Open as FU-P7a3-1** (2026-10-27): put to the user with G-5, not answered; the line is unchanged.
+2. **E-2 — "Founding Partner" stays English in he / es** (SA deviation 5; G-5). **Decided by the user 2026-10-27:** keep it in English.
+
+#### Test Outputs / Counts
+
+| Run | Result |
+|---|---|
+| Requested sets, one at a time, `--ci`, before the QA files | `app/api/stripe` 22 / 581 · `lib/business-os/purge` 17 / 518 · `lib/business-os/billing` 45 / 3 716 · `app/api/business-os/billing` 5 / 206 · `components/business-os/settings` 49 / 945 · `components/business-os/billing` 1 / 17 · `components/business-os/purge` 10 / 108 · `app/admin` 188 / 5 823 · `lib/audit` 16 / 189 · `app/api/business-os/entitlements` 1 / 40: **all pass**. `lib/admin` 35 suites / 1 247 tests: **1 expected failure**, `catalogueDrift.guard` G3-1f ("`portalConfiguration.ts` whole-object, found 1, pinned 0"), fixed on `main` by `663aa9b9`. `lib/business-os/entitlements` 49 / 1 401: all pass once the QA scratch file was removed (it tripped `tierLiteral.forbidden`, see below) |
+| `npm run test:bos-entitlements` (final, scratch removed) | **314 suites, 9 424 tests, all passed** |
+| QA scratch run note | The route scratch file existed during the first `lib/business-os/entitlements` and `test:bos-entitlements` runs and tripped two guards **by design**: `tierLiteral.forbidden` (a tier literal in its fixture) and the billing-repository caller guard (it fakes the repository by name). Both green after removing it (2 suites, 133 tests). Not a product finding |
+| QA files | **Kept** (uncommitted): `components/business-os/settings/__tests__/PlanManage.p7a3.qa.render.test.tsx` (14), `components/business-os/account-deletion/__tests__/DeleteAccountDrawer.p7a3.qa.render.test.tsx` (6). **Scratch, deleted after the run:** `app/api/business-os/purge/commit/__tests__/zz.p7a3.qa.scratch.test.ts` (17). **3 suites, 37 tests, all passed**; ESLint clean on the kept files; `components/business-os/settings` + `account-deletion` re-run with them: 53 / 996, all pass |
+| Sandbox script (scratchpad, not in the repo) | **17 / 17 passed.** Throwaway `cus_VWA8hLA7vxHpav` / `sub_1UV7oBC7KDUGYIcAIlzaGz6y` on clock `clock_1UV7o9C7KDUGYIcAtTDPfF27` (basic price by lookup key): customer and clock **deleted** the same run; a final listing found **0** QA clocks left. Account id asserted first; `cus_VQf9jX6fnfVlkK` not touched; key never printed; no database |
+| Connect harness snapshot md5 | `ab7528ea68309cffb309ffbd46c455ab` before and after; never `-u` |
+| CRLF | Working copies are LF (`core.autocrlf` will convert on commit); every source scan in the sets passed |
+
+#### Owed demo steps (user, sandbox test mode, local `npm run dev` on this branch; workplan demo checklist P-7a.3)
+
+1. Steps 1–4: buy Essentials; Danger Zone Reset **and** Purge refuse with the Settings → Plan message; check the audit table for one `BUSINESS_DATA_PURGE_BLOCKED` with `reason: subscription_live` per attempt and no snapshot in storage; self-delete shows the new line with no mailto; admin delete preview shows R-3 with the new clearing text.
+2. Step 5: Cancel, then steps 2–4 again: all three still refuse.
+3. Steps 6–8: advance the clock past the period end + 25 h; the webhook writes `canceled` + `ended_at` to our row; none of the three refuses for the subscription (stop at the confirmation, **never commit**).
+4. Steps 9–12: Founding Partner variant: the sentence in the confirmation and under Reactivate (and absent for an end date inside the 24 h margin); after the clock passes, the pill and no "ended" banner; past the Founding Partner end, grace and the banner.
+5. Hebrew and Spanish at 360 px: the founding sentence and the `plan_running` line wrap cleanly in RTL. G-5: the he / es drafts and "Founding Partner" vs "שותף מייסד" / "Socio Fundador".
+
+#### Final Status
+
+- [x] All acceptance criteria in QA scope pass — ready for commit (after the user's diff view; demo steps above owed; `catalogueDrift.guard` must be green after RM merges `main`)
+- [ ] Issues found — Dev must address before commit
+
 ---
 
 ## Commit Info
@@ -1041,6 +1256,16 @@ Reviewed in the worktree `neuronforge-p7a`, branch `feature/bos-plan-payments-p7
 | PR | #519 (to `main`, merge commit; auto-merge OFF) |
 | Migration | None |
 | Merge gate | Live demo owed by the user (§QA "Owed demo steps"); do not merge until the user confirms |
+
+| Item | Value |
+|---|---|
+| Slice | P-7a.3 Never charge a deleted account |
+| Branch | `feature/bos-plan-payments-p7a3` |
+| Commits | `7a991f72` feat (P-7a.3), `097b9da3` merge of `origin/main`, plus this docs commit |
+| PR | #534 (to `main`, merge commit; auto-merge OFF) |
+| Migration | None |
+| Merge gate | Live demo owed by the user (§QA P-7a.3 "Owed demo steps"); do not merge until the user confirms |
+| Open follow-up | FU-P7a3-1 (QA E-1): the P-4.2 pre-purchase line `plan.choose.free_access_ends_today`, unchanged pending the user |
 
 ---
 
@@ -1058,3 +1283,5 @@ Reviewed in the worktree `neuronforge-p7a`, branch `feature/bos-plan-payments-p7
 | 2026-10-27 | P-7a.2 code complete, uncommitted (Dev) | On `feature/bos-plan-payments-p7a2` (on top of `131a46b1`). T5 to T8: portal configuration script and reader, portal and invoices routes, `planCardAndInvoicesOffer`, Update card and Invoices in Settings → Plan. X-1 (the portal moves the renewal to the new card: C-7 not triggered; a past-due invoice is not retried at once) and X-5 (`he` refused → `auto`); test configuration `bpc_1UUv5MC7KDUGYIcA3O6iIzRJ` (became the sandbox default). 9 deviations for SA in Implementation Notes (P-7a.2). Requested suites 165 / 6 296 and `test:bos-entitlements` 308 / 9 270 passed; Connect harness md5 unchanged; 0 type errors in the 31 touched files; no migration, no webhook change |
 | 2026-10-27 | SA code review of P-7a.2 (SA) | APPROVED WITH FIXES. C-1, C-6, C-7 (X-1: not triggered), C-8, TQ-6, TQ-8 / X-5, tenant isolation, entitlements (one non-gate `TIER_MATRIX` importer), Zod strict and i18n verified; D2 cancel / reactivate paths untouched. Deviations 1–9 accepted (4: the sandbox default is no regression, live hazard is dashboard edits of our default, so F-2; 9: no false promise in shipped copy, follow-up FU-P7a2-1 "Pay now" wording). F-2 applied: §9.5 row 13 warning. SA runs: 172 suites / 6 712 (3 load timeouts in the untouched `PlanUpgrade.render`, 76 / 76 alone), `test:bos-entitlements` 308 / 9 270, Connect md5 unchanged, 7 mutations all caught |
 | 2026-10-27 | G-5 approved for P-7a.2; FU-P7a2-1 built and closed (Dev) | User approved the P-7a.2 he / es wording (G-5) and accepted TL's FU-P7a2-1: a Due (`open`) invoice row's link reads "Pay now" (`plan.invoices.pay_now`: en "Pay now", he "לתשלום עכשיו", es "Pagar ahora"), same hosted URL, new tab, `noopener`. he / es comments marked approved. Key pins 19 → 20, QA RTL test updated, one new render test (en + he). Runs: 4 requested dirs 100 / 4 869 passed; `test:bos-entitlements` 9 269 / 9 270 (the one failure is the unregistered QA portal route test in the billing-repository caller guard, not this change); 0 type errors in touched files. Uncommitted |
+| 2026-10-27 | P-7a.3 code complete, uncommitted (Dev) | On `feature/bos-plan-payments-p7a3` (on top of P-7a.2 `f3176607`). T9 to T11: Reset / Purge control 3 `subscription_live` / `subscription_unreadable` (C-9), the self-delete blocker and R-3 clearing text point at Settings → Plan (G-6 SQL text unchanged, C-10), the PF-14 cross-path pin, the AC-F8.3 walk, the BQ-5 Founding Partner sentence (`EntitlementService.getFreeAccessAfterPaidTier` through the snapshot cache). 8 deviations for SA in Implementation Notes (P-7a.3); he / es drafts for G-5; demo checklist. No migration, no webhook change; Connect harness md5 unchanged |
+| 2026-10-27 | G-5 approved for P-7a.3; committed, PR opened (RM) | SA APPROVED WITH FIXES (F-3, F-4), QA PASS (no bugs). The user approved the he / es wording (G-5) as drafted and kept "Founding Partner" in English in he / es; he / es comments marked approved. QA E-1 (rewording the P-4.2 line `plan.choose.free_access_ends_today`) not answered: left unchanged, open as FU-P7a3-1. Committed on `feature/bos-plan-payments-p7a3`, `origin/main` merged in (P-7a.2 #528 MERGED 2026-10-27), PR #534 opened; no migration; auto-merge off, live demo owed before merge |

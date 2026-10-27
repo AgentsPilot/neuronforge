@@ -42,7 +42,10 @@ import 'server-only';
  *              switch: Cancel, Reactivate, or the failed-payment line. Absent
  *              when there is nothing to manage. No new read. P-7a.2 adds
  *              `cardAndInvoices` (`planCardAndInvoicesOffer`, the portal and
- *              invoices routes' predicate), from the same row.
+ *              invoices routes' predicate), from the same row. P-7a.3
+ *              (BQ-5) adds `freeAccessAfter` beside Cancel / Reactivate, from
+ *              the route's `freeAccessAfterPaidTier` port (the plan row, read
+ *              through the entitlement service's cache).
  *
  * Returns `null` (nothing to offer, no billing sentence) when the plan cannot
  * be read, when the account has no plan row (the checkout refuses both), or
@@ -119,6 +122,14 @@ export interface PlanPurchaseViewInput {
   snapshot: PlanSnapshotLike & {
     resolution: (NonNullable<PlanSnapshotLike['resolution']> & { lifecycle: Partial<PaymentNoticeLifecycleFacts> }) | null;
   };
+  /**
+   * P-7a.3 (BQ-5): the free access the account returns to when its paid tier
+   * lapses (the route passes `EntitlementService.getFreeAccessAfterPaidTier`
+   * for the session account). Called ONLY when Cancel or Reactivate is
+   * offered; absent, failing or `null` means no sentence. A plain function
+   * port, so this module imports nothing new from the entitlements module.
+   */
+  freeAccessAfterPaidTier?: () => Promise<{ endsAt: string } | null>;
 }
 
 export interface PlanPurchaseViewLogger {
@@ -297,6 +308,19 @@ export async function readPlanPurchaseView(
     planManageOffer(row, manageSwitches, now),
     planCardAndInvoicesOffer(row, manageSwitches)
   );
+
+  // P-7a.3 (BQ-5): the Founding Partner sentence, only beside Cancel or
+  // Reactivate. Display only: a failure says nothing and hides nothing.
+  if (manage && (manage.cancel || manage.reactivate) && input.freeAccessAfterPaidTier) {
+    try {
+      const after = await input.freeAccessAfterPaidTier();
+      if (after && typeof after.endsAt === 'string' && Number.isFinite(Date.parse(after.endsAt))) {
+        manage.freeAccessAfter = { endsAt: after.endsAt };
+      }
+    } catch (err) {
+      log.warn({ err, event: 'bos_billing_purchase_view_free_access_after_unread', accountId }, 'Free access after the paid plan unreadable; sentence omitted');
+    }
+  }
 
   return {
     offer: offerWire,

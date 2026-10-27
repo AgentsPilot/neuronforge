@@ -39,6 +39,7 @@ import {
 import { fromOverrideRow, fromPlanRow, type AccountId, type EntitlementAccount, type EntitlementOverride } from './account';
 import { ALWAYS_SUFFICIENT, type AiActionBalanceSource } from './balance';
 import { decide, failurePolicyFor, type EntitlementDecision, type EntitlementRequest } from './decide';
+import { freeAccessAfterPaidTier, type FreeAccessAfterPaidTier } from './freeAccess';
 import { resolveEntitlements, type EntitlementResolution } from './resolver';
 import { getEntitlementConfig, type EntitlementConfig, type TierMatrixSource } from './source';
 import type { CatalogLike } from './schema';
@@ -272,6 +273,45 @@ export class EntitlementService {
     }
 
     return out;
+  }
+
+  /**
+   * Plan payments P-7a.3 (BQ-5): the free access this account returns to when
+   * its dated paid tier lapses, for the Settings → Plan sentence a cancelling
+   * Founding Partner reads (`freeAccessAfterPaidTier`). Display only: it
+   * refuses and grants nothing.
+   *
+   * The snapshot cannot answer it (while a tier is in force the resolution's
+   * basis is the tier, and the cohort end is not in it), so this reads the same
+   * inputs `getSnapshot` reads, through the same cache: right after the my-plan
+   * route's `getSnapshot` for the same account it is a cache hit, and no second
+   * database read is made. A failed read is `null` (say nothing), never thrown.
+   */
+  async getFreeAccessAfterPaidTier(accountId: AccountId): Promise<FreeAccessAfterPaidTier | null> {
+    const config = this.config();
+    const nowMs = this.now().getTime();
+
+    let account: EntitlementAccount | null;
+    const cached = this.cache.get(accountId);
+    if (cached && nowMs - cached.storedAtMs <= CACHE_TTL_SECONDS * 1000) {
+      account = cached.inputs.account;
+    } else {
+      const result = await this.repository.findEntitlementInputs(accountId);
+      if (result.error || !result.data) {
+        logger.warn({ err: result.error, accountId }, 'Entitlement inputs unreadable; free access after the paid plan not shown');
+        return null;
+      }
+      const inputs = toDomain(result.data);
+      this.store(accountId, { inputs, storedAtMs: nowMs });
+      account = inputs.account;
+    }
+
+    return freeAccessAfterPaidTier(account, {
+      cohorts: config.cohorts,
+      tierOrder: config.tierOrder,
+      subscriptionGraceHistory: config.lifecycle.subscriptionGraceHistory,
+      renewalSettlementMarginHistory: config.lifecycle.renewalSettlementMarginHistory,
+    });
   }
 
   /**

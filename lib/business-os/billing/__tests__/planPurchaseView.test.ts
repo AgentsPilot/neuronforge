@@ -321,3 +321,72 @@ describe('upgrade (P-7b.1b, workplan §3.6; SA U-2): planUpgradeOffer over this 
     expect((await view(topSnapshot, h.deps))!.upgrade).toEqual({ tiers: ABOVE });
   });
 });
+
+describe('freeAccessAfter (P-7a.3, BQ-5): the Founding Partner sentence, only beside Cancel or Reactivate', () => {
+  const subscribed = (overrides: Partial<Row> = {}) =>
+    row({ stripeSubscriptionId: 'sub_1', subscriptionStatus: 'active', boughtTier: TIER, currentPeriodEnd: FUTURE, ...overrides });
+  const FREE_UNTIL = '2027-03-01T00:00:00.000Z';
+
+  const withPort = async (billingRow: Row | null, port: () => Promise<{ endsAt: string } | null>, options: Parameters<typeof harness>[0] = {}) => {
+    const h = harness({ ...options, billing: { data: billingRow, error: null } });
+    const calls = { n: 0 };
+    const result = await readPlanPurchaseView(
+      {
+        userId: USER,
+        accountId: USER,
+        snapshot: ON_A_TIER,
+        freeAccessAfterPaidTier: async () => {
+          calls.n += 1;
+          return port();
+        },
+      },
+      h.deps
+    );
+    return { result, calls, warns: h.warns };
+  };
+
+  it.each([
+    ['renewing (Cancel offered)', subscribed()],
+    ['cancelling (Reactivate offered)', subscribed({ cancelAtPeriodEnd: true })],
+  ])('%s: the port answer is on manage', async (_label, billingRow) => {
+    const { result, calls } = await withPort(billingRow, async () => ({ endsAt: FREE_UNTIL }));
+    expect(result!.manage).toMatchObject({ freeAccessAfter: { endsAt: FREE_UNTIL } });
+    expect(calls.n).toBe(1);
+  });
+
+  it('the port answering null: no field', async () => {
+    const { result } = await withPort(subscribed(), async () => null);
+    expect(result!.manage).toBeDefined();
+    expect(result!.manage).not.toHaveProperty('freeAccessAfter');
+  });
+
+  it.each([
+    ['no subscription', null, {}],
+    ['a failed renewal (no Cancel yet)', subscribed({ subscriptionStatus: 'past_due' }), {}],
+    ['an ended subscription (card and invoices only)', subscribed({ endedAt: PAST, subscriptionStatus: 'canceled' }), {}],
+    ['the price switch off', subscribed(), { switches: { checkoutEnabled: true, pricesEnabled: false } }],
+  ] as Array<[string, Row | null, Parameters<typeof harness>[0]]>)('%s: the port is never called, no field', async (_label, billingRow, options) => {
+    const { result, calls } = await withPort(billingRow, async () => ({ endsAt: FREE_UNTIL }), options);
+    expect(calls.n).toBe(0);
+    expect(result!.manage?.freeAccessAfter).toBeUndefined();
+  });
+
+  it('a throwing port is a warning, never a failed view', async () => {
+    const { result, warns } = await withPort(subscribed(), async () => {
+      throw new Error('plan row unreadable');
+    });
+    expect(result!.manage).toMatchObject({ cancel: true });
+    expect(result!.manage).not.toHaveProperty('freeAccessAfter');
+    expect(warns.some((w) => w.event === 'bos_billing_purchase_view_free_access_after_unread')).toBe(true);
+  });
+
+  it('an unreadable date is dropped', async () => {
+    const { result } = await withPort(subscribed(), async () => ({ endsAt: 'not a date' }));
+    expect(result!.manage).not.toHaveProperty('freeAccessAfter');
+  });
+
+  it('without the port (older callers), nothing changes', async () => {
+    const h = harness({ billing: { data: subscribed(), error: null } });
+    expect((await view(ON_A_TIER, h.deps))!.manage).not.toHaveProperty('freeAccessAfter');
+  });
+});

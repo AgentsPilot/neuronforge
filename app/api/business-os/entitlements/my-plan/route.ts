@@ -123,7 +123,14 @@ export async function GET(request: NextRequest) {
      */
     let purchase: PlanPurchaseWire | null = null;
     try {
-      purchase = await readPlanPurchaseView({ userId: user.id, accountId, snapshot });
+      purchase = await readPlanPurchaseView({
+        userId: user.id,
+        accountId,
+        snapshot,
+        // P-7a.3 (BQ-5): the session account only; read lazily by the view,
+        // through the service cache `getSnapshot` just filled.
+        freeAccessAfterPaidTier: () => getEntitlementService().getFreeAccessAfterPaidTier(accountId),
+      });
     } catch (err) {
       requestLogger.warn({ err, event: 'bos_billing_purchase_view_failed' }, 'Purchase view unavailable; plan shown without it');
     }

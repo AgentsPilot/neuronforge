@@ -939,9 +939,17 @@ describe('source guards', () => {
       // plan billing account (findByUser only); the evaluator imports the status
       // type. Their tests name it to fake it. No entitlements import.
       'lib/business-os/purge/__tests__/AdminDeletionPreview.test.ts',
+      // Plan payments P-7a.3 (PF-14, SA C-9): the Reset guard's control 3 reads
+      // the plan billing rows through hasLivePlanSubscription, so the purge
+      // orchestration suites (both surfaces) fake the repository module by name.
+      'lib/business-os/purge/__tests__/ResetService.adminSurface.test.ts',
+      'lib/business-os/purge/__tests__/ResetService.order.test.ts',
       'lib/business-os/purge/__tests__/adminDeletionRefusals.test.ts',
       // P-3b.1 (QA Bug 1): fakes the repository to test hasLivePlanSubscription.
       'lib/business-os/purge/__tests__/hasLivePlanSubscription.test.ts',
+      // Plan payments P-7a.3: the PF-14 cross-path pin fakes the repository and
+      // imports the status TYPE to enumerate every row the rule distinguishes.
+      'lib/business-os/purge/__tests__/planSubscriptionLive.paths.test.ts',
       // AD-2a: the read moved verbatim to adminDeletionFacts.ts (shared by the
       // preview and the commit gate). Kept in sorted order: the guard compares
       // against found.sort().
