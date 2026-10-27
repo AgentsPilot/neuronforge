@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_CLIENT_PAYMENTS_USD_REQUIREMENT.md](/docs/requirements/ADMIN_CLIENT_PAYMENTS_USD_REQUIREMENT.md): §2.1 (EX-1 to EX-6), §5 to §8, §9 (D-0 to D-5), §11 slice 1a, §12 AC-2 to AC-12, and **SA-RR-CPU** (CPU-1 to CPU-8, rulings SA-Q-1 to SA-Q-10). Where SA-RR-CPU and the BA draft disagree, SA-RR-CPU wins.
 **Branch:** `feature/client-payments-usd-1a` (worktree `neuronforge-cpu1a`), from `origin/main` at `a105fa4a`.
 **Date:** 2026-10-26
-**Status:** Code Complete (uncommitted, awaiting SA code review + QA). SA-WP-CPU1A approved with conditions W-1 to W-5 (§13). Two unforeseen pin moves (AC-48 count, AC-66 object) and one log-key rename await SA ruling (§12A).
+**Status:** SA-CR-CPU1A Code Approved (AC-48, AC-66 and the log key ruled), QA passed (B-1 fixed), TL approved. **1a: PR [#527](https://github.com/AgentsPilot/neuronforge/pull/527)**, opened 2026-10-27; commit `73d5b4a3`, main merged `cd983fde`. Auto-merge is held off by the coordinator until slice 0 (#526) has merged.
 
 ## Overview
 
@@ -762,7 +762,12 @@ Keep the existing "a bare `usd` with no takings type is not a leak" control. No 
 
 ## 15. Commit Info
 
-*(RM populates.)*
+- **Branch:** `feature/client-payments-usd-1a`
+- **Commit:** `73d5b4a3` feat(finance): approximate $ total of client payments, server side (1a)
+- **Merge:** origin/main (`4cc261e5`, including slice 0 #526) merged in `cd983fde`, no conflicts
+- **Pins:** AC-145 `aebc22cb…97ca` (ruled); AC-48 and AC-66 ruled re-freezes; AC-173 and Pins A to D unchanged
+- **Build proof:** CI Build, per SA W-5 (no `.env.local` in the worktree)
+- **PR:** 1a: PR [#527](https://github.com/AgentsPilot/neuronforge/pull/527). Depends on slice 0's PR #526; auto-merge is turned on by the coordinator once #526 has merged
 
 ---
 

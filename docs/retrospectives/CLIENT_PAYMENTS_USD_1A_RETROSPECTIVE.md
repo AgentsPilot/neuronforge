@@ -35,6 +35,6 @@ CUR-3 is not loosened.
 - **A worktree without env files cannot finish `next build`.** Plan for CI to be the build proof.
 - **Merge gate:** 1a must not merge before slice 0 (the docs and the CLAUDE.md exception) is approved by the user and merged. Auto-merge stays off until then.
 
-### Status: APPROVED FOR COMMIT — feature/client-payments-usd-1a — commit pending (RM); merge gated on slice 0
+### Status: COMMITTED — feature/client-payments-usd-1a — commit `73d5b4a3`, 1a: PR #527; merge gated on slice 0 (#526), auto-merge held off
 
 TL approval: APPROVED for RM (commit, PR, auto-merge) — but RM must wait until the user approves slice 0's CLAUDE.md change
