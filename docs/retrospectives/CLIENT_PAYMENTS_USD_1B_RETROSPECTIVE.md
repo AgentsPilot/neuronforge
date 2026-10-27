@@ -39,6 +39,6 @@ When `takings.usd` is absent, the block is byte-identical to today's.
 - **Owed by the user:** AC-21, the manual browser check of the block. QA's steps are in the workplan.
 - **The client-payments USD stream is complete once this merges.** CPU1A-FU-1 stays in the follow-ups bundle.
 
-### Status: APPROVED FOR COMMIT — feature/client-payments-usd-1b — commit pending (RM)
+### Status: COMMITTED — feature/client-payments-usd-1b — commit `021d0174`, 1b: PR #532 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)

@@ -17,7 +17,7 @@ Where SA-RR-CPU and the BA draft disagree, SA-RR-CPU wins.
 - Nothing is pushed.
 
 **Date:** 2026-10-27
-**Status:** Planning. Awaiting SA workplan review. No code written.
+**Status:** SA-WP-CPU1B approved, SA-CR-CPU1B Code Approved, QA passed (B-1 and L-1 fixed), TL approved. **1b: PR [#532](https://github.com/AgentsPilot/neuronforge/pull/532)**, opened 2026-10-27, auto-merge on; commit `021d0174`. The user owes AC-21.
 **Status update (2026-10-27):** SA-WP-CPU1B approved with conditions B-1 to B-5 (§12), folded into the body as appended amendments. **Waiting for 1a to merge** (B-5), then `origin/main` is merged in and code starts.
 **Status update (2026-10-27, later):** Code Complete, uncommitted, awaiting SA code review and QA. 1a (#527) is merged in. CPU1A-FU-1 has moved to the follow-ups bundle (§11A).
 
@@ -700,7 +700,12 @@ None. The page adds no request and no read.
 
 ## 14. Commit Info
 
-*(RM populates.)*
+- **Branch:** `feature/client-payments-usd-1b` (from main `b7f02cd6`)
+- **Commit:** `021d0174` feat(finance): approximate $ total of client payments on Finance (1b)
+- **Merge:** origin/main (`d040115b`, through #525) merged in `50c6eaf0`, no conflicts
+- **Pins:** none moved; AC-145 `aebc22cb…97ca`; the leak guard is byte-identical
+- **PR:** 1b: PR [#532](https://github.com/AgentsPilot/neuronforge/pull/532), auto-merge on (merge commit, via the merge queue)
+- **Owed by the user:** AC-21, the manual browser check (steps in §13 above)
 
 ---
 
