@@ -35,7 +35,8 @@
  * `period_end`: the plan runs to the date the owner paid for. `now`: a
  * renewal payment is failing, and P-7a.4's cancel ends the plan today;
  * `PlanManage` passes it on `manage.paymentFailed`. Steps 3 and 4 then read
- * the `_now` copy ("ends today"), step 2's view is built from today by the
+ * the `_now` copy ("ends today"; step 4 adds P-7a.4's user-approved
+ * `plan.manage.cancel_now_body`: the unpaid invoice is cancelled), step 2's view is built from today by the
  * my-plan route, the reason step stays required and the Founding Partner
  * sentence stays in both modes. `requestExtra` carries any body field the
  * cancel route adds beside the `reasonCode`; P-7a.4 adds none (the route
@@ -343,6 +344,12 @@ function PlanCancelSteps({
             : t('settings.plan_cancel.confirm.body_nodate')}
         {foundingLine && <> {foundingLine}</>}
       </p>
+      {/* P-7a.4 (C-11), user-approved: a failing-payment owner learns the open invoice goes away. */}
+      {mode === 'now' && (
+        <p className={BODY} data-testid="plan-cancel-confirm-invoice">
+          {fill(t('plan.manage.cancel_now_body'), { plan: planName })}
+        </p>
+      )}
       {busy && (
         <p role="status" className={`flex items-center gap-2 ${MUTED}`} data-testid="plan-cancel-busy">
           <Loader2 aria-hidden="true" className="w-3.5 h-3.5 animate-spin" />

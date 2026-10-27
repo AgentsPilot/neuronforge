@@ -144,6 +144,29 @@ describe('PlanManage — P-7a.4 failed payment', () => {
     expect(screen.getByTestId('plan-cancel-confirm-body')).not.toHaveTextContent(translations.en['settings.plan_cancel.confirm.body_now']);
   });
 
+  it.each(['en', 'he', 'es'] as const)('%s: the ends-now confirm keeps the P-7a.4 unpaid-invoice line under body_now; period_end has none', (lang) => {
+    mockLang.language = lang;
+    const dict = translations[lang];
+    const invoice = dict['plan.manage.cancel_now_body'].replace('{plan}', 'Essentials');
+    const { unmount } = render(<PlanManage plan={failing()} />);
+    walkToConfirm();
+    const body = screen.getByTestId('plan-cancel-confirm-body');
+    const line = screen.getByTestId('plan-cancel-confirm-invoice');
+    expect(body).toHaveTextContent(dict['settings.plan_cancel.confirm.body_now']);
+    expect(line).toHaveTextContent(invoice);
+    // Under body_now: the line follows the confirm body.
+    expect(body.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    unmount();
+
+    const renewing = failing();
+    (renewing.purchase as unknown as { manage: unknown }).manage = { cancel: true, reactivate: false, paymentFailed: false };
+    (renewing.purchase as unknown as { billing: unknown }).billing = { state: 'renewing', date: '2099-11-26T10:00:00.000Z' };
+    render(<PlanManage plan={renewing} />);
+    walkToConfirm();
+    expect(screen.queryByTestId('plan-cancel-confirm-invoice')).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(invoice);
+  });
+
   it('a refused Reactivate during a failed payment reads the new line, never the server English', async () => {
     const { planManageRefusalKey } = jest.requireActual('@/components/business-os/settings/planManageCopy') as typeof import('@/components/business-os/settings/planManageCopy');
     expect(planManageRefusalKey({ httpStatus: 409, code: 'payment_failed_contact_us', outcomeUnknown: false })).toBe('plan.manage.refusal.payment_failed');
