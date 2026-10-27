@@ -13,7 +13,11 @@
  * against each reader) nor any constant from another module, so loading the
  * catalogue pulls in no dependency graph.
  *
- * Adding a `process.env.NAME` read? Add its entry here in the same PR.
+ * Adding a `process.env.NAME` read? Add its entry here in the same PR. The
+ * drift guard (`__tests__/catalogueDrift.guard.test.ts`, EC-3) fails the gate
+ * when code reads a name this list lacks, or when an entry is read by nothing
+ * and has no `consumedBy` marker. Steps: docs/FEATURE_FLAGS.md, "Adding an
+ * environment variable".
  *
  * Wording rule for `role`: one plain sentence (or two), no value, no quoted
  * plan name or capability id (SA ruling Q-9).
@@ -193,7 +197,7 @@ function pickExtra(extra: Extra): Pick<EnvEntryBase, 'docLink' | 'seeAlsoPath' |
 
 const VERCEL_ENVS = ['production', 'preview', 'development'] as const;
 const AWS_CAVEAT = 'On Vercel the runtime may set this name itself, so Set does not prove the extraction credential is configured.';
-const FLAGS_DOC = 'docs/feature_flags.md';
+const FLAGS_DOC = 'docs/FEATURE_FLAGS.md';
 
 // ── The catalogue ───────────────────────────────────────────────────────────
 

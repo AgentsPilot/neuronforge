@@ -87,10 +87,6 @@ describe('environment catalogue', () => {
     expect(ENVIRONMENT_GROUPS.map((g) => g.id)).toContain('external');
   });
 
-  it('holds the 133 names of the EC-1 inventory', () => {
-    expect(ENVIRONMENT_CATALOGUE).toHaveLength(133);
-  });
-
   it('K-2 no config or personal entry has a name the SA-C1 pattern would mask', () => {
     const offenders = ENVIRONMENT_CATALOGUE.filter(
       (e) => (e.sensitivity === 'config' || e.sensitivity === 'personal') && nameLooksSecret(e.name)
