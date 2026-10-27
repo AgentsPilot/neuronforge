@@ -236,6 +236,18 @@ interface PreviewData {
     has_website?: boolean | null;
     /** How money actually arrives — the answer that decides whether Stripe is needed at all. */
     collection_method?: 'card_online' | 'invoice' | 'in_person' | 'mixed' | 'none';
+    /*
+     * Two facts the interview settles that this type never declared.
+     *
+     * Both are real `ConfigFactKey`s (lib/business-os/onboarding/
+     * configurationInference.ts) and both are carried through
+     * `computeConfiguration` — `theChainHoldsEndToEnd.test.ts` sends
+     * `sells_scheduled: true` down exactly this path. The preview reads them
+     * a few hundred lines below; without them on the type the reads were
+     * errors, and TypeScript was right to say the shape did not admit them.
+     */
+    sells_scheduled?: boolean;
+    needs_intake?: boolean;
     payment_mode?: 'none' | 'upfront' | 'invoicing' | 'installments';
     needs_stripe_connect?: boolean;
     pipeline_stages?: Array<{

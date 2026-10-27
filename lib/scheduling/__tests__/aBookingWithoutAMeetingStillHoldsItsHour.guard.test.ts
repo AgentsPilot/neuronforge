@@ -57,7 +57,13 @@ describe('the reader asks the bookings, not only the meetings', () => {
      * hour differs from the booking row it belongs to.
      */
     expect(code).toContain('scheduling_meetings(id)');
-    expect(code).toMatch(/scheduling_meetings.*\?\?\s*\[\]\).length/s);
+    /*
+     * `[\s\S]*` rather than `.*` with the `/s` flag: dotAll needs an ES2018
+     * target and this project compiles to ES2017, so the flag is a type
+     * error. The character class spans newlines on every target and matches
+     * exactly the same text.
+     */
+    expect(code).toMatch(/scheduling_meetings[\s\S]*\?\?\s*\[\]\)\.length/);
   });
 });
 

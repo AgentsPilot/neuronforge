@@ -3,6 +3,7 @@
 import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { BasePluginExecutor } from './base-plugin-executor';
+import type { EnquiryTemplate } from '@/lib/business-os/leads/enquiryTemplate';
 import { crmContactRepository, CRMContactUpdate } from '@/lib/repositories/CRMContactRepository';
 import { deleteContact as removeContact } from '@/lib/services/ContactLifecycleService';
 import { crmTaskRepository, CRMTaskUpdate } from '@/lib/repositories/CRMTaskRepository';
@@ -11,14 +12,34 @@ import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStage
 
 const pluginName = 'crm';
 
-/** A template that may arrive as an object or as the JSON string of one. */
-function readTemplateParam(raw: unknown): Record<string, unknown> | null {
+/**
+ * A template that may arrive as an object or as the JSON string of one.
+ *
+ * It returns `EnquiryTemplate | null` rather than a bare record, because the
+ * consumer's field is typed `EnquiryTemplate` and a loose `Record` is not
+ * assignable to it — which is what TypeScript was complaining about.
+ *
+ * The cast is guarded rather than blind. `EnquiryTemplate` is a structured
+ * thing (`subjectPrefix`, `labels`, `sources`…), so asserting it over an
+ * arbitrary parsed object would move the failure from here, where it is a
+ * type error, to whichever downstream read touches a field that was never
+ * there. Checking the two fields the parse actually depends on is enough to
+ * tell a real template from a stray object, and anything that fails the check
+ * is treated exactly as a missing template already is.
+ */
+function isEnquiryTemplate(value: unknown): value is EnquiryTemplate {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Partial<EnquiryTemplate>;
+  return typeof v.subjectPrefix === 'string' && Array.isArray(v.labels);
+}
+
+function readTemplateParam(raw: unknown): EnquiryTemplate | null {
   if (!raw) return null;
-  if (typeof raw === 'object') return raw as Record<string, unknown>;
+  if (typeof raw === 'object') return isEnquiryTemplate(raw) ? raw : null;
   if (typeof raw !== 'string') return null;
   try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    const parsed: unknown = JSON.parse(raw);
+    return isEnquiryTemplate(parsed) ? parsed : null;
   } catch {
     return null;
   }
