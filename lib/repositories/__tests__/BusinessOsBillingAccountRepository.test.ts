@@ -848,6 +848,9 @@ describe('source guards', () => {
       // Plan payments P-6a.1: the test-clock route suite fakes the repository
       // module by name. The route itself does not name it (planTestClock.ts does).
       'app/api/admin/business-os/test/plan-test-clock/__tests__/route.test.ts',
+      // D2 / SX-1 QA (2026-10-27): the gap tests over the same two routes fake
+      // the repository module by name, as route.test.ts below. Test file only.
+      'app/api/business-os/billing/plan/cancel/__tests__/route.d2.qa.test.ts',
       // Plan payments P-7a.1: the cancel / reactivate routes' integration test
       // fakes the repository module by name. The routes themselves do not name it.
       'app/api/business-os/billing/plan/cancel/__tests__/route.test.ts',
