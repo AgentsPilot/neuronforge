@@ -123,6 +123,14 @@ import type { AgentRepositoryResult as RepositoryResult } from './types';
 const OWNER_ACTIVITY_SCAN_CAP = 5000;
 
 /**
+ * FF-3 tranche A (finance follow-ups bundle, SA-WP-FU FU-C3): the scan is read
+ * in pages of at most 1,000 rows. PostgREST returns at most `max-rows` (1,000)
+ * per request and does not say it cut, so a single `.limit(5000)` silently
+ * stopped at 1,000. The cap above is unchanged; it is now reachable.
+ */
+const OWNER_ACTIVITY_PAGE = 1000;
+
+/**
  * What counts as the owner operating their BUSINESS, as opposed to the agent
  * platform running underneath them.
  *
@@ -461,20 +469,35 @@ export class AuditTrailRepository {
     since: string
   ): Promise<RepositoryResult<OwnerActionCount[]>> {
     try {
-      const { data, error } = await this.supabase
-        .from('audit_trail')
-        .select('action, entity_type, entity_id, created_at')
-        .eq('user_id', userId)
-        .gte('created_at', since)
-        // The two BD-26 exclusions, identical to listOwnerEntries.
-        .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
-        .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)
-        .order('created_at', { ascending: false })
-        .limit(OWNER_ACTIVITY_SCAN_CAP);
+      type OwnerActionRow = { action: string; entity_type: string | null; entity_id: string | null; created_at: string };
+      const rows: OwnerActionRow[] = [];
+      // FF-3: offset pages of <= 1,000, a total order (`id` breaks created_at ties, SA-Q-FU-7), the
+      // same user and BD-26 filters on EVERY page; a page error fails the whole read (never a partial count).
+      for (let offset = 0; offset < OWNER_ACTIVITY_SCAN_CAP; offset += OWNER_ACTIVITY_PAGE) {
+        const size = Math.min(OWNER_ACTIVITY_PAGE, OWNER_ACTIVITY_SCAN_CAP - offset);
+        const { data, error } = await this.supabase
+          .from('audit_trail')
+          .select('action, entity_type, entity_id, created_at')
+          .eq('user_id', userId)
+          .gte('created_at', since)
+          // The two BD-26 exclusions, identical to listOwnerEntries.
+          .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
+          .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(offset, offset + size - 1);
 
-      if (error) throw error;
+        if (error) throw error;
 
-      const rows = (data ?? []) as { action: string; entity_type: string | null; entity_id: string | null; created_at: string }[];
+        const page = (data ?? []) as OwnerActionRow[];
+        rows.push(...page);
+        if (page.length < size) break;
+      }
+
+      if (rows.length >= OWNER_ACTIVITY_SCAN_CAP) {
+        // Counts only: never an action name or an entity id.
+        this.logger.warn({ userId, scanned: rows.length, cap: OWNER_ACTIVITY_SCAN_CAP }, 'Owner action scan hit its row cap; counts are a floor');
+      }
 
       /*
        * Grouped in memory rather than by the database.

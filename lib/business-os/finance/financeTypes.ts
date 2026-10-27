@@ -205,8 +205,6 @@ export interface FinanceAiCostSection {
   recorded?: FinanceRecordedAiCost;
 }
 
-export type FinanceRevenueState = 'none_yet' | 'recorded' | 'unknown';
-
 // ── Our revenue, credit boosts (slice 4a, S4-FR-1 to S4-FR-14) ──────────────
 // The platform's own boost purchases, paid in the window. Each money figure is
 // in the currency named beside it; none is ever added across currencies.
@@ -429,11 +427,7 @@ export interface FinanceRevenueTotalLine {
 export interface FinanceRevenueSection {
   /** From the two money parts (SA-W62): `unknown` when boosts AND plans failed; `partial` when one did or either is partial. */
   status: FinanceSectionStatus;
-  /**
-   * All businesses: R-d, unchanged (any paid plan invoice or paid boost,
-   * platform-wide). One business (E-36): from that business's own reads.
-   */
-  state: FinanceRevenueState;
+  // R4-FU-1 bundle (SA-Q-FU-3, BQ-FU-2): `state` and its read R-d were removed; nothing showed them.
   /** Plan payments received in the window (slice 5a, M2-FR-11; replaced R-d's plans line, SA-W61). */
   plans: FinancePlanRevenue;
   /** Credit boosts paid in the window (S4-FR-10). */

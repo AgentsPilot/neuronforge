@@ -26,9 +26,8 @@
  *      platform-wide reminder queue read, since slice 4a the all-accounts
  *      boost purchase read, and since slice 5a the all-accounts plan payment
  *      read, and since M-4 the all-accounts usage-log cost read). The
- *      platform-wide revenue head count is not called with a
- *      business picked either (SA-Q35, slice 5a): the picked view makes no
- *      platform-wide read at all.
+ *      picked view makes no platform-wide read at all (the platform-wide
+ *      revenue head count, R-d, was removed by R4-FU-1).
  * Slice 1c (BD-14, BD-15, BD-16): the billing and revenue reads count test
  * and real rows together; a paying Founding Partner is grouped by its paid
  * tier; one billing row per account is assumed, and two make the paying read
@@ -69,8 +68,8 @@
  * shown by-business rows only, with all businesses (SA-W73). The pure
  * `combineOurRevenue` adds boost net and plans received WITHIN one currency
  * only (SA-Q40, E-34): K-5 and the summary's "Paid us, total" both come from
- * it. R-d (`countRevenueRows`) still sets `state` with all businesses and is
- * NOT called with a business picked (SA-Q35, E-36). The section is unknown only
+ * it. R-d and the section's `state` were removed (R4-FU-1 bundle, SA-Q-FU-3):
+ * the state was shown nowhere. The section is unknown only
  * when the boosts AND the plans reads failed (SA-W62).
  *
  * SECTION 4, CREDITS (slice 1b). The credit-position pass starts as soon as the
@@ -132,7 +131,6 @@ import type {
 import type {
   BusinessOsFinanceReadRepository,
   FinanceBillingStatusRow,
-  FinanceRevenueCounts,
 } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 import { cutoverClamp, settle } from '@/lib/business-os/credits/aiActivity';
 import { ReadDeadlineError, underDeadline, type DeadlineRead, type ReadTiming } from '@/lib/admin/readUnderDeadline';
@@ -274,11 +272,18 @@ export interface FinanceHealthDeps {
     BusinessOsCreditLedgerReadRepository,
     'listRowsOfAllAccountsCreatedInRange' | 'listRowsForAccountCreatedInRange' | 'findChargesByActionIds'
   >;
-  finance: Pick<
+  /**
+   * R4-FU-1 (SA-Q-FU-4): the two billing STATUS keys are explicit function
+   * types, no longer picked from the finance read repository (which no longer
+   * has those reads). The wiring binds them to the CURRENT-mode reader
+   * (Finance R4); the key names are unchanged, so the snapshot's `Pick` and
+   * every caller stay as they were.
+   */
+  finance: {
+    listBillingStatusesAllAccounts: (opts?: { pageSize?: number; ceiling?: number }) => Promise<RepoResult<FinanceBillingStatusRow[]>>;
+    findBillingStatusForAccount: (accountId: string) => Promise<RepoResult<FinanceBillingStatusRow | null>>;
+  } & Pick<
     BusinessOsFinanceReadRepository,
-    | 'listBillingStatusesAllAccounts'
-    | 'findBillingStatusForAccount'
-    | 'countRevenueRows'
     | 'listClientPaymentsAllAccountsPaidInRange'
     | 'listClientPaymentsForAccountPaidInRange'
     | 'listClientRefundsAllAccountsCreatedInRange'
@@ -476,8 +481,6 @@ export interface FinanceHealthCounts {
     paymentsTotal: number;
     namesFound: number;
   };
-  /** R-d (SA-Q35): read with all businesses, `not_called` with a business picked, `failed` when it failed. */
-  revenueExistence: 'read' | 'failed' | 'not_called';
   /**
    * Money MK-5b: Converted this month. Counts, a status and a scope only, never
    * an id, a date or a name. Absent when the wiring supplies no `converted`.
@@ -643,6 +646,14 @@ export async function buildFinanceHealth(
 
   const clamp = cutoverClamp(window.start, window.end);
   const spans = k1Spans(now);
+  // Section 3's window read, clamped to the cut-over: the same call Charge checks' cost tile makes (MK-2).
+  const windowRead = readChargedWindow(deps.ledger, accountId, window).result;
+  // MK2-FU-1 (SA-WP-FU SA-Q-FU-1): when that read covers EXACTLY K-1's current span (instants compared,
+  // never a window label), K-1 uses the same read: one figure, one read. A failed read is Unknown on both.
+  const k1SharesWindowRead =
+    clamp.readFrom !== null &&
+    clamp.readFrom.getTime() === spans.current.from.getTime() &&
+    window.end.getTime() === spans.current.to.getTime();
 
   const plansPromise: Promise<RepoResult<PlanWalk>> =
     accountId !== null
@@ -671,8 +682,6 @@ export async function buildFinanceHealth(
   const today = todayUtc(now);
   const reminderTimings: ReadTiming[] = [];
   const NOT_NARROWED: DeadlineRead<FinanceReminderFiguresInput> | null = null;
-  // SA-Q35: R-d is platform-wide, so with a business picked it is not called (E-36).
-  const NOT_CALLED_REVENUE: RepoResult<FinanceRevenueCounts> | null = null;
 
   // ── M-4 recorded read (wiring): start ──
   // §11F.7: the recorded AI cost. On the Accounts tab neither read runs (AC-167); with a business
@@ -702,7 +711,6 @@ export async function buildFinanceHealth(
   const [
     plansResult,
     payingResult,
-    revenueResult,
     windowResult,
     k1Current,
     k1Previous,
@@ -727,10 +735,8 @@ export async function buildFinanceHealth(
           return one.error ? { data: null, error: one.error } : { data: one.data ? [one.data] : [], error: null };
         })
       : settle(() => deps.finance.listBillingStatusesAllAccounts()),
-    accountId !== null ? Promise.resolve(NOT_CALLED_REVENUE) : settle<FinanceRevenueCounts>(() => deps.finance.countRevenueRows()),
-    // Section 3's window read, clamped to the cut-over: the same call Charge checks' cost tile makes (MK-2).
-    readChargedWindow(deps.ledger, accountId, window).result,
-    readSpan(spans.current),
+    windowRead,
+    k1SharesWindowRead ? windowRead : readSpan(spans.current),
     spans.previousBeforeCutover ? Promise.resolve(null) : readSpan(spans.previous),
     settle<FinanceLot[]>(() => (accountId !== null ? deps.lots.forAccount(accountId) : deps.lots.allAccounts())),
     positionsPromise,
@@ -802,9 +808,9 @@ export async function buildFinanceHealth(
 
   if (plansResult.error) failed('plans', plansResult.error);
   if (payingResult.error) failed('paying_status', payingResult.error);
-  if (revenueResult?.error) failed('revenue_existence', revenueResult.error);
   if (windowResult.error) failed('ledger_window', windowResult.error);
-  if (k1Current.error) failed('ledger_k1_current', k1Current.error);
+  // MK2-FU-1: a shared read failed once and is logged once, as `ledger_window`.
+  if (k1Current.error && !k1SharesWindowRead) failed('ledger_k1_current', k1Current.error);
   if (k1Previous?.error) failed('ledger_k1_previous', k1Previous.error);
   if (lotsResult.error) failed('credit_lots', lotsResult.error);
   if (clientPayments.error) failed('client_payments', clientPayments.error);
@@ -1124,26 +1130,8 @@ export async function buildFinanceHealth(
     },
   });
 
-  const revenueData = revenueResult?.data ?? null;
   const boostsFailed = builtBoosts.status === 'unknown';
   const plansFailed = builtPlanRevenue.status === 'unknown';
-  let state: FinanceRevenueSection['state'];
-  if (accountId === null) {
-    // R-d unchanged: any paid plan invoice or paid boost, platform-wide, test and real alike.
-    state = !revenueData
-      ? 'unknown'
-      : revenueData.planInvoicesPaid > 0 || revenueData.boostsPaid > 0
-        ? 'recorded'
-        : 'none_yet';
-  } else {
-    // E-36: this business's own reads (R-k′, R-m′), never a platform-wide one.
-    state =
-      boostsFailed || plansFailed
-        ? 'unknown'
-        : builtPlanRevenue.counts.invoices > 0 || builtBoosts.counts.counted > 0
-          ? 'recorded'
-          : 'none_yet';
-  }
   const revenue: FinanceRevenueSection = {
     status:
       boostsFailed && plansFailed
@@ -1151,7 +1139,6 @@ export async function buildFinanceHealth(
         : boostsFailed || plansFailed || builtBoosts.status !== 'ok' || builtPlanRevenue.status !== 'ok'
           ? 'partial'
           : 'ok',
-    state,
     plans: {
       status: builtPlanRevenue.status,
       scope,
@@ -1674,7 +1661,6 @@ export async function buildFinanceHealth(
         paymentsTotal: builtPlanRevenue.counts.paymentsTotal,
         namesFound: planNamesFound,
       },
-      revenueExistence: revenueResult === null ? 'not_called' : revenueResult.data ? 'read' : 'failed',
       accountEconomics: accountEconomicsCounts,
       aiRecorded: recordedCounts,
     },

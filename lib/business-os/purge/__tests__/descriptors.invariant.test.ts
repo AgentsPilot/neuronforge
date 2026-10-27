@@ -879,7 +879,9 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     //   (section `bookings`) by analogy with `scheduling_bookings`.
     // +1 account deletion lifecycle DL-1a (2026-10-25): business_os_account_closures (never, user_id),
     //   the deletion request, which a business Reset or Purge must not cancel (SA O-2).
-    expect(baseline.count).toBe(162);
+    // +2 module export MX-1a (2026-10-27): business_os_export_module_jobs and business_os_export_requests
+    //   (never, user_id), the export history and the daily limit counter (SA MX1A-2). Counted from 162 (SA CR-3).
+    expect(baseline.count).toBe(164);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

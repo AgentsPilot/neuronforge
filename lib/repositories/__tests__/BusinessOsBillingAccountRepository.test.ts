@@ -1355,7 +1355,7 @@ describe('current_period_end is written only by the paid apply path (SA C-1 ruli
     expect(code).toMatch(/current_period_end: null,/);
   });
 
-  it('no other application file opens a query on the billing table, and the finance read repository only reads it', () => {
+  it('no other application file opens a query on the billing table, and the finance read repository no longer opens it', () => {
     const offenders: string[] = [];
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -1372,10 +1372,11 @@ describe('current_period_end is written only by the paid apply path (SA C-1 ruli
     };
     for (const dir of ['app', 'lib', 'components', 'hooks']) walk(path.join(ROOT, dir));
     // Plan payments P-8a.1: the admin Subscriptions read joins as a third, read-only reader (one mode per read, PF-15).
+    // R4-FU-1 (finance follow-ups bundle, SA-WP-FU, ruled): the finance read repository LEAVES the list
+    // (R-c and R-c′ removed; Finance reads status through the admin read repository's current-mode reader).
     expect(offenders.sort()).toEqual([
       'lib/repositories/BusinessOsBillingAccountRepository.ts',
       'lib/repositories/BusinessOsBillingAdminReadRepository.ts',
-      'lib/repositories/BusinessOsFinanceReadRepository.ts',
     ]);
     const finance = fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsFinanceReadRepository.ts'), 'utf8');
     expect(finance).not.toMatch(/\.(update|insert|upsert|delete|rpc)\(/);
