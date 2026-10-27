@@ -20,6 +20,12 @@ jest.mock('@/lib/logger/client', () => {
   return { clientLogger: logger };
 });
 
+// EC-4: the filters read the page URL through useSearchParams (as the Businesses page tests do).
+let mockSearch = '';
+jest.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(mockSearch),
+}));
+
 import AdminEnvironmentPage from '../page';
 import type { EnvironmentLabel, EnvironmentViewPayload, EnvRow } from '@/lib/admin/environment-types';
 
@@ -34,13 +40,27 @@ function row(name: string, display: EnvRow['display'], extra: Partial<EnvRow> = 
     scope: 'server',
     expectedIn: OPT,
     display,
+    diagnostics: [],
     ...extra,
   };
 }
 
+const CHECKED: Record<EnvironmentLabel, 'production' | 'preview' | 'local' | null> = {
+  production: 'production',
+  preview: 'preview',
+  local: 'local',
+  'vercel-development': 'local',
+  unknown: null,
+};
+
 function payload(overrides: Partial<EnvironmentViewPayload> = {}, label: EnvironmentLabel = 'preview'): EnvironmentViewPayload {
+  const checked = CHECKED[label];
   return {
-    environment: { label, facts: { host: 'deploy-x.example.test', region: 'abc1', branch: 'feature/x', commit: null } },
+    environment: {
+      label,
+      checkedAgainst: checked,
+      facts: { host: 'deploy-x.example.test', region: 'abc1', branch: 'feature/x', commit: null },
+    },
     groups: [
       {
         id: 'plugins',
@@ -81,7 +101,17 @@ function payload(overrides: Partial<EnvironmentViewPayload> = {}, label: Environ
       },
     ],
     uncategorised: [],
-    counts: { rows: 13, set: 9, notSet: 4, uncategorised: 0, platformHidden: 12 },
+    counts: {
+      rows: 13,
+      set: 9,
+      notSet: 4,
+      uncategorised: 0,
+      platformHidden: 12,
+      requiredNotSet: checked === null ? null : 0,
+      shouldNotBeSet: checked === null ? null : 0,
+      unrecognisedFlags: 0,
+      surroundingWhitespace: 0,
+    },
     generatedAt: '2026-01-02T03:04:05.000Z',
     ...overrides,
   };
@@ -125,14 +155,27 @@ async function renderReady(data: EnvironmentViewPayload = payload()) {
   return fetchMock;
 }
 
+/**
+ * P2-11, updated for EC-4 (P4-13): the only inputs are the name search and the
+ * group select; the only buttons are Refresh, Clear (and the empty state's
+ * Clear filters), and Try again. Nothing copies, reveals or downloads.
+ */
 function expectReadOnly() {
-  expect(document.querySelectorAll('input, select, textarea, form, [role="dialog"]')).toHaveLength(0);
+  expect(document.querySelectorAll('textarea, form, [role="dialog"]')).toHaveLength(0);
+  const inputs = [...document.querySelectorAll('input')];
+  expect(inputs.map((i) => i.getAttribute('type'))).toEqual(['search']);
+  expect(document.querySelectorAll('select')).toHaveLength(1);
   for (const button of screen.queryAllByRole('button')) {
     const name = button.getAttribute('aria-label') ?? button.textContent ?? '';
-    expect(name.startsWith('Refresh') || name === 'Try again').toBe(true);
+    expect(name.startsWith('Refresh') || ['Try again', 'Clear', 'Clear filters'].includes(name)).toBe(true);
     expect(name).not.toMatch(/copy|reveal|show value|download/i);
   }
 }
+
+beforeEach(() => {
+  mockSearch = '';
+  window.history.replaceState(null, '', '/admin/environment');
+});
 
 describe('Environment page', () => {
   it('P2-1 header: one h1, the purpose, the Read-only badge, Refresh with Read at in the bar', async () => {
@@ -334,6 +377,247 @@ describe('Environment page', () => {
     expect(shownText.className).toMatch(/\bbreak-all\b/);
     const valueCellEl = document.querySelector('tr[data-name="FAKE_SHOWN"] [data-testid="env-value"]') as HTMLElement;
     expect(valueCellEl.className).toMatch(/\bbreak-words\b/);
+  });
+
+  describe('EC-4: diagnostics, KPI strip and filters (workplan §4.7 P4-1 to P4-16)', () => {
+    function diagPayload(label: EnvironmentLabel = 'production'): EnvironmentViewPayload {
+      const base = payload({}, label);
+      const checked = CHECKED[label];
+      return {
+        ...base,
+        groups: [
+          {
+            id: 'payments',
+            label: 'Payments (Stripe)',
+            description: 'Payment settings.',
+            rows: [
+              row('FAKE_REQUIRED', { kind: 'status', set: false }, { sensitivity: 'secret', diagnostics: checked ? ['required-not-set'] : [] }),
+              row('FAKE_FORBIDDEN', { kind: 'status', set: true }, { sensitivity: 'secret', diagnostics: checked ? ['should-not-be-set'] : [] }),
+              row('FAKE_ODD_FLAG', { kind: 'flag', state: 'off', source: 'unrecognised' }, { sensitivity: 'flag', diagnostics: ['unrecognised-flag'] }),
+            ],
+          },
+          {
+            id: 'email',
+            label: 'Email',
+            description: 'Email settings.',
+            rows: [row('FAKE_PADDED', { kind: 'status', set: true }, { sensitivity: 'secret', diagnostics: ['surrounding-whitespace'] })],
+          },
+        ],
+        uncategorised: [row('FAKE_UNKNOWN_X', { kind: 'status', set: true }, { group: 'uncategorised', sensitivity: 'secret', expectedIn: null })],
+        counts: {
+          ...base.counts,
+          rows: 5,
+          set: 4,
+          notSet: 1,
+          uncategorised: 1,
+          requiredNotSet: checked ? 1 : null,
+          shouldNotBeSet: checked ? 1 : null,
+          unrecognisedFlags: 1,
+          surroundingWhitespace: 1,
+        },
+      };
+    }
+    const tile = (id: string) => screen.getByTestId(id);
+
+    it('P4-1 / P4-2 five tiles with their words; amber only above 0; no green; K-7 names', async () => {
+      await renderReady(diagPayload());
+      const ids = ['kpi-set', 'kpi-required-not-set', 'kpi-should-not-be-set', 'kpi-values-to-check', 'kpi-uncategorised'];
+      for (const id of ids) expect(tile(id)).toBeInTheDocument();
+      expect(tile('kpi-set')).toHaveAttribute('data-status', 'neutral');
+      expect(tile('kpi-required-not-set')).toHaveAttribute('data-status', 'amber');
+      expect(tile('kpi-should-not-be-set')).toHaveAttribute('data-status', 'amber');
+      expect(tile('kpi-values-to-check')).toHaveAttribute('data-status', 'amber');
+      expect(tile('kpi-values-to-check')).toHaveTextContent('1 unrecognised switch value, 1 with spaces around');
+      expect(tile('kpi-uncategorised')).toHaveAttribute('data-status', 'neutral');
+      expect(document.querySelectorAll('[data-status="green"]')).toHaveLength(0);
+      expect(tile('kpi-required-not-set')).toHaveAttribute('aria-label', 'Required, not set, 1, needs a look');
+    });
+
+    it('P4-2b a zero count is neutral, not green', async () => {
+      await renderReady(payload({}, 'production'));
+      expect(tile('kpi-required-not-set')).toHaveAttribute('data-status', 'neutral');
+      expect(tile('kpi-required-not-set')).toHaveTextContent('0');
+      expect(tile('kpi-required-not-set').tagName).not.toBe('A');
+    });
+
+    it('P4-3 an unknown environment: the two expectation tiles are not measured, and the card says checks are off', async () => {
+      await renderReady(diagPayload('unknown'));
+      for (const id of ['kpi-required-not-set', 'kpi-should-not-be-set']) {
+        expect(tile(id)).toHaveAttribute('data-status', 'not_measured');
+        expect(tile(id)).toHaveTextContent('Not checked: the environment is not recognised');
+      }
+      expect(screen.getByTestId('checked-note')).toHaveTextContent('Checks against the expected settings are off');
+      // Value checks stay on (SA Q4-2).
+      expect(tile('kpi-values-to-check')).toHaveAttribute('data-status', 'amber');
+    });
+
+    it('P4-4 tiles anchor to the first visible matching row and to the Uncategorised card; Set has no target', async () => {
+      await renderReady(diagPayload());
+      expect(tile('kpi-set').tagName).not.toBe('A');
+      expect(tile('kpi-required-not-set')).toHaveAttribute('href', '#env-row-FAKE_REQUIRED');
+      expect(tile('kpi-should-not-be-set')).toHaveAttribute('href', '#env-row-FAKE_FORBIDDEN');
+      expect(tile('kpi-values-to-check')).toHaveAttribute('href', '#env-row-FAKE_ODD_FLAG');
+      expect(tile('kpi-uncategorised')).toHaveAttribute('href', '#uncategorised');
+      expect(document.getElementById('env-row-FAKE_REQUIRED')).not.toBeNull();
+      expect(document.getElementById('uncategorised')).toBe(screen.getByTestId('uncategorised-card'));
+      // Uncategorised rows carry no anchor.
+      expect(document.querySelector('tr[data-name="FAKE_UNKNOWN_X"]')?.id).toBe('');
+    });
+
+    it('P4-4b a filter that hides every match removes the link, not the value', async () => {
+      const user = userEvent.setup();
+      await renderReady(diagPayload());
+      await user.type(screen.getByLabelText('Name'), 'PADDED');
+      expect(tile('kpi-required-not-set').tagName).not.toBe('A');
+      expect(tile('kpi-required-not-set')).toHaveTextContent('1');
+      expect(tile('kpi-values-to-check')).toHaveAttribute('href', '#env-row-FAKE_PADDED');
+    });
+
+    it('P4-5 placeholders while loading; a failed refresh hides the strip (K-10)', async () => {
+      const { pending } = heldFetch();
+      render(<AdminEnvironmentPage />);
+      expect(screen.getAllByTestId('kpi-placeholder')).toHaveLength(5);
+      await act(async () => pending.shift()?.(okAnswer(diagPayload())));
+      await screen.findByTestId('kpi-set');
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Refresh the environment settings' }));
+      await act(async () => pending.shift()?.(answer(500, {})));
+      await screen.findByTestId('environment-error');
+      expect(screen.queryByTestId('kpi-set')).not.toBeInTheDocument();
+      expect(screen.queryAllByTestId('kpi-placeholder')).toHaveLength(0);
+    });
+
+    it('P4-6 / P4-14 region order: header, strip, filter bar (role search, named Filters), content', async () => {
+      await renderReady(diagPayload());
+      const order = [
+        screen.getByRole('banner'),
+        tile('kpi-set'),
+        screen.getByRole('search', { name: 'Filters' }),
+        screen.getByTestId('environment-content'),
+      ];
+      for (let i = 1; i < order.length; i += 1) {
+        expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      }
+    });
+
+    it('P4-7 search narrows rows by name, is never written to the URL, and is read from an inbound link', async () => {
+      const user = userEvent.setup();
+      const replace = jest.spyOn(window.history, 'replaceState');
+      await renderReady(diagPayload());
+      await user.type(screen.getByLabelText('Name'), 'forbid');
+      expect(screen.getAllByTestId('env-row').map((r) => r.getAttribute('data-name'))).toEqual(['FAKE_FORBIDDEN']);
+      for (const call of replace.mock.calls) expect(String(call[2] ?? '')).not.toMatch(/search=/);
+      expect(window.location.search).not.toMatch(/search=/);
+      replace.mockRestore();
+    });
+
+    it('P4-7b an inbound ?search= is read', async () => {
+      mockSearch = 'search=padded';
+      await renderReady(diagPayload());
+      expect(screen.getByLabelText('Name')).toHaveValue('padded');
+      expect(screen.getAllByTestId('env-row').map((r) => r.getAttribute('data-name'))).toEqual(['FAKE_PADDED']);
+    });
+
+    it('P4-8 the group filter: in the URL by replace, default omitted, an unknown id means All', async () => {
+      const user = userEvent.setup();
+      await renderReady(diagPayload());
+      await user.selectOptions(screen.getByLabelText('Group'), 'email');
+      expect(screen.getAllByTestId('group-card').map((c) => c.getAttribute('data-group'))).toEqual(['email']);
+      expect(screen.queryByTestId('uncategorised-card')).not.toBeInTheDocument();
+      expect(window.location.search).toBe('?group=email');
+      await user.selectOptions(screen.getByLabelText('Group'), '');
+      expect(window.location.search).toBe('');
+    });
+
+    it('P4-8b an unknown inbound group id is ignored', async () => {
+      mockSearch = 'group=staging';
+      await renderReady(diagPayload());
+      expect(screen.getAllByTestId('group-card')).toHaveLength(2);
+      expect(screen.getByTestId('uncategorised-card')).toBeInTheDocument();
+    });
+
+    it('P4-9 Clear resets both filters and is disabled at the defaults', async () => {
+      const user = userEvent.setup();
+      await renderReady(diagPayload());
+      const clearButton = screen.getByRole('button', { name: 'Clear' });
+      expect(clearButton).toBeDisabled();
+      await user.type(screen.getByLabelText('Name'), 'x');
+      await user.selectOptions(screen.getByLabelText('Group'), 'payments');
+      expect(clearButton).toBeEnabled();
+      await user.click(clearButton);
+      expect(screen.getByLabelText('Name')).toHaveValue('');
+      expect(screen.getByLabelText('Group')).toHaveValue('');
+      expect(screen.getAllByTestId('group-card')).toHaveLength(2);
+    });
+
+    it('P4-10 nothing matches: the no-match words; Uncategorised reads "No match" under search', async () => {
+      const user = userEvent.setup();
+      await renderReady(diagPayload());
+      await user.type(screen.getByLabelText('Name'), 'no-such-name');
+      expect(screen.getByTestId('environment-no-match')).toHaveTextContent('No settings match the filters.');
+      expect(screen.queryAllByTestId('group-card')).toHaveLength(0);
+      expect(within(screen.getByTestId('uncategorised-card')).getByText('No match')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+      expect(screen.getAllByTestId('group-card')).toHaveLength(2);
+    });
+
+    it('P4-11 each code renders its fixed words as an amber chip; "Required, not set" replaces "Not set"', async () => {
+      await renderReady(diagPayload());
+      expect(valueText('FAKE_REQUIRED')).toBe('Required, not set');
+      expect(valueCell('FAKE_REQUIRED').getByText('Required, not set').closest('[data-tone]')).toHaveAttribute('data-tone', 'warn');
+      expect(valueText('FAKE_FORBIDDEN')).toBe('SetShould not be set on this environment');
+      expect(valueText('FAKE_ODD_FLAG')).toBe('OffSet, not a recognised value: reads as Off');
+      expect(valueText('FAKE_PADDED')).toBe('SetSpaces or line breaks around the value Code that does not trim them reads a different value.');
+      for (const chip of document.querySelectorAll('[data-testid="env-diagnostic"] [data-tone]')) expect(chip).toHaveAttribute('data-tone', 'warn');
+    });
+
+    it('P4-12 (E4-4) no fetch URL has a "?" after a group change, a Refresh and a Try again', async () => {
+      const user = userEvent.setup();
+      const fetchMock = stubFetch(okAnswer(diagPayload()), okAnswer(diagPayload()), answer(500, {}), okAnswer(diagPayload()));
+      render(<AdminEnvironmentPage />);
+      await screen.findByTestId('environment-card');
+      await user.selectOptions(screen.getByLabelText('Group'), 'email');
+      await user.type(screen.getByLabelText('Name'), 'padded');
+      await user.click(screen.getByRole('button', { name: 'Refresh the environment settings' }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      await screen.findByTestId('environment-card');
+      await user.click(screen.getByRole('button', { name: 'Refresh the environment settings' }));
+      await screen.findByTestId('environment-error');
+      await user.click(screen.getByRole('button', { name: 'Try again' }));
+      await screen.findByTestId('environment-card');
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      for (const call of fetchMock.mock.calls) {
+        expect(call).toEqual(REQUEST);
+        expect(String((call as unknown[])[0])).not.toContain('?');
+      }
+      // Refresh kept the filters.
+      expect(screen.getByLabelText('Group')).toHaveValue('email');
+    });
+
+    it('P4-13 read-only with the filters present, in ready, filtered and error states', async () => {
+      const user = userEvent.setup();
+      stubFetch(okAnswer(diagPayload()), answer(500, {}));
+      render(<AdminEnvironmentPage />);
+      await screen.findByTestId('environment-card');
+      expectReadOnly();
+      await user.type(screen.getByLabelText('Name'), 'no-such-name');
+      expectReadOnly();
+      await user.click(screen.getByRole('button', { name: 'Refresh the environment settings' }));
+      await screen.findByTestId('environment-error');
+      expectReadOnly();
+    });
+
+    it('P4-15 vercel-development says it is checked against the local expectations', async () => {
+      await renderReady(diagPayload('vercel-development'));
+      expect(screen.getByTestId('checked-note')).toHaveTextContent('Checked against the local expectations.');
+    });
+
+    it('P4-16 a diagnostic row renders only the fixed words: extra row fields carry nothing to the page', async () => {
+      const data = diagPayload();
+      (data.groups[0].rows[0] as unknown as Record<string, unknown>).note = 'FAKE-smuggled-note';
+      await renderReady(data);
+      expect(document.body.textContent).not.toContain('FAKE-smuggled-note');
+    });
   });
 
   it('P2-14 a late answer does not overwrite a newer one (StrictMode mounts twice, so two reads race)', async () => {

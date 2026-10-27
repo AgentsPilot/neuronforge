@@ -13,11 +13,17 @@
  * @module app/admin/environment/environmentDisplay
  */
 
+import type { KpiTileStatus } from '@/app/admin/components/layout/KpiStrip';
 import type { StatusTone } from '@/app/admin/components/layout/StatusChip';
+import { formatCount } from '@/app/admin/components/layout/adminFormat';
 import type {
+  EnvCheckedAgainst,
+  EnvDiagnostic,
   EnvDisplay,
+  EnvGroupId,
   EnvironmentLabel,
   EnvironmentViewPayload,
+  EnvRow,
   EnvScope,
 } from '@/lib/admin/environment-types';
 
@@ -138,6 +144,14 @@ function isDisplay(value: unknown): boolean {
   }
 }
 
+/** SA E4-3: every code must be one the page has words for. */
+function isDiagnostics(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every((code) => typeof code === 'string' && Object.prototype.hasOwnProperty.call(DIAGNOSTIC_WORDS, code))
+  );
+}
+
 function isRow(value: unknown): boolean {
   return (
     isObject(value) &&
@@ -145,7 +159,23 @@ function isRow(value: unknown): boolean {
     typeof value.role === 'string' &&
     (value.scope === 'server' || value.scope === 'browser-inlined') &&
     (value.seeAlsoPath === undefined || typeof value.seeAlsoPath === 'string') &&
-    isDisplay(value.display)
+    isDisplay(value.display) &&
+    isDiagnostics(value.diagnostics)
+  );
+}
+
+const CHECKED_AGAINST: ReadonlyArray<EnvCheckedAgainst | null> = ['production', 'preview', 'local', null];
+const isCountOrNull = (value: unknown) => value === null || isCount(value);
+
+function isCounts(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    ['rows', 'set', 'notSet', 'uncategorised', 'platformHidden', 'unrecognisedFlags', 'surroundingWhitespace'].every((key) =>
+      isCount(value[key])
+    ) &&
+    // SA Q4-8: only these two may be null (not checked).
+    isCountOrNull(value.requiredNotSet) &&
+    isCountOrNull(value.shouldNotBeSet)
   );
 }
 
@@ -166,10 +196,206 @@ export function isEnvironmentViewPayload(data: unknown): data is EnvironmentView
   const environment = data.environment;
   if (!isObject(environment) || typeof environment.label !== 'string') return false;
   if (!(LABELS as string[]).includes(environment.label)) return false;
+  if (!CHECKED_AGAINST.includes(environment.checkedAgainst as EnvCheckedAgainst | null)) return false;
   const facts = environment.facts;
   if (!isObject(facts) || !['host', 'region', 'branch', 'commit'].every((key) => isStringOrNull(facts[key]))) return false;
   if (!Array.isArray(data.groups) || !data.groups.every(isGroup)) return false;
   if (!Array.isArray(data.uncategorised) || !data.uncategorised.every(isRow)) return false;
-  // The count line renders this number, so it must be one (SA, optional).
-  return isObject(data.counts) && isCount(data.counts.platformHidden);
+  // The count line and the KPI strip render these numbers, so they must be numbers (or null where allowed).
+  return isCounts(data.counts);
+}
+
+// ── EC-4: diagnostics, KPI tiles and filters (workplan §4.4; SA Q4-5 to Q4-11, E4-3, E4-4) ──
+
+export interface DiagnosticWords {
+  text: string;
+  /** Extra words for a screen reader and the tooltip; never taken from the payload. */
+  detail: string | null;
+}
+
+/**
+ * The only words a diagnostic can produce. Keyed by the closed union, so a new
+ * code fails to compile until it has words (and the payload guard refuses any
+ * code that is not a key here).
+ */
+export const DIAGNOSTIC_WORDS: Readonly<Record<EnvDiagnostic, DiagnosticWords>> = {
+  'required-not-set': { text: 'Required, not set', detail: null },
+  'should-not-be-set': { text: 'Should not be set on this environment', detail: null },
+  'unrecognised-flag': { text: 'Set, not a recognised value', detail: null },
+  'surrounding-whitespace': {
+    text: 'Spaces or line breaks around the value',
+    detail: 'Code that does not trim them reads a different value.',
+  },
+};
+
+const WARN = 'warn' as const;
+
+/** The value cell, with the EC-4 emphasis applied (all amber chips carry words and the warn icon). */
+export interface RowValueWords extends ValueWords {
+  /** Amber chips after the value, in the row's code order. */
+  warnings: Array<{ code: EnvDiagnostic; chip: ChipWords; detail: string | null }>;
+}
+
+export function rowValueWords(row: Pick<EnvRow, 'display' | 'diagnostics'>): RowValueWords {
+  const base = describeDisplay(row.display);
+  let chip = base.chip;
+  let note = base.note;
+  const warnings: RowValueWords['warnings'] = [];
+
+  for (const code of row.diagnostics) {
+    const words = DIAGNOSTIC_WORDS[code];
+    if (code === 'required-not-set' && row.display.kind === 'status' && !row.display.set) {
+      // FR-17: the grey "Not set" chip becomes the amber "Required, not set".
+      chip = { text: words.text, tone: WARN };
+      continue;
+    }
+    if (code === 'unrecognised-flag' && row.display.kind === 'flag' && note) {
+      // FR-19: the words already shipped (EC-2); EC-4 makes them an amber chip.
+      warnings.push({ code, chip: { text: note, tone: WARN }, detail: null });
+      note = null;
+      continue;
+    }
+    warnings.push({ code, chip: { text: words.text, tone: WARN }, detail: words.detail });
+  }
+  return { chip, mono: base.mono, note, warnings };
+}
+
+// Filters (FR-21). The group id list is typed against the union, so a new group fails to compile here.
+const GROUP_IDS: Readonly<Record<EnvGroupId, true>> = {
+  environment: true,
+  database: true,
+  admin: true,
+  addresses: true,
+  ai: true,
+  plugins: true,
+  external: true,
+  payments: true,
+  email: true,
+  jobs: true,
+  tokens: true,
+  features: true,
+  logging: true,
+  testing: true,
+  uncategorised: true,
+};
+
+export const GROUP_FILTER_IDS = Object.keys(GROUP_IDS) as EnvGroupId[];
+
+/** U-4: an unknown group id is ignored (the filter falls back to All). */
+export function isGroupFilter(raw: string): raw is EnvGroupId {
+  return Object.prototype.hasOwnProperty.call(GROUP_IDS, raw);
+}
+
+/** FR-21 / SA Q4-11: the variable name only, case-insensitive, trimmed. */
+export function matchesSearch(name: string, search: string): boolean {
+  const term = search.trim().toLowerCase();
+  return term === '' || name.toLowerCase().includes(term);
+}
+
+export interface EnvironmentFilterState {
+  /** '' = all groups. */
+  group: string;
+  search: string;
+}
+
+export interface VisibleView {
+  groups: Array<EnvironmentViewPayload['groups'][number]>;
+  /** False when the group filter names another group (SA Q4-7). */
+  showUncategorised: boolean;
+  uncategorised: EnvRow[];
+  /** Nothing matches anywhere. */
+  empty: boolean;
+}
+
+/** What the filters leave on screen. The environment card is never filtered. */
+export function visibleView(data: EnvironmentViewPayload, filters: EnvironmentFilterState): VisibleView {
+  const group = isGroupFilter(filters.group) ? filters.group : '';
+  const groups = data.groups
+    .filter((block) => group === '' || block.id === group)
+    .map((block) => ({ ...block, rows: block.rows.filter((row) => matchesSearch(row.name, filters.search)) }))
+    // Without a search every chosen card stays (an empty one reads "None"); with one, only cards that match.
+    .filter((block) => block.rows.length > 0 || filters.search.trim() === '');
+  const showUncategorised = group === '' || group === 'uncategorised';
+  const uncategorised = showUncategorised ? data.uncategorised.filter((row) => matchesSearch(row.name, filters.search)) : [];
+  const filtering = group !== '' || filters.search.trim() !== '';
+  const empty =
+    filtering && groups.every((block) => block.rows.length === 0) && (!showUncategorised || uncategorised.length === 0);
+  return { groups, showUncategorised, uncategorised, empty };
+}
+
+/** The anchor id of a catalogued row (catalogued names are `[A-Z0-9_]`, so no escaping is needed). */
+export function rowAnchorId(name: string): string {
+  return `env-row-${name}`;
+}
+
+export const UNCATEGORISED_ANCHOR = 'uncategorised';
+
+export interface KpiTileModel {
+  testId: string;
+  label: string;
+  value: string | null;
+  sub: string | null;
+  status: KpiTileStatus | null;
+  /** A same-page anchor, or null: no target, so not a link (K-6). */
+  href: `#${string}` | null;
+}
+
+function firstVisible(view: VisibleView, codes: readonly EnvDiagnostic[]): `#${string}` | null {
+  for (const block of view.groups) {
+    for (const row of block.rows) {
+      if (row.diagnostics.some((code) => codes.includes(code))) return `#${rowAnchorId(row.name)}`;
+    }
+  }
+  return null;
+}
+
+const NOT_CHECKED_SUB = 'Not checked: the environment is not recognised';
+
+function expectationTile(
+  testId: string,
+  label: string,
+  count: number | null,
+  code: EnvDiagnostic,
+  view: VisibleView
+): KpiTileModel {
+  // SA Q4-8: null means not checked, which is "Not measured yet", never 0.
+  if (count === null) return { testId, label, value: null, sub: NOT_CHECKED_SUB, status: 'not_measured', href: null };
+  // K-5 / FR-20: amber only above 0; never green.
+  return { testId, label, value: formatCount(count), sub: null, status: count > 0 ? 'amber' : null, href: count > 0 ? firstVisible(view, [code]) : null };
+}
+
+/** FR-20: the five tiles, from the server's counts only (K-5). Values are whole-payload figures (K-8). */
+export function kpiTiles(data: EnvironmentViewPayload, view: VisibleView): KpiTileModel[] {
+  const { counts } = data;
+  const valueChecks = counts.unrecognisedFlags + counts.surroundingWhitespace;
+  return [
+    { testId: 'kpi-set', label: 'Set', value: formatCount(counts.set), sub: `of ${formatCount(counts.rows)} listed`, status: null, href: null },
+    expectationTile('kpi-required-not-set', 'Required, not set', counts.requiredNotSet, 'required-not-set', view),
+    expectationTile('kpi-should-not-be-set', 'Should not be set here', counts.shouldNotBeSet, 'should-not-be-set', view),
+    {
+      testId: 'kpi-values-to-check',
+      label: 'Values to check',
+      value: formatCount(valueChecks),
+      sub: `${formatCount(counts.unrecognisedFlags)} unrecognised switch ${counts.unrecognisedFlags === 1 ? 'value' : 'values'}, ${formatCount(counts.surroundingWhitespace)} with spaces around`,
+      status: valueChecks > 0 ? 'amber' : null,
+      href: valueChecks > 0 ? firstVisible(view, ['unrecognised-flag', 'surrounding-whitespace']) : null,
+    },
+    {
+      testId: 'kpi-uncategorised',
+      label: 'Uncategorised',
+      value: formatCount(counts.uncategorised),
+      sub: null,
+      status: null,
+      href: view.showUncategorised ? `#${UNCATEGORISED_ANCHOR}` : null,
+    },
+  ];
+}
+
+/** The environment card's note about which expectations were checked (SA Q4-1, OQ-7). */
+export function checkedNote(data: EnvironmentViewPayload): string | null {
+  if (data.environment.checkedAgainst === null) {
+    return 'Checks against the expected settings are off, because this environment is not recognised.';
+  }
+  if (data.environment.label === 'vercel-development') return 'Checked against the local expectations.';
+  return null;
 }

@@ -1,16 +1,16 @@
 # Workplan: Admin Environment Configuration View
 
-> **Last Updated**: 2026-10-26
+> **Last Updated**: 2026-10-27
 
 **Developer:** Dev
-**Requirement:** [ADMIN_ENVIRONMENT_CONFIGURATION_VIEW_REQUIREMENT.md](/docs/requirements/ADMIN_ENVIRONMENT_CONFIGURATION_VIEW_REQUIREMENT.md) (§10.1 SA Review overrides §3 to §8)
-**Branch:** `feature/admin-environment-view`
+**Requirement:** [ADMIN_ENVIRONMENT_CONFIGURATION_VIEW_REQUIREMENT.md](/docs/requirements/ADMIN_ENVIRONMENT_CONFIGURATION_VIEW_REQUIREMENT.md) (§10.1 SA Review; folded into §3 to §8 on 2026-10-27)
+**Branch:** `feature/admin-environment-view` (EC-1, EC-2: PR #522) · `feature/admin-environment-view-2` (EC-3, EC-4: PR 2)
 **Date:** 2026-10-26
-**Status:** EC-1 Code Complete (workplan SA-approved with changes RC-1..RC-8, applied); awaiting SA code review
+**Status:** EC-1 and EC-2 in PR #522 (SA approved, QA passed). EC-3 and EC-4: workplans written 2026-10-27 (§3, §4), awaiting SA review
 
 ## Overview
 
-A read-only "Environment" page under Settings in `/admin` that lists every environment variable the application reads, grouped, with a one-sentence role, secrets reduced to Set / Not set on the server. This workplan has one section per slice. **EC-1** (catalogue, platform deny-list, server-side classifier, `GET /api/admin/environment`, audit event, access-register row; no UI) is planned in full. EC-2 to EC-4 are stubs, filled when their slice starts.
+A read-only "Environment" page under Settings in `/admin` that lists every environment variable the application reads, grouped, with a one-sentence role, secrets reduced to Set / Not set on the server. This workplan has one section per slice: **EC-1** (catalogue, platform deny-list, server-side classifier, `GET /api/admin/environment`, audit event, access-register row), **EC-2** (the page and sidebar entry), **EC-3** (the catalogue drift guard) and **EC-4** (diagnostics, KPI strip, search and group filter).
 
 > **Public repository.** This workplan names variables, groups, roles and design only. It contains no value, partial value, project reference or remark about the state of any credential, and neither may the code, fixtures, tests, QA report or PR description that follow it (SA-C14). Test fixtures use obviously fake strings.
 
@@ -31,8 +31,8 @@ A read-only "Environment" page under Settings in `/admin` that lists every envir
    10. [Findings for other streams (not fixed here)](#110-findings-for-other-streams-not-fixed-here)
    11. [Implementation notes](#111-implementation-notes)
 2. [EC-2: page and sidebar entry](#2-ec-2-page-and-sidebar-entry)
-3. [EC-3: catalogue drift guard (stub)](#3-ec-3-catalogue-drift-guard-stub)
-4. [EC-4: diagnostics (stub)](#4-ec-4-diagnostics-stub)
+3. [EC-3: catalogue drift guard](#3-ec-3-catalogue-drift-guard)
+4. [EC-4: diagnostics](#4-ec-4-diagnostics)
 5. [SA Review Notes](#5-sa-review-notes)
 6. [QA Testing Report](#6-qa-testing-report)
 7. [Commit Info](#7-commit-info)
@@ -929,21 +929,540 @@ Gates: the `app/admin/environment`, `lib/admin/environment` and `app/api/admin/e
 
 ---
 
-## 3. EC-3: catalogue drift guard (stub)
+## 3. EC-3: catalogue drift guard
 
-Filled when EC-3 starts. Carries R-3 to R-5, OQ-9 (one Jest file in the existing sharded gate, at most 5 s, no new job or script), SA-C13, and the answer to Q-2. Inputs from EC-1: the inventory method in §1.3 and its local timing.
+**Status:** Workplan SA-approved with changes (E3-1 to E3-4, §5). **Code Complete 2026-10-27**, awaiting SA code review and QA (§3.9). **Path:** full cycle (a new CI-enforced rule). **Branch:** `feature/admin-environment-view-2`, cut from the EC-1/EC-2 branch while PR #522 is still open. EC-3 and EC-4 ship together in PR 2, EC-3 as its own commit first. **RM note (corrected by SA, 2026-10-27):** PR 2 always targets `main`, never the parent branch (a PR against the parent branch would merge into that branch, not `main`). If #522 is still open when PR 2 opens, PR 2 shows #522's commits until #522 lands.
 
-- ⬜ Workplan section written
-- ⬜ Implementation, negative controls, CI timing measured by QA
+### 3.1 Rulings and conditions this slice carries
+
+| Ref | What EC-3 must do | Where |
+|---|---|---|
+| R-3 | A Jest test that fails when code reads a name the catalogue lacks, and when a catalogue entry is read by no code and carries no marker | §3.3, G3-1 |
+| R-4 | Computed reads it cannot resolve are reported as information only. **Amended by SA (Q3-1, E3-1):** they are pinned with a reason, and a new or vanished one fails | §3.9, G3-1f |
+| R-5 / OQ-9 | **One Jest file**, collected by the existing sharded gate (`Gate tests (jest)`). No new job, no new npm script, nothing added to `test:authz-guard`, `test:bos-entitlements` or `test:bos-llm`. **At most 5 s** wall time in its shard. A plain recursive file read plus regex: no TypeScript compile of the scanned files, no build, no `ts-morph` | §3.4 |
+| SA-C13 | Detects dot reads, `process.env['NAME']` / `process.env["NAME"]` (and backtick) bracket reads, and destructuring from `process.env`. Scans `app/`, `lib/`, `components/`, `hooks/`, plus root-level `middleware.ts`, `next.config.js` and any `instrumentation*.ts`. Excludes test files and `__tests__` / `__mocks__` folders. CRLF-safe (no `\n`-anchored pattern). The unreferenced-entry marker is the closed enum `consumedBy: 'sdk' \| 'platform' \| 'environment-page'` with a required note. Negative controls for both failure kinds | §3.3, G3-2 |
+| Q-2 (SA, EC-1 workplan review) | Plugin JSON counts as a read source: `${NAME}` placeholders in plugin definitions and `"…EnvVar": "NAME"` fields in plugin configs. `const X = 'NAME'` + `process.env[X]` in the same file is resolved. A constant exported from another file is resolved by following that **one** import; anything this cannot resolve is brought to SA, and **the enum is not widened** | §3.3 steps 4 and 5, Q3-6 |
+| §7 EC-3 | A "how to add an environment variable" step in `docs/feature_flags.md`, and a pointer in `.env.example`'s header | T3-7, T3-8 |
+| SA-C14 | The guard and its failure messages deal in **names** only. It reads source files, never `.env*` files and never `process.env` values | Whole slice |
+
+### 3.2 Analysis summary
+
+| Area | What EC-3 touches |
+|---|---|
+| New test | `lib/admin/environment/__tests__/catalogueDrift.guard.test.ts`: the scanner as pure functions at the top of the file, one real-tree scan, and the negative controls. One file, because any non-test helper placed under `__tests__/` would be collected as a suite by `testMatch` |
+| Catalogue | `lib/admin/environment/catalogue.ts`: its header comment names the guard. New entries only for names that reached `main` after the EC-1 inventory (the first real-tree run lists them; each gets a full entry under the EC-1 rules) |
+| Catalogue tests | `catalogue.test.ts` "holds the 133 names" pin: see Q3-4 |
+| Docs | `docs/feature_flags.md` (a step plus a Change History row); `.env.example` header (comment lines only, no value) |
+| CI | None. The file sits in a folder the gate already collects |
+| Production code | None, apart from new catalogue entries if the first run finds any |
+| Entitlements | The scan **reads** `lib/business-os/entitlements/mode.ts` as text (it resolves a same-file constant there). It imports nothing from that module and writes no tier or capability literal. SA to confirm the skill is not engaged (Q3-7) |
+
+Read paths the guard covers today, from the EC-1 inventory (§1.3) and re-checked for this plan:
+
+| Read path | Count today | How the guard sees it |
+|---|---|---|
+| Literal dot reads | 101 distinct names | Regex |
+| Bracket literal, destructuring | 0 | Regex (negative controls prove detection) |
+| Same-file constant (`process.env[KEY]` with `const KEY = 'NAME'`) | 4 sites | Resolved in the file |
+| Constant imported from another file | 0 | Followed one import (negative controls prove it) |
+| Plugin definition placeholders, `*EnvVar` config fields | 28 definition files, 2 config files | Regex over the JSON text |
+| Library- or page-consumed | 5 entries | `consumedBy` marker |
+| Computed reads left unresolved | 5 sites: the plugin placeholder substitution, the two OAuth `*EnvVar` reads (both covered by the JSON scan), a "which of these names are missing" check whose names are read literally elsewhere, and a test helper that writes | Information only (Q3-1) |
+
+### 3.3 Implementation approach
+
+The scanner is a set of pure functions over `(path, text)` pairs, so the negative controls feed it fixture strings and an in-memory file map without touching the disk. The real-tree run gives it the file system.
+
+1. **Walk.** `fs.readdirSync(dir, { withFileTypes: true })`, recursive, over the four roots. Folders named `node_modules`, `.next`, `__tests__` and `__mocks__` are pruned before descending. Files ending `.ts .tsx .js .jsx .mjs .cjs`, excluding `*.test.*` and `*.spec.*`. Plus the root files `middleware.ts`, `next.config.js` and every `instrumentation*.ts` that exists (none today; the walk tolerates absence).
+2. **Prefilter.** Each file is read as a `Buffer` and checked with `buffer.indexOf('process.env')`. Only files that contain it (about 420 of about 2,940) are decoded and processed further.
+3. **Strip comments.** One linear pass that removes `//` line comments and `/* */` block comments, and leaves string and template text in place. A line comment ends at `\r` or `\n`, so CRLF files behave the same as LF files. Inside a string, `//` is not a comment, so `'https://…' + process.env.X` on one line is still read.
+4. **Match.**
+
+   | Kind | Pattern (simplified; no newline anchors anywhere) |
+   |---|---|
+   | Dot | `process\.env\??\.([A-Za-z_][A-Za-z0-9_]*)` (optional chaining included) |
+   | Bracket literal | `process\.env\??\.?\[\s*(['"\`])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]` |
+   | Destructuring | `\{([^{}]*)\}\s*=\s*process\.env\b`. The brace body is split on commas; each key is the text before `:` or `=`; a `...rest` element is reported as a computed read |
+   | Computed | `process\.env\??\.?\[` not followed by a quote: resolved in step 5 |
+   | Whole object | `process.env` not followed by `.`, `?.` or `[` (passed as an argument, or assigned): information only |
+
+   A write (`process.env.X = …`) outside tests counts as a read, as it did in the EC-1 inventory (Q3-3).
+5. **Resolve computed reads.** For `process.env[IDENT]`:
+   - (a) In the same file, find `const IDENT = 'NAME'` (also `export const`, a type annotation, or a trailing `as const`). Found: `NAME` is a read.
+   - (b) Otherwise, find `import { IDENT }` or `import { ORIG as IDENT }` in the same file. Resolve the specifier (`@/` to the repository root, or relative to the file), trying `.ts`, `.tsx`, `.js` and `/index.ts`. Read that one file and look for `export const ORIG = 'NAME'`. One hop only: a re-export chain is not followed.
+   - (c) A member expression (`process.env[this.config.…]`) or anything else is left unresolved and reported (step 6).
+6. **JSON read sources.** `lib/plugins/definitions/*.json`: every `${…}` whose content is a valid name (`^[A-Z_][A-Z0-9_]*$`; something like `${amount/100}` is not one and is skipped). `lib/plugins/v2/configs/*.json`: every `"…EnvVar": "NAME"`. Two **source pins** keep these assumptions honest: `lib/server/plugin-manager-v2.ts` still substitutes `${…}` from `process.env`, and `lib/plugins/v2/core/UniversalOAuthHandler.ts` still reads `clientIdEnvVar` and `clientSecretEnvVar` from `process.env`. If either reader changes, the pin fails and the guard is revisited rather than going quietly blind.
+7. **Compare with the catalogue** (imported from `@/lib/admin/environment/catalogue`):
+   - **Missing:** a name read by code (steps 4, 5, 6) with no catalogue entry → fail. The message lists each name with the first file that reads it, and says: "Add an entry to lib/admin/environment/catalogue.ts in this PR. See docs/feature_flags.md, 'Adding an environment variable'."
+   - **Unreferenced:** a catalogue entry that nothing reads and that has no `consumedBy` → fail. The message lists each name and says to remove the entry or add a `consumedBy` marker with its note.
+   - **Stale marker** (Q3-5): an entry with `consumedBy` that the code does read → fail ("remove the marker").
+   - **Information:** the unresolved computed-read and whole-object sites, as `file:line` (Q3-1).
+8. **Floors**, so that a broken walk fails rather than passing vacuously: at least 1,000 files scanned, at least 50 literal names, at least 20 plugin definition files, and at least 1 config file.
+
+### 3.4 Staying inside the 5 s budget
+
+| Step | Why it is cheap |
+|---|---|
+| One scan per run | Done once in `beforeAll` and memoised; every `it` asserts against the same result |
+| Pruned walk | `withFileTypes` avoids a `stat` per file; excluded folders are never entered |
+| Buffer prefilter | About 85% of files are never decoded to text or touched by a regex |
+| Linear comment strip and regex | Only on the prefiltered files |
+| JSON | 30 small files in two folders |
+| Import following | Only for computed reads not resolved in their own file (0 today) |
+| No TypeScript work on scanned files | ts-jest compiles only the test file and the imported catalogue, which every Jest file pays anyway |
+
+**Measured for this plan** (a throwaway script in the session scratchpad, not committed; walk, buffer prefilter, strip and match exactly as above; local Windows, three runs): **1.24 to 1.32 s** in-process for 2,938 files (42 MB), 424 prefiltered, with 101 names and 9 computed sites found, the same as the EC-1 inventory. Reading the files is about 60% of that time. The earlier 3.0 to 5.4 s figure was a whole separate Node process, with start-up, decoding every file and stripping comments from every file.
+
+**How the budget is checked.**
+- **Locally:** T3-9 records Jest's own per-file time for the guard, over three runs.
+- **In CI:** QA reads the guard file's duration from the shard's `--json` results artefact (`perfStats`), which the gate already uploads, and records it in §6.
+- **No timing assertion in the test:** a wall-clock assertion on a shared runner flakes, and a flaking required gate blocks every PR. A runaway ceiling is in Q3-2.
+
+**Fallbacks if the local Jest figure goes over 4 s**, in this order:
+1. Read the prefiltered files with `fs.promises.readFile` in batches of 64 (the libuv pool overlaps the reads).
+2. Skip `.d.ts` files.
+3. Bring it back to SA before cutting a root.
+
+### 3.5 Files to create / modify
+
+| # | File | Action | Reason |
+|---|---|---|---|
+| F3-1 | `lib/admin/environment/__tests__/catalogueDrift.guard.test.ts` | create | The guard, its scanner and its negative controls (§3.3) |
+| F3-2 | `lib/admin/environment/catalogue.ts` | modify | Header comment names the guard; entries for any name added to `main` since EC-1 |
+| F3-3 | `lib/admin/environment/__tests__/catalogue.test.ts` | modify | Q3-4 (the 133 pin), and its count if F3-2 adds entries |
+| F3-4 | `docs/feature_flags.md` | modify | A new short section "Adding an environment variable" (every new read gets a catalogue entry in the same PR; how to pick group, class, shape and `expectedIn`; when `consumedBy` applies; that the guard enforces it). A step in "Adding a New Feature Flag" that points to it. A Change History row |
+| F3-5 | `.env.example` | modify | Two or three comment lines in the header: a new variable needs a catalogue entry, and where the step is documented. No variable line changes |
+| F3-6 | `docs/requirements/ADMIN_ENVIRONMENT_CONFIGURATION_VIEW_REQUIREMENT.md` | modify | Progress row 3 at each stage |
+| F3-7 | this workplan | modify | Ticks, timings, SA and QA notes |
+
+No touched file uses `console.*` today (`catalogue.ts`, `catalogue.test.ts`: 0). The guard itself uses one information line, if SA accepts Q3-1.
+
+### 3.6 Task list
+
+- ✅ T3-1: SA reviews §3; rulings recorded in §5 (E3-1 to E3-4)
+- ✅ T3-2: Requirement Progress row 3 updated (workplan stage; code complete)
+- ✅ T3-3: Scanner functions (walk, prefilter, strip, match, resolve, JSON) in F3-1
+- ✅ T3-4: Negative controls N-1 to N-18 (§3.9; N-15 is E3-3's template-literal read, N-16 to N-18 cover E3-1)
+- ✅ T3-5: Real-tree run: no missing name, no unreferenced entry, no stale marker, so F3-2 gained no entry
+- ✅ T3-6: Source pins of the two JSON readers; floors
+- ✅ T3-7: `docs/feature_flags.md` (F3-4; the tracked name is `docs/FEATURE_FLAGS.md`, see §3.9)
+- ✅ T3-8: `.env.example` header pointer (F3-5); only comment lines changed (4 added, 0 removed)
+- ✅ T3-9: Timing, recorded in §3.9. No fallback needed
+- ✅ T3-10: Gates, recorded in §3.9. `test:authz-guard` and `test:bos-entitlements` suites ran inside the full `npm run test:gate` run (none is quarantined)
+- ✅ T3-11: Status set to Code Complete; hand to SA for code review
+
+### 3.7 Test plan
+
+**Real tree (G3-1).**
+
+| # | Assertion |
+|---|---|
+| G3-1a | No name read by code is missing from the catalogue |
+| G3-1b | No catalogue entry is unreferenced unless it has `consumedBy` |
+| G3-1c | No entry with `consumedBy` is read by code |
+| G3-1d | Floors (§3.3 step 8) |
+| G3-1e | The two JSON-reader source pins |
+| G3-1f | Information: the unresolved and whole-object sites (Q3-1) |
+
+**Negative controls (G3-2).** These run on fixture strings and an in-memory file map, never on real files. Every fixture name is made up and obviously fake, for example `FAKE_DRIFT_ALPHA`.
+
+| # | Fixture | Expect |
+|---|---|---|
+| N-1 | A dot read of an uncatalogued fake name | Reported missing, so the guard fails |
+| N-2 | Bracket reads with single quotes, double quotes and a backtick | All detected |
+| N-3 | Destructuring: plain, aliased (`A: a`), with a default (`B = 'x'`), multi-line with CRLF, and with `...rest` | A and B are read; `rest` is reported as computed |
+| N-4 | `process.env?.NAME` | Detected |
+| N-5 | The name only in a line comment, a block comment and a JSDoc block | Not read |
+| N-6 | `'https://example.test' + process.env.NAME` on one line | Detected: `//` inside a string is not a comment |
+| N-7 | A whole fixture file with CRLF line endings, including a line comment that ends in `\r\n` followed by a read | The read is detected; the comment is not |
+| N-8 | `const KEY = 'NAME'` + `process.env[KEY]`, with `export`, a type annotation and `as const` | Resolved |
+| N-9 | An imported constant, by `@/` path and by relative path, and an aliased import | Resolved through one hop |
+| N-10 | A two-hop re-export, and `process.env[obj.prop]` | Unresolved and reported as information; no crash |
+| N-11 | A JSON definition with `${FAKE_NAME}` and `${amount/100}`; a config with `"clientIdEnvVar": "FAKE_ID"` | The two names are read; the non-name is skipped |
+| N-12 | A fake catalogue with one unread entry without a marker, one with `consumedBy`, and one with `consumedBy` that is also read | Unreferenced, not reported, stale marker, respectively |
+| N-13 | Paths: `x.test.ts`, `x.spec.tsx`, `a/__tests__/b.ts`, `a/__mocks__/b.ts`, `node_modules/…` | All excluded by the path filter; `lib/x.ts` included |
+| N-14 | A file without `process.env` | Skipped by the prefilter, and the result is the same as without the prefilter (the prefilter cannot hide a read) |
+
+**Coverage against CLAUDE.md.** This is a guard, not a route: the happy path is G3-1, and the failure paths are N-1 and N-12. QA re-measures the CI time (OQ-9).
+
+### 3.8 Questions for SA
+
+| # | Question | Dev's recommendation |
+|---|---|---|
+| Q3-1 | **How the information-only list is shown (R-4).** One `console.info` line in a test file under `lib/` sits awkwardly with the CLAUDE.md logging rule. The alternative is a pinned list of known unresolved sites, which would make a new one fail | One `console.info` line, emitted only when the list is non-empty, with a comment citing R-4. Keep it information only, as SA-C13 says. If SA prefers failing, pin the 5 sites by path, so a new computed read needs a reviewed addition |
+| Q3-2 | **Runaway ceiling.** Jest's default hook timeout is 5 s, which would make the budget a hard failure, and could flake on a slow runner | Set `beforeAll`'s timeout explicitly to 15 s as a runaway stop only. The 5 s budget is measured (T3-9 locally, QA in CI), not asserted |
+| Q3-3 | **Writes count as reads.** `process.env.X = …` outside tests | Keep it, for consistency with the EC-1 inventory. A write outside tests is rare and worth a catalogue line |
+| Q3-4 | **The "holds the 133 names" pin** in `catalogue.test.ts`. With the guard in place it adds a third edit to every new variable and protects nothing the guard does not | Remove it. Name uniqueness (K-1) stays |
+| Q3-5 | **Stale `consumedBy` marker check** (G3-1c). Not asked for; it stops a marker outliving its reason and hiding a later unreferenced entry | Add it |
+| Q3-6 | **The residue after Q-2.** One-hop import following resolves the only cross-file constant shape the repo uses; today 0 reads need it. Left unresolved: member-expression reads (the two OAuth reads, covered by the JSON scan), the plugin substitution (covered by the JSON scan), one names-list check, one test-helper write, and whole-object passes (the environment route among them) | Accept as information only. No enum change |
+| Q3-7 | **Entitlements skill.** The scan reads `lib/business-os/entitlements/mode.ts` as **text** to resolve its constant. Nothing is imported | Not engaged. `npm run test:bos-entitlements` runs in T3-10 anyway |
+| Q3-8 | **JSON scope.** Only the two folders the two readers load, plus the source pins on those readers | Accept. Scanning every JSON under `lib/` would turn unrelated `${…}` templates into false "missing" names |
+
+### 3.9 Implementation notes (2026-10-27)
+
+**Files.**
+- Created: `lib/admin/environment/__tests__/catalogueDrift.guard.test.ts` (24 tests: G3-1a to G3-1f, N-1 to N-18).
+- Modified:
+  - `lib/admin/environment/catalogue.ts`: header comment only; no entry changed.
+  - `lib/admin/environment/__tests__/catalogue.test.ts`: the 133 pin removed (Q3-4).
+  - `docs/feature_flags.md`: tracked as `docs/FEATURE_FLAGS.md`. The repo writes the lower-case form everywhere, CLAUDE.md included, so the new text follows suit; the guard that reads the doc uses the tracked name.
+  - `.env.example`: header comment only.
+  - The requirement, this workplan.
+
+**How each SA change landed.**
+
+| Change | Where |
+|---|---|
+| E3-1 (Q3-1) | `PINNED_SITES`, entries `{ file, kind, count, why }`. Kinds: `computed`, `whole-object`, and `rest` (a destructuring `...rest`, which the plan counted as computed). `count` is an addition: a second unresolved read in an already-pinned file still fails. G3-1f fails on a new site (with its lines) and on a vanished one, and each `why` must be a real sentence. No `console.*` anywhere in the file. Pinned today: the environment route's whole-object pass, the names-list check, the two OAuth reads (count 2), the plugin substitution, and the test-helper write. Requirement R-4 amended |
+| E3-2 | For QA. This Jest version's `--json` output carries `startTime` and `endTime` per test file, **not** a `perfStats` object (checked in this run's output). The per-file duration is `endTime - startTime` |
+| E3-3 | `mayReadEnv(bytes)` runs `Buffer.indexOf` on the UTF-8 bytes of `process.env`; a file is decoded only after it passes. N-14 shows the prefilter hides no read; N-15 is the template-literal read |
+| E3-4 | Full gate run, below. No exemption was needed |
+| Q3-2 | `beforeAll(…, 15_000)`, a runaway stop only |
+| Q3-3 to Q3-5, Q3-8 | N-17 (a write counts as a read); 133 pin removed; G3-1c with N-12; two JSON folders plus the G3-1e source pins |
+
+**Mutation check.** A throwaway `lib/zzDriftProbe.ts` made two G3-1 tests fail:
+- G3-1a, on a literal read of an uncatalogued fake name;
+- G3-1f, on a new computed read (with its line).
+
+The file was then deleted; `git status` confirms it is gone.
+
+**Timing (T3-9; local Windows; Jest `endTime - startTime` per file).**
+
+| Run | Guard per-file time | Notes |
+|---|---|---|
+| Guard alone, 3 runs | 4,272 / 3,375 / 3,523 ms | Includes the worker's first-file set-up (ts-jest start-up and `setupFiles`) |
+| Guard after a trivial baseline file in the same worker, 2 runs | 1,838 / 1,972 ms | The baseline file paid about 1.9 to 2.1 s of first-file set-up instead |
+| Guard first, baseline second | 3,770 ms (baseline 133 ms) | Confirms that roughly 1.8 s of the stand-alone figure is set-up |
+| Inside the full `npm run test:gate` (all workers busy) | **3,088 ms** | |
+
+The guard's own cost is about 1.8 to 2.0 s, and 3.1 s under full-suite contention, inside the 5 s budget. The §3.4 fallbacks were not needed. In the gate, a worker's first-file set-up is paid once per worker, not per file.
+
+**Gate results (E3-4).**
+
+| Gate | Result |
+|---|---|
+| Guard | 24 / 24 pass |
+| `lib/admin/environment`, `app/api/admin/environment`, `app/admin/environment`, `lib/server/__tests__/testCleanupSecret.test.ts` | 9 suites, 160 tests pass |
+| `npm run test:gate`, full, local Windows | 1,743 suites: 1,730 pass, 13 fail. 44,624 tests: 44,567 pass, 23 fail, 34 skipped. 659 s. **None of the 13 reads a file this slice touched**, except `oneAddressPolicy` (below). They fail locally only, as described below |
+| `test:authz-guard`, `test:bos-entitlements` suites | Ran inside the gate run above (none is quarantined) and passed |
+| `eslint` on the three touched code files | 0 errors, 0 warnings |
+| Hooks lint (`--max-warnings 0`) on the same files | Clean |
+| `tsc --noEmit`, full project, 8 GB heap | Completed with no out-of-memory line; exit 2 with 1,852 diagnostics, the same pre-existing count as at EC-1 and EC-2; **0 in any touched file** |
+
+The 13 failures are not this slice's:
+- **Same result without the guard file.** I re-ran the 13 suites with the new guard moved out of the tree, and got the same 13 failing suites and the same 23 failing tests (232 passing). Then I restored it, byte-identical. This slice's other changes are comments and docs that none of the 13 reads (grep), except `oneAddressPolicy`, which lists the catalogue only under the backslash issue below.
+- **What the messages show.** I have not root-caused each suite. This worktree is checked out with `core.autocrlf=true` (CRLF on disk, LF in the index), and most failures are source-text matches that expect `\n`, or expected substrings spanning a line break:
+  - `bookingNextStep`, `servicesAreDraftsWithWords`, `theChainHoldsEndToEnd`, `freeSlotsComposesSharedRules`, `bookingMailLandsOnTheJourney`, `openaiPricingAdapter`;
+  - three contact-drawer guards: `jobOverAfterHeldMeeting`, `bookingsSearchAndPaging`, `noIntakeToSendOnADeadJob`;
+  - `publicEndpointsAreThrottled`.
+- **`stripeDecidesConnectStatus`** fails its "is actually reading the directory" check, which is likely a Windows path issue.
+- **`supabaseFetch`** fails a development-mode ceiling that depends on the local environment.
+- **`oneAddressPolicy`** is the known backslash-path issue. Every file it lists, the catalogue included, is a full Windows path that misses its allowed list, as on `main`. I left it unchanged.
+
+No source-scanning guard tripped on this slice's files, so no exemption was added.
+
+**After SA code review (C3-1) and QA §6.3, 2026-10-27.** C3-1, the `docs/FEATURE_FLAGS.md` case, was applied by the coordinator; I left it as it is. Dev fixed three things, all in `catalogueDrift.guard.test.ts` except the docs step:
+
+| Item | Change | Control |
+|---|---|---|
+| QA bug 1 (Low): the stripper misread regex literals | In `stripComments`, outside a string a backslash escapes the next character (it occurs there only in a regex literal or JSX text). So `/\//` no longer opens a line comment, and `/^\/*/` no longer opens a block comment | N-19: `.replace(/\//g, …)` followed by a read on the same line, and `/^\/*/` followed by a read two lines later. Both reads are found, and both fail the guard as missing names. A real comment after an escaped slash is still stripped. On today's tree: still 0 missing, 0 unreferenced, the same pins |
+| QA edge 3: `const { env } = process` | A new pattern `ENV_FROM_PROCESS` counts `{ … env … } = process` as a `whole-object` site. The byte prefilter gained two needles (`= process`, `=process`) so such a file is decoded. `const e = process.env` was already a site (N-16) | N-20: `{ env }`, `{ env: e }` and `{ argv, env } =process` are each an unpinned site and fail G3-1f; `{ argv } = process` is not a site |
+| QA doc gap (a) | `docs/FEATURE_FLAGS.md` step 4 now names the fourth failure: a new unresolved read not pinned in the list, covering a computed read, a whole-object use (`const e = process.env`, `const { env } = process`, passing `process.env`) and a `...rest` destructuring; a vanished pin fails too | — |
+
+Guard: 26 / 26 pass.
 
 ---
 
-## 4. EC-4: diagnostics (stub)
+## 4. EC-4: diagnostics
 
-Filled when EC-4 starts. Carries FR-17 to FR-21. Reads `expectedIn`, which EC-1 ships (OQ-7). An `unknown` environment label shows no diagnostics.
+**Status:** Workplan SA-approved with changes (E4-1 to E4-6, §5). **Code Complete 2026-10-27**, awaiting SA code review and QA (§4.9). **Path:** full cycle, because the route's response shape changes (requirement §7 says so). It is in PR 2 with EC-3, as its own commit after EC-3's.
 
-- ⬜ Workplan section written
-- ⬜ Implementation
+### 4.1 Rulings and conditions this slice carries
+
+| Ref | What EC-4 must do | Where |
+|---|---|---|
+| FR-17 / OQ-7 | A variable whose `expectedIn` for this environment is `required`, and which is not set, shows amber "Required, not set" | §4.3.2, D-1 |
+| FR-18 / OQ-7 | A variable whose `expectedIn` for this environment is `forbidden`, and which is set, shows amber "Should not be set on this environment". Amber, not red | §4.3.2, D-2, Q4-4 |
+| FR-19 / Q2-2 | An unrecognised flag value: the words already ship (EC-2); EC-4 adds the amber emphasis. No raw text, ever (SA-C3) | §4.3.2, D-5 |
+| FR-20 | A KPI strip under the header, following the Admin Layout Standard K-1 to K-10 | §4.4.1, P4-1 to P4-6 |
+| FR-21 | A page-held search by name (never in the URL) and a group filter (in the URL) | §4.4.2, P4-7 to P4-12 |
+| OQ-7 | **An Unknown environment label shows no `expectedIn` diagnostics** | §4.3.1, D-3 |
+| QA-3 (SA ruling) | The boost test-accounts count uses the reader's own rule, or is labelled "not validated" | §4.3.3, D-10, Q4-9 |
+| SA (EC-1 deviation 2) | Flag a value with whitespace around it, because a reader that does not trim sees a different value | §4.3.2, D-6, Q4-3 |
+| SA-C3, SA-C5, SA-C6, SA-C7 | **Masking stays as EC-1 built it.** A diagnostic is a code from a closed set, built from no characters of the value. The page's words for it come from a fixed map, never from the payload. The serialisation gate is extended to fixtures that trigger every diagnostic | §4.3, S-7 |
+| K-5 (Layout Standard) | A tile is coloured only from a status the payload carries. The server computes every diagnostic and count; the page re-computes none | §4.3, §4.4.1 |
+| SA-C11, SA-C14 | The client boundary is unchanged (type-only import of `environment-types`). No value and no real-deployment screenshot in any evidence | §4.6 |
+
+### 4.2 Analysis summary
+
+| Area | What EC-4 touches |
+|---|---|
+| Types | `lib/admin/environment-types.ts`: a closed `EnvDiagnostic` union; `EnvRow.diagnostics`; `environment.checkedAgainst`; four new counts. **This is the response-shape change** |
+| Classifier | `classifyEnvironment.ts`: per-row diagnostics, the label-to-expectation mapping, the new counts, and the boost count through the reader (§4.3.3) |
+| Catalogue | `catalogue.ts`: the boost entry's `personalKind` and its role sentence; optionally `NODE_TLS_REJECT_UNAUTHORIZED` (Q4-10). EC-3's guard checks both |
+| Route | `route.ts`: no code change. The audit `details` and the info log spread `payload.counts`, so they gain the four counts automatically, still counts only. The R-8 pin of the `details` keys is updated |
+| Page | KPI strip, filter bar (search, group, Clear), diagnostic chips, row anchors, a "not checked" note, filtered rendering |
+| Shared layout components | Used as they are: `KpiStrip`, `KpiTile` (anchor and no-target modes), `AdminFilterBar` with `onClear` / `canClear`, `useAdminFilters` with `textFilter({ pageOnly: true })` for search, the field-label constants. No new shared export, and no change under `app/admin/components/layout/` apart from the registry entry in its guard test |
+| Database, LLM, entitlements | None. The boost reader's module imports only the flag readers, the address resolver and the Stripe mode module; nothing from `lib/business-os/entitlements/` |
+
+### 4.3 Server design
+
+#### 4.3.1 Which expectations apply
+
+| Label | `checkedAgainst` | `expectedIn` diagnostics |
+|---|---|---|
+| `production` | `production` | On |
+| `preview` | `preview` | On |
+| `local` | `local` | On |
+| `vercel-development` | `local` (Q4-1) | On |
+| `unknown` | `null` | **Off** (OQ-7). `requiredNotSet` and `shouldNotBeSet` are `null`, not 0, so the page cannot show "0, all good" (Q4-8). Value checks stay on (Q4-2) |
+
+#### 4.3.2 Diagnostics (closed set)
+
+```typescript
+export type EnvDiagnostic =
+  | 'required-not-set'        // FR-17
+  | 'should-not-be-set'       // FR-18
+  | 'unrecognised-flag'       // FR-19
+  | 'surrounding-whitespace'; // SA EC-1 deviation 2
+
+// EnvRow gains:     diagnostics: EnvDiagnostic[];   // always present; fixed order; each at most once
+// environment gains: checkedAgainst: 'production' | 'preview' | 'local' | null;
+// EnvironmentCounts gains:
+//   requiredNotSet: number | null;   shouldNotBeSet: number | null;   // null when not checked
+//   unrecognisedFlags: number;       surroundingWhitespace: number;
+```
+
+Rules, per catalogued row. Each is computed inside the row's existing `try`; a throw leaves `diagnostics: []` beside the `classification-error` display.
+
+| Code | When | Built from |
+|---|---|---|
+| `required-not-set` | `checkedAgainst` is not null, `expectedIn[checkedAgainst] === 'required'`, and the value is not set (unset, empty or whitespace only: EC-1's `isSetValue`) | The expectation and one boolean |
+| `should-not-be-set` | `checkedAgainst` is not null, `expectedIn[checkedAgainst] === 'forbidden'`, and the value is set (see Q4-4 for flags) | The expectation and one boolean |
+| `unrecognised-flag` | A `flag` row whose display `source` is `unrecognised` | The existing verdict |
+| `surrounding-whitespace` | The raw value is a non-empty string and `raw !== raw.trim()`. This includes whitespace only, which reads Not set here while a reader that does not trim treats it as set | One boolean (Q4-3) |
+
+- **Uncategorised rows** always carry `diagnostics: []`. They stay status-only, as M-4 requires.
+- **Counts:** `requiredNotSet` and `shouldNotBeSet` tally the rows that carry each code. `unrecognisedFlags` and `surroundingWhitespace` likewise.
+- **What the page and the audit receive.** No diagnostic carries a number, a position or a character. The audit row gains only the four counts.
+
+#### 4.3.3 Boost test-accounts count (QA-3)
+
+`BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS` moves from `personalKind: 'list-comma'` to a new kind, `'list-boost-accounts'`. The classifier counts it with the reader itself: `parseBoostTestAccounts(raw)` from `lib/business-os/boost/boostCheckoutAccess.ts`, called **without** a logger (so the reader's once-only warning state is untouched), and the count is the size of the returned set. That is valid account ids only, de-duplicated, which is exactly what the checkout honours. A list that holds no valid id reads "0 entries", and the role sentence says what that means: "Only valid account ids count, as the checkout counts them; a list that holds none closes the boost to every account." `list-comma` then has no user and is removed (no dead branch). See Q4-9 for the import.
+
+### 4.4 Page design
+
+Region order per the standard (G-1): header, **KPI strip**, **filter bar**, content (environment card, group cards, Uncategorised).
+
+#### 4.4.1 KPI strip (FR-20; K-1 to K-10)
+
+Five tiles (K-1 allows 3 to 5; the fifth is Q4-5). Each value is a whole-payload figure, not a filtered one, so no "of the rows shown" sub-line is needed (K-8). Colour comes only from counts the server computed (K-5).
+
+| Tile | Value | Status | Target (K-6) |
+|---|---|---|---|
+| Set | `counts.set`, sub-line "of N listed" | Neutral | None: not a link |
+| Required, not set | `counts.requiredNotSet` | Amber when above 0, else neutral. `null`: no value, status "Not measured yet", sub-line "Not checked: the environment is not recognised" | Anchor to the first **visible** row carrying the code |
+| Should not be set here | `counts.shouldNotBeSet` | As above | As above |
+| Values to check | `counts.unrecognisedFlags + counts.surroundingWhitespace`, sub-line naming the two parts | Amber when above 0, else neutral | As above, for either code |
+| Uncategorised | `counts.uncategorised` | Neutral | `#uncategorised`, when that card is shown |
+
+- **When a filter hides every matching row,** the tile has no target and is not a link (K-6: "a tile with no possible target is not a link"). Its value does not change.
+- **Row anchors** are `id="env-row-{NAME}"` on catalogued rows only. Catalogued names are `[A-Z0-9_]`, so the fragment needs no escaping.
+- **Loading** shows the strip's placeholders. **An error** hides the strip, and the failed-refresh rule (FR-16) clears everything else as before (K-10).
+- No tile is coloured green. The page can count problems; it cannot vouch that the deployment is healthy.
+
+#### 4.4.2 Filter bar (FR-21; §5.5, §5.6 of the standard)
+
+| Control | Rule |
+|---|---|
+| Search (label "Name") | A text input. Case-insensitive substring of the variable **name** (Q4-11). Held by the page through `textFilter({ key: 'search', pageOnly: true })`: read from an inbound link, **never written to the URL** (U-1) |
+| Group (label "Group") | A native `<select>`: "All groups", then each group by the payload's label, then "Uncategorised". In the URL as `group=<id>`; the default is omitted (U-3); an unknown id falls back to All without an error (U-4). The page holds the id list as `Record<EnvGroupId, true>`, so the compiler fails if the type gains a group the page does not know |
+| Clear | Always rendered; disabled when both filters are at their defaults |
+| Read at + Refresh | As today. Refresh keeps the filters |
+
+- The bar becomes `role="search"`, since it now holds filters.
+- **The page URL's `group` never reaches the API request:** the fetch stays exactly `GET /api/admin/environment` with no query string (SA-C9; P2-12 is extended to cover it).
+
+Filtered rendering:
+- A group card with no matching rows is not rendered.
+- When nothing matches, the content shows "No settings match the filters." with the Clear action.
+- The Uncategorised card: under search it is always rendered, with "No match" when it is empty. Under a group filter for another group it is hidden (Q4-7).
+- The environment card is never filtered.
+
+#### 4.4.3 Rows
+
+| Code | Value cell |
+|---|---|
+| `required-not-set` | The grey "Not set" chip becomes an amber (`warn`) chip "Required, not set" |
+| `should-not-be-set` | Beside the existing value: an amber chip "Should not be set on this environment" |
+| `unrecognised-flag` | The existing words, now in an amber chip |
+| `surrounding-whitespace` | Beside the value: an amber chip "Spaces or line breaks around the value". Its `title` and screen-reader text: "Code that does not trim them reads a different value" |
+
+- **Words and tone come from one fixed map** in `environmentDisplay.ts`, `DIAGNOSTIC_WORDS: Record<EnvDiagnostic, …>`, so a new code fails to compile until it has words. The page never renders text taken from a diagnostic.
+- **Status is never colour alone:** every amber chip carries its words and the `warn` icon.
+- **When `checkedAgainst` is null,** the environment card adds: "Checks against the expected settings are off, because this environment is not recognised."
+- **For `vercel-development`,** the card adds: "Checked against the local expectations."
+
+### 4.5 Files to create / modify
+
+| # | File | Action | Reason |
+|---|---|---|---|
+| F4-1 | `lib/admin/environment-types.ts` | modify | `EnvDiagnostic`, `diagnostics`, `checkedAgainst`, the new counts (§4.3.2) |
+| F4-2 | `lib/admin/environment/classifyEnvironment.ts` | modify | §4.3.1 to §4.3.3 |
+| F4-3 | `lib/admin/environment/catalogue.ts` | modify | The boost kind and role; `list-comma` removed; optionally Q4-10 |
+| F4-4 | `lib/admin/environment/__tests__/classifyEnvironment.test.ts` | modify | D-1 to D-11; C-14 rewritten for the new kind |
+| F4-5 | `lib/admin/environment/__tests__/catalogue.test.ts` | modify | K-4 personal kinds; K-8 boost agreement |
+| F4-6 | `lib/admin/environment/__tests__/serialisation.test.ts` | modify | S-7 |
+| F4-7 | `app/api/admin/environment/__tests__/route.test.ts` | modify | R-8 `details` keys; R-11 |
+| F4-8 | `app/admin/environment/environmentDisplay.ts` | modify | `DIAGNOSTIC_WORDS`, KPI tile model (pure), search and group matching, group id list, payload guard for the new fields |
+| F4-9 | `app/admin/environment/environmentFilters.ts` | create | The `useAdminFilters` spec (`group` in the URL, `search` page-only), as `auditTrailFilters.ts` and `usersFilters.ts` do |
+| F4-10 | `app/admin/environment/components/EnvironmentKpis.tsx` | create | The strip (§4.4.1) |
+| F4-11 | `app/admin/environment/components/EnvironmentView.tsx` | modify | Diagnostic chips, row anchors, filtered rendering, the notes |
+| F4-12 | `app/admin/environment/page.tsx` | modify | Strip, filter bar, filter state |
+| F4-13 | `app/admin/environment/__tests__/page.render.test.tsx` | modify | P4-1 to P4-16; P2-11 and P2-12 updated |
+| F4-14 | `app/admin/environment/__tests__/environmentDisplay.test.ts` | modify | D4-1 to D4-5 |
+| F4-15 | `app/admin/components/layout/__tests__/layoutFolder.guard.test.ts` | modify | The registry entry lists F4-9 and F4-10, and its comment now says "strip and filters" |
+| F4-16 | requirement; this workplan | modify | Progress row 4; ticks and notes |
+
+No touched file uses `console.*` today (checked: all EC-1 and EC-2 files have 0; `lib/business-os/boost/boostCheckoutAccess.ts` is imported, not modified).
+
+### 4.6 Task list
+
+- ✅ T4-1: SA reviews §4; rulings recorded in §5 (Q4-1 to Q4-11, E4-1 to E4-6)
+- ✅ T4-2: Requirement Progress row 4 updated (code complete)
+- ✅ T4-3: Types (F4-1)
+- ✅ T4-4: Classifier diagnostics, mapping and counts (F4-2), with D-1 to D-9, D-11 and the E4-3 key-set test
+- ✅ T4-5: Boost kind (F4-2, F4-3), with D-10 (in C-14) and K-8
+- ✅ T4-6: Serialisation S-7 under four labels plus the M-7 (e) diff; route R-8 (exact keys), R-10 (no spread in the classifier) and R-11 (F4-6, F4-7)
+- ✅ T4-7: Display words, tile model, matching, guard (F4-8), with D4-1 to D4-5
+- ✅ T4-8: Filters spec, strip, view and page (F4-9 to F4-12)
+- ✅ T4-9: Render tests P4-1 to P4-16 (F4-13); registry entry (F4-15)
+- ✅ T4-10: The Q4-10 entry, as E4-2 ruled; the EC-3 guard stays green
+- ✅ T4-11: Gates, recorded in §4.9
+- ✅ T4-12: Status set to Code Complete; hand to SA, then QA
+
+### 4.7 Test plan
+
+All fixtures are fake (`FAKE…`, `example.test`); classifier tests pass objects.
+
+**Classifier (`classifyEnvironment.test.ts`).**
+
+| # | Case | Expect |
+|---|---|---|
+| D-1 | An injected entry that is R in one environment and O in the others, unset, under each label | `required-not-set` only where it is R; counted |
+| D-2 | An entry that is X in one environment, set | `should-not-be-set` only there; unset gives nothing |
+| D-3 | Label `unknown` with R-unset and X-set fixtures | No `expectedIn` codes; `checkedAgainst: null`; both counts `null`; value codes still present (per Q4-2) |
+| D-4 | `vercel-development` | Checked against `local` (per Q4-1) |
+| D-5 | Lenient and strict flags with unrecognised values | `unrecognised-flag`; a recognised or unset flag has none |
+| D-6 | Leading or trailing space, tab, CR, LF on a secret, a shown config, a hidden config, a flag and a personal entry; whitespace only; internal whitespace only | The code on the first two groups (per Q4-3); whitespace only gives Not set plus the code; internal whitespace only gives no code |
+| D-7 | A forbidden flag set to an off value | Per Q4-4 |
+| D-8 | Counts | Equal to the tallies of codes in the rows |
+| D-9 | Every row | `diagnostics` is an array of distinct codes from the closed set, in the fixed order; uncategorised rows always `[]`, including with surrounding whitespace |
+| D-10 | Boost list: two valid ids plus one address; the same id twice in different case; addresses only; blank | 2; 1; 0 (a `count` of 0, not `status`); Not set |
+| D-11 | A row whose classification throws | `classification-error` display with `diagnostics: []` |
+
+**Catalogue (`catalogue.test.ts`).** K-4: `personalKind` is one of `single`, `list-admin-emails`, `list-boost-accounts`. K-8: for a table of fixture lists, the classifier's count equals `parseBoostTestAccounts(raw)?.size`.
+
+**Serialisation gate (S-7, SA-C7).** Fixtures that trigger every code: whitespace-wrapped fake secrets, a set forbidden fake secret, an unrecognised flag holding a fake secret, an unset required entry, and a boost list of fake addresses. Under each of `production`, `preview`, `local` and `unknown`: no fixture window appears in the body, any logger record, the audit argument or the console. Every `diagnostics` element is one of the four codes. The audit `details` keys are exactly the EC-1 set plus the four new counts.
+
+**Route (`route.test.ts`).** R-8: the `details` keys updated. R-11: under an unknown label the response has `checkedAgainst: null` and null counts, and still answers 200.
+
+**Display (`environmentDisplay.test.ts`).**
+- D4-1: every code has fixed words and the `warn` tone.
+- D4-2: the tile model has amber above 0, neutral at 0, "Not measured yet" at null, and the right targets with and without filters.
+- D4-3: name matching is case-insensitive and trimmed; group matching is right.
+- D4-4: the guard refuses an unknown code, a non-array `diagnostics`, an invalid `checkedAgainst`, and counts that are not a number or null.
+- D4-5: the group id list covers `EnvGroupId` (compile-time, plus a runtime length check).
+
+**Render (`page.render.test.tsx`).**
+
+| # | Case |
+|---|---|
+| P4-1 | Strip order and words: five tiles with labels and values; the accessible name reads label, value and status (K-7) |
+| P4-2 | Amber only above 0; neutral at 0; no green anywhere |
+| P4-3 | Unknown environment: the two expectation tiles read "Not measured yet" with the sub-line, and the card shows its note |
+| P4-4 | Tile targets: anchors to the first visible matching row; no link when filtered out; Set has no link; Uncategorised anchors to its card |
+| P4-5 | Loading placeholders; a failed refresh hides the strip and clears the rest (FR-16, K-10) |
+| P4-6 | Region order: header, strip, bar, content |
+| P4-7 | Search narrows rows by name; never in `history.replaceState` URLs; read from an inbound `?search=` |
+| P4-8 | Group filter: `?group=payments` shows only that card; it is written by replace; an unknown id means All; the default is omitted |
+| P4-9 | Clear resets both, and is disabled at the defaults |
+| P4-10 | The no-match words; the Uncategorised card under search and under a group filter (per Q4-7) |
+| P4-11 | Each code renders its fixed words in an amber chip with its icon; "Required, not set" replaces "Not set" |
+| P4-12 | Refresh keeps the filters; the API request still carries no query string with `?group=` on the page URL (P2-12 extended) |
+| P4-13 | P2-11 updated: the only buttons are Refresh, Clear and (on error) Try again; the only inputs are the search box and the group select; no copy, reveal or download control |
+| P4-14 | The bar has `role="search"` with the name "Filters" |
+| P4-15 | The vercel-development note |
+| P4-16 | Diagnostic words come from the map: a payload with an extra field on a row renders nothing from it |
+
+**QA (manual, SA-C14).** After deploy, the owed EC-2 live check, plus: the strip and filters work on a real deployment, and the expectation tiles are plausible for that environment. Recorded as pass or fail per check, with no value, no variable-level finding and no screenshot.
+
+### 4.8 Questions for SA
+
+| # | Question | Dev's recommendation |
+|---|---|---|
+| Q4-1 | **`vercel-development`** (`vercel dev` on a developer machine): which column applies? | `local` |
+| Q4-2 | **Value checks under an Unknown label.** OQ-7 switches off the `expectedIn` checks. Do the unrecognised-flag and whitespace checks, which do not depend on the environment, stay on? | Stay on; only the `expectedIn` checks switch off |
+| Q4-3 | **The whitespace check on `secret` rows.** It tells the admin one fact about a secret's characters (whitespace at an end), which carries no part of the credential, and it is the most useful case (a pasted key with a trailing newline). It is still a property of the value, so it needs an explicit ruling against "no diagnostic reveals any part of a value" | All catalogued classes; never uncategorised rows. Fallback, if SA declines: every class except `secret` |
+| Q4-4 | **A forbidden `flag` set to an off value** (for example a test-only switch explicitly off on production). FR-18 says "set" | Literal FR-18: amber when set. The page reports and does not judge intent, and the line should not be there. Alternative: amber only when it reads On |
+| Q4-5 | **A fifth tile, "Values to check"** (unrecognised flags plus surrounding whitespace). FR-20 lists four | Add it; K-1 allows five, and those rows are otherwise unsignposted |
+| Q4-6 | **Tile targets** | Anchors to the first visible matching row; no link when the filters hide every match; Set has no target |
+| Q4-7 | **Uncategorised card under filters.** FR-15 says it always shows | Always shown under search (with "No match"); hidden when the group filter names another group, since the admin chose the group |
+| Q4-8 | **`null` rather than 0** for the two expectation counts when not checked; the audit row then carries `null` | Accept |
+| Q4-9 | **Boost count via the reader** (QA-3): import `parseBoostTestAccounts` into the classifier. Its module also imports the flag readers, the address resolver and the Stripe mode module, which are light and read no value at import. The alternative is a copy of the UUID rule in the classifier with K-8 as its agreement test, or the "not validated" label | Import the reader (the OQ-10 "one parser" precedent), and remove `list-comma` |
+| Q4-10 | **`NODE_TLS_REJECT_UNAUTHORIZED`** (SA's EC-1 suggestion). Its name contains `AUTH`, so it cannot be `config` (K-2). It would be `secret`-class (Set / Not set), X/X/O, `consumedBy: 'platform'` (Node reads it) | Add it in EC-4: it is exactly the "should not be set here" case. Or defer it |
+| Q4-11 | **Search scope** | The name only, as FR-21 says |
+| Q4-12 | **Path and packaging** | **Settled (coordinator, 2026-10-27):** full cycle for both; two commits in one PR 2, EC-3 first. The user's waiver covers the whole stream, so the gate is SA and QA approval, with no user diff review |
+
+### 4.9 Implementation notes (2026-10-27)
+
+**Files.**
+- Created: `app/admin/environment/environmentFilters.ts`, `app/admin/environment/components/EnvironmentKpis.tsx`.
+- Modified:
+  - server: `lib/admin/environment-types.ts`, `lib/admin/environment/catalogue.ts`, `lib/admin/environment/classifyEnvironment.ts`;
+  - page: `app/admin/environment/environmentDisplay.ts`, `components/EnvironmentView.tsx`, `page.tsx`;
+  - tests: `classifyEnvironment.test.ts`, `catalogue.test.ts`, `serialisation.test.ts`, `route.test.ts`, `environmentDisplay.test.ts`, `page.render.test.tsx`, `layoutFolder.guard.test.ts` (the registry entry);
+  - docs: the requirement, this workplan.
+- The route's code is unchanged.
+
+**How each ruling landed.**
+
+| Ruling | Where |
+|---|---|
+| E4-1 / Q4-3 (M-7) | `diagnosticsFor` pushes `surrounding-whitespace` when the raw value is a non-empty string not equal to its trim: one boolean, for every catalogued class, `secret` included. Uncategorised rows are built with a literal `diagnostics: []`. A whitespace-only value reads Not set plus the code (D-1, D-6). S-7's M-7 (e) test classifies the real route twice, with `STRIPE_SECRET_KEY` unwrapped and then wrapped in whitespace, and requires the two payloads to be identical once that row's added code and the count are undone (`generatedAt` excluded) |
+| E4-2 / Q4-10 | `NODE_TLS_REJECT_UNAUTHORIZED`: `secret`, scope server, X/X/O, `consumedBy: { by: 'platform', note }`, group `environment` (it is a Node runtime setting). The role says only what the setting does. K-6 and a new E4-2 test pin it; the drift guard accepts it as unread-but-marked |
+| E4-3 | Codes are literals pushed in a fixed order; `catalogueRow` copies the array it is given. New test: every row has exactly the DTO keys (`diagnostics`, `display`, `expectedIn`, `group`, `name`, `role`, `scope`, `sensitivity`, plus optional `docLink` and `seeAlsoPath`), and no catalogue-only field (`consumedBy`, `shape`, `flagParser`, `personalKind`, `enumValues`) appears in a payload. R-10 now also requires that the classifier contain no `...` at all. The page guard validates every code against `DIAGNOSTIC_WORDS` with `hasOwnProperty` (so `__proto__` and `toString` fail), `checkedAgainst` against its four values, and the counts (only the two expectation counts may be null) |
+| E4-4 | P4-12: after a group change, a search, two Refreshes and a Try again, all four fetches are exactly `('/api/admin/environment', { method: 'GET', cache: 'no-store' })` and none contains `?` |
+| E4-5 | Gates, below |
+| Q4-1 | `checkedAgainstOf`: `vercel-development` → `local`. The card says "Checked against the local expectations." |
+| Q4-2 | Under Unknown, `checkedAgainst` is null and both expectation counts are null; the unrecognised-flag and whitespace checks still run (D-3, S-7 `unknown`, P4-3) |
+| Q4-4 | Literal FR-18: a forbidden flag set to `false` is flagged (D-7) |
+| Q4-5 / Q4-6 | Five tiles, built by `kpiTiles` from server counts only. Amber above 0, neutral at 0, `not_measured` for null. No tile is ever green (D4-2, P4-1/2/3). Anchor targets are `#env-row-NAME` (catalogued rows only) or `#uncategorised` (the card's `id`). A tile whose matches are all filtered out has no target and is not a link (P4-4, P4-4b) |
+| Q4-7 | The Uncategorised card stays under search ("No match" when the search hides its rows; "None" when it has none at all) and is hidden when the group filter names another group |
+| Q4-8 | `null` in the payload and in the audit `details` (R-11) |
+| Q4-9 / QA-3 | `list-boost-accounts` counts with `parseBoostTestAccounts(raw)`, called without a logger; `list-comma` is removed. K-8 checks agreement with the reader over six fixture lists; C-14 covers addresses, duplicates in different case, and blank |
+| Q4-11 | Name only, case-insensitive and trimmed (D4-3) |
+
+**Deviations.**
+1. **The unrecognised-flag words.** The existing sentence ("Set, not a recognised value: reads as Off/On") moves from the plain note into the amber chip, rather than adding a second chip with the short `DIAGNOSTIC_WORDS` text, so the row does not say the same thing twice. The short text is still the code's entry in the map, used where no flag sentence exists.
+2. **The whitespace detail.** The extra sentence ("Code that does not trim them reads a different value.") is a `title` and screen-reader text on the chip, not a separate visible line.
+3. **No-match state.** It uses the shared `AdminEmpty` with its "Clear filters" button, alongside the bar's Clear. P4-13's read-only check allows exactly Refresh, Clear, Clear filters and Try again.
+4. **Group options before the first read.** The select lists the raw group ids until the payload brings the labels, so an inbound `?group=` value is always a valid option. Once data loads, the labels replace them.
+5. **Search input type.** `type="search"`, labelled "Name".
+
+**Gate results (E4-5; local Windows, 2026-10-27).**
+
+| Gate | Result |
+|---|---|
+| Environment suites, the drift guard, `testCleanupSecret`, the layout-folder guard | 10 suites, 646 tests pass |
+| `npm run test:gate`, full | 1,743 suites, 44,672 tests, 540 s. 14 suites and 24 tests failed on the first run. 13 of the suites are the known Windows-only ones (§3.9, unchanged). The 14th was `lib/server/__tests__/testCleanupSecret.test.ts`, whose single-reader pin caught the new D-9 case naming the test-cleanup secret. **Fixed in the test, with no exemption:** D-9 now uses a fake preview-forbidden entry beside the real catalogue. After the fix that guard and every environment suite pass, so what remains is exactly the 13 known failures |
+| Drift guard inside the gate | 2,876 ms (`endTime - startTime`) |
+| `test:authz-guard`, `test:bos-entitlements` suites | Ran inside the gate (none is quarantined) and passed |
+| eslint and the hooks lint (`--max-warnings 0`) on every touched code file | Clean |
+| `tsc --noEmit`, full project, 8 GB heap | No out-of-memory line; exit 2 with 1,852 diagnostics, the same pre-existing count; **0** in any touched file |
+| `console.*` in new or changed source files | None |
+
+No exemption was added to any source-scanning guard.
 
 ---
 
@@ -1210,6 +1729,214 @@ Gates after the change: `lib/admin/environment` and `app/api/admin/environment` 
 
 No fixture needs changing.
 
+**Final spot-check by SA, 2026-10-27 (QA §6.2 fixes to EC-2; recorded late).** SA re-ran 7 suites and 132 tests, all passing. The fixes are sound:
+- The deep payload guard sends a malformed row to the fallback state, which fails closed.
+- An unknown display kind shows the fixed words and echoes no field, with the `never` check kept.
+- The wrapping changes are layout classes only.
+
+PR 1 (#522) was approved for commit, conditional on the RM's ship-drill step 1. SA's edit recording this failed at the time, in the old worktree, and the handback wrongly said it had been written. It is recorded here instead.
+
+---
+
+**EC-3 and EC-4 workplan review by SA, 2026-10-27 (§3, §4), plus the requirement fold**
+**Status:** ✅ EC-3 approved with changes (E3-1 to E3-4). ✅ EC-4 approved with changes (E4-1 to E4-6). Dev applies them while implementing; SA checks them at code review. Path is settled: full cycle for both, two commits in one PR 2, with SA and QA approval as the gate. SA corrected the RM note in §3 (PR 2 always targets `main`) and the Q4-12 row.
+
+#### Requirement fold (§3 to §8 against §10.1)
+
+**Faithful.** Checked rule by rule:
+- OQ-2: the segment exports and `no-store` (C-3, C-4, FR-4).
+- SA-C1 to SA-C6: M-1 to M-5, plus new M-6 for field picking.
+- SA-C3: the closed flag verdict.
+- OQ-6: secrets fully hidden, with EC-5 deferred.
+- OQ-10: `personal` counts through the reader's parser.
+- OQ-5 and OQ-7: the catalogue location and fields, with `expectedIn` replacing `requirement`.
+- OQ-4: deny-list precedence.
+- OQ-8: the audit event.
+- OQ-9 and SA-C13: the drift guard scope and budget.
+- SA-C9 and SA-C10: FR-1 and FR-2.
+- SA-C12: seed corrections.
+- SA-C14: evidence hygiene.
+- Q-3 and Q-10.
+
+The strategy-doc link is gone and nothing else points at that doc. §10.1 is unchanged. Small gaps, for Dev to close in the requirement (E4-6):
+- SA-C7 (8-character windows, logger and audit sinks) is not in §7's EC-1 guardrails.
+- SA-C11 (client boundary) is in no FR or NFR.
+- §7's EC-1 row still says "M-1 to M-5" (now M-6).
+- FR-20 still lists four tiles (see Q4-5).
+- R-4 needs the Q3-1 ruling below.
+- The Q4-3 exception needs writing in as M-7.
+
+#### Rulings, EC-3 (Q3-1 to Q3-8)
+
+| # | Ruling |
+|---|---|
+| Q3-1 | **Pin, do not print (E3-1). This amends SA-C13 and R-4.** No `console.*` in the guard. The known unresolved computed reads and the whole-object passes (today 5 sites plus the environment route's `classifyEnvironment(process.env)`) are pinned in the test as `{ file, kind, why }`. A new unresolved site fails with a message: make it resolvable, or add it to the list with a reason. A pinned site that has disappeared also fails, so the list cannot go slack. This is stricter than "information only", and it removes the one blind spot the guard would otherwise keep silently. |
+| Q3-2 | **Accepted.** An explicit 15 s `beforeAll` timeout as a runaway stop only. No wall-clock assertion. |
+| Q3-3 | **Accepted.** A write outside tests counts as a read. |
+| Q3-4 | **Accepted.** Remove the "holds the 133 names" pin. G3-1a catches a lost entry for any read name; K-1 uniqueness and K-6 stay. |
+| Q3-5 | **Accepted.** The stale-marker check (G3-1c). Today's five markers are valid: none of those names is read literally. |
+| Q3-6 | **Accepted, under Q3-1's pinning.** No enum change. |
+| Q3-7 | **Not engaged, confirmed.** The guard reads `mode.ts` as text and imports nothing from the entitlements module. `test:bos-entitlements` still runs in T3-10. |
+| Q3-8 | **Accepted.** Only the two JSON folders the readers load, kept honest by the two source pins. |
+
+**Timing and budget.** 1.24 to 1.32 s in-process is credible: 424 of 2,938 files pass the byte prefilter, and the reads dominate. A CI shard with `--maxWorkers=4` and contention will be slower; allow for 2 to 3 s. Verification without a wall-clock assertion is sound: the gate already writes `--json --outputFile` per shard and uploads it as `gate-results-<n>`, which carries per-file `perfStats`. Two conditions:
+- **E3-2:** QA records the guard file's `perfStats.runtime` from all three shards' artefacts (only one shard holds the file) on the PR 2 run, in §6. Above 5 s, the §3.4 fallbacks apply before merge.
+- **E3-3:** the prefilter must match the bytes `process.env` and must not decode first. N-14 already proves it hides nothing. Also add a case for a file that reads `process.env` only inside a template literal (`` `${process.env.X}` ``).
+
+**E3-4: source-scanning guards.** About 40 test files in the repo scan the source. The coordinator's #522 CI had two fail on the catalogue. The guard file itself contains `process.env.FAKE_…` fixture text. Before hand-in, Dev runs the **full gate suite locally** (`npm run test:gate`), not only the named suites, and records the result in T3-10. Any guard that trips gets a name-only exemption with a reason, as the coordinator did.
+
+#### Rulings, EC-4 (Q4-1 to Q4-11)
+
+| # | Ruling |
+|---|---|
+| Q4-1 | **Accepted.** `vercel-development` is checked against `local`, and the card says so. |
+| Q4-2 | **Accepted.** The value checks (unrecognised flag, whitespace) stay on under Unknown; only the `expectedIn` checks switch off. |
+| Q4-3 | **Accepted for all catalogued classes, `secret` included, as one bounded and recorded exception (E4-1).** The diagnostic discloses one boolean: "the value has whitespace at an end". It reveals no credential character, and every key alphabet excludes whitespace. It is also the most useful case: a pasted key with a trailing newline breaks signatures silently. Bounds, all binding: (a) one boolean only. Never which end, which character, how many, or the length. (b) Never on uncategorised rows, which stay status-only (M-4). (c) A whitespace-only value reads Not set plus the code, which is acceptable because such a value holds no secret. (d) Write the exception into the requirement as **M-7**, citing this ruling, so "no diagnostic reveals any part of a value" stays true as written with one named exception. (e) S-7 asserts that the payload for a whitespace-wrapped secret differs from the unwrapped payload only in that row's `diagnostics` and the `surroundingWhitespace` count. |
+| Q4-4 | **Accepted, literal FR-18.** Amber when set, whatever it reads. The diagnostic then depends only on set-ness, and the page reports rather than judges intent. |
+| Q4-5 | **Accepted.** Five tiles (K-1 allows 3 to 5). "Values to check" sub-line names the two parts. Update FR-20 (E4-6). |
+| Q4-6 | **Accepted.** Anchor mode (`href: '#env-row-NAME'`, `#uncategorised`) to the first **visible** matching row. No link when filters hide every match. Set has no target. The Uncategorised card needs `id="uncategorised"`. |
+| Q4-7 | **Accepted.** |
+| Q4-8 | **Accepted.** `null` in the payload and the audit `details`. R-8 pins the keys, and the page guard accepts number or null for exactly those two counts (D4-4). |
+| Q4-9 | **Accepted: import `parseBoostTestAccounts`.** SA checked it is pure when called without a logger (the module-level `warnedRaw` is untouched). Its module imports only `featureFlags`, `origins` and `stripeMode`: no repository, no Supabase, no import from the entitlements module. The classifier stays free of `process.env` text (C-28). Remove `list-comma`. K-8 pins agreement. |
+| Q4-10 | **Accepted in EC-4 (E4-2).** `NODE_TLS_REJECT_UNAUTHORIZED`: `secret` class (the name matches `AUTH`), scope server, `expectedIn` X/X/O, `consumedBy: { by: 'platform', note }` (no app code reads it; SA grep confirms). Group `logging` or `environment` (Dev's choice). The role sentence states only what the setting does, generically, and makes no remark about any deployment. EC-3's guard and E3-4's full gate run must stay green. |
+| Q4-11 | **Accepted.** Name only. |
+
+#### Checks
+
+| Area | Finding | Status |
+|---|---|---|
+| Diagnostics reveal no part of a value | Codes come from a closed union with no number, position or character. Words come from a fixed `DIAGNOSTIC_WORDS` map. The audit gains counts only. S-7 runs every code under four labels. The only value-derived fact is Q4-3's boolean, bounded by E4-1 | OK with E4-1 |
+| Response-shape change keeps the route's guarantees | No route code changes: `GET` only, the exports, `no-store`, the strict query and the gate order are untouched. SA-C5 holds if `diagnostics` is built in `catalogueRow` by copying codes, never by spreading. **E4-3:** `diagnostics` is a new array built per row from literals; R-10 is extended so the classifier still has no spread of the entry; C-18's "no other key" check is extended to the row object (exact key set). The page's deep guard validates every code against the closed set and `checkedAgainst` against its four values | E4-3 |
+| KPI strip vs Layout Standard | Five tiles (K-1). Colour only from server counts (K-5). Amber above 0, neutral at 0, `not_measured` for null, with the shared label "Not measured yet". No green (T-6). No-target tiles are not links (K-6). Whole-payload values, so no filtered sub-line (K-8). Error hides the strip (K-10). Accessible name per K-7. All with existing `KpiTile` modes, no new shared export | OK |
+| URL filter vs the route refusing parameters | `group` lives only in the page URL, through `useAdminFilters`. `search` is page-only (U-1). The fetch stays the bare `GET` with no query (P4-12 extended). `_rsc` is added by Next only to page navigations, never to the API fetch. **E4-4:** P4-12 also asserts that after a group change, a Refresh and a Try again, every fetch URL has no `?` | E4-4 |
+| Source-scanning guards | The new catalogue entry and the boost kind can trip guards that pin names to single readers, as two did on #522 | E3-4 applies to EC-4 too (E4-5) |
+
+#### Required changes
+
+- **E3-1** Q3-1: pin the unresolved and whole-object sites instead of printing them; failing on new or vanished sites; amend R-4 in the requirement.
+- **E3-2** QA records `perfStats.runtime` for the guard from the CI artefacts in §6; above 5 s, apply the §3.4 fallbacks before merge.
+- **E3-3** Prefilter on raw bytes; add the template-literal read case to the negative controls.
+- **E3-4** Run the full `npm run test:gate` locally before hand-in and record it; name-only exemptions with reasons for any guard that trips.
+- **E4-1** Q4-3 bounds (a) to (e), including requirement M-7 and the S-7 diff assertion.
+- **E4-2** Q4-10 entry as ruled.
+- **E4-3** `diagnostics` built by copying literals, an exact row key-set check, R-10 extended, and the page guard validating codes and `checkedAgainst`.
+- **E4-4** P4-12: no `?` in any fetch URL after a group change, a Refresh or a Try again.
+- **E4-5** E3-4's full gate run again at EC-4 hand-in.
+- **E4-6** Requirement fold gaps: SA-C7 in §7's EC-1 guardrails, SA-C11 as an NFR, "M-1 to M-6", FR-20 to five tiles, R-4 per E3-1, and M-7 per E4-1.
+
+---
+
+**Code Review by SA, 2026-10-27 (EC-3)**
+**Status:** ✅ Approved with one small change (C3-1). SA spot-checks it; no second review.
+
+SA read the guard in full (635 lines) and the other diffs, and ran the **full gate locally**: 1,743 suites, 13 failing (23 tests). The guard passed; its suite took 4.3 s (`endTime - startTime`) under full-gate contention on Windows.
+
+#### Rulings
+
+| Item | Ruling |
+|---|---|
+| E3-1 `count` field | **Accepted, and better than ruled.** Pinning a per-file, per-kind count stops a second unresolved site in an already-pinned file from hiding behind the first. Kinds `computed`, `whole-object` and `rest` are the right closed set. Every pin has a reason (pinned by test). |
+| Pinned sites | **All five are legitimate**, checked at source. The environment route's whole-object pass is by design (SA-C8). `analyze-prompt-clarity` checks `['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']`, both read literally elsewhere and catalogued. `UniversalOAuthHandler` (2) and `plugin-manager-v2` (1) are covered by the JSON scan, kept honest by the G3-1e source pins. `lib/testing/plugin-secret-matcher.ts` is a write in a helper that no deployed file imports. |
+| E3-2 wording | **Amended.** Jest's `--json` has no `perfStats`; the measure is the guard's `testResults[]` entry, `endTime - startTime`, in the shard artefact `gate-results-<n>`. QA records it from the PR 2 run. Above 5 s, apply the §3.4 fallbacks before merge. The local 4.3 s under full Windows contention is close to the line, so QA's CI figure matters. Linux runners read files faster than Windows, so a lower figure is expected. |
+| E3-3 | ✅ The needle is `Buffer.indexOf('process.env')` on raw bytes. N-14 shows the prefilter hides nothing, N-15 covers the template-literal read, and Dev's mutation probe failed the guard as it should. |
+| E3-4 local failures | **Confirmed Windows-only on the samples.** `oneAddressPolicy.guard` lists `C:\…` back-slashed paths against posix exemptions, which is why even the resolver `origins.ts` itself is an "offender". `publicEndpointsAreThrottled.guard` names `app\api\…` paths. `stripeDecidesConnectStatus.guard` fails "is actually reading the directory". The rest match the CRLF and path pattern in the repo's known flake notes. `main`'s CI is green with the EC-1 catalogue exemptions in place, so no new exemption is needed. |
+
+#### Does it fail closed?
+
+Yes, within the ruled design.
+- **Roots.** SA checked every other top-level folder. Only `archive/`, `scripts/`, `simulators/` (imported by nothing in the app) and `.github/ci/` read `process.env`, and none is deployed. No `node:process` import, `process['env']` or `import.meta.env` exists in the scanned roots.
+- **Aliasing.** `const e = process.env` is a whole-object site, so a new alias fails as an unpinned site instead of hiding reads.
+- **Writes and floors.** Writes count as reads, and the floors stop a broken walk from passing.
+- **Known residual gaps (accepted, Low).**
+  - The comment stripper does not know regex literals. A regex containing `\/*` could open a false block comment and hide a read on the following lines: the one fail-open path. A quote inside a regex literal only stops comments being stripped, which fails toward a false "missing".
+  - Reads inside third-party packages are out of scope (R-4).
+
+  A negative control for the regex case is a suggestion, not required.
+
+#### Requirement fold (E4-6) and docs
+
+- **E4-6:** ✅ All closed and faithful to §10.1:
+  - §7's EC-1 row states SA-C7's gate (8-character windows; body, logger and audit sinks) and says M-1 to M-6;
+  - SA-C11 is an NFR;
+  - FR-20 has five tiles;
+  - R-4 says "pinned, not printed", with the per-file count;
+  - M-7 records the Q4-3 exception with bounds (a) to (d).
+- **Docs:** ✅ The new "Adding an environment variable" section is accurate: classes, shapes, `expectedIn`, `consumedBy`, the read forms the guard resolves, and the command. Step 5 in "Adding a New Feature Flag" points to it. The `.env.example` change is four comment lines only, with no variable line touched. The catalogue change is a comment only, and the 133 pin is removed as ruled.
+
+#### Required change
+
+**C3-1 (Low): fix the doc path case.** The tracked file is `docs/FEATURE_FLAGS.md`, but the new text says `docs/feature_flags.md`. GitHub's file paths are case-sensitive, so that reference is broken for anyone following it there. Change it in:
+- the guard's failure message (`catalogueDrift.guard.test.ts:413`);
+- the catalogue header comment (`catalogue.ts:19`);
+- `catalogue.ts:200` (`FLAGS_DOC`, the `docLink` the page shows as text);
+- `.env.example` line 5;
+- any new link in the requirement.
+
+CLAUDE.md and older docs carry the same lower-case link. That is pre-existing and stays out of this PR; it is a follow-up for the TL.
+
+### EC-3 code approved for QA: Yes, with C3-1
+
+---
+
+**Code Review by SA, 2026-10-27 (EC-4) + EC-3 fix spot-check**
+**Status:** ✅ EC-4 code approved, no required changes. ✅ EC-3 fixes sound; C3-1 done.
+
+SA re-ran the environment suites, the drift guard, `testCleanupSecret`, and every suite under `app/admin/components`: 37 suites, 1,154 tests, all pass.
+
+#### EC-3 fixes
+
+- **Comment stripper (N-19):** a backslash outside strings now skips the next character, so `\/*` inside a regex literal can no longer open a false block comment. That closes the one fail-open path from SA's EC-3 review.
+- **`const { env } = process` (N-20):** the needles `= process` and `=process` admit the file, and the read is counted as an unpinned whole-object site.
+- **C3-1:** ✅ every new reference now names `docs/FEATURE_FLAGS.md`; no lower-case reference remains in the touched files.
+
+#### Can any diagnostic, count or tile reveal part of a value?
+
+**No.**
+- `diagnosticsFor` pushes literals from the closed four-code union, in a fixed order. The inputs are the expectation, the set-ness boolean, the flag verdict and the single M-7 boolean `raw !== raw.trim()`. It does not record which end, which character or how many.
+- Uncategorised rows carry `[]` (M-4, M-7 (b)). A throwing row carries `[]` beside `classification-error`.
+- The counts are tallies of codes. `requiredNotSet` and `shouldNotBeSet` are `null` when the label is unknown.
+- The tiles show only those counts, and their words come from `DIAGNOSTIC_WORDS` and fixed strings.
+- The page guard accepts only known codes, `checkedAgainst` in its four values, and number-or-null for exactly the two expectation counts.
+
+#### Does the serialisation gate still cover every sink?
+
+**Yes.** S-7 runs every code under production, preview, local and unknown through the real route, and checks for leaks in all four sinks: body, logger, audit and console (`util.inspect`). It also asserts:
+- every code is in the closed set;
+- the padded uncategorised row stays `[]`;
+- the audit `details` keys are exactly the EC-1 set plus the four new counts.
+
+The M-7 (e) differential test shows a whitespace-wrapped secret changes only that row's diagnostics and the whitespace count. The boost list of fake addresses counts 0 and leaks nothing.
+
+#### Route guarantees
+
+**Unchanged.** `route.ts` is not in the diff. The exports, `GET` only, `no-store`, the strict empty query and the gate order are untouched. The response grows by field picking: `diagnostics` is passed into `catalogueRow`, and R-10 pins that the classifier has no spreads. R-8 pins the new `details` keys.
+
+#### KPI strip against the Layout Standard
+
+**Compliant.**
+- K-1: five tiles.
+- K-5: colour only from the server's counts.
+- Amber above 0, no status at 0, `not_measured` with the "Not checked" sub-line for `null`, and never green (T-6).
+- K-6: anchor targets go to the first visible matching row, there is no link when the filters hide every match, Set has no target, and Uncategorised anchors to `#uncategorised` only when that card is shown.
+- K-8: whole-payload values.
+- K-10: the loading placeholders are 5, and the error state hides the strip.
+- Built only on existing `KpiStrip` and `KpiTile` modes, with no new shared export (registry entry only).
+
+**Filters.** `group` lives in the page URL, `search` is page-only, and P4-12 pins that no fetch carries a `?`.
+
+#### Rulings on §4.9 deviations
+
+| # | Ruling |
+|---|---|
+| 1 Unrecognised-flag sentence in the amber chip | **Accepted.** One chip says it once. It keeps the "reads as On/Off" verdict wording, and the map's short text is the fallback. |
+| 2 Whitespace detail as `title` plus screen-reader text | **Accepted.** The chip's visible words ("Spaces or line breaks around the value") carry the meaning; the detail is supplementary. (Suggestion: the `title` is not reachable by keyboard for sighted users. Acceptable while the visible words stand alone.) |
+| 3 `AdminEmpty` with its own "Clear filters" | **Accepted.** It is the shared component's own action, and P4-13 pins the full button set. |
+| 4 Raw group ids before the first read | **Accepted.** Ids are not sensitive, and showing them keeps an inbound `?group=` valid. (Suggestion: disable the select until the first read lands.) |
+| 5 Inbound `?search=` read but never written | **Accepted, and consistent.** This is the standard's U-1 page-only rule (read from an inbound link, never written back), which §4.4.2 stated and the requirement's FR-21 ("search is never in the URL") allows: the page never puts it there. Q4-11 is about scope (the name only) and is honoured: matching is on the name alone, never role or value. |
+| `testCleanupSecret` | **Correct fix.** The new D-9 case uses a fake name instead of naming the test-cleanup secret, so the single-reader pin needs no exemption. |
+
+### EC-4 code approved for QA: Yes. PR 2 (EC-3 + EC-4) approved from SA for commit once QA passes, subject to the RM's ship-drill step 1.
+
 ---
 
 ## 6. QA Testing Report
@@ -1344,6 +2071,125 @@ The final code was tested after Dev's parallel changes to `classifyEnvironment.t
 
 **EC-2 verdict: PASS with notes.** Bug 1 is Low and does not block commit; Dev should harden the guard in this PR if cheap, otherwise as a follow-up.
 
+### 6.3 EC-3 QA (catalogue drift guard), 2026-10-27
+
+**Test mode:** full · **Strategy:** A (Jest), plus mutation testing on the real tree · **Input source:** TL brief. Worktree `neuronforge-envpage2`, branch `feature/admin-environment-view-2`.
+
+Each mutation used throwaway files: probe sources under `lib/zzqa/`, fake plugin JSON files, a copy of the guard with the catalogue mocked, and one appended line on a pinned file, restored from a scratchpad backup and checked byte-identical by SHA-1. All of them were deleted or restored afterwards; `git status` ends with only Dev's changes. All names are fake (`FAKE_QA_…`); no value was read.
+
+**Suites.** The guard passes 24/24. `lib/admin/environment`, `app/api/admin/environment` and `app/admin/environment`: 8 suites, 155 tests, all pass.
+
+**Mutations: each must fail G3-1a and name the variable and file**
+
+| Read form | Result |
+|---|---|
+| Dot; `?.`; bracket with `'`, `"` and backtick; destructuring (plain, alias, default); a `${process.env.X}` template literal; `process.env[CONST]` with the constant in the same file; a constant one import away (`@/` path); `${NAME}` in a plugin definition JSON; a `clientIdEnvVar` field; a write `process.env.X =`; a read after `'https://…' +` on one line; a CRLF file | **Pass:** all named, each with its file |
+| Destructuring `...rest`; ``process.env[`FAKE_${x}`]`` | **Pass:** G3-1f fails, with the new site and line |
+| Reads only inside a line comment, a block comment, a JSDoc comment, a trailing comment and a CRLF comment | **Pass:** not counted |
+| A file under `__tests__/`; an `x.test.ts` | **Pass:** ignored |
+| A catalogue entry removed (`LOG_LEVEL`, through a catalogue mock) | **Pass:** G3-1a, "LOG_LEVEL (read in lib/logger/config.ts)" |
+| An unread entry with no marker added | **Pass:** G3-1b names it |
+| A stale `consumedBy` marker on a name code reads (`NODE_ENV`) | **Pass:** G3-1c names it |
+| A second unresolved computed read appended to a pinned file | **Pass:** G3-1f, "found 2, pinned 1", with both lines |
+
+**Extra adversarial cases (QA's own)**
+
+| Case | Result |
+|---|---|
+| A regex literal containing `\//` (for example `.replace(/\//g, …)`) followed by a read on the same line | **Missed.** The stripper reads `//` as a line comment |
+| A regex literal containing `\/*` (for example `/^\/*/`) | **Missed: every later read in the file**, up to a `*/` or the end of the file. The stripper reads `/*` as a block comment |
+| A JSX text apostrophe (`<p>Don't</p>`) followed by a commented-out read | **False read.** The apostrophe opens a "string", so the comment is kept |
+| `const { env } = process; env.X` | Not seen (no `process.env` text). A known limit of a text scan, and not pinned |
+| **Real-tree impact today** | **None.** A scratchpad comparison of the guard's stripper against TypeScript's own comment ranges, over every scanned file containing `process.env`, found the same 101 names, with 0 files differing |
+
+**Timing** (local Windows, `endTime - startTime` from `--json`; no `perfStats` in this Jest version, as E3-2 noted; this machine was shared with other agent sessions):
+
+| Run | Guard file |
+|---|---|
+| Alone, 3 runs | 5,390 / 5,331 / 5,424 ms (includes the worker's first-file set-up) |
+| First in one worker, then `catalogue.test.ts`, 2 runs | 6,473 / 5,788 ms |
+| Third in one worker, after `eventAudience` and the classifier tests | **3,071 ms** |
+
+The guard's own cost is about 3 s here; Dev measured 1.8 to 2.0 s. The standalone figure is over 5 s only because of the one-off worker set-up, which every shard pays for its first file anyway. **Owed (E3-2):** the CI figure from the PR 2 shard artefacts, which is the number the 5 s budget is judged on.
+
+**Dev's 13 local gate failures (sample of 3).** On this branch, `bookingNextStep`, `publicEndpointsAreThrottled` and `stripeDecidesConnectStatus` all fail. On an LF `git -c core.autocrlf=false archive` of `origin/main` (`ee502a51`, #522 merged), run in the scratchpad: `bookingNextStep` **passes**, so its failure on the branch is CRLF-only, and the other two fail identically on `main`, on Windows backslash paths. That matches Dev's account: none of the three is caused by this slice. Note: a plain `git archive` also writes CRLF when `core.autocrlf=true`.
+
+**Docs** (`docs/FEATURE_FLAGS.md` "Adding an environment variable", step 5 of "Adding a New Feature Flag", the `.env.example` header). Accurate against the guard's behaviour: the read forms, the same-file constant and one-import rule, the JSON read paths, the `consumedBy` enum, the stale-marker rule and the run command. Two small gaps:
+- **(a)** step 4 lists three failure kinds but not the fourth: a new whole-object use (`const e = process.env`, passing `process.env`) or a `...rest` destructuring also fails.
+- **(b)** The `.env.example` header and the guard's message name `docs/feature_flags.md`, while the tracked file is `docs/FEATURE_FLAGS.md`. That is the repo-wide convention Dev noted, but the path does not resolve on a case-sensitive checkout.
+
+**Bugs**
+
+1. **The comment stripper misreads regex literals.** — `catalogueDrift.guard.test.ts` `stripComments` — Severity: **Low** (latent: 0 effect on today's tree, proven above)
+   - Steps: a scanned file with `/^\/*/` or `/\//` in a regex literal, followed by `process.env.NEW_NAME`.
+   - Expected: the read is counted, so G3-1a fails for an uncatalogued name.
+   - Actual: the read is hidden (false negative), and in the `\/*` case every later read in the file is hidden. This is the guard's one fail-open direction.
+   - Fix: treat a `\` outside strings as an escape (skip the next character). That closes both `\//` and `\/*`. Alternatively, cross-check with `ts.createSourceFile` comment ranges, but that is a TypeScript cost the 5 s budget ruled out.
+
+**Edge cases**
+
+2. **A JSX apostrophe can turn a commented-out read into a counted read.** — Severity: Low. This fails safe: it can only make the guard fail spuriously, or keep an entry looking "read".
+3. **`const { env } = process` aliasing is invisible.** — Severity: Low. Suggest adding `\{[^}]*\benv\b[^}]*\}\s*=\s*process\b` as a pinned-site kind, or naming the limit in the docs.
+4. **The two doc gaps (a) and (b) above.** — Severity: cosmetic.
+
+**EC-3 verdict: PASS with notes.** Every requested mutation fails the guard and names its target, and the comments and test-file exclusions behave as specified. Bug 1 is Low and latent; it is worth the one-line fix in this PR. The CI timing is owed under E3-2.
+
+### 6.4 EC-4 QA (diagnostics, KPI strip, search and group filter) and EC-3 re-test, 2026-10-27
+
+**Test mode:** full · **Strategy:** A + B (Jest, in-memory fixtures; the real route with mocked auth, logger and audit; jsdom render) · **Input source:** TL brief. Three throwaway test files were copied in for their runs and then deleted: `git status` shows no QA file and only Dev's changes. All values are fake; no screenshot.
+
+**EC-3 re-test (§6.3 bug 1 and edge 3)**
+
+| Probe | Result |
+|---|---|
+| `.replace(/\//g, …)` followed by a read on the same line | **Fixed:** G3-1a names it |
+| `/^\/*/`, then a read on a later line | **Fixed:** G3-1a names it |
+| `const { env } = process`, and `const {env: e}=process` | **Fixed:** G3-1f fails, with a new `whole-object` site and its line |
+| *Still open (Low):* `const p = process; p.env.X` | Not seen |
+| *Still open (Low):* a regex holding a bare `'` (for example `/'/g`), followed by a commented-out read | The comment is counted as a read. This is the same fail-safe class as §6.3 edge 2 |
+
+**EC-4: diagnostics, over the real catalogue under all five labels**
+
+| Check | Result |
+|---|---|
+| `required-not-set` / `should-not-be-set` | Pass. For every catalogued name, with everything unset and then everything set: each code fires exactly where `expectedIn[checkedAgainst]` says, and on no other row. `requiredNotSet` and `shouldNotBeSet` equal the independent tallies. `vercel-development` is checked against `local` (Q4-1) |
+| A forbidden flag set to `false` (Q4-4) | Pass: still `should-not-be-set` (3 flags on production, 1 on preview) |
+| Unknown | Pass: `checkedAgainst: null`; both counts `null` in the payload and the audit details; the value checks still run (Q4-2) |
+| `unrecognised-flag` | Pass: a junk value on a strict flag |
+| `surrounding-whitespace` | Pass on every class (secret, shown config, hidden config, flag, personal list, personal single), under every label, for 8 paddings: leading space, LF, CRLF, tab, NBSP, BOM, U+2028, ideographic space. **Never on an uncategorised name.** A whitespace-only secret reads Not set plus the code. Internal whitespace only gives no code. A flag `" true"` reads On/set plus the code |
+| No value leaks (M-7, SA-C7) | Pass. Real route, under each label, with whitespace-, newline-, tab- and NBSP-wrapped fake secrets, a personal list, a junk flag and an uncategorised name: no 8-character window of any fake appears in the body, the logs (including `child()` bindings) or the audit argument. Every `diagnostics` element is one of the four codes. The audit `details` keys are exactly the EC-1 set plus the four new counts |
+| Boost count vs `parseBoostTestAccounts` | Pass on 12 lists: valid ids, a duplicate in different case, addresses, junk and blanks, `;` and newline separators, a padded id, braces, no dashes, a non-v4 id, `,,,`, whitespace only. The count always equals the reader's set size; a blank list reads Not set |
+
+**EC-4: page (jsdom)**
+
+| Check | Result |
+|---|---|
+| Search | Pass. Case-insensitive and trimmed (`fake_pay`, `FAKE_PAY`, `Fake_Pay_Req`, `  pay_req  `); matches names only, not role text. Never written to the URL. The Uncategorised card stays under search |
+| Inbound `?search=` / `?group=` | Pass. `payments` filters; `uncategorised` shows only that card; `Payments` (wrong case), `__proto__`, `constructor`, `toString`, `staging` and empty all fall back to All with no error. A repeated `group` takes the first. `?search=<script>` sits in the input as text and is never interpreted |
+| Clear / Clear filters | Pass: both reset everything; Clear is disabled at the defaults; the URL is clean afterwards |
+| Tile targets | Pass. Each anchors to the first **visible** matching row. Under a group or search filter that hides every match, the tile is a `div`, not a link, with the same value. Set never links. Uncategorised links `#uncategorised` only when its card is shown |
+| Uncategorised visibility (Q4-7) | Pass: shown under search, hidden when another group is selected |
+| Fetch | Pass: every call is exactly `('/api/admin/environment', { method: 'GET', cache: 'no-store' })` with no `?`, across inbound filters, a group change and a Refresh, while the page URL carries `?group=` |
+| Payload guard | Pass. It rejects: an unknown or `__proto__` code, a non-string code, missing `diagnostics`, a bad or missing `checkedAgainst`, a string, negative, NaN or Infinity count, `null` on a non-nullable count, and a string expectation count. It accepts the valid and the Unknown/null payloads. **It also closes EC-2 bug 1:** it rejects non-array rows, an object `shown.text`, an object fact and an unknown display kind |
+| Tile colours | Pass: amber only above 0; neutral at 0; `not_measured` with "Not measured yet" and the sub-line under Unknown; no green status anywhere |
+| Accessibility | Pass. The whitespace chip has `title` and `sr-only` text "Code that does not trim them reads a different value." Every `warn` chip has its icon and words. The tiles' accessible names read label, value and status. Search is labelled "Name", the select "Group", and the bar is `role="search"` named "Filters" |
+
+**Gates.**
+- Environment suites, the drift guard, `testCleanupSecret` and `layoutFolder.guard`: 10 suites, **646 tests pass**.
+- QA throwaways: server 27/27; page 36/37 (the one failure was QA's own wrong row-count expectation; the behaviour was correct); EC-3 probe run as above.
+- `npm run test:authz-guard`: 203 pass.
+- eslint and the hooks lint (`--max-warnings 0`) on the EC-4 files: clean.
+
+**Bugs:** none.
+
+**Edge cases (Low)**
+1. **The payload guard accepts a fractional count** (for example `set: 1.5`). The server never sends one. Suggest `Number.isInteger` in `isCount`.
+2. **The two EC-3 residuals in the re-test table:** `p.env` aliasing is unseen, and a regex `'` turns a later comment into a counted read (fail-safe).
+
+**Owed:** the live check after deploy (no admin sign-in available). It covers EC-2's checks, plus the strip and the filters on a real deployment and plausible expectation tiles. Record pass or fail per check, with no values and no screenshot.
+
+**EC-4 verdict: PASS.** The EC-3 re-test passes for the three cases asked.
+
 ---
 
 ## 7. Commit Info
@@ -1359,6 +2205,19 @@ The final code was tested after Dev's parallel changes to `classifyEnvironment.t
 
 **Ship drill (RM, 2026-10-27):** `npm run build` passed. `tsc --noEmit` showed 0 errors in the touched files (1,860 pre-existing elsewhere) and did not run out of memory. Re-checked against `main` after the sync: register row 119 is the next free number, the audit split is 62 / 77 / 84 (223), and the nav total is 28. After the sync, 10 suites and 623 tests pass, and `test:authz-guard` passes 203. Secrets scan of the diff: clean.
 
+### PR 2: EC-3 and EC-4
+
+**Branch:** `feature/admin-environment-view-2` · **PR:** [#524](https://github.com/AgentsPilot/neuronforge/pull/524), EC-3 and EC-4 together, on auto-merge (merge commit) through the merge queue
+
+| Commit | Message |
+|---|---|
+| `4de3f0a7` | test(admin): environment catalogue drift guard (EC-3) |
+| `587cb3a7` | feat(admin): environment diagnostics, KPI strip, search and group filter (EC-4) |
+| `3b596527` | docs(admin): environment view EC-3 and EC-4 workplan, reviews and progress |
+| `f7cacd57` | Merge `origin/main` into the branch (no conflicts) |
+
+**Ship drill (RM, 2026-10-27):** `npm run build` passed. `tsc --noEmit` showed 0 errors in the touched files (1,860 pre-existing elsewhere) and did not run out of memory. EC-3 took only its own hunks of `catalogue.ts` (header, doc link) and `catalogue.test.ts` (the 133 pin); the TLS entry and the boost list kind went with EC-4. After the sync with `main`: 39 suites, 1,178 of 1,179 tests pass (the one failure is `oneAddressPolicy.guard`, Windows backslash paths, as on `main`); the sidebar nav pin, the `eventAudience` split and `test:authz-guard` (203) pass; the drift guard passes against `main`'s reads. Secrets scan of the staged diff: clean.
+
 ---
 
 ## Change History
@@ -1371,3 +2230,6 @@ The final code was tested after Dev's parallel changes to `classifyEnvironment.t
 | 2026-10-27 | SA code review EC-1: approved with changes | RC-1 to RC-8 and Q-1 to Q-10 verified; deviations 1 to 7 ruled; required CR-1 (serialisation gate must expand Error objects), CR-2 (unanchored JWT opening check), CR-3 (narrow four over-broad deny-list prefixes). Follow-up: six admin routes on `main` lack register rows. |
 | 2026-10-27 | SA: CR spot-check passed; EC-2 workplan approved with changes | CR-1 to CR-3 verified (90 tests re-run). EC-2: Q2-1 to Q2-4 ruled; E2-1 to E2-4 required; §2 sequencing corrected to one PR for EC-1 + EC-2; ToC anchor for §2 fixed. |
 | 2026-10-27 | RM: commit, PR and auto-merge | EC-1 and EC-2 committed (`7d3b89a0`, `657f10b8`, `c866088e`), synced with `main` without conflicts, PR #522 opened on auto-merge. §7 filled in. |
+| 2026-10-27 | EC-3 and EC-4 workplans written | Dev, on `feature/admin-environment-view-2`. §3: the drift guard as one Jest file with pure scanner functions, plugin JSON and constant resolution (SA Q-2), the timing plan with a measured 1.24 to 1.32 s local scan, negative controls N-1 to N-14, questions Q3-1 to Q3-8. §4: closed diagnostic codes with `checkedAgainst` and null counts when not checked, the boost count through its reader (QA-3), the whitespace check, a five-tile KPI strip, search and a URL group filter, tests D/S-7/P4, questions Q4-1 to Q4-12. Header, overview and ToC updated. |
+| 2026-10-27 | EC-3 implemented: Code Complete | Dev. The drift guard with E3-1 (pinned sites with a count, no console output), E3-3 (byte prefilter; N-15 template-literal read) and Q3-2 to Q3-5. The 133 pin removed; docs step and `.env.example` pointer added. Guard about 1.8 to 2.0 s marginal locally, 3.1 s inside the full gate. Full local gate: 13 failing suites, all of them local-only, shown unchanged without the guard; no exemption needed. §3.6 ticked, §3.9 added. Requirement fold gaps closed (E4-6). |
+| 2026-10-27 | RM: PR 2 commit, PR and auto-merge | EC-3 and EC-4 committed (`4de3f0a7`, `587cb3a7`, docs `3b596527`), synced with `main` without conflicts (`f7cacd57`), PR #524 opened on auto-merge. §7 PR 2 block added. |

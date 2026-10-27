@@ -59,6 +59,20 @@ export type EnvDisplay =
   | { kind: 'count'; entries: number }
   | { kind: 'hidden'; reason: EnvHiddenReason };
 
+/**
+ * EC-4 diagnostics: a closed set of codes, built from no characters of the
+ * value (requirement M-7). `surrounding-whitespace` is the one named exception:
+ * one boolean, "the value has whitespace at an end" (SA Q4-3).
+ */
+export type EnvDiagnostic =
+  | 'required-not-set'
+  | 'should-not-be-set'
+  | 'unrecognised-flag'
+  | 'surrounding-whitespace';
+
+/** Which `expectedIn` column the diagnostics were checked against (null: not checked). */
+export type EnvCheckedAgainst = 'production' | 'preview' | 'local';
+
 export interface EnvRow {
   name: string;
   group: EnvGroupId;
@@ -70,6 +84,8 @@ export interface EnvRow {
   /** Null only for uncatalogued rows. */
   expectedIn: EnvExpectedIn | null;
   display: EnvDisplay;
+  /** Distinct codes in a fixed order; always `[]` on uncategorised rows (EC-4). */
+  diagnostics: EnvDiagnostic[];
   /** An admin page that shows this setting's contents under its own rules (OQ-10). */
   seeAlsoPath?: string;
   /** A repository doc path, shown as text (the app does not serve `/docs`). */
@@ -102,10 +118,18 @@ export interface EnvironmentCounts {
   uncategorised: number;
   /** Names set by the platform or operating system, counted and not listed. */
   platformHidden: number;
+  /** Rows carrying `required-not-set`; null when the environment is not recognised (SA Q4-8). */
+  requiredNotSet: number | null;
+  /** Rows carrying `should-not-be-set`; null when the environment is not recognised. */
+  shouldNotBeSet: number | null;
+  /** Rows carrying `unrecognised-flag`. */
+  unrecognisedFlags: number;
+  /** Rows carrying `surrounding-whitespace`. */
+  surroundingWhitespace: number;
 }
 
 export interface EnvironmentViewPayload {
-  environment: { label: EnvironmentLabel; facts: EnvironmentFacts };
+  environment: { label: EnvironmentLabel; checkedAgainst: EnvCheckedAgainst | null; facts: EnvironmentFacts };
   /** In the catalogue's group order. */
   groups: EnvGroupBlock[];
   /** Always present, possibly empty (FR-15). */

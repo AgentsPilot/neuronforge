@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import {
+  checkedAgainstOf,
   classifyEnvironment,
   environmentLabelOf,
   MAX_SHOWN_LENGTH,
@@ -33,7 +34,10 @@ function cfgEnum(name: string, enumValues: string[]): EnvCatalogueEntry {
 function flagEntry(name: string, flagParser: 'lenient' | 'strict-true', flagDefault: boolean): EnvCatalogueEntry {
   return { name, group: 'features', role: 'Test entry.', sensitivity: 'flag', flagParser, flagDefault, scope: 'server', expectedIn: OPT };
 }
-function personalEntry(name: string, personalKind: 'single' | 'list-admin-emails' | 'list-comma'): EnvCatalogueEntry {
+function secretEntry(name: string): EnvCatalogueEntry {
+  return { name, group: 'tokens', role: 'Test entry.', sensitivity: 'secret', scope: 'server', expectedIn: OPT };
+}
+function personalEntry(name: string, personalKind: 'single' | 'list-admin-emails' | 'list-boost-accounts'): EnvCatalogueEntry {
   return { name, group: 'admin', role: 'Test entry.', sensitivity: 'personal', personalKind, scope: 'server', expectedIn: OPT };
 }
 
@@ -76,7 +80,7 @@ describe('classifyEnvironment: the name pattern (SA-C1)', () => {
   });
 
   it('C-3b a personal entry whose name matches is status, not a count', () => {
-    expect(displayOf(personalEntry('ACCOUNT_TOKEN_LIST', 'list-comma'), 'a,b,c')).toEqual({ kind: 'status', set: true });
+    expect(displayOf(personalEntry('ACCOUNT_TOKEN_LIST', 'list-boost-accounts'), 'a,b,c')).toEqual({ kind: 'status', set: true });
   });
 
   it('C-4 a flag whose name matches still shows On / Off', () => {
@@ -189,9 +193,15 @@ describe('classifyEnvironment: personal (OQ-10)', () => {
     expect(row?.seeAlsoPath).toBe('/admin/settings');
   });
 
-  it('C-14 a comma list counts non-blank entries; unset is Not set', () => {
-    expect(displayOf(personalEntry('LIST_X', 'list-comma'), 'one, ,two,,three ')).toEqual({ kind: 'count', entries: 3 });
-    expect(displayOf(personalEntry('LIST_X', 'list-comma'), undefined)).toEqual({ kind: 'status', set: false });
+  it('C-14 / D-10 the boost list counts valid account ids only, as the checkout does; unset is Not set', () => {
+    const e = personalEntry('LIST_X', 'list-boost-accounts');
+    const idA = '0f0e0d0c-0b0a-4908-8706-050403020100';
+    const idB = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    expect(displayOf(e, `${idA}, someone@example.test ,${idB}`)).toEqual({ kind: 'count', entries: 2 });
+    expect(displayOf(e, `${idA},${idA.toUpperCase()}`)).toEqual({ kind: 'count', entries: 1 });
+    expect(displayOf(e, 'someone@example.test,other@example.test')).toEqual({ kind: 'count', entries: 0 });
+    expect(displayOf(e, undefined)).toEqual({ kind: 'status', set: false });
+    expect(displayOf(e, '   ')).toEqual({ kind: 'status', set: false });
   });
 
   it('C-15 a single personal value is Set / Not set', () => {
@@ -301,6 +311,7 @@ describe('classifyEnvironment: precedence and the deny-list (OQ-4, RC-1)', () =>
       scope: 'server',
       expectedIn: null,
       display: { kind: 'status', set: true },
+      diagnostics: [],
     });
     expect(payload.uncategorised[0].display).toEqual({ kind: 'status', set: false });
   });
@@ -363,6 +374,11 @@ describe('classifyEnvironment: label, facts, order, counts', () => {
       notSet: ENVIRONMENT_CATALOGUE.length + 1 - 3,
       uncategorised: 1,
       platformHidden: 1,
+      // NODE_ENV=production with no VERCEL_ENV is an Unknown label: not checked (SA Q4-8).
+      requiredNotSet: null,
+      shouldNotBeSet: null,
+      unrecognisedFlags: 0,
+      surroundingWhitespace: 0,
     });
     expect(payload.generatedAt).toBe('2026-01-02T03:04:05.000Z');
   });
@@ -371,5 +387,182 @@ describe('classifyEnvironment: label, facts, order, counts', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'classifyEnvironment.ts'), 'utf8');
     expect(source).not.toMatch(/process\s*\.\s*env/);
     expect(source).toMatch(/^\s*import 'server-only';/m);
+  });
+});
+
+// ── EC-4 diagnostics (workplan §4.3; SA Q4-1 to Q4-9, E4-1, E4-3) ──────────────
+
+const LABEL_ENV: Record<'production' | 'preview' | 'local' | 'vercel-development' | 'unknown', EnvSource> = {
+  production: { VERCEL_ENV: 'production', NODE_ENV: 'production' },
+  preview: { VERCEL_ENV: 'preview', NODE_ENV: 'production' },
+  local: { NODE_ENV: 'development' },
+  'vercel-development': { VERCEL_ENV: 'development' },
+  unknown: { NODE_ENV: 'production' },
+};
+
+function withExpect(entry: EnvCatalogueEntry, p: 'R' | 'O' | 'X', v: 'R' | 'O' | 'X', l: 'R' | 'O' | 'X'): EnvCatalogueEntry {
+  const word = { R: 'required', O: 'optional', X: 'forbidden' } as const;
+  return { ...entry, expectedIn: { production: word[p], preview: word[v], local: word[l] } } as EnvCatalogueEntry;
+}
+
+/** The single injected row, classified under a label, with an optional value. */
+function rowUnder(entry: EnvCatalogueEntry, label: keyof typeof LABEL_ENV, value?: string) {
+  const env: Record<string, string | undefined> = { ...LABEL_ENV[label] };
+  if (value !== undefined) env[entry.name] = value;
+  const { payload } = classifyEnvironment(env, { catalogue: [entry], now: FIXED_NOW });
+  return { row: payload.groups.flatMap((g) => g.rows)[0], payload };
+}
+
+const CODES = ['required-not-set', 'should-not-be-set', 'unrecognised-flag', 'surrounding-whitespace'];
+
+describe('classifyEnvironment: EC-4 diagnostics', () => {
+  it('D-1 required and unset is flagged only where it is required, and counted', () => {
+    const e = withExpect(cfg('REQ_X', 'identifier'), 'R', 'O', 'O');
+    expect(rowUnder(e, 'production').row.diagnostics).toEqual(['required-not-set']);
+    expect(rowUnder(e, 'production').payload.counts.requiredNotSet).toBe(1);
+    expect(rowUnder(e, 'preview').row.diagnostics).toEqual([]);
+    expect(rowUnder(e, 'preview').payload.counts.requiredNotSet).toBe(0);
+    expect(rowUnder(e, 'local').row.diagnostics).toEqual([]);
+    expect(rowUnder(e, 'production', 'plainword').row.diagnostics).toEqual([]);
+    // Whitespace only is not set (EC-1 rule), so still required-not-set, plus M-7 (c).
+    expect(rowUnder(e, 'production', '   ').row.diagnostics).toEqual(['required-not-set', 'surrounding-whitespace']);
+  });
+
+  it('D-2 forbidden and set is flagged only there; unset is not', () => {
+    const e = withExpect(secretEntry('FORBID_X'), 'X', 'O', 'O');
+    expect(rowUnder(e, 'production', 'FAKE-forbidden-zz').row.diagnostics).toEqual(['should-not-be-set']);
+    expect(rowUnder(e, 'production', 'FAKE-forbidden-zz').payload.counts.shouldNotBeSet).toBe(1);
+    expect(rowUnder(e, 'preview', 'FAKE-forbidden-zz').row.diagnostics).toEqual([]);
+    expect(rowUnder(e, 'production').row.diagnostics).toEqual([]);
+  });
+
+  it('D-3 an Unknown label checks no expectation: checkedAgainst and both counts are null; value checks stay on', () => {
+    const req = withExpect(cfg('REQ_X', 'identifier'), 'R', 'R', 'R');
+    const forbid = withExpect(flagEntry('FORBID_FLAG', 'lenient', false), 'X', 'X', 'X');
+    const { payload } = classifyEnvironment({ NODE_ENV: 'production', FORBID_FLAG: ' maybe ' }, { catalogue: [req, forbid] });
+    expect(payload.environment.label).toBe('unknown');
+    expect(payload.environment.checkedAgainst).toBeNull();
+    expect(payload.counts.requiredNotSet).toBeNull();
+    expect(payload.counts.shouldNotBeSet).toBeNull();
+    const rows = payload.groups.flatMap((g) => g.rows);
+    expect(rows.find((r) => r.name === 'REQ_X')?.diagnostics).toEqual([]);
+    // SA Q4-2: the unrecognised-flag and whitespace checks do not depend on the label.
+    expect(rows.find((r) => r.name === 'FORBID_FLAG')?.diagnostics).toEqual(['unrecognised-flag', 'surrounding-whitespace']);
+    expect(payload.counts.unrecognisedFlags).toBe(1);
+    expect(payload.counts.surroundingWhitespace).toBe(1);
+  });
+
+  it('D-4 vercel-development is checked against local (SA Q4-1); the other labels against their own column', () => {
+    expect(checkedAgainstOf('vercel-development')).toBe('local');
+    expect(checkedAgainstOf('local')).toBe('local');
+    expect(checkedAgainstOf('production')).toBe('production');
+    expect(checkedAgainstOf('preview')).toBe('preview');
+    expect(checkedAgainstOf('unknown')).toBeNull();
+    const e = withExpect(cfg('REQ_LOCAL', 'identifier'), 'O', 'O', 'R');
+    expect(rowUnder(e, 'vercel-development').row.diagnostics).toEqual(['required-not-set']);
+    expect(rowUnder(e, 'vercel-development').payload.environment.checkedAgainst).toBe('local');
+  });
+
+  it('D-5 an unrecognised flag value is a code; a recognised or unset flag is not', () => {
+    const lenient = flagEntry('LEN_X', 'lenient', false);
+    const strict = flagEntry('STR_X', 'strict-true', false);
+    expect(rowUnder(lenient, 'production', 'FAKE-garbage').row.diagnostics).toEqual(['unrecognised-flag']);
+    expect(rowUnder(strict, 'production', 'TRUE').row.diagnostics).toEqual(['unrecognised-flag']);
+    expect(rowUnder(lenient, 'production', 'true').row.diagnostics).toEqual([]);
+    expect(rowUnder(lenient, 'production').row.diagnostics).toEqual([]);
+  });
+
+  it('D-6 surrounding whitespace on every catalogued class (M-7); internal whitespace alone is not a code', () => {
+    const entries = [
+      secretEntry('S_X'),
+      cfg('C_SHOWN', 'identifier'),
+      cfg('C_HIDDEN', 'integer'),
+      flagEntry('F_X', 'lenient', false),
+      personalEntry('P_X', 'single'),
+    ];
+    for (const entry of entries) {
+      for (const pad of [' ', '\t', '\r', '\n', '\r\n']) {
+        expect({ name: entry.name, codes: rowUnder(entry, 'local', `${pad}FAKEvalue1`).row.diagnostics }).toEqual({
+          name: entry.name,
+          codes: entry.sensitivity === 'flag' ? ['unrecognised-flag', 'surrounding-whitespace'] : ['surrounding-whitespace'],
+        });
+        expect(rowUnder(entry, 'local', `FAKEvalue1${pad}`).row.diagnostics).toContain('surrounding-whitespace');
+      }
+      expect(rowUnder(entry, 'local', 'FAKE value').row.diagnostics).not.toContain('surrounding-whitespace');
+    }
+    // The shown text stays trimmed, as in EC-1; the code adds one boolean only.
+    expect(rowUnder(cfg('C_SHOWN', 'identifier'), 'local', ' plainword\n').row.display).toEqual({ kind: 'shown', text: 'plainword' });
+  });
+
+  it('D-7 a forbidden flag set to an off value is still flagged (SA Q4-4, literal FR-18)', () => {
+    const e = withExpect(flagEntry('TEST_FLAG_X', 'lenient', false), 'X', 'X', 'O');
+    expect(rowUnder(e, 'production', 'false').row.diagnostics).toEqual(['should-not-be-set']);
+    expect(rowUnder(e, 'production', 'true').row.diagnostics).toEqual(['should-not-be-set']);
+    expect(rowUnder(e, 'local', 'true').row.diagnostics).toEqual([]);
+  });
+
+  it('D-8 the four counts equal the tallies of codes in the rows', () => {
+    const env: EnvSource = {
+      VERCEL_ENV: 'production',
+      NODE_ENV: 'production',
+      NODE_TLS_REJECT_UNAUTHORIZED: 'FAKE-tls-zz',
+      ADMIN_BUSINESS_DELETE_ENABLED: 'FAKE-garbage',
+      STRIPE_SECRET_KEY: ' FAKE-padded-key ',
+    };
+    const { payload } = classifyEnvironment(env, { now: FIXED_NOW });
+    const rows = payload.groups.flatMap((g) => g.rows);
+    const count = (code: string) => rows.filter((r) => r.diagnostics.includes(code as never)).length;
+    expect(payload.counts.requiredNotSet).toBe(count('required-not-set'));
+    expect(payload.counts.requiredNotSet).toBeGreaterThan(0);
+    expect(payload.counts.shouldNotBeSet).toBe(count('should-not-be-set'));
+    expect(rows.find((r) => r.name === 'NODE_TLS_REJECT_UNAUTHORIZED')?.diagnostics).toEqual(['should-not-be-set']);
+    expect(payload.counts.unrecognisedFlags).toBe(count('unrecognised-flag'));
+    expect(payload.counts.surroundingWhitespace).toBe(count('surrounding-whitespace'));
+    expect(payload.counts.surroundingWhitespace).toBe(1);
+  });
+
+  it('D-9 every row: distinct codes from the closed set in the fixed order; uncategorised rows always []', () => {
+    // A fake preview-forbidden secret beside the real catalogue. (The real one of that
+    // shape is pinned to a single reader by its own guard, so this test does not name it.)
+    const previewForbidden = withExpect(secretEntry('FAKE_PREVIEW_FORBIDDEN'), 'O', 'X', 'O');
+    const env: EnvSource = {
+      VERCEL_ENV: 'preview',
+      FAKE_PREVIEW_FORBIDDEN: ' FAKE-x ',
+      ZZ_PADDED_UNCATALOGUED: ' FAKE-y ',
+      ADMIN_BUSINESS_DELETE_ENABLED: ' nope ',
+    };
+    const { payload } = classifyEnvironment(env, { catalogue: [...ENVIRONMENT_CATALOGUE, previewForbidden], now: FIXED_NOW });
+    for (const row of payload.groups.flatMap((g) => g.rows)) {
+      expect(new Set(row.diagnostics).size).toBe(row.diagnostics.length);
+      const order = row.diagnostics.map((c) => CODES.indexOf(c));
+      expect(order.every((i) => i >= 0)).toBe(true);
+      expect([...order].sort((a, b) => a - b)).toEqual(order);
+    }
+    expect(payload.groups.flatMap((g) => g.rows).find((r) => r.name === 'FAKE_PREVIEW_FORBIDDEN')?.diagnostics).toEqual([
+      'should-not-be-set',
+      'surrounding-whitespace',
+    ]);
+    expect(payload.uncategorised.map((r) => [r.name, r.diagnostics])).toEqual([['ZZ_PADDED_UNCATALOGUED', []]]);
+  });
+
+  it('D-11 a row whose classification throws carries no diagnostics', () => {
+    const bad = withExpect({ ...cfg('BROKEN_X', 'identifier'), shape: 'no-such-shape' } as unknown as EnvCatalogueEntry, 'O', 'O', 'O');
+    const { row } = rowUnder(bad, 'production', ' FAKE-row-secret ');
+    expect(row.display).toEqual({ kind: 'hidden', reason: 'classification-error' });
+    expect(row.diagnostics).toEqual([]);
+  });
+
+  it('E4-3 every row has exactly the DTO keys: nothing spread from the entry', () => {
+    const required = ['diagnostics', 'display', 'expectedIn', 'group', 'name', 'role', 'scope', 'sensitivity'];
+    const optional = ['docLink', 'seeAlsoPath'];
+    const { payload } = classifyEnvironment({ VERCEL_ENV: 'production', ZZ_ODD: 'x' }, { now: FIXED_NOW });
+    for (const row of [...payload.groups.flatMap((g) => g.rows), ...payload.uncategorised]) {
+      const keys = Object.keys(row).sort();
+      expect({ name: row.name, missing: required.filter((k) => !keys.includes(k)) }).toEqual({ name: row.name, missing: [] });
+      expect({ name: row.name, extra: keys.filter((k) => !required.includes(k) && !optional.includes(k)) }).toEqual({ name: row.name, extra: [] });
+      expect(Object.keys(row.display).every((k) => ['kind', 'text', 'set', 'state', 'source', 'entries', 'reason'].includes(k))).toBe(true);
+    }
+    // `consumedBy`, `shape`, `flagParser` and other catalogue fields never reach a row.
+    expect(JSON.stringify(payload)).not.toMatch(/consumedBy|flagParser|personalKind|"shape"|enumValues/);
   });
 });

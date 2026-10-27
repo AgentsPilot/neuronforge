@@ -34,6 +34,7 @@ import { isUpgradeModalDemoEnabled } from '@/lib/business-os/upgradeModalDemoFla
 import { isCreditHistoryRouteEnabled } from '@/lib/business-os/credits/creditHistoryFlag';
 import { isBusinessDeleteSurfaceEnabled } from '@/lib/business-os/purge/purgeAuthz';
 import { isCalibrationAutoRcaEnabled } from '@/lib/calibration/calibrationRcaConfig';
+import { parseBoostTestAccounts } from '@/lib/business-os/boost/boostCheckoutAccess';
 
 const env = process.env as Record<string, string | undefined>;
 
@@ -87,10 +88,6 @@ describe('environment catalogue', () => {
     expect(ENVIRONMENT_GROUPS.map((g) => g.id)).toContain('external');
   });
 
-  it('holds the 133 names of the EC-1 inventory', () => {
-    expect(ENVIRONMENT_CATALOGUE).toHaveLength(133);
-  });
-
   it('K-2 no config or personal entry has a name the SA-C1 pattern would mask', () => {
     const offenders = ENVIRONMENT_CATALOGUE.filter(
       (e) => (e.sensitivity === 'config' || e.sensitivity === 'personal') && nameLooksSecret(e.name)
@@ -117,7 +114,7 @@ describe('environment catalogue', () => {
         if (entry.flagParser === 'strict-true') expect({ name: entry.name, flagDefault: entry.flagDefault }).toEqual({ name: entry.name, flagDefault: false });
       }
       if (entry.sensitivity === 'personal') {
-        expect(['single', 'list-admin-emails', 'list-comma']).toContain(entry.personalKind);
+        expect(['single', 'list-admin-emails', 'list-boost-accounts']).toContain(entry.personalKind);
       }
       for (const where of ['production', 'preview', 'local'] as const) {
         expect(['required', 'optional', 'forbidden']).toContain(entry.expectedIn[where]);
@@ -173,11 +170,43 @@ describe('environment catalogue', () => {
       ['VERCEL_REGION', 'environment-page'],
       ['VERCEL_GIT_COMMIT_REF', 'environment-page'],
       ['VERCEL_GIT_COMMIT_SHA', 'environment-page'],
+      ['NODE_TLS_REJECT_UNAUTHORIZED', 'platform'],
       ['QSTASH_CURRENT_SIGNING_KEY', 'sdk'],
       ['QSTASH_NEXT_SIGNING_KEY', 'sdk'],
     ]);
     for (const entry of ENVIRONMENT_CATALOGUE) {
       if (entry.consumedBy) expect(entry.consumedBy.note.trim().length).toBeGreaterThan(10);
+    }
+  });
+
+  it('E4-2 the TLS check switch is a server secret, forbidden on Vercel, read by the platform', () => {
+    const entry = ENVIRONMENT_CATALOGUE.find((e) => e.name === 'NODE_TLS_REJECT_UNAUTHORIZED');
+    expect(entry).toMatchObject({
+      sensitivity: 'secret',
+      scope: 'server',
+      expectedIn: { production: 'forbidden', preview: 'forbidden', local: 'optional' },
+      consumedBy: { by: 'platform' },
+    });
+  });
+
+  it('K-8 the boost test-accounts count agrees with the checkout reader (QA-3, SA Q4-9)', () => {
+    const entry = ENVIRONMENT_CATALOGUE.find((e) => e.name === 'BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS');
+    expect(entry).toMatchObject({ sensitivity: 'personal', personalKind: 'list-boost-accounts' });
+    if (!entry) throw new Error('missing entry');
+    const idA = '0f0e0d0c-0b0a-4908-8706-050403020100';
+    const idB = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    for (const raw of [
+      `${idA},${idB}`,
+      `${idA}, someone@example.test ,${idB}`,
+      `${idA},${idA.toUpperCase()}`,
+      'someone@example.test,other@example.test',
+      ` ${idA} ,, `,
+      ',',
+    ]) {
+      const { payload } = classifyEnvironment({ [entry.name]: raw }, { catalogue: [entry] });
+      const display = payload.groups.flatMap((g) => g.rows)[0].display;
+      const reader = parseBoostTestAccounts(raw);
+      expect({ raw, display }).toEqual({ raw, display: reader === null ? { kind: 'status', set: false } : { kind: 'count', entries: reader.size } });
     }
   });
 

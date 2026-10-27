@@ -20,19 +20,26 @@
  *
  * Server-guarded by `app/admin/layout.tsx` (`requireAdminPage`), like every
  * `/admin` page.
+ *
+ * EC-4 (workplan §4.4; FR-17 to FR-21): the KPI strip under the header, and a
+ * filter bar with a page-held name search and a `group` filter in the page URL.
+ * Neither filter ever reaches the API request (SA-C9, SA E4-4).
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
-import { AdminFilterBar } from '@/app/admin/components/layout/AdminFilterBar';
+import { AdminFilterBar, ADMIN_FIELD_CONTROL, ADMIN_FIELD_LABEL } from '@/app/admin/components/layout/AdminFilterBar';
 import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
 import { ADMIN_NETWORK_ERROR, adminReadFallback, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
+import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 import type { EnvironmentViewPayload } from '@/lib/admin/environment-types';
 import { clientLogger } from '@/lib/logger/client';
 
+import { EnvironmentKpis } from './components/EnvironmentKpis';
 import { EnvironmentView } from './components/EnvironmentView';
-import { isEnvironmentViewPayload } from './environmentDisplay';
+import { GROUP_FILTER_IDS, isEnvironmentViewPayload, visibleView } from './environmentDisplay';
+import { ENVIRONMENT_FILTER_SPEC } from './environmentFilters';
 
 const logger = clientLogger.child({ module: 'AdminEnvironmentPage' });
 
@@ -96,6 +103,20 @@ export default function AdminEnvironmentPage() {
     void load();
   }, [load]);
 
+  // FR-21: `group` in the URL, `search` held by the page (never written). Neither reaches the fetch above.
+  const { filters, setFilters, clear, isDefault } = useAdminFilters(ENVIRONMENT_FILTER_SPEC);
+  const searchId = useId();
+  const groupId = useId();
+
+  const shown = data && status !== 'error' ? data : null;
+  const view = useMemo(() => (shown ? visibleView(shown, filters) : null), [shown, filters]);
+
+  // Group labels come from the payload; before the first read, the ids stand in so a linked
+  // `?group=` value is still a selectable option.
+  const groupOptions = shown
+    ? shown.groups.map((g) => ({ id: g.id as string, label: g.label }))
+    : GROUP_FILTER_IDS.filter((id) => id !== 'uncategorised').map((id) => ({ id: id as string, label: id }));
+
   const isLoading = status === 'loading';
 
   return (
@@ -106,7 +127,49 @@ export default function AdminEnvironmentPage() {
         badge={{ label: 'Read-only', testId: 'read-only-badge' }}
       />
 
-      <AdminFilterBar onRefresh={() => void load()} busy={isLoading} what={WHAT} readAt={readAt} />
+      <EnvironmentKpis data={shown} loading={isLoading} view={view} />
+
+      <AdminFilterBar
+        onRefresh={() => void load()}
+        busy={isLoading}
+        what={WHAT}
+        readAt={readAt}
+        onClear={clear}
+        canClear={!isDefault}
+      >
+        <div className="w-full sm:w-64">
+          <label htmlFor={searchId} className={ADMIN_FIELD_LABEL}>
+            Name
+          </label>
+          <input
+            id={searchId}
+            type="search"
+            placeholder="Search by variable name"
+            value={filters.search}
+            onChange={(e) => setFilters({ search: e.target.value })}
+            className={`${ADMIN_FIELD_CONTROL} w-full`}
+          />
+        </div>
+        <div>
+          <label htmlFor={groupId} className={ADMIN_FIELD_LABEL}>
+            Group
+          </label>
+          <select
+            id={groupId}
+            value={filters.group}
+            onChange={(e) => setFilters({ group: e.target.value })}
+            className={ADMIN_FIELD_CONTROL}
+          >
+            <option value="">All groups</option>
+            {groupOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+            <option value="uncategorised">Uncategorised</option>
+          </select>
+        </div>
+      </AdminFilterBar>
 
       {/* Always mounted, so a refresh keeps the tables on screen while it reads. */}
       <div data-testid="environment-content" aria-busy={isLoading} className="space-y-6">
@@ -116,7 +179,9 @@ export default function AdminEnvironmentPage() {
 
         {status === 'loading' && !data && <AdminLoading what={WHAT} />}
 
-        {data && status !== 'error' && <EnvironmentView data={data} />}
+        {shown && view && (
+          <EnvironmentView data={shown} view={view} searching={filters.search.trim() !== ''} onClear={clear} />
+        )}
       </div>
     </div>
   );
