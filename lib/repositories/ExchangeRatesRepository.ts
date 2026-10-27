@@ -3,7 +3,9 @@
 // admin-maintained table of rates behind the Exchange rates tab of
 // `/admin/finance` (Admin Exchange Rates slices 1a and 2, requirement
 // ADMIN_EXCHANGE_RATES_REQUIREMENT.md).
-// Nothing reads these rates to convert money (D-5).
+// Nothing reads these rates to convert money (D-5), except the admin Finance
+// page's approximate-dollar client payments figure (FIN BD-56), through
+// `lib/admin/exchangeRates/clientPaymentRates.ts`.
 //
 // WHY THERE IS NO `.eq('user_id', userId)` HERE (CLAUDE.md rule 4 exemption,
 // stated rather than silently skipped):
@@ -20,10 +22,13 @@
 //   repository does not depend on those policies either way (SA-R5).
 //
 //   Because scoping cannot protect these tables, AUTHORISATION IS THE CALLER'S
-//   JOB. The one permitted caller is `app/api/admin/exchange-rates/**`, behind
-//   the admin gate `requireAdmin` (`lib/admin/requireAdminRoute.ts` →
-//   AdminAccessService → the `admin_users` table; never `profiles.role`). Do
-//   not add an ungated caller.
+//   JOB. The permitted callers are `app/api/admin/exchange-rates/**` and
+//   `lib/admin/exchangeRates/clientPaymentRates.ts` (FIN BD-56), whose one
+//   caller is the admin finance route. Both are behind the admin gate
+//   `requireAdmin` (`lib/admin/requireAdminRoute.ts` → AdminAccessService →
+//   the `admin_users` table; never `profiles.role`). The importer guard
+//   (`clientPaymentsUsd.source.guard`, G-a) enforces this list. Do not add an
+//   ungated caller.
 //
 //   No method accepts a caller-supplied table name, column list or limit —
 //   only a currency code the route has already narrowed through Zod, a
