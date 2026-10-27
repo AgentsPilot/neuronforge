@@ -59,6 +59,14 @@ function ValueCell({ row }: { row: EnvRow }) {
     <div className="flex flex-wrap items-center gap-2">
       {words.chip && <StatusChip tone={words.chip.tone}>{words.chip.text}</StatusChip>}
       {words.mono !== null && <span className="break-all font-mono text-xs text-slate-200">{words.mono}</span>}
+      {/* EC-6 (OQ-1, OQ-3): origin, then our label, then the role words (or "Unknown project"), muted. */}
+      {words.project && (
+        <span data-testid="env-supabase-project" className="text-xs">
+          {words.project.label !== null && <span className="text-slate-200">{words.project.label}</span>}
+          {words.project.label !== null && ' '}
+          <span className="text-slate-400">{words.project.muted}</span>
+        </span>
+      )}
       {words.note !== null && <span className="text-xs text-slate-400">{words.note}</span>}
       {words.warnings.map((warning) => (
         <span key={warning.code} data-testid="env-diagnostic" data-code={warning.code} title={warning.detail ?? undefined}>

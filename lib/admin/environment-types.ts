@@ -68,7 +68,18 @@ export type EnvDiagnostic =
   | 'required-not-set'
   | 'should-not-be-set'
   | 'unrecognised-flag'
-  | 'surrounding-whitespace';
+  | 'surrounding-whitespace'
+  /** EC-6: both Supabase URL rows are shown and their origins differ. */
+  | 'supabase-url-mismatch';
+
+/** EC-6 (OQ-1): the intended role of a Supabase project in our table. Words live on the page side. */
+export type EnvSupabaseRole = 'development-staging' | 'production';
+
+/**
+ * EC-6 (SA-L5): what our project table says about a shown Supabase origin.
+ * The label and role are ours, never read from the value or from Supabase.
+ */
+export type EnvSupabaseProject = { kind: 'known'; label: string; role: EnvSupabaseRole } | { kind: 'unknown' };
 
 /** Which `expectedIn` column the diagnostics were checked against (null: not checked). */
 export type EnvCheckedAgainst = 'production' | 'preview' | 'local';
@@ -90,6 +101,8 @@ export interface EnvRow {
   seeAlsoPath?: string;
   /** A repository doc path, shown as text (the app does not serve `/docs`). */
   docLink?: string;
+  /** EC-6: only on the two Supabase URL rows, only when shown with a Supabase host; omitted otherwise. */
+  supabaseProject?: EnvSupabaseProject;
 }
 
 export type EnvironmentLabel = 'production' | 'preview' | 'vercel-development' | 'local' | 'unknown';
@@ -126,6 +139,8 @@ export interface EnvironmentCounts {
   unrecognisedFlags: number;
   /** Rows carrying `surrounding-whitespace`. */
   surroundingWhitespace: number;
+  /** EC-6 (OQ-4): 1 when the two Supabase URLs differ, else 0. Counted from the pair, not per row. */
+  supabaseUrlMismatch: number;
 }
 
 export interface EnvironmentViewPayload {

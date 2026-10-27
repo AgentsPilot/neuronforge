@@ -181,7 +181,7 @@ describe('GET /api/admin/environment', () => {
       environment: body.data.environment.label,
       ...body.data.counts,
     });
-    // EC-4 (SA Q4-8): the EC-1 counts plus the four diagnostic counts, nothing else.
+    // EC-4 (SA Q4-8): the EC-1 counts plus the four diagnostic counts and the EC-6 mismatch count (OQ-4), nothing else.
     expect(Object.keys(input.details as object).sort()).toEqual(
       [
         'correlationId',
@@ -192,6 +192,7 @@ describe('GET /api/admin/environment', () => {
         'rows',
         'set',
         'shouldNotBeSet',
+        'supabaseUrlMismatch',
         'surroundingWhitespace',
         'uncategorised',
         'unrecognisedFlags',
