@@ -45,6 +45,14 @@
  * `…Usd`. Absent on the Accounts tab (AC-167). No field holds a sum of the two
  * measures.
  *
+ * Client payments in approximate US dollars (FIN BD-56, slice 1a, SA-RR-CPU):
+ * ONE optional key, `takings.usd`, the single exception to "no field is a
+ * total across currencies". Each currency's Gross is converted once at the
+ * admin rate and the converted cents are added; it is approximate, admin only,
+ * worked out on read and never stored, charged or added to our revenue
+ * (EX-1 to EX-6). Set by the finance route, never by the builder; absent on
+ * the Accounts tab.
+ *
  * @module lib/business-os/finance/financeTypes
  */
 
@@ -865,6 +873,47 @@ export interface FinanceTakingsSection {
   scope: 'all' | 'one';
   /** Null only when `status` is `unknown` (the payments read failed). */
   figures: FinanceTakingsFigures | null;
+  /**
+   * BD-56 (slice 1a): client payments in approximate US dollars. Present on
+   * the Overview and in the picked view; ABSENT on the Accounts tab. Set by
+   * the finance route, never by the builder. Never part of our revenue.
+   */
+  usd?: FinanceClientPaymentsUsd;
+}
+
+/** BD-56: why a currency line was or was not converted. `stale` is converted, at a rate older than 35 days. */
+export type FinanceUsdRowState = 'converted' | 'stale' | 'no_rate' | 'disabled' | 'unusable';
+
+/** One currency line of the approximate-dollar figure (BD-56). */
+export interface FinanceClientPaymentsUsdRow {
+  /** Normalised code; null = the "Unknown currency" line (never converted, CPU-2). */
+  currency: string | null;
+  /** Counted payments (succeeded or refunded) on this line. */
+  payments: number;
+  /** The takings line's Gross, in its own currency (the same number as the table above). */
+  gross: number;
+  /** As stored, text (e.g. "3.700000"); '1' for USD; null when no usable row. */
+  rate: string | null;
+  rateUpdatedAt: string | null;
+  state: FinanceUsdRowState;
+  /** Approximate US dollars from integer cents; null unless `converted` or `stale`. */
+  usd: number | null;
+}
+
+/** BD-56: client payments in approximate US dollars, admin only, worked out on read. */
+export interface FinanceClientPaymentsUsd {
+  /** ok: every counted payment converted and exactly read; partial: "at least"; unknown: the payments read failed. */
+  status: FinanceSectionStatus;
+  /** The converted rows' sum, from integer cents; null only when `unknown`. Never part of our revenue (BD-1, EX-6). */
+  totalUsd: number | null;
+  rows: FinanceClientPaymentsUsdRow[];
+  /** Over the `converted` and `stale` rows. */
+  converted: { payments: number; currencies: number };
+  /** Over the `no_rate`, `disabled` and `unusable` rows. */
+  notConverted: { payments: number; currencies: number };
+  ratesRead: 'ok' | 'failed';
+  /** Any converted row used a rate older than 35 days (D-5). */
+  stale: boolean;
 }
 
 // ── Section 4, credits (slice 1b, S1-FR-21 to S1-FR-24) ─────────────────────

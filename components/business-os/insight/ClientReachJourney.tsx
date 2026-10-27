@@ -254,7 +254,23 @@ export function ClientReachJourney({ graph, onAction }: Props) {
                 fontFamily: font,
               }}
             >
-              {tr(`reach.blocked.${focus.item.id}`, focus.item.title)}
+              {/*
+                `website` means two different businesses, and one sentence
+                cannot serve both.
+                ──────────────────────────────────────────────────────────────
+                "Your page is built, but nobody can find it" is true of an
+                account with a site sitting in draft. For one that declined a
+                website and is reached by a link, no page was ever built, and
+                the sentence describes work it has not done and never will.
+
+                The item already carries the distinction: the dashboard sets
+                `create_booking_link` exactly where `wants_website` is false,
+                so keying on it keeps both surfaces driven by one decision
+                rather than two that can drift.
+              */}
+              {focus.item.action === 'create_booking_link'
+                ? tr('reach.blocked.website_link', focus.item.title)
+                : tr(`reach.blocked.${focus.item.id}`, focus.item.title)}
             </div>
             <div
               style={{
@@ -271,15 +287,42 @@ export function ClientReachJourney({ graph, onAction }: Props) {
             </div>
           </div>
 
-          {focus.item.action && onAction && (
-            <button
-              onClick={() => onAction(focus.item.action!, { stepId: focus.item.id })}
-              className="crj-btn"
-              style={{ fontFamily: font }}
-            >
-              {tr(`reach.fix.${focus.item.id}`, tr('readiness.setUpNow', 'Set up now'))}
-            </button>
-          )}
+          {/*
+            TWO WAYS TO BE REACHED, AND A BUSINESS WITH ITS OWN SITE HAS BOTH.
+            ──────────────────────────────────────────────────────────────────
+            One button offered the booking link and stopped there, which only
+            half describes a business that kept its own website. Their site is
+            already where clients find them; what is missing is a link to book
+            through, and a way for the enquiries that site emails them to
+            become leads instead of sitting in an inbox.
+
+            The second button is drawn only in that case — `create_booking_link`
+            is set exactly where `wants_website` is false — so a business we are
+            building a site for sees one button, as before.
+          */}
+          <div className="crj-actions">
+            {focus.item.action && onAction && (
+              <button
+                onClick={() => onAction(focus.item.action!, { stepId: focus.item.id })}
+                className="crj-btn"
+                style={{ fontFamily: font }}
+              >
+                {focus.item.action === 'create_booking_link'
+                  ? tr('reach.fix.website_link', tr('readiness.setUpNow', 'Set up now'))
+                  : tr(`reach.fix.${focus.item.id}`, tr('readiness.setUpNow', 'Set up now'))}
+              </button>
+            )}
+
+            {focus.item.action === 'create_booking_link' && onAction && (
+              <button
+                onClick={() => onAction('connect_inbox_channel', { stepId: focus.item.id })}
+                className="crj-btn crj-btn-quiet"
+                style={{ fontFamily: font }}
+              >
+                {tr('reach.fix.inbox_channel', 'Read my website enquiries')}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -291,6 +334,31 @@ export function ClientReachJourney({ graph, onAction }: Props) {
         This is the same shape FunnelMap now uses, for the same reason.
       */}
       <style jsx global>{`
+        .crj-actions {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          flex-shrink: 0;
+        }
+        /*
+         * The second route is an alternative, not a lesser one.
+         *
+         * A transparent fill let the card's own tinted background show
+         * through, so the button read as a shaded patch rather than as a
+         * control. (No backticks in here: this comment sits inside a
+         * styled-jsx template literal, and one would close it.) It carries
+         * the surface colour instead, which is what every other secondary
+         * button in Business OS does, and it sits on the same ground whatever
+         * the card behind it is doing.
+         */
+        .crj-btn-quiet {
+          background: var(--v2-surface) !important;
+          color: var(--v2-text-primary) !important;
+          border: 1px solid var(--v2-border) !important;
+        }
+        .crj-btn-quiet:hover {
+          background: var(--v2-surface-hover) !important;
+        }
         .crj-flow {
           display: flex;
           align-items: stretch;
@@ -418,7 +486,32 @@ export function ClientReachJourney({ graph, onAction }: Props) {
           .crj-scroll {
             overflow: visible;
           }
-          .crj-flow {
+          .crj-actions {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          flex-shrink: 0;
+        }
+        /*
+         * The second route is an alternative, not a lesser one.
+         *
+         * A transparent fill let the card's own tinted background show
+         * through, so the button read as a shaded patch rather than as a
+         * control. (No backticks in here: this comment sits inside a
+         * styled-jsx template literal, and one would close it.) It carries
+         * the surface colour instead, which is what every other secondary
+         * button in Business OS does, and it sits on the same ground whatever
+         * the card behind it is doing.
+         */
+        .crj-btn-quiet {
+          background: var(--v2-surface) !important;
+          color: var(--v2-text-primary) !important;
+          border: 1px solid var(--v2-border) !important;
+        }
+        .crj-btn-quiet:hover {
+          background: var(--v2-surface-hover) !important;
+        }
+        .crj-flow {
             flex-direction: column;
           }
           .crj-stn {

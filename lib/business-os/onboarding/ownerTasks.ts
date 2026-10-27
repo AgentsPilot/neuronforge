@@ -38,7 +38,13 @@
  * @module lib/business-os/onboarding/ownerTasks
  */
 
-export type OwnerTaskKey = 'services' | 'availability' | 'intake' | 'stripe' | 'bank';
+export type OwnerTaskKey =
+  | 'services'
+  | 'availability'
+  | 'intake'
+  | 'stripe'
+  | 'bank'
+  | 'mailbox';
 
 export type OwnerTaskLanguage = 'en' | 'he' | 'es';
 
@@ -91,6 +97,15 @@ export interface OwnerTaskInput {
   sellsScheduled?: boolean;
   collectionMethod?: 'card_online' | 'invoice' | 'in_person' | 'mixed' | 'none' | null;
   needsIntake?: boolean;
+  /**
+   * They said they already have a website, so the enquiries it emails them are
+   * the channel to set up rather than a site to build.
+   *
+   * Comes from the `client_acquisition` chip, not from `online_presence_mode`:
+   * that mode records only what WE build, and a business keeping its own site
+   * shares `booking_only` with one that has no presence at all.
+   */
+  hasOwnWebsite?: boolean;
 }
 
 interface Copy {
@@ -130,6 +145,28 @@ const COPY: Record<OwnerTaskKey, Copy> = {
       en: 'Only you know when you work. Without it there is nothing to book.',
       he: 'רק אתה יודע מתי אתה עובד. בלי זה אין מה להזמין.',
       es: 'Solo tú sabes cuándo trabajas. Sin eso no hay nada que reservar.',
+    },
+    minutes: 2,
+  },
+  /*
+   * Connecting the mailbox their form already writes to.
+   *
+   * Only you can sign in to your own mail, which is what puts this in a list of
+   * things nobody else can do. It is deliberately NOT a blocker: a booking
+   * surface publishes perfectly well without it, and nothing in
+   * `journeyReadiness` reads it. An unconnected mailbox costs them leads, not
+   * correctness.
+   */
+  mailbox: {
+    title: {
+      en: 'Leads from your website',
+      he: 'לידים מהאתר שלך',
+      es: 'Prospectos desde tu web',
+    },
+    body: {
+      en: 'Only you can sign in to your own mailbox. Then every enquiry your form sends becomes a lead that gets answered.',
+      he: 'רק אתה יכול להיכנס לתיבת הדואר שלך. אחרי זה כל פנייה שהטופס שולח הופכת לליד שמקבל מענה.',
+      es: 'Solo tú puedes entrar a tu buzón. Después, cada consulta que envía tu formulario se convierte en un prospecto que recibe respuesta.',
     },
     minutes: 2,
   },
@@ -240,6 +277,10 @@ export function ownerTasks(input: OwnerTaskInput, language: OwnerTaskLanguage): 
   if (collectsOnline) owed.push('stripe');
   if (invoicesSome) owed.push('bank');
   if (input.needsIntake) owed.push('intake');
+  /* After the money and the form, before the catalogue: it is the only task
+     that brings people IN rather than preparing what happens once they are
+     here, and it depends on nothing above it. */
+  if (input.hasOwnWebsite) owed.push('mailbox');
   if (hasServices) owed.push('services');
 
   /*

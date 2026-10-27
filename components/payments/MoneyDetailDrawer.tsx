@@ -245,6 +245,23 @@ export function MoneyDetailDrawer({
                    */
                   const isCancelled = period.status === 'cancelled';
 
+                  /*
+                   * Money that was taken and has gone back.
+                   *
+                   * The schedule coloured by `status` alone, and the status of a
+                   * refunded period is still `paid` — correctly: it WAS paid,
+                   * and the refund is a second event recorded on the charge. So
+                   * period 1 of f8df6318 sat on a green dot reading "$30.00"
+                   * while this drawer's own detail panel, two inches below,
+                   * read "Refunded · $30.00" off the same money.
+                   *
+                   * Full return only. A partial leaves the business holding
+                   * some of it, so the period still stands as a collection and
+                   * the figure beside it is still real.
+                   */
+                  const returned = Number(period.refundedAmount ?? 0);
+                  const fullyReturned = returned > 0 && returned >= period.amount;
+
                   return (
                     <div
                       key={period.id}
@@ -257,7 +274,9 @@ export function MoneyDetailDrawer({
                         className="h-1.5 w-1.5 shrink-0 rounded-full"
                         style={{
                           background:
-                            period.status === 'paid'
+                            fullyReturned
+                              ? STATUS_TONE.refunded
+                              : period.status === 'paid'
                               ? STATUS_TONE.paid
                               : period.status === 'overdue'
                                 ? STATUS_TONE.overdue
@@ -288,9 +307,18 @@ export function MoneyDetailDrawer({
                         </span>
                       )}
 
+                      {/* In words as well as struck through, for the same
+                          reason the cancelled line gives: a strike alone reads
+                          as a discount or a correction. */}
+                      {!isCancelled && fullyReturned && (
+                        <span className="text-[11px]" style={{ color: STATUS_TONE.refunded }}>
+                          {t('payments.status.refunded') || 'Refunded'}
+                        </span>
+                      )}
+
                       <span
                         className={`ms-auto tabular-nums ${
-                          isCancelled
+                          isCancelled || fullyReturned
                             ? 'text-[var(--v2-text-muted)] line-through decoration-[var(--v2-text-muted)]'
                             : 'text-[var(--v2-text-primary)]'
                         }`}
