@@ -31,7 +31,13 @@
 
 import { COHORTS, type CohortConfig } from './config/cohorts';
 import type { EntitlementAccount } from './account';
-import { deriveLifecycle, tierSettlementEndsAt, type EntitlementBasis, type LifecycleInputs } from './lifecycle';
+import {
+  deriveLifecycle,
+  tierSettlementEndsAt,
+  type EntitlementBasis,
+  type LifecycleInputs,
+  type LifecycleResult,
+} from './lifecycle';
 
 /** The two facts of a resolution this reads. `EntitlementResolution` satisfies it. */
 export interface FreeAccessResolutionLike {
@@ -132,22 +138,56 @@ export function freeAccessAfterPaidTier(
   account: EntitlementAccount | null,
   inputs: LifecycleInputs
 ): FreeAccessAfterPaidTier | null {
-  if (!account || !account.tier || !account.tierExpiresAt || !account.cohort) return null;
+  if (!account || !account.cohort) return null;
 
   const cohort = Object.prototype.hasOwnProperty.call(inputs.cohorts, account.cohort)
     ? inputs.cohorts[account.cohort]
     : undefined;
   if (!cohort || cohort.durationHistory) return null;
 
-  const tierEndsAt = Date.parse(tierSettlementEndsAt(account.tierExpiresAt, inputs.renewalSettlementMarginHistory));
-  if (!Number.isFinite(tierEndsAt)) return null;
+  const survivor = ownCohortAfterPaidTier(account, inputs);
+  if (!survivor) return null;
 
-  const after = deriveLifecycle(account, inputs, new Date(tierEndsAt));
-  if (after.basis.kind !== 'cohort' || after.state === 'grace' || after.state === 'paused' || after.anomaly) return null;
-
-  const endsAt = after.accessEndsAt;
+  const endsAt = survivor.lifecycle.accessEndsAt;
   if (endsAt === null) return null;
   const endsAtMs = Date.parse(endsAt);
-  if (!Number.isFinite(endsAtMs) || endsAtMs <= tierEndsAt) return null;
+  if (!Number.isFinite(endsAtMs) || endsAtMs <= survivor.tierEndsAt.getTime()) return null;
   return { endsAt };
+}
+
+/**
+ * Does the account's OWN cohort survive the end of its dated paid tier?
+ * (Account-deletion lifecycle SX-2, SA R-4a: the ONE derivation behind both
+ * `freeAccessAfterPaidTier` (P-7a.3) and `afterPlanAccount` (D3 / SX-2b).)
+ *
+ * Read through the resolver's own lifecycle (`deriveLifecycle`) at the moment
+ * the tier really ends: its paid-through date plus the renewal settlement
+ * margin (`tierSettlementEndsAt`, PF-10). The cohort survives when, at that
+ * moment, the basis is a cohort that is live: not grace, not paused, no
+ * anomaly. Any cohort shape counts here (an open-ended or dated Founding
+ * Partner, an unexpired trial); `freeAccessAfterPaidTier` narrows it to the
+ * BQ-5 shape on top.
+ *
+ *   { tierEndsAt, lifecycle }  the cohort survives; `lifecycle` is the
+ *                              derivation at `tierEndsAt`
+ *   null                       no dated tier, no cohort, an unreadable date,
+ *                              or the cohort has ended (or never resolved) by then
+ *
+ * Pure. Reads structure, never a cohort id.
+ */
+export function ownCohortAfterPaidTier(
+  account: EntitlementAccount | null,
+  inputs: LifecycleInputs
+): { tierEndsAt: Date; lifecycle: LifecycleResult } | null {
+  if (!account || !account.tier || !account.tierExpiresAt || !account.cohort) return null;
+
+  const tierEndsAtMs = Date.parse(tierSettlementEndsAt(account.tierExpiresAt, inputs.renewalSettlementMarginHistory));
+  if (!Number.isFinite(tierEndsAtMs)) return null;
+  const tierEndsAt = new Date(tierEndsAtMs);
+
+  const lifecycle = deriveLifecycle(account, inputs, tierEndsAt);
+  if (lifecycle.basis.kind !== 'cohort' || lifecycle.state === 'grace' || lifecycle.state === 'paused' || lifecycle.anomaly) {
+    return null;
+  }
+  return { tierEndsAt, lifecycle };
 }

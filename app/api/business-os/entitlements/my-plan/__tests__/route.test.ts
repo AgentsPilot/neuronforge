@@ -55,6 +55,10 @@ const state = {
   /** P-7a.3 (BQ-5): which accounts the free-access-after read was asked about, and its answer. */
   freeAccessAskedFor: [] as string[],
   freeAccessAfter: null as { endsAt: string } | null,
+  /** SX-2 (D3): what `readPlanEndingView` was asked, and its answer. */
+  endingAsks: [] as Array<{ accountId: string; endsAt: string; locale: string }>,
+  ending: null as unknown,
+  endingThrows: false,
 };
 
 jest.mock('@/lib/auth', () => ({
@@ -73,6 +77,16 @@ jest.mock('@/lib/business-os/entitlements/EntitlementService', () => ({
       return state.freeAccessAfter;
     },
   }),
+}));
+
+// SX-2 (D3): the ending view is the entitlements module's own (its suite is
+// `planEndingView.test.ts`); here only what the route asks and does with it.
+jest.mock('@/lib/business-os/entitlements/planEndingView', () => ({
+  readPlanEndingView: async (input: { accountId: string; endsAt: string; locale: string }) => {
+    state.endingAsks.push(input);
+    if (state.endingThrows) throw new Error('preview on fire');
+    return state.ending;
+  },
 }));
 
 // The language read goes through the repository (CLAUDE.md rule 1). Stubbed at
@@ -774,5 +788,88 @@ describe('freeAccessAfter (plan payments P-7a.3, BQ-5)', () => {
     state.billing = { data: null, error: null };
     await GET(new NextRequest('http://localhost/api/business-os/entitlements/my-plan'));
     expect(state.freeAccessAskedFor).toEqual([]);
+  });
+});
+
+describe('ending: the Cancel drawer\'s "What changes" (SX-2 / D3; SA Q-6, R-8, R-11)', () => {
+  const PERIOD_END = '2099-10-27T00:00:00.000Z';
+  const paying = (extra: Record<string, unknown> = {}) => ({
+    data: {
+      id: 'b1', accountId: CUSTOMER, livemode: false, stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1',
+      subscriptionStatus: 'active', boughtTier: buyableTiers()[0], currentPeriodEnd: PERIOD_END,
+      cancelAtPeriodEnd: false, pendingTier: null, openCheckoutSessionId: null, openCheckoutExpiresAt: null,
+      lastInvoiceId: null, lastPaidAt: null, lastPaymentFailedAt: null, failedAttempts: 0,
+      actionRequiredInvoiceUrl: null, founderDiscountAppliedAt: null, endedAt: null,
+      createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', ...extra,
+    },
+    error: null,
+  });
+  const FREE_PLAN = {
+    kind: 'free_plan', endsAt: PERIOD_END, planName: 'Test Flight', until: '2099-11-10T00:00:00.000Z', credits: 1000,
+    loses: ['AI assistant'], thenReadOnlyDays: 7, thenPausedFrom: '2099-11-17T00:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    state.user = { id: CUSTOMER };
+    state.snapshot = resolutionFor(buyableTiers()[0]);
+    state.freeAccessAfter = null;
+    state.endingAsks = [];
+    state.ending = FREE_PLAN;
+    state.endingThrows = false;
+  });
+
+  it('renewing with Cancel offered: built for the SESSION account, from the billing row\'s period end, in the reader\'s language', async () => {
+    state.billing = paying();
+    state.locale = { data: { preferredLanguage: 'he', timezone: null }, error: null };
+    const res = await GET(new NextRequest(`http://localhost/api/business-os/entitlements/my-plan?accountId=${SOMEBODY_ELSE}&endsAt=2000-01-01`));
+    const body = await res.json();
+    expect(body.data.purchase.manage.cancel).toBe(true);
+    expect(state.endingAsks).toEqual([{ accountId: CUSTOMER, endsAt: PERIOD_END, locale: 'he' }]);
+    expect(body.data.ending).toEqual(FREE_PLAN);
+  });
+
+  it('R-11: a cancelling account (set to end) is never offered an ending, and nothing is asked', async () => {
+    state.billing = paying({ cancelAtPeriodEnd: true });
+    const body = await (await GET(request())).json();
+    expect(body.data.purchase.manage.reactivate).toBe(true);
+    expect(body.data.ending).toBeNull();
+    expect(state.endingAsks).toEqual([]);
+  });
+
+  it('no paid plan, a failed payment, or the price switch off: ending null, nothing asked', async () => {
+    for (const billing of [{ data: null, error: null }, paying({ subscriptionStatus: 'past_due' })]) {
+      state.billing = billing;
+      const body = await (await GET(request())).json();
+      expect(body.data.ending).toBeNull();
+    }
+    state.billing = paying();
+    state.pricesOn = false;
+    const body = await (await GET(request())).json();
+    expect(body.data.ending).toBeNull();
+    expect(state.endingAsks).toEqual([]);
+  });
+
+  it('a throwing ending view never hides the plan: 200, ending null, the purchase intact', async () => {
+    state.billing = paying();
+    state.endingThrows = true;
+    const res = await GET(request());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.data.ending).toBeNull();
+    expect(body.data.purchase.manage.cancel).toBe(true);
+    expect(body.data.planId).toBe(buyableTiers()[0]);
+  });
+
+  it('the view answering null (inputs unreadable) is ending null', async () => {
+    state.billing = paying();
+    state.ending = null;
+    const body = await (await GET(request())).json();
+    expect(body.data.ending).toBeNull();
+  });
+
+  it('the source takes the date from the purchase view\'s billing, never from the request', () => {
+    const source = codeOnly(readFileSync(join(process.cwd(), 'app', 'api', 'business-os', 'entitlements', 'my-plan', 'route.ts'), 'utf8'));
+    expect(source).toMatch(/readPlanEndingView\(\{\s*accountId,\s*endsAt:\s*billing\.date,\s*locale\s*\}\)/);
   });
 });

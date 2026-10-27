@@ -284,8 +284,8 @@ describe('backward: a gate cannot ship unregistered', () => {
     },
     {
       file: 'app/api/business-os/entitlements/my-plan/route.ts',
-      symbols: ['buildCustomerPlanView', 'getEntitlementService', 'resolveAccountId'],
-      why: 'The CUSTOMER read behind the "Your plan" settings section (S-4a step 1) — the first non-admin file in this list. It resolves the session account and formats the answer; it refuses nothing, and it has no capability id to gate on. Note `getEntitlementService` here is `getSnapshot`, which reports every capability, and NOT `check()`, which is the call that would make this a gate: if this file ever calls `check`, it belongs in ENFORCEMENT_POINTS instead of here. `resolveAccountId` is the account seam (SA P-1), which every external caller of the service must go through — `accountSeam.guard` enforces that product-wide.',
+      symbols: ['buildCustomerPlanView', 'getEntitlementService', 'readPlanEndingView', 'resolveAccountId'],
+      why: 'The CUSTOMER read behind the "Your plan" settings section (S-4a step 1) — the first non-admin file in this list. It resolves the session account and formats the answer; it refuses nothing, and it has no capability id to gate on. Note `getEntitlementService` here is `getSnapshot`, which reports every capability, and NOT `check()`, which is the call that would make this a gate: if this file ever calls `check`, it belongs in ENFORCEMENT_POINTS instead of here. `resolveAccountId` is the account seam (SA P-1), which every external caller of the service must go through — `accountSeam.guard` enforces that product-wide. SX-2 (D3): `readPlanEndingView` describes what the account will have once its paid period ends, for the Cancel drawer; display only, refuses nothing, writes nothing, calls no `check()` / `decide()`.',
     },
     // ── Business OS invites (invite-only signup, Slice 0) ──────────────────
     // None of these refuses a capability. They read the invite config (expiry

@@ -875,6 +875,35 @@ function comparisonLabel(labels: Partial<Record<Locale, string>> | undefined, lo
   return labels?.[locale] ?? labels?.en ?? fallback;
 }
 
+/** Is this capability shown on the comparison table at all? (Unknown or `not_built`: no.) */
+function isVisibleOnComparison(capability: string, catalog: Record<string, CapabilityDef>): boolean {
+  return catalog[capability] !== undefined && !isHiddenFromCustomer(capability, catalog[capability]);
+}
+
+/**
+ * A configured row's members as the table counts them: its `not_built` (and
+ * unknown) capabilities dropped first, because nobody has them (UM-D2).
+ *
+ * Exported with `comparisonRowIncluded` (account-deletion lifecycle D3, SA
+ * Q-3): the Cancel drawer's "You'll lose" list (`planEndingView`) reads the
+ * table's own ✓ rule, never a second copy of it.
+ */
+export function comparisonRowMembers(capabilities: readonly string[], catalog: Record<string, CapabilityDef>): string[] {
+  return capabilities.filter((capability) => isVisibleOnComparison(capability, catalog));
+}
+
+/**
+ * The row ✓ rule (UM-D2): a plan's cell is ✓ only if it grants EVERY member.
+ * `described` is `describePlanCapabilities` of that plan's resolution, keyed
+ * by capability. One rule, two callers (`buildPlanComparison`, `planEndingView`).
+ */
+export function comparisonRowIncluded(
+  members: readonly string[],
+  described: ReadonlyMap<string, { granting: boolean }>
+): boolean {
+  return members.every((capability) => described.get(capability)?.granting === true);
+}
+
 /**
  * The plan comparison table (upgrade modal UM-0, UM-D1 / UM-D2).
  *
@@ -952,8 +981,7 @@ export function buildPlanComparison(input: {
       }
     : null;
 
-  const isVisible = (capability: string) =>
-    catalog[capability] !== undefined && !isHiddenFromCustomer(capability, catalog[capability]);
+  const isVisible = (capability: string) => isVisibleOnComparison(capability, catalog);
   const grants = (column: { described: Map<string, { granting: boolean }> }, capability: string) =>
     column.described.get(capability)?.granting === true;
   // A row survives when a shown plan grants it, or the account's own plan does
@@ -967,7 +995,7 @@ export function buildPlanComparison(input: {
 
   for (const rowConfig of rowsConfig) {
     for (const capability of rowConfig.capabilities) placed.add(capability);
-    const members = rowConfig.capabilities.filter(isVisible);
+    const members = comparisonRowMembers(rowConfig.capabilities, catalog);
     if (members.length === 0 || !members.some(grantedBySome)) continue;
     candidates.push({ row: rowConfig.id, label: comparisonLabel(rowConfig.labels, locale, rowConfig.id), members });
   }
@@ -990,7 +1018,7 @@ export function buildPlanComparison(input: {
       : (comparisonSectionForCategory(catalog[candidate.members[0]].category) ?? catalog[candidate.members[0]].category);
 
     const cellFor = (column: NonNullable<typeof own>): CustomerPlanComparisonCell => {
-      const included = candidate.members.every((capability) => grants(column, capability));
+      const included = comparisonRowIncluded(candidate.members, column.described);
       const value =
         isAmountRow && included
           ? candidate.members

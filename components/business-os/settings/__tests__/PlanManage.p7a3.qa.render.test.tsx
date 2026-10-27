@@ -31,6 +31,10 @@ jest.mock('@/lib/business-os/LanguageContext', () => {
   };
 });
 
+jest.mock('@/components/business-os/data-export/DownloadMyDataButton', () => ({
+  DownloadMyDataButton: () => <div data-testid="download-my-data" />,
+}));
+
 import { PlanManage } from '@/components/business-os/settings/PlanManage';
 import { formatAccountDay } from '@/components/business-os/settings/planUpgradeCopy';
 import type { PlanPayload } from '@/components/business-os/settings/planPayloadTypes';
@@ -52,6 +56,13 @@ function plan(manage: Manage, billing: unknown): PlanPayload {
     name: 'Essentials',
     purchase: { offer: { kind: 'none', reason: 'paying' }, billing, endsFreeAccessOnPurchase: null, upgrade: null, manage },
   } as unknown as PlanPayload;
+}
+
+/** D3: Cancel opens the Cancel drawer; walk it to the confirm step (reason → changes → review → confirm). */
+function walkToConfirm(reason = 'too_expensive') {
+  fireEvent.click(screen.getByTestId('plan-manage-cancel'));
+  fireEvent.click(screen.getByTestId(`plan-cancel-reason-${reason}`));
+  for (let step = 1; step < 4; step += 1) fireEvent.click(screen.getByTestId('plan-cancel-next'));
 }
 
 function inRtl(ui: React.ReactElement, lang: Lang) {
@@ -81,16 +92,14 @@ describe('the copy (en / he / es)', () => {
 });
 
 describe('on screen', () => {
-  it.each(LANGS)('%s: confirmation reads "You keep …" THEN the founding sentence, with the account-day date', (lang) => {
+  it.each(LANGS)('%s: the Cancel drawer\'s confirm reads its sentence THEN the founding sentence, with the account-day date (D3 SA R-4c)', (lang) => {
     mockLang.language = lang;
     inRtl(<PlanManage plan={plan({ cancel: true, reactivate: false, paymentFailed: false, freeAccessAfter: { endsAt: FREE_UNTIL } }, { state: 'renewing', date: RENEWS })} />, lang);
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    const text = screen.getByTestId('plan-manage-confirm').textContent ?? '';
+    walkToConfirm();
+    const text = screen.getByTestId('plan-cancel-confirm-body').textContent ?? '';
     const expectedDay = formatAccountDay(FREE_UNTIL, lang, 'UTC')!;
     const founding = translations[lang]['plan.manage.cancel_confirm_founding'].replace('{freeUntil}', expectedDay);
-    const keep = translations[lang]['plan.manage.cancel_confirm_body']
-      .replace('{plan}', 'Essentials')
-      .replace('{date}', formatAccountDay(RENEWS, lang, 'UTC')!);
+    const keep = translations[lang]['settings.plan_cancel.confirm.body'].replace('{date}', formatAccountDay(RENEWS, lang, 'UTC')!);
     expect(text).toContain(keep);
     expect(text).toContain(founding);
     expect(text.indexOf(keep)).toBeLessThan(text.indexOf(founding));

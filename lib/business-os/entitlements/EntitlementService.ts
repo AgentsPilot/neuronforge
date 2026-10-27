@@ -39,7 +39,9 @@ import {
 import { fromOverrideRow, fromPlanRow, type AccountId, type EntitlementAccount, type EntitlementOverride } from './account';
 import { ALWAYS_SUFFICIENT, type AiActionBalanceSource } from './balance';
 import { decide, failurePolicyFor, type EntitlementDecision, type EntitlementRequest } from './decide';
+import { afterPlanAccount } from './afterPlan';
 import { freeAccessAfterPaidTier, type FreeAccessAfterPaidTier } from './freeAccess';
+import { tierSettlementEndsAt, type LifecycleInputs } from './lifecycle';
 import { resolveEntitlements, type EntitlementResolution } from './resolver';
 import { getEntitlementConfig, type EntitlementConfig, type TierMatrixSource } from './source';
 import type { CatalogLike } from './schema';
@@ -289,29 +291,62 @@ export class EntitlementService {
    */
   async getFreeAccessAfterPaidTier(accountId: AccountId): Promise<FreeAccessAfterPaidTier | null> {
     const config = this.config();
-    const nowMs = this.now().getTime();
 
-    let account: EntitlementAccount | null;
-    const cached = this.cache.get(accountId);
-    if (cached && nowMs - cached.storedAtMs <= CACHE_TTL_SECONDS * 1000) {
-      account = cached.inputs.account;
-    } else {
-      const result = await this.repository.findEntitlementInputs(accountId);
-      if (result.error || !result.data) {
-        logger.warn({ err: result.error, accountId }, 'Entitlement inputs unreadable; free access after the paid plan not shown');
-        return null;
-      }
-      const inputs = toDomain(result.data);
-      this.store(accountId, { inputs, storedAtMs: nowMs });
-      account = inputs.account;
-    }
+    const inputs = await this.readInputs(accountId, 'Entitlement inputs unreadable; free access after the paid plan not shown');
+    if (!inputs) return null;
 
-    return freeAccessAfterPaidTier(account, {
-      cohorts: config.cohorts,
-      tierOrder: config.tierOrder,
-      subscriptionGraceHistory: config.lifecycle.subscriptionGraceHistory,
-      renewalSettlementMarginHistory: config.lifecycle.renewalSettlementMarginHistory,
-    });
+    return freeAccessAfterPaidTier(inputs.account, lifecycleInputsOf(config));
+  }
+
+  /**
+   * Account-deletion lifecycle SX-2 (D3; workplan §2.3, SA Q-4 / R-5): the
+   * account now, and as it will resolve just after its paid tier ends at
+   * `endsAt`, for the Cancel drawer's "What changes" step (`planEndingView`).
+   * Display only: it writes nothing, refuses and grants nothing.
+   *
+   *   current         the account as it resolves now
+   *   after           the after-plan row (`afterPlanAccount`, the one rule
+   *                   SX-2b also writes with), resolved one millisecond past
+   *                   the tier's settlement end (`tierSettlementEndsAt`), so a
+   *                   renewing subscriber is never read as lapsed inside the margin
+   *   afterTrialEnd   when `after` is a live cohort with an end: the same row
+   *                   one millisecond past that end (its grace, then paused)
+   *   moved           true when the row moves to the after-plan cohort
+   *   freeAccessAfter P-7a.3's `freeAccessAfterPaidTier` on the same ended row
+   *                   (SA R-4b: the Founding Partner date is never computed twice)
+   *
+   * Same inputs and cache as `getSnapshot` (one private `readInputs`). The
+   * cached object is never mutated: `afterPlanAccount` copies. `null` when the
+   * inputs are unreadable or there is no plan row.
+   */
+  async previewAfterPlan(accountId: AccountId, endsAt: string): Promise<AfterPlanPreview | null> {
+    const config = this.config();
+
+    const inputs = await this.readInputs(accountId, 'Entitlement inputs unreadable; plan ending not previewed');
+    if (!inputs) return null;
+    if (!inputs.account) return null;
+
+    const lifecycle = lifecycleInputsOf(config);
+    const endsAtMs = Date.parse(endsAt);
+    if (!Number.isFinite(endsAtMs)) return null;
+
+    const resolveAt = (account: EntitlementAccount, at: Date) =>
+      resolveEntitlements({ config, account, overrides: inputs.overrides, addons: [], now: at });
+
+    const current = this.resolve(config, inputs);
+    const { account: afterAccount, moved } = afterPlanAccount(inputs.account, endsAt, lifecycle);
+    const settledMs = Date.parse(tierSettlementEndsAt(endsAt, lifecycle.renewalSettlementMarginHistory));
+    const after = resolveAt(afterAccount, new Date(settledMs + 1));
+
+    let afterTrialEnd: EntitlementResolution | null = null;
+    const liveCohort =
+      after.basis.kind === 'cohort' && !after.anomaly && after.state !== 'grace' && after.state !== 'paused';
+    const afterEndMs = after.lifecycle.accessEndsAt === null ? NaN : Date.parse(after.lifecycle.accessEndsAt);
+    if (liveCohort && Number.isFinite(afterEndMs)) afterTrialEnd = resolveAt(afterAccount, new Date(afterEndMs + 1));
+
+    const freeAccessAfter = freeAccessAfterPaidTier({ ...inputs.account, tierExpiresAt: endsAt }, lifecycle);
+
+    return { current, after, afterTrialEnd, moved, freeAccessAfter };
   }
 
   /**
@@ -334,6 +369,29 @@ export class EntitlementService {
   /** Tests only: how many entries are held. */
   get cacheSize(): number {
     return this.cache.size;
+  }
+
+  /**
+   * The cached inputs, or one repository read stored into the cache (SA R-5:
+   * the ONE cache-or-read block behind `getFreeAccessAfterPaidTier` and
+   * `previewAfterPlan`). Right after the my-plan route's `getSnapshot` for the
+   * same account it is a cache hit. `null` when the read fails, logged as a
+   * warn with the caller's message and ids only. Callers must not mutate what
+   * it returns: it may be the cache entry's own object.
+   */
+  private async readInputs(accountId: AccountId, unreadableMessage: string): Promise<CacheEntry['inputs'] | null> {
+    const nowMs = this.now().getTime();
+    const cached = this.cache.get(accountId);
+    if (cached && nowMs - cached.storedAtMs <= CACHE_TTL_SECONDS * 1000) return cached.inputs;
+
+    const result = await this.repository.findEntitlementInputs(accountId);
+    if (result.error || !result.data) {
+      logger.warn({ err: result.error, accountId }, unreadableMessage);
+      return null;
+    }
+    const inputs = toDomain(result.data);
+    this.store(accountId, { inputs, storedAtMs: nowMs });
+    return inputs;
   }
 
   private resolve(
@@ -368,6 +426,25 @@ function toDomain(inputs: BusinessOsEntitlementInputs): {
   return {
     account: inputs.plan ? fromPlanRow(inputs.plan) : null,
     overrides: inputs.overrides.map(fromOverrideRow),
+  };
+}
+
+/** What `previewAfterPlan` returns (SX-2, D3). */
+export interface AfterPlanPreview {
+  current: EntitlementResolution;
+  after: EntitlementResolution;
+  afterTrialEnd: EntitlementResolution | null;
+  moved: boolean;
+  freeAccessAfter: FreeAccessAfterPaidTier | null;
+}
+
+/** The four config pieces `deriveLifecycle` reads, from one config. */
+function lifecycleInputsOf(config: EntitlementConfig): LifecycleInputs {
+  return {
+    cohorts: config.cohorts,
+    tierOrder: config.tierOrder,
+    subscriptionGraceHistory: config.lifecycle.subscriptionGraceHistory,
+    renewalSettlementMarginHistory: config.lifecycle.renewalSettlementMarginHistory,
   };
 }
 
