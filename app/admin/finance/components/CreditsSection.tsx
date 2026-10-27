@@ -72,6 +72,7 @@ import {
 import { formatCount, formatCredits } from '../financeFormat';
 import { groupLabel } from './AccountsByPlanSection';
 import { BlockKpi } from '@/app/admin/components/layout/BlockKpi';
+import { KpiStrip } from '@/app/admin/components/layout/KpiStrip';
 import { FinanceSection } from './FinanceSection';
 import { businessTargetOf, useBusinessRowOpen } from './BusinessDrawer';
 
@@ -151,18 +152,21 @@ export function CreditsSection({
     >
       {f && (
         <div className="space-y-3">
-          {/* Money MK-1: the block KPI is the headline (§3.2), leading (§5); K-2's far-over count is its amber chip. */}
-          <BlockKpi
-            label={BLOCK_KPI_OVER_ALLOWANCE_LABEL}
-            value={formatCount(f.overAllowance)}
-            indicator={{ kind: 'leading', definition: BLOCK_KPI_OVER_ALLOWANCE_DEFINITION }}
-            chip={
-              f.farOverAllowance !== null && f.farOverAllowance > 0
-                ? { tone: k2ChipTone(k2), label: BLOCK_KPI_FAR_OVER_CHIP(formatCount(f.farOverAllowance), section.farOverAllowancePercent) }
-                : null
-            }
-            testId="credits-over"
-          />
+          {/* Money MK-1: the block KPI is the headline (§3.2), leading (§5); K-2's far-over count is its amber chip.
+              On the page-top strip's five-column grid (user, 2026-10-27), so it reads as one tile of five. */}
+          <KpiStrip>
+            <BlockKpi
+              label={BLOCK_KPI_OVER_ALLOWANCE_LABEL}
+              value={formatCount(f.overAllowance)}
+              indicator={{ kind: 'leading', definition: BLOCK_KPI_OVER_ALLOWANCE_DEFINITION }}
+              chip={
+                f.farOverAllowance !== null && f.farOverAllowance > 0
+                  ? { tone: k2ChipTone(k2), label: BLOCK_KPI_FAR_OVER_CHIP(formatCount(f.farOverAllowance), section.farOverAllowancePercent) }
+                  : null
+              }
+              testId="credits-over"
+            />
+          </KpiStrip>
           <dl className={`grid gap-3 ${hasBought ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`} data-testid="credits-summary">
             <div><dt className="text-xs text-slate-400">{CREDITS_FAR_OVER}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-far-over">{count(f.farOverAllowance)}</dd></div>
             <div><dt className="text-xs text-slate-400">{CREDITS_GIFTED}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-gifted">{credits(gifted?.outstanding)}</dd></div>

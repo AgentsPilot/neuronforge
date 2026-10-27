@@ -52,6 +52,7 @@ import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Play, RefreshCw } from
 
 import { ADMIN_FIELD_CONTROL, ADMIN_FIELD_LABEL } from '@/app/admin/components/layout/AdminFilterBar';
 import { BlockKpi } from '@/app/admin/components/layout/BlockKpi';
+import { KpiStrip } from '@/app/admin/components/layout/KpiStrip';
 import { AdminError, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import {
@@ -460,14 +461,17 @@ export function LeakCheckPanel({ accountId, accountLabel, variant = 'page' }: Le
         <p className="mt-1 max-w-3xl text-xs text-slate-400">{LEAK_INTRO}</p>
       </div>
 
+      {/* On the page-top strip's five-column grid (user, 2026-10-27), so it reads as one tile of five. */}
       {variant === 'page' && (
-        <BlockKpi
-          label={LEAK_KPI_LABEL}
-          value={kpi.value}
-          chip={kpi.chip}
-          indicator={{ kind: 'leading', definition: LEAK_KPI_DEFINITION }}
-          testId="leak-kpi-uncharged"
-        />
+        <KpiStrip>
+          <BlockKpi
+            label={LEAK_KPI_LABEL}
+            value={kpi.value}
+            chip={kpi.chip}
+            indicator={{ kind: 'leading', definition: LEAK_KPI_DEFINITION }}
+            testId="leak-kpi-uncharged"
+          />
+        </KpiStrip>
       )}
 
       <div className="flex flex-wrap items-end gap-3">
