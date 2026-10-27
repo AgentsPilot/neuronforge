@@ -968,30 +968,38 @@ export const emailTranslations = {
       he: '↩️ הוחזר'
     },
     /*
-     * A course is not an appointment.
+     * ── ONE WAY OF ASKING, WHATEVER WAS CANCELLED ────────────────────────────
      *
-     * "Would you like to book a new appointment?" under a cancelled COURSE asked
-     * about a meeting that never existed, and the button said "find another
-     * time" when there was no time to find. The unscheduled wording asks the
-     * question that actually applies, and the link goes to the same thing that
-     * was cancelled rather than to a list of everything on offer.
+     * This started as two wordings. The generic one, "Would you like to book a
+     * new appointment?", was wrong over a cancelled COURSE: it asked about a
+     * meeting that never existed, and its button said "find another time" when
+     * there was no time to find. So a second, course-only pair was added that
+     * said "sign up".
+     *
+     * Two names for one act is its own confusion: the same client, cancelled
+     * off a session and off a course, was invited back in two different
+     * vocabularies, and neither the owner nor the client could tell whether
+     * "sign up" meant something other than "book".
+     *
+     * What was actually wrong was never the verb. It was the NOUN — "a new
+     * appointment" — and the promise of another time. Naming the service and
+     * dropping that promise makes one sentence true of both, so there is one
+     * pair again and it reads correctly over a course:
+     *
+     *     Would you like to book Mental Training Course again?   [ Book Again ]
+     *
+     * The link carries the service id either way, so the page opens on the
+     * thing that was cancelled rather than a list of everything on offer.
      */
-    unscheduledBookAgainPrompt: {
-      en: (serviceName: string) => `Would you like to sign up for ${serviceName} again?`,
-      es: (serviceName: string) => `¿Te gustaría volver a apuntarte a ${serviceName}?`,
-      he: (serviceName: string) => `תרצו להירשם שוב ל${serviceName}?`
-    },
-    unscheduledBookAgain: {
-      en: 'Sign up again',
-      es: 'Apuntarme de nuevo',
-      he: 'הרשמה מחדש'
-    },
-    /** The scheduled variant, now naming what it is rebooking. */
     bookAgainPromptNamed: {
-      en: (serviceName: string) => `Would you like to book ${serviceName} for another time?`,
-      es: (serviceName: string) => `¿Te gustaría reservar ${serviceName} para otro momento?`,
-      he: (serviceName: string) => `תרצו לקבוע מועד אחר ל${serviceName}?`
+      en: (serviceName: string) => `Would you like to book ${serviceName} again?`,
+      es: (serviceName: string) => `¿Te gustaría reservar ${serviceName} de nuevo?`,
+      he: (serviceName: string) => `תרצו להזמין שוב את ${serviceName}?`
     },
+    /**
+     * The unnamed original. No longer rendered by the cancellation email — kept
+     * because `closureCancellation` asserts a closure notice does NOT carry it.
+     */
     bookAgainPrompt: {
       en: 'Would you like to book a new appointment?',
       es: '¿Te gustaría reservar una nueva cita?',
@@ -1000,7 +1008,13 @@ export const emailTranslations = {
     bookAgain: {
       en: 'Book Again',
       es: 'Reservar de Nuevo',
-      he: 'קבע שוב'
+      /*
+       * Was `קבע שוב` — "set [a date] again", which is the same appointment
+       * assumption the prompt above shed, and singular masculine imperative
+       * under a plural polite question. The infinitive works for a course and
+       * a session alike.
+       */
+      he: 'להזמין שוב'
     },
     questions: {
       en: (businessName: string) =>
@@ -1975,7 +1989,8 @@ export const emailTranslations = {
     bookAgain: {
       en: 'Book Again',
       es: 'Reservar de Nuevo',
-      he: 'הזמן שוב'
+      /* The same button as the cancellation email's, so it reads the same way. */
+      he: 'להזמין שוב'
     },
     questions: {
       en: (businessName: string) =>

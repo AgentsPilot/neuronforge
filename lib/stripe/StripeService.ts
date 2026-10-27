@@ -11,6 +11,8 @@ import {
   BOS_USER_ID_METADATA_KEY,
 } from '@/lib/business-os/billing/stripeMetadataKeys';
 import { subscriptionIdFromInvoice } from '@/lib/payments/invoiceSubscription';
+import { invoiceLinePriceIds } from '@/lib/payments/invoiceLinePrices';
+import type { PortalConfigurationFacts } from '@/lib/business-os/billing/portalConfiguration';
 
 const logger = createLogger({ module: 'StripeService' });
 
@@ -81,6 +83,33 @@ export interface BusinessOsCancelFacts {
   endedAt: number | null;
   /** The latest item period end (clover: the period is on the items). */
   currentPeriodEnd: number | null;
+}
+
+/** P-7a.2 (X-5): the portal locales the app sends. `he` is not one Stripe accepts; the caller sends `auto`. */
+export type BusinessOsPortalLocale = 'en' | 'es' | 'auto';
+
+/** P-7a.2: a portal session. `url` is a bearer link: never logged, audited or put in an error. */
+export interface BusinessOsPortalSessionFacts {
+  url: string;
+  customerId: string;
+  configurationId: string | null;
+  livemode: boolean;
+}
+
+/** P-7a.2 (TQ-6): one invoice of the owner's list, as Stripe reports it. Unix seconds. */
+export interface BusinessOsInvoiceListFacts {
+  id: string;
+  customerId: string | null;
+  livemode: boolean;
+  status: string | null;
+  billingReason: string | null;
+  totalMinor: number | null;
+  currency: string | null;
+  created: number | null;
+  hostedInvoiceUrl: string | null;
+  invoicePdf: string | null;
+  /** From the embedded lines (`invoiceLinePriceIds`); may be truncated, used for the plan label only. */
+  priceIds: string[];
 }
 
 /** SA U-1: the idempotency key of one upgrade request. Same request, same key. */
@@ -694,6 +723,98 @@ export class StripeService {
       endedAt: unixOrNull(subscription.ended_at),
       // On clover the period lives on the items; the latest end is when the plan stops.
       currentPeriodEnd: periodEnds.length > 0 ? Math.max(...periodEnds) : null,
+    };
+  }
+
+  // ── Business OS card and invoices (plan payments P-7a.2, workplan §4.4, §4.5; SA C-6, TQ-6 to TQ-8) ──
+  // The caller passes ids from OUR billing row and the checked configuration
+  // id; nothing here comes from a request. The legacy agent-platform
+  // `createPortalSession` / `listInvoices` below are NOT used for Business OS:
+  // they name no configuration (Stripe's default may allow cancel and plan
+  // switching) and check nothing.
+
+  /** The portal configuration, reduced to what `portalConfigurationProblems` checks. */
+  async retrieveBusinessOsPortalConfiguration(configurationId: string): Promise<PortalConfigurationFacts> {
+    const config = await this.stripe.billingPortal.configurations.retrieve(configurationId);
+    const features = config.features;
+    return {
+      id: config.id,
+      active: config.active,
+      livemode: config.livemode,
+      features: {
+        payment_method_update: features?.payment_method_update?.enabled === true,
+        invoice_history: features?.invoice_history?.enabled === true,
+        subscription_cancel: features?.subscription_cancel?.enabled === true,
+        subscription_update: features?.subscription_update?.enabled === true,
+        customer_update: features?.customer_update?.enabled === true,
+      },
+    };
+  }
+
+  /**
+   * A portal session on OUR configuration for OUR row's customer. `flow:
+   * 'payment_method_update'` opens on the card form and, with
+   * `after_completion` redirect (SA C-6), comes straight back to `returnUrl`.
+   * X-1 (2026-10-26, sandbox): a card added there becomes the customer's
+   * invoice default and the subscription's own default is CLEARED, so the
+   * next renewal uses the new card. X-5: `he` is not a portal locale (the
+   * caller sends `auto` for it).
+   *
+   * The URL is a bearer link to the customer's billing: returned for the
+   * owner's browser only, never logged, audited or put in an error.
+   */
+  async createBusinessOsPortalSession(params: {
+    customerId: string;
+    configurationId: string;
+    returnUrl: string;
+    locale: BusinessOsPortalLocale;
+    flow: 'payment_method_update' | null;
+  }): Promise<BusinessOsPortalSessionFacts> {
+    const { customerId, configurationId, returnUrl, locale, flow } = params;
+    const session = await this.stripe.billingPortal.sessions.create({
+      customer: customerId,
+      configuration: configurationId,
+      return_url: returnUrl,
+      locale,
+      ...(flow === 'payment_method_update'
+        ? { flow_data: { type: 'payment_method_update', after_completion: { type: 'redirect', redirect: { return_url: returnUrl } } } }
+        : {}),
+    });
+    return {
+      url: session.url,
+      customerId: session.customer,
+      configurationId: refId(session.configuration),
+      livemode: session.livemode,
+    };
+  }
+
+  /**
+   * One page of OUR row's customer's invoices, newest first (TQ-6: no
+   * auto-paging; `limit` is the caller's, at most 100). Facts only; the
+   * caller maps, filters and drops.
+   */
+  async listBusinessOsInvoices(params: { customerId: string; limit: number }): Promise<{
+    invoices: BusinessOsInvoiceListFacts[];
+    hasMore: boolean;
+  }> {
+    const limit = Math.max(1, Math.min(100, Math.floor(params.limit)));
+    const page = await this.stripe.invoices.list({ customer: params.customerId, limit });
+    return {
+      invoices: page.data.map((invoice) => ({
+        id: invoice.id ?? '',
+        customerId: refId(invoice.customer),
+        livemode: invoice.livemode,
+        status: invoice.status ?? null,
+        billingReason: invoice.billing_reason ?? null,
+        // A credit (negative total) is a real invoice too; only a non-integer is unreadable.
+        totalMinor: Number.isSafeInteger(invoice.total) ? invoice.total : null,
+        currency: typeof invoice.currency === 'string' ? invoice.currency : null,
+        created: unixOrNull(invoice.created),
+        hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+        invoicePdf: invoice.invoice_pdf ?? null,
+        priceIds: invoiceLinePriceIds(invoice).priceIds,
+      })),
+      hasMore: page.has_more,
     };
   }
 

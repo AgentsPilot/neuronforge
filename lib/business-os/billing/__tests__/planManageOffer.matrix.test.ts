@@ -189,7 +189,8 @@ describe('D2 change_pending (renewing side)', () => {
     ['a checkout lock with no expiry recorded', row({ openCheckoutSessionId: 'cs_open', openCheckoutExpiresAt: null })],
   ])('%s: no control, cancel refused with zero Stripe calls, reactivate writes nothing', async (_name, r) => {
     const manage = await screen(r, true);
-    expect(manage).toEqual({ cancel: false, reactivate: false, paymentFailed: false });
+    // P-7a.2 may add `cardAndInvoices`: the card and invoices stay offered while a change is pending.
+    expect(manage).toMatchObject({ cancel: false, reactivate: false, paymentFailed: false });
     const cancel = await writes(r, 'cancel', true);
     expect(cancel).toEqual({ wrote: false, stripeCalls: 0 });
     const reactivate = await writes(r, 'reactivate', true);

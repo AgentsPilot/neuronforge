@@ -24,6 +24,12 @@
  *     maths, the parser or the route.
  *   - No feed body in a log line of the route.
  *   - The fixture holds no backslash (Tailwind scan hazard, PR #180) and is dated.
+ *   - Client payments in approximate dollars (FIN BD-56, slice 1a; SA-RR-CPU
+ *     SA-Q-9, ruled list change; SA-WP-CPU1A SA-Q-1A-1): the converter
+ *     `clientPaymentsUsd.ts` joins the no-float files. Its one sanctioned
+ *     edge to the wire, `centsToWire`, is the only `Number(` in it: the scan
+ *     runs with exactly that declaration removed, and the declaration is
+ *     pinned to exist once and to hold exactly one `Number(`.
  * Every rule has a planted control, so a dead rule cannot pass.
  */
 
@@ -59,7 +65,8 @@ const ROUTE = 'app/api/admin/exchange-rates/sync/route.ts';
 /** The sync files (C2 and C3), each scanned by name. */
 const SYNC_FILES = [FEED, MATH, PARSER, RULES, SYNC_RULES, ROUTE];
 const PURE_FILES = [MATH, PARSER, RULES, SYNC_RULES];
-const NO_FLOAT_FILES = [MATH, PARSER, ROUTE];
+const CONVERTER = `${LIB_DIR}/clientPaymentsUsd.ts`;
+const NO_FLOAT_FILES = [MATH, PARSER, ROUTE, CONVERTER];
 const LIB_FILES = walk(LIB_DIR);
 const PAGE_FILES = walk('app/admin/exchange-rates');
 const ADMIN_PAGE_FILES = walk('app/admin');
@@ -110,6 +117,12 @@ const FLOAT_BANS: ReadonlyArray<readonly [string, RegExp]> = [
   ['BigInt literal', /(?<![A-Za-z0-9_$.])[0-9][0-9_]*n\b/],
 ];
 const floatHits = (source: string) => FLOAT_BANS.filter(([, pattern]) => pattern.test(code(source))).map(([name]) => name);
+
+/** SA-Q-1A-1: the converter's one sanctioned edge, `centsToWire`, as a whole declaration. */
+const EDGE_DECLARATION = /export function centsToWire\([^)]*\)[^{]*\{[\s\S]*?\n\}\n/g;
+const edgeDeclarations = (source: string) => code(source).match(EDGE_DECLARATION) ?? [];
+/** The source the float scan sees: the converter without its one edge; every other file as it is. */
+const floatScanned = (file: string, source: string) => (file === CONVERTER ? code(source).replace(EDGE_DECLARATION, '') : source);
 
 const LOG_CALL = /[Ll]ogger[.](info|warn|error|debug)[(][^;]*;/g;
 const BODY_IN_LOG = /[.]text(?![A-Za-z])|(?<![A-Za-z])text:|(?<![A-Za-z'])raw(?![A-Za-z])|[{,] *body(?![A-Za-z])/;
@@ -179,7 +192,32 @@ describe('banned imports (RR-1, SQ-1, SQ-36, SQ-42)', () => {
 
 describe('no float on the rate path (SQ-38)', () => {
   it.each(NO_FLOAT_FILES)('%s', (file) => {
-    expect({ file, hits: floatHits(read(file)) }).toEqual({ file, hits: [] });
+    expect({ file, hits: floatHits(floatScanned(file, read(file))) }).toEqual({ file, hits: [] });
+  });
+
+  it('BD-56: the converter has exactly one centsToWire declaration, holding exactly one Number(', () => {
+    const edges = edgeDeclarations(read(CONVERTER));
+    expect(edges).toHaveLength(1);
+    expect((edges[0] ?? '').match(/(?<![A-Za-z0-9_.$])Number[(]/g) ?? []).toHaveLength(1);
+  });
+
+  it.each([
+    ['Number(', 'const n = Number(cents);'],
+    ['Math.', 'const r = Math.round(x * 100);'],
+    ['BigInt literal', 'const ten = 10n;'],
+  ])('BD-56 planted: %s outside centsToWire is caught in the converter', (name, plant) => {
+    expect(floatHits(floatScanned(CONVERTER, `${read(CONVERTER)}
+${plant}
+`))).toEqual([name]);
+  });
+
+  it('BD-56 planted: a second edge declaration is seen', () => {
+    const twice = `${read(CONVERTER)}
+export function centsToWire(c: bigint): number | null {
+  return Number(c);
+}
+`;
+    expect(edgeDeclarations(twice)).toHaveLength(2);
   });
 });
 

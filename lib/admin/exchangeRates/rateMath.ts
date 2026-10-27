@@ -6,6 +6,8 @@
  * derived from two rates of the same official feed (ECB(X) ÷ ECB(USD)), and a
  * gap is the difference between two rates of the SAME currency, absolute or as
  * a % of one of them. Nothing here takes or produces an amount of money (D-5).
+ * `divideHalfUp` has one caller that converts money, the BD-56 exception:
+ * `clientPaymentsUsd.ts` (ADMIN_CLIENT_PAYMENTS_USD_REQUIREMENT.md).
  *
  * SQ-38: the pure `decimal.ts` primitives are reused unedited; this file adds
  * only the division (half away from zero) and fixed-place printing. Values are

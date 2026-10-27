@@ -349,8 +349,37 @@ export function generateBookingConfirmationEmail(
   icsContent: string;
 } {
   const locale = data.locale || 'en';
-  const calendarLinks = generateCalendarLinks(data);
-  const formattedDate = formatEmailDate(data.dateTime, data.timezone, { locale });
+
+  /*
+   * ── A PURCHASE HAS NO CLOCK, AND ASKING IT FOR ONE THREW ────────────────────
+   *
+   * `hasSchedule === false` is already honoured everywhere BELOW this point:
+   * the date, time and duration rows are omitted, the "add to calendar" block
+   * is omitted, and the caller only attaches the .ics when it is true.
+   *
+   * These three lines ran first and unconditionally. For a service sold with
+   * no time — a course, a product — `dateTime` is `new Date(NaN)`, and
+   * `toISOString()` on an Invalid Date throws `RangeError: Invalid time
+   * value`. So the whole email threw before any of that careful omission was
+   * reached.
+   *
+   * Reported 2026-10-26 on booking 39e47674, "Mental Training Course_No time
+   * one pay": the confirmation never reached the client — the journey read
+   * "No send recorded" — and pressing "Send again" surfaced the raw
+   * `Invalid time value` as a toast. One cause, both symptoms.
+   *
+   * The package case was already handled by taking the first session's clock;
+   * a product has no sessions either, so there is nothing to take and nothing
+   * that should be printed.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const hasClock =
+    data.hasSchedule !== false && !Number.isNaN(data.dateTime?.getTime?.() ?? NaN);
+
+  const calendarLinks = hasClock
+    ? generateCalendarLinks(data)
+    : { google: '', outlook: '', ics: '' };
+  const formattedDate = hasClock ? formatEmailDate(data.dateTime, data.timezone, { locale }) : '';
   /*
    * On a plan, what is owed NOW is the first unpaid period — never the total.
    *
@@ -592,7 +621,10 @@ export function generateBookingConfirmationEmail(
       ? t.addedSessionSubject[locale](dateStr)
       : (data.hasSchedule === false ? t.unscheduledSubject : t.subject)[locale](data.serviceName),
     html: wrapInBrandedTemplate(content, brandingWithLocale),
-    icsContent: generateICSContent(data, icsOptions)
+    /* Empty for a purchase with no hour: the caller already refuses to attach
+       one (`icsContent && hasSchedule !== false`), and building it is what
+       threw — an .ics is a calendar entry, and there is no entry to make. */
+    icsContent: hasClock ? generateICSContent(data, icsOptions) : ''
   };
 }
 
@@ -1004,28 +1036,25 @@ export function generateBookingCancellationEmail(data: {
 
     ${!data.meetingOnly && bookAgainHref ? `
     <!--
-      Book again, in the language of what was actually cancelled.
+      Book again — one wording, whatever was cancelled.
 
-      A COURSE is not an appointment. "Would you like to book a new appointment?"
-      over a cancelled course asked about a meeting that never existed, and the
-      button said "find another time" when there was no time to find.
+      NOTE: no backticks in this comment. It sits inside a template literal,
+      so one would end the string.
 
-      The prompt also NAMES the thing now. "Book a new appointment" invited the
-      client back to a list of everything on offer and left them to find what
-      they had lost; the link carries the service id, so the page opens on it.
+      This branched on hasSchedule and offered a course "Sign up again" while a
+      session got "Book Again". Two names for one act, which read as two
+      different offers. The wording is now true of both: it NAMES the service
+      and promises no time, so a course is invited back in the same words as an
+      appointment. See bookAgainPromptNamed in translations.ts for the full
+      reasoning.
+
+      The link carries the service id, so the page opens on the thing that was
+      cancelled rather than a list of everything on offer.
     -->
     <p style="margin: 0 0 16px; font-size: 14px; color: ${c.inkMuted};">
-      ${
-        data.hasSchedule === false
-          ? t.unscheduledBookAgainPrompt[locale](data.serviceName)
-          : t.bookAgainPromptNamed[locale](data.serviceName)
-      }
+      ${t.bookAgainPromptNamed[locale](data.serviceName)}
     </p>
-    ${emailButton(
-      data.hasSchedule === false ? t.unscheduledBookAgain[locale] : t.bookAgain[locale],
-      bookAgainHref,
-      { branding: data.branding }
-    )}
+    ${emailButton(t.bookAgain[locale], bookAgainHref, { branding: data.branding })}
     ` : ''}
 
     <!-- Final Note -->
