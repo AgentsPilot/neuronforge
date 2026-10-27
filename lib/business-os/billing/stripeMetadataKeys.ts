@@ -22,6 +22,14 @@ export const BOS_PLAN_PRODUCT_MARKER = 'business_os_plan';
 /** `product` value the Credits Boost flow writes (boost 4a). */
 export const BOS_BOOST_PRODUCT_MARKER = 'business_os_boost';
 
+/**
+ * `product` value on the Business OS customer-portal configuration (plan
+ * payments P-7a.2, workplan §4.4). The setup script finds its own
+ * configuration by it; the runtime never selects a configuration by it (the
+ * id comes from `STRIPE_BOS_PORTAL_CONFIGURATION_ID`).
+ */
+export const BOS_PORTAL_PRODUCT_MARKER = 'business_os_portal';
+
 /** Business OS user id key (C-3). Compared, never used to select an account. */
 export const BOS_USER_ID_METADATA_KEY = 'bos_user_id';
 
