@@ -148,6 +148,21 @@ function unixOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
+/**
+ * FU-P7a4-1 (SA R-2): Stripe's `cancellation_details.reason` values worth
+ * reporting, the same three the subscription mirror records. Anything else
+ * (absent, null, a value Stripe adds later) reads as null.
+ */
+export const BUSINESS_OS_CANCELLATION_REASONS = ['payment_failed', 'cancellation_requested', 'payment_disputed'] as const;
+export type BusinessOsCancellationReason = (typeof BUSINESS_OS_CANCELLATION_REASONS)[number];
+
+function cancellationReasonOf(subscription: Stripe.Subscription): BusinessOsCancellationReason | null {
+  const raw: unknown = subscription.cancellation_details?.reason ?? null;
+  return typeof raw === 'string' && (BUSINESS_OS_CANCELLATION_REASONS as readonly string[]).includes(raw)
+    ? (raw as BusinessOsCancellationReason)
+    : null;
+}
+
 function subscriptionItemFacts(item: Stripe.SubscriptionItem): BusinessOsSubscriptionItemFacts {
   return {
     id: item.id,
@@ -622,6 +637,13 @@ export class StripeService {
      */
     cancelAt?: number | null;
     endedAt: number | null;
+    /**
+     * FU-P7a4-1 (SA R-2): `cancellation_details.reason` from the SAME
+     * retrieve, kept to `BUSINESS_OS_CANCELLATION_REASONS`, else null. For the
+     * `bos_billing_paid_after_end` alert only; it decides nothing. Optional
+     * only so existing hand-built fakes stay valid; absent reads as null.
+     */
+    cancellationReason?: BusinessOsCancellationReason | null;
     livemode: boolean;
     metadata: Stripe.Metadata;
     priceIds: string[];
@@ -674,6 +696,7 @@ export class StripeService {
       cancelAtPeriodEnd: subscription.cancel_at_period_end,
       cancelAt: unixOrNull(subscription.cancel_at),
       endedAt: subscription.ended_at ?? null,
+      cancellationReason: cancellationReasonOf(subscription),
       livemode: subscription.livemode,
       metadata: subscription.metadata ?? {},
       priceIds,

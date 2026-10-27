@@ -29,6 +29,7 @@ import type Stripe from 'stripe';
 
 import {
   applyPaidPlanInvoice,
+  paidAfterEnd,
   PlanPaymentRetryError,
   recordActionRequiredPlanInvoice,
   recordFailedPlanInvoice,
@@ -1170,5 +1171,318 @@ describe('P-6a.2: the cure after a paid invoice (SA C-1 ruling, rule 5)', () => 
     h.clearRenewalFailure.mockClear();
     await paid(h, renewalPaid());
     expect(h.clearRenewalFailure).not.toHaveBeenCalled();
+  });
+});
+
+// ── FU-P7a4-1: a plan invoice paid after its subscription ended (SA R-1 to R-6) ──
+
+describe('FU-P7a4-1: paidAfterEnd (pure helper, SA R-1, R-3, R-6)', () => {
+  // The fixture invoice: period 1790000000 → 1792592000, paid at 1790000070.
+  const PERIOD_END_ISO = new Date(1792592000 * 1000).toISOString();
+  const PAID_ISO = new Date(1790000070 * 1000).toISOString();
+  const facts = { periodEnd: PERIOD_END_ISO, paidAt: PAID_ISO };
+  const ended = { endedAt: 1790000050, status: 'canceled', cancellationReason: 'cancellation_requested' as const };
+
+  it('fires when Stripe says it ended before the period end AND the money came after the end', () => {
+    expect(paidAfterEnd(facts, ended)).toEqual({
+      subscriptionEndedAt: new Date(1790000050 * 1000).toISOString(),
+      subscriptionStatus: 'canceled',
+      cancellationReason: 'cancellation_requested',
+    });
+  });
+
+  it('each condition flipped alone answers null', () => {
+    // 1: not ended.
+    expect(paidAfterEnd(facts, { ...ended, endedAt: null })).toBeNull();
+    // 2: a period-end cancel's last invoice (period end AT the end, and before it).
+    expect(paidAfterEnd(facts, { ...ended, endedAt: 1792592000 })).toBeNull();
+    expect(paidAfterEnd({ periodEnd: new Date(1790000040 * 1000).toISOString(), paidAt: PAID_ISO }, ended)).toBeNull();
+    // 3: paid at or before the end (a late delivery of a payment made while live).
+    expect(paidAfterEnd({ ...facts, paidAt: new Date(1790000050 * 1000).toISOString() }, ended)).toBeNull();
+    expect(paidAfterEnd({ ...facts, paidAt: new Date(1790000010 * 1000).toISOString() }, ended)).toBeNull();
+  });
+
+  it('an absent cancellation reason reads as null', () => {
+    expect(paidAfterEnd(facts, { endedAt: 1790000050, status: 'canceled' })?.cancellationReason).toBeNull();
+  });
+
+  it('never throws: unreadable times answer null', () => {
+    const bad: Array<[Parameters<typeof paidAfterEnd>[0], Parameters<typeof paidAfterEnd>[1]]> = [
+      [facts, { ...ended, endedAt: Number.NaN }],
+      [facts, { ...ended, endedAt: Number.POSITIVE_INFINITY }],
+      [facts, { ...ended, endedAt: -1 }],
+      [facts, { ...ended, endedAt: 0 }],
+      [facts, { ...ended, endedAt: '1790000050' as unknown as number }],
+      // Too big for a Date: `toISOString` would throw.
+      [{ periodEnd: '+275760-09-13T00:00:00.000Z', paidAt: '+275760-09-13T00:00:00.000Z' }, { ...ended, endedAt: 1e15 }],
+      [{ periodEnd: 'not a date', paidAt: PAID_ISO }, ended],
+      [{ periodEnd: PERIOD_END_ISO, paidAt: null }, ended],
+      [{ periodEnd: PERIOD_END_ISO, paidAt: 'garbage' }, ended],
+      [{ periodEnd: undefined as unknown as string, paidAt: PAID_ISO }, ended],
+    ];
+    for (const [f, s] of bad) {
+      expect(() => paidAfterEnd(f, s)).not.toThrow();
+      expect(paidAfterEnd(f, s)).toBeNull();
+    }
+    const hostile = Object.defineProperty({ status: 'canceled' }, 'endedAt', {
+      get() {
+        throw new Error('hostile');
+      },
+    }) as unknown as Parameters<typeof paidAfterEnd>[1];
+    expect(() => paidAfterEnd(facts, hostile)).not.toThrow();
+    expect(paidAfterEnd(facts, hostile)).toBeNull();
+  });
+
+  it('pure: no promise, inputs untouched, same answer twice', () => {
+    const f = Object.freeze({ ...facts });
+    const s = Object.freeze({ ...ended });
+    const first = paidAfterEnd(f, s);
+    expect(first).not.toBeInstanceOf(Promise);
+    expect(paidAfterEnd(f, s)).toEqual(first);
+    expect(f).toEqual(facts);
+    expect(s).toEqual(ended);
+  });
+});
+
+describe('FU-P7a4-1: bos_billing_paid_after_end in the webhook (alert only, SA R-1 to R-6)', () => {
+  const ENDED_AT = 1790000050; // after the fixture period's start, before its paid_at (1790000070)
+  const ALERT = 'bos_billing_paid_after_end';
+  /** The pinned allow-list: ids, amounts and dates only (R-5 adds the two tiers). */
+  const ALERT_KEYS = [
+    'accountId',
+    'alert',
+    'amountMinor',
+    'billingReason',
+    'billingRowId',
+    'cancellationReason',
+    'currency',
+    'event',
+    'eventRowId',
+    'invoiceId',
+    'livemode',
+    'paidAt',
+    'periodEnd',
+    'planWritten',
+    'recordEndedAt',
+    'status',
+    'stripeEventId',
+    'subscriptionEndedAt',
+    'subscriptionId',
+    'subscriptionStatus',
+    'tier',
+    'tierAfter',
+    'tierBefore',
+  ].sort();
+
+  function endedAtStripe(h: ReturnType<typeof setup>, overrides: Partial<StripeSubscription> & { cancellationReason?: string | null } = {}) {
+    h.subscriptions.set(SUB_1, { ...subscriptionAt(SUB_1, { status: 'canceled', endedAt: ENDED_AT }), cancellationReason: 'cancellation_requested', ...overrides } as StripeSubscription);
+  }
+
+  it('fires once, at error with alert, on the X-4d shape; the plan is applied exactly as today (SA ruling 1 b)', async () => {
+    const h = setup();
+    endedAtStripe(h);
+    await expect(paid(h, paidCreate())).resolves.toBeUndefined();
+
+    expect(h.world.plan?.tier).toBe(TIER_A);
+    const lines = h.logged(ALERT);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].level).toBe('error');
+    const ctx = lines[0].ctx;
+    expect(Object.keys(ctx).sort()).toEqual(ALERT_KEYS);
+    expect(ctx).toMatchObject({
+      alert: true,
+      accountId: ACCOUNT,
+      billingRowId: '33333333-3333-4333-8333-333333333333',
+      invoiceId: 'in_C1',
+      subscriptionId: SUB_1,
+      livemode: false,
+      status: 'applied',
+      planWritten: true,
+      tierBefore: null,
+      tierAfter: TIER_A,
+      tier: TIER_A,
+      currency: 'usd',
+      periodEnd: PERIOD_1_END,
+      subscriptionEndedAt: new Date(ENDED_AT * 1000).toISOString(),
+      subscriptionStatus: 'canceled',
+      cancellationReason: 'cancellation_requested',
+      // Our row held no subscription yet: no row fact to report.
+      recordEndedAt: null,
+    });
+    // Written at the commit, beside the applied line, before the post-commit chain.
+    const events = h.logLines.map((l) => l.ctx.event);
+    expect(events.indexOf(ALERT)).toBe(events.indexOf('bos_billing_invoice_applied') + 1);
+  });
+
+  it('no PII: no customer id, no email, no metadata value anywhere in the line', async () => {
+    const h = setup();
+    endedAtStripe(h, { metadata: { bos_user_id: ACCOUNT, note: 'owner text' } });
+    const event = invoiceEvent('invoice-paid-subscription-create.json', { invoiceId: 'in_C1' }, (invoice) => {
+      invoice.metadata = { note: 'owner text' };
+    });
+    await paid(h, event);
+    const ctx = h.logged(ALERT)[0].ctx;
+    const text = JSON.stringify(ctx);
+    expect(text).not.toContain('fixture@example.invalid');
+    expect(text).not.toContain('owner text');
+    expect(text).not.toContain(CUSTOMER);
+    expect(ctx).not.toHaveProperty('customerId');
+  });
+
+  it("fires for Stripe's own dunning end paid later (cancellation reason payment_failed); our row's end is context", async () => {
+    const h = setup();
+    h.world.billing = billingRow({ stripeSubscriptionId: SUB_1, subscriptionStatus: 'canceled', endedAt: '2026-09-22T00:00:00.000Z' });
+    endedAtStripe(h, { cancellationReason: 'payment_failed' });
+    await paid(h, paidCreate());
+    const ctx = h.logged(ALERT)[0].ctx;
+    expect(ctx.cancellationReason).toBe('payment_failed');
+    expect(ctx.recordEndedAt).toBe('2026-09-22T00:00:00.000Z');
+  });
+
+  it('does not fire for a live subscription (active, past_due)', async () => {
+    for (const status of ['active', 'past_due']) {
+      const h = setup();
+      h.subscriptions.set(SUB_1, subscriptionAt(SUB_1, { status }));
+      await paid(h, paidCreate());
+      expect(h.logged('bos_billing_invoice_applied')).toHaveLength(1);
+      expect(h.logged(ALERT)).toHaveLength(0);
+    }
+  });
+
+  it("does not fire for a period-end cancel's last invoice, nor for a payment made before the end and delivered late", async () => {
+    const atPeriodEnd = setup();
+    endedAtStripe(atPeriodEnd, { endedAt: 1792592000 });
+    await paid(atPeriodEnd, paidCreate());
+    expect(atPeriodEnd.logged(ALERT)).toHaveLength(0);
+
+    const paidBefore = setup();
+    endedAtStripe(paidBefore, { endedAt: 1790000100 });
+    await paid(paidBefore, paidCreate());
+    expect(paidBefore.logged('bos_billing_invoice_applied')).toHaveLength(1);
+    expect(paidBefore.logged(ALERT)).toHaveLength(0);
+  });
+
+  it('R-1: our row says ended but Stripe says live: no alert (Stripe alone decides)', async () => {
+    const h = setup();
+    h.world.billing = billingRow({ stripeSubscriptionId: SUB_1, subscriptionStatus: 'canceled', endedAt: new Date(ENDED_AT * 1000).toISOString() });
+    await paid(h, paidCreate());
+    expect(h.logged(ALERT)).toHaveLength(0);
+  });
+
+  it('a replay (already_applied) and a refusal stay silent: one paid invoice alerts once', async () => {
+    const h = setup();
+    endedAtStripe(h);
+    const event = paidCreate();
+    await paid(h, event);
+    await paid(h, JSON.parse(JSON.stringify(event)) as Stripe.Event);
+    expect(h.logged('bos_billing_invoice_replayed')).toHaveLength(1);
+    expect(h.logged(ALERT)).toHaveLength(1);
+
+    const refused = setup();
+    endedAtStripe(refused, { customerId: 'cus_Other' });
+    await paid(refused, paidCreate('in_C2'));
+    expect(refused.logged('bos_billing_payment_refused')).toHaveLength(1);
+    expect(refused.logged(ALERT)).toHaveLength(0);
+  });
+
+  it('R-4: subscription_conflict with a NEW refusal row fires once (status subscription_conflict, planWritten false, no tiers); its replay is silent', async () => {
+    const h = setup();
+    // The owner re-subscribed (SUB_2, live) and then paid the ended SUB_1's invoice.
+    h.world.billing = billingRow({ stripeSubscriptionId: SUB_2, subscriptionStatus: 'active' });
+    endedAtStripe(h);
+    const event = paidCreate('in_Old', SUB_1);
+    await paid(h, event);
+    expect(historyKinds(h.world)).toEqual(['mismatch_refused:second_subscription']);
+    const lines = h.logged(ALERT);
+    expect(lines).toHaveLength(1);
+    expect(Object.keys(lines[0].ctx).sort()).toEqual(ALERT_KEYS);
+    expect(lines[0].ctx).toMatchObject({
+      status: 'subscription_conflict',
+      planWritten: false,
+      tierBefore: null,
+      tierAfter: null,
+      eventRowId: h.world.events[0].id,
+      subscriptionId: SUB_1,
+      // Our row holds the NEW subscription, so its end is not this one's.
+      recordEndedAt: null,
+    });
+
+    await paid(h, JSON.parse(JSON.stringify(event)) as Stripe.Event);
+    expect(h.logged(ALERT)).toHaveLength(1);
+  });
+
+  it('R-4: subscription_conflict without a new row (eventRowId null) stays silent', async () => {
+    const h = setup();
+    endedAtStripe(h);
+    h.deps.billingEvents.applyPlanPayment = jest.fn(async () => ({ data: { status: 'subscription_conflict' as const, eventRowId: null }, error: null }));
+    await paid(h, paidCreate());
+    expect(h.logged('bos_billing_payment_refused')).toHaveLength(1);
+    expect(h.logged(ALERT)).toHaveLength(0);
+  });
+
+  /**
+   * R-6 (binding test 7): the same event through two worlds that differ ONLY
+   * in Stripe's `ended_at` (and the reason). Everything the webhook does,
+   * except the one alert line, is deep-equal.
+   */
+  async function runBoth(prepare: (h: ReturnType<typeof setup>) => void, makeEvent: () => Stripe.Event) {
+    const event = makeEvent();
+    const run = async (endedAt: number | null) => {
+      const h = setup();
+      prepare(h);
+      const current = h.subscriptions.get(SUB_1) as StripeSubscription;
+      h.subscriptions.set(SUB_1, { ...current, status: 'canceled', endedAt, cancellationReason: endedAt === null ? null : 'cancellation_requested' } as StripeSubscription);
+      const returned = await paid(h, JSON.parse(JSON.stringify(event)) as Stripe.Event);
+      const applyMock = h.deps.billingEvents.applyPlanPayment as jest.Mock;
+      const recordMock = h.deps.billingEvents.recordEvent as jest.Mock;
+      return {
+        h,
+        snapshot: {
+          returned,
+          applyArgs: applyMock.mock.calls,
+          recordArgs: recordMock.mock.calls,
+          // The audit's `log` is each harness's own closure: compared without it.
+          audits: h.audits.map((audit) => ({ ...audit, log: null })),
+          order: h.order,
+          cure: h.clearRenewalFailure.mock.calls,
+          events: h.world.events,
+          billing: h.world.billing,
+          plan: h.world.plan,
+          logEvents: h.logLines.map((l) => `${l.level}:${String(l.ctx.event)}`).filter((e) => e !== `error:${ALERT}`),
+        },
+      };
+    };
+    const withEnd = await run(ENDED_AT);
+    const withoutEnd = await run(null);
+    return { withEnd, withoutEnd };
+  }
+
+  it('R-6 / test 7: the apply outcome is identical with and without the alert (applied path)', async () => {
+    const { withEnd, withoutEnd } = await runBoth(() => undefined, () => paidCreate());
+    expect(withEnd.h.logged(ALERT)).toHaveLength(1);
+    expect(withoutEnd.h.logged(ALERT)).toHaveLength(0);
+    expect(withEnd.snapshot).toEqual(withoutEnd.snapshot);
+  });
+
+  it('R-6 / test 7: the outcome is identical with and without the alert (subscription_conflict path)', async () => {
+    const { withEnd, withoutEnd } = await runBoth(
+      (h) => {
+        h.world.billing = billingRow({ stripeSubscriptionId: SUB_2, subscriptionStatus: 'active' });
+      },
+      () => paidCreate('in_Old', SUB_1)
+    );
+    expect(withEnd.h.logged(ALERT)).toHaveLength(1);
+    expect(withoutEnd.h.logged(ALERT)).toHaveLength(0);
+    expect(withEnd.snapshot).toEqual(withoutEnd.snapshot);
+  });
+
+  it('never throws on unreadable Stripe times: resolves, no alert, applied as usual', async () => {
+    for (const endedAt of [Number.NaN, 1e15, 'garbage' as unknown as number]) {
+      const h = setup();
+      endedAtStripe(h, { endedAt });
+      await expect(paid(h, paidCreate())).resolves.toBeUndefined();
+      expect(h.world.plan?.tier).toBe(TIER_A);
+      expect(h.logged(ALERT)).toHaveLength(0);
+    }
   });
 });
