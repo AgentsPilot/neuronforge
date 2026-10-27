@@ -40,7 +40,15 @@ describe('a cancelled course, which was never an appointment', () => {
 
   it('names the thing it is inviting them back to', () => {
     expect(html).toContain('קורס מומחים');
-    expect(html).toMatch(/להירשם שוב/);
+    /*
+     * Was `להירשם שוב` — "sign up again" — one of two variants, the other
+     * being `לקבוע מועד אחר` for anything with a time on it. Both were
+     * replaced with a single neutral invitation that reads correctly over a
+     * course and over an appointment alike, so there is no longer a wording
+     * that can be wrong for the kind of thing being cancelled. See the
+     * reasoning on `bookAgainPrompt` in lib/email/templates/translations.ts.
+     */
+    expect(html).toMatch(/תרצו להזמין שוב/);
   });
 
   it('links straight to that service, not to the list', () => {
@@ -101,15 +109,37 @@ describe('what happened to the money', () => {
   });
 });
 
-describe('a scheduled booking still reads as one', () => {
-  it('keeps appointment wording and names the service', () => {
-    const html = generateBookingCancellationEmail({
-      ...course,
-      hasSchedule: true,
-      bookAgainUrl: 'https://app.example.com/c/ABC123/book',
-      serviceId: 'svc-1',
-    }).html;
-    expect(html).toMatch(/תרצו לקבוע מועד אחר/);
-    expect(html).toContain('קורס מומחים');
+/*
+ * A scheduled booking and an unscheduled one now read the SAME.
+ *
+ * This described a second wording kept specially for things with a time on
+ * them. That variant is gone on purpose: one invitation that is true of both
+ * cannot be the wrong one, whereas two variants can only ever be right when
+ * the code picks correctly between them. What still has to hold is that
+ * neither case reverts to meeting language, which is the complaint the whole
+ * file exists for.
+ */
+describe('scheduled or not, it reads the same and never mentions a meeting', () => {
+  const base = {
+    ...course,
+    bookAgainUrl: 'https://app.example.com/c/ABC123/book',
+    serviceId: 'svc-1',
+  };
+  const scheduled = generateBookingCancellationEmail({ ...base, hasSchedule: true }).html;
+  const unscheduled = generateBookingCancellationEmail(base).html;
+
+  it('uses the one neutral invitation and names the service', () => {
+    expect(scheduled).toMatch(/תרצו להזמין שוב/);
+    expect(scheduled).toContain('קורס מומחים');
+  });
+
+  it('does not ask about scheduling a meeting either', () => {
+    expect(scheduled).not.toContain('לקבוע פגישה חדשה');
+  });
+
+  /* The point of unifying them: no branch can pick the wrong wording. */
+  it('says the same thing whether or not there was a time', () => {
+    expect(scheduled).toMatch(/תרצו להזמין שוב/);
+    expect(unscheduled).toMatch(/תרצו להזמין שוב/);
   });
 });

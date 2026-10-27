@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Building2,
+  Mail,
   Users,
   Calendar,
   Check,
@@ -26,7 +27,6 @@ import { SetupFactCard, SetupFactDeck } from '@/components/business-os/setup/Set
 import { LazyConfigurationDialog } from '@/components/business-os/lazyDialogs';
 import { StripeConnectWizard } from '@/components/payments/StripeConnectWizard';
 import { InvoiceSettingsSection } from '@/components/business-os/settings/InvoiceSettingsSection';
-import { InboxChannelCard } from '@/components/business-os/leads/InboxChannelCard';
 import { InboxChannelSetupDialog } from '@/components/business-os/leads/InboxChannelSetupDialog';
 import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
 import { ownerTasks } from '@/lib/business-os/onboarding/ownerTasks';
@@ -111,6 +111,8 @@ interface PreviewData {
     /** Clients fill in a form before their appointment. */
     needs_intake?: boolean;
     online_presence_mode?: 'full_website' | 'booking_only' | 'website_only' | 'none';
+    /** They told us they already have a site. Null means "not established". */
+    has_website?: boolean | null;
     payment_mode?: 'none' | 'upfront' | 'invoicing' | 'installments';
     needs_stripe_connect?: boolean;
     pipeline_stages?: Array<{
@@ -282,12 +284,26 @@ function OnboardingBuildContent() {
         && payable
       );
     },
+    /*
+     * A channel exists, or it does not. Positive evidence, like the rest: the
+     * status route answers from the agent row itself, so a connected mailbox
+     * that has not run yet still counts as done — the owner's part is finished
+     * and the first sweep is ours.
+     */
+    mailbox: async () => {
+      const response = await fetch('/api/business-os/leads/inbox/status', { cache: 'no-store' });
+      if (!response.ok) return false;
+      const body = await response.json();
+      return Boolean(body?.success) && (body.data?.channels?.length ?? 0) > 0;
+    },
     /* Stripe settles from the wizard's own completion, and intake leaves no
        trace to check: reading a form is not observable. */
     stripe: undefined,
     intake: undefined,
   };
-  const [openStep, setOpenStep] = useState<'availability' | 'stripe' | 'bank' | 'intake' | 'services' | null>(null);
+  const [openStep, setOpenStep] = useState<
+    'availability' | 'stripe' | 'bank' | 'intake' | 'services' | 'mailbox' | null
+  >(null);
   /** Needed to mount the invoice settings in place rather than navigating to them. */
   const [userId, setUserId] = useState<string | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
@@ -318,9 +334,17 @@ function OnboardingBuildContent() {
     }
   }, []);
 
+  /*
+   * On mount, not on `buildComplete`.
+   *
+   * The task row exists from the moment the steps are built, so an owner can
+   * press it while the build is still running — and the setup dialog needs the
+   * status to know which mailboxes it may offer. Fetched once, early, so that
+   * press never opens an empty first screen.
+   */
   useEffect(() => {
-    if (buildComplete) void refreshInboxChannel();
-  }, [buildComplete, refreshInboxChannel]);
+    void refreshInboxChannel();
+  }, [refreshInboxChannel]);
 
   // Ref to prevent double build calls in StrictMode
   const buildStartedRef = React.useRef(false);
@@ -490,6 +514,7 @@ function OnboardingBuildContent() {
       intake: <ClipboardList className="w-4 h-4" />,
       stripe: <CreditCard className="w-4 h-4" />,
       bank: <Building2 className="w-4 h-4" />,
+      mailbox: <Mail className="w-4 h-4" />,
     };
 
     const howLong = (minutes: number) =>
@@ -516,6 +541,10 @@ function OnboardingBuildContent() {
         sellsScheduled: data.configuration?.sells_scheduled,
         collectionMethod: data.configuration?.collection_method,
         needsIntake: data.configuration?.needs_intake,
+        /* What they SAID, not what the presence mode implies: a business that
+           keeps its own site shares `booking_only` with one that has no web
+           presence at all, so the mode cannot tell them apart. */
+        hasOwnWebsite: data.configuration?.has_website === true,
       },
       selectedLanguage as 'en' | 'he' | 'es'
     )) {
@@ -927,7 +956,10 @@ function OnboardingBuildContent() {
       alone('availability'),
       at('payments', 'bank', 'stripe'),
       alone('intake'),
-      at('website'),
+      /* `mailbox` branches off the website row rather than standing alone:
+         "how clients reach you" is one question, and a business that kept its
+         own site is answering it the other way round. */
+      at('website', 'mailbox'),
       /* A row with neither a fact to report nor work to offer is not a row. */
     ].filter(row => row.built || row.branches.length > 0 || row.done.length > 0);
   })();
@@ -1066,7 +1098,14 @@ function OnboardingBuildContent() {
    * on the screen.
    */
   const openOwnerStep = (id: string) => {
-    if (id === 'availability' || id === 'stripe' || id === 'bank' || id === 'intake' || id === 'services') {
+    if (
+      id === 'availability' ||
+      id === 'stripe' ||
+      id === 'bank' ||
+      id === 'intake' ||
+      id === 'services' ||
+      id === 'mailbox'
+    ) {
       setOpenStep(id);
     }
   };
@@ -1833,7 +1872,9 @@ function OnboardingBuildContent() {
                                       ? (selectedLanguage === 'he' ? 'בחר טופס' : selectedLanguage === 'es' ? 'Elegir formulario' : 'Choose a form')
                                       : step.id === 'stripe'
                                         ? (selectedLanguage === 'he' ? 'חבר את סטרייפ' : selectedLanguage === 'es' ? 'Conectar Stripe' : 'Connect Stripe')
-                                        : (selectedLanguage === 'he' ? 'מלא פרטים' : selectedLanguage === 'es' ? 'Completar datos' : 'Fill in details')}
+                                        : step.id === 'mailbox'
+                                          ? (selectedLanguage === 'he' ? 'חבר את תיבת הדואר' : selectedLanguage === 'es' ? 'Conectar el buzón' : 'Connect your mailbox')
+                                          : (selectedLanguage === 'he' ? 'מלא פרטים' : selectedLanguage === 'es' ? 'Completar datos' : 'Fill in details')}
                                 </button>
                               </div>
                             );
@@ -1891,29 +1932,12 @@ function OnboardingBuildContent() {
             )}
 
             {/*
-                LEADS FROM A SITE THEY ALREADY HAVE.
-                ──────────────────────────────────────────────────────────────
-                Offered here, and nowhere earlier, because this is the moment
-                a business that kept its own website has just been given
-                everything except the one thing that connects the two: their
-                form still emails them, and the platform still knows nothing
-                about the people who filled it in.
-
-                It draws itself only for an owner with a mailbox connected —
-                `InboxChannelCard` returns null otherwise — so a business with
-                no mail account sees nothing at all rather than an offer it
-                cannot take. It never blocks anything: the build is complete
-                and the way to the dashboard is directly below.
+                The mailbox channel used to have a card of its own here, below
+                the owner tasks. It is an owner task now — "only you can sign in
+                to your own mailbox" is exactly what that list is for — so the
+                card is gone and there is one surface with one state instead of
+                two that can disagree.
             */}
-            {buildComplete && (
-              <div className="mt-5">
-                <InboxChannelCard
-                  size="row"
-                  status={inboxChannel}
-                  onSetUp={() => setInboxSetupOpen(true)}
-                />
-              </div>
-            )}
 
             {/* Error State - Compact */}
             {buildError && (
@@ -1951,13 +1975,27 @@ function OnboardingBuildContent() {
           frame, exactly as when the dialog shipped with the page. */}
       <LazyConfigurationDialog isOpen={false} onClose={() => undefined} />
 
-      {/* The same four-screen setup the dashboard opens, mounted here so the
-          offer above does not send anybody to another page to take it. */}
+      {/*
+        The same four-screen setup the dashboard opens, mounted here so the
+        owner task does not send anybody to another page to do it.
+
+        Opened by EITHER route: `openStep === 'mailbox'` is the task row, which
+        is what `thePlanAndTheBuildAgree` checks for, and `inboxSetupOpen` is
+        kept because the dialog closes itself and the step has to clear with it.
+      */}
       <InboxChannelSetupDialog
-        open={inboxSetupOpen}
-        onOpenChange={setInboxSetupOpen}
+        open={openStep === 'mailbox' || inboxSetupOpen}
+        onOpenChange={open => {
+          setInboxSetupOpen(open);
+          if (!open && openStep === 'mailbox') closeOwnerStep('mailbox');
+        }}
         status={inboxChannel}
-        onEnabled={setInboxChannel}
+        onEnabled={status => {
+          setInboxChannel(status);
+          /* Connected is the whole of this task, so it settles on the spot
+             rather than waiting for the reconciliation pass. */
+          settleOwnerStep('mailbox');
+        }}
         onStatusChanged={setInboxChannel}
       />
 

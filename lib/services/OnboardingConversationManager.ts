@@ -2987,14 +2987,52 @@ export class OnboardingConversationManager {
   private extractClientAcquisition(message: string): ClientAcquisitionExtraction {
     const lowerMsg = message.toLowerCase();
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * "I ALREADY HAVE A WEBSITE" IS READ FIRST, AND IT HAS TO BE.
+     *
+     * This is a keyword scan, and every honest wording of that chip contains
+     * the very words the website test matches: `website`, `אתר`, `sitio`. Read
+     * in the other order, a business saying "I already have one" is recorded as
+     * asking us to BUILD one — the exact inversion the chip exists to prevent,
+     * and a keyword parser reports nothing when it misreads.
+     *
+     * So it is matched on the half the build-a-site chip does not share — the
+     * enquiries-by-email half — and its text is then REMOVED from the string
+     * before the website test runs, so its own "website" cannot satisfy it.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const hasOwnWebsite =
+      lowerMsg.includes('already have') ||
+      lowerMsg.includes('enquiries it emails') ||
+      lowerMsg.includes('כבר יש לי') ||
+      lowerMsg.includes('שמגיעות למייל') ||
+      lowerMsg.includes('ya tengo') ||
+      lowerMsg.includes('llegan a mi correo');
+
+    /*
+     * The website test reads the message WITHOUT that option's text.
+     *
+     * Cut at the phrase that opens it, through to the end of its clause, so
+     * what remains is every other chip the owner ticked. Ticking both — "I have
+     * a site, build me a better one" — therefore still registers the build,
+     * because that request lives in a clause of its own.
+     */
+    const withoutOwnSite = hasOwnWebsite
+      ? lowerMsg.replace(
+          /(already have a website|כבר יש לי אתר|ya tengo un sitio)[^,|\n]*/g,
+          ' '
+        )
+      : lowerMsg;
+
     // Check for website selection (Professional website / אתר מקצועי / Sitio web)
     const needsWebsite =
-      lowerMsg.includes('website') ||
-      lowerMsg.includes('professional') ||
-      lowerMsg.includes('אתר') ||
-      lowerMsg.includes('מקצועי') ||
-      lowerMsg.includes('sitio') ||
-      lowerMsg.includes('profesional');
+      withoutOwnSite.includes('website') ||
+      withoutOwnSite.includes('professional') ||
+      withoutOwnSite.includes('אתר') ||
+      withoutOwnSite.includes('מקצועי') ||
+      withoutOwnSite.includes('sitio') ||
+      withoutOwnSite.includes('profesional');
 
     // Connecting the accounts they already have.
     //
@@ -3017,16 +3055,22 @@ export class OnboardingConversationManager {
     // Build acquisition channels array
     const channels: string[] = [];
     if (needsWebsite) channels.push('website');
+    if (hasOwnWebsite) channels.push('inbox_enquiries');
     if (needsChannels) channels.push('channel_insights');
 
     const result: ClientAcquisitionExtraction = {
       acquisition_channels: channels,
-      // Not known from this answer, and it used to be asserted as false with
-      // the reasoning "if they had one, why would they need one?" — which
-      // mistakes declining our website for having none. A business with its
-      // own site is exactly the one that wants its Facebook and Google
-      // connected and nothing else.
-      has_website: null,
+      /*
+       * Known at last, on one path.
+       *
+       * It used to be asserted as false with the reasoning "if they had one,
+       * why would they need one?" — which mistakes declining our website for
+       * having none — and was then softened to a permanent `null` because no
+       * answer could settle it. The chip above is that answer. Every other
+       * reply still yields `null`, which remains correct: declining a website
+       * says nothing about owning one.
+       */
+      has_website: hasOwnWebsite ? true : null,
       wants_more_clients_online: needsWebsite || needsChannels,
       primary_channel: needsWebsite ? 'website' : needsChannels ? 'social_media' : 'referrals',
       // A chosen option wins over a stray "not now".
@@ -3038,6 +3082,10 @@ export class OnboardingConversationManager {
       // answer.
       needs_website: needsWebsite,
       needs_channel_insights: needsChannels,
+      /* The mailbox lead channel: their form already emails them, and we read
+         that mailbox. Granted as a capability at build time; the connection
+         itself is an owner task, never an OAuth popup mid-conversation. */
+      needs_inbox_channel: hasOwnWebsite,
     };
 
     logger.info({ result, messageLength: message.length }, 'Extracted client acquisition from multi-select');
@@ -4244,6 +4292,7 @@ export class OnboardingConversationManager {
         website_consequence: 'אני מניח שתרצו שנבנה לכם אתר.',
         client_acquisition_options: [
           'שאבנה לך אתר מקצועי',
+          'כבר יש לי אתר: לקרוא ממנו את הפניות שמגיעות למייל',
           'לחבר פייסבוק, אינסטגרם או גוגל: לראות מאיפה מגיעים הלקוחות',
         ],
         default_company: 'העסק שלך',
@@ -4311,6 +4360,7 @@ export class OnboardingConversationManager {
         website_consequence: 'imagino que querrás que te construyamos una web.',
         client_acquisition_options: [
           'Que te construya un sitio web profesional',
+          'Ya tengo un sitio: leer las consultas que llegan a mi correo',
           'Conectar Facebook, Instagram o Google: ver de dónde vienen tus clientes',
         ],
         default_company: 'tu negocio',
@@ -4423,6 +4473,7 @@ export class OnboardingConversationManager {
       website_consequence: 'I take it you want a website built.',
       client_acquisition_options: [
         'Build me a professional website',
+        'I already have a website: read the enquiries it emails me',
         'Connect Facebook, Instagram or Google: see where clients come from',
       ],
       default_company: 'your business',

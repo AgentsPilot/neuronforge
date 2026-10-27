@@ -314,37 +314,39 @@ export interface GraphNode {
  * optional work sits directly after the step it belongs to.
  */
 export const SETUP_STEPS: GraphNode[] = [
-  // Nothing to sell, book or invoice without these.
   /*
-   * The catalogue — unless the business has said it has none. A website and a
-   * contact form feeding the CRM is a supported shape, and asking it forever
-   * to "add your services" is asking it to stop being what it chose to be.
-   * `sellsAnything` returns null wherever that has not been settled, which
-   * leaves the step showing.
+   * HOURS COME BEFORE SERVICES, NOT AFTER — and the old order was a deadlock.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This required `services`, on the reasoning that "open hours with nothing to
+   * book render an empty booking page". The relevance half of that is real and
+   * is already carried by `applies` below: a business selling only downloads is
+   * never asked for hours, and `takesAppointments` answers that from the
+   * onboarding answer, with no service row needed.
+   *
+   * As an ORDERING it closed a circle:
+   *
+   *   · the dashboard counts `services` done only when one is PUBLISHED
+   *     (`active_services_count` filters `status = 'active'`)
+   *   · publishing a scheduled service is refused while `hours` is missing —
+   *     `journeyReadiness` treats it as a blocking gap
+   *   · `availability` was locked behind `services`
+   *
+   * So the first service could not be published until hours were set, hours
+   * could not be set until services were done, and services were not done
+   * until one was published. A new account was shown "Add services" with
+   * "Set availability · After Services" beneath it and no way through either.
+   * Reported on a real signup (David KPMG, 2026-10-26).
+   *
+   * The onboarding build screen always had the right order — `ownerTasks`
+   * makes services depend on availability, Stripe and bank details — so the two
+   * surfaces contradicted each other, which is the drift this codebase keeps
+   * writing post-mortems about.
+   * ───────────────────────────────────────────────────────────────────────────
    */
-  { id: 'services', requires: [], owner: 'platform', applies: sellsAnything, mandatory: 'always' },
-  // The form attaches to a service booking.
-  { id: 'intake', requires: ['services'], owner: 'platform', mandatory: 'optional', belongsTo: 'services' },
-
-  // What each service actually is, in the owner's words.
-  //
-  // Optional on purpose: a business with no descriptions can still take a
-  // client end to end, so this must never stand between them and trading. It
-  // is here because the website's copy for a service is written from its
-  // description — without one the model writes a paragraph guessed from the
-  // service's name, and the page reads like it was written by somebody who has
-  // never met the business.
-  //
-  // Never asked during the onboarding chat, where speed matters more; the
-  // question belongs to the dashboard, once there is a reason to answer it.
-  { id: 'service_descriptions', requires: ['services'], owner: 'user', mandatory: 'optional', belongsTo: 'services' },
-
-  // Open hours with nothing to book render an empty booking page — and hours
-  // asked of a business that sells only downloads are an empty demand. Applies
-  // only where some service is actually booked against a time.
   {
     id: 'availability',
-    requires: ['services'],
+    requires: [],
     owner: 'platform',
     applies: shape => takesAppointments(shape),
     mandatory: shape => takesAppointments(shape),
@@ -501,6 +503,49 @@ export const SETUP_STEPS: GraphNode[] = [
    * set the hours, settle how you get paid, then open the doors.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CATALOGUE LAST, WHERE EVERYTHING IT NEEDS IS ALREADY DONE.
+   *
+   * It used to be FIRST, and the order is not cosmetic: the suggested next move
+   * is the first compulsory step that is ready, in this array's order. So a new
+   * account was told "Add services" before it had hours, a tax id or a bank
+   * account — and `active_services_count` only counts a service once it is
+   * PUBLISHED, which `journeyReadiness` refuses until those exist. The owner
+   * was pointed at the one task that could not be finished yet.
+   *
+   * The onboarding build screen has always ordered it this way, and says why:
+   * "the hours a booking needs, then the money, then the form a client fills,
+   * and the catalogue last, where everything it needs is already done"
+   * (`lib/business-os/onboarding/ownerTasks.ts`). The two surfaces now agree.
+   *
+   * Its optional children follow it, as every `belongsTo` group does.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /*
+   * The catalogue — unless the business has said it has none. A website and a
+   * contact form feeding the CRM is a supported shape, and asking it forever
+   * to "add your services" is asking it to stop being what it chose to be.
+   * `sellsAnything` returns null wherever that has not been settled, which
+   * leaves the step showing.
+   */
+  { id: 'services', requires: [], owner: 'platform', applies: sellsAnything, mandatory: 'always' },
+  // The form attaches to a service booking.
+  { id: 'intake', requires: ['services'], owner: 'platform', mandatory: 'optional', belongsTo: 'services' },
+
+  // What each service actually is, in the owner's words.
+  //
+  // Optional on purpose: a business with no descriptions can still take a
+  // client end to end, so this must never stand between them and trading. It
+  // is here because the website's copy for a service is written from its
+  // description — without one the model writes a paragraph guessed from the
+  // service's name, and the page reads like it was written by somebody who has
+  // never met the business.
+  //
+  // Never asked during the onboarding chat, where speed matters more; the
+  // question belongs to the dashboard, once there is a reason to answer it.
+  { id: 'service_descriptions', requires: ['services'], owner: 'user', mandatory: 'optional', belongsTo: 'services' },
+
   { id: 'website', requires: ['services'], owner: 'platform', mandatory: 'always' },
   // A site publishes fine on the stock theme, so this never blocks — but it is
   // where the look of the site, the invoices and the emails is set.

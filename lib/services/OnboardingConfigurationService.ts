@@ -185,6 +185,14 @@ export interface ClientAcquisitionExtraction {
    * those channels, it does not write to them.
    */
   needs_channel_insights?: boolean;
+  /**
+   * They already have a website, and want the enquiries it emails them read.
+   *
+   * The one answer that can settle `has_website`: declining our website says
+   * nothing about owning one, which is why that field was a permanent `null`
+   * before this chip existed.
+   */
+  needs_inbox_channel?: boolean;
 }
 
 // NEW: Q5 - How do you track clients?
@@ -249,6 +257,15 @@ export interface InferredConfiguration {
 
   // Online Presence Mode
   online_presence_mode: OnlinePresenceMode;
+  /**
+   * They told us they already have a website.
+   *
+   * Distinct from `online_presence_mode`, which only records what WE are asked
+   * to build: a business that keeps its own site and one with no web presence
+   * at all both land on `booking_only`, and before this they were
+   * indistinguishable. Null means "not established", not "no".
+   */
+  has_website?: boolean | null;
 
   // Payment Configuration
   payment_mode: PaymentMode;
@@ -638,6 +655,9 @@ export class OnboardingConfigurationService {
 
       // Online Presence
       online_presence_mode: onlinePresenceMode,
+      /* Carried through so the build can tell a business that kept its own site
+         from one with no presence at all; both share a presence mode. */
+      has_website: extracted.clientAcquisition?.has_website ?? null,
 
       // Payment
       payment_mode: paymentMode,
@@ -1098,6 +1118,20 @@ export class OnboardingConfigurationService {
       // never answer "did this person ask for their accounts to be connected?"
       // — which is the only question the channels card needs answered.
       addCapability('channel_insights', 'You want to connect Facebook, Instagram or Google');
+    }
+
+    /*
+     * The mailbox lead channel, for a business that keeps its own site.
+     *
+     * Its own capability for the same reason `channel_insights` has one: it is
+     * the only thing that can answer "did this person say they already have a
+     * website?", which is what the build's owner-task list needs to know.
+     */
+    if (data.clientAcquisition?.needs_inbox_channel) {
+      addCapability(
+        'inbox_enquiries',
+        'You already have a website and want the enquiries it emails you read'
+      );
     }
 
     // 7. Volume-based additions

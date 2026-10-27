@@ -172,6 +172,22 @@ export function V2ThemeProvider({
     root.style.setProperty('--v2-error-icon', errorColors.icon)
 
     /*
+     * The SOLID amber and green, beside the bg/border/text/icon sets above.
+     *
+     * Written here as well as in `v2-theme-tokens.css` because the guard holds
+     * the two to be identical: the sheet is what paints before hydration and
+     * this is what paints after, and a token in one but not the other is a
+     * colour that changes at hydration.
+     *
+     * The same value in both modes — amber and green read on either ground —
+     * which is why there is no `isDark` branch. They are not customisable
+     * today; when they become so they take a `customTokens.colors?.…` on the
+     * left exactly as the pairs above do.
+     */
+    root.style.setProperty('--v2-warning', '#F59E0B')
+    root.style.setProperty('--v2-success', '#10B981')
+
+    /*
      * ───────────────────────────────────────────────────────────────────────────
      * THE STATUS FAMILY, WHICH NOTHING SET AT RUNTIME.
      *
