@@ -125,8 +125,9 @@ for (const entry of ENVIRONMENT_CATALOGUE) {
   } else if (entry.sensitivity === 'personal') {
     if (entry.personalKind === 'list-admin-emails') {
       fixtureEnv[entry.name] = `${secretFor(`${entry.name}#1`)}@example.test, ${secretFor(`${entry.name}#2`)}@example.test`;
-    } else if (entry.personalKind === 'list-comma') {
-      fixtureEnv[entry.name] = `${secretFor(`${entry.name}#1`)},${secretFor(`${entry.name}#2`)}`;
+    } else if (entry.personalKind === 'list-boost-accounts') {
+      // Addresses, not account ids: the reader honours none, so the count is 0 (QA-3).
+      fixtureEnv[entry.name] = `${secretFor(`${entry.name}#1`)}@example.test,${secretFor(`${entry.name}#2`)}`;
     } else {
       fixtureEnv[entry.name] = secretFor(entry.name);
     }
@@ -281,6 +282,7 @@ describe('SA-C7 serialisation gate', () => {
     expect(rows.get('ADMIN_BUSINESS_DELETE_ENABLED')).toEqual({ kind: 'flag', state: 'off', source: 'unrecognised' });
     expect(rows.get('CALIBRATION_AUTO_RCA_ENABLED')).toEqual({ kind: 'flag', state: 'off', source: 'unrecognised' });
     expect(rows.get('ADMIN_EMAILS')).toEqual({ kind: 'count', entries: 2 });
+    expect(rows.get('BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS')).toEqual({ kind: 'count', entries: 0 });
     expect(data.uncategorised.map((r) => r.name)).toEqual(expect.arrayContaining([UNCATALOGUED_PLAIN, UNCATALOGUED_PATTERN]));
 
     // S-5: deny-listed names are absent from every sink, as names too.
@@ -310,6 +312,117 @@ describe('SA-C7 serialisation gate', () => {
     const adminEmails = data.groups.flatMap((g) => g.rows).find((r) => r.name === 'ADMIN_EMAILS');
     expect(adminEmails?.display).toEqual({ kind: 'hidden', reason: 'classification-error' });
     expectNoLeakAnywhere(body);
+  });
+
+  describe('S-7 (EC-4) every diagnostic code, under every label, leaks nothing', () => {
+    const CODES = ['required-not-set', 'should-not-be-set', 'unrecognised-flag', 'surrounding-whitespace'];
+    const LABELS: Array<[string, { VERCEL_ENV?: string; NODE_ENV: string }]> = [
+      ['production', { VERCEL_ENV: 'production', NODE_ENV: 'production' }],
+      ['preview', { VERCEL_ENV: 'preview', NODE_ENV: 'production' }],
+      ['local', { NODE_ENV: 'development' }],
+      ['unknown', { NODE_ENV: 'test' }],
+    ];
+    const PADDED_SECRET = 'STRIPE_SECRET_KEY';
+    const REQUIRED_REMOVED = 'ENCRYPTION_SECRET';
+    let savedVercelEnv: string | undefined;
+
+    type Row = { name: string; display: unknown; diagnostics: string[] };
+    type Data = { environment: { label: string; checkedAgainst: string | null }; groups: Array<{ rows: Row[] }>; uncategorised: Row[]; counts: Record<string, number | null> };
+
+    beforeAll(() => {
+      savedVercelEnv = env.VERCEL_ENV;
+    });
+    afterEach(() => {
+      if (savedVercelEnv === undefined) delete env.VERCEL_ENV;
+      else env.VERCEL_ENV = savedVercelEnv;
+      env[PADDED_SECRET] = fixtureEnv[PADDED_SECRET];
+      env[REQUIRED_REMOVED] = fixtureEnv[REQUIRED_REMOVED];
+      env[UNCATALOGUED_PLAIN] = fixtureEnv[UNCATALOGUED_PLAIN];
+    });
+
+    function applyLabel(vars: { VERCEL_ENV?: string; NODE_ENV: string }): void {
+      if (vars.VERCEL_ENV === undefined) delete env.VERCEL_ENV;
+      else env.VERCEL_ENV = vars.VERCEL_ENV;
+      env.NODE_ENV = vars.NODE_ENV;
+    }
+
+    it.each(LABELS)('%s', async (label, vars) => {
+      applyLabel(vars);
+      // Triggers: a whitespace-wrapped secret, an unset required secret, a padded
+      // uncatalogued name; the fixtures already hold an unrecognised flag and a
+      // set secret that is forbidden on production and preview.
+      env[PADDED_SECRET] = ` ${fixtureEnv[PADDED_SECRET]}\r\n`;
+      delete env[REQUIRED_REMOVED];
+      env[UNCATALOGUED_PLAIN] = `\t${fixtureEnv[UNCATALOGUED_PLAIN]} `;
+
+      const { status, body, parsed } = await runAndCollect();
+      expect(status).toBe(200);
+      expectNoLeakAnywhere(body);
+
+      const data = parsed.data as Data;
+      expect(data.environment.label).toBe(label);
+      const rows = data.groups.flatMap((g) => g.rows);
+      for (const row of [...rows, ...data.uncategorised]) {
+        expect(Array.isArray(row.diagnostics)).toBe(true);
+        for (const code of row.diagnostics) expect({ name: row.name, code, known: CODES.includes(code) }).toEqual({ name: row.name, code, known: true });
+      }
+      const seen = new Set(rows.flatMap((r) => r.diagnostics));
+      expect(seen.has('unrecognised-flag')).toBe(true);
+      expect(seen.has('surrounding-whitespace')).toBe(true);
+      expect(rows.find((r) => r.name === PADDED_SECRET)?.display).toEqual({ kind: 'status', set: true });
+      expect(data.uncategorised.find((r) => r.name === UNCATALOGUED_PLAIN)?.diagnostics).toEqual([]);
+      if (label === 'unknown') {
+        expect(data.environment.checkedAgainst).toBeNull();
+        expect(data.counts.requiredNotSet).toBeNull();
+        expect(data.counts.shouldNotBeSet).toBeNull();
+        expect(seen.has('required-not-set') || seen.has('should-not-be-set')).toBe(false);
+      } else {
+        expect(rows.find((r) => r.name === REQUIRED_REMOVED)?.diagnostics).toContain('required-not-set');
+        if (label !== 'local') expect(rows.find((r) => r.name === 'NODE_TLS_REJECT_UNAUTHORIZED')?.diagnostics).toContain('should-not-be-set');
+      }
+
+      // The audit row: the EC-1 keys plus the four EC-4 counts, nothing else.
+      const audit = auditRecords[0] as { details: Record<string, unknown> };
+      expect(Object.keys(audit.details).sort()).toEqual(
+        [
+          'correlationId',
+          'environment',
+          'notSet',
+          'platformHidden',
+          'requiredNotSet',
+          'rows',
+          'set',
+          'shouldNotBeSet',
+          'surroundingWhitespace',
+          'uncategorised',
+          'unrecognisedFlags',
+        ].sort()
+      );
+    });
+
+    it('M-7 (e): wrapping a secret in whitespace changes only that row\'s diagnostics and the whitespace count', async () => {
+      applyLabel({ VERCEL_ENV: 'production', NODE_ENV: 'production' });
+      const plain = (await runAndCollect()).parsed.data as Data & { generatedAt?: string };
+      env[PADDED_SECRET] = `\n${fixtureEnv[PADDED_SECRET]} `;
+      const padded = (await runAndCollect()).parsed.data as Data & { generatedAt?: string };
+      expect(leaksIn(JSON.stringify(padded))).toEqual([]);
+
+      const strip = (d: Data & { generatedAt?: string }) => {
+        const copy = JSON.parse(JSON.stringify(d)) as Data & { generatedAt?: string };
+        delete copy.generatedAt;
+        return copy;
+      };
+      const a = strip(plain);
+      const b = strip(padded);
+      const rowOf = (d: Data) => d.groups.flatMap((g) => g.rows).find((r) => r.name === PADDED_SECRET) as Row;
+      expect(rowOf(a).diagnostics).not.toContain('surrounding-whitespace');
+      expect(rowOf(b).diagnostics).toEqual([...rowOf(a).diagnostics, 'surrounding-whitespace']);
+      expect(b.counts.surroundingWhitespace).toBe((a.counts.surroundingWhitespace as number) + 1);
+      // Undo exactly those two differences: the rest must be identical.
+      rowOf(b).diagnostics = rowOf(a).diagnostics;
+      b.counts.surroundingWhitespace = a.counts.surroundingWhitespace;
+      expect(b).toEqual(a);
+    });
   });
 
   it('S-6b a whole-classification throw carrying a fixture is a 500 with the fixed code, in development', async () => {

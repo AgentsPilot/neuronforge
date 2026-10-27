@@ -699,14 +699,18 @@ const MIGRATED_PAGES = [
   },
   {
     // Admin environment view EC-2 (FR-11, as L-12): header with the Read-only
-    // badge, the Refresh-only bar, shared states, the read on readAdminResponse,
-    // tables on the shared adminTable constants. No strip, no filters, no
-    // drawer, no dialog: the page is read-only.
+    // badge, shared states, the read on readAdminResponse, tables on the shared
+    // adminTable constants. EC-4 (FR-20, FR-21): the KPI strip on the shared
+    // tiles (anchor mode), and the shared filter bar with the URL hook (group in
+    // the URL, the name search page-only) and Clear. No drawer, no dialog: the
+    // page is read-only.
     page: '/admin/environment (Environment)',
     files: [
       'app/admin/environment/page.tsx',
       'app/admin/environment/components/EnvironmentView.tsx',
+      'app/admin/environment/components/EnvironmentKpis.tsx',
       'app/admin/environment/environmentDisplay.ts',
+      'app/admin/environment/environmentFilters.ts',
     ],
   },
   {

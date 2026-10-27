@@ -41,7 +41,7 @@ export type EnvConfigShape = 'url' | 'host' | 'integer' | 'enum' | 'gitSha' | 'r
 export type EnvFlagParser = 'lenient' | 'strict-true';
 
 /** OQ-10: how a `personal` value is summarised. */
-export type EnvPersonalKind = 'single' | 'list-admin-emails' | 'list-comma';
+export type EnvPersonalKind = 'single' | 'list-admin-emails' | 'list-boost-accounts';
 
 /** SA-C13: why an entry may be read by no code in the scanned roots. */
 export interface EnvConsumedBy {
@@ -220,6 +220,10 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   config('VERCEL_GIT_COMMIT_SHA', 'environment', 'The git commit this deployment was built from; shown as a deployment fact.', 'gitSha', OPTIONAL, {
     consumedBy: { by: 'environment-page', note: 'Read only by the admin Environment page, as a deployment fact.' },
   }),
+  // SA Q4-10 / E4-2: the name matches AUTH, so it is secret-class (Set / Not set only).
+  secret('NODE_TLS_REJECT_UNAUTHORIZED', 'environment', 'Tells Node.js whether to verify TLS certificates on outgoing connections; it can switch that check off, so it belongs only on a developer machine.', exp('X', 'X', 'O'), {
+    consumedBy: { by: 'platform', note: 'Read by the Node.js runtime itself, not by app code.' },
+  }),
 
   // 2. Database (Supabase)
   config('NEXT_PUBLIC_SUPABASE_URL', 'database', 'Address of the Supabase project; every database, auth and storage call goes here.', 'url', exp('R', 'R', 'R')),
@@ -306,7 +310,7 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   flag('BUSINESS_OS_PLAN_PRICES_ENABLED', 'payments', 'Lets the webhook recognise Business OS plan prices; off means every plan invoice is treated as unknown.', 'lenient', false, OPTIONAL, { docLink: FLAGS_DOC }),
   flag('BUSINESS_OS_PLAN_CHECKOUT_ENABLED', 'payments', 'Opens the Business OS plan checkout; needs plan price recognition on.', 'lenient', false, OPTIONAL, { docLink: FLAGS_DOC }),
   flag('BUSINESS_OS_CREDITS_BOOST_ENABLED', 'payments', 'Lets owners buy a credits boost.', 'lenient', false, OPTIONAL, { docLink: FLAGS_DOC }),
-  personal('BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS', 'payments', 'Optional list of accounts allowed to buy a boost; unset means every account when the boost switch is on.', 'list-comma'),
+  personal('BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS', 'payments', 'Optional list of accounts allowed to buy a boost; unset means every account when the boost switch is on. Only valid account ids count, as the checkout counts them; a list that holds none closes the boost to every account.', 'list-boost-accounts'),
   config('INVOICE_BARE_URL_GRACE_DAYS', 'payments', 'How many days an invoice link without a signed token keeps working; 0 requires a signed link for every invoice, unset uses the token lifetime.', 'integer'),
 
   // 8. Email

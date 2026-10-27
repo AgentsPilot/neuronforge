@@ -181,6 +181,43 @@ describe('GET /api/admin/environment', () => {
       environment: body.data.environment.label,
       ...body.data.counts,
     });
+    // EC-4 (SA Q4-8): the EC-1 counts plus the four diagnostic counts, nothing else.
+    expect(Object.keys(input.details as object).sort()).toEqual(
+      [
+        'correlationId',
+        'environment',
+        'notSet',
+        'platformHidden',
+        'requiredNotSet',
+        'rows',
+        'set',
+        'shouldNotBeSet',
+        'surroundingWhitespace',
+        'uncategorised',
+        'unrecognisedFlags',
+      ].sort()
+    );
+  });
+
+  it('R-11 an unrecognised environment still answers 200, with no expectation checks (OQ-7, SA Q4-8)', async () => {
+    const saved = { VERCEL_ENV: env.VERCEL_ENV, NODE_ENV: env.NODE_ENV };
+    delete env.VERCEL_ENV;
+    env.NODE_ENV = 'test';
+    try {
+      const res = await call();
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { data: EnvironmentViewPayload };
+      expect(body.data.environment).toMatchObject({ label: 'unknown', checkedAgainst: null });
+      expect(body.data.counts.requiredNotSet).toBeNull();
+      expect(body.data.counts.shouldNotBeSet).toBeNull();
+      const details = (mockAuditLog.mock.calls[0][0] as { details: Record<string, unknown> }).details;
+      expect(details.requiredNotSet).toBeNull();
+      expect(details.shouldNotBeSet).toBeNull();
+    } finally {
+      if (saved.VERCEL_ENV === undefined) delete env.VERCEL_ENV;
+      else env.VERCEL_ENV = saved.VERCEL_ENV;
+      env.NODE_ENV = saved.NODE_ENV;
+    }
   });
 
   it('R-9 an audit failure does not fail the view', async () => {
@@ -223,6 +260,9 @@ describe('GET /api/admin/environment: source pins', () => {
       expect(source).not.toMatch(/\.\.\.\s*process\s*\.\s*env/);
       expect(source).not.toMatch(/\.\.\.\s*env\b/);
     }
+    // SA E4-3: the classifier spreads nothing at all, so no entry field (and no
+    // value) can ride into a row or its diagnostics.
+    expect(classifier).not.toMatch(/\.\.\./);
     const uses = [...route.matchAll(/process\s*\.\s*env[^\n]{0,40}/g)].map((m) => m[0]);
     expect(uses.length).toBe(2);
     for (const use of uses) {

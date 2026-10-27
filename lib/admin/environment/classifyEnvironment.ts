@@ -24,9 +24,12 @@
 import 'server-only';
 
 import { parseAdminEmails } from '@/lib/admin/adminEmailsEnv';
+import { parseBoostTestAccounts } from '@/lib/business-os/boost/boostCheckoutAccess';
 import { parseBooleanFlag } from '@/lib/utils/parseBooleanFlag';
 import type {
   EnvCataloguedGroupId,
+  EnvCheckedAgainst,
+  EnvDiagnostic,
   EnvDisplay,
   EnvironmentFacts,
   EnvironmentLabel,
@@ -249,8 +252,10 @@ function personalDisplay(entry: EnvPersonalEntry, raw: string | undefined): EnvD
     case 'list-admin-emails':
       // OQ-10: the one parser the admin gate and the Admin users page use.
       return { kind: 'count', entries: parseAdminEmails(raw).size };
-    case 'list-comma':
-      return { kind: 'count', entries: raw.split(',').filter((part) => part.trim() !== '').length };
+    case 'list-boost-accounts':
+      // QA-3 / SA Q4-9: the checkout's own reader, called WITHOUT a logger so its
+      // once-only warning state is untouched. Counts valid account ids only.
+      return { kind: 'count', entries: parseBoostTestAccounts(raw)?.size ?? 0 };
     default:
       throw new EnvClassificationError('unknown_personal_kind');
   }
@@ -286,8 +291,48 @@ export function environmentLabelOf(env: EnvSource): EnvironmentLabel {
   return 'unknown';
 }
 
+/** SA Q4-1: which `expectedIn` column applies; null (not checked) for an unknown label (OQ-7). */
+export function checkedAgainstOf(label: EnvironmentLabel): EnvCheckedAgainst | null {
+  switch (label) {
+    case 'production':
+      return 'production';
+    case 'preview':
+      return 'preview';
+    case 'local':
+    case 'vercel-development':
+      return 'local';
+    default:
+      return null;
+  }
+}
+
+/**
+ * EC-4 diagnostics for one catalogued row (SA E4-1, E4-3). Each code is a
+ * literal pushed in a fixed order; nothing is copied from the value or spread
+ * from the entry. The only value-derived fact is the M-7 boolean
+ * "whitespace at an end" (SA Q4-3): never which end, which character or how many.
+ */
+function diagnosticsFor(
+  entry: EnvCatalogueEntry,
+  raw: string | undefined,
+  display: EnvDisplay,
+  checkedAgainst: EnvCheckedAgainst | null
+): EnvDiagnostic[] {
+  const out: EnvDiagnostic[] = [];
+  const isSet = isSetValue(raw);
+  if (checkedAgainst !== null) {
+    const expected = entry.expectedIn[checkedAgainst];
+    if (expected === 'required' && !isSet) out.push('required-not-set');
+    // SA Q4-4: literal FR-18, amber when set, whatever a flag reads.
+    if (expected === 'forbidden' && isSet) out.push('should-not-be-set');
+  }
+  if (display.kind === 'flag' && display.source === 'unrecognised') out.push('unrecognised-flag');
+  if (typeof raw === 'string' && raw !== '' && raw !== raw.trim()) out.push('surrounding-whitespace');
+  return out;
+}
+
 /** Builds a row field by field (SA-C5). The value never becomes a field. */
-function catalogueRow(entry: EnvCatalogueEntry, display: EnvDisplay): EnvRow {
+function catalogueRow(entry: EnvCatalogueEntry, display: EnvDisplay, diagnostics: EnvDiagnostic[]): EnvRow {
   const row: EnvRow = {
     name: entry.name,
     group: entry.group,
@@ -300,6 +345,7 @@ function catalogueRow(entry: EnvCatalogueEntry, display: EnvDisplay): EnvRow {
       local: entry.expectedIn.local,
     },
     display,
+    diagnostics,
   };
   if (entry.seeAlsoPath) row.seeAlsoPath = entry.seeAlsoPath;
   if (entry.docLink) row.docLink = entry.docLink;
@@ -323,11 +369,19 @@ export function classifyEnvironment(env: EnvSource, options: ClassifyEnvironment
     throw new EnvClassificationError('catalogue_unavailable');
   }
 
+  const label = environmentLabelOf(env);
+  const checkedAgainst = checkedAgainstOf(label);
   const rowErrors: EnvRowError[] = [];
   const catalogued = new Set<string>();
   const rowsByGroup = new Map<EnvCataloguedGroupId, EnvRow[]>();
   const rowsByName = new Map<string, EnvRow>();
   let setCount = 0;
+  const tally: Record<EnvDiagnostic, number> = {
+    'required-not-set': 0,
+    'should-not-be-set': 0,
+    'unrecognised-flag': 0,
+    'surrounding-whitespace': 0,
+  };
 
   for (const entry of catalogue) {
     catalogued.add(entry.name);
@@ -335,14 +389,18 @@ export function classifyEnvironment(env: EnvSource, options: ClassifyEnvironment
     if (isSetValue(raw)) setCount += 1;
 
     let display: EnvDisplay;
+    let diagnostics: EnvDiagnostic[];
     try {
       display = displayFor(entry, raw);
+      diagnostics = diagnosticsFor(entry, raw, display, checkedAgainst);
     } catch (thrown) {
       display = { kind: 'hidden', reason: 'classification-error' };
+      diagnostics = [];
       rowErrors.push({ name: entry.name, errorClass: errorClassOf(thrown) });
     }
+    for (const code of diagnostics) tally[code] += 1;
 
-    const row = catalogueRow(entry, display);
+    const row = catalogueRow(entry, display, diagnostics);
     rowsByName.set(entry.name, row);
     const list = rowsByGroup.get(entry.group) ?? [];
     list.push(row);
@@ -368,6 +426,8 @@ export function classifyEnvironment(env: EnvSource, options: ClassifyEnvironment
       scope: scopeOfName(name),
       expectedIn: null,
       display: { kind: 'status', set: isSet },
+      // M-4 / M-7 (b): uncategorised rows stay status-only, with no diagnostic at all.
+      diagnostics: [],
     });
   }
 
@@ -387,7 +447,7 @@ export function classifyEnvironment(env: EnvSource, options: ClassifyEnvironment
 
   const totalRows = rowsByName.size + uncategorised.length;
   const payload: EnvironmentViewPayload = {
-    environment: { label: environmentLabelOf(env), facts },
+    environment: { label, checkedAgainst, facts },
     groups: groupBlocks,
     uncategorised,
     counts: {
@@ -396,6 +456,11 @@ export function classifyEnvironment(env: EnvSource, options: ClassifyEnvironment
       notSet: totalRows - setCount,
       uncategorised: uncategorised.length,
       platformHidden,
+      // SA Q4-8: null, not 0, when the environment is not recognised.
+      requiredNotSet: checkedAgainst === null ? null : tally['required-not-set'],
+      shouldNotBeSet: checkedAgainst === null ? null : tally['should-not-be-set'],
+      unrecognisedFlags: tally['unrecognised-flag'],
+      surroundingWhitespace: tally['surrounding-whitespace'],
     },
     generatedAt: now().toISOString(),
   };
