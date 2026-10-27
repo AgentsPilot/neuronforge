@@ -105,7 +105,7 @@ export interface PlanManageWireShape {
   cancel: boolean;
   /** Set to end, before the end date: "Reactivate". */
   reactivate: boolean;
-  /** A renewal failed: "update your card, or contact us to cancel" (P-7a.4 offers Cancel here later). */
+  /** A renewal failed. P-7a.4: comes with `cancel`, and the confirmation says the plan ends NOW (BQ-3 = A). */
   paymentFailed: boolean;
   /** P-7a.2: "Update card" (Stripe's portal) and "Invoices". Present only when true. */
   cardAndInvoices?: true;

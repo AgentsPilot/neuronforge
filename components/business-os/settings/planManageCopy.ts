@@ -25,7 +25,8 @@ export const PLAN_MANAGE_REFUSAL_KEYS: Readonly<Record<PlanManageRefusalCode | '
   billing_row_unreadable: 'plan.manage.refusal.unavailable',
   not_subscribed: 'plan.manage.refusal.not_subscribed',
   subscription_not_active: 'plan.manage.refusal.not_active',
-  payment_failed_contact_us: 'plan.manage.payment_failed_contact',
+  // P-7a.4: after BQ-3 = A only a Reactivate during a failed renewal is refused this way.
+  payment_failed_contact_us: 'plan.manage.refusal.payment_failed',
   billing_record_mismatch: 'plan.manage.refusal.support',
   upgrade_pending: 'plan.manage.refusal.upgrade_pending',
   // D2 / SX-1 (SA F-1): an existing line, so no new wording; D3 may give it its own.

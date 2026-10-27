@@ -128,15 +128,16 @@ describe('QA focus 5: the Settings pop-up strip vs the drawer-stacked modal', ()
 });
 
 describe('QA focus 6: failed payment and the switch', () => {
-  it.each(['past_due', 'unpaid'])('%s on our record: the contact line, no button', async (status) => {
+  // P-7a.4 (BQ-3 = A): the contact line is replaced by Cancel, which ends the plan now.
+  it.each(['past_due', 'unpaid'])('%s on our record: the "end it now" line and Cancel only', async (status) => {
     const payload = await payloadFor({ billingRow: payingRow(LOWER, { subscriptionStatus: status }) });
-    expect(payload.purchase?.manage).toEqual({ cancel: false, reactivate: false, paymentFailed: true });
+    expect(payload.purchase?.manage).toEqual({ cancel: true, reactivate: false, paymentFailed: true });
     render(<PlanManage plan={payload} />);
-    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations.en['plan.manage.payment_failed_contact']);
-    expect(within(screen.getByTestId('plan-manage')).queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations.en['plan.manage.payment_failed_cancel_now']);
+    expect(within(screen.getByTestId('plan-manage')).getAllByRole('button').map((b) => b.getAttribute('data-testid'))).toEqual(['plan-manage-cancel']);
   }, SLOW);
 
-  it('active but failed_attempts > 0: the contact line too', async () => {
+  it('active but failed_attempts > 0: the same line and Cancel', async () => {
     const payload = await payloadFor({ billingRow: payingRow(LOWER, { failedAttempts: 1 }) });
     expect(payload.purchase?.manage?.paymentFailed).toBe(true);
   }, SLOW);
@@ -244,10 +245,10 @@ describe('QA focus 8 + 7: upgrade_pending, and he / es at 360 px in RTL', () => 
     expect(done.textContent).toContain('2099');
     a.unmount();
 
-    // Contact line (failed payment) and a refusal.
+    // Failed-payment line (P-7a.4: with Cancel).
     const second = host.appendChild(document.createElement('div'));
-    const b = render(<PlanManage plan={plan({ cancel: false, reactivate: false, paymentFailed: true })} />, { container: second });
-    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations[lang]['plan.manage.payment_failed_contact']);
+    const b = render(<PlanManage plan={plan({ cancel: true, reactivate: false, paymentFailed: true })} />, { container: second });
+    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations[lang]['plan.manage.payment_failed_cancel_now']);
     b.unmount();
     host.remove();
   });
@@ -255,8 +256,10 @@ describe('QA focus 8 + 7: upgrade_pending, and he / es at 360 px in RTL', () => 
   it('every plan.manage value keeps the English placeholders, in he and es', () => {
     const slots = (s: string) => (s.match(/\{\w+\}/g) ?? []).sort().join(',');
     const keys = Object.keys(translations.en).filter((key) => key.startsWith('plan.manage.'));
-    // 21 from P-7a.1, plus P-7a.2's `plan.manage.update_card` and `plan.manage.opening_stripe`.
-    expect(keys).toHaveLength(23);
+    // 21 from P-7a.1, plus P-7a.2's `plan.manage.update_card` and `plan.manage.opening_stripe`;
+    // P-7a.4: + payment_failed_cancel_now, cancel_now_body, cancel_now_confirm, ended_now,
+    // refusal.payment_failed, − payment_failed_contact.
+    expect(keys).toHaveLength(27);
     for (const key of keys) {
       for (const lang of ['he', 'es'] as const) {
         expect(`${key}:${slots(translations[lang][key] ?? '')}`).toBe(`${key}:${slots(translations.en[key])}`);

@@ -31,8 +31,9 @@ describe('planManageWire with cardAndInvoices', () => {
   it('rides along with Cancel / Reactivate / the failed-payment line', () => {
     expect(planManageWire({ kind: 'renewing' }, true)).toEqual({ cancel: true, reactivate: false, paymentFailed: false, cardAndInvoices: true });
     expect(planManageWire({ kind: 'cancelling' }, true)).toEqual({ cancel: false, reactivate: true, paymentFailed: false, cardAndInvoices: true });
-    expect(planManageWire({ kind: 'none', reason: 'payment_failed' }, true)).toEqual({
-      cancel: false,
+    // P-7a.4: a failed renewal now offers Cancel (ends now).
+    expect(planManageWire({ kind: 'failing' }, true)).toEqual({
+      cancel: true,
       reactivate: false,
       paymentFailed: true,
       cardAndInvoices: true,
