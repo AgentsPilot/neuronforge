@@ -977,7 +977,14 @@ None. SC-1 (19,500 plan rows, about 107k qualifying rows) is bounded and passed 
 
 ## Commit Info
 
-*(RM to populate.)*
+| Item | Value |
+|---|---|
+| Branch | `fix/finance-paying-first-payment-scale` |
+| Commits | `713e83fb` (fix), `23b6eac0` (merge origin/main `abe9fd64`), `fe66a311` (docs: renumber + sync), `a5f3e959` (test: QA probe + QA report), `5a7ec971` (merge origin/main `b9dc16c7`, #560; clean) |
+| Re-run after the second sync | `lib/admin/billing` + finance routes (AC-145, `EXPECTED_SHA256` `38897cd3…` equal to main) + `firstPaymentEquivalence` + QA probe: 11 suites, 291 / 291. `app/admin/finance`: 33 suites, 989 / 989. 20261099 still free on origin/main |
+| PR | [#562](https://github.com/AgentsPilot/neuronforge/pull/562), **open, awaiting migration apply**. Not on auto-merge (CR-M5F-2) |
+| Merge gate | The user's go-ahead, then apply `supabase/migrations/20261099_business_os_first_plan_payments_view.sql` on prod, then run `scripts/check-bos-first-plan-payments-migration.sql` and confirm `all_ok = true`, then `schema:check` green, then merge (merge commit) |
+| Merge commit | *(pending)* |
 
 ---
 
@@ -991,3 +998,4 @@ None. SC-1 (19,500 plan rows, about 107k qualifying rows) is bounded and passed 
 | 2026-10-27 | SA code review (SA-CR-M5F) | Code approved for QA with conditions CR-M5F-1 (sync with main, which now includes #541, and re-run AC-145 and the pins) and CR-M5F-2 (go-ahead → apply → checker `all_ok` → merge; no auto-merge before the apply). M5F-C1 to C5 and C7 verified in code; C6 is due at the sync. D-2 (RC-15 `ALLOWED` entry) approved; D-1 and D-3 to D-6 accepted. 506/506 green on SA's re-run. Three Low, non-blocking comments |
 | 2026-10-28 | CR-M5F-1 sync (Dev) | Migration renumbered `20261097` → `20261099` (main took 20261097 and 20261098). Committed locally `713e83fb`; merged origin/main `abe9fd64` in `23b6eac0`; one docs conflict (FIN Change History), both rows kept. 20261098 reviewed: no effect on the view or the equivalence; a meaning change in MK-9 from D3.1 recorded as MK5BFU-FU-2 (proposed). Re-runs green; `EXPECTED_SHA256` equals main; only `converted.firstPlanPayments` differs; pins unchanged |
 | 2026-10-28 | QA (full) | **PASS, no bugs.** The QA probe `firstPaymentScale.qa.test.ts` (22 tests, uncommitted) covers every failure path through the real builder, wiring and repository: Q1 fails, Q2 fails, more than 31 days, a duplicate, out of range, not asked for, no user, a bad date, the two reads disagree. Each one leaves Converted and MK-9 Paid Unknown. It also checks the hand-computed edge cases and that one business picked never runs Q1 (C5), byte-equal to legacy. AC-145 hash `38897cd3…` equals main, and only that one calls entry differs. Migration 20261099, its rollback and checker were reviewed statically: no stale 20261097, and the number is still free after fetching main `b9dc16c7`. Results: targeted 2,005/2,005; finance lib and UI 3,288/3,288; `test:bos-entitlements` 9,755/9,755; authz 203/203; `typecheck:bos-llm` 0 new; scoped tsc 0 errors with a canary; `lint:hooks` clean. Notes: main is 2 commits ahead (#560), with a clean merge, so re-run the suites after merging. AC-7 (the production checker) is owed under CR-M5F-2 |
+| 2026-10-28 | RM: committed and PR opened | QA work committed `a5f3e959`; origin/main (#560) merged cleanly in `5a7ec971`; re-runs green (291/291 and 989/989; AC-145 hash unchanged); 20261099 still free. PR #562 open, awaiting the migration apply; no auto-merge (CR-M5F-2) |
