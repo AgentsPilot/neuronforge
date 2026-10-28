@@ -496,14 +496,15 @@ describe('the confirmation node shows a CONFIRMATION, not any linked mail', () =
        it, so matching the raw source fails on the explanation. Which is the
        hazard this file's `code()` helper was written for. */
     expect(code(DRAWER)).not.toContain('?? linked[0]');
-    expect(code(DRAWER)).toContain('linked.find(saysConfirmed)');
+    expect(code(DRAWER)).toContain('saysConfirmed(email)');
   });
 
-  it('applies the strict test in BOTH copies', () => {
+  it('applies the strict test in BOTH copies, and excludes the bill in both', () => {
     /* `findConfirmationEmail` is declared twice — initial load and silent
        refresh. One fixed and one not shows a different mail after a refresh. */
     const declarations = DRAWER.match(/const findConfirmationEmail = \(/g) ?? [];
-    const strictUses = DRAWER.match(/linked\.find\(saysConfirmed\)/g) ?? [];
+    const strictUses =
+      code(DRAWER).match(/email\.email_kind !== 'invoice_sent' && saysConfirmed\(email\)/g) ?? [];
     expect(strictUses.length).toBe(declarations.length);
   });
 
@@ -526,6 +527,41 @@ describe('the confirmation node shows a CONFIRMATION, not any linked mail', () =
     expect(saysConfirmed(`Appointment rescheduled - ${service}`)).toBe(false);
     expect(saysConfirmed(`Tu cita está confirmada - ${service}`)).toBe(true);
     expect(saysConfirmed(`Cita reprogramada - ${service}`)).toBe(false);
+  });
+
+  it('and a BILL slips through that rule, which is why it is excluded by kind', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────
+     * The subject test cannot be asked to tell a bill apart, because both
+     * halves of an invoice subject are the business's own words:
+     *
+     *     `${noun} #${invoiceNumber} מ-${businessName}`
+     *
+     * `noun` is whatever that business calls the document — it is resolved
+     * from its settings precisely so a business can say "Receipt" or "Tax
+     * invoice" — and `אישור תשלום` is an ordinary thing to call one. The
+     * business name is free text and can contain the word too.
+     *
+     * Invoice mail could not reach the picker before: it carried no booking,
+     * so it never entered `linked`. Once it names its booking it does, and
+     * the only honest filter is the recorded KIND.
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    const templates = read('lib/email/templates/translations.ts');
+    expect(templates).toContain('מ-${businessName}');
+
+    /* The drawer's rule, restated — the test above pins it to the source. */
+    const saysConfirmed = (subject: string) => {
+      const s = subject.toLowerCase();
+      return s.includes('confirm') || s.includes('אושרה') || s.includes('אישור');
+    };
+
+    /* A real document noun a business may choose, in a real subject. */
+    expect(saysConfirmed('אישור תשלום #INV-00043 מ-בית הספר')).toBe(true);
+    expect(saysConfirmed('Payment confirmation #INV-00043 from The Studio')).toBe(true);
+
+    /* So the picker must not reach the subject test at all for a bill. */
+    expect(code(DRAWER)).toContain("email.email_kind !== 'invoice_sent' && saysConfirmed(email)");
   });
 });
 

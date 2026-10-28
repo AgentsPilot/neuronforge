@@ -3673,7 +3673,24 @@ export function CRMContactDrawerV2({
          * Falling through to the time window instead can still find the real
          * confirmation among the unlinked rows.
          */
-        const confirmed = linked.find(saysConfirmed);
+        /*
+         * ── A BILL IS NOT A CONFIRMATION, WHATEVER ITS SUBJECT SAYS ───────
+         *
+         * The invoice subject is `{noun} #{number} from {businessName}`, and
+         * BOTH halves are the business's own words: the noun is whatever it
+         * calls the document — "Receipt", "Tax invoice", "אישור תשלום" — and
+         * the name is free text. So an invoice mail can contain `אישור` or
+         * `confirm` and satisfy `saysConfirmed` while being a bill.
+         *
+         * It could not reach here before: invoice mail carried no booking, so
+         * it never entered `linked` at all. Now that it does, the subject test
+         * has to be told what it is reading. Excluded by KIND rather than by
+         * subject, which is the rule this file already follows — see the note
+         * on finding the cancellation by kind.
+         */
+        const confirmed = linked.find(
+          email => email.email_kind !== 'invoice_sent' && saysConfirmed(email)
+        );
         if (confirmed) return confirmed;
 
         /*
@@ -4423,7 +4440,12 @@ export function CRMContactDrawerV2({
           /* No `?? linked[0]`: on a booking predating the link column the
              confirmation is unlinked, so that fallback returned whatever was
              linked — the reschedule notice. Fall through instead. */
-          const confirmed = linked.find(saysConfirmed);
+          /* And a bill is not a confirmation whatever its subject says — the
+             copy on the initial load carries the reasoning. Both copies must
+             behave identically. */
+          const confirmed = linked.find(
+            email => email.email_kind !== 'invoice_sent' && saysConfirmed(email)
+          );
           if (confirmed) return confirmed;
 
           /*

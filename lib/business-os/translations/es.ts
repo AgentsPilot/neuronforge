@@ -2629,6 +2629,7 @@ export const es = {
     'crm.journey.mail_kind.missed_appointment': 'el aviso de cita perdida',
     'crm.journey.mail_kind.meeting_reminder': 'un recordatorio de la cita',
     'crm.journey.mail_kind.meeting_reminder_owner': 'un recordatorio de la cita, para ti',
+    'crm.journey.mail_kind.invoice_sent': 'la factura',
     'crm.journey.mail_kind.payment_receipt': 'el recibo de pago',
     'crm.journey.mail_kind.payment_request_cancelled': 'Solicitud de pago cancelada',
     'crm.journey.mail_kind.refund_confirmed': 'la confirmación del reembolso',
