@@ -210,6 +210,10 @@ const ALLOWED = new Set(
     // Their tests name it to type fixtures and to fake the wiring's read.
     'lib/business-os/finance/__tests__/planGroups.test.ts',
     'lib/business-os/finance/__tests__/financeHealth.test.ts',
+    // MK5B-FU-1 (2026-10-27): the first-payment equivalence and scale test. It names the
+    // repository only in the PATH of an `import type` (the plan row type of its fixtures);
+    // it imports no value, mocks nothing and calls nothing. Declared, not hidden (see header).
+    'lib/business-os/finance/__tests__/firstPaymentEquivalence.test.ts',
     // ── Plan payments P-8a.1, 2026-10-18 — the admin Subscriptions page (P8A-R1) ─
     // READ ONLY. The wiring calls `pagePlans` (walked by Finance's own
     // `walkPlans`) and nothing else; the SUBSCRIPTIONS_WIRING test below pins

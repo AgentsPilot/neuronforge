@@ -28,9 +28,12 @@ import {
   ADMIN_BILLING_READ_LIMITS,
   ADMIN_BILLING_ROW_COLUMNS,
   AdminBillingReadCeilingError,
+  AdminBillingReadDuplicateError,
   AdminBillingReadIsolationError,
   BusinessOsBillingAdminReadRepository,
+  FIRST_PAYMENT_RANGE_MAX_DAYS,
   FIRST_PLAN_PAYMENT_COLUMNS,
+  FIRST_PLAN_PAYMENTS_VIEW,
   type AdminBillingRow,
 } from '../BusinessOsBillingAdminReadRepository';
 
@@ -45,7 +48,7 @@ function recordingClient(respond: (calls: Call[], index: number) => Response) {
       const index = queries.length;
       queries.push(calls);
       const builder: Record<string, unknown> = {};
-      for (const method of ['select', 'eq', 'gt', 'not', 'in', 'order', 'limit', 'maybeSingle']) {
+      for (const method of ['select', 'eq', 'gt', 'gte', 'lt', 'not', 'in', 'order', 'limit', 'maybeSingle']) {
         builder[method] = (...args: unknown[]) => {
           calls.push({ method, args });
           return builder;
@@ -215,14 +218,19 @@ describe('source: read-only', () => {
 
   it('every .from( names a billing table, and every read filters livemode', () => {
     // P-8a.2: two reads (R-p and R-p′), each with its own mode filter.
-    // MK-5b (SA-10): one more, the first plan payment, of the billing events, with its own mode filter.
+    // MK-5b (SA-10): one more, the first plan payment, with its own mode filter.
+    // MK5B-FU-1 (SA-WP-M5F): the first-payment reads moved from the billing events table to the read-only
+    // view (named by its constant), and Q1 joined them: two view reads, each with its own mode filter.
+    // The billing events table is no longer read here.
     expect([...code.matchAll(/\.from\(\s*'([a-z_]+)'\s*\)/g)].map((m) => m[1])).toEqual([
       'business_os_billing_accounts',
       'business_os_billing_accounts',
-      'business_os_billing_events',
     ]);
-    expect((code.match(/\.from\s*\(/g) ?? []).length).toBe(3);
-    expect((code.match(/\.eq\('livemode', livemode\)/g) ?? []).length).toBe(3);
+    expect((code.match(/\.from\(FIRST_PLAN_PAYMENTS_VIEW\)/g) ?? []).length).toBe(2);
+    expect(code).toContain("export const FIRST_PLAN_PAYMENTS_VIEW = 'business_os_first_plan_payments';");
+    expect((code.match(/\.from\s*\(/g) ?? []).length).toBe(4);
+    expect((code.match(/\.eq\('livemode', livemode\)/g) ?? []).length).toBe(4);
+    expect(code).not.toContain('business_os_billing_events');
   });
 
   it('MK-5b: the first-payment read names no boost table (a boost is never a first payment, PAY SR-6)', () => {
@@ -279,35 +287,28 @@ describe('findBillingRowForAccount (R-p′, P-8a.2)', () => {
   });
 });
 
-// ── Money MK-5b (SA-10): the first plan payment per account, one mode ──────
-describe('listFirstPlanPaymentsForAccounts (MK-5b, SA-10)', () => {
+// ── Money MK-5b (SA-10), re-sourced by MK5B-FU-1 (SA-WP-M5F): the first plan payment per account ──
+describe('listFirstPlanPaymentsForAccounts (MK-5b, SA-10; MK5B-FU-1 view)', () => {
   const id = (n: number) => `22222222-2222-4222-8222-${String(n).padStart(12, '0')}`;
   const ids = (count: number, from = 1) => Array.from({ length: count }, (_, i) => id(from + i));
-  const event = (n: number, userN: number, paidAt: string) => ({
-    id: `00000000-0000-4000-9000-${String(n).padStart(12, '0')}`,
-    user_id: id(userN),
-    paid_at: paidAt,
-  });
+  const viewRow = (userN: number, at: string) => ({ user_id: id(userN), first_payment_at: at });
   const read = (client: SupabaseClient) => new BusinessOsBillingAdminReadRepository(client);
 
-  it('R-1: one query of the billing events, the paid plan invoice above zero, keyset on id, at most 1,000 rows', async () => {
-    const { client, queries } = recordingClient(() => ({ data: [event(1, 1, '2026-10-05T10:00:00.000Z')], error: null }));
+  it('R-1: one query of the first-payment VIEW, one mode, the asked ids, keyset on user_id, at most 1,000 rows', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [viewRow(1, '2026-10-05T10:00:00.000Z')], error: null }));
     const result = await read(client).listFirstPlanPaymentsForAccounts([id(1)], false);
 
     expect(result).toEqual({ data: [{ user_id: id(1), paid_at: '2026-10-05T10:00:00.000Z' }], error: null });
     expect(queries).toHaveLength(1);
     const q = queries[0];
-    expect(q[0].args).toEqual(['business_os_billing_events']);
+    expect(q[0].args).toEqual([FIRST_PLAN_PAYMENTS_VIEW]);
+    expect(FIRST_PLAN_PAYMENTS_VIEW).toBe('business_os_first_plan_payments');
     expect(argsOf(q, 'select')).toEqual([[FIRST_PLAN_PAYMENT_COLUMNS]]);
-    expect(FIRST_PLAN_PAYMENT_COLUMNS).toBe('id, user_id, paid_at');
-    expect(argsOf(q, 'eq')).toEqual([
-      ['livemode', false],
-      ['kind', 'invoice_paid'],
-    ]);
-    expect(argsOf(q, 'gt')).toEqual([['amount_minor', 0]]);
-    expect(argsOf(q, 'not')).toEqual([['paid_at', 'is', null]]);
+    expect(FIRST_PLAN_PAYMENT_COLUMNS).toBe('user_id, first_payment_at');
+    expect(argsOf(q, 'eq')).toEqual([['livemode', false]]);
     expect(argsOf(q, 'in')).toEqual([['user_id', [id(1)]]]);
-    expect(argsOf(q, 'order')).toEqual([['id', { ascending: true }]]);
+    expect(argsOf(q, 'gt')).toEqual([]);
+    expect(argsOf(q, 'order')).toEqual([['user_id', { ascending: true }]]);
     expect(argsOf(q, 'limit')).toEqual([[1000]]);
   });
 
@@ -323,15 +324,14 @@ describe('listFirstPlanPaymentsForAccounts (MK-5b, SA-10)', () => {
     expect(bad.queries).toHaveLength(0);
   });
 
-  it('R-3: 250 ids are read in chunks of at most 100 (100, 100, 50), each with the full filter', async () => {
+  it('R-3: 250 ids are read in chunks of at most 100 (100, 100, 50), each with the mode filter', async () => {
     const { client, queries } = recordingClient(() => ({ data: [], error: null }));
     const result = await read(client).listFirstPlanPaymentsForAccounts(ids(250), false);
     expect(result).toEqual({ data: [], error: null });
     expect(ADMIN_BILLING_READ_LIMITS.IN_CHUNK).toBe(100);
     expect(queries.map((q) => (argsOf(q, 'in')[0][1] as string[]).length)).toEqual([100, 100, 50]);
-    // Every id once, across the chunks.
     expect(new Set(queries.flatMap((q) => argsOf(q, 'in')[0][1] as string[])).size).toBe(250);
-    for (const q of queries) expect(argsOf(q, 'eq')).toEqual([['livemode', false], ['kind', 'invoice_paid']]);
+    for (const q of queries) expect(argsOf(q, 'eq')).toEqual([['livemode', false]]);
   });
 
   it('R-3: ids are lower-cased and de-duplicated before the chunks', async () => {
@@ -340,37 +340,30 @@ describe('listFirstPlanPaymentsForAccounts (MK-5b, SA-10)', () => {
     expect(argsOf(queries[0], 'in')).toEqual([['user_id', [id(1), id(2)]]]);
   });
 
-  it('R-4: a page of exactly 1,000 asks for the next page after the last id, in the same chunk', async () => {
-    const first = Array.from({ length: 1000 }, (_, i) => event(i + 1, 1, '2026-10-05T10:00:00.000Z'));
+  it('R-4: a full page (a defence: the view gives at most one row per id) asks for the next page after the last user_id', async () => {
     const { client, queries } = recordingClient((_calls, index) =>
-      index === 0 ? { data: first, error: null } : { data: [event(2000, 1, '2026-09-01T00:00:00.000Z')], error: null }
+      index === 0 ? { data: [viewRow(1, '2026-10-05T10:00:00.000Z'), viewRow(2, '2026-10-06T10:00:00.000Z')], error: null } : { data: [], error: null }
     );
-    const result = await read(client).listFirstPlanPaymentsForAccounts([id(1)], false);
+    const result = await read(client).listFirstPlanPaymentsForAccounts([id(1), id(2), id(3)], false, { pageSize: 2 });
     expect(queries).toHaveLength(2);
-    expect(argsOf(queries[1], 'gt')).toEqual([['amount_minor', 0], ['id', first[999].id]]);
-    expect(argsOf(queries[1], 'in')).toEqual([['user_id', [id(1)]]]);
-    // The earlier payment on the second page wins.
-    expect(result.data).toEqual([{ user_id: id(1), paid_at: '2026-09-01T00:00:00.000Z' }]);
+    expect(argsOf(queries[1], 'gt')).toEqual([['user_id', id(2)]]);
+    expect(argsOf(queries[1], 'in')).toEqual([['user_id', [id(1), id(2), id(3)]]]);
+    expect(result.data).toHaveLength(2);
   });
 
   it('R-5: reaching the ceiling, across chunks, is an ERROR, never a partial list', async () => {
     const { client } = recordingClient((calls) => {
       const chunk = (calls.find((c) => c.method === 'in')?.args[1] ?? []) as string[];
-      return { data: [{ id: `e-${chunk[0]}`, user_id: chunk[0], paid_at: '2026-10-05T10:00:00.000Z' }], error: null };
+      return { data: [{ user_id: chunk[0], first_payment_at: '2026-10-05T10:00:00.000Z' }], error: null };
     });
     const result = await read(client).listFirstPlanPaymentsForAccounts(ids(250), false, { ceiling: 3 });
     expect(result.data).toBeNull();
     expect(result.error).toBeInstanceOf(AdminBillingReadCeilingError);
   });
 
-  it('R-6: the earliest payment per account only; an account with none is absent', async () => {
+  it('R-6: one row per account with a first payment, sorted by account; an account with none is absent', async () => {
     const { client } = recordingClient(() => ({
-      data: [
-        event(1, 1, '2026-10-09T00:00:00.000Z'),
-        event(2, 1, '2026-08-02T00:00:00.000Z'),
-        event(3, 2, '2026-10-01T00:00:00.000Z'),
-        event(4, 1, '2026-10-01T00:00:00.000Z'),
-      ],
+      data: [viewRow(2, '2026-10-01T00:00:00.000Z'), viewRow(1, '2026-08-02T00:00:00.000Z')],
       error: null,
     }));
     const result = await read(client).listFirstPlanPaymentsForAccounts([id(1), id(2), id(3)], false);
@@ -380,29 +373,23 @@ describe('listFirstPlanPaymentsForAccounts (MK-5b, SA-10)', () => {
     ]);
   });
 
-  it('R-7: a zero invoice and a boost cannot be a first payment: the kind and amount filters are on every query', async () => {
-    // Planted control: a fake that ignored the filters would hand back a zero invoice. The filters
-    // are what keeps it out, so they are pinned on every query of every chunk.
-    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
-    await read(client).listFirstPlanPaymentsForAccounts(ids(150), true);
-    expect(queries).toHaveLength(2);
-    for (const q of queries) {
-      expect(argsOf(q, 'eq')).toContainEqual(['kind', 'invoice_paid']);
-      expect(argsOf(q, 'gt')).toContainEqual(['amount_minor', 0]);
-      expect(q[0].args).toEqual(['business_os_billing_events']);
-    }
+  it('R-7: a second row for one account is an ERROR, never a pick (planted: the view cannot give it)', async () => {
+    const { client } = recordingClient(() => ({ data: [viewRow(1, '2026-10-05T00:00:00.000Z'), viewRow(1, '2026-09-05T00:00:00.000Z')], error: null }));
+    const result = await read(client).listFirstPlanPaymentsForAccounts([id(1)], false);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(AdminBillingReadDuplicateError);
   });
 
   it('R-8: isolation: a row for an account not asked for is an ERROR, never kept', async () => {
-    const { client } = recordingClient(() => ({ data: [event(1, 1, '2026-10-05T00:00:00.000Z'), event(2, 99, '2026-10-05T00:00:00.000Z')], error: null }));
+    const { client } = recordingClient(() => ({ data: [viewRow(1, '2026-10-05T00:00:00.000Z'), viewRow(99, '2026-10-05T00:00:00.000Z')], error: null }));
     const result = await read(client).listFirstPlanPaymentsForAccounts([id(1)], false);
     expect(result.data).toBeNull();
     expect(result.error).toBeInstanceOf(AdminBillingReadIsolationError);
     expect(mockLog.error).toHaveBeenCalled();
   });
 
-  it('R-8: a detached row (user_id NULL) is not an asked account either: an error', async () => {
-    const { client } = recordingClient(() => ({ data: [{ ...event(1, 1, '2026-10-05T00:00:00.000Z'), user_id: null }], error: null }));
+  it('R-8: a row with no user_id is not an asked account either: an error', async () => {
+    const { client } = recordingClient(() => ({ data: [{ user_id: null, first_payment_at: '2026-10-05T00:00:00.000Z' }], error: null }));
     const result = await read(client).listFirstPlanPaymentsForAccounts([id(1)], false);
     expect(result.error).toBeInstanceOf(AdminBillingReadIsolationError);
   });
@@ -425,11 +412,11 @@ describe('listFirstPlanPaymentsForAccounts (MK-5b, SA-10)', () => {
     expect(queries).toHaveLength(0);
   });
 
-  it('R-9: an unreadable paid_at is an error, never skipped (it could hide an earlier payment)', async () => {
-    const { client } = recordingClient(() => ({ data: [event(1, 1, 'not a date')], error: null }));
+  it('R-9: an unreadable first_payment_at is an error, never skipped', async () => {
+    const { client } = recordingClient(() => ({ data: [viewRow(1, 'not a date')], error: null }));
     const result = await read(client).listFirstPlanPaymentsForAccounts([id(1)], false);
     expect(result.data).toBeNull();
-    expect(result.error?.message).toMatch(/paid_at/);
+    expect(result.error?.message).toMatch(/first_payment_at/);
   });
 
   it('R-10: a database error is returned, never thrown; the log has counts only, never an id', async () => {
@@ -437,7 +424,7 @@ describe('listFirstPlanPaymentsForAccounts (MK-5b, SA-10)', () => {
     const failed = await read(failing.client).listFirstPlanPaymentsForAccounts([id(1)], false);
     expect(failed).toEqual({ data: null, error: expect.objectContaining({ message: 'boom' }) });
 
-    const ok = recordingClient(() => ({ data: [event(1, 1, '2026-10-05T00:00:00.000Z')], error: null }));
+    const ok = recordingClient(() => ({ data: [viewRow(1, '2026-10-05T00:00:00.000Z')], error: null }));
     await read(ok.client).listFirstPlanPaymentsForAccounts([id(1)], false);
     const info = mockLog.info.mock.calls.find((c) => c[1] === 'First plan payments of one mode read');
     expect(info?.[0]).toEqual(expect.objectContaining({ accounts: 1, chunks: 1, rows: 1, found: 1 }));
@@ -449,5 +436,102 @@ describe('listFirstPlanPaymentsForAccounts (MK-5b, SA-10)', () => {
     const result = await read(client).listFirstPlanPaymentsForAccounts([id(1)], false, { pageSize });
     expect(result.error).toBeInstanceOf(Error);
     expect(queries).toHaveLength(0);
+  });
+});
+
+// ── MK5B-FU-1 (SA-WP-M5F, Q1): every account whose first payment is in a range ──
+describe('listFirstPlanPaymentsInRangeAllAccounts (MK5B-FU-1, Q1)', () => {
+  const id = (n: number) => `33333333-3333-4333-8333-${String(n).padStart(12, '0')}`;
+  const OCT = { from: '2026-10-01T00:00:00.000Z', to: '2026-11-01T00:00:00.000Z' };
+  const viewRow = (userN: number, at = '2026-10-05T10:00:00.000Z') => ({ user_id: id(userN), first_payment_at: at });
+  const read = (client: SupabaseClient) => new BusinessOsBillingAdminReadRepository(client);
+
+  it('Q1-1: one query of the view: one mode, the range [from, to), keyset on user_id, at most 1,000 rows', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [viewRow(2), viewRow(1, '2026-10-01T00:00:00.000Z')], error: null }));
+    const result = await read(client).listFirstPlanPaymentsInRangeAllAccounts(OCT, true);
+    expect(result).toEqual({
+      data: [
+        { user_id: id(1), paid_at: '2026-10-01T00:00:00.000Z' },
+        { user_id: id(2), paid_at: '2026-10-05T10:00:00.000Z' },
+      ],
+      error: null,
+    });
+    expect(queries).toHaveLength(1);
+    const q = queries[0];
+    expect(q[0].args).toEqual(['business_os_first_plan_payments']);
+    expect(argsOf(q, 'select')).toEqual([['user_id, first_payment_at']]);
+    expect(argsOf(q, 'eq')).toEqual([['livemode', true]]);
+    expect(argsOf(q, 'gte')).toEqual([['first_payment_at', OCT.from]]);
+    expect(argsOf(q, 'lt')).toEqual([['first_payment_at', OCT.to]]);
+    expect(argsOf(q, 'in')).toEqual([]);
+    expect(argsOf(q, 'order')).toEqual([['user_id', { ascending: true }]]);
+    expect(argsOf(q, 'limit')).toEqual([[1000]]);
+  });
+
+  it.each([
+    ['unreadable', { from: 'nope', to: OCT.to }],
+    ['backwards', { from: OCT.to, to: OCT.from }],
+    ['empty', { from: OCT.from, to: OCT.from }],
+    ['over 31 days', { from: '2026-10-01T00:00:00.000Z', to: '2026-11-01T00:00:01.000Z' }],
+    ['missing', null as unknown as { from: string; to: string }],
+  ])('Q1-2: a %s range is refused before any query', async (_label, range) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await read(client).listFirstPlanPaymentsInRangeAllAccounts(range, false);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+    expect(FIRST_PAYMENT_RANGE_MAX_DAYS).toBe(31);
+  });
+
+  it('Q1-2: exactly 31 days is allowed (December)', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await read(client).listFirstPlanPaymentsInRangeAllAccounts({ from: '2026-12-01T00:00:00.000Z', to: '2027-01-01T00:00:00.000Z' }, false);
+    expect(result).toEqual({ data: [], error: null });
+    expect(queries).toHaveLength(1);
+  });
+
+  it('Q1-3: keyset paging over 2,500 rows: 1,000, 1,000, 500, each after the last user_id', async () => {
+    const all = Array.from({ length: 2500 }, (_, i) => viewRow(i + 1));
+    const { client, queries } = recordingClient((_calls, index) => ({ data: all.slice(index * 1000, index * 1000 + 1000), error: null }));
+    const result = await read(client).listFirstPlanPaymentsInRangeAllAccounts(OCT, false);
+    expect(result.data).toHaveLength(2500);
+    expect(queries).toHaveLength(3);
+    expect(argsOf(queries[0], 'gt')).toEqual([]);
+    expect(argsOf(queries[1], 'gt')).toEqual([['user_id', id(1000)]]);
+    expect(argsOf(queries[2], 'gt')).toEqual([['user_id', id(2000)]]);
+    for (const q of queries) expect(argsOf(q, 'limit')).toEqual([[1000]]);
+  });
+
+  it('Q1-4: reaching the ceiling is an ERROR, never a partial list', async () => {
+    const { client } = recordingClient(() => ({ data: [viewRow(1), viewRow(2)], error: null }));
+    const result = await read(client).listFirstPlanPaymentsInRangeAllAccounts(OCT, false, { pageSize: 2, ceiling: 3 });
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(AdminBillingReadCeilingError);
+  });
+
+  it('Q1-4: a row outside the range, a duplicate, a bad id or a bad date is an error (planted)', async () => {
+    const outside = recordingClient(() => ({ data: [viewRow(1, '2026-11-01T00:00:00.000Z')], error: null }));
+    expect((await read(outside.client).listFirstPlanPaymentsInRangeAllAccounts(OCT, false)).error?.message).toMatch(/outside the range/);
+    const before = recordingClient(() => ({ data: [viewRow(1, '2026-09-30T23:59:59.999Z')], error: null }));
+    expect((await read(before.client).listFirstPlanPaymentsInRangeAllAccounts(OCT, false)).error?.message).toMatch(/outside the range/);
+    const dup = recordingClient(() => ({ data: [viewRow(1), viewRow(1)], error: null }));
+    expect((await read(dup.client).listFirstPlanPaymentsInRangeAllAccounts(OCT, false)).error).toBeInstanceOf(AdminBillingReadDuplicateError);
+    const badId = recordingClient(() => ({ data: [{ user_id: 'x', first_payment_at: '2026-10-05T00:00:00.000Z' }], error: null }));
+    expect((await read(badId.client).listFirstPlanPaymentsInRangeAllAccounts(OCT, false)).error).toBeInstanceOf(AdminBillingReadIsolationError);
+    const badDate = recordingClient(() => ({ data: [viewRow(1, 'never')], error: null }));
+    expect((await read(badDate.client).listFirstPlanPaymentsInRangeAllAccounts(OCT, false)).error?.message).toMatch(/first_payment_at/);
+  });
+
+  it('Q1-5: a database error is returned, never thrown; logs carry counts only, never an id', async () => {
+    const failing = recordingClient(() => ({ data: null, error: new Error('boom') }));
+    expect(await read(failing.client).listFirstPlanPaymentsInRangeAllAccounts(OCT, false)).toEqual({
+      data: null,
+      error: expect.objectContaining({ message: 'boom' }),
+    });
+    const ok = recordingClient(() => ({ data: [viewRow(7)], error: null }));
+    await read(ok.client).listFirstPlanPaymentsInRangeAllAccounts(OCT, false);
+    const info = mockLog.info.mock.calls.find((c) => c[1] === 'First plan payments of one mode in a range read');
+    expect(info?.[0]).toEqual(expect.objectContaining({ pages: 1, rows: 1, found: 1 }));
+    expect(JSON.stringify([mockLog.info.mock.calls, mockLog.error.mock.calls])).not.toContain('33333333-3333-4333-8333');
   });
 });
