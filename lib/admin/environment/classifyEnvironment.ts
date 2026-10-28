@@ -37,6 +37,7 @@ import type {
   EnvGroupBlock,
   EnvRow,
   EnvScope,
+  EnvSupabaseProject,
 } from '@/lib/admin/environment-types';
 
 import {
@@ -49,6 +50,7 @@ import {
   type EnvPersonalEntry,
 } from './catalogue';
 import { isPlatformNoise } from './platformDenyList';
+import { SUPABASE_PROJECTS, SUPABASE_URL_ROW_NAMES, type SupabaseProjectEntry } from './supabaseProjects';
 
 // ── Masking rules ───────────────────────────────────────────────────────────
 
@@ -111,6 +113,9 @@ const HAS_LOWER = /[a-z]/;
 const HAS_DIGIT = /\d/;
 // SA QF-2: a URL must spell its scheme with the slashes; `https:word` parses but is not an address.
 const URL_SCHEME = /^https?:\/\//i;
+// EC-6 (OQ-6): https only, the exact Supabase host, no port, no further subdomain.
+// Matched against the SHOWN origin, which `new URL()` has already lower-cased (SA-L2).
+const SUPABASE_ORIGIN = /^https:\/\/([a-z0-9]+)\.supabase\.co$/;
 
 function hasMixedKeyRun(text: string): boolean {
   for (const run of text.match(ALNUM_RUN) ?? []) {
@@ -134,6 +139,8 @@ export interface ClassifyEnvironmentOptions {
   isNoise?: (name: string) => boolean;
   /** Test seam: a fixed clock. */
   now?: () => Date;
+  /** Test seam: a substitute Supabase project table (EC-6). */
+  supabaseProjects?: ReadonlyMap<string, SupabaseProjectEntry>;
 }
 
 export interface EnvRowError {
@@ -356,6 +363,25 @@ function shownText(row: EnvRow | undefined): string | null {
   return row && row.display.kind === 'shown' ? row.display.text : null;
 }
 
+/**
+ * EC-6 (SA-L1, SA-L3, SA-L5): what our table says about a shown origin, or
+ * undefined when the origin is not a Supabase host. Input is `shown` text only,
+ * which already passed the global gates and the origin reduction, so no new
+ * value class is read. One anchored regex and one Map lookup: it cannot throw
+ * (SA-L4). Built field by field; the table entry is never spread.
+ */
+function supabaseProjectOf(
+  origin: string,
+  projects: ReadonlyMap<string, SupabaseProjectEntry>
+): EnvSupabaseProject | undefined {
+  const match = SUPABASE_ORIGIN.exec(origin);
+  if (!match) return undefined;
+  // A Map has no inherited keys, so `constructor` and the like are simply absent (SA-L3).
+  const entry = projects.get(match[1]);
+  if (!entry) return { kind: 'unknown' };
+  return { kind: 'known', label: entry.label, role: entry.role };
+}
+
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 export function classifyEnvironment(env: EnvSource, options: ClassifyEnvironmentOptions = {}): ClassifyEnvironmentResult {
@@ -363,6 +389,7 @@ export function classifyEnvironment(env: EnvSource, options: ClassifyEnvironment
   const groups = options.groups ?? ENVIRONMENT_GROUPS;
   const isNoise = options.isNoise ?? isPlatformNoise;
   const now = options.now ?? (() => new Date());
+  const supabaseProjects = options.supabaseProjects ?? SUPABASE_PROJECTS;
 
   if (!Array.isArray(catalogue) || catalogue.length === 0) {
     // Fail closed: no catalogue means no answer, never an unmasked list.
@@ -381,6 +408,9 @@ export function classifyEnvironment(env: EnvSource, options: ClassifyEnvironment
     'should-not-be-set': 0,
     'unrecognised-flag': 0,
     'surrounding-whitespace': 0,
+    // SA-L7: initialised for the closed record, never read. The code sits on two
+    // rows, so a per-row tally would count one mismatch twice (OQ-4).
+    'supabase-url-mismatch': 0,
   };
 
   for (const entry of catalogue) {
@@ -405,6 +435,28 @@ export function classifyEnvironment(env: EnvSource, options: ClassifyEnvironment
     const list = rowsByGroup.get(entry.group) ?? [];
     list.push(row);
     rowsByGroup.set(entry.group, list);
+  }
+
+  // EC-6: the project label and the pair check, from `shown` rows only (SA-L1).
+  // Hidden, masked, unset and errored rows take no part.
+  const shownSupabaseRows: EnvRow[] = [];
+  for (const name of SUPABASE_URL_ROW_NAMES) {
+    const row = rowsByName.get(name);
+    if (!row || row.display.kind !== 'shown') continue;
+    const project = supabaseProjectOf(row.display.text, supabaseProjects);
+    // Omitted, never null, when no label applies (SA-L5).
+    if (project) row.supabaseProject = project;
+    shownSupabaseRows.push(row);
+  }
+  let supabaseUrlMismatch = 0;
+  if (shownSupabaseRows.length === 2) {
+    const [first, second] = shownSupabaseRows;
+    if (shownText(first) !== shownText(second)) {
+      // SA-L6: on both rows, after the existing codes, whatever `checkedAgainst` is.
+      first.diagnostics.push('supabase-url-mismatch');
+      second.diagnostics.push('supabase-url-mismatch');
+      supabaseUrlMismatch = 1;
+    }
   }
 
   // OQ-4 precedence: catalogue, then deny-list, then Uncategorised.
@@ -461,6 +513,8 @@ export function classifyEnvironment(env: EnvSource, options: ClassifyEnvironment
       shouldNotBeSet: checkedAgainst === null ? null : tally['should-not-be-set'],
       unrecognisedFlags: tally['unrecognised-flag'],
       surroundingWhitespace: tally['surrounding-whitespace'],
+      // OQ-4: from the pair, not the tally.
+      supabaseUrlMismatch,
     },
     generatedAt: now().toISOString(),
   };

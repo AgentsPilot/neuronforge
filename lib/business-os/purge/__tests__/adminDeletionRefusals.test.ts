@@ -118,12 +118,14 @@ describe('R-3 (platform plan subscription), SC-5', () => {
     row: { status: null, stripeSubscriptionId: null, endedAt: null, ...o },
   });
 
-  it.each(R3_LIVE_STATUSES)('applies on status %s (live mode), with the Stripe dashboard and P-7a in its clearing action', (status) => {
+  it.each(R3_LIVE_STATUSES)('applies on status %s (live mode), pointing at Settings → Plan and the Stripe dashboard (P-7a.3, C-10)', (status) => {
     const r3 = byId(evaluateAdminDeletionRefusals(facts({}, { billing: { test: { row: null }, live: row({ status }) } })).refusals, 'R-3');
     expect(r3.status).toBe('applies');
     expect(r3.message).toContain('live mode');
     expect(r3.clearingAction).toContain('Stripe dashboard');
-    expect(r3.clearingAction).toContain('P-7a');
+    // P-7a.3: the owner cancels in-app now; the stale "arrives with P-7a" is gone.
+    expect(r3.clearingAction).toContain('Settings → Plan');
+    expect(r3.clearingAction).not.toContain('arrives with');
   });
 
   it('applies on the test-mode row too, and names the mode', () => {

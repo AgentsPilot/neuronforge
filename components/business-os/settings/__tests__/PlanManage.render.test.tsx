@@ -137,10 +137,11 @@ describe('PlanManage', () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
-  it('a failed renewal shows the contact line and no button (P-7a.4 adds Cancel here)', () => {
-    render(<PlanManage plan={plan({ cancel: false, reactivate: false, paymentFailed: true })} />);
-    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations.en['plan.manage.payment_failed_contact']);
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  it('P-7a.4: a failed renewal shows the "cancel to end it now" line and Cancel', () => {
+    render(<PlanManage plan={plan({ cancel: true, reactivate: false, paymentFailed: true })} />);
+    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations.en['plan.manage.payment_failed_cancel_now']);
+    expect(screen.getByTestId('plan-manage-cancel')).toBeInTheDocument();
+    expect(screen.queryByTestId('plan-manage-reactivate')).not.toBeInTheDocument();
   });
 
   it('every plan.manage key has a Hebrew and a Spanish draft', () => {
@@ -150,5 +151,42 @@ describe('PlanManage', () => {
       expect(translations.he[key]).toBeTruthy();
       expect(translations.es[key]).toBeTruthy();
     }
+  });
+});
+
+describe('PlanManage — the Founding Partner sentence (P-7a.3, BQ-5)', () => {
+  const FREE_UNTIL = '2100-03-01T12:00:00.000Z';
+  const withFreeAccess = (manage: { cancel: boolean; reactivate: boolean; paymentFailed: boolean }, billing?: unknown) =>
+    plan({ ...manage, freeAccessAfter: { endsAt: FREE_UNTIL } } as typeof manage, billing);
+
+  it('in the cancel confirmation, after the "You keep" sentence, with the free-access end date', () => {
+    render(<PlanManage plan={withFreeAccess({ cancel: true, reactivate: false, paymentFailed: false })} />);
+    expect(screen.queryByTestId('plan-manage-founding')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
+    const confirm = screen.getByTestId('plan-manage-confirm');
+    expect(confirm).toHaveTextContent('You keep Essentials until November 26, 2099');
+    expect(confirm).toHaveTextContent('Then you go back to your Founding Partner free access, which runs until March 1, 2100.');
+  });
+
+  it('while the plan is set to end: shown beside Reactivate', () => {
+    render(<PlanManage plan={withFreeAccess({ cancel: false, reactivate: true, paymentFailed: false }, { state: 'ending', date: RENEWS })} />);
+    expect(screen.getByTestId('plan-manage-founding')).toHaveTextContent('which runs until March 1, 2100');
+    expect(screen.getByTestId('plan-manage-reactivate')).toBeInTheDocument();
+  });
+
+  it('without the field: no sentence anywhere', () => {
+    render(<PlanManage plan={plan({ cancel: true, reactivate: false, paymentFailed: false })} />);
+    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
+    expect(screen.getByTestId('plan-manage-confirm')).not.toHaveTextContent('Founding Partner');
+    expect(screen.queryByTestId('plan-manage-founding')).not.toBeInTheDocument();
+  });
+
+  it.each(['he', 'es'] as const)('%s: the drafted sentence renders with its date, no raw key or slot', (lang) => {
+    mockLang.language = lang;
+    render(<PlanManage plan={withFreeAccess({ cancel: false, reactivate: true, paymentFailed: false }, { state: 'ending', date: RENEWS })} />);
+    const line = screen.getByTestId('plan-manage-founding');
+    expect(line.textContent).not.toContain('plan.manage.');
+    expect(line.textContent).not.toContain('{freeUntil}');
+    expect(line.textContent).toContain('2100');
   });
 });

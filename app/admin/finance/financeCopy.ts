@@ -490,6 +490,51 @@ export const PROCESSOR_NOT_RECORDED = 'Not recorded';
 export const BLOCK_KPI_CLIENT_PAYMENTS_LABEL = 'Businesses taking client payments';
 export const BLOCK_KPI_CLIENT_PAYMENTS_DEFINITION =
   "Businesses with at least one client payment recorded in the window. Their clients' money, not ours.";
+
+/**
+ * Client payments in approximate dollars (FIN BD-56; requirement
+ * ADMIN_CLIENT_PAYMENTS_USD_REQUIREMENT.md §5, §6.3, §7.2; slice 1b). The one
+ * converted figure on the platform: always "≈", always "converted at admin
+ * rates" (EX-3), always "our customers' revenue, not ours" (U-4). The tooltip's
+ * second line is the shared lagging line (LL-2, LL-4).
+ */
+export const CLIENT_PAYMENTS_USD = {
+  label: 'Client payments processed',
+  /** §5.3 line 1. */
+  definition:
+    "What our customers' clients paid them through AgentPilot in this window, before refunds and fees, converted to approximate US dollars at the rates on the Exchange rates tab. Our customers' money, never part of our revenue.",
+  note: "Our customers' revenue, not ours",
+  /** No client payment in the window (SA-Q-1B-3): never "≈ $0". */
+  none: 'None',
+  staleChip: 'Uses a stale rate',
+  convertedLine: (payments: number, currencies: number) =>
+    `Converted at admin rates · ${payments} ${payments === 1 ? 'payment' : 'payments'} in ${currencies} ${currencies === 1 ? 'currency' : 'currencies'}`,
+  notConvertedNoRate: (count: number) =>
+    `plus ${count} ${count === 1 ? 'payment' : 'payments'} in other currencies, not converted (no rate)`,
+  ratesFailed: (count: number) =>
+    `Exchange rates could not be read; ${count} ${count === 1 ? 'payment' : 'payments'} in other currencies not converted`,
+  ratesLink: 'Exchange rates',
+  table: 'Converted to $',
+  columns: {
+    currency: 'Currency',
+    payments: 'Payments',
+    paid: 'Paid, in that currency',
+    rate: 'Rate used',
+    updated: 'Rate last updated',
+    usd: '≈ In US dollars',
+  },
+  ratePer: (rate: string) => `${rate} per $1`,
+  /** SA-Q-1B-5: only Stale is a warning; "Rate off" is the Exchange rates tab's own word. */
+  states: { stale: 'Stale', no_rate: 'No rate', disabled: 'Rate off', unusable: 'Not usable' },
+  /** A row not converted; and the headline when payments exist but none converted (SA-WP-CPU1B B-1). */
+  notConverted: 'Not converted',
+  total: '≈ Total',
+  footer: 'Approximate. Converted at the admin rates on the Exchange rates tab; never part of our revenue.',
+} as const;
+/** The approximate sign every converted amount carries (EX-3). */
+export const APPROX = '≈';
+/** SA-Q-1B-7: the Exchange rates tab of this page (in-page, as `PLANS_PAGE`). */
+export const EXCHANGE_RATES_TAB_HREF = '/admin/finance?tab=exchange-rates';
 export const TAKINGS_BY_BUSINESS = 'Takings by business';
 export const TAKINGS_BUSINESS = 'Business';
 export const NAME_UNKNOWN_BUSINESS = 'Unknown business';
@@ -870,7 +915,8 @@ export const PAYING_BREAKDOWN = {
   endedInWindow: (count: string) => `Trials ended in this window: ${count}`,
   paid: (count: string) => `Paid: ${count}`,
   paidBeforeEnd: (count: string) => `of which before the trial ended: ${count}`,
-  paidUnknown: 'Paid: Unknown',
+  // MK9-FU-1: said once, with its reason (the rate line is not shown then).
+  paidUnknown: 'Paid: Unknown (first payments could not be read)',
   rate: (paid: string, base: string, percent: string) => `Rate: ${paid} of ${base} (${percent}%)`,
   tooFew: (minimum: string) => `Too few trials for a rate (a rate needs at least ${minimum})`,
   noRateCutOff: 'No rate: not every account could be read',

@@ -9,6 +9,11 @@
  *   - `manage.cancel`     ⇔ the cancel action writes at Stripe;
  *   - `manage.reactivate` ⇔ the reactivate action writes at Stripe;
  *   - no control          ⇔ both actions are refused before any Stripe call.
+ *
+ * P-7a.4: a write is EITHER Stripe write: `cancel_at_period_end` or the
+ * immediate end (`cancelBusinessOsSubscriptionNow`), so a failed renewal's
+ * Cancel (past_due / unpaid → immediate; a cured row → period end) is in the
+ * same equivalence.
  */
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: { marker: 'service-role-default' } }));
@@ -85,6 +90,10 @@ const ROWS: Array<[string, Row | null]> = [
   ['canceled', row({ subscriptionStatus: 'canceled', endedAt: PAST })],
   ['incomplete', row({ subscriptionStatus: 'incomplete' })],
   ['paused', row({ subscriptionStatus: 'paused' })],
+  // D2 (SA W-3): a pending change refuses the CANCEL side only; a cancelling plan stays kept-able.
+  ['active, set to end, a tier change pending', row({ cancelAtPeriodEnd: true, pendingTier: TIER })],
+  ['active, set to end, a checkout lock open', row({ cancelAtPeriodEnd: true, openCheckoutSessionId: 'cs_open', openCheckoutExpiresAt: FUTURE })],
+  ['active, renewing, an EXPIRED checkout lock', row({ openCheckoutSessionId: 'cs_old', openCheckoutExpiresAt: PAST })],
 ];
 
 /** Stripe agrees with our row (the matrix is about OUR data; the fresh checks have their own tests). */
@@ -128,6 +137,19 @@ async function writes(r: Row | null, action: 'cancel' | 'reactivate', pricesEnab
         wrote = true;
         return { id: 'sub_own', status: 'active', customerId: 'cus_own', livemode: false, cancelAtPeriodEnd: value, cancelAt: value ? FUTURE_UNIX : null, endedAt: null, currentPeriodEnd: FUTURE_UNIX };
       },
+      // P-7a.4: the immediate end and C-11's sweep (nothing open here).
+      cancelBusinessOsSubscriptionNow: async () => {
+        stripeCalls += 1;
+        wrote = true;
+        return { id: 'sub_own', status: 'canceled', customerId: 'cus_own', livemode: false, cancelAtPeriodEnd: false, cancelAt: null, endedAt: Math.floor(NOW.getTime() / 1000), currentPeriodEnd: FUTURE_UNIX };
+      },
+      listBusinessOsOpenSubscriptionInvoices: async () => {
+        stripeCalls += 1;
+        return { invoices: [], hasMore: false };
+      },
+      voidBusinessOsInvoice: async () => {
+        throw new Error('nothing to void in the matrix');
+      },
     },
   } as unknown as PlanManageDeps;
   await managePlanSubscription({ action, userId: USER, accountId: USER }, deps);
@@ -170,4 +192,26 @@ it('the matrix is not vacuous: each control is offered somewhere', async () => {
   expect(offered.some((m) => m.cancel)).toBe(true);
   expect(offered.some((m) => m.reactivate)).toBe(true);
   expect(offered.some((m) => m.paymentFailed)).toBe(true);
+});
+
+/**
+ * D2 (SA W-3): a renewing plan with a change pending. The screen shows no
+ * control; the cancel is refused on our data with zero Stripe calls; a
+ * reactivate is never refused for this reason (our row may be stale, P-7a C-2),
+ * so it reads Stripe, finds nothing to undo and writes nothing.
+ */
+describe('D2 change_pending (renewing side)', () => {
+  it.each([
+    ['a tier change pending', row({ pendingTier: TIER })],
+    ['a checkout lock open', row({ openCheckoutSessionId: 'cs_open', openCheckoutExpiresAt: FUTURE })],
+    ['a checkout lock with no expiry recorded', row({ openCheckoutSessionId: 'cs_open', openCheckoutExpiresAt: null })],
+  ])('%s: no control, cancel refused with zero Stripe calls, reactivate writes nothing', async (_name, r) => {
+    const manage = await screen(r, true);
+    // P-7a.2 may add `cardAndInvoices`: the card and invoices stay offered while a change is pending.
+    expect(manage).toMatchObject({ cancel: false, reactivate: false, paymentFailed: false });
+    const cancel = await writes(r, 'cancel', true);
+    expect(cancel).toEqual({ wrote: false, stripeCalls: 0 });
+    const reactivate = await writes(r, 'reactivate', true);
+    expect(reactivate.wrote).toBe(false);
+  });
 });

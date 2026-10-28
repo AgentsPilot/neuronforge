@@ -806,7 +806,9 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
     // rollback, which restores 20261077: same again. 20261092 (the meeting and abandoned-booking
     // links reviewed for G-18) and its rollback, which restores 20261081: same again. 20261094 (DL-1a:
     // the plan gained business_os_account_closures) and its rollback, which restores 20261092: same
-    // again, so 20261092 is listed by name. Taken from the
+    // again, so 20261092 is listed by name. 20261096 (MX-1a: the plan gained the export request and
+    // module job tables) and its rollback, which restores 20261094: same again, so 20261094 is listed
+    // by name. Taken from the
     // generator's constants, so this file does not spell the next version's name (R-7).
     const testAccountCleanup = [
       join(ROOT, ...CLEANUP_MIGRATION_FILE.split('/')),
@@ -828,6 +830,8 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
       join(SQL_SCRIPTS_DIR, '20261081_operator_account_cleanup_anonymise_rollback.sql'),
       join(MIGRATIONS_DIR, '20261092_operator_test_account_cleanup_meeting_links.sql'),
       join(SQL_SCRIPTS_DIR, '20261092_operator_test_account_cleanup_meeting_links_rollback.sql'),
+      join(MIGRATIONS_DIR, '20261094_operator_test_account_cleanup_account_closures.sql'),
+      join(SQL_SCRIPTS_DIR, '20261094_operator_test_account_cleanup_account_closures_rollback.sql'),
     ];
     const allowed = new Set(
       [CHARGES_MIGRATION, CHARGES_ROLLBACK, ...indexOnly, ...testAccountCleanup].map((file) => relative(ROOT, file))

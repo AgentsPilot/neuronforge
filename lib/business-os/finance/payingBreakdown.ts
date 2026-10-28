@@ -11,6 +11,8 @@
  *    has no billing row with a subscription status; "Subscription ended or not
  *    paying" = it has one, and it is not paying (MK9-R4: the same "billed"
  *    predicate as the Subscriptions list, so "Assigned" is its "No Stripe").
+ *    A cut plan walk makes the split "at least" (MK9-FU-2): the page reads that
+ *    from the same walk's flag, carried on `trials.status`, so no key is added.
  *
  * 2. Trial-to-paid (BQ-23). The base is every trial that ENDED in the window
  *    `[start, end)` and by now (SA-CR-MK9 C-1: ended means before both the
@@ -55,7 +57,9 @@ export function compedSplit(input: {
     const row = rowOf.get(accountId);
     // "Billed" (MK9-R4): a row with a subscription status. Without one, nothing was ever subscribed.
     if (!row || row.subscription_status === null) assignedNoSubscription += 1;
-    // Comped means not paying already; a paying row here would be a classifier fault, so it is not hidden.
+    // Unreachable for a paying row: an account is Comped only when the classifier found it NOT paying,
+    // by this same isPaying predicate (planGroups.groupFor). Were it reached, the account would count
+    // in `total` but in neither line, so the two lines would no longer add up to Comped (MK9-FU-3).
     else if (!input.isPaying(row)) endedOrNotPaying += 1;
   }
   return { total, assignedNoSubscription, endedOrNotPaying };

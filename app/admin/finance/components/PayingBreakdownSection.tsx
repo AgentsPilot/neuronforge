@@ -42,6 +42,10 @@ export function PayingBreakdownSection({
   onRetry: () => void;
 }) {
   const { comped, trials } = breakdown;
+  // MK9-FU-2: Comped and the trial counts rest on the SAME plan walk, and the walk being cut off is the
+  // only way either can be short (the billing-status read fails at its ceiling, never cuts: Comped is
+  // then null). `trials.status` is exactly that walk's flag, and it is never 'unknown' while Comped has
+  // figures (financeHealth's builder; pinned there by the MK9-FU-2 case). So one `exact` serves both.
   const exact = trials.status === 'ok';
   const n = (value: number) => atLeast(formatCount(value), exact);
   const status = trials.status === 'unknown' && comped === null ? 'unknown' : trials.status === 'partial' ? 'partial' : 'ok';
@@ -68,8 +72,8 @@ export function PayingBreakdownSection({
             </p>
           ) : (
             <p className={LINE} data-testid="paying-breakdown-comped-line">
-              {PAYING_BREAKDOWN.compedTotal(formatCount(comped.total))} · {PAYING_BREAKDOWN.assigned} {formatCount(comped.assignedNoSubscription)} ·{' '}
-              {PAYING_BREAKDOWN.endedOrNotPaying} {formatCount(comped.endedOrNotPaying)}
+              {PAYING_BREAKDOWN.compedTotal(n(comped.total))} · {PAYING_BREAKDOWN.assigned} {n(comped.assignedNoSubscription)} ·{' '}
+              {PAYING_BREAKDOWN.endedOrNotPaying} {n(comped.endedOrNotPaying)}
             </p>
           )}
           <p className={NOTE}>{PAYING_BREAKDOWN.note}</p>
@@ -92,15 +96,16 @@ export function PayingBreakdownSection({
                   ? PAYING_BREAKDOWN.paidUnknown
                   : `${PAYING_BREAKDOWN.paid(n(trials.paid))} (${PAYING_BREAKDOWN.paidBeforeEnd(n(trials.paidBeforeEnd))})`}
               </p>
-              <p className={LINE} data-testid="paying-breakdown-rate">
-                {trials.rate !== null
-                  ? PAYING_BREAKDOWN.rate(formatCount(trials.rate.paid), formatCount(trials.rate.base), formatCount(trials.rate.percent))
-                  : !exact
-                    ? PAYING_BREAKDOWN.noRateCutOff
-                    : trials.paid === null
-                      ? PAYING_BREAKDOWN.paidUnknown
+              {/* MK9-FU-1 (SA-Q-FU-9): with Paid unknown there is no rate; the line above already says why. */}
+              {(trials.rate !== null || !exact || trials.paid !== null) && (
+                <p className={LINE} data-testid="paying-breakdown-rate">
+                  {trials.rate !== null
+                    ? PAYING_BREAKDOWN.rate(formatCount(trials.rate.paid), formatCount(trials.rate.base), formatCount(trials.rate.percent))
+                    : !exact
+                      ? PAYING_BREAKDOWN.noRateCutOff
                       : PAYING_BREAKDOWN.tooFew(formatCount(trials.minimumForRate))}
-              </p>
+                </p>
+              )}
               <p className={LINE} data-testid="paying-breakdown-running">
                 {PAYING_BREAKDOWN.stillRunning(n(trials.stillRunning))}
               </p>

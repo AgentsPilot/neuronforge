@@ -71,6 +71,8 @@ describe('retrieveBusinessOsSubscription', () => {
       // P-7a.1 (SA C-3): additive; the fixture sets no `cancel_at`.
       cancelAt: null,
       endedAt: null,
+      // FU-P7a4-1 (SA R-2): additive; the fixture carries no cancellation_details.
+      cancellationReason: null,
       livemode: false,
       metadata: { product: 'business_os_plan' },
       priceIds: ['price_a'],
@@ -91,6 +93,25 @@ describe('retrieveBusinessOsSubscription', () => {
     expect(out.customerId).toBe('cus_2');
     expect(out.endedAt).toBe(1_790_500_000);
     expect(out.status).toBe('canceled');
+  });
+
+  it('FU-P7a4-1 (SA R-2): cancellation_details.reason is passed through for the three known values, else null; no other call', async () => {
+    for (const reason of ['payment_failed', 'cancellation_requested', 'payment_disputed']) {
+      mockSubscriptionsRetrieve.mockResolvedValueOnce(
+        subscription({ status: 'canceled', ended_at: 1_790_500_000, cancellation_details: { reason, comment: 'owner text', feedback: 'other' } })
+      );
+      const out = await service().retrieveBusinessOsSubscription('sub_1');
+      expect(out.cancellationReason).toBe(reason);
+      // The free-text comment and feedback never leave the read.
+      expect(JSON.stringify(out)).not.toContain('owner text');
+    }
+    for (const details of [undefined, null, { reason: null }, { reason: 'something_new' }, { reason: 42 }]) {
+      mockSubscriptionsRetrieve.mockResolvedValueOnce(subscription({ cancellation_details: details }));
+      const out = await service().retrieveBusinessOsSubscription('sub_1');
+      expect(out.cancellationReason).toBeNull();
+    }
+    expect(mockSubscriptionsRetrieve).toHaveBeenCalledTimes(8);
+    expect(mockSubscriptionItemsList).not.toHaveBeenCalled();
   });
 
   it('has_more on the items: every item page is read and the embedded page is not double counted', async () => {

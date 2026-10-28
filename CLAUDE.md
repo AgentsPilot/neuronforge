@@ -176,7 +176,7 @@ Both are business-level facts with traps. Read before touching money display or 
 | **`user_preferences.timezone` is the authority** for the clock | `business_profiles.timezone` **does not exist**. Naming it in a `.select()` makes PostgREST reject the *whole* query |
 | **NULL means "not asked"; `'UTC'` means "chose UTC"** | Keep them distinguishable, or the readiness gate cannot tell it needs to ask |
 | **`LanguageContext.currencyCode` is localStorage-backed** — display only | Never seed a value that gets **written** from it. Use `businessCurrency` for anything persisted (invoices, payments, new services) |
-| **Never sum money across currencies** | An admin-maintained `exchange_rates` table exists, but no figure may be converted or summed with it. Group by currency (`revenue_by_currency`) and label with `primary_currency` |
+| **Never sum money across currencies** | An admin-maintained `exchange_rates` table exists, but no figure may be converted or summed with it — **one exception:** the admin Finance page's approximate-dollar total of client payments ([ADMIN_CLIENT_PAYMENTS_USD_REQUIREMENT.md](/docs/requirements/ADMIN_CLIENT_PAYMENTS_USD_REQUIREMENT.md)), limited to that doc's conditions EX-1 to EX-6: labelled as converted, worked out on read, never stored, never charged, never added to our revenue. Everywhere else, group by currency (`revenue_by_currency`) and label with `primary_currency` |
 | **A missing timezone blocks publishing** a booking surface | Via the `timezone` gap in `journeyReadiness`. Currency deliberately does **not** gate |
 
 Fixing a gap? Use `gapFixAction(kind)` — it returns the settings tab *and* the label together, so they cannot point at different things.

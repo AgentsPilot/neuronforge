@@ -22,6 +22,21 @@
  * shows itself comes from the route's own answer, so a failed re-read never
  * hides what happened.
  *
+ * P-7a.4 (BQ-3 = A; SA C-11, TQ-12): with `manage.paymentFailed` the
+ * confirmation says the plan ENDS NOW, not "until {date}". The route decides
+ * the real mode on Stripe's fresh status, and the line after the press says
+ * what happened (`mode: 'immediate'` / `state: 'ended'` → "has ended").
+ *
+ * P-7a.2: "Update card" and "Invoices" (`PlanCardAndInvoices`) render here
+ * too, where `manage.cardAndInvoices` is set; the hosts are unchanged.
+ *
+ * P-7a.3 (BQ-5): where the server sends `manage.freeAccessAfter` (a Founding
+ * Partner whose free access outlives the paid plan by more than the 24 h
+ * margin), one sentence names the return to free access and its end date: in
+ * the cancel confirmation (both the "until {date}" and the P-7a.4 "ends now"
+ * one, SA P-7a.4 deviation 8), and under Reactivate while the plan is set to end.
+ * The server decides when it is true; this island only formats the date.
+ *
  * Imports nothing from the entitlements module and no server file (the copy
  * map type-imports the refusal codes only).
  */
@@ -32,6 +47,7 @@ import { Loader2 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
 
+import { PlanCardAndInvoices } from './PlanCardAndInvoices';
 import type { PlanPayload } from './planPayloadTypes';
 import { PLAN_CANCEL_PATH, PLAN_REACTIVATE_PATH, planManageRefusalKey } from './planManageCopy';
 import { fill } from './planText';
@@ -78,12 +94,17 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
   if (!manage && notice === null) return null;
 
   const planName = plan.name ?? '';
+  // P-7a.4: a failed renewal; Cancel ends the plan now.
+  const endsNow = manage?.paymentFailed === true && manage.cancel;
   const day = (iso: string | null) => (iso ? formatAccountDay(iso, language, timezone) : null);
   // Only the DATE for the confirmation sentence. This is not a success
   // predicate: "You're on …" stays usePlanFlow's alone (upgrade modal C-2).
   const billing = plan.purchase?.billing ?? null;
   const renewalDate = billing !== null && billing.state === 'renewing' ? billing.date : null;
   const renewsOn = day(renewalDate);
+  // P-7a.3 (BQ-5): the free-access end, only when the server sent it.
+  const freeUntil = day(manage?.freeAccessAfter?.endsAt ?? null);
+  const foundingLine = freeUntil ? fill(t('plan.manage.cancel_confirm_founding'), { freeUntil }) : null;
 
   const run = async (action: Action) => {
     setPhase({ kind: 'busy', action });
@@ -98,7 +119,10 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
         // says what Stripe holds, from the route's own answer, so a stale
         // re-read never leaves the press with no visible result.
         const state = outcome === 'unchanged' ? data.state : null;
-        if (outcome === 'cancelled' || state === 'cancelling') {
+        if ((outcome === 'cancelled' && data.mode === 'immediate') || state === 'ended') {
+          // P-7a.4: ended now (or already ended at Stripe).
+          setNotice({ kind: 'done', text: fill(t('plan.manage.ended_now'), { plan: planName }) });
+        } else if (outcome === 'cancelled' || state === 'cancelling') {
           const ends = day(stringOrNull(outcome === 'cancelled' ? data.endsOn : data.date));
           setNotice({
             kind: 'done',
@@ -131,7 +155,7 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
     <div className="space-y-2 pt-2" data-testid="plan-manage">
       {manage?.paymentFailed && (
         <p className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-manage-payment-failed">
-          {t('plan.manage.payment_failed_contact')}
+          {t('plan.manage.payment_failed_cancel_now')}
         </p>
       )}
 
@@ -141,12 +165,32 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
         </button>
       )}
 
-      {phase.kind === 'confirming' && (
+      {/* P-7a.4: the failed-payment confirmation says "ends now" (C-11). */}
+      {phase.kind === 'confirming' && endsNow && (
+        <div role="group" aria-label={t('plan.manage.cancel_button')} className="space-y-2" data-testid="plan-manage-confirm-now">
+          <p className="text-xs text-[var(--v2-text-primary)]">
+            {fill(t('plan.manage.cancel_now_body'), { plan: planName })}
+            {/* SA P-7a.4 deviation 8: the BQ-5 sentence here too, on the server's same rule. */}
+            {foundingLine && <> {foundingLine}</>}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={PRIMARY_BUTTON} onClick={() => void run('cancel')} data-testid="plan-manage-cancel-confirm">
+              {t('plan.manage.cancel_now_confirm')}
+            </button>
+            <button type="button" className={SECONDARY_BUTTON} onClick={() => setPhase({ kind: 'idle' })} data-testid="plan-manage-keep">
+              {t('plan.manage.keep')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {phase.kind === 'confirming' && !endsNow && (
         <div role="group" aria-label={t('plan.manage.cancel_button')} className="space-y-2" data-testid="plan-manage-confirm">
           <p className="text-xs text-[var(--v2-text-primary)]">
             {renewsOn
               ? fill(t('plan.manage.cancel_confirm_body'), { plan: planName, date: renewsOn })
               : fill(t('plan.manage.cancel_confirm_body_nodate'), { plan: planName })}
+            {foundingLine && <> {foundingLine}</>}
           </p>
           <div className="flex flex-wrap gap-2">
             <button type="button" className={PRIMARY_BUTTON} onClick={() => void run('cancel')} data-testid="plan-manage-cancel-confirm">
@@ -157,6 +201,12 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
             </button>
           </div>
         </div>
+      )}
+
+      {manage?.reactivate && phase.kind === 'idle' && foundingLine && (
+        <p className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-manage-founding">
+          {foundingLine}
+        </p>
       )}
 
       {manage?.reactivate && phase.kind === 'idle' && (
@@ -171,6 +221,9 @@ export function PlanManage({ plan, onChanged }: { plan: PlanPayload; onChanged?:
           <span>{t(phase.action === 'cancel' ? 'plan.manage.cancelling' : 'plan.manage.reactivating')}</span>
         </p>
       )}
+
+      {/* P-7a.2: Update card and Invoices, exactly where `manage.cardAndInvoices` says. */}
+      {manage?.cardAndInvoices && <PlanCardAndInvoices />}
 
       {notice?.kind === 'done' && (
         <p role="status" className="text-xs text-[var(--v2-text-primary)]" data-testid="plan-manage-done">

@@ -11,6 +11,8 @@ import {
   BOS_USER_ID_METADATA_KEY,
 } from '@/lib/business-os/billing/stripeMetadataKeys';
 import { subscriptionIdFromInvoice } from '@/lib/payments/invoiceSubscription';
+import { invoiceLinePriceIds } from '@/lib/payments/invoiceLinePrices';
+import type { PortalConfigurationFacts } from '@/lib/business-os/billing/portalConfiguration';
 
 const logger = createLogger({ module: 'StripeService' });
 
@@ -83,6 +85,33 @@ export interface BusinessOsCancelFacts {
   currentPeriodEnd: number | null;
 }
 
+/** P-7a.2 (X-5): the portal locales the app sends. `he` is not one Stripe accepts; the caller sends `auto`. */
+export type BusinessOsPortalLocale = 'en' | 'es' | 'auto';
+
+/** P-7a.2: a portal session. `url` is a bearer link: never logged, audited or put in an error. */
+export interface BusinessOsPortalSessionFacts {
+  url: string;
+  customerId: string;
+  configurationId: string | null;
+  livemode: boolean;
+}
+
+/** P-7a.2 (TQ-6): one invoice of the owner's list, as Stripe reports it. Unix seconds. */
+export interface BusinessOsInvoiceListFacts {
+  id: string;
+  customerId: string | null;
+  livemode: boolean;
+  status: string | null;
+  billingReason: string | null;
+  totalMinor: number | null;
+  currency: string | null;
+  created: number | null;
+  hostedInvoiceUrl: string | null;
+  invoicePdf: string | null;
+  /** From the embedded lines (`invoiceLinePriceIds`); may be truncated, used for the plan label only. */
+  priceIds: string[];
+}
+
 /** SA U-1: the idempotency key of one upgrade request. Same request, same key. */
 export function businessOsUpgradeIdempotencyKey(subscriptionId: string, priceId: string, prorationDate: number): string {
   return `bos-upgrade:${subscriptionId}:${priceId}:${prorationDate}`;
@@ -117,6 +146,21 @@ function isWholeMinor(value: unknown): value is number {
 
 function unixOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/**
+ * FU-P7a4-1 (SA R-2): Stripe's `cancellation_details.reason` values worth
+ * reporting, the same three the subscription mirror records. Anything else
+ * (absent, null, a value Stripe adds later) reads as null.
+ */
+export const BUSINESS_OS_CANCELLATION_REASONS = ['payment_failed', 'cancellation_requested', 'payment_disputed'] as const;
+export type BusinessOsCancellationReason = (typeof BUSINESS_OS_CANCELLATION_REASONS)[number];
+
+function cancellationReasonOf(subscription: Stripe.Subscription): BusinessOsCancellationReason | null {
+  const raw: unknown = subscription.cancellation_details?.reason ?? null;
+  return typeof raw === 'string' && (BUSINESS_OS_CANCELLATION_REASONS as readonly string[]).includes(raw)
+    ? (raw as BusinessOsCancellationReason)
+    : null;
 }
 
 function subscriptionItemFacts(item: Stripe.SubscriptionItem): BusinessOsSubscriptionItemFacts {
@@ -593,6 +637,13 @@ export class StripeService {
      */
     cancelAt?: number | null;
     endedAt: number | null;
+    /**
+     * FU-P7a4-1 (SA R-2): `cancellation_details.reason` from the SAME
+     * retrieve, kept to `BUSINESS_OS_CANCELLATION_REASONS`, else null. For the
+     * `bos_billing_paid_after_end` alert only; it decides nothing. Optional
+     * only so existing hand-built fakes stay valid; absent reads as null.
+     */
+    cancellationReason?: BusinessOsCancellationReason | null;
     livemode: boolean;
     metadata: Stripe.Metadata;
     priceIds: string[];
@@ -645,6 +696,7 @@ export class StripeService {
       cancelAtPeriodEnd: subscription.cancel_at_period_end,
       cancelAt: unixOrNull(subscription.cancel_at),
       endedAt: subscription.ended_at ?? null,
+      cancellationReason: cancellationReasonOf(subscription),
       livemode: subscription.livemode,
       metadata: subscription.metadata ?? {},
       priceIds,
@@ -654,7 +706,7 @@ export class StripeService {
     };
   }
 
-  // ── Business OS plan cancel / reactivate (plan payments P-7a.1; SA C-2, TQ-3) ──
+  // ── Business OS plan cancel / reactivate (plan payments P-7a.1; P-7a C-2, TQ-3; D2 SX C-4) ──
 
   /**
    * THE cancel / reactivate write: `cancel_at_period_end` on OUR row's
@@ -662,13 +714,24 @@ export class StripeService {
    * request value). Returns the facts the status mirror needs, from the
    * update's own answer (SA C-2: no second retrieve).
    *
-   * No idempotency key (SA TQ-3): setting a boolean is idempotent, and a key
-   * would replay a stale answer on cancel → reactivate → cancel within 24 h.
+   * Idempotency (P-7a TQ-3, SX C-4; D2 workplan §3.3, SA Q-3 / W-4): never a
+   * FIXED key, because a key derived from the ids would replay a stale answer
+   * on cancel → reactivate → cancel within 24 h. The caller may pass a key
+   * that is fresh PER ATTEMPT (`planManageAttemptKey`, a random uuid suffix):
+   * a network retry inside that attempt reuses it, the next attempt never
+   * does. Without one, the request carries no options (as P-7a.1 built it).
    * X-2 (2026-10-26, sandbox): `true` also sets `cancel_at` to the period end;
    * `false` clears both, including a `cancel_at` set without the flag.
    */
-  async setBusinessOsCancelAtPeriodEnd(subscriptionId: string, cancelAtPeriodEnd: boolean): Promise<BusinessOsCancelFacts> {
-    const subscription = await this.stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: cancelAtPeriodEnd });
+  async setBusinessOsCancelAtPeriodEnd(
+    subscriptionId: string,
+    cancelAtPeriodEnd: boolean,
+    options?: { idempotencyKey?: string }
+  ): Promise<BusinessOsCancelFacts> {
+    const params = { cancel_at_period_end: cancelAtPeriodEnd };
+    const subscription = options?.idempotencyKey
+      ? await this.stripe.subscriptions.update(subscriptionId, params, { idempotencyKey: options.idempotencyKey })
+      : await this.stripe.subscriptions.update(subscriptionId, params);
     const customer = subscription.customer;
     const periodEnds = (subscription.items?.data ?? [])
       .map((item) => unixOrNull(item.current_period_end))
@@ -683,6 +746,170 @@ export class StripeService {
       endedAt: unixOrNull(subscription.ended_at),
       // On clover the period lives on the items; the latest end is when the plan stops.
       currentPeriodEnd: periodEnds.length > 0 ? Math.max(...periodEnds) : null,
+    };
+  }
+
+  // ── Business OS immediate cancel during a failed payment (plan payments P-7a.4; workplan §4.3; SA C-11, TQ-12) ──
+  // Called ONLY by `planSubscriptionManage.ts` (pinned by
+  // oneDontRenewPath.guard.test.ts, D2 SA W-7). The caller passes ids from OUR
+  // billing row (the subscription) or from the open-invoice list of that same
+  // subscription, cross-checked; nothing here comes from a request.
+
+  /**
+   * End OUR row's subscription NOW: `subscriptions.cancel` with EXACTLY
+   * `{ invoice_now: false, prorate: false }` (TQ-12): no final invoice and no
+   * proration credit. No `cancellation_details` and nothing else (TL, agreed
+   * with the deletion session's SX-2b: Stripe then records
+   * `cancellation_details.reason = 'cancellation_requested'`, X-4 2026-10-27).
+   * The key is the caller's, fresh PER ATTEMPT (D2's pattern, SX C-4).
+   *
+   * X-4 (sandbox, 2026-10-27): the open renewal invoice stays `open` and
+   * payable (Stripe only stops its automatic retries); paying it afterwards
+   * succeeds and sends `invoice.paid`. So the caller voids it (C-11).
+   */
+  async cancelBusinessOsSubscriptionNow(subscriptionId: string, options: { idempotencyKey: string }): Promise<BusinessOsCancelFacts> {
+    const subscription = await this.stripe.subscriptions.cancel(
+      subscriptionId,
+      { invoice_now: false, prorate: false },
+      { idempotencyKey: options.idempotencyKey }
+    );
+    const customer = subscription.customer;
+    const periodEnds = (subscription.items?.data ?? [])
+      .map((item) => unixOrNull(item.current_period_end))
+      .filter((value): value is number => value !== null);
+    return {
+      id: subscription.id,
+      status: subscription.status,
+      customerId: typeof customer === 'string' ? customer : customer?.id ?? null,
+      livemode: subscription.livemode,
+      cancelAtPeriodEnd: subscription.cancel_at_period_end,
+      cancelAt: unixOrNull(subscription.cancel_at),
+      endedAt: unixOrNull(subscription.ended_at),
+      currentPeriodEnd: periodEnds.length > 0 ? Math.max(...periodEnds) : null,
+    };
+  }
+
+  /**
+   * The OPEN invoices of OUR row's subscription (C-11), facts only. One page
+   * of at most 20; `hasMore` lets the caller alert rather than guess.
+   */
+  async listBusinessOsOpenSubscriptionInvoices(subscriptionId: string): Promise<{
+    invoices: Array<{ id: string; status: string | null; customerId: string | null; subscriptionId: string | null; livemode: boolean }>;
+    hasMore: boolean;
+  }> {
+    const page = await this.stripe.invoices.list({ subscription: subscriptionId, status: 'open', limit: 20 });
+    return {
+      invoices: page.data.map((invoice) => ({
+        id: invoice.id ?? '',
+        status: invoice.status ?? null,
+        customerId: refId(invoice.customer),
+        subscriptionId: subscriptionIdFromInvoice(invoice),
+        livemode: invoice.livemode,
+      })),
+      hasMore: page.has_more,
+    };
+  }
+
+  /**
+   * Void one open invoice (C-11), so its hosted "Pay now" link can no longer
+   * be paid (X-4: "Voided invoices cannot be paid."). The key is the
+   * caller's, per attempt. A second void of the same invoice is refused by
+   * Stripe ("This invoice isn't open"), never a second write.
+   */
+  async voidBusinessOsInvoice(invoiceId: string, options: { idempotencyKey: string }): Promise<{ id: string; status: string | null }> {
+    const invoice = await this.stripe.invoices.voidInvoice(invoiceId, {}, { idempotencyKey: options.idempotencyKey });
+    return { id: invoice.id ?? '', status: invoice.status ?? null };
+  }
+
+  // ── Business OS card and invoices (plan payments P-7a.2, workplan §4.4, §4.5; SA C-6, TQ-6 to TQ-8) ──
+  // The caller passes ids from OUR billing row and the checked configuration
+  // id; nothing here comes from a request. The legacy agent-platform
+  // `createPortalSession` / `listInvoices` below are NOT used for Business OS:
+  // they name no configuration (Stripe's default may allow cancel and plan
+  // switching) and check nothing.
+
+  /** The portal configuration, reduced to what `portalConfigurationProblems` checks. */
+  async retrieveBusinessOsPortalConfiguration(configurationId: string): Promise<PortalConfigurationFacts> {
+    const config = await this.stripe.billingPortal.configurations.retrieve(configurationId);
+    const features = config.features;
+    return {
+      id: config.id,
+      active: config.active,
+      livemode: config.livemode,
+      features: {
+        payment_method_update: features?.payment_method_update?.enabled === true,
+        invoice_history: features?.invoice_history?.enabled === true,
+        subscription_cancel: features?.subscription_cancel?.enabled === true,
+        subscription_update: features?.subscription_update?.enabled === true,
+        customer_update: features?.customer_update?.enabled === true,
+      },
+    };
+  }
+
+  /**
+   * A portal session on OUR configuration for OUR row's customer. `flow:
+   * 'payment_method_update'` opens on the card form and, with
+   * `after_completion` redirect (SA C-6), comes straight back to `returnUrl`.
+   * X-1 (2026-10-26, sandbox): a card added there becomes the customer's
+   * invoice default and the subscription's own default is CLEARED, so the
+   * next renewal uses the new card. X-5: `he` is not a portal locale (the
+   * caller sends `auto` for it).
+   *
+   * The URL is a bearer link to the customer's billing: returned for the
+   * owner's browser only, never logged, audited or put in an error.
+   */
+  async createBusinessOsPortalSession(params: {
+    customerId: string;
+    configurationId: string;
+    returnUrl: string;
+    locale: BusinessOsPortalLocale;
+    flow: 'payment_method_update' | null;
+  }): Promise<BusinessOsPortalSessionFacts> {
+    const { customerId, configurationId, returnUrl, locale, flow } = params;
+    const session = await this.stripe.billingPortal.sessions.create({
+      customer: customerId,
+      configuration: configurationId,
+      return_url: returnUrl,
+      locale,
+      ...(flow === 'payment_method_update'
+        ? { flow_data: { type: 'payment_method_update', after_completion: { type: 'redirect', redirect: { return_url: returnUrl } } } }
+        : {}),
+    });
+    return {
+      url: session.url,
+      customerId: session.customer,
+      configurationId: refId(session.configuration),
+      livemode: session.livemode,
+    };
+  }
+
+  /**
+   * One page of OUR row's customer's invoices, newest first (TQ-6: no
+   * auto-paging; `limit` is the caller's, at most 100). Facts only; the
+   * caller maps, filters and drops.
+   */
+  async listBusinessOsInvoices(params: { customerId: string; limit: number }): Promise<{
+    invoices: BusinessOsInvoiceListFacts[];
+    hasMore: boolean;
+  }> {
+    const limit = Math.max(1, Math.min(100, Math.floor(params.limit)));
+    const page = await this.stripe.invoices.list({ customer: params.customerId, limit });
+    return {
+      invoices: page.data.map((invoice) => ({
+        id: invoice.id ?? '',
+        customerId: refId(invoice.customer),
+        livemode: invoice.livemode,
+        status: invoice.status ?? null,
+        billingReason: invoice.billing_reason ?? null,
+        // A credit (negative total) is a real invoice too; only a non-integer is unreadable.
+        totalMinor: Number.isSafeInteger(invoice.total) ? invoice.total : null,
+        currency: typeof invoice.currency === 'string' ? invoice.currency : null,
+        created: unixOrNull(invoice.created),
+        hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+        invoicePdf: invoice.invoice_pdf ?? null,
+        priceIds: invoiceLinePriceIds(invoice).priceIds,
+      })),
+      hasMore: page.has_more,
     };
   }
 

@@ -267,6 +267,8 @@ export type DeletionCommitCodeView =
   | 'agents_option_refused'
   | 'delete_graph_refused'
   | 'delete_graph_unreadable'
+  | 'subscription_live'
+  | 'subscription_unreadable'
   | 'stripe_connected'
   | 'stripe_unreadable'
   | 'local_blocking'

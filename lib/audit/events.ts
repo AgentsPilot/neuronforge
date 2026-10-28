@@ -507,6 +507,11 @@ export const AUDIT_EVENTS = {
   // the owner. Details: subscription id, endsOn, livemode, mode 'period_end'
   // (P-7a.4 adds 'immediate'), outcome, actor 'owner', correlation id. Nothing
   // is refunded and the plan row is not written: access follows paid-through.
+  // D2 / SX-1 (SA Q-4): also `reasonCode`, a planLeaveReasons.ts code or null,
+  // never a label or free text. P-7a.4's immediate cancel carries it too (W-6).
+  // P-7a.4 (TQ-12, SA C-11): a cancel while a renewal is failing at Stripe ends
+  // the subscription NOW: same key, mode 'immediate', endsOn = when it ended,
+  // plus invoicesVoided / invoicesLeftOpen (null = could not tell, alerted).
   BOS_BILLING_SUBSCRIPTION_CANCELLED: 'BOS_BILLING_SUBSCRIPTION_CANCELLED',
   // Plan payments P-7a.1: an owner removed a pending cancellation before the
   // period end (reactivate). Same writer rules, entity and actor as
@@ -1229,7 +1234,7 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.BOS_BILLING_SUBSCRIPTION_CANCELLED]: {
     severity: 'info',
     complianceFlags: ['SOC2'],
-    description: 'A Business OS owner set their plan subscription to cancel at the period end (nothing refunded; access continues to the paid-through date)',
+    description: 'A Business OS owner cancelled their plan subscription: at the period end (nothing refunded; access continues to the paid-through date), or, while a renewal payment was failing, immediately with its open invoice voided (details.mode)',
   },
   [AUDIT_EVENTS.BOS_BILLING_SUBSCRIPTION_REACTIVATED]: {
     severity: 'info',

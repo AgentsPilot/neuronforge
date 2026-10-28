@@ -53,11 +53,49 @@ describe('PayingBreakdownSection', () => {
     expect(screen.getByTestId('section-paying-breakdown')).toHaveAttribute('data-status', 'unknown');
   });
 
+  it('MK9-FU-1: with Paid unknown, "Paid: Unknown" is said ONCE, with its reason, and there is no rate line', () => {
+    show({ ...READY, trials: { ...READY.trials, paid: null, paidBeforeEnd: null, rate: null } });
+    const section = screen.getByTestId('section-paying-breakdown');
+    expect(section.textContent?.match(/Paid: Unknown/g)).toHaveLength(1);
+    expect(screen.getByTestId('paying-breakdown-trials-line')).toHaveTextContent(
+      'Trials ended in this window: 12 · Paid: Unknown (first payments could not be read)'
+    );
+    expect(screen.queryByTestId('paying-breakdown-rate')).toBeNull();
+    // The other lines of the block are unchanged.
+    expect(screen.getByTestId('paying-breakdown-running')).toHaveTextContent('Still running: 7');
+  });
+
+  it('MK9-FU-1: a cut walk with Paid unknown keeps its cut-off rate line, and Paid: Unknown stays single', () => {
+    show({ ...READY, trials: { ...READY.trials, status: 'partial', paid: null, paidBeforeEnd: null, rate: null } });
+    expect(screen.getByTestId('paying-breakdown-rate')).toHaveTextContent(PAYING_BREAKDOWN.noRateCutOff);
+    expect(screen.getByTestId('section-paying-breakdown').textContent?.match(/Paid: Unknown/g)).toHaveLength(1);
+  });
+
   it('a cut walk: "at least" counts, a notice, and no rate', () => {
     show({ ...READY, trials: { ...READY.trials, status: 'partial', rate: null } });
     expect(screen.getByTestId('paying-breakdown-cut-off')).toBeInTheDocument();
     expect(screen.getByTestId('paying-breakdown-trials-line')).toHaveTextContent('At least 12');
     expect(screen.getByTestId('paying-breakdown-rate')).toHaveTextContent(PAYING_BREAKDOWN.noRateCutOff);
+  });
+
+  // MK9-FU-2 (SA-WP-FU2, option A): Comped rests on the same plan walk as the trial counts, so a cut walk
+  // makes it a lower bound too. The flag is the walk's own, carried on `trials.status`.
+  it('MK9-FU-2: a cut walk makes Comped and both its parts "At least"', () => {
+    show({ ...READY, trials: { ...READY.trials, status: 'partial', rate: null } });
+    expect(screen.getByTestId('paying-breakdown-comped-line')).toHaveTextContent(
+      'Comped: At least 6 · Assigned, no subscription At least 4 · Subscription ended or not paying At least 2'
+    );
+  });
+
+  it('MK9-FU-2: an exact walk shows the Comped figures plain, with no "At least"', () => {
+    show(READY);
+    expect(screen.getByTestId('paying-breakdown-comped-line')).not.toHaveTextContent(/At least/i);
+  });
+
+  it('MK9-FU-2: a cut walk with the paying read failed still says "Could not check", never "At least"', () => {
+    show({ comped: null, trials: { ...READY.trials, status: 'partial', rate: null } });
+    expect(screen.getByTestId('paying-breakdown-comped-unknown')).toHaveTextContent('Comped: Could not check');
+    expect(screen.getByTestId('paying-breakdown-comped')).not.toHaveTextContent(/At least/i);
   });
 
   it('Paying unknown is said in words', () => {

@@ -26,6 +26,15 @@
  *                   (or more than one item) → recorded WITHOUT the plan
  *                   (`assignsPlan` false), alerted and audited on a new row only
  *   10 apply        `business_os_apply_plan_payment`, then `recordPlanChange`
+ *   10a late pay    FU-P7a4-1 (SA R-1 to R-6): AFTER the apply returned, the
+ *                   pure `paidAfterEnd` reads the step-9 subscription facts
+ *                   (no new call, no new read). When Stripe says the
+ *                   subscription ended before the invoice's period end AND the
+ *                   money came after that end, one `error` + `alert: true`
+ *                   line `bos_billing_paid_after_end`, on a NEW money row only
+ *                   (`applied` / `recorded`, or `subscription_conflict` with a
+ *                   new refusal row). Alert only: the outcome is unchanged and
+ *                   an operator decides honour vs refund
  *   failed / action required (P-6a.2, workplan §5.3, §5.4; SA C-1 to C-3, U-10):
  *   8  record       one `invoice_payment_failed` / `payment_action_required`
  *                   history row for EVERY plan invoice (SA Q-2, Q-8)
@@ -94,7 +103,7 @@ import type Stripe from 'stripe';
 
 import { AUDIT_FLUSH_TIMEOUT_MS } from '@/lib/audit/auditTimeouts';
 import type { Logger } from '@/lib/logger';
-import type { StripeService } from '@/lib/stripe/StripeService';
+import type { BusinessOsCancellationReason, StripeService } from '@/lib/stripe/StripeService';
 import {
   isHostedInvoiceUrl,
   type BusinessOsBillingAccount,
@@ -437,6 +446,89 @@ async function checkInvoice(
   return { ctx, account, accountId, facts };
 }
 
+// ── FU-P7a4-1: a plan invoice paid after its subscription ended ─────────────
+
+/** What `paidAfterEnd` found: Stripe's facts only (SA R-1). */
+export interface PaidAfterEndFacts {
+  /** Stripe's `ended_at`, as ISO. */
+  subscriptionEndedAt: string;
+  subscriptionStatus: string;
+  cancellationReason: BusinessOsCancellationReason | null;
+}
+
+/**
+ * FU-P7a4-1 (SA ruling 1 on P-7a.4 deviation 1; R-1 to R-6). Pure: no I/O, no
+ * `await`, never throws (anything unreadable answers `null`). Fires when, by
+ * Stripe's FRESH read alone (R-1), the subscription ended before the period
+ * the invoice pays for was over AND the money came after that end (R-3):
+ *   1  `endedAt` set (a positive, finite unix time)
+ *   2  `periodEnd > endedAt`: a period-end cancel's last invoice (period end
+ *      at or before `ended_at`) never fires
+ *   3  `paidAt > endedAt`: a late delivery of a payment made while the
+ *      subscription was live never fires
+ * The answer feeds ONE log line; it never reaches `applyPlanPayment`, the
+ * U-4 guard or the held-subscription logic (R-6).
+ */
+export function paidAfterEnd(
+  facts: { periodEnd: string; paidAt: string | null },
+  subscription: { endedAt: number | null; status: string; cancellationReason?: BusinessOsCancellationReason | null }
+): PaidAfterEndFacts | null {
+  try {
+    const endedAt = subscription.endedAt;
+    if (typeof endedAt !== 'number' || !Number.isFinite(endedAt) || endedAt <= 0) return null;
+    const endedMs = endedAt * 1000;
+    const periodEndMs = typeof facts.periodEnd === 'string' ? Date.parse(facts.periodEnd) : NaN;
+    const paidMs = typeof facts.paidAt === 'string' ? Date.parse(facts.paidAt) : NaN;
+    if (!Number.isFinite(periodEndMs) || !Number.isFinite(paidMs)) return null;
+    if (!(periodEndMs > endedMs) || !(paidMs > endedMs)) return null;
+    return {
+      subscriptionEndedAt: new Date(endedMs).toISOString(),
+      subscriptionStatus: String(subscription.status),
+      cancellationReason: subscription.cancellationReason ?? null,
+    };
+  } catch {
+    // A time `toISOString` cannot hold, or a hostile getter: no alert, never a throw.
+    return null;
+  }
+}
+
+/** The alert's context: the helper's facts plus our row's, which decide nothing (R-1). */
+interface PaidAfterEndAlert extends PaidAfterEndFacts {
+  billingRowId: string;
+  /** Our row's `ended_at`, only when it holds this invoice's subscription; else null. */
+  recordEndedAt: string | null;
+}
+
+/** The one `bos_billing_paid_after_end` line. Ids, amounts and dates only: no owner text, no PII, no metadata values. */
+function logPaidAfterEnd(
+  log: Logger,
+  alert: PaidAfterEndAlert,
+  ids: { accountId: string; invoiceId: string; subscriptionId: string; livemode: boolean; stripeEventId: string },
+  facts: PlanInvoiceFacts,
+  outcome: { status: string; eventRowId: string; planWritten: boolean; tierBefore: string | null; tierAfter: string | null }
+): void {
+  log.error(
+    {
+      event: 'bos_billing_paid_after_end',
+      alert: true,
+      ...ids,
+      billingRowId: alert.billingRowId,
+      ...outcome,
+      tier: facts.tier,
+      billingReason: facts.billingReason,
+      amountMinor: facts.amountMinor,
+      currency: 'usd',
+      periodEnd: facts.periodEnd,
+      paidAt: facts.paidAt,
+      subscriptionEndedAt: alert.subscriptionEndedAt,
+      subscriptionStatus: alert.subscriptionStatus,
+      cancellationReason: alert.cancellationReason,
+      recordEndedAt: alert.recordEndedAt,
+    },
+    'Business OS plan invoice paid after its subscription ended; outcome unchanged, operator to decide honour or refund'
+  );
+}
+
 // ── invoice.paid ────────────────────────────────────────────────────────────
 
 /** Apply one paid plan invoice. Returns when it is done (applied, recorded, replayed or refused); throws to retry. */
@@ -513,10 +605,22 @@ export async function applyPaidPlanInvoice(event: Stripe.Event, log: Logger, dep
   });
   if (applied.error || !applied.data) throw applied.error ?? new PlanPaymentRetryError('apply_failed');
 
+  // FU-P7a4-1 (R-6): read only AFTER the apply returned, so nothing it
+  // answers can reach the apply. Stripe's step-9 facts alone decide (R-1).
+  const lateEnd = paidAfterEnd(facts, subscription);
+
   await afterApply(deps, ctx, accountId, facts, applied.data, {
     billingCycleAnchor: isoFromUnix(subscription.billingCycleAnchor),
     secondSubscription: held !== null && held !== facts.subscriptionId && replacesSubscriptionId === null,
     upgradeNotApplied,
+    paidAfterEnd:
+      lateEnd === null
+        ? null
+        : {
+            ...lateEnd,
+            billingRowId: account.id,
+            recordEndedAt: account.stripeSubscriptionId === facts.subscriptionId ? account.endedAt : null,
+          },
   });
 }
 
@@ -673,7 +777,7 @@ async function afterApply(
   accountId: string,
   facts: PlanInvoiceFacts,
   result: BusinessOsApplyPlanPaymentResult,
-  extra: { billingCycleAnchor: string; secondSubscription: boolean; upgradeNotApplied: boolean }
+  extra: { billingCycleAnchor: string; secondSubscription: boolean; upgradeNotApplied: boolean; paidAfterEnd?: PaidAfterEndAlert | null }
 ): Promise<void> {
   const { event, livemode, log } = ctx;
   const ids = {
@@ -693,6 +797,16 @@ async function afterApply(
         { event: 'bos_billing_invoice_applied', status: result.status, planWritten: result.planWritten, anchorSet: result.anchorSet, tier: facts.tier, ...ids },
         'Business OS plan invoice applied'
       );
+      // FU-P7a4-1: at the commit, beside the line above, before the post-commit chain.
+      if (extra.paidAfterEnd) {
+        logPaidAfterEnd(log, extra.paidAfterEnd, ids, facts, {
+          status: result.status,
+          eventRowId: result.eventRowId,
+          planWritten: result.planWritten,
+          tierBefore: result.tierBefore,
+          tierAfter: result.tierAfter,
+        });
+      }
       // C-4 (as amended by SA F-1): the post-commit chain is timed on its own
       // line, written once that chain has settled.
       const committedAt = Date.now();
@@ -729,6 +843,17 @@ async function afterApply(
         { event: 'bos_billing_payment_refused', reason: refusalReason, eventRowId: result.eventRowId, ...ids, alert: true },
         'Business OS plan payment refused: subscription conflict'
       );
+      // FU-P7a4-1 (SA R-4): on a NEW refusal row only, so it fires once (e.g.
+      // the owner re-subscribed, then paid the ended subscription's invoice).
+      if (extra.paidAfterEnd && result.eventRowId !== null) {
+        logPaidAfterEnd(log, extra.paidAfterEnd, ids, facts, {
+          status: result.status,
+          eventRowId: result.eventRowId,
+          planWritten: false,
+          tierBefore: null,
+          tierAfter: null,
+        });
+      }
       if (result.eventRowId !== null) {
         await deps.recordPlanChange({
           accountId,

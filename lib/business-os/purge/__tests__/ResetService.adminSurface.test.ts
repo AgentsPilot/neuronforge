@@ -41,6 +41,23 @@ jest.mock('@/lib/repositories/BusinessPurgeRepository', () => ({
   ),
 }));
 
+/*
+ * Plan payments P-7a.3 (PF-14; SA C-9): control 3 reads the target's plan
+ * billing rows (both modes) through `hasLivePlanSubscription`. Faked at the
+ * repository, recorded in the same call and argument logs as `billingRead`.
+ * Default: no billing row, so every test above it runs as before.
+ */
+const billing = { findByUser: jest.fn() };
+jest.mock('@/lib/repositories/BusinessOsBillingAccountRepository', () => ({
+  businessOsBillingAccountRepository: {
+    findByUser: (...a: unknown[]) => {
+      calls.push('billingRead');
+      (args.billingRead ??= []).push(a);
+      return billing.findByUser(...a);
+    },
+  },
+}));
+
 const auditLog = jest.fn().mockResolvedValue(undefined);
 jest.mock('@/lib/services/AuditTrailService', () => ({
   AuditTrailService: { getInstance: () => ({ log: auditLog }) },
@@ -113,6 +130,7 @@ beforeEach(() => {
   calls.length = 0;
   for (const k of Object.keys(args)) delete args[k];
   jest.clearAllMocks();
+  billing.findByUser.mockResolvedValue({ data: null, error: null });
   gate.mockReset().mockImplementation(async () => {
     calls.push('gate');
     return { ok: true };
@@ -246,5 +264,33 @@ describe('tenant pin (tenant-isolation-guard)', () => {
     const parsed = JSON.parse(body);
     expect(JSON.stringify(parsed)).toContain(ADMIN);
     expect(body).not.toMatch(/actorEmail/);
+  });
+});
+
+describe('P-7a.3 control 3 on the admin arm (SA C-9: agrees with R-3)', () => {
+  it('a live plan subscription refuses before the Connect read, the snapshot and the gate; reads the TARGET only', async () => {
+    happyPath();
+    billing.findByUser.mockImplementation(async (_id: string, livemode: boolean) => ({
+      data: livemode ? { subscriptionStatus: 'active', stripeSubscriptionId: 'sub_live1', endedAt: null } : null,
+      error: null,
+    }));
+
+    const outcome = await adminRun();
+
+    expect(outcome).toMatchObject({ status: 'refused', reason: 'subscription_live', snapshotWritten: false, rowsDeleted: 0 });
+    expect(calls).not.toContain('resolveConnectAccounts');
+    expect(calls).not.toContain('writeSnapshot');
+    expect(gate).not.toHaveBeenCalled();
+    expect(auditLog).not.toHaveBeenCalled();
+    for (const call of args.billingRead) expect(call[0]).toBe(TARGET);
+    expect(JSON.stringify(args.billingRead)).not.toContain(ADMIN);
+  });
+
+  it('no subscription: control 3 reads both modes for the target, then the run goes on as before', async () => {
+    happyPath();
+    const outcome = await adminRun();
+    expect(outcome.status).toBe('completed');
+    expect(calls.indexOf('billingRead')).toBeLessThan(calls.indexOf('resolveConnectAccounts'));
+    expect(args.billingRead.map((call) => call[1]).sort()).toEqual([false, true]);
   });
 });

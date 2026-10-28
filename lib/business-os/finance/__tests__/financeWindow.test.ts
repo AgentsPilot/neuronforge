@@ -39,7 +39,8 @@ describe('k1Spans', () => {
   it('Oct 9 2026: previous span is Sep 1 to Sep 9 at the same time, and before the cut-over (true today)', () => {
     const s = k1Spans(new Date('2026-10-09T10:30:00.000Z'));
     expect(iso(s.current.from)).toBe('2026-10-01T00:00:00.000Z');
-    expect(iso(s.current.to)).toBe('2026-10-09T10:30:00.000Z');
+    // MK2-FU-1: the current span ends at the next UTC midnight, as This month's window does.
+    expect(iso(s.current.to)).toBe('2026-10-10T00:00:00.000Z');
     expect(iso(s.previous.from)).toBe('2026-09-01T00:00:00.000Z');
     expect(iso(s.previous.to)).toBe('2026-09-09T10:30:00.000Z');
     expect(s.previousBeforeCutover).toBe(true);
@@ -68,11 +69,21 @@ describe('k1Spans', () => {
     expect(iso(s.previous.to)).toBe('2026-12-15T12:00:00.000Z');
   });
 
-  it('exactly at a month start: both spans are empty (nothing to read, exact 0)', () => {
+  it('exactly at a month start: the previous span is empty; the current one is the 1st (MK2-FU-1)', () => {
     const s = k1Spans(new Date('2026-12-01T00:00:00.000Z'));
-    expect(isEmptySpan(s.current)).toBe(true);
+    expect(isEmptySpan(s.current)).toBe(false);
+    expect([iso(s.current.from), iso(s.current.to)]).toEqual(['2026-12-01T00:00:00.000Z', '2026-12-02T00:00:00.000Z']);
     expect(isEmptySpan(s.previous)).toBe(true);
     expect(iso(s.previous.from)).toBe(iso(s.previous.to));
+  });
+
+  it('MK2-FU-1: the current span is exactly the This month window, on the last day of a month and at 23:59', () => {
+    for (const at of ['2026-10-31T23:59:59.999Z', '2026-12-31T00:00:00.000Z', '2028-02-29T12:00:00.000Z', '2026-10-14T12:00:00.000Z']) {
+      const now = new Date(at);
+      const s = k1Spans(now);
+      const w = resolveFinanceWindow({ preset: 'this_month' }, now);
+      expect({ at, from: iso(s.current.from), to: iso(s.current.to) }).toEqual({ at, from: iso(w.start), to: iso(w.end) });
+    }
   });
 });
 

@@ -13,10 +13,13 @@ import { join } from 'path';
 import { COHORTS } from '@/lib/business-os/entitlements/config/cohorts';
 import { LIFECYCLE_CONFIG } from '@/lib/business-os/entitlements/config/lifecycle';
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
-import { freeAccessEndedByPurchase, hasOpenEndedFreeAccess } from '@/lib/business-os/entitlements/freeAccess';
+import { freeAccessAfterPaidTier, freeAccessEndedByPurchase, hasOpenEndedFreeAccess } from '@/lib/business-os/entitlements/freeAccess';
 import { deriveLifecycle, type LifecycleInputs } from '@/lib/business-os/entitlements/lifecycle';
 import { account } from '@/lib/business-os/entitlements/__fixtures__/accounts';
 import type { CohortConfig } from '@/lib/business-os/entitlements/config/cohorts';
+import { en } from '@/lib/business-os/translations/en';
+import { he } from '@/lib/business-os/translations/he';
+import { es } from '@/lib/business-os/translations/es';
 
 const NOW = new Date('2026-10-13T12:00:00.000Z');
 const PAST = '2026-10-01T00:00:00.000Z';
@@ -168,5 +171,63 @@ describe('freeAccessEndedByPurchase — the sentence beside the Choose list (P-4
     expect(freeAccessEndedByPurchase({ basis: dated.basis, lifecycle: dated }, NOW, renamed)).toBe('admin_dated');
     const trial = deriveLifecycle(account({ cohort: 'beta_preview', onboardingStartedAt: '2026-10-10T00:00:00.000Z' }), inputs, NOW);
     expect(freeAccessEndedByPurchase({ basis: trial.basis, lifecycle: trial }, NOW, renamed)).toBe('timed');
+  });
+});
+
+describe('freeAccessAfterPaidTier — BQ-5, the Founding Partner sentence (P-7a.3)', () => {
+  const DAY = 86400000;
+  const MARGIN_MS = LIFECYCLE_CONFIG.renewalSettlementMarginHistory[0].days * DAY;
+  const PAID_THROUGH = '2026-11-10T00:00:00.000Z';
+  const plus = (iso: string, ms: number) => new Date(Date.parse(iso) + ms).toISOString();
+  const paying = (overrides: Parameters<typeof account>[0] = {}) =>
+    account({ tier: TIER, planVersion: 1, tierExpiresAt: PAID_THROUGH, cohort: ADMIN_DATED, ...overrides });
+
+  it('free access ending after paid-through + the margin: its end date', () => {
+    const until = '2027-03-01T00:00:00.000Z';
+    expect(freeAccessAfterPaidTier(paying({ cohortExpiresAt: until }), INPUTS)).toEqual({ endsAt: until });
+  });
+
+  it('the boundary is paid-through + the 24 h margin, exclusive', () => {
+    const atMargin = plus(PAID_THROUGH, MARGIN_MS);
+    expect(freeAccessAfterPaidTier(paying({ cohortExpiresAt: atMargin }), INPUTS)).toBeNull();
+    expect(freeAccessAfterPaidTier(paying({ cohortExpiresAt: plus(atMargin, 1000) }), INPUTS)).toEqual({ endsAt: plus(atMargin, 1000) });
+    // Inside the margin, or before the paid-through date: free access is over by then.
+    expect(freeAccessAfterPaidTier(paying({ cohortExpiresAt: plus(PAID_THROUGH, 12 * 3600000) }), INPUTS)).toBeNull();
+    expect(freeAccessAfterPaidTier(paying({ cohortExpiresAt: '2026-11-01T00:00:00.000Z' }), INPUTS)).toBeNull();
+  });
+
+  it.each([
+    ['no account', null],
+    ['no tier', account({ cohort: ADMIN_DATED, cohortExpiresAt: FUTURE })],
+    ['an open-ended paid tier (nothing lapses)', paying({ tierExpiresAt: null, cohortExpiresAt: '2027-03-01T00:00:00.000Z' })],
+    ['no cohort', paying({ cohort: null })],
+    ['open-ended free access (no date to name)', paying({ cohortExpiresAt: null })],
+    ['a timed cohort (a trial is not Founding Partner free access)', paying({ cohort: TIMED, onboardingStartedAt: '2026-11-05T00:00:00.000Z' })],
+    ['a cohort the config does not know', paying({ cohort: 'not_a_cohort', cohortExpiresAt: '2027-03-01T00:00:00.000Z' })],
+  ])('%s → null', (_label, acct) => {
+    expect(freeAccessAfterPaidTier(acct, INPUTS)).toBeNull();
+  });
+
+  it('agrees with the lifecycle: whenever it names a date, the account IS on that free access after the margin', () => {
+    const until = '2027-03-01T00:00:00.000Z';
+    const acct = paying({ cohortExpiresAt: until });
+    const after = deriveLifecycle(acct, INPUTS, new Date(plus(PAID_THROUGH, MARGIN_MS)));
+    expect(after.basis).toEqual({ kind: 'cohort', cohort: ADMIN_DATED });
+    expect(after.accessEndsAt).toBe(freeAccessAfterPaidTier(acct, INPUTS)!.endsAt);
+  });
+
+  // SA code review P-7a.3, F-4 (deviation 5): the rule is structural (any
+  // admin-dated cohort), but the copy names the cohort. Tripwire: if a second
+  // admin-dated cohort is added, or the one cohort's label stops matching the
+  // sentence in any language, this fails and the sentence must take the label
+  // from the server (a slot) instead.
+  it('the copy names the ONE admin-dated cohort, in its own label, in every language', () => {
+    const adminDated = cohortEntries.filter(([, config]) => !config.durationHistory);
+    expect(adminDated).toHaveLength(1);
+    const labels = (adminDated[0][1] as unknown as { labels: Record<'en' | 'he' | 'es', string> }).labels;
+    const dictionaries = { en, he, es } as unknown as Record<'en' | 'he' | 'es', Record<string, string>>;
+    for (const locale of ['en', 'he', 'es'] as const) {
+      expect(dictionaries[locale]['plan.manage.cancel_confirm_founding']).toContain(labels[locale]);
+    }
   });
 });

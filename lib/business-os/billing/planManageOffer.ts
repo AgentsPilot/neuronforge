@@ -22,10 +22,33 @@
  * | switch off | `none` / `switch_off` |
  * | no row, no subscription id | `none` / `not_subscribed` |
  * | `ended_at` set, or a status that is not live (`canceled`, `incomplete`, `incomplete_expired`, `paused`, unknown) | `none` / `not_active` |
- * | a renewal failure open (`past_due`, `unpaid`, or `failed_attempts > 0`) | `none` / `payment_failed` (P-7a.4 turns Cancel on here; until then the screen says "contact us") |
+ * | a renewal failure open (`past_due`, `unpaid`, or `failed_attempts > 0` on a live status) | `failing`: may cancel, and the cancel ENDS THE PLAN NOW (P-7a.4, BQ-3 = A) |
  * | `active` / `trialing` (TQ-14: a trial behaves as active), cancel flag set, period end unknown or past | `none` / `period_over` |
  * | `active` / `trialing`, cancel flag set | `cancelling`: may reactivate |
+ * | `active` / `trialing`, a plan change pending (`pending_tier`, or an open checkout not yet expired) | `none` / `change_pending` (D2) |
  * | `active` / `trialing` | `renewing`: may cancel |
+ *
+ * `change_pending` (D2 / SX-1, workplan
+ * docs/workplans/BUSINESS_OS_D2_PLAN_CANCEL_ENGINE_WORKPLAN.md §3.2; SA-2, SA
+ * W-3) refuses the CANCEL side only: it sits after the cancelling branch, so a
+ * cancelling plan is always kept-able. Today neither state can occur: nothing
+ * writes `pending_tier` (P-7b.2's column), and no checkout lock can be open
+ * beside a live subscription (`planPurchaseOffer` refuses `paying`; the
+ * subscribed mirror clears it). It is P-7b.2's defence. An open checkout counts
+ * only while `open_checkout_expires_at` is later than `now`, as the
+ * repository's own `open_checkout_expires_at.lte.now` rule. `planManageWire`
+ * shows nothing for it, as for `period_over`.
+ *
+ * P-7a.4 (workplan §4.3; BQ-3 = A, user 2026-10-26; SA C-11, TQ-12): a failed
+ * renewal no longer hides Cancel. `failing` is OUR row's guess only: the
+ * engine decides immediate vs period end on Stripe's FRESH status (SA's
+ * P-7a.1 binding note), so a row Stripe already cured gets a period-end
+ * cancel, never an immediate end of a paid-up plan. `failing` offers no
+ * Reactivate (nothing to keep: the renewal is unpaid).
+ *
+ * P-7a.2 adds `planCardAndInvoicesOffer` (below): "Update card" and
+ * "Invoices", behind the same switch, for any row with a Business OS
+ * subscription on it, ended included.
  *
  * It refuses a billing ACTION, never a capability: nothing here calls the
  * entitlements module.
@@ -42,6 +65,12 @@ export interface PlanManageFacts {
   currentPeriodEnd: string | null;
   endedAt: string | null;
   failedAttempts: number;
+  /** D2 (SA W-3): `pending_tier`. Optional so callers that pass older shapes stay valid; absent = none. */
+  pendingTier?: string | null;
+  /** D2 (SA W-3): `open_checkout_session_id`. Absent = none. */
+  openCheckoutSessionId?: string | null;
+  /** D2 (SA W-3): `open_checkout_expires_at`, ISO. */
+  openCheckoutExpiresAt?: string | null;
 }
 
 export interface PlanManageSwitches {
@@ -49,9 +78,10 @@ export interface PlanManageSwitches {
   pricesEnabled: boolean;
 }
 
-export type PlanManageNoneReason = 'switch_off' | 'not_subscribed' | 'not_active' | 'payment_failed' | 'period_over';
+export type PlanManageNoneReason = 'switch_off' | 'not_subscribed' | 'not_active' | 'period_over' | 'change_pending';
 
-export type PlanManageOffer = { kind: 'renewing' } | { kind: 'cancelling' } | { kind: 'none'; reason: PlanManageNoneReason };
+/** P-7a.4: `failing` replaces P-7a.1's `none` / `payment_failed`: Cancel is offered, and ends the plan now. */
+export type PlanManageOffer = { kind: 'renewing' } | { kind: 'cancelling' } | { kind: 'failing' } | { kind: 'none'; reason: PlanManageNoneReason };
 
 /** Stripe statuses in which a subscription renews (TQ-14: `trialing` as `active`). */
 export const MANAGEABLE_STATUSES: readonly string[] = ['active', 'trialing'];
@@ -64,8 +94,13 @@ export function planManageOffer(facts: PlanManageFacts | null, switches: PlanMan
   if (facts.endedAt !== null) return { kind: 'none', reason: 'not_active' };
 
   const status = facts.subscriptionStatus;
-  const failureOpen = (status !== null && PAYMENT_FAILED_STATUSES.includes(status)) || facts.failedAttempts > 0;
-  if (failureOpen) return { kind: 'none', reason: 'payment_failed' };
+  // P-7a.4: a failure counts only on a status that is still live; `failed_attempts`
+  // left on a `canceled` / `paused` / unknown row offers nothing (as before P-7a.4,
+  // where it offered only the "contact us" line).
+  const failureOpen =
+    (status !== null && PAYMENT_FAILED_STATUSES.includes(status)) ||
+    (facts.failedAttempts > 0 && status !== null && MANAGEABLE_STATUSES.includes(status));
+  if (failureOpen) return { kind: 'failing' };
   if (status === null || !MANAGEABLE_STATUSES.includes(status)) return { kind: 'none', reason: 'not_active' };
 
   if (facts.cancelAtPeriodEnd) {
@@ -73,7 +108,17 @@ export function planManageOffer(facts: PlanManageFacts | null, switches: PlanMan
     if (!Number.isFinite(periodEnd) || periodEnd <= now.getTime()) return { kind: 'none', reason: 'period_over' };
     return { kind: 'cancelling' };
   }
+  if (hasPendingChange(facts, now)) return { kind: 'none', reason: 'change_pending' };
   return { kind: 'renewing' };
+}
+
+/** D2 (SA W-3): a tier change waiting, or a checkout lock that has not expired yet. */
+function hasPendingChange(facts: PlanManageFacts, now: Date): boolean {
+  if (facts.pendingTier) return true;
+  if (!facts.openCheckoutSessionId) return false;
+  const expiresAt = facts.openCheckoutExpiresAt ? Date.parse(facts.openCheckoutExpiresAt) : Number.NaN;
+  // Unknown expiry with a session id set: treat as open (fail closed for a cancel; Keep is unaffected).
+  return !Number.isFinite(expiresAt) || expiresAt > now.getTime();
 }
 
 /**
@@ -84,13 +129,53 @@ export function planManageOffer(facts: PlanManageFacts | null, switches: PlanMan
 export interface PlanManageWire {
   cancel: boolean;
   reactivate: boolean;
-  /** A renewal failed: Cancel is not offered yet; the screen says "update your card, or contact us". */
+  /**
+   * A renewal failed. P-7a.4: set together with `cancel`, and the screen's
+   * confirmation says the plan ENDS NOW (BQ-3 = A). Stripe's fresh status
+   * decides the real mode; the route's answer says which happened.
+   */
   paymentFailed: boolean;
+  /**
+   * P-7a.2: "Update card" and "Invoices" (`planCardAndInvoicesOffer`). Present
+   * only when true, so a payload from before P-7a.2 reads the same.
+   */
+  cardAndInvoices?: true;
 }
 
-export function planManageWire(offer: PlanManageOffer): PlanManageWire | null {
-  if (offer.kind === 'renewing') return { cancel: true, reactivate: false, paymentFailed: false };
-  if (offer.kind === 'cancelling') return { cancel: false, reactivate: true, paymentFailed: false };
-  if (offer.reason === 'payment_failed') return { cancel: false, reactivate: false, paymentFailed: true };
+/**
+ * The wire for the screen. `cardAndInvoices` is `planCardAndInvoicesOffer`'s
+ * answer for the same row (P-7a.2); it may be the only control (an ended
+ * subscription still has its receipts).
+ */
+export function planManageWire(offer: PlanManageOffer, cardAndInvoices = false): PlanManageWire | null {
+  const docs = cardAndInvoices ? { cardAndInvoices: true as const } : {};
+  if (offer.kind === 'renewing') return { cancel: true, reactivate: false, paymentFailed: false, ...docs };
+  if (offer.kind === 'cancelling') return { cancel: false, reactivate: true, paymentFailed: false, ...docs };
+  if (offer.kind === 'failing') return { cancel: true, reactivate: false, paymentFailed: true, ...docs };
+  if (cardAndInvoices) return { cancel: false, reactivate: false, paymentFailed: false, ...docs };
   return null;
+}
+
+// ── Card and invoices (P-7a.2; workplan §4.1, §4.4, §4.5; SA C-1, TQ-6) ─────
+
+/** The facts the card-and-invoices rule reads: OUR billing row only. */
+export interface PlanCardAndInvoicesFacts {
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+}
+
+/**
+ * THE ONE PREDICATE behind "Update card" / "Invoices" on the screen and the
+ * portal and invoices routes' our-data step: the price-recognition switch on
+ * (C-1, BQ-1: never the checkout switch, so pausing sales never hides a
+ * payer's card or receipts), and our row holds a Business OS customer AND a
+ * subscription id, live or ended (an ex-customer may still want a receipt).
+ *
+ * The subscription id is required as well as the customer (a deliberate
+ * narrowing of workplan §4.1's "customer exists"): the customer is created
+ * when a checkout STARTS, so an owner who opened a checkout and never paid
+ * would otherwise be offered "Update card" for a plan they never had.
+ */
+export function planCardAndInvoicesOffer(facts: PlanCardAndInvoicesFacts | null, switches: PlanManageSwitches): boolean {
+  return switches.pricesEnabled && !!facts && !!facts.stripeCustomerId && !!facts.stripeSubscriptionId;
 }

@@ -53,6 +53,7 @@ const READERS: Record<string, Array<() => boolean>> = {
   ADMIN_BUSINESS_DELETE_ENABLED: [featureFlags.isAdminBusinessDeleteEnabled],
   BUSINESS_OS_CREDITS_BOOST_ENABLED: [featureFlags.isBusinessOsCreditsBoostEnabled],
   BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED: [featureFlags.isAccountSelfDeleteEnabled],
+  BUSINESS_OS_MODULE_EXPORT_ENABLED: [featureFlags.isModuleExportEnabled],
   NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME: [featureFlags.isEarlySessionOutcomeEnabled],
   BUSINESS_OS_PLAN_CHECKOUT_ENABLED: [isPlanCheckoutEnabled],
   BUSINESS_OS_PLAN_PRICES_ENABLED: [isPlanPriceRecognitionEnabled],
@@ -95,9 +96,9 @@ describe('environment catalogue', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('K-3 browser-inlined scope is exactly the NEXT_PUBLIC_ names plus both Nango names', () => {
+  it('K-3 browser-inlined scope is exactly the NEXT_PUBLIC_ names', () => {
     for (const entry of ENVIRONMENT_CATALOGUE) {
-      const expected = entry.name.startsWith('NEXT_PUBLIC_') || entry.name === 'NANGO_PUBLIC_KEY' || entry.name === 'NANGO_SECRET_KEY';
+      const expected = entry.name.startsWith('NEXT_PUBLIC_');
       expect({ name: entry.name, browser: entry.scope === 'browser-inlined' }).toEqual({ name: entry.name, browser: expected });
     }
   });

@@ -55,4 +55,30 @@ describe('BlockKpi (shared since MK-3a)', () => {
 });
 
 /** Recorded from `app/admin/finance/components/BlockKpi.tsx` on origin/main f8d32d60, before the move. */
-const BLOCK_KPI_SHA256 = '99c6969c1c394f247177a882555aba230c92cad8208edf9a498e3c73bc24fad4';
+const BLOCK_KPI_SHA256 = 'd25574961e3c6024f6e360f006642c3e9f4ff9ab68fb8037f46731c18f71dfe0';
+
+// ── Client payments in approximate dollars (FIN BD-56, slice 1b, SA-Q-5, CPU-5): the optional note ──
+// Appended only: the cases above, and the hash, are unedited.
+describe('BlockKpi note (slice 1b, SA-Q-5)', () => {
+  it('N-1: a note renders inside the group, under the figure; the accessible name is unchanged', () => {
+    render(
+      <BlockKpi
+        label="Client payments processed"
+        value="≈ $12,346"
+        indicator={{ kind: 'lagging', definition: 'D.' }}
+        note="Our customers' revenue, not ours"
+        testId="takings-usd"
+      />
+    );
+    const box = screen.getByTestId('takings-usd-kpi');
+    expect(box).toHaveAttribute('aria-label', 'Client payments processed, ≈ $12,346');
+    const note = screen.getByTestId('takings-usd-note');
+    expect(note).toHaveTextContent("Our customers' revenue, not ours");
+    expect(box).toContainElement(note);
+  });
+
+  it('N-2: no note prop, no note element (the existing callers)', () => {
+    render(<BlockKpi label="L" value="1" indicator={{ kind: 'leading', definition: 'D.' }} testId="y" />);
+    expect(screen.queryByTestId('y-note')).toBeNull();
+  });
+});
