@@ -76,7 +76,33 @@ describe('every action survived the move', () => {
   it('still lets an open meeting be called off at any time', () => {
     // Cancelling is the one action that does not depend on the meeting having
     // happened — legitimate before or after.
-    expect(actions).toMatch(/if \(!settled && onSetStatus\) \{/);
+    //
+    // `systemHeld` widens this and never narrows it: a row the automation
+    // closed is settled in name only, so calling it off stays reachable there
+    // too. The guard is that the clock is not a condition — not that the
+    // branch names exactly one.
+    expect(actions).toMatch(/if \(\(!settled \|\| systemHeld\) && onSetStatus\) \{/);
+  });
+
+  it('keeps every answer open on a meeting the automation closed', () => {
+    /*
+     * `auto_complete_meetings` marks an overdue meeting held because held is
+     * the only answer available to it. The date passing is not evidence the
+     * meeting happened, so all three answers stay open — and the confirmation
+     * is the one that bills, which the automation deliberately does not do.
+     *
+     * Checked here because the rule is one `const` feeding three branches: if
+     * it stops being read, the row silently goes back to offering nothing.
+     */
+    expect(actions).toMatch(/const systemHeld =/);
+    expect(actions).toMatch(/outcomeBy === 'system'/);
+    /* It reaches the no-show branch through `awaiting`… */
+    expect(actions).toMatch(/systemHeld;/);
+    /* …the cancel branch directly… */
+    expect(actions).toMatch(/\(!settled \|\| systemHeld\)/);
+    /* …and relabels the primary, because confirming is not "mark done". */
+    expect(actions).toMatch(/primaryLabel = systemHeld/);
+    expect(actions).toMatch(/crm\.booking\.action\.confirm_held/);
   });
 
   it('lets a meeting be moved until it has happened or been called off', () => {

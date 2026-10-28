@@ -324,7 +324,13 @@ describe('calling off one session is not cancelling the order', () => {
      * package would read as the whole thing being off. The session's own
      * endpoint stamps that hour, frees it, and leaves the other five.
      */
-    const confirm = drawerCode.slice(drawerCode.indexOf('onConfirm={async ({ proposalContinues })'));
+    /*
+     * Anchored on the parameter, not the whole destructuring: the dialog has
+     * since gained `addReplacement`, and pinning the exact argument list made
+     * this find nothing and assert against an empty string — which fails
+     * loudly, but for the wrong reason.
+     */
+    const confirm = drawerCode.slice(drawerCode.indexOf('onConfirm={async ({ proposalContinues'));
     const body = confirm.slice(0, confirm.indexOf('const data ='));
 
     expect(body).toContain('/outcome');

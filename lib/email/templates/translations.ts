@@ -817,6 +817,18 @@ export const emailTranslations = {
          the sentence stands on its own however the date is formatted. */
       he: (dateStr: string) => `הפגישה בוטלה · ${dateStr}`
     },
+    /*
+     * A cancellation that comes with its own replacement.
+     *
+     * The session list below already shows the new date; what it cannot say is
+     * WHY it is there. Without this line a client reads "your session is
+     * cancelled" over a list that grew a date on its own.
+     */
+    replacementBooked: {
+      en: (when: string) => `We have booked you a replacement session for ${when}.`,
+      es: (when: string) => `Te hemos reservado una sesión de reemplazo para el ${when}.`,
+      he: (when: string) => `קבענו עבורכם פגישה חלופית ל${when}.`
+    },
     meetingOnlyIntro: {
       en: (clientName: string) =>
         `Hello ${clientName}, the meeting below will not go ahead.`,
@@ -1818,6 +1830,27 @@ export const emailTranslations = {
       en: 'Payment Method',
       es: 'Método de Pago',
       he: 'אמצעי תשלום'
+    },
+    /*
+     * The VALUES, not just the label.
+     *
+     * The method arrived from the database and went straight into the email,
+     * so a Hebrew receipt read "אמצעי תשלום: card" — an English enum beside a
+     * translated label, on a document a client keeps.
+     *
+     * Keyed on what the column actually stores. `cheque` and `check` are both
+     * here because the API spells it one way and the rest of the product the
+     * other, and a receipt is the wrong place to discover that.
+     */
+    paymentMethodValues: {
+      card: { en: 'Card', es: 'Tarjeta', he: 'כרטיס אשראי' },
+      stripe: { en: 'Card', es: 'Tarjeta', he: 'כרטיס אשראי' },
+      cash: { en: 'Cash', es: 'Efectivo', he: 'מזומן' },
+      bank_transfer: { en: 'Bank transfer', es: 'Transferencia bancaria', he: 'העברה בנקאית' },
+      cheque: { en: 'Cheque', es: 'Cheque', he: 'צ׳ק' },
+      check: { en: 'Cheque', es: 'Cheque', he: 'צ׳ק' },
+      manual: { en: 'Recorded by hand', es: 'Registrado manualmente', he: 'נרשם ידנית' },
+      other: { en: 'Other', es: 'Otro', he: 'אחר' },
     },
     serviceLabel: {
       en: 'Service',

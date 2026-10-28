@@ -51,6 +51,15 @@ const BodySchema = z.object({
    * Defaults to false so a caller that does not ask never surprises a client.
    */
   notifyClient: z.boolean().optional(),
+  /**
+   * The hour booked IN PLACE of this one, when the owner took the offer.
+   *
+   * The caller books the replacement BEFORE recording the outcome, so the one
+   * mail the client receives can list it. This names it, so the mail can also
+   * explain it — otherwise the client reads "cancelled" over a list that grew
+   * a date by itself.
+   */
+  replacementStart: z.string().optional(),
   /** What the client is told, for a session called off. */
   reason: z.string().max(1000).optional(),
   /**
@@ -351,6 +360,27 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
      * visible on the journey and re-sendable.
      * ───────────────────────────────────────────────────────────────────────
      */
+    /*
+     * ── WHETHER THE CLIENT WAS ACTUALLY TOLD ────────────────────────────────
+     *
+     * `null` means no mail was due here — a held meeting, or an outcome the
+     * owner asked not to notify on. `false` means one was due and did not go,
+     * and that is the case the owner must see: the outcome below returns
+     * `success: true` either way, so a silent failure read on screen as "the
+     * client has been told".
+     *
+     * Measured on this account: of five meetings cancelled by an owner, two
+     * produced no client email and no `email_sends` row of any kind — nothing
+     * on the journey to notice, nothing to re-send, and a server log line as
+     * the only trace. Every refusal inside the sender was ruled out against
+     * those bookings (contact, address and service were all present and
+     * identical to the ones that did send), so the cause is still open. This
+     * does not fix that cause; it makes the next occurrence visible instead of
+     * silent, which is what it will take to find it.
+     */
+    let clientNotified: boolean | null = null;
+    let notifyError: string | null = null;
+
     if (parsed.data.notifyClient && status !== 'held' && result.data.startTime) {
       try {
         const { BookingEmailService } = await import('@/lib/services/BookingEmailService');
@@ -359,6 +389,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           status === 'cancelled'
             ? await BookingEmailService.sendCancellationEmail(bookingId, user.id, parsed.data.reason, {
                 sessionStart: result.data.startTime,
+                replacementStart: parsed.data.replacementStart ?? null,
                 /*
                  * ───────────────────────────────────────────────────────────
                  * THE MEETING'S EMAIL, NOT THE ORDER'S.
@@ -400,7 +431,14 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
                 /* So the session list marks THIS row, and so the money beside
                    it is whatever the decision above just made it. */
                 meetingId,
+                /* The hour booked to make up for it, when the owner took that
+                   offer. The mail then names it instead of inviting the client
+                   to choose one — the two are alternatives. */
+                replacementStart: parsed.data.replacementStart ?? null,
               });
+
+        clientNotified = mail.sent;
+        notifyError = mail.sent ? null : mail.error ?? 'The email did not go out';
 
         if (!mail.sent) {
           requestLogger.warn(
@@ -409,6 +447,10 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           );
         }
       } catch (err) {
+        /* Still not fatal — the outcome stands. But it is no longer silent. */
+        clientNotified = false;
+        notifyError = err instanceof Error ? err.message : 'The email threw';
+
         requestLogger.error({ err, meetingId, bookingId, status }, "A session's email threw");
       }
     }
@@ -433,6 +475,10 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       bookingId,
       status,
       billed: billed ? { stageId: billed.stageId, invoiceId: billed.invoiceId, amount: billed.amount } : null,
+      /* See `clientNotified` above: null = none was due, false = one was due
+         and did not go. The caller shows the owner the difference. */
+      clientNotified,
+      notifyError,
     });
   } catch (error) {
     requestLogger.error({ err: error }, 'Request failed');

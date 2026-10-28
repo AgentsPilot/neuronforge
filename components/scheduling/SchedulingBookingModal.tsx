@@ -1536,13 +1536,84 @@ export function SchedulingBookingModal({
       ? endOfBusinessLocal(formData.start_time, service.duration_minutes || 60, zone)
       : null;
 
-    if (end) {
-      setFormData(prev => ({ ...prev, service_id: serviceId, end_time: end }));
-    } else {
-      setFormData(prev => ({ ...prev, service_id: serviceId }));
+    /*
+     * ── SWAPPING THE SERVICE ASKS ITS QUESTIONS AGAIN ───────────────────────
+     *
+     * Everything below the service belongs TO the service, and keeping it
+     * across a swap carries one service's answers onto another:
+     *
+     *   the hour     chosen against the old duration and the old availability.
+     *                A 50-minute slot does not fit an 80-minute service, and
+     *                an unscheduled one has no hour at all — yet the field
+     *                kept whatever the last service left there
+     *   the form     "send the client form" is a decision about the old
+     *                service's intake. A quote or a course has no intake to
+     *                send, so the toggle was answering for a question the new
+     *                service does not ask
+     *
+     * Cleared rather than recomputed, because re-asking is the point: the
+     * steps collapse once answered, so a silently carried-over hour reads as a
+     * decision the owner made about THIS service when they made it about the
+     * last one.
+     *
+     * Three deliberate limits:
+     *
+     *   · only a REAL swap. Choosing the service already chosen changes
+     *     nothing, and the first choice of all has nothing behind it to clear
+     *   · never while EDITING. A saved appointment's hour is a fact about a
+     *     booking that exists, and the client may already hold it; correcting
+     *     the service on one must not silently empty it
+     *   · the CLIENT and the NOTES stay. Neither belongs to the service, and
+     *     both are the owner's own typing — `a services list that changes
+     *     while the dialog is open` guards that same typing against a
+     *     different cause
+     */
+    const startsAfresh = Boolean(formData.service_id) && serviceId !== formData.service_id && !booking;
+
+    setFormData(prev => ({
+      ...prev,
+      service_id: serviceId,
+      ...(startsAfresh
+        ? { start_time: '', end_time: '' }
+        : end
+          ? { end_time: end }
+          : {}),
+    }));
+
+    if (startsAfresh) {
+      setSendIntakeForm(false);
     }
-    // Clear any service-related errors
-    setFormErrors(prev => ({ ...prev, service_id: '' }));
+
+    // Clear any service-related errors — including the hour's, which a reset
+    // has just un-answered and which must not arrive pre-refused.
+    setFormErrors(prev =>
+      startsAfresh
+        ? { ...prev, service_id: '', start_time: '', end_time: '' }
+        : { ...prev, service_id: '' }
+    );
+
+    /*
+     * ── ANSWERING A REOPENED STEP RELEASES IT ────────────────────────────────
+     *
+     * `planBookingSteps` gives a reopened step priority over the natural
+     * order — `reopened ?? natural` — and nothing but opening the dialog ever
+     * cleared it. So the SECOND service choice appeared to do nothing:
+     *
+     *   1. pick a service     `openedStep` is null, the natural order moves on
+     *                         to the next unanswered step, the dialog visibly
+     *                         advances
+     *   2. press "change"     `openedStep` becomes 'service', pinned
+     *   3. pick another one   the form updates underneath, but the open step
+     *                         is still 'service', so nothing moves and the new
+     *                         service's steps never come forward
+     *
+     * The owner has just answered the question this step asks, which is
+     * exactly when the first pass closes it. Handing the choice back to the
+     * natural order restores that, and it is the ONLY thing that changes:
+     * `planBookingSteps` then reopens this very step by itself if the new
+     * service leaves it unanswered or in error.
+     */
+    setOpenedStep(null);
   };
 
   // Handle start time change - auto-update end time based on service duration

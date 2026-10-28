@@ -606,10 +606,25 @@ describe('cancelling the MEETING is not cancelling the job', () => {
     expect(code(ROUTE)).toContain('meetingOnly: { proposalContinues }');
     expect(code(ROUTE)).toContain('proposalContinues: z.boolean().optional()');
 
-    /* Non-blocking: the appointment IS cancelled, and a mail server having a
-       bad minute must not fail a request the owner saw succeed. */
+    /*
+     * The appointment IS cancelled, and a mail server having a bad minute must
+     * not fail a request the owner saw succeed. That is the rule, and it still
+     * holds.
+     *
+     * This asserted `.catch(` on a DETACHED call, which was the mechanism
+     * rather than the rule — and the mechanism was wrong in a way that cost
+     * something real: detached, the result was unreachable, so the route
+     * answered `success` whether or not any mail went out. Two of five
+     * owner-cancelled meetings on a live account produced no client email and
+     * no `email_sends` row, and the owner was told the client had been told.
+     *
+     * The send is awaited now, inside a try/catch that swallows and logs. Same
+     * guarantee — a failure cannot fail the request — and the route can
+     * finally report whether the client heard, which is asserted below.
+     */
     const send = code(ROUTE).slice(code(ROUTE).indexOf('sendCancellationEmail'));
-    expect(send.slice(0, 400)).toContain('.catch(');
+    expect(send.slice(0, 900)).toContain('catch');
+    expect(code(ROUTE)).toContain('clientNotified');
   });
 
   it('but not once the owner has said no quote is coming', () => {

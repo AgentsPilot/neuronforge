@@ -27,6 +27,26 @@ import type { BlockRendererProps, FlowStep, FormField, SelectedServiceData } fro
 import { flowHasScheduling, flowHasClientInfo } from './types';
 import { matchServiceByName, flowForService, hasJourneyFacts } from './bookingAction';
 import { IntakeFormStep, type IntakeTemplate } from './IntakeFormStep';
+import { businessDateKey, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
+
+/*
+ * How far ahead a service takes bookings when it has never been configured.
+ *
+ * Imported rather than repeated: this page and the owner's own settings must
+ * not disagree about an unset value, and they did — the number lived in three
+ * files and moving one of them would have left a client offered dates the
+ * business had not agreed to take.
+ */
+import { DEFAULT_ADVANCE_BOOKING_DAYS, bookableDaysFor } from '@/lib/scheduling/bookingWindow';
+
+/**
+ * How many day buttons the strip shows at once.
+ *
+ * A fortnight, which is what this strip held in total before it could be
+ * paged — so a business that never set a longer window sees what it saw
+ * before, and one that did now has somewhere to go.
+ */
+const DATES_PER_PAGE = 14;
 import { StripePaymentForm } from './StripePaymentForm';
 import { PlanPaymentList } from './PlanPaymentList';
 import { ConsentCheckbox, type ConsentCopy } from '@/components/public/ConsentCheckbox';
@@ -43,6 +63,13 @@ export interface Service {
   name: string;
   description: string | null;
   duration_minutes: number;
+  /**
+   * How far ahead this service accepts bookings.
+   *
+   * The business's own setting. Null or absent means it was never configured,
+   * and the strip falls back to the same 30 the repository defaults to.
+   */
+  advance_booking_days?: number | null;
   price: number | null;
   currency: string;
   icon?: string;
@@ -115,6 +142,9 @@ export const LABELS = {
   en: {
     chooseService: 'Choose a Service',
     selectDate: 'Select a Date',
+    earlierDates: 'Earlier dates',
+    dayClosed: 'Closed on this day',
+    laterDates: 'Later dates',
     selectTime: 'Select a Time',
     yourDetails: 'Your Details',
     name: 'Your Name',
@@ -191,6 +221,9 @@ export const LABELS = {
   es: {
     chooseService: 'Elige un Servicio',
     selectDate: 'Selecciona una Fecha',
+    earlierDates: 'Fechas anteriores',
+    dayClosed: 'Cerrado este día',
+    laterDates: 'Fechas posteriores',
     selectTime: 'Selecciona una Hora',
     yourDetails: 'Tus Datos',
     name: 'Tu Nombre',
@@ -267,6 +300,9 @@ export const LABELS = {
   he: {
     chooseService: 'בחר שירות',
     selectDate: 'בחר תאריך',
+    earlierDates: 'תאריכים מוקדמים יותר',
+    dayClosed: 'סגור ביום זה',
+    laterDates: 'תאריכים מאוחרים יותר',
     selectTime: 'בחר שעה',
     yourDetails: 'הפרטים שלך',
     name: 'השם שלך',
@@ -674,6 +710,17 @@ interface DateTimeStepProps {
    * filled in, and the one gap that stops the site being published.
    */
   isPreview?: boolean;
+  /** The business's clock, so the days offered are its days and not the visitor's. */
+  businessTimezone?: string | null;
+  /**
+   * Days inside the window the business simply does not work.
+   *
+   * A weekday with no hours, or a date it closed — `windowsForDate` folds both
+   * together on the server, so a holiday greys out exactly like a Sunday.
+   */
+  closedDates?: Set<string>;
+  /** How far ahead this service takes bookings, as the server reported it. */
+  advanceBookingDays?: number | null;
   /** The API's reason code, when it gave one. */
   slotsReason?: string | null;
 }
@@ -693,14 +740,87 @@ export function DateTimeStep({
   theme,
   locale = 'en',
   isPreview = false,
-  slotsReason = null
+  slotsReason = null,
+  businessTimezone = null,
+  closedDates,
+  advanceBookingDays = null
 }: DateTimeStepProps) {
   // Generate dates for next 14 days
-  const dates = Array.from({ length: 14 }, (_, i) => {
-    const date = new Date();
-    date.setDate(date.getDate() + i);
-    return date.toISOString().split('T')[0];
-  });
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE DAYS THE BUSINESS SAYS IT CAN BE BOOKED ON, ON ITS OWN CALENDAR.
+   *
+   * This was a hardcoded fortnight built two ways wrong at once:
+   *
+   *   · `length: 14` ignored `advance_booking_days`, so a business that
+   *     accepts bookings ninety days out could only be offered fourteen, and
+   *     the strip simply ended with nowhere to go.
+   *
+   *   · `new Date()` then `toISOString()` builds the days on the VISITOR's
+   *     clock and reduces them to a UTC date. For anyone east of UTC that
+   *     drops the business's real last day off the end, and for anyone west it
+   *     offers a first date the business considers yesterday.
+   *
+   * `businessDateKey` and `shiftBusinessDateKey` are the same helpers the
+   * booking page uses, so all three surfaces now count days the same way.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const bookableDays = bookableDaysFor(advanceBookingDays ?? service.advance_booking_days);
+
+  const zone = businessTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const firstBookableDay = businessDateKey(new Date(), zone);
+
+  /* Paged a fortnight at a time: ninety buttons in one scroller is a worse
+     control than fourteen, not a better one. */
+  const [dateWindowStart, setDateWindowStart] = useState(0);
+
+  useEffect(() => {
+    setDateWindowStart(0);
+  }, [service.id]);
+
+  const visibleDays = Math.min(DATES_PER_PAGE, bookableDays - dateWindowStart);
+
+  const dates = Array.from({ length: Math.max(0, visibleDays) }, (_, i) =>
+    shiftBusinessDateKey(firstBookableDay, dateWindowStart + i)
+  );
+
+  const canGoEarlier = dateWindowStart > 0;
+  const canGoLater = dateWindowStart + DATES_PER_PAGE < bookableDays;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHICH MONTH THE VISITOR IS LOOKING AT.
+   *
+   * The strip shows a weekday and a number. Over a fortnight that is enough —
+   * "Tue 28" is obviously this month. Over ninety days it is not: paging
+   * forward gives "31, 1, 2, 3" and no way to tell February from April, so a
+   * client books a date and only the confirmation tells them the month.
+   *
+   * Named from the dates actually on screen, and showing both when the window
+   * straddles a boundary, because that is the case where the day number alone
+   * is most misleading.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const monthLabel = (() => {
+    if (dates.length === 0) return '';
+
+    const monthOf = (key: string) => {
+      const [y, m] = key.split('-').map(Number);
+      /* Noon, so no timezone can roll the label into a neighbouring month. */
+      return new Date(y, m - 1, 1, 12, 0, 0);
+    };
+
+    const first = monthOf(dates[0]);
+    const last = monthOf(dates[dates.length - 1]);
+
+    const sameYear = first.getFullYear() === last.getFullYear();
+    const name = (d: Date, withYear: boolean) =>
+      d.toLocaleDateString(locale, withYear ? { month: 'long', year: 'numeric' } : { month: 'long' });
+
+    if (first.getMonth() === last.getMonth() && sameYear) return name(first, true);
+
+    return `${name(first, !sameYear)} – ${name(last, true)}`;
+  })();
 
   const formatTime = (isoString: string) => {
     const date = new Date(isoString);
@@ -743,21 +863,77 @@ export function DateTimeStep({
 
       {/* Date Selection */}
       <div>
-        <h4 className="text-sm font-medium ap-ink-2 mb-3">{labels.selectDate}</h4>
+        {/* The arrows sit WITH the dates they move, not above the section. */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="min-w-0">
+            <h4 className="text-sm font-medium ap-ink-2">{labels.selectDate}</h4>
+            {monthLabel && (
+              <p className="text-xs ap-ink-3 mt-0.5 truncate">{monthLabel}</p>
+            )}
+          </div>
+          {(canGoEarlier || canGoLater) && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setDateWindowStart(start => Math.max(0, start - DATES_PER_PAGE))}
+                disabled={!canGoEarlier}
+                aria-label={labels.earlierDates}
+                title={labels.earlierDates}
+                className="flex h-8 w-8 items-center justify-center rounded-lg ap-card-2 ap-ink-2 transition-opacity disabled:opacity-30"
+              >
+                <ChevronLeft className="w-4 h-4 rtl:rotate-180" />
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setDateWindowStart(start =>
+                    Math.min(Math.max(0, bookableDays - DATES_PER_PAGE), start + DATES_PER_PAGE)
+                  )
+                }
+                disabled={!canGoLater}
+                aria-label={labels.laterDates}
+                title={labels.laterDates}
+                className="flex h-8 w-8 items-center justify-center rounded-lg ap-card-2 ap-ink-2 transition-opacity disabled:opacity-30"
+              >
+                <ChevronRight className="w-4 h-4 rtl:rotate-180" />
+              </button>
+            </div>
+          )}
+        </div>
         <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
           {dates.map((date) => {
             // Parse date parts to avoid timezone issues
             // new Date('2026-07-29') creates midnight UTC which shifts in local timezone
             const [year, month, day] = date.split('-').map(Number);
             const dateObj = new Date(year, month - 1, day, 12, 0, 0); // noon local time
+            /*
+              ─────────────────────────────────────────────────────────────────
+              A DAY THE BUSINESS DOES NOT WORK IS SHOWN, NOT HIDDEN.
+              
+              Shown, because a week missing its Saturday reads as a loading
+              fault; greyed, because the alternative is a visitor choosing it
+              and waiting for "no available times" to find out. The server
+              folds the weekly hours together with time off, so a holiday looks
+              exactly like a Sunday here — which is what it is, to someone
+              trying to book.
+              ─────────────────────────────────────────────────────────────────
+            */
+            const closed = closedDates?.has(date) ?? false;
+
             return (
               <button
                 key={date}
+                type="button"
                 onClick={() => onDateSelect(date)}
+                disabled={closed}
+                aria-disabled={closed}
+                title={closed ? labels.dayClosed : undefined}
                 className={`flex-shrink-0 px-4 py-3 rounded-lg border text-center transition-all min-w-[70px] ${
                   selectedDate === date
                     ? 'border-transparent text-white'
-                    : 'ap-line ap-card ap-hover-line'
+                    : closed
+                      ? 'ap-line ap-card opacity-40 cursor-not-allowed line-through'
+                      : 'ap-line ap-card ap-hover-line'
                 }`}
                 style={selectedDate === date ? { backgroundColor: primaryColor } : {}}
               >
@@ -2146,6 +2322,16 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
    * `Europe/London`. Null until the first availability response arrives.
    */
   const [businessTimezone, setBusinessTimezone] = useState<string | null>(null);
+  /**
+   * Days in the window the business does not work, and how far it takes bookings.
+   *
+   * Both arrive on the availability response. Held here rather than in the step
+   * because the step is remounted as the client moves back and forth, and
+   * refetching the same unchanging answer on every visit would make the strip
+   * flicker between greyed and not.
+   */
+  const [closedDates, setClosedDates] = useState<Set<string>>(new Set());
+  const [advanceBookingDays, setAdvanceBookingDays] = useState<number | null>(null);
 
   /**
    * A slot's wall clock ("2026-09-21T14:00:00") as an ISO instant.
@@ -2374,16 +2560,49 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
     }
   };
 
-  // Fetch slots when date changes
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * RUNS AS SOON AS A SERVICE IS CHOSEN, NOT ONLY ONCE A DATE IS.
+   *
+   * This was gated on `selectedDate`, which is exactly when the closed days
+   * are no longer useful: the strip is drawn the moment the step opens, and a
+   * visitor was shown every day as bookable until they had already picked one.
+   * The greying arrived after the mistake it exists to prevent.
+   *
+   * With no date chosen the request still needs one, so it asks about today
+   * and the SLOTS half of the answer is ignored — nothing is selected, so
+   * there is nothing to list. What is kept is the part that describes the
+   * business rather than the day: its clock, how far ahead it takes bookings,
+   * and which days it does not work.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   useEffect(() => {
-    if (!selectedService || !selectedDate) return;
+    if (!selectedService) return;
 
     const fetchSlots = async () => {
-      setLoadingSlots(true);
-      setError(null);
+      /* Only a real date selection is worth a spinner; the opening request
+         fills in the strip's own facts and must not blank the time list. */
+      if (selectedDate) {
+        setLoadingSlots(true);
+        setError(null);
+      }
 
       try {
-        const url = `/api/website/scheduling/availability?service_id=${selectedService.id}&date=${selectedDate}${subdomain ? `&subdomain=${subdomain}` : ''}${userCode ? `&user_code=${userCode}` : ''}`;
+        /*
+         * `closed_days` asks the same request which of the next N days the
+         * business does not work, so the strip can grey them instead of
+         * letting a visitor find out one click at a time. It costs one array
+         * lookup per day on the server — no extra round trip, and no slot
+         * calculation.
+         */
+        const queryDate =
+          selectedDate ||
+          businessDateKey(
+            new Date(),
+            businessTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone
+          );
+
+        const url = `/api/website/scheduling/availability?service_id=${selectedService.id}&date=${queryDate}&closed_days=${DEFAULT_ADVANCE_BOOKING_DAYS}${subdomain ? `&subdomain=${subdomain}` : ''}${userCode ? `&user_code=${userCode}` : ''}`;
         const response = await fetch(url);
         const data = await response.json();
 
@@ -2397,31 +2616,52 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
             available: true,
             display_time: slot.display_time
           }));
-          setSlots(mappedSlots);
+          /* Today's slots are not an answer to a question nobody asked. */
+          if (selectedDate) setSlots(mappedSlots);
           // The zone those wall clocks belong to. Returned by the route all
           // along; the widget simply never read it.
           if (typeof data.timezone === 'string' && data.timezone) {
             setBusinessTimezone(data.timezone);
           }
-          // Kept so the step can tell "no hours set at all" from "nothing free
-          // on this date" — the same empty list, two different problems.
-          setSlotsReason((data.reason as string) ?? null);
-          // Show message if no slots (e.g., "No availability configured")
-          if (mappedSlots.length === 0 && data.message) {
-            setError(data.message);
+          /* The days with no hours at all, and how far ahead this service
+             takes bookings — both answered by the same request. */
+          if (Array.isArray(data.closedDates)) {
+            setClosedDates(new Set(data.closedDates as string[]));
           }
-        } else {
+          if (typeof data.advance_booking_days === 'number') {
+            setAdvanceBookingDays(data.advance_booking_days);
+          }
+          /*
+            Everything from here describes the DATE, so it only applies when
+            one was chosen. The opening request asks about today purely to
+            learn the business's own facts, and letting its answer set an
+            error or an empty-slots reason would put "no available times" on a
+            screen where nothing has been picked yet.
+          */
+          if (selectedDate) {
+            // Kept so the step can tell "no hours set at all" from "nothing free
+            // on this date" — the same empty list, two different problems.
+            setSlotsReason((data.reason as string) ?? null);
+            // Show message if no slots (e.g., "No availability configured")
+            if (mappedSlots.length === 0 && data.message) {
+              setError(data.message);
+            }
+          }
+        } else if (selectedDate) {
           setError(data.error || 'Failed to load available times');
         }
       } catch {
-        setError(labels.errLoadTimes);
+        if (selectedDate) setError(labels.errLoadTimes);
       } finally {
-        setLoadingSlots(false);
+        if (selectedDate) setLoadingSlots(false);
       }
     };
 
     fetchSlots();
-  }, [selectedService, selectedDate, subdomain, userCode]);
+    /* `businessTimezone` is read when no date is chosen, to ask about the
+       business's today rather than the visitor's. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedService, selectedDate, subdomain, userCode, businessTimezone]);
 
   // Navigation helpers
   const goToStep = useCallback((step: CurrentStep, direction: 'forward' | 'backward' = 'forward') => {
@@ -3056,6 +3296,9 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
 
                 {currentStep === 'datetime' && selectedService && (
                   <DateTimeStep
+                    businessTimezone={businessTimezone}
+                    closedDates={closedDates}
+                    advanceBookingDays={advanceBookingDays}
                     service={selectedService}
                     selectedDate={selectedDate}
                     selectedSlot={selectedSlot}

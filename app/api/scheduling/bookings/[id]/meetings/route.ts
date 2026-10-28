@@ -49,6 +49,8 @@ import {
 } from '@/lib/services/BookingLifecycleService';
 import { isSlotTakenError } from '@/lib/business-os/bookingStatus';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
+import { busyMeetings } from '@/lib/scheduling/busyMeetings';
+import { nextSessionSlots } from '@/lib/scheduling/nextSessionSlot';
 
 /**
  * What to call the stage a newly added session bills.
@@ -105,7 +107,303 @@ const addSchema = z.object({
   charge: z.boolean().optional().default(false),
   /** The owner was told the day is closed and said add it anyway. */
   allow_closed_day: z.boolean().optional().default(false),
+  /**
+   * Tell the client about this session on its own.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * True everywhere it has ever been: an owner adding a seventh session to a
+   * block means the client to hear about it, and "A session has been added to
+   * your package" is the whole point.
+   *
+   * FALSE for a REPLACEMENT offered on the cancel or no-show dialog. That
+   * session is half of one event, and the other half — the hour being given
+   * back — is about to send its own mail carrying every session of the block
+   * with its state and its share of the payment. Two mails a second apart,
+   * the first of them listing a block that no longer exists, is worse than
+   * one: the client reads "your session on the 20th is cancelled" over a list
+   * with no replacement in it, and then a second note about a session appearing
+   * from nowhere.
+   *
+   * So the caller books the replacement FIRST and silently, and the outcome
+   * mail that follows is the one the client reads — by then the list contains
+   * the cancelled session, the new one, and what each is worth.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  notify: z.boolean().optional().default(true),
+  /**
+   * The session this one REPLACES, when it is a replacement.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The cancel and no-show dialogs book the replacement BEFORE recording the
+   * outcome, so the one email the client receives lists every session
+   * including the new one. The consequence is that at this moment the session
+   * being called off is still standing — and the "block is full" refusal below
+   * counts it. An upfront block of three therefore refused its own
+   * replacement, every time: the hour was cancelled and nothing took its
+   * place.
+   *
+   * Naming it here excludes it from that count, exactly as `excluding` does on
+   * the GET. The two are the same question asked a second apart, and they have
+   * to agree — otherwise the dialog offers a replacement the write then
+   * refuses, which is what happened.
+   *
+   * Verified to belong to this package before it is honoured, so it cannot be
+   * used to push a block past what was agreed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  replaces: z.string().optional(),
 });
+
+/**
+ * GET — where a replacement session WOULD go, and whether one is allowed.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The cancel and no-show dialogs offer to add a replacement, and the owner has
+ * to see the hour before they agree to it. Working that out needs three things
+ * the browser does not have: the proposal's agreed session count, the whole
+ * diary (an hour may be sold to another client entirely), and the rule about
+ * which outcomes free a place.
+ *
+ * So it is answered here, by the same reads the POST below makes — which is
+ * also what keeps the offer and the refusal from disagreeing. Answering it in
+ * the drawer from the sessions it happens to have loaded would propose hours
+ * that are already taken, because the drawer only ever sees one contact.
+ *
+ * `excluding` is the session about to be called off or marked missed. It has
+ * not been written yet when the dialog opens, so the count has to be told to
+ * leave it out — otherwise a block at its agreed size reports no room for the
+ * very replacement the owner is being offered.
+ *
+ * Read-only, and never fails the dialog: anything unexpected answers "no
+ * replacement", and the owner places the session by hand as before.
+ */
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
+  const NONE = NextResponse.json({ success: true, canAdd: false, proposedStart: null });
+
+  try {
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const excluding = request.nextUrl.searchParams.get('excluding');
+
+    /*
+     * ── THE ID MAY BE A SESSION, NOT THE PURCHASE ───────────────────────────
+     *
+     * A package session has no booking of its own. The drawer builds a card
+     * for each one out of the container's and OVERWRITES `id` with the
+     * MEETING's id, keeping the purchase in `parent_booking_id` — so every
+     * control on a session row calls its handlers with a meeting id in the
+     * place a booking id normally goes.
+     *
+     * Asking for that id's sessions therefore found none, and this answered
+     * "no replacement" for every package in the product: the toggle never
+     * appeared on the one surface it was built for.
+     *
+     * So an id with no sessions of its own is tried as a MEETING, and that
+     * meeting's booking is the container. Resolved HERE rather than at the
+     * call site, because the caller cannot know which of the two it is
+     * holding — and because every other handler on that row is already built
+     * around the same convention, which must not be disturbed to fix this.
+     */
+    let containerId = params.id;
+
+    const sessionsOf = async (id: string) =>
+      (
+        await supabaseServer
+          .from('scheduling_meetings')
+          .select('id, start_time, end_time, meeting_status')
+          .eq('booking_id', id)
+          .eq('user_id', user.id)
+          .not('session_number', 'is', null)
+      ).data;
+
+    let sessionRows = await sessionsOf(containerId);
+
+    if (!sessionRows?.length) {
+      const { data: asMeeting } = await supabaseServer
+        .from('scheduling_meetings')
+        .select('booking_id')
+        .eq('id', containerId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!asMeeting?.booking_id) return NONE;
+
+      containerId = String(asMeeting.booking_id);
+      sessionRows = await sessionsOf(containerId);
+    }
+
+    if (!sessionRows?.length) return NONE;
+
+    const { data: proposal } = await supabaseServer
+      .from('proposals')
+      .select('sessions')
+      .eq('package_booking_id', containerId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    const shape = proposal?.sessions as
+      | { dates?: unknown[]; bill_per_session?: boolean; duration_minutes?: number }
+      | null;
+
+    const perSession = shape?.bill_per_session === true;
+    const agreed = Array.isArray(shape?.dates) ? shape!.dates!.length : 0;
+
+    /* The same test the POST makes, plus the session being answered right now,
+       which is about to stop holding its place. */
+    const occupies = (row: { id: string; meeting_status: string | null }) =>
+      row.id !== excluding &&
+      row.meeting_status !== 'cancelled' &&
+      row.meeting_status !== 'no_show' &&
+      row.meeting_status !== 'moved';
+
+    const standing = sessionRows.filter(occupies).length;
+
+    /* A per-session block is never full — it is billed as it goes. An upfront
+       block is, and then there is nothing to offer. */
+    if (!perSession && agreed > 0 && standing >= agreed) return NONE;
+
+    const minutes = (() => {
+      const first = sessionRows.find(row => row.start_time && row.end_time);
+      if (!first) return shape?.duration_minutes ?? 60;
+      const span =
+        (new Date(String(first.end_time)).getTime() -
+          new Date(String(first.start_time)).getTime()) /
+        60_000;
+      return Number.isFinite(span) && span > 0 ? span : (shape?.duration_minutes ?? 60);
+    })();
+
+    /*
+     * The whole diary for the stretch a proposal could land in, not just this
+     * package's own hours: the rhythm may walk straight into another client.
+     * Twelve rhythms is the furthest `nextSessionSlot` will look.
+     */
+    const latest = sessionRows
+      .map(row => new Date(String(row.start_time)).getTime())
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b)
+      .pop();
+
+    if (!latest) return NONE;
+
+    const from = new Date(Math.max(latest, Date.now())).toISOString();
+    const to = new Date(Math.max(latest, Date.now()) + 400 * 24 * 60 * 60 * 1000).toISOString();
+
+    const busy = await busyMeetings(supabaseServer, user.id, from, to);
+
+    /*
+     * ── THE RHYTHM IS READ FROM THE WHOLE SERIES, THE COUNT IS NOT ──────────
+     *
+     * `occupies` answers "does this session still hold a place", and the
+     * session being called off does not — that is what frees room for the
+     * replacement. It is a different question from "when does this block
+     * meet", and reading the schedule through the same filter got it wrong:
+     * cancelling the last standing session left NO dates to read, so the one
+     * case where an owner most wants a replacement offered got none.
+     *
+     * The dates of a series are facts about the series whatever became of each
+     * hour, so the schedule is read from all of them. Only `moved` is dropped,
+     * because a superseded attempt is not a date the block ever met on — its
+     * replacement is already in this list.
+     */
+    /*
+     * The proposal, AND the beats after it.
+     *
+     * One date was not enough. The rhythm's next beat can be right about the
+     * pattern and wrong about the week — the owner is away, the room is taken
+     * by something this app cannot see, or the client simply cannot make it —
+     * and the only answer available then was to decline the replacement and
+     * place the session by hand. Offering the following free hours lets them
+     * say "not that Tuesday, the one after" without leaving the dialog.
+     *
+     * `proposedStart` stays the first of them, so every existing caller and
+     * the email that names the hour read exactly what they read before.
+     */
+    /*
+     * Ask for MORE than will be offered, because some will be dropped.
+     *
+     * `nextSessionSlots` knows which hours are taken — `busyMeetings` is the
+     * owner's whole diary, the same source the public availability list reads
+     * — but it does not know which DAYS the business works. A block that meets
+     * Tuesdays keeps proposing Tuesdays long after the owner has closed them,
+     * and the only place that was noticed was the write, which refuses with
+     * `closed_day` after the owner has already agreed.
+     *
+     * So the closed-day rule now runs where the dates are OFFERED, with the
+     * same function the write uses. Eight candidates in, up to four out.
+     */
+    const candidates = nextSessionSlots(
+      sessionRows
+        .filter(row => row.meeting_status !== 'moved')
+        .map(row => String(row.start_time)),
+      {
+        durationMinutes: minutes,
+        busy: busy.map(interval => ({ start: interval.start_time, end: interval.end_time })),
+        count: 8,
+      }
+    );
+
+    /* The container's zone decides what "that day" means — a slot at 23:00 UTC
+       is a different weekday in Jerusalem, and the closed-day rule is about
+       the owner's calendar, not the server's. */
+    const { data: containerForZone } = await supabaseServer
+      .from('scheduling_bookings')
+      .select('timezone')
+      .eq('id', containerId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    const proposedStarts: string[] = [];
+    for (const iso of candidates) {
+      if (proposedStarts.length >= 4) break;
+      const closed = await closedDayCheck(
+        user.id,
+        iso,
+        new Date(new Date(iso).getTime() + minutes * 60_000).toISOString(),
+        (containerForZone as { timezone?: string | null } | null)?.timezone,
+        requestLogger
+      );
+      if (!closed) proposedStarts.push(iso);
+    }
+
+    const proposedStart = proposedStarts[0] ?? null;
+
+    return NextResponse.json({
+      success: true,
+      canAdd: Boolean(proposedStart),
+      proposedStart,
+      /** The alternatives, proposal first. Empty when there is nothing free. */
+      proposedStarts,
+      durationMinutes: minutes,
+      /*
+       * Which KIND of package this is, so the caller books the replacement the
+       * way this block is sold.
+       *
+       * On an UPFRONT block the money is already in: the replacement takes the
+       * cancelled session's portion and is never billed again. On a PER-SESSION
+       * block nothing has been paid for the hour that was called off — it is
+       * billed when it is HELD — so its replacement has to carry a stage of its
+       * own, or the client receives a session nobody ever invoices.
+       *
+       * Asked here rather than guessed there: the drawer has no proposal, and
+       * `charge: true` against an upfront block is refused outright.
+       */
+      billsPerSession: perSession,
+      /* The purchase the replacement is added to, which is not necessarily the
+         id this was called with — see the resolution above. */
+      containerId,
+    });
+  } catch (err) {
+    /* The dialog still opens; it just makes no offer. */
+    requestLogger.warn({ err, containerId: params.id }, 'Could not propose a replacement session');
+    return NONE;
+  }
+}
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -205,6 +503,110 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       );
     }
 
+    /*
+     * ── AN UPFRONT BLOCK CANNOT GROW BEYOND WHAT WAS AGREED ─────────────────
+     *
+     * A package paid in ONE sum is a contract for a stated number of sessions
+     * at a stated total. Adding a session beyond that count changes what was
+     * agreed without changing what was paid: the client's own total is then
+     * wrong against the quote they accepted, and the extra session has no
+     * money behind it at all — `packageSessionLines` shows it with a blank
+     * figure, because there genuinely isn't one.
+     *
+     * The guard above already refuses to CHARGE for one here. This refuses to
+     * add it free, which is the other half of the same rule. Another session
+     * means another agreement: a new quote, or a new booking.
+     *
+     * ── AND ONLY FOR AN UPFRONT BLOCK ───────────────────────────────────────
+     *
+     * A package billed PER SESSION is untouched, deliberately. There each
+     * session is paid after it is held, so a seventh on a block of six is
+     * priced the moment it happens and no agreed total is contradicted — which
+     * is the scenario the comment at the control itself describes ("a seventh
+     * on a block of six") and which must keep working.
+     *
+     * ── A REPLACEMENT IS NOT AN EXTRA ───────────────────────────────────────
+     *
+     * Counted over sessions that still OCCUPY A PLACE, not every row ever
+     * written. So calling one off and adding another in its place is allowed —
+     * the count returns to the agreed number — while growing the block is
+     * refused.
+     *
+     * A NO-SHOW frees a place too, and for a different reason than a
+     * cancellation. It is not that the session was never delivered; the hour
+     * was held and the owner waited. It is that the owner may choose to offer
+     * a make-up, and this count is what decides whether they CAN.
+     *
+     * The money says the other thing, and deliberately. `packageSessionLines`
+     * excludes only CANCELLED sessions from its shares, so a no-show keeps its
+     * portion — it consumed real money — and a make-up added after one shows
+     * no figure at all. Which is the truth: that session is free, given by an
+     * owner who need not have given it. A cancelled session's portion does
+     * move, because nothing was consumed.
+     */
+    const agreedDates = (proposal?.sessions as { dates?: unknown[] } | null)?.dates;
+    const agreedCount = Array.isArray(agreedDates) ? agreedDates.length : 0;
+
+    /*
+     * ── WHICH SESSION THIS ONE STANDS IN FOR ────────────────────────────────
+     *
+     * Two things need it and they are not the same thing:
+     *
+     *   the COUNT below, because the hour being called off no longer holds its
+     *   place and an upfront block would otherwise refuse its own replacement;
+     *
+     *   the ROW itself, so the link survives the request. Without it nothing
+     *   can afterwards tell a session that has been made up from one that is
+     *   still waiting — see 20261095 for why a count cannot answer that.
+     *
+     * Declared here, above the upfront-only guard, because the LINK matters on
+     * every package. A per-session block has no ceiling to refuse against, so
+     * the count never runs for it — and leaving the id inside that guard meant
+     * its replacements were written with no link at all.
+     *
+     * Honoured only for a meeting that really is one of this package's, so a
+     * stray id can neither buy an extra session nor point the link at a
+     * stranger.
+     */
+    const replacedId =
+      input.replaces && (sessionMeetings ?? []).some(row => row.id === input.replaces)
+        ? input.replaces
+        : null;
+
+    if (!perSession && agreedCount > 0) {
+      /*
+       * Whichever shape this package is in — `asMeetings` is the same switch
+       * every other count on this route uses. Reading only the new shape would
+       * leave the rule unenforced on a legacy container, whose sessions are
+       * child BOOKINGS and whose cancelled ones carry `status: 'cancelled'`
+       * rather than a meeting status.
+       */
+      /** Neither called off nor missed: the session still owes the client an hour. */
+      const occupied = (status: string | null | undefined) =>
+        status !== 'cancelled' && status !== 'no_show';
+
+      const standing = asMeetings
+        ? (sessionMeetings ?? []).filter(
+            row => row.id !== replacedId && occupied(row.meeting_status)
+          ).length
+        : (siblings ?? []).filter(
+            child =>
+              occupied((child as { status?: string | null }).status) &&
+              occupied((child as { meeting_status?: string | null }).meeting_status)
+          ).length;
+
+      if (standing >= agreedCount) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'package_already_complete',
+            error: `This package was agreed as ${agreedCount} sessions and paid for in full. To arrange more, send a new quote or create another booking.`,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     const minutes =
       input.duration_minutes ??
       (proposal?.sessions as { duration_minutes?: number } | null)?.duration_minutes ??
@@ -290,6 +692,12 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         session_number: nextNumber,
         /* The first attempt at this new session. */
         occurrence_number: 1,
+        /*
+         * What it stands in for, when it is a replacement. Already validated
+         * above as a session of THIS package — the same check that lets it be
+         * left out of the block-full count — so it cannot point at a stranger.
+         */
+        replaces_meeting_id: replacedId,
       });
 
       if (isSlotTakenError(session.error)) {
@@ -543,7 +951,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
      * go out is visible on the journey and re-sendable.
      * ───────────────────────────────────────────────────────────────────────
      */
-    if (asMeetings) {
+    if (asMeetings && input.notify) {
       try {
         const { BookingEmailService } = await import('@/lib/services/BookingEmailService');
         const mail = await BookingEmailService.sendBookingConfirmation(containerId, user.id, {

@@ -94,9 +94,21 @@ describe('a phase waiting to be billed', () => {
   /*
    * ...and the booking is carried separately, which is the fix. The two were
    * one field, and one field cannot be both.
+   *
+   * THE MEETING COMES FIRST, where there is one. A package is one container
+   * booking plus N meetings, and the container carries no time — so opening
+   * the container names the purchase rather than the session this row is
+   * about, and five sessions produced five links to the same place. The
+   * meeting id IS the row's booking to open; the container is the fallback for
+   * a stage that has no meeting (a quote phase, or one written before the
+   * column existed).
    */
   it('and separately names the job to open', () => {
-    expect(body).toMatch(/bookingId:\s*\(?row\.booking_id/);
+    expect(body).toMatch(/bookingId:\s*\(?row\.(meeting_id|booking_id)/);
+  });
+
+  it('naming the SESSION rather than the purchase, where there is one', () => {
+    expect(body).toMatch(/bookingId:[\s\S]{0,120}meeting_id[\s\S]{0,120}\?\?[\s\S]{0,60}booking_id/);
   });
 
   /*
@@ -105,7 +117,8 @@ describe('a phase waiting to be billed', () => {
    * the contact's list rather than naming a phantom.
    */
   it('tolerating a phase with no appointment behind it', () => {
-    expect(body).toMatch(/bookingId:[\s\S]{0,80}\?\?\s*undefined/);
+    /* The window allows for the meeting-first fallback above. */
+    expect(body).toMatch(/bookingId:[\s\S]{0,160}\?\?\s*undefined/);
   });
 });
 

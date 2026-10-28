@@ -537,6 +537,70 @@ export function bookingNextStep(input: NextStepInput): NextStep {
     return DONE;
   }
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * HELD BY A CLOCK IS AN ANSWER NOBODY GAVE.
+   *
+   * `auto_complete_meetings` closes off an overdue meeting by writing
+   * `meeting_status: 'held'`, because held is the only answer available to it:
+   * no-show and called-off are judgements about a room it was not in. The date
+   * passing is not evidence the meeting happened, and the owner knows of cases
+   * where it did not.
+   *
+   * `quoteGate` reads that `'held'` as `'open'` — correct, as far as the QUOTE
+   * is concerned — and the card then moved on to the money as though the
+   * question had been settled. It had not been asked. So this re-opens it, for
+   * the one case where it is still safe to ask:
+   *
+   *   · the meeting is held and `outcome_by` says the AUTOMATION said so.
+   *     An owner's own `'held'`, or a client's, is a person's answer and final.
+   *   · no quote is in flight. A priced job has moved past this question.
+   *   · nothing has gone to the client and nothing has been collected. Once an
+   *     invoice is in their inbox, correcting the hour is a credit note, not a
+   *     status — a different job, and `CashCancelledUnrefundedDetector`'s.
+   *
+   *     `plan_needs_billing` BELONGS HERE, and leaving it out was the bug that
+   *     made this fire on nothing real. It reads as a plan state, but
+   *     `moneyStateFrom` only returns it for an outstanding `manual` stage with
+   *     NO invoice raised — the staged-quote spelling of `needs_invoice`, and
+   *     the state every auto-completed session is in, because the automation
+   *     does not bill. `plan_auto` stays out: those stages charge on a schedule
+   *     without the owner, so some may already have gone out.
+   *
+   * The actions are the three the owner needs and all three already exist, so
+   * every handler, dialog and label below is the one already in use:
+   *
+   *   · `mark_held`      — agreeing with it, which is what RAISES the invoice
+   *                        the automation deliberately withheld. It also writes
+   *                        `outcome_by: 'owner'`, so the row stops asking.
+   *   · `mark_no_show`   — it did not happen. Its dialog already asks whether
+   *                        to charge for the miss.
+   *   · `cancel_booking` — it was called off. For a plain consultation the
+   *                        booking IS the hour, which is the only shape that
+   *                        reaches here: a package's sessions live on
+   *                        `scheduling_meetings`, which the automation does not
+   *                        touch, and its container carries no time at all.
+   *
+   * Reachable only through the automation, and the automation never bills — so
+   * every row this fires on has money still waiting on a person.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (
+    booking.meeting_status === 'held' &&
+    input.outcomeBy === 'system' &&
+    (!proposalStatus || proposalStatus === 'none') &&
+    (money === 'needs_invoice' ||
+      money === 'plan_needs_billing' ||
+      money === 'nothing_to_collect')
+  ) {
+    return {
+      stage: 'session',
+      whoseMove: 'owner',
+      labelKey: 'next.confirm_auto_held',
+      actions: ['mark_held', 'mark_no_show', 'cancel_booking'],
+    };
+  }
+
   /* ── THE MEETING, AND THE ONE TASK THAT COMES BEFORE IT ───────────────── */
 
   if (gate === 'ahead') {

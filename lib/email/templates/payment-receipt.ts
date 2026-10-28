@@ -13,6 +13,7 @@ import {
   emailTone,
   emailPlanSchedule,
   emailSessionRows,
+  sessionPaymentColumn,
   type EmailSessionLine,
   type BrandingData,
   type EmailPlanPeriod
@@ -183,7 +184,19 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
   }
 
   if (data.paymentMethod) {
-    detailRows.push(emailDetailRow(t.paymentMethodLabel[locale], data.paymentMethod, brandingWithLocale));
+    /*
+     * Translated, not printed raw.
+     *
+     * This passed the stored value through, so a Hebrew receipt said
+     * "אמצעי תשלום: card". An unknown value still prints as it stands — a
+     * method nobody has translated is better shown than hidden, and it names
+     * itself in the log the next time somebody reads one.
+     */
+    const method =
+      t.paymentMethodValues[data.paymentMethod as keyof typeof t.paymentMethodValues]?.[locale] ??
+      data.paymentMethod;
+
+    detailRows.push(emailDetailRow(t.paymentMethodLabel[locale], method, brandingWithLocale));
   }
 
   if (data.serviceName) {
@@ -254,7 +267,12 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
                  columns: {
                    when: tPlan.sessionColWhen[locale],
                    state: tPlan.sessionColState[locale],
-                   payment: tPlan.sessionColPayment[locale],
+                   /* Only where the sessions were billed one at a time — the
+                      rule lives beside the table, in `base-template`. */
+                   payment: sessionPaymentColumn(
+                     data.sessionLines,
+                     tPlan.sessionColPayment[locale]
+                   ),
                  },
                  zoneNote: tPlan.sessionZoneNote[locale],
                })}`

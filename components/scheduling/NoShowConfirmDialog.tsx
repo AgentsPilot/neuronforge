@@ -27,7 +27,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Loader2, UserX } from 'lucide-react';
 import {
   Dialog,
@@ -119,8 +119,57 @@ interface NoShowConfirmDialogProps {
    * toggle is not shown.
    */
   chargeable?: boolean;
+  /**
+   * The make-up session this no-show makes room for, where one is possible.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Same shape and same rule as the cancellation dialog's, with one difference
+   * that matters to the money rather than to this control: a cancelled session
+   * hands its portion of the payment to whatever replaces it, while a no-show
+   * KEEPS its portion — the hour was held and the owner waited. So a make-up
+   * offered here is free, and is the owner's to give.
+   *
+   * `proposedStart` is shown before they agree, because ticking it books that
+   * hour and tells the client. Null hides the toggle.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  replacement?: {
+    proposedStart: string;
+    /**
+     * The proposal and the rhythm's next free beats after it, proposal first.
+     *
+     * The rhythm can be right about the pattern and wrong about the week. With
+     * one date the owner's only answer to "not that day" was to decline the
+     * make-up and place it by hand.
+     */
+    options?: string[];
+  } | null;
   /** Receives the owner's choice. Resolves when the change has been applied. */
-  onConfirm: (options: { notifyClient: boolean; chargeSession: boolean }) => Promise<void>;
+  onConfirm: (options: {
+    notifyClient: boolean;
+    chargeSession: boolean;
+    addReplacement: boolean;
+    /** The hour the owner settled on. The proposal unless they picked another. */
+    replacementStart?: string;
+  }) => Promise<void>;
+}
+
+/**
+ * An instant, as the value a `datetime-local` input wants.
+ *
+ * That input speaks wall time with no zone, so it has to be given the owner's
+ * local reading of the instant — `toISOString()` would hand it UTC and the
+ * field would show an hour nobody chose. The reverse trip is `new Date(value)`,
+ * which reads the same wall time back in the same zone.
+ */
+function toLocalInput(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
 }
 
 export function NoShowConfirmDialog({
@@ -128,10 +177,41 @@ export function NoShowConfirmDialog({
   onOpenChange,
   clientName,
   chargeable = false,
+  replacement,
   onConfirm,
 }: NoShowConfirmDialogProps) {
   const { t, isRTL } = useLanguage();
   const [notifyClient, setNotifyClient] = useState(false);
+  /* OFF by default: this one books a real hour, so the owner opts in. The
+     same reasoning as the cancellation dialog's replacement toggle. */
+  const [addReplacement, setAddReplacement] = useState(false);
+  /* The proposal until they say otherwise; re-seeded per session. */
+  const [chosenStart, setChosenStart] = useState(replacement?.proposedStart ?? '');
+  useEffect(() => {
+    setChosenStart(replacement?.proposedStart ?? '');
+  }, [replacement?.proposedStart]);
+
+  /*
+   * ── THE TWO OFFERS ARE ALTERNATIVES, NOT A PAIR ─────────────────────────
+   *
+   * "Invite them to rebook" asks the CLIENT to pick an hour. "Add a make-up"
+   * books one FOR them. Both on, the client receives a session already in
+   * their calendar and, in the same breath, a link inviting them to choose a
+   * different time — two hours arranged for one missed session.
+   *
+   * So taking either offer puts the other down. The owner can still turn the
+   * first back on, which turns this one off; they are a choice, and the dialog
+   * says so by only ever holding one of them.
+   */
+  const chooseReplacement = (next: boolean) => {
+    setAddReplacement(next);
+    if (next) setNotifyClient(false);
+  };
+
+  const chooseInvite = (next: boolean) => {
+    setNotifyClient(next);
+    if (next) setAddReplacement(false);
+  };
   /*
    * ───────────────────────────────────────────────────────────────────────────
    * CHARGING STARTS ON, WHICH IS THE OPPOSITE OF THE EMAIL ABOVE IT.
@@ -157,13 +237,20 @@ export function NoShowConfirmDialog({
   const confirm = async () => {
     setWorking(true);
     try {
-      await onConfirm({ notifyClient, chargeSession });
+      await onConfirm({
+        notifyClient,
+        chargeSession,
+        /* Never true without an hour to put it in. */
+        addReplacement: Boolean(replacement) && addReplacement,
+        replacementStart: chosenStart || replacement?.proposedStart,
+      });
       onOpenChange(false);
       // Back to the defaults for the next booking: a choice made about one
       // client must never be applied silently to the next. That cuts both
       // ways, so a waiver does not carry over either.
       setNotifyClient(false);
       setChargeSession(true);
+      setAddReplacement(false);
     } finally {
       setWorking(false);
     }
@@ -223,7 +310,7 @@ export function NoShowConfirmDialog({
           {/* Each toggle says what it will actually do, beside itself. */}
           <OutcomeSwitch
             checked={notifyClient}
-            onToggle={() => setNotifyClient(v => !v)}
+            onToggle={() => chooseInvite(!notifyClient)}
             disabled={working}
             label={t('scheduling.no_show.notify_label')}
             description={t('scheduling.no_show.notify_description')}
@@ -246,6 +333,137 @@ export function NoShowConfirmDialog({
               description={t('scheduling.no_show.charge_description')}
               isRTL={isRTL}
             />
+          )}
+
+          {/*
+            ── A MAKE-UP FOR THE HOUR NOBODY CAME TO ─────────────────────────
+            Offered only where the block can still take another session. The
+            date is in the description, because ticking this books that hour
+            and tells the client: the owner is agreeing to something they can
+            see rather than to a rule they have to remember.
+
+            A make-up after a no-show is FREE, and deliberately so. The missed
+            session keeps its portion of the payment — the hour was held and
+            nobody came — so the replacement carries none. That is the owner's
+            to give, which is exactly why it is a toggle and not automatic.
+          */}
+          {replacement && (
+            <OutcomeSwitch
+              checked={addReplacement}
+              onToggle={() => chooseReplacement(!addReplacement)}
+              disabled={working}
+              label={t('scheduling.no_show.replace_label') || 'Add a make-up session?'}
+              description={
+                addReplacement
+                  ? `${t('scheduling.no_show.replace_on_hint') || 'It will be booked for'} ${new Date(
+                      chosenStart || replacement.proposedStart
+                    ).toLocaleString(isRTL ? 'he-IL' : 'en-GB', {
+                      weekday: 'long',
+                      day: 'numeric',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}`
+                  : t('scheduling.no_show.replace_off_hint') ||
+                    'The missed session is not made up.'
+              }
+              isRTL={isRTL}
+            />
+          )}
+
+          {/*
+            * "Not that day." The rhythm's next free beats, same weekday and
+            * hour, so the owner is choosing WHICH WEEK — the question they
+            * actually have. Only once a make-up is agreed and only when there
+            * is more than one to choose between: a list of one implies the
+            * others were unavailable rather than absent.
+            */}
+          {replacement && addReplacement && (
+            <div className="mt-2">
+              {/*
+                * Suggestions are hidden when there is only one: a list of one is
+                * not a choice, and reads as though the others were unavailable
+                * rather than absent. The free picker below is always there.
+                */}
+              {(replacement.options?.length ?? 0) > 1 && (
+                <>
+                <p className="mb-1.5 text-xs text-[var(--v2-text-muted)]">
+                  {t('scheduling.no_show.replace_pick') || 'Or choose another date'}
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {replacement.options!.map(iso => {
+                    const picked = (chosenStart || replacement.proposedStart) === iso;
+                    return (
+                      <button
+                        key={iso}
+                        type="button"
+                        onClick={() => setChosenStart(iso)}
+                        disabled={working}
+                        aria-pressed={picked}
+                        className="px-2.5 py-1.5 text-xs font-medium border transition-colors disabled:opacity-50"
+                        style={{
+                          borderRadius: 'var(--v2-radius-button)',
+                          borderColor: picked ? 'var(--v2-primary)' : 'var(--v2-border)',
+                          background: picked ? 'var(--v2-primary)' : 'var(--v2-bg)',
+                          color: picked ? '#fff' : 'var(--v2-text-primary)',
+                        }}
+                      >
+                        <bdi>
+                          {new Date(iso).toLocaleString(isRTL ? 'he-IL' : 'en-GB', {
+                            weekday: 'short',
+                            day: 'numeric',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </bdi>
+                      </button>
+                    );
+                  })}
+                </div>
+                </>
+              )}
+
+              {/*
+                * ── AND ANY OTHER HOUR ──────────────────────────────────────
+                *
+                * The suggestions are the block's own rhythm stepped forward
+                * from its LAST session, which is where a replacement usually
+                * belongs and is not where it always can go. A client who can
+                * only do a Thursday, a gap mid-block the owner would rather
+                * fill, a week that suits both — none of those are beats of the
+                * rhythm, and offering only beats made the owner close the
+                * dialog and place the session by hand.
+                *
+                * Nothing here needs guarding that is not already guarded: the
+                * add route takes any instant, refuses an overlap on a database
+                * constraint (`scheduling_meetings_no_overlap`), refuses a
+                * closed day unless told otherwise, and refuses a block that is
+                * already complete. The picker widens what can be ASKED for,
+                * not what can be written.
+                */}
+              <label className="mt-2 block">
+                <span className="block text-xs text-[var(--v2-text-muted)] mb-1">
+                  {t('scheduling.no_show.replace_any') || 'Or pick any date and time'}
+                </span>
+                <input
+                  type="datetime-local"
+                  value={toLocalInput(chosenStart || replacement.proposedStart)}
+                  onChange={event => {
+                    const next = event.target.value;
+                    if (!next) return;
+                    const parsed = new Date(next);
+                    if (!Number.isNaN(parsed.getTime())) setChosenStart(parsed.toISOString());
+                  }}
+                  disabled={working}
+                  className="w-full px-2.5 py-1.5 text-xs border bg-[var(--v2-bg)] text-[var(--v2-text-primary)] disabled:opacity-50"
+                  style={{
+                    borderRadius: 'var(--v2-radius-button)',
+                    borderColor: 'var(--v2-border)',
+                  }}
+                />
+              </label>
+            </div>
           )}
         </div>
 

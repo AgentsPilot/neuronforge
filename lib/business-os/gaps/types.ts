@@ -239,6 +239,50 @@ export interface GapItem {
    */
   sessionNumber?: number;
   /**
+   * This hour was closed by a CLOCK, not by a person.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `auto_complete_meetings` marks an overdue meeting held, because held is
+   * the only answer available to it: no-show and called-off are judgements
+   * about a room it was not in. A date going by is not evidence anyone
+   * attended.
+   *
+   * It matters here because the row it decorates asks the owner to BILL. The
+   * automation deliberately stops short of that, so the money on these rows is
+   * waiting on a person agreeing the hour was real. The card says so in words
+   * and makes its button a confirmation rather than a charge.
+   *
+   * Absent — not `false` — when a person answered, so the ordinary row is
+   * shaped exactly as it was.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  autoHeld?: boolean;
+  /**
+   * Which channel brought this one, as a KEY.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A mailbox lead and a website-form lead deliberately share a `source`:
+   * `captureEnquiry` keeps both inside `FORM_SOURCES` because the
+   * unanswered-enquiry chase matches on it, and a lead the chase cannot see is
+   * worse than one labelled vaguely. `source_metadata.via` is the marker that
+   * carries the difference, and nothing read it — so an email an agent found,
+   * read and filed looked identical to a form somebody typed into.
+   *
+   * A key rather than a sentence, for the same reason as `sessionNumber`: the
+   * gaps run server-side with no language resolved, and `note` is rendered
+   * raw. The surface names the channel in the reader's own words.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  via?: string;
+  /**
+   * WHICH mailbox, where the channel was one — `google-mail` or `outlook`.
+   *
+   * Named separately from `via` because it answers a different question and is
+   * often absent: a lead filed through the agent before the provider was
+   * recorded has the channel and not the account it came from.
+   */
+  viaProvider?: string;
+  /**
    * A payment plan that is STILL CHARGING this client.
    *
    * Only `booking_cancelled` sets it. It is not a detail on the row so much as
