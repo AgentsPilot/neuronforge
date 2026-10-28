@@ -2466,6 +2466,8 @@ export const en = {
     'crm.booking.package.add_confirm': 'Add it',
     'crm.booking.package.adding': 'Adding…',
     'crm.booking.package.charge_it': 'Bill it like the others',
+    'crm.booking.package.makes_up_for': 'Makes up for',
+    'crm.booking.package.makes_up_for_nothing': 'Nothing, an extra session',
     'crm.booking.package.add_failed': 'The meeting could not be added.',
     'crm.booking.step.package': 'The meetings',
     'crm.booking.package.col_when': 'When',
