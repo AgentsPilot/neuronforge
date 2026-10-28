@@ -107,7 +107,9 @@ describe('a clock\'s answer does not wear a person\'s tick', () => {
        get the sentence. A missing key would leave them with the raw id. */
     for (const lang of ['en', 'he', 'es']) {
       const dict = readFileSync(
-        join(__dirname, '..', '..', '..', 'lib', 'business-os', 'translations', `${lang}.ts`),
+        /* From the repo root, not by counting `..` out of `__tests__` — three
+           of them land on `components/`. Same correction as `root` above. */
+        join(process.cwd(), 'lib', 'business-os', 'translations', `${lang}.ts`),
         'utf-8'
       );
       expect(`${lang}:${dict.includes("'crm.booking.status.auto_completed'")}`).toBe(
@@ -118,7 +120,16 @@ describe('a clock\'s answer does not wear a person\'s tick', () => {
 });
 
 describe('the Needs-you row says why it is asking', () => {
-  const root = join(__dirname, '..', '..', '..');
+  /*
+   * The repo root, from `components/crm/contact-drawer/__tests__`.
+   *
+   * Three `..` lands on `components/`, so every read below looked for
+   * `components/lib/...` and the suite failed to LOAD — which CI reports as a
+   * runtime error rather than a failed assertion, and the gate's G5 check
+   * fails the whole run for it. `process.cwd()` is what the other guards in
+   * this directory use and does not depend on counting directories.
+   */
+  const root = process.cwd();
   const defs = readFileSync(join(root, 'lib', 'business-os', 'gaps', 'definitions.ts'), 'utf-8');
   const route = readFileSync(
     join(root, 'app', 'api', 'business-os', 'gaps', 'route.ts'),
