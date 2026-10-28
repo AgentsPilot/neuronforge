@@ -228,6 +228,12 @@ const ALLOWED = new Set(
     'app/api/admin/business-os/billing/accounts/[accountId]/__tests__/route.test.ts',
     'lib/admin/billing/billingPanelView.ts',
     'lib/admin/billing/__tests__/billingPanelView.test.ts',
+    // ── Plan payments P-8b.2, 2026-10-28 — the nightly plan reconcile (Step B) ─
+    // READ ONLY. The cron pass's wiring calls `findEntitlementInputsBatch` (the
+    // tier and paid-through date of PAYING billing rows' accounts, ids taken
+    // from our own billing records, never from input) and nothing else; the
+    // PLAN_RECONCILE_WIRING test below pins it. Listed in NO_STATE_WRITE_REFERRERS.
+    'lib/business-os/billing/planReconcileDeps.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
@@ -252,6 +258,10 @@ const FINANCE_METHODS = ['findEntitlementInputs', 'pagePlans'];
 /** Plan payments P-8a.1 (P8A-R1): the Subscriptions page's wiring, and the ONE plan-repository method it may call. */
 const SUBSCRIPTIONS_WIRING = 'lib/admin/billing/subscriptionsDeps.ts';
 const SUBSCRIPTIONS_METHOD = 'pagePlans';
+
+/** Plan payments P-8b.2: the nightly plan reconcile's wiring, and the ONE plan-repository method it may call. */
+const PLAN_RECONCILE_WIRING = 'lib/business-os/billing/planReconcileDeps.ts';
+const PLAN_RECONCILE_METHOD = 'findEntitlementInputsBatch';
 
 /** The methods that CHANGE entitlement state. Component 5's admin routes own these. */
 const WRITE_METHODS = [
@@ -319,6 +329,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/admin/billing/subscriptionsView.ts',
   // Plan payments P-8a.2: the billing panel builder — the plan row TYPE only, pure.
   'lib/admin/billing/billingPanelView.ts',
+  // Plan payments P-8b.2: the nightly plan reconcile wiring — READ ONLY, `findEntitlementInputsBatch` and nothing else.
+  'lib/business-os/billing/planReconcileDeps.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -501,6 +513,14 @@ describe('RC-15 — entitlement repository referrers', () => {
       'pagePlans',
       'updatePlan',
     ]);
+  });
+
+  it('Plan payments P-8b.2: the plan reconcile wiring calls findEntitlementInputsBatch on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...PLAN_RECONCILE_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect(calls).toEqual([PLAN_RECONCILE_METHOD]);
+    // Reached only as the module's singleton, never bound to a local name a later edit could call unseen.
+    expect(source).not.toMatch(/=\s*\w+\.businessOsAccountPlanRepository\s*;/);
   });
 
   it('the allowed list names files that exist', () => {

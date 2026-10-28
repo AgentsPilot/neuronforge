@@ -33,11 +33,15 @@
 // adding a line for the errors it discards (reclaim, complete, release) is the
 // tracked follow-up FU-9 (SA Q-4), not part of a behaviour-preserving move.
 //
-// CALLERS: `app/api/stripe/webhook/route.ts` only.
+// CALLERS: `app/api/stripe/webhook/route.ts`, and the nightly plan reconcile
+// pass (`lib/business-os/billing/planReconcilePass.ts`, wired by
+// `planReconcileDeps.ts`; plan payments P-8b.2, SA ruling 2), which leases each
+// plan event it replays through this same table.
 //
 // NEW, NOT MOVED: `reclaimStale` (plan payments P-8b.1, PF-5; workplan
-// docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P8B_WORKPLAN.md §4.1, SA ruling 1).
-// It is the one method here that did not exist inline before CF-5.
+// docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P8B_WORKPLAN.md §4.1, SA ruling 1)
+// and `reclaimFailedIfStillFailed` (P-8b.2, SA ruling 2). They are the two
+// methods here that did not exist inline before CF-5.
 
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
@@ -164,9 +168,36 @@ export class ProcessedWebhookEventRepository {
   }
 
   /**
+   * ⟨unscoped-by-design⟩ Takes a `failed` claim back ONLY if it is still
+   * `failed` (plan payments P-8b.2, SA ruling 2): `processing`, the failure
+   * message cleared, a fresh `processed_at`. The nightly plan pass is its only
+   * caller. Unlike the route's unconditional `reclaimFailed`, a nightly actor
+   * must not race Stripe's own retry of the same row: of the pass and a
+   * delivery that both read `failed`, exactly one wins.
+   *
+   * ONE conditional UPDATE, `won` only when it changed exactly one row. Read
+   * from `{ count: 'exact' }`, never from `.select()` (the PostgREST
+   * update-plus-select defect), and no `.or()`.
+   */
+  async reclaimFailedIfStillFailed(eventId: string): Promise<WebhookClaimResult<{ won: boolean }>> {
+    const { error, count } = await this.supabase
+      .from('processed_webhook_events')
+      .update(
+        { status: 'processing', failure_message: null, processed_at: new Date().toISOString() },
+        { count: 'exact' }
+      )
+      .eq('event_id', eventId)
+      .eq('status', 'failed');
+    if (error) return { data: null, error };
+    return { data: { won: count === 1 }, error: null };
+  }
+
+  /**
    * ⟨unscoped-by-design⟩ Marks a claim done, so later deliveries of the event
    * are skipped. The ONLY completing write: the route reaches it through its
-   * `completeClaim()` helper alone (pinned by `routerPlacement.guard`).
+   * `completeClaim()` helper alone (pinned by `routerPlacement.guard`), and the
+   * plan reconcile pass through its one `settleClaim` helper (P-8b.2, pinned by
+   * `planReconcilePass.guard`).
    */
   async complete(eventId: string): Promise<WebhookClaimResult<null>> {
     const { error } = await this.supabase
