@@ -886,7 +886,94 @@ The design is also sound:
 
 ## QA Testing Report
 
-*(QA to populate.)*
+**QA — 2026-10-28** (worktree `neuronforge-mk5bfu`, branch `fix/finance-paying-first-payment-scale` at `fe66a311`; local commits `713e83fb`, `23b6eac0`, `fe66a311`; nothing pushed, nothing applied to any database)
+**Test mode:** full
+**Strategy used:** A (unit: wiring, ask helper, repository) + B (integration through the real builder, real wiring and real repository over the reference-view fake) + static review of the migration, rollback and checker (no database apply, by instruction)
+**Focus:** api, schema, security, performance
+**Skipped:** live apply and checker run (not allowed in this pass; owed by CR-M5F-2), `npm run build` and `schema:check` (red until the view exists, §6.5), browser check (no UI change)
+**Input source:** prompt keywords (TL brief), checked against §9 and §10
+
+### QA probe added (uncommitted, for Dev/RM to include)
+
+`lib/business-os/finance/__tests__/firstPaymentScale.qa.test.ts` (22 tests). Real `buildFinanceHealth` → real `listCurrentModeFirstPlanPayments` → real `BusinessOsBillingAdminReadRepository` → `fakeFirstPaymentDb`, with a tamper hook that plants database answers the view can never give. It names no repository type (takes the plan-row type from `trialEndOf`), so RC-15 needs no `ALLOWED` entry; RC-15 was run green with it present.
+
+### Test Coverage
+
+| Acceptance criterion / brief item | Tested? | Result | Notes |
+|---|---|---|---|
+| Happy path: all businesses, exact figures | ✅ | Pass | QA probe, hand-computed: Converted 4, stopped 2; MK-9 ended 3, Paid 2, Paid-before-end 1; payload byte-equal to the frozen legacy read |
+| Failure: the view read (Q1) fails | ✅ | Pass | Converted `unknown` (all nulls) **and** MK-9 Paid / Paid-before-end / rate null. QA probe + wiring test |
+| Failure: the by-id read (Q2) fails | ✅ | Pass | Same Unknown. QA probe + EQ-11 |
+| Failure: range over 31 days | ✅ | Pass | `AdminBillingReadGuardError`, **0 queries**, through wiring + repository (QA) and Q1-2 (31 days 00:00:01 refused; exactly 31 days in December allowed) |
+| Failure: duplicate account (Q1 and Q2) | ✅ | Pass | `AdminBillingReadDuplicateError` → payload Unknown (QA), R-7, Q1-4 |
+| Failure: row outside the month | ✅ | Pass | Payload Unknown (QA); Q1-4 plants both the next-month start and the last ms of the previous month |
+| Failure: row for an account not asked for / no user / bad date | ✅ | Pass | Isolation error → payload Unknown (QA); R-8, R-9 |
+| Failure: the two joined reads disagree | ✅ | Pass | Payload Unknown (QA); the same instant written two ways is not a disagreement (wiring test) |
+| MK5BFU-AC-1 byte-identical payload | ✅ | Pass | EQ-1 (50 seeds), EQ-2 (1,750 accounts), EQ-3 (100/101/200/1,000/1,001/2,000), EQ-4, EQ-9, EQ-10, EQ-11 + QA probe, all against the hash-pinned legacy block `ac0ac49b…3e04` (asserted) |
+| MK5BFU-AC-2 exact at scale (SC-1) | ✅ | Pass | Old read returns `AdminBillingReadCeilingError` (so Unknown, D-3); new path `ok` and equal to the oracle for Converted, stopped, MK-9 Paid, Paid-before-end, ended |
+| MK5BFU-AC-3 bounded reads | ✅ | Pass | SC-1: every `limit` ≤ 1,000, every `in()` ≤ 100 ids, rows read ≤ asked ids + month rows and < 1/20 of history; SC-2: 20,000 first payments in one month → ceiling error, never 0 |
+| MK5BFU-AC-4 one rule, both Unknown together | ✅ | Pass | Every QA failure case asserts Converted **and** MK-9 Paid Unknown |
+| MK5BFU-AC-5 / C5: one business never runs Q1 | ✅ | Pass | QA: for each of 10 accounts (every state), a spy on `listFirstPlanPaymentsInRangeAllAccounts` is never called, exactly 1 query with `in = [that id]`, no `first_payment_at` filter, bytes equal to legacy. Also builder (spy), route (`{ accountIds: [ACCOUNT], firstPaymentIn: null }`) and EQ-10 |
+| MK5BFU-AC-6 view security (static) | ✅ | Pass | See migration review below |
+| MK5BFU-AC-7 checker on production | ⬜ | Not run | Owed after the user-approved apply (CR-M5F-2). Checker reviewed statically: read-only, one statement, `all_ok` column |
+| MK5BFU-AC-8 AC-145 | ✅ | Pass | `EXPECTED_SHA256` = `38897cd3295ae0c5e865503cf0394453c38f532b0ec87866610126281b1e4edf`, the same line as `origin/main` (`b9dc16c7`). `git diff origin/main` on `route.test.ts`: the only `EXPECTED_CALLS` change is `'converted.firstPlanPayments'` (plus comments, the restore constant, and two MK-5b route assertions moved to the query object). Confirmed independently of the in-test restore proof (SA comment 1) |
+| MK5BFU-AC-10 guards | ✅ | Pass | Range-cap source guard and tranche-A paging, finance source guard, first-payment stamp guard: green |
+| MK5BFU-AC-11 no `console.*`, counts-only logs | ✅ | Pass | 0 `console.*` in the slice's TS files; R-10, Q1-5 and the builder log test |
+| MK5BFU-AC-12 access unchanged | ✅ | Pass | No route change; `test:authz-guard` 203/203 |
+| Edge: UTC month boundary | ✅ | Pass | `00:00:00.000Z` on the 1st is in, `23:59:59.999Z` on the last day of the previous month is out, `00:00:00.000Z` on the next 1st is out (QA, hand-checked); offsets across midnight in EQ corners |
+| Edge: trial whose first payment fell in an earlier month | ✅ | Pass | Counted Paid and Paid-before-end, not in Converted (QA; EQ corners) |
+| Edge: amount 0 | ✅ | Pass | A $0 row before the first paid one is ignored; first payment is the later paid row (QA) |
+| Edge: livemode mixing | ✅ | Pass | An earlier live-mode payment is ignored in test mode (QA; EQ corners) |
+| Edge: null user_id | ✅ | Pass | A detached paid row this month is never counted (QA); the view and both index predicates exclude it |
+| Edge: same-instant ties | ✅ | Pass | Two rows at the same instant written with different offsets → one first payment, one Converted row (QA; EQ-5 corners; checker C-7) |
+
+### Migration 20261099: static review
+
+| Check | Result |
+|---|---|
+| Refuses on PG < 15 | ✅ `server_version_num < 150000` raises before any DDL, "Nothing was applied" |
+| `statement_timeout` | ✅ `SET LOCAL statement_timeout = '120s'` (and `lock_timeout = '5s'`), before the first `CREATE INDEX` |
+| Guards before DDL | ✅ base table present, no anon/authenticated CREATE on `public`, view and both index names free, service_role can read the base table |
+| `security_invoker` | ✅ `WITH (security_invoker = true)`; no `security_barrier`, no `SECURITY DEFINER`; the in-file probe re-checks the option |
+| Grants | ✅ `REVOKE ALL` from PUBLIC, anon, authenticated, service_role, then a single `GRANT SELECT … TO service_role`; the probe fails the transaction if any client role holds any of 7 privileges, or service_role holds more than SELECT, and reads the view as service_role |
+| View rule | ✅ `invoice_paid`, `amount_minor > 0`, `paid_at IS NOT NULL`, `user_id IS NOT NULL`, anti-join with `(paid_at, id)` tie-break; selects only `user_id, livemode, first_payment_at` |
+| Rollback | ✅ `DROP VIEW IF EXISTS public.business_os_first_plan_payments` + `DROP INDEX IF EXISTS` for `…_paid_month_idx` and `…_first_payment_idx`, in one transaction under `lock_timeout`; nothing else |
+| Checker | ✅ `SET default_transaction_read_only = on;` then one `WITH … SELECT` (2 `;` in the file); no write keyword outside a string literal; ASCII only; no "into"; returns C-1..C-8, `base_rows`, `view_rows` and `all_ok` |
+| Stale `20261097` | ✅ None for this view. Remaining hits are main's own `20261097_a_session_knows_what_it_replaced` (code comments), history rows marked superseded in this workplan and FIN §0.4, and SA's original CR-M5F-1 wording (historical) |
+| Number still free | ✅ After `git fetch` (origin/main `b9dc16c7`, #560): highest on main is `20261098`; no remote branch holds `20261099` or later |
+| Migration-text test | ✅ `bos-first-plan-payments-view.migration.test.ts` green (also inside `test:bos-entitlements`) |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None.
+
+#### Performance Issues (should fix)
+None. SC-1 (19,500 plan rows, about 107k qualifying rows) is bounded and passed inside its 60 s timeout under a loaded parallel run.
+
+#### Edge Cases (nice to fix / notes)
+1. **Main moved again** (Low, process). `origin/main` is 2 commits ahead (#560, P-8b.3a: `lib/admin/billing/subscriptions*`, `billingPanelView.ts`, `app/admin/finance/**`, the subscriptions route, `planReconcilePass.ts`). `git merge-tree` shows a clean merge and no overlap with this slice's files. After merging it before the PR, re-run `lib/admin/billing`, `app/admin/finance`, the finance route (AC-145) and the equivalence suite.
+2. **Sub-millisecond ties** (Informational). The view picks the true minimum at microsecond precision; the old read compared `Date.parse` (milliseconds). They could differ only if one account has two qualifying payments inside the same millisecond. Stripe's `paid_at` is whole seconds, so this cannot happen in practice. Figures could not move anyway, because every comparison downstream is in milliseconds.
+3. **SC-1 proves the old path fails at the read, not through the builder** (Informational, D-3 accepted by SA). EQ-11 and the QA probe close the gap: a failed first-payment read gives Unknown through the builder on both paths.
+4. **Out of scope:** MK5BFU-FU-2 (a D3.1 after-cancel free period counted in MK-9) and MK5BFU-FU-1 (the plan walk's 20,000-row cap) were not tested, as briefed.
+
+### Test Outputs / Logs
+
+| Run | Result |
+|---|---|
+| Targeted: builder, equivalence and scale, `firstPaymentAsk`, finance route (both suites), `lib/admin/billing` (5), repository, range-cap source guard + tranche-A paging, first-payment stamp guard, RC-15, finance source guard, migration-text test | 17 suites, **2,005 / 2,005** (43 s) |
+| QA probe `firstPaymentScale.qa.test.ts` | **22 / 22**; with RC-15 re-run beside it: 60 / 60 |
+| `lib/business-os/finance` + `app/admin/finance` (including the QA probe; `exchangeRatesTab.render` and `chargeChecksRequest.pin.render` passed first time) | 56 suites, **3,288 / 3,288** |
+| `npm run test:bos-entitlements` (includes `lib/repositories/__tests__` and `supabase/migrations/__tests__`) | 327 suites, **9,755 / 9,755** |
+| `npm run test:authz-guard` | 2 suites, **203 / 203** |
+| `typecheck:bos-llm` (`NODE_OPTIONS=--max-old-space-size=8192`) | Exit 0: 612 files in scope, 11 errors, **0 new** |
+| Scoped `tsc` (8 GB) over the slice's 15 TS files plus the QA probe | Exit 0, **0 errors**. A canary (a `string[]` assigned to `number` via `trialAccountsToAsk`) gave TS2322 and exit 2, so the run really checks |
+| `npm run lint:hooks` | Exit 0 |
+| `console.*` in the slice's TS files | 0 |
+
+### Final Status
+- [x] All acceptance criteria that can be tested before the apply pass. **QA verdict: PASS.** No bugs. AC-7 (the production checker `all_ok`) is still owed under CR-M5F-2: the user's go-ahead, then apply, then the checker, then merge. Not eligible for auto-merge before the apply.
+- [ ] Issues found — Dev must address before commit
 
 ## Commit Info
 
@@ -903,3 +990,4 @@ The design is also sound:
 | 2026-10-27 | Implemented (Dev) | Migration 20261097 (renumbered `20261099` on 2026-10-28), rollback, checker, EXPLAIN probe, migration-text test (M5F-C1 to C4); repository Q1 and Q2 on the view; wiring; `firstPaymentAsk.ts`; builder; equivalence and scale tests (SC-1 about 7 s); AC-145 calls-only re-freeze with the hash unchanged at `38897cd3`; Pins A to D, AC-173 and T-12 unchanged. D-1 to D-6; MK5BFU-FU-1 (plan walk cap) recorded. Nothing applied to production |
 | 2026-10-27 | SA code review (SA-CR-M5F) | Code approved for QA with conditions CR-M5F-1 (sync with main, which now includes #541, and re-run AC-145 and the pins) and CR-M5F-2 (go-ahead → apply → checker `all_ok` → merge; no auto-merge before the apply). M5F-C1 to C5 and C7 verified in code; C6 is due at the sync. D-2 (RC-15 `ALLOWED` entry) approved; D-1 and D-3 to D-6 accepted. 506/506 green on SA's re-run. Three Low, non-blocking comments |
 | 2026-10-28 | CR-M5F-1 sync (Dev) | Migration renumbered `20261097` → `20261099` (main took 20261097 and 20261098). Committed locally `713e83fb`; merged origin/main `abe9fd64` in `23b6eac0`; one docs conflict (FIN Change History), both rows kept. 20261098 reviewed: no effect on the view or the equivalence; a meaning change in MK-9 from D3.1 recorded as MK5BFU-FU-2 (proposed). Re-runs green; `EXPECTED_SHA256` equals main; only `converted.firstPlanPayments` differs; pins unchanged |
+| 2026-10-28 | QA (full) | **PASS, no bugs.** The QA probe `firstPaymentScale.qa.test.ts` (22 tests, uncommitted) covers every failure path through the real builder, wiring and repository: Q1 fails, Q2 fails, more than 31 days, a duplicate, out of range, not asked for, no user, a bad date, the two reads disagree. Each one leaves Converted and MK-9 Paid Unknown. It also checks the hand-computed edge cases and that one business picked never runs Q1 (C5), byte-equal to legacy. AC-145 hash `38897cd3…` equals main, and only that one calls entry differs. Migration 20261099, its rollback and checker were reviewed statically: no stale 20261097, and the number is still free after fetching main `b9dc16c7`. Results: targeted 2,005/2,005; finance lib and UI 3,288/3,288; `test:bos-entitlements` 9,755/9,755; authz 203/203; `typecheck:bos-llm` 0 new; scoped tsc 0 errors with a canary; `lint:hooks` clean. Notes: main is 2 commits ahead (#560), with a clean merge, so re-run the suites after merging. AC-7 (the production checker) is owed under CR-M5F-2 |
