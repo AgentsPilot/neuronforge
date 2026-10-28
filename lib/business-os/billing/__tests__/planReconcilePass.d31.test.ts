@@ -3,45 +3,62 @@
  * `.deleted` event twice produces one end row and one cohort change".
  *
  * The pass never replays a `completed` claim, but it CAN replay a `failed`
- * `customer.subscription.deleted` days later. Here the REAL plan handler and
- * the REAL subscription mirror run behind the pass, on in-memory ports:
+ * `customer.subscription.deleted` days later. Here the REAL plan handler, the
+ * REAL subscription mirror and the REAL after-plan move
+ * (`moveToFreeCohortAfterPlan`, D3.1 / SX-2b, PR #556) run behind the pass, on
+ * in-memory ports. The plan store is stateful: a move's write lands on the row
+ * the next read returns, as the plan table does (the same store as D's own
+ * "replay (P-8b reconcile)" tests in `planSubscriptionMirror.test.ts` and
+ * `afterPlanMove.test.ts`).
  *
- *   - a failed `.deleted` replayed by two nightly runs: one end row, one
- *     end-of-subscription plan change (the audit port, which is where SX-2b's
- *     free-cohort move hooks in; until D3.1 lands it is the only side effect);
- *   - a partial failure (the end row is written, then the plan-change step
- *     throws, so the claim is marked failed): the next run's replay sees the
- *     end row as a duplicate, writes no second row and makes no second change.
+ *   - a failed `.deleted` replayed by two nightly runs: one end row and ONE
+ *     free-cohort move (one write, one `BOS_PLAN_FREE_PERIOD_AFTER_CANCEL`);
+ *   - a partial failure (the end row is written, then the move's write fails,
+ *     so the claim is marked failed): the next run's replay sees the end row as
+ *     a duplicate, writes no second row, and makes the move exactly once; a
+ *     third run changes nothing.
  *
- * Binding on SX-2b (ruling 12): the cohort move must be a target-state write,
- * guarded by "still the current subscription", and must not depend on the end
- * row being new. When D3.1 lands, its owner extends the second case to assert
- * the cohort row itself.
+ * SA ruling 12's condition on SX-2b is met by D3.1: the move is a target-state
+ * compare-and-set guarded by "the row's last move came from this subscription",
+ * and it runs outside the "end row is new" branch, so a replay re-runs it.
  */
 
 import fs from 'fs';
 import path from 'path';
 import type Stripe from 'stripe';
 
+import {
+  AFTER_PLAN_MOVE_AUDIT_ACTION,
+  moveToFreeCohortAfterPlan,
+  type AfterPlanMoveDeps,
+  type AfterPlanMoveRead,
+  type AfterPlanMoveWrite,
+} from '@/lib/business-os/billing/afterPlanMove';
 import { createPlanBillingHandler, type PlanBillingHandlerDeps } from '@/lib/business-os/billing/planBillingHandler';
 import { createPlanReconcilePass, type PlanClaimStatus, type PlanReconcileDeps } from '@/lib/business-os/billing/planReconcilePass';
 import type { ReconcilePassContext } from '@/lib/business-os/billing/reconcilePassRunner';
+import { AFTER_PLAN } from '@/lib/business-os/entitlements/config/afterPlan';
+import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
+import type { RecordPlanChangeInput } from '@/lib/business-os/entitlements/recordPlanChange';
+import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import type { Logger } from '@/lib/logger';
 import type { BusinessOsBillingAccount } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 import type { BusinessOsBillingEventInput } from '@/lib/repositories/BusinessOsBillingEventRepository';
 
-/** The plan-change port's input, named through the handler's own deps (no entitlements import). */
-type RecordPlanChangeInput = Parameters<PlanBillingHandlerDeps['recordPlanChange']>[0];
-
 const NOW = Date.parse('2026-10-28T05:41:00.000Z');
 const ACCOUNT = '11111111-1111-4111-8111-111111111111';
 const SUB = 'sub_D31';
-const ENDED_AT = 1_790_600_000;
+/** As D's mirror tests: a test-clock end after the real-time `NOW`. */
+const ENDED_AT = 1_801_211_893;
+const ENDED_ISO = new Date(ENDED_AT * 1000).toISOString();
 
 function deletedEvent(): Stripe.Event {
   const file = path.join(__dirname, 'fixtures', 'stripe', 'customer-subscription-deleted.json');
   const event = JSON.parse(fs.readFileSync(file, 'utf8')) as Stripe.Event;
-  (event.data.object as Stripe.Subscription).id = SUB;
+  const subscription = event.data.object as Stripe.Subscription;
+  subscription.id = SUB;
+  // An owner-started end: the one reason that gives the free period (BQ-20).
+  subscription.cancellation_details = { comment: null, feedback: null, reason: 'cancellation_requested' };
   return event;
 }
 
@@ -53,9 +70,9 @@ function billingRow(): BusinessOsBillingAccount {
     stripeCustomerId: 'cus_d31',
     stripeSubscriptionId: SUB,
     subscriptionStatus: 'active',
-    boughtTier: 'tier_one',
-    currentPeriodEnd: '2026-11-01T00:00:00.000Z',
-    cancelAtPeriodEnd: false,
+    boughtTier: TIER_ORDER[TIER_ORDER.length - 1],
+    currentPeriodEnd: ENDED_ISO,
+    cancelAtPeriodEnd: true,
     pendingTier: null,
     openCheckoutSessionId: null,
     openCheckoutExpiresAt: null,
@@ -71,18 +88,72 @@ function billingRow(): BusinessOsBillingAccount {
   };
 }
 
-function harness(options: { planChangeThrowsOnce?: boolean } = {}) {
+function harness(options: { moveWriteFailsOnce?: boolean } = {}) {
   const event = deletedEvent();
   const state = { row: billingRow() };
   const endRows: BusinessOsBillingEventInput[] = [];
-  const planChanges: RecordPlanChangeInput[] = [];
-  let planChangeThrows = options.planChangeThrowsOnce ?? false;
+  const mirrorAudits: RecordPlanChangeInput[] = [];
+  const moveAudits: RecordPlanChangeInput[] = [];
+  const moveWrites: AfterPlanMoveWrite[] = [];
+  let moveWriteFails = options.moveWriteFailsOnce ?? false;
+
+  // The plan table, stateful: a move's write lands on the row the next read returns.
+  const store: AfterPlanMoveRead = {
+    plan: {
+      user_id: ACCOUNT,
+      tier: TIER_ORDER[TIER_ORDER.length - 1],
+      plan_version: 0,
+      tier_expires_at: ENDED_ISO,
+      cohort: AFTER_PLAN.cohort,
+      cohort_expires_at: null,
+      onboarding_started_at: '2026-01-01T00:00:00.000Z',
+      profile_created_at: null,
+      trial_started_at: null,
+      trial_ends_at: null,
+      grace_ends_at: null,
+      period_anchor: '2026-10-01T00:00:00+00:00',
+      origin: 'admin',
+      updated_by_admin_id: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-10-01T00:00:00.123456+00:00',
+    },
+    moves: 0,
+    lastSubscriptionId: null,
+  };
+  const moveDeps: AfterPlanMoveDeps = {
+    readMoveInputs: async () => ({ data: { plan: { ...store.plan }, moves: store.moves, lastSubscriptionId: store.lastSubscriptionId }, error: null }),
+    writeMove: async (input) => {
+      moveWrites.push(input);
+      if (moveWriteFails) {
+        moveWriteFails = false;
+        return { data: null, error: new Error('plan write failed') };
+      }
+      if (input.expected.updatedAt !== store.plan.updated_at || input.expected.moves !== store.moves) return { data: { outcome: 'stale' }, error: null };
+      store.plan = {
+        ...store.plan,
+        cohort: input.cohort,
+        trial_started_at: input.trialStartedAt,
+        trial_ends_at: input.trialEndsAt,
+        grace_ends_at: input.clearGraceEndsAt ? null : store.plan.grace_ends_at,
+        period_anchor: input.periodAnchor,
+        updated_at: `2026-10-28T05:41:00.${String(store.moves + 1).padStart(6, '0')}+00:00`,
+      };
+      store.moves += 1;
+      store.lastSubscriptionId = input.subscriptionId;
+      return { data: { outcome: 'applied', moves: store.moves }, error: null };
+    },
+    config: () => getEntitlementConfig(),
+    recordPlanChange: async (input) => {
+      moveAudits.push(input);
+    },
+    now: () => new Date(NOW),
+  };
 
   const quiet: Record<string, unknown> = { info: () => undefined, warn: () => undefined, error: () => undefined, debug: () => undefined };
   quiet.child = () => quiet;
   const log = quiet as unknown as Logger;
 
-  // The real handler, with only the ports a `.deleted` event reaches.
+  // The real handler, with only the ports a `.deleted` event reaches, and the REAL after-plan move.
   const handlerDeps = {
     stripeMode: () => 'test',
     now: () => new Date(NOW),
@@ -126,12 +197,9 @@ function harness(options: { planChangeThrowsOnce?: boolean } = {}) {
       },
     },
     recordPlanChange: async (input: RecordPlanChangeInput) => {
-      planChanges.push(input);
-      if (planChangeThrows) {
-        planChangeThrows = false;
-        throw new Error('plan change step failed');
-      }
+      mirrorAudits.push(input);
     },
+    afterPlanMove: (input: Parameters<typeof moveToFreeCohortAfterPlan>[0], moveLog: Logger) => moveToFreeCohortAfterPlan(input, moveLog, moveDeps),
   } as unknown as PlanBillingHandlerDeps;
   const handler = createPlanBillingHandler(handlerDeps);
 
@@ -180,37 +248,68 @@ function harness(options: { planChangeThrowsOnce?: boolean } = {}) {
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
     trigger: 'nightly',
   };
-  return { event, state, endRows, planChanges, claims, run: () => pass.run(context) };
+  return { event, state, store, endRows, mirrorAudits, moveAudits, moveWrites, claims, run: () => pass.run(context) };
 }
 
 describe('D3.1 replay safety: one .deleted event replayed twice (SA ruling 12)', () => {
-  it('a failed .deleted replayed by two nightly runs: one end row and one plan change', async () => {
+  it('a failed .deleted replayed by two nightly runs: one end row and one free-cohort move', async () => {
     const h = harness();
     const first = await h.run();
+    const afterFirst = JSON.parse(JSON.stringify(h.store)) as AfterPlanMoveRead;
     const second = await h.run();
     expect(first.replayed).toBe(1);
     expect(second.replayed).toBe(0);
+
     expect(h.endRows).toHaveLength(1);
     expect(h.endRows[0]).toMatchObject({ kind: 'subscription_ended', stripeEventId: h.event.id, accountId: ACCOUNT });
-    expect(h.planChanges.map((c) => c.action)).toEqual(['BOS_BILLING_SUBSCRIPTION_ENDED']);
+    expect(h.mirrorAudits.map((c) => c.action)).toEqual(['BOS_BILLING_SUBSCRIPTION_ENDED']);
+
+    // The move: one write, one audit, the row moved and stamped with this subscription.
+    expect(h.moveWrites).toHaveLength(1);
+    expect(h.moveAudits.map((c) => c.action)).toEqual([AFTER_PLAN_MOVE_AUDIT_ACTION]);
+    expect(h.store.moves).toBe(1);
+    expect(h.store.lastSubscriptionId).toBe(SUB);
+    expect(h.store).toEqual(afterFirst);
+
     expect(h.claims.get(h.event.id)).toBe('completed');
-    expect(h.state.row.endedAt).toBe(new Date(ENDED_AT * 1000).toISOString());
+    expect(h.state.row.endedAt).toBe(ENDED_ISO);
   });
 
-  it('a partial failure (end row written, then the plan-change step throws): the retry sees a duplicate, no second row, no second change', async () => {
-    const h = harness({ planChangeThrowsOnce: true });
+  it('a partial failure (end row written, then the move write fails): the retry sees a duplicate, no second row, the move exactly once', async () => {
+    const h = harness({ moveWriteFailsOnce: true });
     const first = await h.run();
     expect(first).toMatchObject({ replayed: 0, replayFailed: 1 });
     expect(h.claims.get(h.event.id)).toBe('failed');
+    expect(h.endRows).toHaveLength(1);
+    expect(h.store.moves).toBe(0);
 
     const second = await h.run();
     expect(second).toMatchObject({ replayed: 1, replayFailed: 0 });
     expect(h.endRows).toHaveLength(1);
-    expect(h.planChanges).toHaveLength(1);
+    // The end audit is written only with a NEW end row, so once.
+    expect(h.mirrorAudits).toHaveLength(1);
+    // One failed write attempt, then the one that landed.
+    expect(h.moveWrites).toHaveLength(2);
+    expect(h.store.moves).toBe(1);
+    expect(h.moveAudits.map((c) => c.action)).toEqual([AFTER_PLAN_MOVE_AUDIT_ACTION]);
     expect(h.claims.get(h.event.id)).toBe('completed');
 
     // A third run finds it completed and replays nothing.
+    const afterSecond = JSON.parse(JSON.stringify(h.store)) as AfterPlanMoveRead;
     expect((await h.run()).replayed).toBe(0);
     expect(h.endRows).toHaveLength(1);
+    expect(h.moveWrites).toHaveLength(2);
+    expect(h.store).toEqual(afterSecond);
+  });
+
+  it('the move is idempotent on its own: forcing the claim back to failed and replaying again moves nothing more', async () => {
+    const h = harness();
+    await h.run();
+    h.claims.set(h.event.id, 'failed');
+    expect((await h.run()).replayed).toBe(1);
+    expect(h.endRows).toHaveLength(1);
+    expect(h.moveWrites).toHaveLength(1);
+    expect(h.store.moves).toBe(1);
+    expect(h.moveAudits).toHaveLength(1);
   });
 });
