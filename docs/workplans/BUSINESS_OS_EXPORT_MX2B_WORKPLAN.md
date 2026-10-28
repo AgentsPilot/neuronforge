@@ -578,7 +578,14 @@ The throwaway test file was deleted and `columnLabels.ts` restored byte-identica
 
 ## Commit Info
 
-_(RM to populate.)_
+| Field | Value |
+|---|---|
+| Branch | `feature/bos-export-mx2b-column-labels` (off main `7d641ac2`) |
+| Code commit | `ec4affdc` feat(data-export): CSV header labels in en/he/es (MX-2b) |
+| Docs commit | `1f251a12` docs(data-export): MX-2b workplan, BQ-31 answered |
+| PR | [#558](https://github.com/AgentsPilot/neuronforge/pull/558) |
+| Conflicts vs main | None (`git merge-tree` clean against `c0a34bb5`; main moved 14 commits, none in the export area) |
+| User approval | 2026-10-28: "E3 diff reviewed and approved: RM commit + PR + auto-merge." |
 
 ---
 
@@ -590,3 +597,4 @@ _(RM to populate.)_
 | 2026-10-28 | SA workplan review (SA) | APPROVED WITH CHANGES: MX2B-1…12 ruled (required labels and storage by key + section overrides approved; extra rules L-3…L-9 accepted with a cap); R-1 move `KEY_ECHO_LABELS` into the test file and drop T-L15; R-2 gate confirmation; R-3 standards. Technical cost/risk notes on MX2B-Q1…Q3 for the user |
 | 2026-10-28 | Implemented (Dev) — Code Complete | `columnLabels.ts` + `columnLabels.test.ts` created; `joinedCsv.ts` labels required + runtime throw, `KEY_ECHO_LABELS` moved into `joinedCsv.test.ts` (R-1); one `LOWER_CASE_EXEMPT` entry in `exportClassification.test.ts` (D-1, for SA). User answer to MX2B-Q1…Q3 recorded in §8.2 (all cells as stored). MX2B-11 note for MX-3 recorded. Implementation Notes added |
 | 2026-10-28 | SA code review (SA) | APPROVED, code approved for QA. R-1…R-3 and MX2B-1/2/5/6 verified; D-1 exemption confirmed, D-2…D-4 approved; three section overrides confirmed genuine; no cell value passes through labels. Two Low wording notes (he `installment_amount`, es `invoice_tax_id`) for the native review. SA reran the export suite: 21 suites, 718 tests passed |
+| 2026-10-28 | Committed (RM) | Commits `ec4affdc` (code) and `1f251a12` (docs) on `feature/bos-export-mx2b-column-labels`; PR #558 opened against main; Commit Info filled |
