@@ -288,7 +288,8 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
       }
     });
     expect(classMentions).toEqual([]);
-    for (const method of ['findClaim', 'reclaimFailed', 'insertClaim', 'markFailed']) {
+    // P-8b.1 (SA ruling 2): the stale-claim reclaim joins the claim methods POST calls exactly once.
+    for (const method of ['findClaim', 'reclaimStale', 'reclaimFailed', 'insertClaim', 'markFailed']) {
       expect(methodCallsTo(post!, 'processedWebhookEventRepository', method)).toHaveLength(1);
     }
   });
