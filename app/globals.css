@@ -682,3 +682,65 @@ html.dark input,
   outline: 2px solid #22c58b;
   outline-offset: 2px;
 }
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE LIFT UNDER A PRIMARY BUTTON, WHICH IS NOT THE SAME IN BOTH THEMES.
+ *
+ * The Needs-you card's action buttons carried their shadow inline:
+ *
+ *   0 2px 8px -2px color-mix(in srgb, var(--v2-primary) 55%, transparent)
+ *
+ * A shadow tinted with the button's OWN colour. On a white page that reads as
+ * a soft lift. On `--v2-bg` (#0F172A) it is a coloured halo bleeding 8px into
+ * a dark ground — and on an account whose brand colour is orange, a row of
+ * orange buttons each wearing an orange glow reads as out of focus rather than
+ * raised. That is the "buttons look blurry in dark mode" report.
+ *
+ * A shadow is an absence of light. On a dark surface it has to be DARKER than
+ * the surface to mean anything, so the dark rule swaps the tint for near-black
+ * and pulls the blur in: the button still sits above the card, without the
+ * halo.
+ *
+ * A class rather than the inline style it replaces, because an inline style
+ * cannot answer `.dark` — which is the whole reason the glow was identical in
+ * both themes.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+.ap-primary-lift {
+  box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--v2-primary) 55%, transparent);
+}
+
+.dark .ap-primary-lift,
+:root.dark .ap-primary-lift {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.45);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND ENOUGH CONTRAST UNDER THE WHITE LABEL TO READ AS TEXT.
+   *
+   * Removing the glow did not fix "the buttons look blurry", because the glow
+   * was not what made them look blurry. The LABEL was: white on this account's
+   * brand orange (#F97316) measures about 2.8:1, and text below roughly 4.5:1
+   * stops resolving into letters and starts reading as a soft shape. On a dark
+   * ground, where the eye has no other high-contrast edge nearby, that reads
+   * as being out of focus.
+   *
+   * The platform's own answer elsewhere is dark text on a bright fill — the
+   * money search's add button is `#04241A` on `#22C58B`. That cannot be copied
+   * here: `--v2-primary` is a CUSTOM token, orange for this business and the
+   * default indigo #6366F1 for most, and dark text on indigo is the same
+   * problem upside down.
+   *
+   * So the fill moves instead of the text. Mixing 22% black keeps the hue and
+   * the identity while taking the luminance down far enough for white to clear
+   * the threshold — orange lands near 4.6:1, indigo was already past it and
+   * simply deepens. One rule that is right for a brand colour nobody here
+   * chooses.
+   *
+   * Dark mode only: on a white page the lighter fill is correct and the same
+   * label has a pale ground to sit against.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  background: color-mix(in srgb, var(--v2-primary) 78%, #000) !important;
+}

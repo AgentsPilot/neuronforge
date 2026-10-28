@@ -394,6 +394,84 @@ describe('once the meeting is marked', () => {
   });
 });
 
+describe('held by the automation, which is an answer nobody gave', () => {
+  /*
+   * `auto_complete_meetings` writes `meeting_status: 'held'` +
+   * `outcome_by: 'system'` onto the booking once the meeting is overdue. Held
+   * is the only answer it can give — no-show and called-off are judgements
+   * about a room it was not in — so the card has to ask rather than move on.
+   */
+  const autoHeld: NextStepInput = {
+    ...held,
+    isQuoted: false,
+    money: 'needs_invoice',
+    outcomeBy: 'system',
+  };
+
+  it('re-opens the question, and offers all three answers', () => {
+    const step = bookingNextStep(autoHeld);
+    expect(step.labelKey).toBe('next.confirm_auto_held');
+    expect(step.whoseMove).toBe('owner');
+    /* Confirming is what bills: the automation deliberately never does. */
+    expect(step.actions).toEqual(['mark_held', 'mark_no_show', 'cancel_booking']);
+  });
+
+  it('leaves a PERSON\'s answer alone', () => {
+    /* The whole distinction. An owner or a client saying held is final, and
+       re-asking would nag about a question already answered. */
+    for (const by of ['owner', 'client', null, undefined] as const) {
+      expect(bookingNextStep({ ...autoHeld, outcomeBy: by }).labelKey).not.toBe(
+        'next.confirm_auto_held'
+      );
+    }
+  });
+
+  it('stops asking once the money has gone to the client', () => {
+    /*
+     * Correcting the hour after an invoice is in their inbox is a credit note,
+     * not a status change — a different job, and not this card's.
+     *
+     * `plan_auto` is here because those stages charge on a schedule without
+     * the owner, so some may already have gone out.
+     */
+    for (const money of ['paid', 'with_client', 'plan_auto'] as const) {
+      expect(bookingNextStep({ ...autoHeld, money }).labelKey).not.toBe(
+        'next.confirm_auto_held'
+      );
+    }
+  });
+
+  it('still asks on a STAGED quote with nothing raised yet', () => {
+    /*
+     * The case this shipped broken on. `plan_needs_billing` reads like a plan
+     * state, but `moneyStateFrom` returns it only for an outstanding `manual`
+     * stage with no invoice — the staged spelling of `needs_invoice`, and the
+     * state every auto-completed session is in, because the automation does
+     * not bill. Excluding it meant the step fired on nothing real.
+     */
+    for (const money of ['needs_invoice', 'plan_needs_billing', 'nothing_to_collect'] as const) {
+      expect(bookingNextStep({ ...autoHeld, money }).labelKey).toBe('next.confirm_auto_held');
+    }
+  });
+
+  it('stops asking once a quote is in flight', () => {
+    /* A priced job has moved past this question. */
+    expect(
+      bookingNextStep({ ...autoHeld, proposalStatus: 'sent' }).labelKey
+    ).not.toBe('next.confirm_auto_held');
+  });
+
+  it('does not outrank a job that was called off', () => {
+    /* Called off beats everything, as it does at the top of the resolver. */
+    expect(
+      bookingNextStep({
+        ...autoHeld,
+        booking: { status: 'cancelled', meeting_status: 'held' },
+      }).labelKey
+    ).not.toBe('next.confirm_auto_held');
+  });
+});
+
 describe('the quote', () => {
   it('sitting with the client is NOT a task', () => {
     const step = bookingNextStep({ ...held, proposalStatus: 'sent' });

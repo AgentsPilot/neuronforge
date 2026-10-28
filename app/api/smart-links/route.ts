@@ -104,11 +104,36 @@ export async function GET(request: NextRequest) {
       (result.data || []).map(link => link.id)
     );
 
+    /*
+     * ── A COUNT THAT FAILED IS NOT A COUNT OF ZERO ──────────────────────────
+     *
+     * This read `uniques.data?.[link.id] ?? 0`, so a failed count published a
+     * confident 0 for every link. The list itself comes from a different read
+     * and was fine, which is what made it convincing: a full list of links,
+     * each reporting nobody came.
+     *
+     * The links still go out — losing the whole page over a secondary figure
+     * would be the worse trade, and that part of the original intent stands.
+     * What changes is that the figure becomes `null` and the page shows it as
+     * absent rather than as zero.
+     */
+    if (uniques.error) {
+      requestLogger.warn(
+        { err: uniques.error, links: (result.data || []).length },
+        'Smart links listed without their unique-visitor counts'
+      );
+    }
+
     return NextResponse.json({
       success: true,
       links: (result.data || []).map(link => ({
         ...link,
-        unique_visitors: uniques.data?.[link.id] ?? 0,
+        /* Null means "not counted", which the page shows as "—". A real zero
+           is still a zero and still reads 0. */
+        unique_visitors: uniques.data ? (uniques.data.counts[link.id] ?? 0) : null,
+        /* Every figure is a floor when the read hit its ceiling — see
+           `UniqueVisitorCounts.atCap`. */
+        unique_visitors_at_least: uniques.data?.atCap ?? false,
       })),
       ...(defaultLinks ? { defaultLinks } : {})
     });

@@ -57,6 +57,8 @@ interface BusinessData {
     currency: string;
     is_scheduled?: boolean | null;
     collection?: 'online' | 'invoice' | null;
+    /** How far ahead this service takes bookings. Null means use the default. */
+    advance_booking_days?: number | null;
     /**
      * Bought outright, or quoted first. The modal's resolver reads it.
      *

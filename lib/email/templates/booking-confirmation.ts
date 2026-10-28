@@ -16,6 +16,7 @@ import {
   formatCurrency,
   formatEmailDate,
   emailSessionRows,
+  sessionPaymentColumn,
   type EmailSessionLine,
   type BrandingData
 } from './base-template';
@@ -549,7 +550,9 @@ export function generateBookingConfirmationEmail(
              columns: {
                when: t.sessionColWhen[locale],
                state: t.sessionColState[locale],
-               payment: t.sessionColPayment[locale],
+               /* Dropped for a package paid up front — one rule, in
+                  `base-template`, shared with the receipt. */
+               payment: sessionPaymentColumn(data.sessionLines, t.sessionColPayment[locale]),
              },
              zoneNote: t.sessionZoneNote[locale],
            })}`
@@ -639,6 +642,21 @@ export function generateBookingCancellationEmail(data: {
    * them, because the client has no other record of a block they paid for.
    */
   sessionLines?: EmailSessionLine[];
+  /**
+   * The hour booked IN PLACE of the one this email calls off.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Without it the client reads "your session is cancelled" over a list that
+   * has silently grown a new date, and is left to work out whether the two
+   * are connected. Reported from a real send: three sessions struck through
+   * and a fourth sitting under them marked "upcoming", with nothing saying it
+   * was the replacement.
+   *
+   * Set only when a replacement was actually booked — the owner chooses that
+   * on the cancel dialog — so an ordinary cancellation says nothing new.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  replacementStart?: Date | null;
 
   clientName: string;
   serviceName: string;
@@ -970,6 +988,20 @@ export function generateBookingCancellationEmail(data: {
 
     ${moneyNotice}
 
+    ${
+      /* The hour that replaces the one above — see `replacementStart`. Guarded
+         on a real date, because `Intl` throws on an invalid one. */
+      data.replacementStart && !Number.isNaN(data.replacementStart.getTime())
+        ? emailNoticeBox(
+            t.replacementBooked[locale](
+              formatEmailDate(data.replacementStart, data.timezone, { locale })
+            ),
+            'success',
+            brandingWithLocale
+          )
+        : ''
+    }
+
     <!-- Every session of the package, and where each stands. -->
     ${
       data.sessionLines?.length
@@ -990,7 +1022,10 @@ export function generateBookingCancellationEmail(data: {
              columns: {
                when: tConfirm.sessionColWhen[locale],
                state: tConfirm.sessionColState[locale],
-               payment: tConfirm.sessionColPayment[locale],
+               payment: sessionPaymentColumn(
+                 data.sessionLines,
+                 tConfirm.sessionColPayment[locale]
+               ),
              },
              zoneNote: tConfirm.sessionZoneNote[locale],
            })}`
@@ -1081,6 +1116,20 @@ export function generateBookingCancellationEmail(data: {
  * to avoid. See `missedAppointment` in the translations for the tone rules.
  */
 export function generateMissedAppointmentEmail(data: {
+  /**
+   * The hour booked to MAKE UP for the one that was missed.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The dialog offers two things that cannot both be true: invite the client to
+   * pick a new time, or book one for them. Taking the second and still sending
+   * the first gives a client a session already in their calendar and, in the
+   * same mail, a link to choose a different one.
+   *
+   * So when this is set the mail NAMES the hour and the invitation is dropped.
+   * Absent for an ordinary no-show, where the invitation is the whole point.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  replacementStart?: Date | null;
   clientName: string;
   serviceName: string;
   dateTime: Date;
@@ -1110,6 +1159,9 @@ export function generateMissedAppointmentEmail(data: {
   const tIntake = emailTranslations.intake;
   /* The session table's own words, shared with the four emails that already
      print one, so a client never meets two vocabularies for one list. */
+  /* The cancellation namespace owns the replacement wording, so the make-up
+     reads identically whether the session was called off or missed. */
+  const tCancel = emailTranslations.bookingCancellation;
   const tConfirm = emailTranslations.bookingConfirmation;
 
   const brandingWithLocale = { ...data.branding, locale };
@@ -1181,15 +1233,32 @@ export function generateMissedAppointmentEmail(data: {
              columns: {
                when: tConfirm.sessionColWhen[locale],
                state: tConfirm.sessionColState[locale],
-               payment: tConfirm.sessionColPayment[locale],
+               payment: sessionPaymentColumn(
+                 data.sessionLines,
+                 tConfirm.sessionColPayment[locale]
+               ),
              },
              zoneNote: tConfirm.sessionZoneNote[locale],
            })}`
         : ''
     }
 
-    ${data.bookAgainUrl ? `
-    <!-- A way back in -->
+    ${
+      /* Booked for them: say which hour, and do not also ask them to choose
+         one. Guarded on a real date — `Intl` throws on an invalid one. */
+      data.replacementStart && !Number.isNaN(data.replacementStart.getTime())
+        ? emailNoticeBox(
+            tCancel.replacementBooked[locale](
+              formatEmailDate(data.replacementStart, data.timezone, { locale })
+            ),
+            'success',
+            brandingWithLocale
+          )
+        : ''
+    }
+
+    ${data.bookAgainUrl && !data.replacementStart ? `
+    <!-- A way back in. Not offered when an hour has already been booked. -->
     <p style="margin: 0 0 16px; font-size: 14px; color: ${c.inkMuted};">
       ${t.bookAgainPrompt[locale]}
     </p>
@@ -1410,7 +1479,10 @@ export function generateBookingRescheduledEmail(data: {
              columns: {
                when: tConfirm.sessionColWhen[locale],
                state: tConfirm.sessionColState[locale],
-               payment: tConfirm.sessionColPayment[locale],
+               payment: sessionPaymentColumn(
+                 data.sessionLines,
+                 tConfirm.sessionColPayment[locale]
+               ),
              },
              zoneNote: tConfirm.sessionZoneNote[locale],
            })}`

@@ -8,7 +8,6 @@ import { buildJourney, daysSince } from '@/lib/business-os/insight/journeyTimeli
 import { getProcess } from '@/lib/business-os/insight/kernel/TriggerableProcesses';
 import { localizeStageLabel } from '@/lib/business-os/stageLabels';
 import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
-import { SUPPORTED_PROVIDERS } from '@/lib/business-os/leads/inboxProviders';
 import {
   resolveSetup,
   isReadyForClients,
@@ -854,14 +853,30 @@ export function LiveDashboard({
      *
      * Still not offered to everyone. A business we are building a site for is
      * reached through that site, and its form feeds the CRM directly, so the
-     * row would be noise. The population is: reached by a link rather than by
-     * our website, or already running one mailbox with another still unset.
+     * row would be noise.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * ONE MAILBOX IS ENOUGH. The row asks for a thing to be SET UP, and once
+     * any provider is connected it is.
+     *
+     * This counted connected channels against `SUPPORTED_PROVIDERS.length`, so
+     * a business running Gmail — agent configured, scanning, filing leads —
+     * was still told to "define the leads from your own website" because
+     * Outlook was unset. Readiness was reporting an unfinished SETUP for
+     * something already working, which is the one claim this card cannot
+     * afford to get wrong: an owner who sees a completed thing listed as
+     * outstanding learns to discount the whole list.
+     *
+     * Connecting a second mailbox is a real thing some businesses want, and
+     * it belongs where mailboxes are managed — not in readiness, which
+     * answers "can this business trade yet".
+     * ───────────────────────────────────────────────────────────────────────
      */
     const reachedByTheirOwnSite =
       setupShape.presence === 'booking_only' || setupShape.presence === 'none';
-    const anyMailboxUnset = inboxChannel.channels.length < SUPPORTED_PROVIDERS.length;
+    const noMailboxAtAll = inboxChannel.channels.length === 0;
 
-    if (anyMailboxUnset && (reachedByTheirOwnSite || inboxChannel.channels.length > 0)) {
+    if (noMailboxAtAll && reachedByTheirOwnSite) {
       return [
         ...setupItems,
         {

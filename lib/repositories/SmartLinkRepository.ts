@@ -102,6 +102,19 @@ export interface SmartLinkClick {
   converted_at: string | null;
 }
 
+/**
+ * How many people reached each link, and whether the answer is complete.
+ *
+ * `atCap` is true when the click read hit its ceiling: every count is then a
+ * FLOOR, not a total. It rides with the counts because the ceiling applies to
+ * the whole read rather than to any one link, so nothing downstream could
+ * infer it.
+ */
+export interface UniqueVisitorCounts {
+  counts: Record<string, number>;
+  atCap: boolean;
+}
+
 export interface SmartLinkRepositoryResult<T> {
   data: T | null;
   error: Error | null;
@@ -592,9 +605,9 @@ export class SmartLinkRepository {
     userId: string,
     linkIds: string[],
     days = 30
-  ): Promise<SmartLinkRepositoryResult<Record<string, number>>> {
+  ): Promise<SmartLinkRepositoryResult<UniqueVisitorCounts>> {
     try {
-      if (linkIds.length === 0) return { data: {}, error: null };
+      if (linkIds.length === 0) return { data: { counts: {}, atCap: false }, error: null };
 
       const since = new Date();
       since.setDate(since.getDate() - days);
@@ -665,11 +678,38 @@ export class SmartLinkRepository {
 
       const counts: Record<string, number> = {};
       for (const id of linkIds) counts[id] = seen.get(id)?.size ?? 0;
-      return { data: counts, error: null };
+
+      /*
+       * `atCap` travels with the figures because the caller cannot work it out.
+       * The ceiling is on ROWS SCANNED across every link at once, so hitting it
+       * makes each count a floor — and which links were cut short is unknowable
+       * from the counts themselves. The log line below has said this all along;
+       * the screen could not hear it.
+       */
+      return { data: { counts, atCap: data.length >= CLICK_SCAN_CEILING }, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Could not count unique visitors for links');
-      // Never fatal: the list renders without the figure rather than not at all.
-      return { data: {}, error: null };
+
+      /*
+       * ── NO FIGURE IS NOT A FIGURE OF ZERO ───────────────────────────────
+       *
+       * This returned `{ data: {}, error: null }`, which reads as "every link
+       * had no visitors". The caller then wrote `?? 0` and the page printed a
+       * confident, un-muted 0 against each one: a business owner was told
+       * NOBODY CAME when the truth was WE COULD NOT COUNT. The two are
+       * opposite advice — one says change the link, the other says look again
+       * later — and the owner had no way to tell which they were reading.
+       *
+       * Still never fatal, which was the right half of the original intent:
+       * the error is handed back so the caller can drop the figure and keep
+       * the list. What changes is that the absence is now visible as an
+       * absence.
+       *
+       * A business with NO LINKS is not this case and never reaches here: it
+       * returns empty counts above, because "nothing to count" really is zero
+       * visitors across zero links.
+       */
+      return { data: null, error: error as Error };
     }
   }
 

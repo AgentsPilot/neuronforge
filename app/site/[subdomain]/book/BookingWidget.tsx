@@ -9,7 +9,7 @@
 
 import { useState, useEffect } from 'react';
 import { resolveVisitorSessionId } from '@/lib/analytics/visitorSession';
-import { Calendar, Clock, User, Mail, ArrowLeft, ArrowRight, Check, Loader2, ClipboardList, CreditCard, ChevronDown } from 'lucide-react';
+import { Calendar, Clock, User, Mail, ArrowLeft, ArrowRight, Check, Loader2, ClipboardList, CreditCard, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import PhoneInput from 'react-phone-number-input';
 import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { journeySteps } from '@/lib/business-os/clientJourney';
@@ -22,6 +22,25 @@ import { ConsentCheckbox } from '@/components/public/ConsentCheckbox';
 import { useConsentCopy, consentPayload } from '@/hooks/useConsentCopy';
 import { businessDateKey, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 
+/*
+ * How far ahead a service takes bookings when it has never been configured.
+ *
+ * Imported rather than repeated: this page and the owner's own settings must
+ * not disagree about an unset value, and they did — the number lived in three
+ * files and moving one of them would have left a client offered dates the
+ * business had not agreed to take.
+ */
+import { DEFAULT_ADVANCE_BOOKING_DAYS, bookableDaysFor } from '@/lib/scheduling/bookingWindow';
+
+/**
+ * How many day buttons the strip shows at once.
+ *
+ * Two weeks, which is what the strip showed in total before it could be paged
+ * — so a business that never set a longer window sees exactly what it saw
+ * before, and one that did now has somewhere to go.
+ */
+const DATES_PER_PAGE = 14;
+
 interface Service {
   id: string;
   name: string;
@@ -33,6 +52,13 @@ interface Service {
   currency: string;
   /** Does a client pick a time for this? False for a product. */
   is_scheduled?: boolean | null;
+  /**
+   * How far ahead this service accepts bookings.
+   *
+   * The business's own setting. Null means it was never configured, and the
+   * strip falls back to the same 30 the repository defaults to.
+   */
+  advance_booking_days?: number | null;
   /** How the money arrives. Null while the service is free. */
   collection?: 'online' | 'invoice' | null;
 }
@@ -112,6 +138,8 @@ const translations = {
   en: {
     choose_service: 'Choose a Service',
     select_date: 'Select a Date',
+    earlier_dates: 'Earlier dates',
+    later_dates: 'Later dates',
     select_time: 'Select a Time',
     your_name: 'Your Name',
     email: 'Email Address',
@@ -162,6 +190,8 @@ const translations = {
   es: {
     choose_service: 'Elige un Servicio',
     select_date: 'Selecciona una Fecha',
+    earlier_dates: 'Fechas anteriores',
+    later_dates: 'Fechas posteriores',
     select_time: 'Selecciona una Hora',
     your_name: 'Tu Nombre',
     email: 'Correo Electrónico',
@@ -210,6 +240,8 @@ const translations = {
   he: {
     choose_service: 'בחר שירות',
     select_date: 'בחר תאריך',
+    earlier_dates: 'תאריכים מוקדמים יותר',
+    later_dates: 'תאריכים מאוחרים יותר',
     select_time: 'בחר שעה',
     your_name: 'השם שלך',
     email: 'כתובת אימייל',
@@ -360,15 +392,98 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   };
 
   /*
-   * The next 14 days the BUSINESS can be booked on.
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE DAYS THE BUSINESS SAYS IT CAN BE BOOKED ON — ALL OF THEM.
    *
-   * Built from the visitor's calendar and then reduced to a UTC day, this
-   * offered a client in Auckland a first date the business considered
-   * yesterday, and dropped its real last day off the end.
+   * This was `Array.from({ length: 14 })`: a fortnight, hardcoded, always
+   * starting today, with no way to reach day fifteen. A business that had set
+   * `advance_booking_days` to ninety still showed fourteen, and a client who
+   * wanted a date next month simply could not say so. The reschedule panel has
+   * honoured the setting all along, so the same client got one window on their
+   * first booking and a different one when moving it.
+   *
+   * Still built from the business's calendar and reduced to a business day:
+   * computing it from the visitor's clock offered a client in Auckland a first
+   * date the business considered yesterday.
+   * ───────────────────────────────────────────────────────────────────────────
    */
-  const dates = Array.from({ length: 14 }, (_, i) =>
-    shiftBusinessDateKey(businessDateKey(new Date(), timezone), i)
+  const bookableDays = bookableDaysFor(selectedService?.advance_booking_days);
+
+  const firstBookableDay = businessDateKey(new Date(), timezone);
+
+  /*
+   * How far into that window the strip is scrolled, in days.
+   *
+   * Paged rather than printed in full: ninety buttons in one horizontal
+   * scroller is a worse control than fourteen, not a better one. The arrows
+   * move a week at a time, which is how someone looking for "a Tuesday in
+   * three weeks" actually navigates.
+   */
+  const [dateWindowStart, setDateWindowStart] = useState(0);
+
+  const visibleDays = Math.min(DATES_PER_PAGE, bookableDays - dateWindowStart);
+
+  const dates = Array.from({ length: Math.max(0, visibleDays) }, (_, i) =>
+    shiftBusinessDateKey(firstBookableDay, dateWindowStart + i)
   );
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHICH MONTH THE VISITOR IS LOOKING AT.
+   *
+   * The buttons carry a weekday and a number. Across a fortnight that reads
+   * fine; across ninety days it does not — paging forward gives "31, 1, 2, 3"
+   * with nothing to say whether that is November or February, so a client
+   * picks a date and finds out the month from the confirmation.
+   *
+   * Both months are named when the window straddles a boundary, which is
+   * exactly when a bare day number misleads most.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const monthLabel = (() => {
+    if (dates.length === 0) return '';
+
+    /* Noon UTC and `timeZone: 'UTC'`, the same pairing `formatDate` above uses,
+       so naming a month cannot slip into its neighbour for a zone behind UTC. */
+    const monthName = (key: string, withYear: boolean) =>
+      new Date(`${key.slice(0, 7)}-01T12:00:00Z`).toLocaleDateString(dateLocale, {
+        month: 'long',
+        ...(withYear ? { year: 'numeric' } : {}),
+        timeZone: 'UTC',
+      });
+
+    const first = dates[0].slice(0, 7);
+    const last = dates[dates.length - 1].slice(0, 7);
+
+    if (first === last) return monthName(dates[0], true);
+
+    const sameYear = first.slice(0, 4) === last.slice(0, 4);
+
+    return `${monthName(dates[0], !sameYear)} – ${monthName(dates[dates.length - 1], true)}`;
+  })();
+
+  const canGoEarlier = dateWindowStart > 0;
+  const canGoLater = dateWindowStart + DATES_PER_PAGE < bookableDays;
+
+  /*
+   * A new service means a new window, and possibly a shorter one.
+   *
+   * Without this, picking a 90-day service, scrolling to day 60 and then
+   * switching to a 14-day service leaves a selected date the business has
+   * just said it will not take — and the strip scrolled past its own end.
+   */
+  useEffect(() => {
+    setDateWindowStart(0);
+  }, [selectedService?.id]);
+
+  useEffect(() => {
+    if (!selectedDate) return;
+    const lastBookable = shiftBusinessDateKey(firstBookableDay, bookableDays - 1);
+    if (selectedDate > lastBookable || selectedDate < firstBookableDay) {
+      setSelectedDate('');
+      setSelectedSlot(null);
+    }
+  }, [selectedDate, bookableDays, firstBookableDay]);
 
   // Auto-select service if initialServiceId is provided (e.g., from landing page)
   useEffect(() => {
@@ -935,7 +1050,49 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
 
         {/* Date Selection */}
         <div>
-          <h3 className="text-sm font-medium text-gray-700 mb-3">{t.select_date}</h3>
+          {/*
+            The heading and the pager share a row: the arrows belong WITH the
+            dates they move, not above the section as a whole.
+          */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="min-w-0">
+              <h3 className="text-sm font-medium text-gray-700">{t.select_date}</h3>
+              {monthLabel && (
+                <p className="mt-0.5 truncate text-xs text-gray-500">{monthLabel}</p>
+              )}
+            </div>
+            {(canGoEarlier || canGoLater) && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setDateWindowStart(start => Math.max(0, start - DATES_PER_PAGE))}
+                  disabled={!canGoEarlier}
+                  aria-label={t.earlier_dates}
+                  title={t.earlier_dates}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-600 transition-colors hover:border-gray-300 disabled:opacity-30 disabled:hover:border-gray-200"
+                >
+                  <ChevronLeft className="h-4 w-4 rtl:rotate-180" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDateWindowStart(start =>
+                      Math.min(
+                        Math.max(0, bookableDays - DATES_PER_PAGE),
+                        start + DATES_PER_PAGE
+                      )
+                    )
+                  }
+                  disabled={!canGoLater}
+                  aria-label={t.later_dates}
+                  title={t.later_dates}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-600 transition-colors hover:border-gray-300 disabled:opacity-30 disabled:hover:border-gray-200"
+                >
+                  <ChevronRight className="h-4 w-4 rtl:rotate-180" />
+                </button>
+              </div>
+            )}
+          </div>
           <div className="flex gap-2 overflow-x-auto pb-2">
             {dates.map((date) => (
               <button

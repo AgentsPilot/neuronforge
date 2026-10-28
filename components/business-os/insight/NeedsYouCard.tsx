@@ -56,6 +56,17 @@ export interface GapItemView {
   /** Which session of a package. See `GapItem.sessionNumber`. */
   sessionNumber?: number | null;
   /**
+   * A clock closed this hour, not a person. See `GapItem.autoHeld`.
+   *
+   * Changes two things on the row: it earns a sentence saying why it is here,
+   * and its button becomes a confirmation rather than a charge.
+   */
+  autoHeld?: boolean | null;
+  /** Which channel brought the lead. See `GapItem.via`. */
+  via?: string | null;
+  /** And which mailbox, where one was recorded. */
+  viaProvider?: string | null;
+  /**
    * What is held on it, where money is involved.
    *
    * Decides the row's action for `booking_cancelled`, where one gap has two
@@ -786,6 +797,21 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                 const isQueuedWorking = rows[`queued:${item.contactId}`]?.kind === 'working';
                 const action = actionFor(gap, item);
                 const Icon = ACTION_ICON[action || ''] || Send;
+                /*
+                 * The same action, asked as a different question.
+                 *
+                 * `bill_stage` ordinarily reads "mark done and bill", which is
+                 * the right words over work a person has already said was
+                 * done. Over an hour only a clock vouched for it is the wrong
+                 * request: it tells the owner to charge when what they have to
+                 * do first is decide whether there is anything to charge for.
+                 *
+                 * Same button, same endpoint — the stage is billed either way.
+                 * Only the sentence changes, so the one row that needs a
+                 * judgement asks for one.
+                 */
+                const actionKey =
+                  item.autoHeld && action === 'bill_stage' ? 'bill_stage_auto_held' : action;
 
                 return (
                   <div
@@ -884,6 +910,53 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                               * resolved: the number travels, the sentence is
                               * built in the reader's own words.
                               */}
+                            {/*
+                              * WHERE IT CAME FROM, where that is not obvious.
+                              *
+                              * A lead an agent read out of the mailbox is
+                              * stored with the same `source` as one typed into
+                              * the website form — deliberately, so the
+                              * unanswered-enquiry chase sees both. The result
+                              * was a row reading "Website contact · just now"
+                              * for an email the owner had never seen, with
+                              * nothing saying an agent had found and filed it.
+                              *
+                              * Only the inbox is named: a form submission IS
+                              * the ordinary case, and labelling every row with
+                              * its channel would be noise on all but a few.
+                              */}
+                            {item.via === 'inbox_channel' && (
+                              <span className="text-[var(--v2-text-muted)]">
+                                {' · '}
+                                {(() => {
+                                  /*
+                                   * NAME THE AGENT AND THE MAILBOX.
+                                   *
+                                   * "Found in your inbox" said where it was
+                                   * without saying what did the finding, and
+                                   * the distinction is the whole point of the
+                                   * row: this enquiry reached the CRM because
+                                   * an agent read the owner's mail, not
+                                   * because anybody opened it. An owner who
+                                   * does not know that cannot tell a working
+                                   * agent from a lucky coincidence.
+                                   *
+                                   * The provider is absent on leads filed
+                                   * before it was recorded, so the generic
+                                   * sentence stays as the fallback rather
+                                   * than leaving a blank where a mailbox
+                                   * should be.
+                                   */
+                                  const key =
+                                    item.viaProvider === 'google-mail'
+                                      ? 'gaps.via.agent_gmail'
+                                      : item.viaProvider === 'outlook'
+                                        ? 'gaps.via.agent_outlook'
+                                        : 'gaps.via.agent';
+                                  return t(key) === key ? t('gaps.via.agent') : t(key);
+                                })()}
+                              </span>
+                            )}
                             {typeof item.sessionNumber === 'number' && (
                               <span className="text-[var(--v2-text-muted)]">
                                 {' · '}
@@ -937,11 +1010,46 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                             * later with no phrase of its own yet.
                             */}
                           <span title={startedOn(item.since)} className="truncate">
-                            {(t(`gaps.since.${gap.id}`) === `gaps.since.${gap.id}`
-                              ? t('gaps.waiting')
-                              : t(`gaps.since.${gap.id}`)
-                            ).replace('{t}', waitedFor(item.since, t))}
+                            {(() => {
+                              /*
+                               * WHAT THE CLOCK IS COUNTING FROM, which is not
+                               * the same for every row of one gap.
+                               *
+                               * `stage_awaiting_completion` says "since they
+                               * approved the quote", and that was true while a
+                               * stage had no date of its own. A package stage
+                               * now dates itself by the SESSION it bills, so
+                               * the same sentence would read "4 days since they
+                               * approved" over a figure counted from a meeting
+                               * held yesterday — the phrase contradicting the
+                               * number beside it.
+                               *
+                               * The session number is what distinguishes them:
+                               * present only where `since` is a session.
+                               */
+                              const key =
+                                typeof item.sessionNumber === 'number'
+                                  ? `gaps.since.${gap.id}_session`
+                                  : `gaps.since.${gap.id}`;
+                              const phrase = t(key) === key ? null : t(key);
+                              const fallback =
+                                t(`gaps.since.${gap.id}`) === `gaps.since.${gap.id}`
+                                  ? t('gaps.waiting')
+                                  : t(`gaps.since.${gap.id}`);
+
+                              return (phrase ?? fallback).replace('{t}', waitedFor(item.since, t));
+                            })()}
                           </span>
+
+                          {/* The date itself, because the figure beside it is
+                              relative and nothing else on this row can be
+                              matched against the diary or the drawer. */}
+                          {onDay(item.since) && (
+                            <span className="shrink-0 text-[var(--v2-text-muted)]">
+                              {' · '}
+                              <bdi>{onDay(item.since)}</bdi>
+                            </span>
+                          )}
                           {/*
                             * When the platform will answer this itself.
                             *
@@ -985,6 +1093,68 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                               </span>
                             </>
                           )}
+                          {/*
+                            * WHY THIS ROW DESERVES A SECOND LOOK BEFORE IT IS
+                            * BILLED.
+                            *
+                            * Every other row here says a person decided
+                            * something and the money follows. This one says a
+                            * clock did: `auto_complete_meetings` marked the
+                            * meeting held because its date went by, which is
+                            * the only answer it has — and a date passing is
+                            * not evidence anyone attended.
+                            *
+                            * Without the sentence the row is indistinguishable
+                            * from one the owner closed themselves, and the
+                            * button beside it charges a client for an hour
+                            * nobody has vouched for. Amber for the same reason
+                            * the plan warning is: not an error, a thing to
+                            * check before acting.
+                            *
+                            * `truncate` is deliberately NOT used — this one has
+                            * to be readable, and it is the last thing on the
+                            * line.
+                            */}
+                          {item.autoHeld && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="font-medium text-amber-600 dark:text-amber-400">
+                                {t('gaps.auto_held_check') ||
+                                  'Marked automatically because the date passed, worth checking it happened'}
+                              </span>
+                            </>
+                          )}
+                          {/*
+                            * WHY A SECOND LINK IS WORTH SENDING.
+                            *
+                            * The cancellation email already carried a booking
+                            * button: the path a client cancels through does
+                            * not suppress it. So on its face this row asks the
+                            * owner to send something the client has had since
+                            * the moment they cancelled, and read that way it
+                            * is noise.
+                            *
+                            * What makes it a task is the part the row never
+                            * said: they have not come back. That is now a
+                            * CHECKED fact rather than an assumption — a
+                            * contact with any future hour is filtered out of
+                            * this gap entirely — so the sentence states
+                            * exactly what the data behind it means, and the
+                            * owner can tell a personal nudge from a duplicate.
+                            *
+                            * Only on the empty-slot case. Where money is held
+                            * the row is about the refund, and the client's
+                            * diary is beside the point.
+                            */}
+                          {gap.id === 'booking_cancelled' && action === 'send_booking_link' && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-[var(--v2-text-muted)]">
+                                {t('gaps.cancelled_not_rebooked') ||
+                                  'has not booked again since'}
+                              </span>
+                            </>
+                          )}
                         </p>
                       </div>
 
@@ -1010,7 +1180,13 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                              which stretches its children, and a button stretched
                              to the full width of the card reads as the card's
                              action rather than this row's. */
-                          className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all hover:brightness-110 active:scale-[0.97] disabled:active:scale-100 disabled:hover:brightness-100"
+                          /* `ap-primary-lift` only while it is the primary
+                             button: the done state is a tinted chip and wants
+                             no shadow at all. See the rule in `globals.css`
+                             for why the lift cannot stay inline. */
+                          className={`shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all hover:brightness-110 active:scale-[0.97] disabled:active:scale-100 disabled:hover:brightness-100${
+                            state.kind === 'done' ? '' : ' ap-primary-lift'
+                          }`}
                           style={
                             state.kind === 'done'
                               ? {
@@ -1021,8 +1197,6 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                               : {
                                   background: 'var(--v2-primary)',
                                   color: '#fff',
-                                  boxShadow:
-                                    '0 2px 8px -2px color-mix(in srgb, var(--v2-primary) 55%, transparent)',
                                   opacity: state.kind === 'working' ? 0.6 : undefined,
                                 }
                           }
@@ -1037,7 +1211,7 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                               <Icon className="w-3.5 h-3.5" />
                               {state.kind === 'working'
                                 ? t('gaps.working')
-                                : t(`gaps.action.${action}`)}
+                                : t(`gaps.action.${actionKey}`)}
                             </>
                           )}
                         </button>
@@ -1184,6 +1358,28 @@ function waitedFor(since: string, t: (key: string) => string): string {
  * "17 days" answers how long; this answers since when, which is the question
  * an owner asks next and the one the row has no width to answer inline.
  */
+/**
+ * The same instant, short enough to sit on the row itself.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `startedOn` is the long form and lives in the row's `title`, which is a
+ * tooltip: it needs a mouse, and the owner reading this card is as likely to
+ * be on a phone. So the only date they could actually see was a relative one —
+ * "4 days since" — and a relative figure cannot be matched against anything.
+ * The drawer lists sessions by DATE, the diary is by date, and the owner was
+ * being asked to find "the one from four days ago" by counting backwards.
+ *
+ * No year: every row on this card is recent by construction, and a year on
+ * each one costs width that the note needs more.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function onDay(since: string): string {
+  const date = new Date(since);
+  return Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
 function startedOn(since: string): string {
   const date = new Date(since);
   return Number.isNaN(date.getTime())

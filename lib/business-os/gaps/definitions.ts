@@ -35,6 +35,27 @@ const ANSWERED_ACTIVITIES = ['booking_link_sent', 'booking_link_chase'];
 const CANCELLED_SCAN_LIMIT = 200;
 
 /**
+ * How long a client gets to rebook on their own before the owner is asked to
+ * chase them.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The cancellation email carries a booking button — the path a client cancels
+ * through does not suppress it — and it reaches them the moment they cancel.
+ * The row used to appear at that same moment, so the first thing the owner was
+ * told to do was send a link that was already in the client's inbox.
+ *
+ * A day later the row means something it could not mean before: they had the
+ * link and did not use it. That is worth a personal approach, and it is a
+ * different task from the one the automation just did.
+ *
+ * ONLY the empty-slot case waits. Money held and a plan still charging appear
+ * at once — nothing else is going to collect or return those, and a day's
+ * delay there is a day of the client's money sitting in the wrong place.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const REBOOK_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
  * How far back the unmarked-meeting scan reads.
  *
  * Its own constant rather than borrowing the one above: that name describes a
@@ -87,7 +108,18 @@ const enquiryUnanswered: GapDefinition = {
     safely('enquiry_unanswered', async () => {
       const { data: contacts } = await supabaseServer
         .from('crm_contacts')
-        .select('id, first_name, last_name, email, custom_fields, created_at')
+        /*
+         * `source_metadata` carries WHICH CHANNEL brought this one.
+         *
+         * A mailbox lead and a website-form lead share a `source` on purpose —
+         * it has to stay inside `FORM_SOURCES` or this very gap never sees the
+         * contact, which is the identity `captureEnquiry` is built around. The
+         * marker beside it is how the two can still be told apart, and until
+         * now nothing read it: the card said "Website contact · just now" for
+         * an email an agent had found and filed, with no sign it came from the
+         * inbox at all.
+         */
+        .select('id, first_name, last_name, email, custom_fields, source_metadata, created_at')
         .eq('user_id', userId)
         .in('source', FORM_SOURCES)
         .gte('created_at', daysAgo(now, 14))
@@ -107,7 +139,24 @@ const enquiryUnanswered: GapDefinition = {
             str(custom.service_interest) ||
             str(custom.first_website_message) ||
             str(custom.last_website_message);
-          return { contactId: r.id, name: personName(r), note, since: r.created_at as string };
+          /*
+           * Named as a KEY, not a sentence: the gaps run server-side and this
+           * route resolves no language, so a phrase composed here would reach
+           * a Hebrew owner in English. The surface says it in their words.
+           */
+          const attribution = (r.source_metadata ?? null) as
+            { via?: string; provider?: string } | null;
+
+          return {
+            contactId: r.id,
+            name: personName(r),
+            note,
+            since: r.created_at as string,
+            ...(attribution?.via ? { via: attribution.via } : {}),
+            /* WHICH mailbox the agent was reading. Stored beside `via` by
+               `captureEnquiry` and, like it, a key rather than a sentence. */
+            ...(attribution?.provider ? { viaProvider: attribution.provider } : {}),
+          };
         });
     }),
 };
@@ -769,6 +818,73 @@ const bookingCancelled: GapDefinition = {
 
       const nowMs = new Date(now).getTime();
 
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE CLIENTS WHO ALREADY CAME BACK.
+       *
+       * The cancellation email the client receives carries a booking button —
+       * `offerRebooking` is not suppressed on the path a client cancels
+       * through, so `resolveBookingUrl` fills it in and the template draws
+       * "choose another time". A good share of them use it.
+       *
+       * Nothing here noticed. The row filtered on `status = 'cancelled'` and
+       * who cancelled it, and neither of those changes when the same client
+       * books again — so a client who cancelled Tuesday, pressed the button,
+       * and sits in the diary for Thursday still left the owner a row saying
+       * "send booking link". The task had resolved itself and went on asking.
+       *
+       * Any FUTURE booking counts, not only one made after the cancellation.
+       * A client with an hour still ahead of them does not need a link, and
+       * which of their bookings came first is not the question the row asks.
+       *
+       * Only the empty-slot case is dropped. Money held and a plan still
+       * charging are decided below and are untouched by this: being back in
+       * the diary does not return a deposit or stop a debit.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const rebooked = new Set<string>();
+      /* A row this gap is reporting on can never be its own answer. Held
+         separately from the status test below because it is a different
+         claim: that one excludes dead appointments, this one excludes the
+         very bookings being asked about. */
+      const cancelledIds = new Set(rows.map(row => row.id as string));
+      const cancelledContactIds = [
+        ...new Set(rows.map(row => row.contact_id as string).filter(Boolean)),
+      ];
+      for (const ids of chunked(cancelledContactIds)) {
+        const { data: upcoming } = await supabaseServer
+          .from('scheduling_bookings')
+          .select('id, contact_id, status, start_time')
+          .eq('user_id', userId)
+          .in('contact_id', ids);
+        for (const row of upcoming || []) {
+          /*
+           * The three conditions are applied HERE rather than as PostgREST
+           * filters, and deliberately.
+           *
+           * A dead appointment is not a client coming back, so cancelled and
+           * missed rows are excluded — and without that the cancelled rows
+           * this gap is built from would answer their own question and
+           * suppress every one of themselves. The hour must also be ahead:
+           * one that has already passed refills nothing.
+           *
+           * In memory because the predicate is small, the row set is already
+           * bounded by the contacts above, and a filter that silently fails
+           * server-side here would not error — it would quietly mark every
+           * client as back and empty the gap. This way the rule is visible
+           * and testable.
+           */
+          const contactId = row.contact_id as string | null;
+          if (!contactId) continue;
+          if (cancelledIds.has(row.id as string)) continue;
+          const status = row.status as string | null;
+          if (status === 'cancelled' || status === 'no_show') continue;
+          const starts = row.start_time ? new Date(row.start_time as string).getTime() : NaN;
+          if (!Number.isFinite(starts) || starts <= nowMs) continue;
+          rebooked.add(contactId);
+        }
+      }
+
       return rows
         .filter(row => {
           const held = heldByBooking.get(row.id as string);
@@ -781,6 +897,23 @@ const bookingCancelled: GapDefinition = {
           // Money owed stays until it is given back. An empty slot only matters
           // while there is still time to fill it.
           if (held) return true;
+          /* They have an hour ahead of them already — see `rebooked` above.
+             Nothing to send, and the slot question answered itself. */
+          if (rebooked.has(row.contact_id as string)) return false;
+          /*
+           * Still inside the client's own window to come back. See
+           * `REBOOK_GRACE_MS`: asking now would duplicate the email that went
+           * out when they cancelled.
+           *
+           * An unreadable timestamp shows the row rather than hiding it. A
+           * task the owner sees a few hours early is a smaller failure than
+           * one they never see, and this is the half of the gap where nobody
+           * else is watching the client.
+           */
+          const cancelledAt = Date.parse(
+            (row.updated_at as string) || (row.created_at as string) || ''
+          );
+          if (Number.isFinite(cancelledAt) && nowMs - cancelledAt < REBOOK_GRACE_MS) return false;
           return row.start_time ? new Date(row.start_time as string).getTime() > nowMs : false;
         })
         .map(row => {
@@ -971,12 +1104,29 @@ const stageAwaitingCompletion: GapDefinition = {
 
       const meetingById = new Map<
         string,
-        { start: string | null; end: string | null; session: number | null; status: string | null }
+        {
+          start: string | null;
+          end: string | null;
+          session: number | null;
+          status: string | null;
+          /**
+           * WHO answered for this hour (`outcome_by`, 20261078).
+           *
+           * Carried because the row this gap raises asks the owner to BILL,
+           * and the strength of that ask depends entirely on who said the
+           * meeting happened. `auto_complete_meetings` marks an overdue
+           * meeting held because held is the only answer a clock has — the
+           * date passing is not evidence anyone attended. Billing on that
+           * without a person agreeing is how a client is invoiced for an hour
+           * nobody sat through.
+           */
+          by: string | null;
+        }
       >();
       for (const ids of chunked(meetingIds)) {
         const { data: meetings } = await supabaseServer
           .from('scheduling_meetings')
-          .select('id, start_time, end_time, session_number, meeting_status')
+          .select('id, start_time, end_time, session_number, meeting_status, outcome_by')
           .eq('user_id', userId)
           .in('id', ids);
         for (const meeting of meetings || []) {
@@ -985,6 +1135,7 @@ const stageAwaitingCompletion: GapDefinition = {
             end: (meeting.end_time as string) ?? null,
             session: (meeting.session_number as number) ?? null,
             status: (meeting.meeting_status as string) ?? null,
+            by: (meeting.outcome_by as string) ?? null,
           });
         }
       }
@@ -1140,6 +1291,30 @@ const stageAwaitingCompletion: GapDefinition = {
          * billed.
          */
         sessionNumber: meeting?.session ?? undefined,
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * NOBODY HAS ACTUALLY SAID THIS HOUR HAPPENED.
+         *
+         * The row asks the owner to bill. How much that ask can be trusted
+         * depends on who closed the meeting, and there are two very different
+         * answers:
+         *
+         *   a person   the owner (or the client) was there and said so. The
+         *              stage is simply waiting its turn to be invoiced.
+         *   a clock    `auto_complete_meetings` marked it held because the
+         *              date went by. Held is the only answer available to it —
+         *              no-show and called-off are judgements about a room it
+         *              was not in — and a date passing is not evidence anyone
+         *              attended.
+         *
+         * The automation deliberately does not bill, precisely so this second
+         * case reaches a person first. Flagged rather than hidden: the money is
+         * genuinely waiting, and the owner is the only one who can say whether
+         * it is owed. The card turns this into a sentence that explains itself
+         * and a button that confirms before it charges.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        autoHeld: meeting?.by === 'system' || undefined,
         entityId: row.id as string,
         /*
          * The JOB this phase belongs to, which is what the button opens.
@@ -1151,7 +1326,31 @@ const stageAwaitingCompletion: GapDefinition = {
          * hangs off a proposal with no appointment behind it, in which case the
          * link degrades to the contact's list rather than naming a phantom.
          */
-        bookingId: (row.booking_id as string | null) ?? undefined,
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * THE MEETING, WHERE THERE IS ONE — because that is what the drawer
+         * calls a booking here.
+         *
+         * `booking_id` on a per-session stage is the CONTAINER: one booking
+         * holding N meetings, which is the shape a package has had since
+         * `ProposalAcceptanceService` stopped creating a child booking per
+         * date. The drawer does not render that container. It splits a package
+         * into one card per session, and gives each card
+         * `booking.id = attempt.id` — the MEETING id — demoting the container
+         * to `parent_booking_id`.
+         *
+         * So the link arrived naming a booking no card carried, `BookingsTab`
+         * matched nothing, and the owner landed on a list of shut cards with
+         * the row they were sent for indistinguishable from the rest.
+         *
+         * The meeting id is therefore not a different answer to the question,
+         * it IS the booking to open for this row. The container stays the
+         * fallback for every stage that has no meeting — a quote phase, and
+         * any stage written before the column existed.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        bookingId:
+          (row.meeting_id as string | null) ?? (row.booking_id as string | null) ?? undefined,
         value: Number(row.amount) || undefined,
         currency: str(row.currency) || undefined,
         };

@@ -20,7 +20,7 @@ import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCale
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { windowsForDate } from '@/lib/scheduling/availabilityWindows';
 import { generateTimeSlots, type TimeSlot } from '@/lib/scheduling/availableSlots';
-import { safeTimezone, businessClock, businessDateKey } from '@/lib/scheduling/businessTime';
+import { safeTimezone, businessClock, businessDateKey, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteAvailabilityAPI' });
@@ -41,7 +41,9 @@ const AvailabilityQuerySchema = z.object({
   subdomain: z.string().optional(),
   user_code: z.string().optional(),
   service_id: z.string().uuid('Invalid service ID'),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
+  /* Digits or empty. Bounded in code as well, because this is a public URL. */
+  closed_days: z.string().regex(/^\d*$/).optional()
 });
 
 interface WeeklyAvailability {
@@ -83,7 +85,23 @@ export async function GET(request: NextRequest) {
       subdomain: subdomainParam && subdomainParam.trim() ? subdomainParam.trim() : undefined,
       user_code: userCodeParam && userCodeParam.trim() ? userCodeParam.trim() : undefined,
       service_id: searchParams.get('service_id') || '',
-      date: searchParams.get('date') || ''
+      date: searchParams.get('date') || '',
+      /**
+       * How many days of OPEN/CLOSED to report alongside this date's slots.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * The date strip offered every day as if it were bookable, so a visitor
+       * found out the business is closed on Saturdays by choosing one and
+       * waiting for "no available times". Over a fortnight that is tedious;
+       * over the ninety days a business may accept, it is unusable.
+       *
+       * Cheap on purpose: `windowsForDate` is a pure read of hours already in
+       * memory, so ninety days cost ninety array lookups rather than ninety
+       * slot calculations. The strip only needs to know whether to grey a
+       * button.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      closed_days: searchParams.get('closed_days') || ''
     };
 
     // Validate input
@@ -95,7 +113,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { subdomain, user_code: userCode, service_id, date } = validationResult.data;
+    const { subdomain, user_code: userCode, service_id, date, closed_days } = validationResult.data;
 
     let ownerId: string;
 
@@ -310,9 +328,19 @@ export async function GET(request: NextRequest) {
      * is to take bookings, and the same one its siblings make.
      * ───────────────────────────────────────────────────────────────────────
      */
+    /*
+     * Widened to cover the closed-day window when one is asked for, so the
+     * holidays inside it grey out exactly like the weekdays the business does
+     * not work. One query either way.
+     */
+    const closedWindow = Math.min(Math.max(parseInt(closed_days || '0', 10) || 0, 0), 120);
+
+    const timeOffTo =
+      closedWindow > 0 ? shiftBusinessDateKey(businessDateKey(new Date(), timezone), closedWindow) : date;
+
     const { data: timeOff, error: timeOffError } = await schedulingTimeOffRepository.list(ownerId, {
-      from: date,
-      to: date,
+      from: closedWindow > 0 ? businessDateKey(new Date(), timezone) : date,
+      to: timeOffTo < date ? date : timeOffTo,
     });
 
     if (timeOffError) {
@@ -435,6 +463,32 @@ export async function GET(request: NextRequest) {
       service_name: service.service_name,
       duration_minutes: service.duration_minutes,
       timezone,
+      /*
+       * How far ahead this service takes bookings, so the strip can run to the
+       * business's own limit instead of a hardcoded fortnight.
+       */
+      advance_booking_days: service.advance_booking_days ?? null,
+      /*
+       * The days in the requested window with no hours at all — a weekday the
+       * business does not work, or a date it closed. `windowsForDate` folds
+       * both together, so a holiday greys out exactly like a Sunday.
+       */
+      closedDates:
+        closedWindow > 0
+          ? (() => {
+              const closed: string[] = [];
+              let cursor = businessDateKey(new Date(), timezone);
+
+              for (let i = 0; i < closedWindow; i++) {
+                if (windowsForDate(availability, cursor, timeOff ?? []).length === 0) {
+                  closed.push(cursor);
+                }
+                cursor = shiftBusinessDateKey(cursor, 1);
+              }
+
+              return closed;
+            })()
+          : [],
       slots
     });
 

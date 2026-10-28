@@ -37,6 +37,14 @@ interface TimeSlot {
 }
 
 interface Service {
+  /**
+   * How many days ahead this service accepts bookings.
+   *
+   * The widget builds its date strip from this. Absent means the column was
+   * null, and the caller falls back to the same 30 the repository defaults to
+   * elsewhere rather than inventing a different number here.
+   */
+  advance_booking_days?: number | null;
   is_scheduled?: boolean;
   collection?: 'online' | 'invoice' | null;
   /** Bought outright, or quoted first. The booking modal's resolver reads it. */
@@ -69,6 +77,31 @@ export async function GET(request: NextRequest) {
     const serviceId = searchParams.get('service_id');
     const date = searchParams.get('date'); // YYYY-MM-DD format
     const daysAhead = parseInt(searchParams.get('days') || '7', 10);
+
+    /**
+     * How many days of OPEN/CLOSED to report, without computing any slots.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The date strips on the public pages offered every day in their window as
+     * if it were bookable, and a visitor learned the business is closed on a
+     * Saturday by picking it and waiting for "no available times". Over a
+     * fortnight that is tedious; over the ninety days a business may accept, it
+     * is unusable.
+     *
+     * Reported separately from `slots` because it must stay cheap:
+     * `windowsForDate` is a pure read of hours already in memory, so ninety
+     * days cost ninety array lookups. Asking the slot engine the same question
+     * would be ninety database round trips for an answer the strip only needs
+     * in order to grey a button.
+     *
+     * Capped, because this is a public endpoint and the number arrives from a
+     * query string.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const closedDaysWindow = Math.min(
+      Math.max(parseInt(searchParams.get('closed_days') || '0', 10) || 0, 0),
+      120
+    );
 
     /*
      * Who this calendar belongs to — resolved the same way every other public
@@ -230,6 +263,8 @@ export async function GET(request: NextRequest) {
       currency: s.currency || 'USD',
       // The two facts the widget builds its journey from.
       is_scheduled: s.is_scheduled !== false,
+      /* How far ahead the strip may run. */
+      advance_booking_days: s.advance_booking_days ?? null,
       collection: s.collection ?? null,
       sale_mode: s.sale_mode ?? 'direct',
       paymentPlan: plansByService[s.id],
@@ -375,8 +410,37 @@ export async function GET(request: NextRequest) {
       'Availability fetched'
     );
 
+    /*
+     * Which of the next N days the business simply does not work.
+     *
+     * `windowsForDate` already folds the weekly hours together with time off —
+     * an `unavailable` exception closes the date, and `custom_hours` reopens it
+     * — so a holiday greys out exactly like a Sunday, which is what the client
+     * needs to see.
+     *
+     * Empty when nothing was asked for, and empty when the business has no
+     * hours configured at all: that case is already reported through `reason`,
+     * and greying every day would say "closed for ninety days" about a setting
+     * the owner has not filled in yet.
+     */
+    const closedDates: string[] = [];
+
+    if (closedDaysWindow > 0 && hasAvailabilityConfigured && availabilitySettings) {
+      let cursor = businessDateKey(new Date(), timezone);
+
+      for (let i = 0; i < closedDaysWindow; i++) {
+        if (windowsForDate(availabilitySettings, cursor, timeOff).length === 0) {
+          closedDates.push(cursor);
+        }
+        cursor = shiftBusinessDateKey(cursor, 1);
+      }
+    }
+
     return NextResponse.json({
       success: true,
+      /* The days in that window with no hours at all, so a strip can grey them
+         instead of letting a visitor discover it one click at a time. */
+      closedDates,
       businessName: businessProfile?.company_name || subdomain,
       timezone,
       availabilityConfigured: hasAvailabilityConfigured,

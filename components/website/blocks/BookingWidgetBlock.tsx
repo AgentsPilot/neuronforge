@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Calendar, Clock, ArrowRight, Loader2 } from 'lucide-react';
+import { Calendar, Clock, ArrowRight, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { BlockRendererProps, CapabilityConfig } from './types';
 import { businessDateKey, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 import { createLogger } from '@/lib/logger';
 import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
+import { DEFAULT_ADVANCE_BOOKING_DAYS, bookableDaysFor } from '@/lib/scheduling/bookingWindow';
 
 const logger = createLogger({ module: 'BookingWidgetBlock' });
 
@@ -28,6 +29,9 @@ const LABELS = {
     subtitle: 'Choose a service and time that works for you',
     selectService: 'Select a service',
     selectDate: 'Select a date',
+    earlierDates: 'Earlier dates',
+    laterDates: 'Later dates',
+    dayClosed: 'Closed on this day',
     selectTime: 'Select a time',
     book: 'Book Now',
     loading: 'Loading availability...',
@@ -43,6 +47,9 @@ const LABELS = {
     subtitle: 'Elige un servicio y horario que te convenga',
     selectService: 'Selecciona un servicio',
     selectDate: 'Selecciona una fecha',
+    earlierDates: 'Fechas anteriores',
+    laterDates: 'Fechas posteriores',
+    dayClosed: 'Cerrado este día',
     selectTime: 'Selecciona una hora',
     book: 'Reservar Ahora',
     loading: 'Cargando disponibilidad...',
@@ -58,6 +65,9 @@ const LABELS = {
     subtitle: 'בחר שירות ושעה שמתאימים לך',
     selectService: 'בחר שירות',
     selectDate: 'בחר תאריך',
+    earlierDates: 'תאריכים מוקדמים יותר',
+    laterDates: 'תאריכים מאוחרים יותר',
+    dayClosed: 'סגור ביום זה',
     selectTime: 'בחר שעה',
     book: 'הזמן עכשיו',
     loading: '...טוען זמינות',
@@ -103,6 +113,15 @@ interface ServiceOption {
   paymentPlan?: ServicePaymentPlan;
 }
 
+/**
+ * How many day buttons this block shows at once.
+ *
+ * A week, which is what it showed in total before it could be paged — the
+ * block sits in a page column rather than a full-width dialog, so a fortnight
+ * of buttons would scroll sideways on a phone.
+ */
+const DATES_PER_PAGE = 7;
+
 export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, className, subdomain, isPreview, clientFlow, onOpenBooking }: BlockRendererProps) {
   /*
    * Can this block ask the server who the business is?
@@ -136,6 +155,9 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
   const availabilityUrl = (extra: Record<string, string> = {}) => {
     const params = new URLSearchParams(extra);
     if (subdomain) params.set('subdomain', subdomain);
+    /* Which of the next months the business does not work, answered by the
+       same request — one array lookup per day on the server, no extra call. */
+    if (!params.has('closed_days')) params.set('closed_days', String(DEFAULT_ADVANCE_BOOKING_DAYS));
     return `/api/website/booking/availability?${params.toString()}`;
   };
   const {
@@ -153,6 +175,10 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
 
   const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
   const [selectedService, setSelectedService] = useState<string>('');
+  /** Days in the window the business simply does not work. */
+  const [closedDates, setClosedDates] = useState<Set<string>>(new Set());
+  /** Each service's own booking window, by id, as the API reported it. */
+  const [advanceByService, setAdvanceByService] = useState<Record<string, number | null>>({});
   /*
    * A business date key ("2026-09-21"), not a Date.
    *
@@ -170,13 +196,62 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
   const [loading, setLoading] = useState(true);
   const [availabilityConfigured, setAvailabilityConfigured] = useState<boolean | null>(null);
 
-  /* The next 7 days as the BUSINESS counts them. Falls back to the visitor's
-     zone only until the first availability response names the real one. */
-  const nextDays = useMemo(() => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE WINDOW THE BUSINESS ACTUALLY OFFERS, NOT ONE WEEK.
+   *
+   * This showed seven days, hardcoded, with no way past them — so this block
+   * offered a week while the booking page offered a fortnight and the smart
+   * link offered three months. Same business, same service, three different
+   * answers depending on which surface a client happened to open.
+   *
+   * Now bounded by the service's own `advance_booking_days` like the others,
+   * paged a week at a time because this block is narrower than the full page,
+   * and labelled with its month: "31, 1, 2" across a ninety-day window says
+   * nothing about which month it means.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [dateWindowStart, setDateWindowStart] = useState(0);
+
+  const bookableDays = bookableDaysFor(
+    selectedService ? advanceByService[selectedService] : undefined
+  );
+
+  const firstBookableDay = useMemo(() => {
     const zone = businessTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const first = businessDateKey(new Date(), zone);
-    return Array.from({ length: 7 }, (_, i) => shiftBusinessDateKey(first, i));
+    return businessDateKey(new Date(), zone);
   }, [businessTimezone]);
+
+  const nextDays = useMemo(() => {
+    const visible = Math.min(DATES_PER_PAGE, bookableDays - dateWindowStart);
+    return Array.from({ length: Math.max(0, visible) }, (_, i) =>
+      shiftBusinessDateKey(firstBookableDay, dateWindowStart + i)
+    );
+  }, [firstBookableDay, bookableDays, dateWindowStart]);
+
+  const canGoEarlier = dateWindowStart > 0;
+  const canGoLater = dateWindowStart + DATES_PER_PAGE < bookableDays;
+
+  /* Named from the days on screen, and naming both when the week straddles a
+     boundary — the case where a bare day number misleads most. */
+  const monthLabel = useMemo(() => {
+    if (nextDays.length === 0) return '';
+
+    const name = (key: string, withYear: boolean) =>
+      new Date(`${key.slice(0, 7)}-01T12:00:00Z`).toLocaleDateString(locale, {
+        month: 'long',
+        ...(withYear ? { year: 'numeric' } : {}),
+        timeZone: 'UTC',
+      });
+
+    const first = nextDays[0];
+    const last = nextDays[nextDays.length - 1];
+
+    if (first.slice(0, 7) === last.slice(0, 7)) return name(first, true);
+
+    const sameYear = first.slice(0, 4) === last.slice(0, 4);
+    return `${name(first, !sameYear)} – ${name(last, true)}`;
+  }, [nextDays, locale]);
 
   // Fetch availability data from API
   useEffect(() => {
@@ -193,6 +268,10 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
         if (data.success) {
           setAvailabilityConfigured(data.availabilityConfigured);
           // The zone the returned slots belong to.
+          /* The days the business does not work, for greying the strip. */
+          if (Array.isArray(data.closedDates)) {
+            setClosedDates(new Set(data.closedDates as string[]));
+          }
           if (typeof data.timezone === 'string' && data.timezone) {
             setBusinessTimezone(data.timezone);
           }
@@ -209,6 +288,8 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
               collection?: 'online' | 'invoice' | null;
               sale_mode?: 'direct' | 'proposal';
               paymentPlan?: ServicePaymentPlan;
+              /* How far ahead this one takes bookings. */
+              advance_booking_days?: number | null;
             };
             let live = data.services as ApiService[];
 
@@ -240,6 +321,10 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
                */
               if (scoped.length > 0) live = scoped;
             }
+
+            setAdvanceByService(
+              Object.fromEntries(live.map((s: ApiService) => [s.id, s.advance_booking_days ?? null]))
+            );
 
             setServiceOptions(live.map((s: ApiService) => ({
               id: s.id,
@@ -531,18 +616,65 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
 
           {/* Date Selection */}
           <div className="mb-8">
-            <label className="block text-sm font-medium ap-ink-2 mb-3">
-              {labels.selectDate}
-            </label>
+            {/* The heading, the month on screen, and the arrows that move it. */}
+            <div className="flex items-center justify-between mb-3">
+              <div className="min-w-0">
+                <label className="block text-sm font-medium ap-ink-2">
+                  {labels.selectDate}
+                </label>
+                {monthLabel && (
+                  <p className="text-xs ap-ink-3 mt-0.5 truncate">{monthLabel}</p>
+                )}
+              </div>
+              {(canGoEarlier || canGoLater) && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setDateWindowStart(start => Math.max(0, start - DATES_PER_PAGE))}
+                    disabled={!canGoEarlier}
+                    aria-label={labels.earlierDates}
+                    title={labels.earlierDates}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border ap-line ap-ink-2 transition-opacity disabled:opacity-30"
+                  >
+                    <ChevronLeft className="w-4 h-4 rtl:rotate-180" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDateWindowStart(start =>
+                        Math.min(Math.max(0, bookableDays - DATES_PER_PAGE), start + DATES_PER_PAGE)
+                      )
+                    }
+                    disabled={!canGoLater}
+                    aria-label={labels.laterDates}
+                    title={labels.laterDates}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border ap-line ap-ink-2 transition-opacity disabled:opacity-30"
+                  >
+                    <ChevronRight className="w-4 h-4 rtl:rotate-180" />
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="flex gap-2 overflow-x-auto pb-2">
-              {nextDays.map((dateKey: string, index: number) => (
+              {nextDays.map((dateKey: string, index: number) => {
+                /* Shown and struck through rather than removed: a week missing
+                   its Saturday reads as a loading fault. */
+                const closed = closedDates.has(dateKey);
+
+                return (
                 <button
                   key={index}
+                  type="button"
                   onClick={() => setSelectedDate(dateKey)}
+                  disabled={closed}
+                  aria-disabled={closed}
+                  title={closed ? labels.dayClosed : undefined}
                   className={`flex-shrink-0 p-3 rounded-xl border-2 transition-all min-w-[80px] text-center ${
                     selectedDate === dateKey
                       ? 'border-current'
-                      : 'ap-line ap-hover-line'
+                      : closed
+                        ? 'ap-line opacity-40 cursor-not-allowed line-through'
+                        : 'ap-line ap-hover-line'
                   }`}
                   style={{
                     borderColor: selectedDate === dateKey ? primaryColor : undefined,
@@ -559,7 +691,8 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
                     {Number(dateKey.slice(8, 10))}
                   </p>
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
 

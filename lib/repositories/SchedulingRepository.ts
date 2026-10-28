@@ -199,11 +199,27 @@ export interface SchedulingMeetingInsert {
   session_number: number;
   /** Which attempt at that session. 1 for a session nobody has moved yet. */
   occurrence_number: number;
+  /**
+   * The session this one was booked IN PLACE of.
+   *
+   * Set only by the replacement toggle on the cancel and no-show dialogs. A
+   * session something points at has already been made up, which is what stops
+   * the drawer offering to move it — see 20261097.
+   */
+  replaces_meeting_id?: string | null;
 }
 
 export interface SchedulingMeetingAttempt {
   id: string;
   booking_id: string;
+  /**
+   * The session this attempt was booked IN PLACE of, if any.
+   *
+   * Read the other way round by the card: a session that something points at
+   * has been made up, and is not offered Reschedule. Null on every ordinary
+   * session and on every row written before 20261097.
+   */
+  replaces_meeting_id?: string | null;
   /** Who recorded `meeting_status`. NULL on rows predating 20261078. */
   outcome_by: MeetingOutcomeActor | null;
   /** When it was recorded, so the rail can place it among the emails. */
@@ -251,6 +267,15 @@ export interface SchedulingBooking {
    * meeting. See the note on `MeetingStatus` for why this is not `status`.
    */
   meeting_status?: MeetingStatus;
+  /**
+   * Who recorded that outcome (`outcome_by`, 20261078).
+   *
+   * Travels with the status it describes. `auto_complete_meetings` stamps
+   * `'system'` here when a clock, rather than a person, closed the meeting —
+   * which is what lets the drawer offer the owner a correction.
+   */
+  outcome_by?: MeetingOutcomeActor | null;
+  outcome_at?: string | null;
   cancellation_reason: string | null;
   /** Structured cancellation: the code, the note, and who called it off. */
   cancel_reason?: string | null;
@@ -481,7 +506,8 @@ export class SchedulingServiceRepository {
         .insert({
           ...service,
           buffer_minutes: service.buffer_minutes ?? 15,
-          advance_booking_days: service.advance_booking_days ?? 30,
+          /* 90, not 30 — see `DEFAULT_ADVANCE_BOOKING_DAYS`. */
+          advance_booking_days: service.advance_booking_days ?? DEFAULT_ADVANCE_BOOKING_DAYS,
           min_notice_hours: service.min_notice_hours ?? 24,
           availability: service.availability || {},
           is_active: service.is_active ?? true,
@@ -520,7 +546,7 @@ export class SchedulingServiceRepository {
       const insertData = services.map(service => ({
         ...service,
         buffer_minutes: service.buffer_minutes ?? 15,
-        advance_booking_days: service.advance_booking_days ?? 30,
+        advance_booking_days: service.advance_booking_days ?? DEFAULT_ADVANCE_BOOKING_DAYS,
         min_notice_hours: service.min_notice_hours ?? 24,
         availability: service.availability || {},
         is_active: service.is_active ?? false, // Drafts start inactive
@@ -798,9 +824,17 @@ export class SchedulingServiceRepository {
    * the base set it narrows FROM.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /*
+   * `advance_booking_days` is public because the CLIENT needs it.
+   *
+   * It is the business's own answer to "how far ahead will you take a
+   * booking", and without it on this list the public widget had nothing to ask
+   * and showed a hardcoded fortnight to everyone — including a business that
+   * had set ninety days.
+   */
   static readonly PUBLIC_COLUMNS =
     'id, service_name, description, duration_minutes, price, currency, ' +
-    'is_active, is_scheduled, collection, sale_mode';
+    'is_active, is_scheduled, collection, sale_mode, advance_booking_days';
 
   async listBookable(userId: string): Promise<SchedulingRepositoryResult<SchedulingService[]>> {
     try {
@@ -1223,6 +1257,12 @@ export class SchedulingBookingRepository {
           timezone: meeting.timezone ?? null,
           session_number: meeting.session_number,
           occurrence_number: meeting.occurrence_number,
+          /*
+           * The session this one stands in for, when it came from the
+           * replacement toggle. Null for every ordinary session, which is
+           * almost all of them — see the column's own comment (20261097).
+           */
+          replaces_meeting_id: meeting.replaces_meeting_id ?? null,
           /*
            * Nobody has said what happened at a session that has not happened.
            * Null is that value, and it is also what makes the row hold its
@@ -1729,7 +1769,9 @@ export class SchedulingBookingRepository {
            sessions from six attempts at one appointment. Named explicitly:
            a column absent from a select is `undefined`, not null, and every
            session would read as "not a session". */
-        .select('id, booking_id, start_time, end_time, timezone, meeting_status, outcome_by, outcome_at, moved_by, session_number, occurrence_number, created_at')
+        /* `replaces_meeting_id` so a session that has already been made up can
+           be told from one still waiting — see 20261097. */
+        .select('id, booking_id, start_time, end_time, timezone, meeting_status, outcome_by, outcome_at, moved_by, session_number, occurrence_number, created_at, replaces_meeting_id')
         /* CLAUDE.md rule 4. The booking ids came from a list this user already
            owns, but a filter that depends on an earlier query being right is
            not a filter. */
@@ -3521,5 +3563,6 @@ export class SchedulingBookingRepository {
 
 // Singleton exports (initialized with server-side Supabase client)
 import { supabaseServer } from '@/lib/supabaseServer';
+import { DEFAULT_ADVANCE_BOOKING_DAYS } from '@/lib/scheduling/bookingWindow';
 export const schedulingServiceRepository = new SchedulingServiceRepository(supabaseServer);
 export const schedulingBookingRepository = new SchedulingBookingRepository(supabaseServer);

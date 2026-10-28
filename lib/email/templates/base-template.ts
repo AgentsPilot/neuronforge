@@ -1011,6 +1011,36 @@ export interface EmailSessionLine {
   /** What came back, where some of it did. */
   refunded?: number | null;
   isSubject: boolean;
+  /** Billed on its own, or a share of one sum paid for the whole block. */
+  billedPerSession?: boolean;
+}
+
+/**
+ * The Payment column's label, or nothing when there is no per-session charge.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A package paid UPFRONT is one invoice for the whole block. The per-session
+ * figures exist — `packageSessionLines` divides the sum so a column is not
+ * blank — but they are this platform's arithmetic, not amounts the client was
+ * billed. A receipt printing three of them asks the reader to reconcile them
+ * against the single sum stated at the top, which they already paid once.
+ *
+ * A package billed PER SESSION is the opposite: each meeting has its own
+ * stage, its own invoice and its own state, and that column is the only thing
+ * telling the client which ones are settled. Dropping it there would hide what
+ * they still owe.
+ *
+ * Both rules in one place because five templates render this table, and a rule
+ * about money written out five times is four chances to disagree.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function sessionPaymentColumn(
+  lines: EmailSessionLine[],
+  label: string
+): string | undefined {
+  /* `some`, not `every`: a block with even one real charge owes the reader
+     the detail, and a mixed one is exactly where a missing column misleads. */
+  return lines.some(line => line.billedPerSession) ? label : undefined;
 }
 
 export function emailSessionRows(
@@ -1021,7 +1051,16 @@ export function emailSessionRows(
   labels: {
     states: Record<string, string>;
     money: Record<string, string>;
-    columns: { when: string; state: string; payment: string };
+    /**
+     * `payment` is optional, and absent means the column is not drawn.
+     *
+     * A package paid UPFRONT has no per-session charge: the figure in that
+     * column is a share this platform calculated, not something the client was
+     * ever billed. Printing it asks a reader to reconcile three numbers
+     * against the single sum they already paid, which the receipt states at
+     * the top anyway.
+     */
+    columns: { when: string; state: string; payment?: string };
     zoneNote: (zone: string) => string;
   }
 ): string {
@@ -1031,6 +1070,15 @@ export function emailSessionRows(
   const isRtl = locale === 'he';
   const start = isRtl ? 'right' : 'left';
   const end = isRtl ? 'left' : 'right';
+
+  /*
+   * The column is drawn only when there is a per-session charge to put in it.
+   *
+   * A caller that omits the label has decided this package was paid as one
+   * sum. The header and every row drop the cell together — leaving the header
+   * in place over empty cells is the version of this bug that looks deliberate.
+   */
+  const showsPayment = Boolean(labels.columns.payment);
 
   /*
    * ───────────────────────────────────────────────────────────────────────────
@@ -1054,8 +1102,12 @@ export function emailSessionRows(
     <tr>
       <td style="padding: 0 0 6px; width: 24px;"></td>
       <td style="padding: 0 8px 6px; text-align: ${start}; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: ${c.inkFaint};">${labels.columns.when}</td>
-      <td style="padding: 0 8px 6px; text-align: ${start}; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: ${c.inkFaint};">${labels.columns.state}</td>
-      <td style="padding: 0 0 6px; text-align: ${end}; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: ${c.inkFaint};">${labels.columns.payment}</td>
+      <td style="padding: 0 8px 6px; text-align: ${start}; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: ${c.inkFaint};">${labels.columns.state}</td>${
+        showsPayment
+          ? `
+      <td style="padding: 0 0 6px; text-align: ${end}; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: ${c.inkFaint};">${labels.columns.payment}</td>`
+          : ''
+      }
     </tr>`;
 
   /*
@@ -1111,8 +1163,12 @@ export function emailSessionRows(
     <tr>
       <td style="padding: 7px 0; border-top: 1px solid ${c.line}; width: 24px; font-size: 12px; color: ${c.inkFaint}; vertical-align: top;">${line.number}</td>
       <td style="padding: 7px 8px; border-top: 1px solid ${c.line}; text-align: ${start}; font-size: 13px; font-weight: ${weight}; color: ${c.ink}; ${struck}">${when}</td>
-      <td style="padding: 7px 8px; border-top: 1px solid ${c.line}; text-align: ${start}; font-size: 12px; color: ${c.inkMuted};">${state}</td>
-      <td style="padding: 7px 0; border-top: 1px solid ${c.line}; text-align: ${end}; font-size: 12px; color: ${c.ink};">${money}</td>
+      <td style="padding: 7px 8px; border-top: 1px solid ${c.line}; text-align: ${start}; font-size: 12px; color: ${c.inkMuted};">${state}</td>${
+        showsPayment
+          ? `
+      <td style="padding: 7px 0; border-top: 1px solid ${c.line}; text-align: ${end}; font-size: 12px; color: ${c.ink};">${money}</td>`
+          : ''
+      }
     </tr>`;
     })
     .join('');

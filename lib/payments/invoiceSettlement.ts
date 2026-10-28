@@ -241,6 +241,83 @@ export async function settleInvoicePaid(
     .maybeSingle();
 
   if (existing?.data?.id) {
+    /*
+     * ── ALREADY PAID IS NOT ALREADY FINISHED ────────────────────────────────
+     *
+     * This returned here and nothing else ran, which is right about the one
+     * thing the guard exists for — a redelivered webhook must not record a
+     * second payment — and wrong about everything that follows it. Skipped
+     * with it were the invoice's own status transition and, worse,
+     * `confirmPackageOnPayment`, whose comment below spells out the cost: a
+     * package left `pending`, its slots held, its client never told.
+     *
+     * The guard keys on a TRANSACTION row existing, and the transaction is not
+     * always written by this function. Measured on a live package
+     * (`INV1611-00034`, $660, three sessions): the charge row was created at
+     * 17:54:46.554 and the invoice's `paid_at` stamped at 17:54:45.916 — the
+     * payment was recorded elsewhere FIRST, so when settlement ran it found a
+     * succeeded transaction and returned immediately. The result was an
+     * invoice reading `sent` while carrying `paid_at`, a booking reading
+     * `payment_status: paid`, and a container still `pending`.
+     *
+     * And a `pending` container is not cosmetic: the public reschedule route
+     * refuses anything whose booking is not `confirmed`, so the client who had
+     * paid in full was told "This booking is no longer open for changes" on
+     * every session.
+     *
+     * So the early return now means "do not record a second payment", not "do
+     * not finish the job". Both steps below are idempotent — the invoice
+     * update is skipped unless it would change something, and
+     * `confirmPackageOnPayment` filters on `status = 'pending'`, so a package
+     * already confirmed is untouched.
+     *
+     * The RECEIPT is deliberately NOT sent from here. It lives below this
+     * return precisely so a replayed webhook cannot send a second one, and
+     * that reasoning is unaffected: this path is for a payment already
+     * recorded, whose receipt has already gone.
+     */
+    const { data: current } = await db
+      .from('payment_invoices')
+      .select('id, status, paid_at')
+      .eq('id', input.invoiceId)
+      .maybeSingle();
+
+    /* `settled` already treats a `paid_at` with a lagging status as paid — see
+       its own comment about exactly this window. Here the status is what needs
+       catching up, so it is read directly. */
+    const statusLagging =
+      current && !['paid', 'refunded', 'partially_refunded'].includes(String(current.status));
+
+    if (statusLagging) {
+      const { error: catchUpError } = await db
+        .from('payment_invoices')
+        .update({
+          status: 'paid',
+          paid_at: current?.paid_at ?? paidAt,
+          updated_at: paidAt,
+        })
+        .eq('id', input.invoiceId);
+
+      if (catchUpError) {
+        logger.error(
+          { err: catchUpError, invoiceId: input.invoiceId },
+          'A paid invoice could not be brought up to date'
+        );
+      }
+    }
+
+    await (async () => {
+      try {
+        const { confirmPackageOnPayment } = await import('@/lib/payments/confirmPackageOnPayment');
+        await confirmPackageOnPayment(client as SupabaseClient, input.invoiceId, paidAt);
+      } catch (err) {
+        logger.error(
+          { err, invoiceId: input.invoiceId },
+          'A payment was already recorded but a package it paid for was not confirmed'
+        );
+      }
+    })();
+
     return { transactionId: existing.data.id, alreadySettled: true };
   }
 

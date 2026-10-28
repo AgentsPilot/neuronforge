@@ -182,9 +182,20 @@ interface SmartLink {
   destination_type: string | null;
   click_count: number;
   conversion_count: number;
-  /** Distinct visitors, counted by the list route the way the website counts
-   *  them: clicks with no identifier collapse into one unknown visitor. */
-  unique_visitors?: number;
+  /**
+   * Distinct visitors, counted by the list route the way the website counts
+   * them: clicks with no identifier collapse into one unknown visitor.
+   *
+   * NULL means the count could not be made — not that nobody came. The route
+   * sends null rather than 0 when the click read fails, because those are
+   * opposite pieces of advice to an owner reading the row.
+   */
+  unique_visitors?: number | null;
+  /**
+   * The figure is a FLOOR: the click read hit its ceiling, so there may be
+   * more. Shown as "5+" rather than "5".
+   */
+  unique_visitors_at_least?: boolean;
   is_active: boolean;
   created_at: string;
   metadata?: {
@@ -4721,7 +4732,36 @@ export default function WebsiteManagementPage() {
                 {([
                   { value: link.click_count, label: language === 'he' ? 'קליקים' : language === 'es' ? 'Clics' : 'Clicks', muted: false },
                   { value: link.conversion_count, label: language === 'he' ? 'המרות' : language === 'es' ? 'Conversiones' : 'Conversions', muted: false },
-                  { value: link.unique_visitors ?? 0, label: labels.unique_visitors, muted: false },
+                  {
+                    /*
+                     * "—" when the count could not be made, which is NOT the
+                     * same as nobody coming. A failed read used to publish a
+                     * confident 0 against every link, telling an owner their
+                     * links were dead when the truth was that the figure was
+                     * missing — and the two call for opposite responses.
+                     *
+                     * The dash and the muting are borrowed from the Rate cell
+                     * beside it, which already says "no reading" this way, so
+                     * the row speaks with one voice and nothing needs
+                     * translating.
+                     *
+                     * A real zero still reads 0, and still reads boldly: it is
+                     * a measurement, and an owner should see it.
+                     *
+                     * "+" marks a floor — the click read hit its ceiling, so
+                     * "5+" means at least five. Correct per link: the ceiling
+                     * is on rows scanned across all of them, so any count may
+                     * be short, and none can be shown as exact.
+                     */
+                    value:
+                      link.unique_visitors == null
+                        ? '—'
+                        : link.unique_visitors_at_least
+                          ? `${link.unique_visitors}+`
+                          : link.unique_visitors,
+                    label: labels.unique_visitors,
+                    muted: link.unique_visitors == null,
+                  },
                   {
                     value: link.click_count > 0 ? `${((link.conversion_count / link.click_count) * 100).toFixed(0)}%` : '—',
                     label: language === 'he' ? 'אחוז המרה' : language === 'es' ? 'Tasa' : 'Rate',
