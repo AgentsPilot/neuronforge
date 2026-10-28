@@ -76,7 +76,7 @@ describe('GET …/boost/purchases?sessionId= (5b.1)', () => {
     expect(Object.keys(body.data.purchase).sort()).toEqual(
       ['createdAt', 'creditsBonus', 'creditsTotal', 'currency', 'id', 'kind', 'name', 'packageId', 'paidAt', 'priceMinor', 'receiptUrl', 'status', 'taxExclusive']
     );
-    expect(body.data.purchase).toMatchObject({ status: 'processing', packageId: 'plus', kind: 'bought', name: { en: 'Plus' } });
+    expect(body.data.purchase).toMatchObject({ status: 'processing', packageId: 'plus', kind: 'bought', name: { en: 'Medium' } });
     const text = JSON.stringify(body);
     for (const secret of [SESSION, 'pi_test_1', 'livemode', 'flagReason']) expect(text).not.toContain(secret);
     // The account is the session's.
@@ -184,7 +184,7 @@ describe('5b.2: the Purchases list (GET without sessionId)', () => {
     expect(body.data.purchases.map((p: { id: string }) => p.id)).toEqual(['11111111-0000-4000-8000-000000000002', '11111111-0000-4000-8000-000000000001']);
     for (const view of body.data.purchases) expect(Object.keys(view).sort()).toEqual(LIST_KEYS);
     expect(body.data.purchases.map((p: { status: string }) => p.status)).toEqual(['processing', 'credited']);
-    expect(body.data.purchases[1]).toMatchObject({ receiptUrl: 'https://pay.stripe.com/r/a', kind: 'bought', name: { en: 'Plus' } });
+    expect(body.data.purchases[1]).toMatchObject({ receiptUrl: 'https://pay.stripe.com/r/a', kind: 'bought', name: { en: 'Medium' } });
     const text = JSON.stringify(body);
     for (const secret of ['cs_test_a', 'cs_test_b', 'pi_test_a', 'livemode', '22222222']) expect(text).not.toContain(secret);
     // The account is the session's; the mode is the server key's; the default limit.

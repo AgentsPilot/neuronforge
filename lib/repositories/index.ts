@@ -44,6 +44,10 @@ export type {
   EnsureBusinessOsAccountPlanInput,
   CreateBusinessOsOverrideInput,
   ResetBusinessOsPlanStateInput,
+  BusinessOsAfterPlanMoveState,
+  BusinessOsAfterPlanMoveInputs,
+  ApplyAfterPlanMoveInput,
+  ApplyAfterPlanMoveResult,
 } from './BusinessOsAccountPlanRepository';
 export {
   BusinessOsEntitlementShadowRepository,

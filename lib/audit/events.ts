@@ -188,6 +188,19 @@ export const AUDIT_EVENTS = {
   // the guard ids, the resolved login id if any, files_removed and the
   // correlationId. Never the email, the reason note or the fingerprint.
   ACCOUNT_DELETION_REFUSED: 'ACCOUNT_DELETION_REFUSED',
+  // Account deletion lifecycle D3.1 / SX-2b (workplan
+  // BUSINESS_OS_D3_1_FREE_COHORT_AFTER_CANCEL_WORKPLAN.md §7; SA S-8): an
+  // owner-started cancel (Stripe `cancellation_requested`) ended a paid plan,
+  // and the webhook moved the account to the configured free cohort for a
+  // free period (halved per earlier move). Written by afterPlanMove.ts through
+  // recordPlanChange, once per subscription, only when the plan row write
+  // applied. Platform actor (details.actor 'stripe_webhook'), never the owner.
+  // Entity type 'business_os_account_plan', id = the account. Changes: before /
+  // after of cohort, trial dates, tier_expires_at, grace_ends_at,
+  // period_anchor, after_plan_moves. Details: automatic, trigger, Stripe's
+  // reason, subscription id, endedAt, days, priorMoves, cohort, livemode, event
+  // id. Never an email, a name or the owner's leave reason code.
+  BOS_PLAN_FREE_PERIOD_AFTER_CANCEL: 'BOS_PLAN_FREE_PERIOD_AFTER_CANCEL',
   // Business OS AI activity (Layer 3): one entry per AI action or background
   // job, summarising its LLM calls. Written by the server only; a browser can
   // never write one (lib/audit/requestSchemas.ts) and owners never read one
@@ -509,6 +522,9 @@ export const AUDIT_EVENTS = {
   // is refunded and the plan row is not written: access follows paid-through.
   // D2 / SX-1 (SA Q-4): also `reasonCode`, a planLeaveReasons.ts code or null,
   // never a label or free text. P-7a.4's immediate cancel carries it too (W-6).
+  // P-7a.4 (TQ-12, SA C-11): a cancel while a renewal is failing at Stripe ends
+  // the subscription NOW: same key, mode 'immediate', endsOn = when it ended,
+  // plus invoicesVoided / invoicesLeftOpen (null = could not tell, alerted).
   BOS_BILLING_SUBSCRIPTION_CANCELLED: 'BOS_BILLING_SUBSCRIPTION_CANCELLED',
   // Plan payments P-7a.1: an owner removed a pending cancellation before the
   // period end (reactivate). Same writer rules, entity and actor as
@@ -1231,7 +1247,7 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.BOS_BILLING_SUBSCRIPTION_CANCELLED]: {
     severity: 'info',
     complianceFlags: ['SOC2'],
-    description: 'A Business OS owner set their plan subscription to cancel at the period end (nothing refunded; access continues to the paid-through date)',
+    description: 'A Business OS owner cancelled their plan subscription: at the period end (nothing refunded; access continues to the paid-through date), or, while a renewal payment was failing, immediately with its open invoice voided (details.mode)',
   },
   [AUDIT_EVENTS.BOS_BILLING_SUBSCRIPTION_REACTIVATED]: {
     severity: 'info',
@@ -1322,6 +1338,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['GDPR', 'SOC2'],
     description: 'An account deletion was refused or failed; nothing or only storage files were removed',
+  },
+  // D3.1 / SX-2b (SA S-8). 'info': the configured outcome of an owner's own
+  // cancel, needing no operator action; SOC2, as every Business OS billing event.
+  [AUDIT_EVENTS.BOS_PLAN_FREE_PERIOD_AFTER_CANCEL]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: "A Business OS owner's cancelled paid plan ended and the account moved to the free plan for a free period (shorter on each repeat cancel)",
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',

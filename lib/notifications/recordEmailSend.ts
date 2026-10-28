@@ -139,6 +139,23 @@ export type EmailKind =
   | 'meeting_reminder'
   | 'meeting_reminder_owner'
   /* About the job rather than one appointment. */
+  /**
+   * The bill itself, going out to the client.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Deliberately NOT in `ABOUT_ONE_APPOINTMENT`, for the reason `payment_receipt`
+   * is not: an invoice is a fact about the JOB. It carries its booking, so the
+   * card can answer "was this client actually billed?", but it does not belong
+   * inside one appointment's history.
+   *
+   * The roster had no invoice member at all, which is why every invoice mail
+   * ever sent was filed with no kind AND no booking — the sender holds the
+   * invoice row, uses `booking_id` from it to build the pay link, and then
+   * dropped it when recording the send. An owner looking at the card saw no
+   * evidence the bill had gone out, and concluded it had not.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  | 'invoice_sent'
   | 'payment_receipt'
   | 'refund_confirmed'
   /* One payment request withdrawn, while the agreement itself continues. Not

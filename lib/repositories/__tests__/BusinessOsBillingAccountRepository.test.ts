@@ -370,7 +370,8 @@ describe('acquireCheckoutLock (SR-5 / SA-P14 layer 1, compare-and-set)', () => {
 describe('replaceCustomer (compare-and-set on the old customer id)', () => {
   const INPUT = { userId: USER, livemode: false, oldCustomerId: 'cus_old', newCustomerId: 'cus_new', nowIso: NOW_ISO };
 
-  it('swaps the customer and clears the subscription mirror and the lock, CAS on the old id, count exact, no select', async () => {
+  // P-6a follow-up F-1, fixed in P-8b.2 (TL decision 11): the WHOLE subscription mirror is cleared, as in C-6.
+  it('swaps the customer and clears the whole subscription mirror and the lock, CAS on the old id, count exact, no select', async () => {
     const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
     const result = await new BusinessOsBillingAccountRepository(client).replaceCustomer(INPUT);
     expect(result).toEqual({ data: { replaced: true }, error: null });
@@ -380,8 +381,18 @@ describe('replaceCustomer (compare-and-set on the old customer id)', () => {
           stripe_customer_id: 'cus_new',
           stripe_subscription_id: null,
           subscription_status: null,
+          bought_tier: null,
+          current_period_end: null,
+          cancel_at_period_end: false,
+          pending_tier: null,
           open_checkout_session_id: null,
           open_checkout_expires_at: null,
+          last_invoice_id: null,
+          last_paid_at: null,
+          last_payment_failed_at: null,
+          failed_attempts: 0,
+          action_required_invoice_url: null,
+          ended_at: null,
           updated_at: NOW_ISO,
         },
         { count: 'exact' },
@@ -394,6 +405,33 @@ describe('replaceCustomer (compare-and-set on the old customer id)', () => {
     ]);
     expect(argsOf(queries[0], 'select')).toEqual([]);
     expect(argsOf(queries[0], 'or')).toEqual([]);
+  });
+
+  it('F-1: writes every UPDATE-granted column of 20261025 except the founder discount stamp, the same set as the test-clock attach', async () => {
+    const migration = fs
+      .readFileSync(path.join(ROOT, 'supabase', 'migrations', '20261025_business_os_billing_accounts.sql'), 'utf8')
+      .replace(/\r\n/g, '\n');
+    const grant = migration.match(/GRANT UPDATE \(([^)]+)\) ON TABLE public\.business_os_billing_accounts TO service_role;/);
+    expect(grant).not.toBeNull();
+    const granted = (grant as RegExpMatchArray)[1].split(',').map((column) => column.trim());
+
+    const replace = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    await new BusinessOsBillingAccountRepository(replace.client).replaceCustomer(INPUT);
+    const patch = argsOf(replace.queries[0], 'update')[0][0] as Record<string, unknown>;
+    const kept = ['stripe_customer_id', 'founder_discount_applied_at', 'updated_at'];
+    expect(Object.keys(patch).sort()).toEqual(granted.filter((column) => column !== 'founder_discount_applied_at').sort());
+    for (const column of granted.filter((name) => !kept.includes(name))) {
+      expect([null, false, 0]).toContain(patch[column]);
+    }
+
+    const attach = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    await new BusinessOsBillingAccountRepository(attach.client).attachTestClockCustomer({
+      userId: USER,
+      oldCustomerId: 'cus_old',
+      newCustomerId: 'cus_new',
+      nowIso: NOW_ISO,
+    });
+    expect(patch).toEqual(argsOf(attach.queries[0], 'update')[0][0]);
   });
 
   it('count 0 → replaced: false (someone else replaced it first)', async () => {
@@ -851,6 +889,12 @@ describe('source guards', () => {
       // D2 / SX-1 QA (2026-10-27): the gap tests over the same two routes fake
       // the repository module by name, as route.test.ts below. Test file only.
       'app/api/business-os/billing/plan/cancel/__tests__/route.d2.qa.test.ts',
+      // Plan payments P-7a.4 QA (2026-10-27): the two-tab / cured-row / void-failure
+      // gap tests fake the repository module by name (stateful). Test file only.
+      'app/api/business-os/billing/plan/cancel/__tests__/route.p7a4.qa.test.ts',
+      // Plan payments P-7a.4: the immediate-cancel route test fakes the repository
+      // module by name, as route.test.ts below. Test file only.
+      'app/api/business-os/billing/plan/cancel/__tests__/route.p7a4.test.ts',
       // Plan payments P-7a.1: the cancel / reactivate routes' integration test
       // fakes the repository module by name. The routes themselves do not name it.
       'app/api/business-os/billing/plan/cancel/__tests__/route.test.ts',
@@ -884,9 +928,14 @@ describe('source guards', () => {
       'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
       // P-5b.1: the N-2 apply test imports the same TYPE for its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.n2.test.ts',
+      // FU-P7a4-1: the QA edge test imports the same TYPES for its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.paidAfterEnd.qa.test.ts',
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
       // P-6a.2: pins the notice's confirm prefix to this repository's HOSTED_INVOICE_URL_PREFIX.
       'lib/business-os/billing/__tests__/planPaymentNotice.test.ts',
+      // Plan payments P-8b.2 (SA ruling 12): the D3.1 replay-safety test runs the real plan handler
+      // behind the reconcile pass and imports the billing row and event input TYPES for its fakes.
+      'lib/business-os/billing/__tests__/planReconcilePass.d31.test.ts',
       // P-6a.2 (T10): the renewal captured-payload test runs the repository's
       // REAL pure decisions in its fake, and imports the row TYPE.
       'lib/business-os/billing/__tests__/planRenewal.captured.test.ts',
@@ -963,6 +1012,9 @@ describe('source guards', () => {
       // Not a caller: the money history repository's caller guard names this
       // test file's path (the two guards list each other).
       'lib/repositories/__tests__/BusinessOsBillingEventRepository.test.ts',
+      // Not a caller (P-8b.2, SA ruling 9): the plan reconcile read repository's test asserts
+      // that repository names neither billing writer, so it names both as a pattern.
+      'lib/repositories/__tests__/PlanReconcileReadRepository.test.ts',
       'lib/repositories/index.ts',
     ];
     const SYMBOLS = ['BusinessOsBillingAccountRepository', 'businessOsBillingAccountRepository'];
@@ -1348,7 +1400,9 @@ describe('clearRenewalFailure (SA C-1 ruling, rule 5)', () => {
 describe('current_period_end is written only by the paid apply path (SA C-1 ruling, rule 3)', () => {
   const lf = (text: string) => text.replace(/\r\n/g, '\n');
 
-  it('in this repository, the only UPDATE payload naming current_period_end is the TEST MODE attach, which clears it', () => {
+  // P-8b.2 (P-6a follow-up F-1): `replaceCustomer` joins the attach as a CLEARING writer. Both set it to
+  // null and nothing else; a period value is still written only by the paid apply function.
+  it('in this repository, the only UPDATE payloads naming current_period_end are the two customer swaps, which clear it', () => {
     const code = lf(fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsBillingAccountRepository.ts'), 'utf8'));
     const writers: string[] = [];
     const starts = [...code.matchAll(/\n {2}(?:private )?async (\w+)\(/g)].map((m) => ({ name: m[1], at: m.index ?? 0 }));
@@ -1356,10 +1410,17 @@ describe('current_period_end is written only by the paid apply path (SA C-1 ruli
     starts.forEach((start, i) => {
       const body = code.slice(start.at, i + 1 < starts.length ? starts[i + 1].at : code.length);
       for (const update of body.matchAll(/\.update\(([\s\S]*?)\{ count: 'exact' \}/g)) {
-        if (/current_period_end\s*:/.test(update[1])) writers.push(start.name);
+        if (/current_period_end\s*:/.test(update[1])) {
+          writers.push(start.name);
+          // A clear, never a value.
+          expect({ method: start.name, write: update[1].match(/current_period_end\s*:\s*([^,\n]+)/)?.[1] }).toEqual({
+            method: start.name,
+            write: 'null',
+          });
+        }
       }
     });
-    expect(writers).toEqual(['attachTestClockCustomer']);
+    expect(writers).toEqual(['replaceCustomer', 'attachTestClockCustomer']);
     expect(code).toMatch(/current_period_end: null,/);
   });
 
@@ -1382,9 +1443,12 @@ describe('current_period_end is written only by the paid apply path (SA C-1 ruli
     // Plan payments P-8a.1: the admin Subscriptions read joins as a third, read-only reader (one mode per read, PF-15).
     // R4-FU-1 (finance follow-ups bundle, SA-WP-FU, ruled): the finance read repository LEAVES the list
     // (R-c and R-c′ removed; Finance reads status through the admin read repository's current-mode reader).
+    // Plan payments P-8b.2 (SA ruling 9): the nightly plan reconcile's read repository joins as a
+    // fourth, read-only reader (one mode per read, PF-15; its own test pins that it never writes).
     expect(offenders.sort()).toEqual([
       'lib/repositories/BusinessOsBillingAccountRepository.ts',
       'lib/repositories/BusinessOsBillingAdminReadRepository.ts',
+      'lib/repositories/PlanReconcileReadRepository.ts',
     ]);
     const finance = fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsFinanceReadRepository.ts'), 'utf8');
     expect(finance).not.toMatch(/\.(update|insert|upsert|delete|rpc)\(/);

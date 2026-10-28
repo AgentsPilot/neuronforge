@@ -275,6 +275,20 @@ describe('a trial (a one-off total)', () => {
     });
   });
 
+  // D3.1 / SX-2b (SA S-5, DR-9): the after-plan move gives the fresh one-off total by moving
+  // `period_anchor` to the end date. A former payer's paid usage sits in periods BEFORE the
+  // moved anchor, so the trial total summed from it reads the full configured total.
+  it('a trial total summed from the anchor the after-plan move set reads the full total', async () => {
+    const MOVED = '2026-11-26T10:00:00+00:00';
+    const { deps, owner } = makeDeps(
+      { totals: [totalsRow(PERIOD, { owner: 30000 }), totalsRow(NEXT_PERIOD, { owner: 2500 })] },
+      { findPeriodAnchor: jest.fn(async () => ({ data: MOVED as string | null, error: null as Error | null })), readAllowance: jest.fn(async () => TRIAL) }
+    );
+    const result = await readOwnerCreditUsage(USER, deps, makeLog());
+    expect(owner.listTotalsFrom).toHaveBeenCalledWith(USER, MOVED);
+    expect(result.data).toMatchObject({ period: { kind: 'trial_total', resetsOn: null }, used: 0, remaining: TRIAL.amount });
+  });
+
   it('a read that reaches the ceiling is an error, never a partial total (W6-6)', async () => {
     const { deps } = makeDeps({ totals: [totalsRow(PERIOD, { owner: 1 })], totalsCeiling: true }, { readAllowance: jest.fn(async () => TRIAL) });
     const log = makeLog();

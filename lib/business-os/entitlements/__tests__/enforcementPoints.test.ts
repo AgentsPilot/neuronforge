@@ -284,8 +284,8 @@ describe('backward: a gate cannot ship unregistered', () => {
     },
     {
       file: 'app/api/business-os/entitlements/my-plan/route.ts',
-      symbols: ['buildCustomerPlanView', 'getEntitlementService', 'resolveAccountId'],
-      why: 'The CUSTOMER read behind the "Your plan" settings section (S-4a step 1) — the first non-admin file in this list. It resolves the session account and formats the answer; it refuses nothing, and it has no capability id to gate on. Note `getEntitlementService` here is `getSnapshot`, which reports every capability, and NOT `check()`, which is the call that would make this a gate: if this file ever calls `check`, it belongs in ENFORCEMENT_POINTS instead of here. `resolveAccountId` is the account seam (SA P-1), which every external caller of the service must go through — `accountSeam.guard` enforces that product-wide.',
+      symbols: ['buildCustomerPlanView', 'getEntitlementService', 'readPlanEndingView', 'resolveAccountId'],
+      why: 'The CUSTOMER read behind the "Your plan" settings section (S-4a step 1) — the first non-admin file in this list. It resolves the session account and formats the answer; it refuses nothing, and it has no capability id to gate on. Note `getEntitlementService` here is `getSnapshot`, which reports every capability, and NOT `check()`, which is the call that would make this a gate: if this file ever calls `check`, it belongs in ENFORCEMENT_POINTS instead of here. `resolveAccountId` is the account seam (SA P-1), which every external caller of the service must go through — `accountSeam.guard` enforces that product-wide. SX-2 (D3): `readPlanEndingView` describes what the account will have once its paid period ends, for the Cancel drawer; display only, refuses nothing, writes nothing, calls no `check()` / `decide()`.',
     },
     // ── Business OS invites (invite-only signup, Slice 0) ──────────────────
     // None of these refuses a capability. They read the invite config (expiry
@@ -597,6 +597,17 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['getEntitlementConfig', 'isBusinessOsTenant'],
       why: 'Plan payments P-8a.2: the admin billing panel route asks whether the account is a Business OS tenant (the same check as the summary route, tenant-isolation-guard order) and reads the config once for the pure builder. Read-only; it refuses no capability and calls no check() / decide().',
     },
+    // ── Account deletion lifecycle D3.1 / SX-2b, 2026-10-27 — the after-plan move ──
+    {
+      file: 'lib/business-os/billing/afterPlanMove.ts',
+      symbols: ['AFTER_PLAN', 'AfterPlanConfig', 'AfterPlanSkip', 'EntitlementConfig', 'LifecycleInputs', 'RecordPlanChangeInput', 'afterPlanAccount', 'fromPlanRow', 'isGrantableCohort'],
+      why: 'Account deletion lifecycle D3.1 / SX-2b (workplan §6.2; SA S-6, DR-11): WRITES the after-plan move from the webhook `customer.subscription.deleted` (an owner-started end). It applies the one after-plan rule (`afterPlanAccount`, with `fromPlanRow`, its `AfterPlanSkip` and `LifecycleInputs` types) to the configured cohort (`AFTER_PLAN`, `AfterPlanConfig`), checks the cohort is grantable (`isGrantableCohort`, GR-1, a config check, never a refusal by plan), and records the change through a `RecordPlanChangeInput` port; `EntitlementConfig` types its config port. It answers a Stripe event, refuses no request by plan or capability and calls no `check()` / `decide()`, so it is not a gate. If it ever refuses a feature by plan, it moves to ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/billing/afterPlanMoveDeps.ts',
+      symbols: ['getEntitlementConfig', 'recordPlanChange'],
+      why: 'Account deletion lifecycle D3.1 / SX-2b (workplan §6.2, §6.3; SA S-9): the production wiring of the after-plan move. It hands the use case `getEntitlementConfig` (the configured cohorts and lifecycle) and `recordPlanChange` (audit + flush + cache invalidation after the move was written), as planBillingHandler.ts does for the payment apply. It refuses nothing by plan or capability and calls no `check()` / `decide()`, so it is not a gate.',
+    },
     // ── Plan payments P-3b.2, 2026-10-07 — the webhook plan handler ─────────
     {
       file: 'lib/business-os/billing/planBillingHandler.ts',
@@ -611,7 +622,7 @@ describe('backward: a gate cannot ship unregistered', () => {
     {
       file: 'lib/business-os/billing/planSubscriptionMirror.ts',
       symbols: ['RecordPlanChangeInput', 'resolveAccountId'],
-      why: 'Plan payments P-6a.2 (workplan §5.5, SA C-4): on `customer.subscription.deleted` it records the `subscription_ended` money history row and the BOS_BILLING_SUBSCRIPTION_ENDED audit. `resolveAccountId` is the account seam for the id taken from our billing row (SR-8); `RecordPlanChangeInput` is the TYPE of its audit port. It writes no plan row, invalidates nothing, calls no `check()` / `decide()` and refuses nothing by plan.',
+      why: 'Plan payments P-6a.2 (workplan §5.5, SA C-4): on `customer.subscription.deleted` it records the `subscription_ended` money history row and the BOS_BILLING_SUBSCRIPTION_ENDED audit. `resolveAccountId` is the account seam for the id taken from our billing row (SR-8); `RecordPlanChangeInput` is the TYPE of its audit port. It writes no plan row, invalidates nothing, calls no `check()` / `decide()` and refuses nothing by plan; on an owner-ended `.deleted` it hands off to the after-plan port (`afterPlanMove.ts`, registered separately, D3.1 / SX-2b).',
     },
     {
       file: 'lib/business-os/billing/readPaymentNotice.ts',

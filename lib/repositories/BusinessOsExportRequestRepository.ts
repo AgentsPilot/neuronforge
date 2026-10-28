@@ -20,6 +20,12 @@
 // - Every argument is parsed with Zod before the call. A module id must be one
 //   of the MX-0 ids (defence in depth; "switched on" is the route's check).
 // - `findByIdForUser` filters on id AND user_id, so a foreign id matches nothing.
+// - `listRecentForUser` (MX-1b history) filters on user_id and orders
+//   `requested_at DESC, id DESC`: a total order, and the limit counts
+//   REQUESTS, so the history never cuts one request's module lines in half.
+// - `markRequestedEmailSent` (MX-1b) is a compare-and-set on id + user_id +
+//   `requested_email_sent_at IS NULL`, counted with { count: 'exact' } and no
+//   `.select()` after the update (the PostgREST update + select hazard).
 //
 // WHO MAY IMPORT THIS FILE is pinned by
 // lib/repositories/__tests__/exportRequestRepositories.callers.guard.test.ts.
@@ -66,6 +72,29 @@ export const exportRequestRowSchema = z.object({
   updated_at: timestamp,
 });
 export type ExportRequest = z.infer<typeof exportRequestRowSchema>;
+
+/** The columns the history reads (MX-1b §5 step 1). Never `*`. */
+export const EXPORT_REQUEST_HISTORY_COLUMNS = 'id, origin, modules, requested_at';
+
+/** Requests per history read: default and ceiling (SA MX1B-9). */
+export const HISTORY_REQUEST_LIMIT = 20;
+export const HISTORY_REQUEST_LIMIT_MAX = 50;
+
+const historyRequestRowSchema = z.object({
+  id: uuid,
+  origin: z.enum(EXPORT_REQUEST_ORIGINS),
+  // Shape only (SA MX1A-10), as the row schema above.
+  modules: z.array(z.string().regex(CODE_SHAPE)).min(1).max(MODULE_EXPORT_POLICY.MAX_MODULES_PER_REQUEST),
+  requested_at: timestamp,
+});
+
+/** One request of the history, newest first (MX-1b §5). */
+export interface ExportRequestSummary {
+  id: string;
+  origin: ExportRequestOrigin;
+  modules: string[];
+  requestedAt: string;
+}
 
 /** The modules of a new request: MX-0 ids, at least one, no duplicate. */
 const modulesSchema = z
@@ -230,6 +259,79 @@ export class BusinessOsExportRequestRepository {
     } catch (err) {
       const safe = toError(err);
       this.logger.error({ err: safe, method: 'findByIdForUser', requestId, userId }, 'Failed to read the export request');
+      return { data: null, error: safe };
+    }
+  }
+
+  // ============ MX-1b: the history and the "Export requested" email ============
+
+  /**
+   * The account's newest export requests (MX-1b §5 step 1): newest first, with
+   * `id DESC` as the tie-break, so the page is a total order and stable between
+   * reads. `limit` counts requests (default 20, clamped 1..50). Rows are parsed
+   * one at a time: a bad row is logged by id and dropped (SA MX-1a comment 2).
+   */
+  async listRecentForUser(userId: string, options: { limit?: number } = {}): Promise<RepositoryResult<ExportRequestSummary[]>> {
+    if (!uuid.safeParse(userId).success) {
+      return { data: null, error: coded(EXPORT_REQUEST_ERROR.INVALID_INPUT, 'Invalid input: user id') };
+    }
+    const requested = Number.isInteger(options.limit) ? (options.limit as number) : HISTORY_REQUEST_LIMIT;
+    const limit = Math.min(Math.max(requested, 1), HISTORY_REQUEST_LIMIT_MAX);
+    try {
+      const { data, error } = await this.supabase
+        .from('business_os_export_requests')
+        .select(EXPORT_REQUEST_HISTORY_COLUMNS)
+        .eq('user_id', userId)
+        .order('requested_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      const out: ExportRequestSummary[] = [];
+      for (const row of Array.isArray(data) ? data : []) {
+        const parsed = historyRequestRowSchema.safeParse(row);
+        if (parsed.success) {
+          out.push({ id: parsed.data.id, origin: parsed.data.origin, modules: parsed.data.modules, requestedAt: parsed.data.requested_at });
+        } else {
+          const id = row && typeof row === 'object' ? (row as Record<string, unknown>).id : null;
+          this.logger.error(
+            { method: 'listRecentForUser', userId, requestId: typeof id === 'string' && uuid.safeParse(id).success ? id : null },
+            'Dropped an export request row that failed its parse'
+          );
+        }
+      }
+      return { data: out, error: null };
+    } catch (err) {
+      const safe = toError(err);
+      this.logger.error({ err: safe, method: 'listRecentForUser', userId }, 'Failed to read the export requests');
+      return { data: null, error: safe };
+    }
+  }
+
+  /**
+   * Record that the "Export requested" email was accepted (MX-1b §4.1 step 8,
+   * SA MX1A-11). Compare-and-set: only this account's row, and only while the
+   * column is still NULL. `updated: false` (already marked, or not this
+   * account's request) is not an error.
+   */
+  async markRequestedEmailSent(requestId: string, userId: string): Promise<RepositoryResult<{ updated: boolean }>> {
+    if (!uuid.safeParse(requestId).success || !uuid.safeParse(userId).success) {
+      return { data: null, error: coded(EXPORT_REQUEST_ERROR.INVALID_INPUT, 'Invalid input: id') };
+    }
+    const now = new Date().toISOString();
+    try {
+      const { error, count } = await this.supabase
+        .from('business_os_export_requests')
+        .update({ requested_email_sent_at: now, updated_at: now }, { count: 'exact' })
+        .eq('id', requestId)
+        .eq('user_id', userId)
+        .is('requested_email_sent_at', null);
+      if (error) throw error;
+      const updated = (count ?? 0) > 0;
+      if (!updated) this.logger.debug({ method: 'markRequestedEmailSent', requestId, userId }, 'Requested email already marked, or not this account');
+      return { data: { updated }, error: null };
+    } catch (err) {
+      const safe = toError(err);
+      this.logger.error({ err: safe, method: 'markRequestedEmailSent', requestId, userId }, 'Failed to mark the requested email as sent');
       return { data: null, error: safe };
     }
   }

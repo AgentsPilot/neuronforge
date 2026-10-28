@@ -132,6 +132,27 @@ const RELEASED: Readonly<Record<string, string>> = {
   'starter@2': 'bcae417f6cc5c42b',
   'plus@2': '2e026363e3c2236d',
   'max@2': '2e37ff2229cabaec',
+  /*
+   * Labels translated, 2026-10-27. Same prices, bonuses and retail version.
+   *
+   * The names and descriptions were built with a helper that copied the
+   * English string into the `he` and `es` slots. That satisfied the schema,
+   * which only requires all three to be present, so every check passed and a
+   * Hebrew or Spanish owner read English in the boost drawer.
+   */
+  'starter@3': '9f3113c256bad459',
+  'plus@3': '6679b42c30e9ce39',
+  'max@3': '7009c4d8d64f3707',
+  /*
+   * Renamed to sizes, 2026-10-27. Same prices, bonuses and retail version.
+   *
+   * Starter / Plus / Max is tier language: it says there is a ladder without
+   * saying what is on it. Small / medium / large needs no explaining, and the
+   * `id`s are untouched, so nothing stored against a purchase moves.
+   */
+  'starter@4': '544faaf2a9b184a8',
+  'plus@4': '15eac7ce2cfe63e7',
+  'max@4': '862f5efb35c62394',
 };
 
 /** JSON with sorted keys at every level, so the fingerprint ignores key order. */
@@ -207,8 +228,8 @@ describe('the released package snapshot (T-B12, SA C-4, FR-4)', () => {
   it('negative controls: an edit without a bump, an edited record and a removed record are all caught (T-F18)', () => {
     const shipped = resolvedShipped();
     const editedConfig = shipped.map((pkg) => (pkg.id === 'plus' ? { ...pkg, bonusPercent: 12 } : pkg));
-    // The shipped config is version 2 since the 2026-10-25 re-size (D5).
-    expect(configDrift(editedConfig, SNAPSHOT)).toEqual(['plus@2']);
+    // The shipped config is version 4 since the 2026-10-27 rename to sizes.
+    expect(configDrift(editedConfig, SNAPSHOT)).toEqual(['plus@4']);
 
     // Aimed at a version-1 record: a superseded release is protected exactly like the current one.
     const editedSnapshot = SNAPSHOT.map((record) =>

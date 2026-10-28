@@ -20,6 +20,7 @@ import {
 } from '../classifyEnvironment';
 import { ENVIRONMENT_CATALOGUE, ENVIRONMENT_GROUP_ORDER, type EnvCatalogueEntry, type EnvConfigShape } from '../catalogue';
 import { parseAdminEmails } from '@/lib/admin/adminEmailsEnv';
+import { SUPABASE_PROJECTS, SUPABASE_URL_ROW_NAMES } from '../supabaseProjects';
 import type { EnvDisplay, EnvRow } from '@/lib/admin/environment-types';
 
 const OPT = { production: 'optional', preview: 'optional', local: 'optional' } as const;
@@ -379,6 +380,7 @@ describe('classifyEnvironment: label, facts, order, counts', () => {
       shouldNotBeSet: null,
       unrecognisedFlags: 0,
       surroundingWhitespace: 0,
+      supabaseUrlMismatch: 0,
     });
     expect(payload.generatedAt).toBe('2026-01-02T03:04:05.000Z');
   });
@@ -413,7 +415,7 @@ function rowUnder(entry: EnvCatalogueEntry, label: keyof typeof LABEL_ENV, value
   return { row: payload.groups.flatMap((g) => g.rows)[0], payload };
 }
 
-const CODES = ['required-not-set', 'should-not-be-set', 'unrecognised-flag', 'surrounding-whitespace'];
+const CODES = ['required-not-set', 'should-not-be-set', 'unrecognised-flag', 'surrounding-whitespace', 'supabase-url-mismatch'];
 
 describe('classifyEnvironment: EC-4 diagnostics', () => {
   it('D-1 required and unset is flagged only where it is required, and counted', () => {
@@ -554,7 +556,7 @@ describe('classifyEnvironment: EC-4 diagnostics', () => {
 
   it('E4-3 every row has exactly the DTO keys: nothing spread from the entry', () => {
     const required = ['diagnostics', 'display', 'expectedIn', 'group', 'name', 'role', 'scope', 'sensitivity'];
-    const optional = ['docLink', 'seeAlsoPath'];
+    const optional = ['docLink', 'seeAlsoPath', 'supabaseProject'];
     const { payload } = classifyEnvironment({ VERCEL_ENV: 'production', ZZ_ODD: 'x' }, { now: FIXED_NOW });
     for (const row of [...payload.groups.flatMap((g) => g.rows), ...payload.uncategorised]) {
       const keys = Object.keys(row).sort();
@@ -564,5 +566,168 @@ describe('classifyEnvironment: EC-4 diagnostics', () => {
     }
     // `consumedBy`, `shape`, `flagParser` and other catalogue fields never reach a row.
     expect(JSON.stringify(payload)).not.toMatch(/consumedBy|flagParser|personalKind|"shape"|enumValues/);
+  });
+});
+
+// ── EC-6 Supabase project label (workplan §8.4 S6-1 to S6-6; SA OQ-4, OQ-6, SA-L1 to SA-L8) ──
+
+describe('classifyEnvironment: EC-6 Supabase project label and mismatch', () => {
+  // Every ref here is made up. The injected table stands in for the real one.
+  const FAKE_PROJECTS = new Map([['fakeknownref1', { label: 'Fake-dev-project', role: 'development-staging' as const }]]);
+  const KNOWN = 'https://fakeknownref1.supabase.co';
+  const OTHER = 'https://fakeotherref2.supabase.co';
+  const PUB = 'NEXT_PUBLIC_SUPABASE_URL';
+  const SRV = 'SUPABASE_URL';
+  type Projects = ReadonlyMap<string, { label: string; role: 'development-staging' | 'production' }>;
+
+  function classify(env: EnvSource, projects: Projects | undefined = FAKE_PROJECTS) {
+    const { payload } = classifyEnvironment(
+      { VERCEL_ENV: 'production', NODE_ENV: 'production', ...env },
+      projects ? { now: FIXED_NOW, supabaseProjects: projects } : { now: FIXED_NOW }
+    );
+    const rows = payload.groups.flatMap((g) => g.rows);
+    const byName = (name: string) => rows.find((r) => r.name === name) as EnvRow;
+    return { payload, rows, pub: byName(PUB), srv: byName(SRV) };
+  }
+
+  it('S6-1 a known ref on both rows: the table label and role on each, built field by field; no mismatch', () => {
+    const { pub, srv, payload } = classify({ [PUB]: KNOWN, [SRV]: `${KNOWN}/rest/v1` });
+    for (const row of [pub, srv]) {
+      expect(row.display).toEqual({ kind: 'shown', text: KNOWN });
+      expect(row.supabaseProject).toEqual({ kind: 'known', label: 'Fake-dev-project', role: 'development-staging' });
+      expect(Object.keys(row.supabaseProject as object).sort()).toEqual(['kind', 'label', 'role']);
+      expect(row.diagnostics).toEqual([]);
+    }
+    expect(pub.supabaseProject).not.toBe(srv.supabaseProject);
+    expect(payload.counts.supabaseUrlMismatch).toBe(0);
+  });
+
+  it('S6-2 an unknown ref reads unknown; prototype names are unknown against the injected AND the real table (SA-L3)', () => {
+    expect(classify({ [PUB]: OTHER }).pub.supabaseProject).toEqual({ kind: 'unknown' });
+    for (const ref of ['constructor', 'tostring', 'hasownproperty', 'valueof']) {
+      const url = `https://${ref}.supabase.co`;
+      expect({ ref, project: classify({ [PUB]: url }).pub.supabaseProject }).toEqual({ ref, project: { kind: 'unknown' } });
+      expect({ ref, project: classify({ [PUB]: url }, undefined).pub.supabaseProject }).toEqual({ ref, project: { kind: 'unknown' } });
+    }
+    // `toString` written in any case is lower-cased by the URL parser first (SA-L2).
+    expect(classify({ [PUB]: 'https://toString.supabase.co' }).pub.supabaseProject).toEqual({ kind: 'unknown' });
+  });
+
+  it('S6-3 hosts that are not exactly <ref>.supabase.co over https get no label (OQ-6, SA-L2)', () => {
+    const noLabel = [
+      'https://db.example.test',
+      'http://127.0.0.1:54321',
+      'https://fakeknownref1.supabase.co:8443',
+      'https://extra.fakeknownref1.supabase.co',
+      'http://fakeknownref1.supabase.co',
+      'https://fakeknownref1.supabase.com',
+      'https://fake-known-ref.supabase.co',
+      'https://supabase.co',
+    ];
+    for (const url of noLabel) {
+      const { pub } = classify({ [PUB]: url });
+      expect({ url, kind: pub.display.kind, hasField: 'supabaseProject' in pub }).toEqual({ url, kind: 'shown', hasField: false });
+    }
+  });
+
+  it('S6-3b SA-L2: upper case and a default :443 are normalised, so the lower-case origin carries its label', () => {
+    const { pub } = classify({ [PUB]: 'HTTPS://FAKEKNOWNREF1.SUPABASE.CO:443/rest/v1' });
+    expect(pub.display).toEqual({ kind: 'shown', text: KNOWN });
+    expect(pub.supabaseProject).toEqual({ kind: 'known', label: 'Fake-dev-project', role: 'development-staging' });
+  });
+
+  it('S6-3c only the two Supabase rows are labelled; another url row on a Supabase host is not', () => {
+    const { rows } = classify({ NEXT_PUBLIC_APP_URL: KNOWN });
+    const app = rows.find((r) => r.name === 'NEXT_PUBLIC_APP_URL') as EnvRow;
+    expect(app.display).toEqual({ kind: 'shown', text: KNOWN });
+    expect('supabaseProject' in app).toBe(false);
+  });
+
+  it('S6-4 a hidden or unset URL gets no label and takes no part in a mismatch (SA-L1)', () => {
+    const hiddenValues = ['not a url', 'notaurl', `${KNOWN}/x y`, 'ftp://fakeknownref1.supabase.co'];
+    for (const value of hiddenValues) {
+      const { pub, srv, payload } = classify({ [PUB]: value, [SRV]: OTHER });
+      expect({ value, display: pub.display.kind, hasField: 'supabaseProject' in pub }).toEqual({ value, display: 'hidden', hasField: false });
+      expect(pub.diagnostics).not.toContain('supabase-url-mismatch');
+      expect(srv.diagnostics).not.toContain('supabase-url-mismatch');
+      expect(srv.supabaseProject).toEqual({ kind: 'unknown' });
+      expect(payload.counts.supabaseUrlMismatch).toBe(0);
+    }
+    const unset = classify({});
+    expect('supabaseProject' in unset.pub).toBe(false);
+    expect('supabaseProject' in unset.srv).toBe(false);
+    expect(unset.payload.counts.supabaseUrlMismatch).toBe(0);
+  });
+
+  it('S6-5 only one row set: its label shows and there is no mismatch; the same origin on both is no mismatch', () => {
+    for (const [name, other] of [[PUB, SRV], [SRV, PUB]]) {
+      const result = classify({ [name]: KNOWN });
+      const set = name === PUB ? result.pub : result.srv;
+      const unset = name === PUB ? result.srv : result.pub;
+      expect(set.supabaseProject).toEqual({ kind: 'known', label: 'Fake-dev-project', role: 'development-staging' });
+      expect(set.diagnostics).toEqual([]);
+      expect({ other, hasField: 'supabaseProject' in unset }).toEqual({ other, hasField: false });
+      expect(result.payload.counts.supabaseUrlMismatch).toBe(0);
+    }
+    const same = classify({ [PUB]: KNOWN, [SRV]: `${KNOWN}/` });
+    expect(same.payload.counts.supabaseUrlMismatch).toBe(0);
+  });
+
+  it('S6-6 different origins: the code on both rows, after the existing codes; counted once, not twice (OQ-4, SA-L6, SA-L7)', () => {
+    const { pub, srv, rows, payload } = classify({ [PUB]: KNOWN, [SRV]: ` ${OTHER} ` });
+    expect(pub.diagnostics).toEqual(['supabase-url-mismatch']);
+    expect(srv.diagnostics).toEqual(['surrounding-whitespace', 'supabase-url-mismatch']);
+    expect(pub.supabaseProject).toEqual({ kind: 'known', label: 'Fake-dev-project', role: 'development-staging' });
+    expect(srv.supabaseProject).toEqual({ kind: 'unknown' });
+    expect(rows.filter((r) => r.diagnostics.includes('supabase-url-mismatch'))).toHaveLength(2);
+    expect(payload.counts.supabaseUrlMismatch).toBe(1);
+    expect(payload.counts.surroundingWhitespace).toBe(1);
+  });
+
+  it('S6-6b http against https raises the mismatch (the http row has no label); two custom domains do too', () => {
+    const httpCase = classify({ [PUB]: KNOWN, [SRV]: 'http://fakeknownref1.supabase.co' });
+    expect('supabaseProject' in httpCase.srv).toBe(false);
+    expect(httpCase.pub.diagnostics).toEqual(['supabase-url-mismatch']);
+    expect(httpCase.srv.diagnostics).toEqual(['supabase-url-mismatch']);
+    expect(httpCase.payload.counts.supabaseUrlMismatch).toBe(1);
+    const custom = classify({ [PUB]: 'https://db-one.example.test', [SRV]: 'https://db-two.example.test' });
+    expect(custom.payload.counts.supabaseUrlMismatch).toBe(1);
+  });
+
+  it('S6-6c independent of checkedAgainst; uncategorised rows never carry it', () => {
+    const { payload } = classifyEnvironment(
+      { NODE_ENV: 'production', [PUB]: KNOWN, [SRV]: OTHER, ZZ_OTHER_SUPABASE_URL: 'https://fakethirdref3.supabase.co' },
+      { now: FIXED_NOW, supabaseProjects: FAKE_PROJECTS, isNoise: () => false }
+    );
+    expect(payload.environment.checkedAgainst).toBeNull();
+    expect(payload.counts.supabaseUrlMismatch).toBe(1);
+    const rows = payload.groups.flatMap((g) => g.rows);
+    expect(rows.find((r) => r.name === PUB)?.diagnostics).toEqual(['supabase-url-mismatch']);
+    expect(payload.uncategorised.map((r) => r.name)).toContain('ZZ_OTHER_SUPABASE_URL');
+    for (const row of payload.uncategorised) {
+      expect(row.diagnostics).toEqual([]);
+      expect('supabaseProject' in row).toBe(false);
+    }
+  });
+});
+
+describe('supabaseProjects: the table itself (OQ-2, SA-L3, SA-L5)', () => {
+  it('is a ReadonlyMap whose refs fit the match pattern and whose labels fit the page guard', () => {
+    expect(SUPABASE_PROJECTS).toBeInstanceOf(Map);
+    expect(SUPABASE_URL_ROW_NAMES).toEqual(['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL']);
+    for (const [ref, entry] of SUPABASE_PROJECTS) {
+      // Checked as booleans, so a failure names no ref.
+      expect(/^[a-z0-9]+$/.test(ref)).toBe(true);
+      expect(Object.keys(entry).sort()).toEqual(['label', 'role']);
+      expect(entry.label.length >= 1 && entry.label.length <= 60).toBe(true);
+      expect(['development-staging', 'production']).toContain(entry.role);
+    }
+  });
+
+  it('is pure data: type-only imports, and catalogued rows only', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'supabaseProjects.ts'), 'utf8');
+    const imports = source.split(/\r?\n/).filter((line) => /^\s*import\s/.test(line));
+    expect(imports.every((line) => /^\s*import type\s/.test(line))).toBe(true);
+    for (const name of SUPABASE_URL_ROW_NAMES) expect(ENVIRONMENT_CATALOGUE.some((e) => e.name === name)).toBe(true);
   });
 });

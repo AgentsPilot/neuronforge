@@ -3030,6 +3030,34 @@ describe('Money MK-9: payingBreakdown through the builder', () => {
     expect(converted?.firstPlanPayments).not.toHaveBeenCalled();
   });
 
+  // MK9-FU-2 (SA-WP-FU2 option A, T4-4): the page marks Comped "At least" from `trials.status`. That is
+  // sound only while a capped walk gives Comped figures AND a 'partial' trial status together.
+  it('MK9-FU-2: a capped plan walk gives a non-null Comped split together with trials.status "partial"', async () => {
+    let page = 0;
+    const pagePlans = jest.fn(() => {
+      page += 1;
+      // Tier in force, no billing row: every account is comped ("Assigned, no subscription").
+      return ok(
+        Array.from({ length: 500 }, (_, i) =>
+          plan(`${String(page).padStart(8, '0')}-0000-4000-8000-${String(i).padStart(12, '0')}`, {
+            tier: TIER,
+            cohort: null,
+            tier_expires_at: '2026-12-31T00:00:00.000Z',
+          })
+        )
+      );
+    });
+    const { deps } = breakdownDeps([]);
+    const { result } = await run({ ...deps, plans: { pagePlans } } as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.accounts.status).toBe('partial');
+    const breakdown = result.payload.payingBreakdown;
+    expect(breakdown?.trials.status).toBe('partial');
+    expect(breakdown?.comped).not.toBeNull();
+    expect(breakdown?.comped?.total).toBeGreaterThan(0);
+    expect(breakdown?.comped?.assignedNoSubscription).toBe(breakdown?.comped?.total);
+  });
+
   it('a business picked: no breakdown key (one account is not a rate)', async () => {
     const { deps } = breakdownDeps([]);
     const { result } = await run(deps as never, A);

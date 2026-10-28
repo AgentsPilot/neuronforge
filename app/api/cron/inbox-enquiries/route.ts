@@ -1,12 +1,21 @@
 /**
  * Check every business's mailbox for new website enquiries.
  *
- * Every five minutes, because the number comes from the client's wait rather
- * than from our convenience: `reply_to_enquiries` sends fifteen minutes after a
- * lead is filed, chosen as "long enough to intervene, short enough that the
- * person who wrote in still has this business in mind". Polling every fifteen
- * would add fifteen more and halve that intent; polling every five keeps the
- * whole journey inside twenty.
+ * The tick is every five minutes; how often a MAILBOX is actually searched is
+ * `MIN_MINUTES_BETWEEN_RUNS` in the runner, now fifteen.
+ *
+ * The two are separate on purpose. The schedule decides how quickly a channel
+ * created a moment ago makes its first check — five minutes, because that is
+ * the run an owner sits and waits for. The floor decides the steady cadence
+ * afterwards.
+ *
+ * The number still comes from the client's wait rather than from our
+ * convenience: `reply_to_enquiries` sends fifteen minutes after a lead is
+ * filed, chosen as "long enough to intervene, short enough that the person who
+ * wrote in still has this business in mind". At a fifteen-minute floor the
+ * whole journey lands inside thirty rather than twenty — the trade that was
+ * made knowingly when the cost of a tick turned out to be one indexed query
+ * and no AI at all.
  *
  * Each run is one filtered mailbox search per channel — unread, one sender, one
  * subject prefix, nothing older than setup day — which normally matches

@@ -13,7 +13,7 @@
  *   - focus 6: past_due → contact line, no button; price switch off → nothing;
  *   - focus 4 (UI half): a `cancel_at`-only cancellation that our record does
  *     not mirror keeps offering Cancel (the known C-3 follow-up);
- *   - focus 2: a double press on "Yes, cancel" posts once;
+ *   - focus 2: a double press on the Cancel drawer's confirm posts once (D3);
  *   - focus 8: `upgrade_pending` reads its own line in en / he / es;
  *   - focus 7: he / es at 360 px, RTL container: lines render, no
  *     physical-direction classes, buttons wrap.
@@ -39,6 +39,9 @@ jest.mock('@/lib/business-os/LanguageContext', () => {
 jest.mock('@/lib/supabaseClient', () => ({ supabase: {} }));
 jest.mock('next/navigation', () => ({ useRouter: () => ({ replace: jest.fn() }) }));
 jest.mock('@/lib/client/stripeJs', () => ({ getStripePromise: () => Promise.resolve({ handleNextAction: async () => ({}) }) }));
+jest.mock('@/components/business-os/data-export/DownloadMyDataButton', () => ({
+  DownloadMyDataButton: () => <div data-testid="download-my-data" />,
+}));
 jest.mock('@stripe/react-stripe-js', () => ({
   EmbeddedCheckoutProvider: ({ children }: { children: React.ReactNode }) => <div data-testid="fake-provider">{children}</div>,
   EmbeddedCheckout: () => <div data-testid="fake-checkout" />,
@@ -128,15 +131,16 @@ describe('QA focus 5: the Settings pop-up strip vs the drawer-stacked modal', ()
 });
 
 describe('QA focus 6: failed payment and the switch', () => {
-  it.each(['past_due', 'unpaid'])('%s on our record: the contact line, no button', async (status) => {
+  // P-7a.4 (BQ-3 = A): the contact line is replaced by Cancel, which ends the plan now.
+  it.each(['past_due', 'unpaid'])('%s on our record: the "end it now" line and Cancel only', async (status) => {
     const payload = await payloadFor({ billingRow: payingRow(LOWER, { subscriptionStatus: status }) });
-    expect(payload.purchase?.manage).toEqual({ cancel: false, reactivate: false, paymentFailed: true });
+    expect(payload.purchase?.manage).toEqual({ cancel: true, reactivate: false, paymentFailed: true });
     render(<PlanManage plan={payload} />);
-    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations.en['plan.manage.payment_failed_contact']);
-    expect(within(screen.getByTestId('plan-manage')).queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations.en['plan.manage.payment_failed_cancel_now']);
+    expect(within(screen.getByTestId('plan-manage')).getAllByRole('button').map((b) => b.getAttribute('data-testid'))).toEqual(['plan-manage-cancel']);
   }, SLOW);
 
-  it('active but failed_attempts > 0: the contact line too', async () => {
+  it('active but failed_attempts > 0: the same line and Cancel', async () => {
     const payload = await payloadFor({ billingRow: payingRow(LOWER, { failedAttempts: 1 }) });
     expect(payload.purchase?.manage?.paymentFailed).toBe(true);
   }, SLOW);
@@ -169,18 +173,25 @@ function plan(manage: { cancel: boolean; reactivate: boolean; paymentFailed: boo
   } as unknown as PlanPayload;
 }
 
+/** D3: Cancel opens the Cancel drawer; walk it to the confirm step (reason → changes → review → confirm). */
+function walkToConfirm(reason = 'too_expensive') {
+  fireEvent.click(screen.getByTestId('plan-manage-cancel'));
+  fireEvent.click(screen.getByTestId(`plan-cancel-reason-${reason}`));
+  for (let step = 1; step < 4; step += 1) fireEvent.click(screen.getByTestId('plan-cancel-next'));
+}
+
 describe('QA focus 2: a double press posts once', () => {
-  it('two clicks on "Yes, cancel" before the answer → one POST', async () => {
+  it('two clicks on the Cancel drawer\'s confirm before the answer → one POST (D3)', async () => {
     let resolve: (value: unknown) => void = () => undefined;
     fetchMock.mockImplementation(() => new Promise((r) => (resolve = r)));
     render(<PlanManage plan={plan({ cancel: true, reactivate: false, paymentFailed: false })} />);
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    const confirm = screen.getByTestId('plan-manage-cancel-confirm');
+    walkToConfirm();
+    const confirm = screen.getByTestId('plan-cancel-confirm');
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId('plan-manage-busy')).toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByTestId('plan-cancel-busy')).toBeInTheDocument();
+    expect(confirm).toBeDisabled();
     await act(async () => {
       resolve({ status: 200, json: async () => ({ success: true, data: { outcome: 'cancelled', endsOn: '2099-11-26T10:00:00.000Z' } }) });
     });
@@ -206,8 +217,8 @@ describe('QA focus 8 + 7: upgrade_pending, and he / es at 360 px in RTL', () => 
     fetchMock.mockResolvedValue({ status: 409, json: async () => ({ success: false, error: 'SERVER ENGLISH', code: 'upgrade_pending', retryAfter: '2099-01-01T00:00:00.000Z' }) });
     const onChanged = jest.fn();
     render(<PlanManage plan={plan({ cancel: true, reactivate: false, paymentFailed: false })} onChanged={onChanged} />);
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    fireEvent.click(screen.getByTestId('plan-manage-cancel-confirm'));
+    walkToConfirm();
+    fireEvent.click(screen.getByTestId('plan-cancel-confirm'));
     const line = await screen.findByTestId('plan-manage-refused');
     expect(line).toHaveTextContent(translations[lang]['plan.manage.refusal.upgrade_pending']);
     expect(line).not.toHaveTextContent('SERVER ENGLISH');
@@ -223,31 +234,34 @@ describe('QA focus 8 + 7: upgrade_pending, and he / es at 360 px in RTL', () => 
     host.style.width = '360px';
     document.body.appendChild(host);
 
-    // Confirmation.
+    // Confirmation (D3: the Cancel drawer's confirm step).
     const a = render(<PlanManage plan={plan({ cancel: true, reactivate: false, paymentFailed: false })} />, { container: host });
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    const confirm = screen.getByTestId('plan-manage-confirm');
-    expect(confirm.textContent).toContain(translations[lang]['plan.manage.cancel_confirm']);
-    expect(confirm.textContent).toContain(translations[lang]['plan.manage.keep']);
+    walkToConfirm();
+    const confirm = screen.getByTestId('plan-cancel-step-4');
+    expect(confirm.textContent).toContain(translations[lang]['settings.plan_cancel.confirm.button']);
+    expect(confirm.textContent).toContain(translations[lang]['settings.plan_cancel.confirm.dismiss']);
     expect(confirm.textContent).toContain('Essentials');
     expect(confirm.textContent).not.toMatch(/\{(plan|date)\}/);
-    expect((confirm.querySelector('.flex') as HTMLElement).className).toContain('flex-wrap');
-    for (const el of Array.from(host.querySelectorAll('*'))) expect((el as HTMLElement).className?.toString() ?? '').not.toMatch(PHYSICAL);
+    expect((confirm.querySelector('.flex-wrap') as HTMLElement | null)).not.toBeNull();
+    for (const el of [...Array.from(host.querySelectorAll('*')), ...Array.from(confirm.querySelectorAll('*'))]) {
+      expect((el as HTMLElement).className?.toString() ?? '').not.toMatch(PHYSICAL);
+    }
     expect(host.closest('[dir]')?.getAttribute('dir')).toBe(dir);
+    expect(screen.getByTestId('plan-cancel-drawer').getAttribute('dir')).toBe(dir);
 
     // Done line.
     fetchMock.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { outcome: 'cancelled', endsOn: '2099-11-26T10:00:00.000Z' } }) });
-    fireEvent.click(screen.getByTestId('plan-manage-cancel-confirm'));
+    fireEvent.click(screen.getByTestId('plan-cancel-confirm'));
     const done = await screen.findByTestId('plan-manage-done');
     expect(done.textContent).not.toMatch(/\{(plan|date)\}/);
     expect(done.textContent).toContain('Essentials');
     expect(done.textContent).toContain('2099');
     a.unmount();
 
-    // Contact line (failed payment) and a refusal.
+    // Failed-payment line (P-7a.4: with Cancel).
     const second = host.appendChild(document.createElement('div'));
-    const b = render(<PlanManage plan={plan({ cancel: false, reactivate: false, paymentFailed: true })} />, { container: second });
-    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations[lang]['plan.manage.payment_failed_contact']);
+    const b = render(<PlanManage plan={plan({ cancel: true, reactivate: false, paymentFailed: true })} />, { container: second });
+    expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations[lang]['plan.manage.payment_failed_cancel_now']);
     b.unmount();
     host.remove();
   });
@@ -256,8 +270,10 @@ describe('QA focus 8 + 7: upgrade_pending, and he / es at 360 px in RTL', () => 
     const slots = (s: string) => (s.match(/\{\w+\}/g) ?? []).sort().join(',');
     const keys = Object.keys(translations.en).filter((key) => key.startsWith('plan.manage.'));
     // 21 from P-7a.1, plus P-7a.2's `plan.manage.update_card` and `plan.manage.opening_stripe`,
-    // plus P-7a.3's `plan.manage.cancel_confirm_founding` (BQ-5).
-    expect(keys).toHaveLength(24);
+    // plus P-7a.3's `plan.manage.cancel_confirm_founding` (BQ-5);
+    // P-7a.4: + payment_failed_cancel_now, cancel_now_body, cancel_now_confirm, ended_now,
+    // refusal.payment_failed, − payment_failed_contact.
+    expect(keys).toHaveLength(28);
     for (const key of keys) {
       for (const lang of ['he', 'es'] as const) {
         expect(`${key}:${slots(translations[lang][key] ?? '')}`).toBe(`${key}:${slots(translations.en[key])}`);

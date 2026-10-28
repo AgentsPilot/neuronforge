@@ -232,6 +232,21 @@ const ALLOWED = new Set(
     'app/api/admin/business-os/billing/accounts/[accountId]/__tests__/route.test.ts',
     'lib/admin/billing/billingPanelView.ts',
     'lib/admin/billing/__tests__/billingPanelView.test.ts',
+    // ── Account deletion lifecycle D3.1 / SX-2b, 2026-10-27 — the after-plan move (SA S-9) ─
+    // A SYSTEM write of plan state, from the webhook (rule 7, SA-approved new
+    // pattern, mirroring the invite redemption wiring). The wiring may call
+    // exactly `findAfterPlanMoveInputs` and the write `applyAfterPlanMove`, and
+    // NO other plan-state write; the AFTER_PLAN_MOVE_WIRING test below pins it.
+    // The use case (`afterPlanMove.ts`) names no repository: ports only.
+    'lib/business-os/billing/afterPlanMoveDeps.ts',
+    // The repository's own after-plan suite.
+    'lib/repositories/__tests__/BusinessOsAccountPlanRepository.afterPlanMove.test.ts',
+    // ── Plan payments P-8b.2, 2026-10-28 — the nightly plan reconcile (Step B) ─
+    // READ ONLY. The cron pass's wiring calls `findEntitlementInputsBatch` (the
+    // tier and paid-through date of PAYING billing rows' accounts, ids taken
+    // from our own billing records, never from input) and nothing else; the
+    // PLAN_RECONCILE_WIRING test below pins it. Listed in NO_STATE_WRITE_REFERRERS.
+    'lib/business-os/billing/planReconcileDeps.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
@@ -257,6 +272,10 @@ const FINANCE_METHODS = ['findEntitlementInputs', 'pagePlans'];
 const SUBSCRIPTIONS_WIRING = 'lib/admin/billing/subscriptionsDeps.ts';
 const SUBSCRIPTIONS_METHOD = 'pagePlans';
 
+/** Plan payments P-8b.2: the nightly plan reconcile's wiring, and the ONE plan-repository method it may call. */
+const PLAN_RECONCILE_WIRING = 'lib/business-os/billing/planReconcileDeps.ts';
+const PLAN_RECONCILE_METHOD = 'findEntitlementInputsBatch';
+
 /** The methods that CHANGE entitlement state. Component 5's admin routes own these. */
 const WRITE_METHODS = [
   'ensurePlanRow',
@@ -270,11 +289,18 @@ const WRITE_METHODS = [
   'provisionFromFriendInvite',
   // Plan payments P-9.1 (SA-P9): the admin Paid finalise writes a no-basis plan row.
   'provisionFromAdminPaidInvite',
+  // Account deletion lifecycle D3.1 / SX-2b (SA S-9): the webhook's after-plan move.
+  'applyAfterPlanMove',
 ];
 
 /** The one invite-redemption file allowed to name the plan repository, and the writes it may call. */
 const INVITE_REDEMPTION_WIRING = 'lib/business-os/invites/redemptionDeps.ts';
 const INVITE_REDEMPTION_WRITES = ['provisionFromInvite', 'provisionFromFriendInvite', 'provisionFromAdminPaidInvite'];
+
+/** D3.1 / SX-2b: the after-plan move's wiring, and the TWO plan-repository methods it may call (one read, one write). */
+const AFTER_PLAN_MOVE_WIRING = 'lib/business-os/billing/afterPlanMoveDeps.ts';
+const AFTER_PLAN_MOVE_METHODS = ['applyAfterPlanMove', 'findAfterPlanMoveInputs'];
+const AFTER_PLAN_MOVE_WRITE = 'applyAfterPlanMove';
 
 /**
  * Allowed files that are NOT the repository layer and NOT an admin route.
@@ -323,6 +349,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/admin/billing/subscriptionsView.ts',
   // Plan payments P-8a.2: the billing panel builder — the plan row TYPE only, pure.
   'lib/admin/billing/billingPanelView.ts',
+  // Plan payments P-8b.2: the nightly plan reconcile wiring — READ ONLY, `findEntitlementInputsBatch` and nothing else.
+  'lib/business-os/billing/planReconcileDeps.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -414,6 +442,8 @@ describe('RC-15 — entitlement repository referrers', () => {
       if (!isTest && p === 'lib/business-os/entitlements/adminOps.ts') of.push('admin_ops');
       // 3c. The invite redemption's wiring (Slice 1b): one write, checked below.
       if (!isTest && p === INVITE_REDEMPTION_WIRING) of.push('invite_redemption');
+      // 3d. The after-plan move's wiring (D3.1 / SX-2b): one read, one write, checked below.
+      if (!isTest && p === AFTER_PLAN_MOVE_WIRING) of.push('after_plan_move');
       // 4. Tests, which name these symbols in order to assert on them.
       if (isTest) of.push('test');
       return of;
@@ -436,6 +466,24 @@ describe('RC-15 — entitlement repository referrers', () => {
     for (const method of WRITE_METHODS.filter((name) => !INVITE_REDEMPTION_WRITES.includes(name))) {
       expect(source).not.toMatch(new RegExp(`\\.${method}\\s*\\(`));
     }
+  });
+
+  it('D3.1 / SX-2b (SA S-9): the after-plan move wiring calls findAfterPlanMoveInputs and applyAfterPlanMove and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...AFTER_PLAN_MOVE_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect([...calls].sort()).toEqual(AFTER_PLAN_MOVE_METHODS);
+    for (const method of WRITE_METHODS.filter((name) => name !== AFTER_PLAN_MOVE_WRITE)) {
+      expect(source).not.toMatch(new RegExp(`\\.${method}\\s*\\(`));
+    }
+  });
+
+  it('D3.1 / SX-2b: applyAfterPlanMove is called from the after-plan wiring ONLY', () => {
+    const pattern = new RegExp(`\\.${AFTER_PLAN_MOVE_WRITE}\\s*\\(`);
+    const callers = files
+      .filter((file) => !/__tests__/.test(file))
+      .filter((file) => pattern.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(ROOT, file).split(sep).join('/'));
+    expect(callers).toEqual([AFTER_PLAN_MOVE_WIRING]);
   });
 
   it('Slice 6a (W6-1): the owner credit card wiring calls findPeriodAnchor on the plan repository and NOTHING else', () => {
@@ -505,6 +553,14 @@ describe('RC-15 — entitlement repository referrers', () => {
       'pagePlans',
       'updatePlan',
     ]);
+  });
+
+  it('Plan payments P-8b.2: the plan reconcile wiring calls findEntitlementInputsBatch on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...PLAN_RECONCILE_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect(calls).toEqual([PLAN_RECONCILE_METHOD]);
+    // Reached only as the module's singleton, never bound to a local name a later edit could call unseen.
+    expect(source).not.toMatch(/=\s*\w+\.businessOsAccountPlanRepository\s*;/);
   });
 
   it('the allowed list names files that exist', () => {

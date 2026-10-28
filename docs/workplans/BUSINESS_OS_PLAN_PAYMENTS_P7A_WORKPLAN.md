@@ -7,7 +7,7 @@
 **Depends on:** P-6a merged (#405, P-6a.2: renewal failure columns, `subscription_ended` row, `planPaymentNotice`, the `/test-business-os` test clock). P-3b.2 mirror (`customer.subscription.updated` already copies `cancel_at_period_end`). P-7b.1 merged (the owner-facing billing-mutation route pattern). P-8a merged (admin Subscriptions list and the Businesses-drawer Plan billing block).
 **Date:** 2026-10-25
 **Branch:** `feature/bos-plan-payments-p7a`, worktree `neuronforge-p7a`, fresh from `origin/main` `10761291` (#509). Confirmed with `git branch --show-current` on 2026-10-25. Highest migration on that main: `20261092`.
-**Status:** SA reviewed 2026-10-25: APPROVED WITH CONDITIONS C-1 to C-12 (SA Review Notes). User decisions 2026-10-26 (§14.1): BQ-3 = A (P-7a.4 in scope), BQ-2 after month ends, BQ-1 yes. **P-7a.1:** SA code review APPROVED WITH FIXES (F-1 applied), QA PASS (no bugs), G-5 (he / es wording) approved by the user 2026-10-26 with the Hebrew fix ("מבטלים…" / "מחדשים…"). Merged to `main` as PR #519. **P-7a.2:** SA code review APPROVED WITH FIXES (F-2, doc only), QA PASS (all 10, no bugs), G-5 (he / es wording) approved by the user 2026-10-27 including FU-P7a2-1 ("Pay now" on a Due row). Merged to `main` as PR #528 (2026-10-27). **P-7a.3:** SA code review APPROVED WITH FIXES (F-3, F-4), QA PASS (no bugs), G-5 (he / es wording) approved by the user 2026-10-27 as drafted, "Founding Partner" kept in English in he / es. Committed on `feature/bos-plan-payments-p7a3`, `origin/main` merged in, PR #534 open to `main`; no migration; merge gate: the user's live demo (do not merge until the user confirms; auto-merge off). Open follow-up **FU-P7a3-1** (QA E-1): the P-4.2 pre-purchase line `plan.choose.free_access_ends_today` is unchanged; the user has not decided on rewording it.
+**Status:** SA reviewed 2026-10-25: APPROVED WITH CONDITIONS C-1 to C-12 (SA Review Notes). User decisions 2026-10-26 (§14.1): BQ-3 = A (P-7a.4 in scope), BQ-2 after month ends, BQ-1 yes. **P-7a.1:** SA code review APPROVED WITH FIXES (F-1 applied), QA PASS (no bugs), G-5 (he / es wording) approved by the user 2026-10-26 with the Hebrew fix ("מבטלים…" / "מחדשים…"). Merged to `main` as PR #519. **P-7a.2:** SA code review APPROVED WITH FIXES (F-2, doc only), QA PASS (all 10, no bugs), G-5 (he / es wording) approved by the user 2026-10-27 including FU-P7a2-1 ("Pay now" on a Due row). Merged to `main` as PR #528 (2026-10-27). **P-7a.3:** SA code review APPROVED WITH FIXES (F-3, F-4), QA PASS (no bugs), G-5 (he / es wording) approved by the user 2026-10-27 as drafted, "Founding Partner" kept in English in he / es. Merged to `main` as PR #534 (2026-10-27); no migration. Open follow-up **FU-P7a3-1** (QA E-1): the P-4.2 pre-purchase line `plan.choose.free_access_ends_today` is unchanged; the user has not decided on rewording it. **P-7a.4:** code complete 2026-10-27 on `feature/bos-plan-payments-p7a4` (from `89cd0d90`); SA code review 2026-10-27 APPROVED WITH FIXES (F-3, F-4 applied by SA); QA PASS; the user approved the code and the G-5 he / es wording 2026-10-27; committed `639a5b59`. `origin/main` (with #534) merged in and the SA deviation-8 (dev-8) hunk added, uncommitted, awaiting SA re-review; PR to `main` after that; no migration.
 
 ## Overview
 
@@ -207,6 +207,8 @@ New pure function in `lib/business-os/billing/planCheckoutEligibility.ts` (besid
 **C-11 (SA, binding).** An open renewal invoice must not re-assert the tier after an immediate cancel: either void the subscription's open invoice(s) in the same orchestration (after `subscriptions.cancel`, each void its own Stripe call, `outcomeUnknown` on a lost answer), or prove by test that the apply path refuses an `invoice.paid` for a subscription our record shows ended. The confirmation for this state says "ends now", not "until {date}". Same audit key `BOS_BILLING_SUBSCRIPTION_CANCELLED` with `details.mode = 'immediate'` (TQ-12).
 
 
+**As built (P-7a.4, 2026-10-27):** X-4 showed the open invoice stays payable after `subscriptions.cancel` (Stripe only stops retrying it) and that paying it sends `invoice.paid`, which `applyPaidPlanInvoice` would apply (it has no "subscription ended" refusal). So C-11 is met by **voiding** every open invoice of the subscription after the cancel, not by the test option. Details in Implementation Notes (P-7a.4).
+
 A `past_due` subscription's period end has already passed; "cancel at period end" would end it a month later while Stripe keeps retrying the card. If BQ-3 = A, Cancel in that state ends the subscription **now** (`subscriptions.cancel`, `prorate: false`, `invoice_now: false`), and X-4 establishes whether Stripe then stops collecting the open invoice by itself or whether we must void it. The webhook's `.deleted` path (P-6a.2) then records the end; the lifecycle continues grace → paused from the unpaid date. Audit: the same `CANCELLED` key with `details.mode = 'immediate'` (TQ-12, approved). BQ-3 was answered A, so P-7a.4 is built after P-7a.1.
 
 ### 4.4 Portal and its configuration (P-7a.2)
@@ -324,7 +326,7 @@ New importers of `lib/business-os/entitlements/`: the three or four new routes (
 | ✅ T9 | `ResetGuard` control 3 + tests; Danger Zone message (C-9: the server's own message, no client map) | 0.3d | .3 |
 | ✅ T10 | R-3 text, self-delete blocker (en/he/es + fallback), cross-path pin | 0.3d | .3 |
 | ✅ T11 | AC-F8.3 lifecycle walk; BQ-5 Founding Partner sentence (SA deviation-5 carry-forward); demo checklist for the sandbox with a test clock (Implementation Notes (P-7a.3)). The demo itself is owed by the user | 0.2d | .3 |
-| ⬜ T12 | (Only if BQ-3 = A) X-4; immediate cancel for a failed payment; tests; demo step 9 | 0.5d | .4 |
+| ✅ T12 | (Only if BQ-3 = A) X-4; immediate cancel for a failed payment; tests; demo step 9. **Committed `639a5b59` 2026-10-27** on `feature/bos-plan-payments-p7a4` (Implementation Notes (P-7a.4)); C-11 met by voiding (X-4: the open invoice stays payable after the cancel) | 0.5d | .4 |
 
 Each slice ends with: `npm test` on the touched suites **plus `app/api/stripe`** locally, `npm run test:bos-entitlements`, the typecheck filtered to the touched files (check it did not OOM), `npm run build`, `git diff --stat` reviewed (no deletion-only file), then SA code review and QA. **Connect harness** (`app/api/stripe/webhook/__tests__/connectPath.characterisation.test.ts`): P-7a does not touch the webhook, so the harness must pass with its snapshot **unchanged** (md5 recorded before and after); never run with bare `-u`, never `--updateSnapshot`.
 
@@ -404,7 +406,7 @@ Standard sandbox `acct_1UPKR4C7KDUGYIcA`, test mode, local `npm run dev` on this
 | 7 | Cancel again; advance the test clock past the period end + 25 h | Webhook: subscription ended; Settings: "Your subscription ended on …", banner during grace; admin: Ended, In grace. After 5 more days: Paused (recorded) |
 | 8 | (.3) Repeat step 6 | All clear (the subscription has ended); do **not** commit a deletion on the demo account |
 | 9 | Founding Partner variant: a champion account with an admin-set free-access end date after the paid-through date buys, cancels (confirmation names the free access, BQ-5), clock past period end + 25 h | Back on Founding Partner, pill shown, no "ended" banner (AC-F8.3); admin plan column: Free access = Founding Partner |
-| 10 | (P-7a.4 only) Renewal with `4000 0000 0000 0341` fails; Cancel | Per BQ-3 |
+| 10 | (P-7a.4) Update card to `4000 0000 0000 0341` (portal), advance the clock past the period end + 1 h so the renewal fails; Settings → Plan; Cancel → confirm | Before: banner "payment failed", the line "Your payment failed. Update your card to keep your plan, or cancel it to end it now.", **Cancel only** (no Reactivate). Confirmation says it **ends now**, no date. After: "Cancelled. Essentials has ended, and your card will not be charged again." Stripe: subscription `canceled` now, `cancellation_details.reason` `cancellation_requested`; the renewal invoice **void**; Invoices: that row reads "Not charged", no "Pay now". Banner switches to "Your Essentials subscription has ended" (grace). Webhook: `customer.subscription.deleted` → one `subscription_ended` money-history row. Audit: `BOS_BILLING_SUBSCRIPTION_CANCELLED` with `mode: immediate`, `invoicesVoided: 1`, `invoicesLeftOpen: 0`. Admin list: Ended. Opening the old hosted "Pay now" link (copied before the cancel) shows the invoice void, not payable (C-11) |
 | 11 | Refusal path: second tab still showing Cancel after step 2 → press it | "unchanged", no second audit entry |
 
 **After the demo, the same day:** cancel every demo subscription, delete test customers and clocks, switches off and sandbox keys out of `.env.local`, `git diff` shows nothing in env files, ids recorded.
@@ -650,6 +652,88 @@ User decision 2026-10-27 (G-5), accepting TL's recommendation: the link on an `o
 | Sandbox live check (scratch script, not in the repo) | 10 / 10; throwaway customer deleted |
 | `npm run build` | Not run in this slice (P-7a.1's build stop was the worktree's missing `.env.local`, accepted as environmental); compile-affecting changes are covered by the typecheck |
 
+## Implementation Notes (P-7a.4)
+
+**Code complete 2026-10-27, uncommitted**, on `feature/bos-plan-payments-p7a4` (worktree `neuronforge-p7a4`, fresh from `origin/main` `89cd0d90`, which holds P-7a.1 #519, P-7a.2 #528 and D2 #525; `git branch --show-current` checked). Its PR opens only after P-7a.3 merges. No migration. No webhook or apply-path change.
+
+### Sandbox experiment X-4 (standard sandbox `acct_1UPKR4C7KDUGYIcA`, test mode, 2026-10-27)
+
+Run as a scratch script (not in the repo); the key was read from the env file outside the repo and never printed; `cus_VQf9jX6fnfVlkK` was not touched. Test clock `clock_1UV94dC7KDUGYIcAqKYOUzZV` with three throwaway customers on the `bos_plan_basic_monthly_usd` price: A1 `cus_VWBRHKDcQ9bTT1` / `sub_1UV94fC7KDUGYIcAmAum5m7Y`, A2 `cus_VWBR4XfpeHM3j0` / `sub_1UV94iC7KDUGYIcAc0jYhr1e`, B `cus_VWBRHnIXC1ebap` / `sub_1UV94lC7KDUGYIcAygnuJ2P8`. All three customers and the clock were deleted in the same run.
+
+| # | Finding | Consequence |
+|---|---|---|
+| X-4a | A1 and A2 renewed on a failing card (`pm_card_chargeCustomerFail`), clock past the period end + 1 day: subscription `past_due`, renewal invoice `open`, `attempt_count` 1, `next_payment_attempt` set, `auto_advance` true | The P-7a.4 starting state |
+| X-4b | `subscriptions.cancel(id, { invoice_now: false, prorate: false }, { idempotencyKey })` → `status: canceled`, `ended_at` = now (clock time), `cancel_at_period_end` false, **`cancellation_details.reason: 'cancellation_requested'`** (comment and feedback null). Events: `customer.subscription.deleted` (reason `cancellation_requested`), then `invoice.updated` on the open invoice | The webhook's existing `.deleted` path records the end and the `subscription_ended` row; nothing new is needed there |
+| X-4c | **The open invoice stays `open` and payable.** Stripe only stops collecting it (`auto_advance` false, `next_payment_attempt` null). Eight clock days later: still `open`, never retried | Stripe does not void it by itself |
+| X-4d | **Paying it after the cancel succeeds:** `invoices.pay` with a good card on A1's invoice → `paid`, events `invoice.paid` + `invoice.payment_succeeded`, the subscription stays `canceled`. `applyPaidPlanInvoice` has no refusal for an ended subscription (it reads the status only as a fact), so that `invoice.paid` would put the paid tier back with no subscription | **C-11 needs the void.** The "prove by test that apply refuses" option is false today |
+| X-4e | `invoices.voidInvoice` on A2's open invoice after its cancel → `void`. A second void → `StripeInvalidRequestError` "You can only pass in open invoices. This invoice isn't open." Paying the voided invoice → refused, "Voided invoices cannot be paid." Events `invoice.updated`, `invoice.voided` | C-11 met: the hosted "Pay now" link can no longer restore the tier |
+| X-4f | `invoices.list({ subscription, status: 'open' })` returns exactly that subscription's open invoice; the invoice's subscription is on clover's `parent.subscription_details.subscription` | The sweep lists by subscription and still cross-checks customer, subscription and mode |
+| X-4g (TL / SX-2b) | **`cancellation_details.reason` after (a) the immediate cancel: `cancellation_requested`; after (b) a P-7a.1 period-end cancel (B: `cancel_at_period_end: true`) reaching its end on the clock: `cancellation_requested`** (also already set, with `canceled_at`, at the moment the flag was set; `.deleted` carried it) | Both of our cancel paths leave Stripe's own `cancellation_requested`; a Stripe dunning end would read `payment_failed`. The immediate call sends no `cancellation_details` (pinned by `businessOsPlanCancelNow.test.ts`) |
+
+### What was built
+
+- **`planManageOffer`**: P-7a.1's `none` / `payment_failed` becomes a new kind **`failing`** (a renewal failure open: `past_due`, `unpaid`, or `failed_attempts > 0` on a live status). The wire for `failing` is `{ cancel: true, reactivate: false, paymentFailed: true }`. A failure count left on a status that is not live (`canceled`, `paused`, unknown) now offers nothing (it used to offer only the "contact us" line).
+- **`planSubscriptionManage.ts`** (the one engine, D2 W-7). Our row only ADMITS the cancel; **Stripe's fresh status picks the mode** (SA's P-7a.1 binding note): `past_due` / `unpaid` → the immediate path; `active` / `trialing` (cured, webhook lagging) → the unchanged period-end path; a `failing` row whose subscription Stripe already ended → `unchanged` / `ended`, healed, no write, no audit. A Reactivate on a failing row (record) or on a `past_due` subscription (Stripe) is still refused `payment_failed_contact_us`. Immediate path: I-1 pending upgrade update → `upgrade_pending` (TQ-5); I-2 `cancelBusinessOsSubscriptionNow` under `bos-plan-manage:{sub}:cancel_now:{attempt}` (D2's per-attempt key, never logged); refused-before-run errors → `stripe_error`, not audited; a lost answer or an answer that is not OUR ended subscription → `outcomeUnknown`, audited `unknown`, no sweep; I-3 (C-11) list the subscription's open invoices and void each that matches our customer, subscription and mode, each its own call under `bos-plan-manage:{invoice}:void:{attempt}`; I-4 mirror `canceled` + `ended_at` from Stripe's answer. **A void that cannot be done never fails the request** (the plan has ended): counted in `invoicesLeftOpen`, logged `error` + `alert: true` (`bos_billing_cancel_now_invoice_left_open`); a failed list or a second page → `invoicesLeftOpen: null`.
+- **`StripeService`**: `cancelBusinessOsSubscriptionNow` (params EXACTLY `{ invoice_now: false, prorate: false }`, the key, no `cancellation_details`; returns `BusinessOsCancelFacts`), `listBusinessOsOpenSubscriptionInvoices` (one page of 20, facts only), `voidBusinessOsInvoice` (no params but the key). `oneDontRenewPath.guard.test.ts`'s engine-only list gains `cancelBusinessOsSubscriptionNow` and `voidBusinessOsInvoice`.
+- **Cancel route**: the answer gains `mode: 'immediate'` on the immediate end (absent on period end, so P-7a.1 answers are unchanged), and `unchanged` may carry `state: 'ended'`. Audit (TQ-12): the same `BOS_BILLING_SUBSCRIPTION_CANCELLED`, `details.mode = 'immediate'`, `endsOn` = when it ended, `invoicesVoided`, `invoicesLeftOpen` (immediate only), and D2's optional `reasonCode` (left optional, as agreed). `events.ts`: comment and description edited in place.
+- **UI (`PlanManage.tsx`)**, kept to four small hunks away from P-7a.3's: with `manage.paymentFailed` the line reads "Your payment failed. Update your card to keep your plan, or cancel it to end it now." and Cancel is shown; its confirmation (`plan-manage-confirm-now`) says the plan **ends now** and names no date (C-11); after the press, `mode: 'immediate'` or `state: 'ended'` reads "Cancelled. {plan} has ended, and your card will not be charged again."; a period-end answer (Stripe had cured it) reads the usual "You keep {plan} until {date}". `planManageCopy`: `payment_failed_contact_us` → `plan.manage.refusal.payment_failed`.
+- **What follows without code**: the banner. `planPaymentNotice` checks `ended_at` first, so once the mirror (or the `.deleted` webhook) writes the end the "payment failed" banner becomes "Your {plan} subscription has ended. Choose a plan to continue." while the lifecycle reads grace / paused (a Founding Partner whose free access is live sees none, AC-F6.5). Settings → Plan shows the ended state; the invoice list shows the renewal as "Not charged" (`void`, U-10 wording) with no "Pay now". The money history gets one `subscription_ended` row from the `.deleted` mirror (our pre-emptive mirror does not suppress it: the CAS is on the subscription id only). The admin list reads the row: Ended.
+
+### Wording (P-7a.4; en final, he / es DRAFTS for G-5)
+
+| Key | en | he (draft) | es (draft) |
+|---|---|---|---|
+| `plan.manage.payment_failed_cancel_now` | Your payment failed. Update your card to keep your plan, or cancel it to end it now. | התשלום נכשל. אפשר לעדכן את הכרטיס כדי להשאיר את התוכנית, או לבטל אותה ולסיים אותה עכשיו. | Tu pago no se realizó. Actualiza tu tarjeta para conservar tu plan, o cancélalo para terminarlo ahora. |
+| `plan.manage.cancel_now_body` | Your last payment didn't go through. If you cancel, {plan} ends now and we stop trying to charge your card. The unpaid invoice is cancelled, so there is nothing left to pay. | התשלום האחרון לא עבר. אם מבטלים, {plan} מסתיימת עכשיו ואנחנו מפסיקים לנסות לחייב את הכרטיס. החשבונית שלא שולמה מבוטלת, כך שאין מה לשלם. | Tu último pago no se realizó. Si cancelas, {plan} termina ahora y dejamos de intentar cobrar tu tarjeta. La factura pendiente se anula, así que no queda nada por pagar. |
+| `plan.manage.cancel_now_confirm` | Yes, end it now | כן, לסיים עכשיו | Sí, terminarlo ahora |
+| `plan.manage.ended_now` | Cancelled. {plan} has ended, and your card will not be charged again. | התוכנית בוטלה. {plan} הסתיימה, והכרטיס לא יחויב שוב. | Cancelado. {plan} ha terminado y no se volverá a cobrar tu tarjeta. |
+| `plan.manage.refusal.payment_failed` | Your payment failed. Update your card first, or cancel your plan. | התשלום נכשל. קודם צריך לעדכן את הכרטיס, או לבטל את התוכנית. | Tu pago no se realizó. Primero actualiza tu tarjeta, o cancela tu plan. |
+
+Retired: `plan.manage.payment_failed_contact` (P-7a.1's "contact us to cancel" line), removed from en / he / es. `plan.manage.*` count 23 → 27 (`PlanManage.p7a1.qa` pin).
+
+### Deviations for SA
+
+1. **C-11 by voiding, not by test**: X-4d shows the apply path would honour a late `invoice.paid` on an ended subscription. Voiding is in the engine, after the cancel, as C-11's first option. **Residual windows, alerted not closed:** (a) the owner pays the hosted link in the seconds between the cancel and the void; (b) the cancel's answer is lost (`outcomeUnknown`, the sweep does not run; `stripe_error` is already alerted, and the log carries `invoiceSweep: 'not_run'`); (c) a void or the list fails. In each, an operator voids the invoice in Stripe. A defence in the apply path (refuse `invoice.paid` whose subscription Stripe reports `canceled` with `ended_at` before the invoice's period end) would close all three, but it is a webhook-side change and the brief says stop for SA: **recommended as a follow-up for SA to rule on**, not built.
+2. **Void failures do not fail the request.** The subscription has ended at Stripe, so answering 502 would misreport it. The result is `cancelled` / `immediate` with `invoicesLeftOpen` > 0 (or null) in the audit and an alerted log line.
+3. **`unchanged` / `ended`** (new state) only when our row says `failing` and Stripe says `canceled` with `ended_at`: a second tab, or Stripe's own dunning end before our mirror. Other rows keep P-7a.1's `subscription_not_active` (pinned tests unchanged). It does not re-run the void sweep (no unaudited money write); the first press's audit already records any leftover.
+4. **Our row's `failing` admits a cancel; the mode follows Stripe**, both ways: a cured row gets a period-end cancel (binding note), and a row that still says renewing while Stripe says `past_due` ends now (the confirmation the owner saw then was the period-end one; the line after the press tells the truth). A `cancelling` row with a `past_due` subscription also ends now: `planManageOffer` checks the failure before the cancel flag, so that row answers `failing` and the screen offers Cancel ("ends now"), not Reactivate (pinned in `planManageOffer.test.ts`). *(Corrected by SA code review 2026-10-27; the first draft said the screen shows Reactivate there.)*
+5. **`failing` needs a live status for the count branch**: `failed_attempts > 0` on `canceled` / `paused` / unknown answers `not_active`, so Cancel is never offered for a subscription that cannot be cancelled. Before P-7a.4 that row showed only the contact line.
+6. **The key namespace**: `cancel_now` and `void` suffixes in D2's `bos-plan-manage:` shape, from the same attempt id (one per `managePlanSubscription` call). Not logged; pinned.
+7. **`reasonCode` stays optional** on the immediate cancel (SA: required only by whichever slice holds the engine after D3 merges).
+8. **P-7a.3 merge notes** (its PR merges first): `PlanManage.tsx` hunks were placed apart from P-7a.3's (header paragraph above the P-7a.2 one, `endsNow` beside `planName`, the confirm split on its own line); the `PlanManage.p7a1.qa` key-count pin, the three dictionaries (adjacent `plan.manage.*` lines), this workplan and the requirement P-7a row will conflict textually and need a hand merge (count = 27 + P-7a.3's additions). **After the merge, P-7a.3's Founding Partner sentence (`freeAccessAfter`) should also show in the "ends now" confirmation**, since `planPurchaseView` now sends `manage.cancel` on a failing row and P-7a.3 computes the sentence beside Cancel; wording for that case ("Then you go back to your Founding Partner free access…") reads correctly after an immediate end too. To be done in the P-7a.4 PR after rebasing on P-7a.3.
+
+### Test and gate results (2026-10-27)
+
+| Gate | Result |
+|---|---|
+| New suites | `planCancelNow.p7a4` (engine) 23, `businessOsPlanCancelNow` (StripeService call shapes, incl. "no `cancellation_details`") 4, `route.p7a4` (cancel route, audit `mode: immediate`) 4, `PlanManage.p7a4.render` 9 (40 in all) |
+| Changed suites | `planManageOffer` / `.matrix` (the matrix now counts the immediate end as a write: the screen offers Cancel exactly where the route writes), `planCardAndInvoicesOffer`, `planSubscriptionManage` (the failed-payment refusals are now Reactivate-only), cancel `route.test`, `PlanManage.render`, `PlanManage.p7a1.qa` (key count 23 → 27), `oneDontRenewPath.guard` (engine-only list + 2), `BusinessOsBillingAccountRepository` caller allow-list (+ `route.p7a4.test.ts`) |
+| Requested set, run one after another | `app/api/stripe` 22 / 581; `lib/business-os/billing` 49 / 3 766; `app/api/business-os/billing` 7 / 260; `components/business-os/settings` 51 / 952; `components/business-os/billing` 1 / 17; `lib/stripe` 10 / 103; `lib/audit` 16 / 189; `lib/admin/environment` 4 / 122; `lib/repositories/__tests__` 120 / 2 896: **all passed** (first run: the repository caller guard needed the new route test registered, fixed; `PlanPurchase.render` timed out once while ESLint ran beside it, 47 / 47 alone and in the re-run of the whole folder) |
+| `npm run test:bos-entitlements` | **313 suites, 9 401 tests, all passed** |
+| Connect harness `connectPath.characterisation.test.ts.snap` | md5 `ab7528ea68309cffb309ffbd46c455ab` (unchanged; git shows it unmodified); never `-u` |
+| Typecheck (`tsc --noEmit`, 8 GB heap) | Completed, no OOM; **0 errors in the touched / new files** (1 849 pre-existing elsewhere) |
+| ESLint on the 23 touched / new source and test files | 0 errors; 1 pre-existing warning in `lib/audit/events.ts` (line 1839, not touched) |
+| Env reads | None added (EC-3 catalogue unaffected) |
+| `npm run build` | Not run (the worktree has no `.env.local`, as P-7a.1 / P-7a.2) |
+| Sandbox X-4 | Above; every object deleted in the same run |
+
+### QA E-1 and E-2: CLOSED by TL ruling (2026-10-27)
+
+- **E-1 (second tab reads "not active").** TL: a second tab pressing Cancel after the immediate end has landed must read "has ended". Built in `planSubscriptionManage.ts` step 5: a **cancel** on a row whose record shows `ended_at` (any ended plan, not only a former failing one) answers `unchanged` / `ended` with our row's `ended_at`, **from our row: no Stripe call, no write, no audit** (logged `info`, `source: 'record'`). A reactivate on such a row keeps 409 `subscription_not_active`. The screen already maps `state: 'ended'` to "has ended". Tests: `planSubscriptionManage.test.ts` (the order-contract row moved into its own test: cancel → `unchanged` / `ended`, reactivate → refused, both with zero Stripe calls); the two QA pins updated (`route.p7a4.qa.test.ts` tab B after the mirror → 200 `unchanged` / `ended`, only `db:findByUser`, one audit in all; `PlanManage.p7a4.qa.render.test.tsx` → "has ended", never "not active"); one new route test in `route.p7a4.test.ts` (ended row → 200 from the row, no Stripe, no audit). Deviation 3 is superseded for rows our record shows ended.
+- **E-2 (stale server English).** `PLAN_MANAGE_REFUSALS.payment_failed_contact_us.message` is now "Your payment failed. Update your card first, or cancel your plan." (the en `plan.manage.refusal.payment_failed` line); a route test pins equality with the dictionary and no "contact us". The code name is kept: it is on the wire, in `planManageCopy` and in a dozen tests, and renaming it buys nothing (TL: rename only if cheap).
+
+Re-run after E-1 / E-2, one after another: `app/api/stripe` 22 / 581; `lib/business-os/billing` 49 / 3 768; `app/api/business-os/billing` 8 / 279; `components/business-os/settings` 52 / 970 (first pass: 5 timing failures in `PlanUpgrade.render.test.tsx`, a file P-7a.4 does not touch; 76 / 76 alone and 52 / 970 on the folder re-run); `lib/stripe` 10 / 103; `lib/audit` 16 / 189; `lib/server` 11 / 148; `lib/repositories/__tests__` 120 / 2 896; `npm run test:bos-entitlements` **313 / 9 401**. All passed. Deviation 8's Founding Partner sentence in the "ends now" confirmation waits for RM's merge of `main` (P-7a.3, #534).
+
+### Merge of `origin/main` (P-7a.3, #534) and SA deviation 8 (2026-10-27)
+
+P-7a.4 committed as `639a5b59` (user-approved). TL merged `origin/main`; Dev hand-merged the three textual conflicts, uncommitted and staged, awaiting SA re-review:
+
+- **`PlanManage.p7a1.qa.render.test.tsx`** key-count pin: **28** = P-7a.1's 21 + P-7a.2's 2 + P-7a.3's 1 (`cancel_confirm_founding`) + P-7a.4's +5 −1. Counted in en, he and es after the merge: 28 each, no duplicate, `payment_failed_contact` absent.
+- **This workplan and the requirement**: both sides kept. P-7a.3 shown as merged (#534); its SA review and QA report sit before P-7a.4's; the task rows, change history and requirement §9.1 row carry both slices.
+- **Semantic conflict, auto-merged file**: `planPurchaseView.test.ts` (P-7a.3) pinned "a failed renewal (no Cancel yet): the port is never called". P-7a.4 gives a failed renewal a Cancel, so the view now asks the port there, and deviation 8 needs exactly that. The `past_due` case moved to the "the port answer is on manage" list; no product change in `planPurchaseView.ts`. The billing-repository ALLOWED list merged sorted with no edit; translations merged clean.
+- **Deviation 8 (binding)**: `PlanManage.tsx` shows `foundingLine` (the same `plan.manage.cancel_confirm_founding` sentence, the same `manage.freeAccessAfter` the server sends on the BQ-5 rule) after `cancel_now_body` in the `plan-manage-confirm-now` paragraph, the same way P-7a.3 shows it in `plan-manage-confirm`. No new key. Test: `PlanManage.p7a4.render.test.tsx` "SA deviation 8" (founding past_due account → sentence present, after "ends now"; non-founding → absent).
+- **Runs (one after another)**: `components/business-os/settings` 53 / 989 before the new test, `PlanManage*` 6 / 78 after it; `lib/business-os/billing` + `lib/business-os/purge` 66 / 4 296; `lib/stripe` + `app/api/business-os/billing` + the billing repository suite 19 / 512; `lib/admin/environment` + `lib/server` 15 / 270; `app/api/stripe` 22 / 581; `planPurchaseView` + `app/api/business-os/entitlements` 2 / 87. All passed. Typecheck (`tsc --noEmit`, 8 GB heap): completed, no OOM; 0 errors in the touched files (1 849 pre-existing elsewhere, the same count as before the merge).
+
 ---
 
 ## Implementation Notes (P-7a.3)
@@ -722,6 +806,205 @@ Prerequisites as §10 "Before the demo" items 1, 3, 4 and 5 (price and checkout 
 | Typecheck (`tsc --noEmit`, 8 GB heap) | Completed, no OOM; **0 errors in the 30 touched / new `.ts(x)` files** (1 861 pre-existing elsewhere). Two earlier runs caught 4 errors in the new test files (literal widening, a cohort union), fixed |
 | ESLint on the touched / new `.ts(x)` files | 0 findings |
 | `npm run build` | Not run (as in P-7a.2: no `.env.local` in this worktree); compile-affecting changes are covered by the typecheck |
+
+---
+
+## Workplan: FU-P7a4-1 (alert on a plan invoice paid after its subscription ended)
+
+**Status:** Code complete, uncommitted (2026-10-27); SA workplan review APPROVED WITH CHANGES (R-1 to R-6, applied). Awaiting SA code review. **Branch:** `feature/bos-plan-payments-fu-p7a4-1` (worktree `neuronforge-fu1`, stacked on P-7a.4 = PR #540; `git branch --show-current` checked). No migration, no wording, no UI.
+
+**Scope (SA, deviation 1 ruling + D3.1 review):** alert-only. On `invoice.paid` for a subscription that ended before the invoice's period end, APPLY exactly as today and log `error` + `alert: true`, event `bos_billing_paid_after_end`, so an operator decides honour vs refund. No refusal, no reinstatement, no undo, no audit row, no new DB read.
+
+### Trigger
+
+All of these, computed by one pure exported helper `paidAfterEnd(facts, subscription)` in `planPaymentApply.ts` (returns `null` or the alert facts; never throws: an unparseable time gives `null`):
+
+1. `subscription.endedAt !== null`: the subscription ended (Stripe's `ended_at`).
+2. `facts.periodEnd > endedAt`: it ended before the period the invoice pays for was over. A period-end cancel's last invoice has `periodEnd <= ended_at`, so it never fires (SA ruling 1 c).
+3. `facts.paidAt > endedAt`: the money came after the end. Without this, a late or replayed delivery of an invoice paid while the subscription was live would alert falsely (the event's name says "paid after end").
+4. The apply returned `applied` or `recorded` (a new money row). `already_applied` / `already_recorded` replays, refusals, `subscription_conflict` and the retry throws never alert, so one paid invoice alerts once.
+
+**Which fact says "ended": Stripe's, from the read the apply already makes** (step 9, `retrieveBusinessOsSubscription(facts.subscriptionId)`), not our billing row. No extra call. Our row is not reliable here: Stripe does not order `customer.subscription.deleted` before `invoice.paid`, and a Stripe dunning end (one of the two cases SA named) reaches our row only through that `.deleted` delivery. Our row's `ended_at` is logged beside it (`recordEndedAt`, only when the row holds the same subscription id) as context; it decides nothing. See Q-1.
+
+### Where it sits
+
+- `applyPaidPlanInvoice`: after the existing fresh read and the U-4 guard, `const lateEnd = paidAfterEnd(facts, subscription)`. Nothing passed to `applyPlanPayment` changes.
+- `afterApply`, `applied` / `recorded` case: immediately after the existing `bos_billing_invoice_applied` line (so the alert is written at the commit, before the post-commit chain, as SA F-1 placed that line), `if (extra.paidAfterEnd) log.error(...)`. `extra` gains one optional field. Nothing else in `afterApply` reads it.
+- `planBillingHandler.ts`: no change (the deps are unchanged).
+
+### Log line (ids only, no owner text, no PII, no metadata values)
+
+```typescript
+log.error(
+  {
+    event: 'bos_billing_paid_after_end', alert: true,
+    accountId, billingRowId: account.id, invoiceId, subscriptionId, livemode, stripeEventId,
+    status: result.status, planWritten: result.planWritten, tier: facts.tier, billingReason: facts.billingReason,
+    amountMinor: facts.amountMinor, currency: 'usd',
+    periodEnd: facts.periodEnd, paidAt: facts.paidAt, subscriptionEndedAt /* ISO */, subscriptionStatus,
+    recordEndedAt /* our row, same sub only, else null */, cancellationReason /* Q-2 */,
+  },
+  'Business OS plan invoice paid after its subscription ended; applied as usual, operator to decide honour or refund'
+);
+```
+
+No customer id (the existing `ids` omit it; kept so). No email, no name, no `bos_user_id` value.
+
+### Files
+
+| File | Action | Reason |
+|---|---|---|
+| `lib/business-os/billing/planPaymentApply.ts` | modify | `paidAfterEnd` helper; one `extra` field; the log line; header comment step 10a |
+| `lib/stripe/StripeService.ts` | modify, only if Q-2 = yes | `retrieveBusinessOsSubscription` gains optional `cancellationReason?: string \| null` from the SAME retrieve (`cancellation_details.reason`, filtered to the mirror's three known values, else null). Optional so existing fakes stay valid |
+| `lib/business-os/billing/__tests__/planPaymentApply.paidAfterEnd.test.ts` | create | Below |
+| the existing `retrieveBusinessOsSubscription` suite under `lib/stripe/` | modify, only if Q-2 = yes | The reason is read and filtered |
+| this workplan, the requirement | modify | Status |
+
+### Tests (`planPaymentApply.paidAfterEnd.test.ts`, the fakes of `planPaymentApply.test.ts`)
+
+1. **Fires:** Stripe `canceled`, `endedAt` after the period start, `paidAt` after `endedAt` (the X-4d shape): exactly one `bos_billing_paid_after_end` line at `error` with `alert: true`, the fields above, and the apply still `applied` with the tier written (as today, SA ruling 1 b).
+2. **Fires for a Stripe dunning end** (`cancellationReason: 'payment_failed'`, invoice paid later): one line (SA ruling 1 c: the operator decides).
+3. **Does not fire for a live subscription** (`active`, `endedAt` null), nor for `past_due`.
+4. **Does not fire for a period-end cancel's last invoice** (`periodEnd === endedAt`), nor for an invoice paid before the end and delivered late (`paidAt < endedAt`).
+5. **Does not fire on a replay** (`already_applied`), a refusal, or `subscription_conflict`.
+6. **Our row says ended, Stripe says live: no alert; our row says live, Stripe says ended: alert** (Stripe's fresh read decides, Q-1).
+7. **Apply outcome byte-identical:** the same event run with the subscription ended and with it live (same status passed through): the `applyPlanPayment` argument, the `recordPlanChange` calls, the `recordEvent` calls, the cure call and the return value are deep-equal; only the log differs.
+8. **Never throws:** `endedAt` / `paidAt` / `periodEnd` unparseable or `NaN`: resolves, no alert, apply unchanged.
+9. **No PII:** the line's keys are exactly the allow-list above (pinned with `Object.keys(...).sort()`), and no value equals the fixture's email or metadata.
+10. Unit tests for `paidAfterEnd` itself: each of conditions 1 to 3 flipped alone returns `null`.
+
+Gates: `lib/business-os/billing` and `app/api/stripe` folders, `lib/stripe` (if Q-2), `npm run test:bos-entitlements` (the file imports from entitlements), the Connect characterisation snapshot md5 unchanged, typecheck 0 errors on the touched files, ESLint on them.
+
+### Task list
+
+- ✅ 1. SA workplan review; apply rulings on Q-1 to Q-3.
+- ✅ 2. `paidAfterEnd` helper + its unit tests.
+- ✅ 3. Wire into `applyPaidPlanInvoice` / `afterApply`; integration tests 1 to 9.
+- ✅ 4. (Q-2 = yes) `cancellationReason` on the subscription read + its test.
+- ✅ 5. Gates above; status in this workplan and the requirement.
+
+### Open questions for SA
+
+- **Q-1 (the deciding fact).** The brief said "decide from our own billing row". This plan decides from Stripe's fresh read that `applyPaidPlanInvoice` already makes (no new call, no new DB read), because our row lags the `.deleted` webhook and a Stripe dunning end only reaches it that way; SA's ruling 1 also says "Stripe reports ended". Our row is logged, not used. Confirm, or rule "row OR Stripe".
+- **Q-2 (`cancellation_details.reason`).** SA's ruling 1 lists it in the line. The current `retrieveBusinessOsSubscription` result does not carry it. Adding it is one optional field on the same retrieve (no new call), so the line tells `cancellation_requested` (ours, P-7a.4's residual windows) from `payment_failed` (Stripe's dunning end). Yes (recommended) or log without it?
+- **Q-3 (condition 3, `paidAt > endedAt`).** Not in SA's ruling text; added to keep a late delivery of a pre-end payment from alerting. Confirm.
+
+### SA review: FU-P7a4-1 workplan
+
+**Reviewed by SA, 2026-10-27. Status: APPROVED WITH CHANGES.** Checked against `planPaymentApply.ts` (`applyPaidPlanInvoice`, `afterApply`), `StripeService.retrieveBusinessOsSubscription` and the apply function in `20261028_business_os_first_payment_stamp.sql`.
+
+**D3.1 trace.** SX-2b moves the account to free on `.deleted` but leaves our billing row on the same subscription id, so a later `invoice.paid` for that sub (an `uncollectible` invoice paid afterwards) takes `v_subscription = p_stripe_subscription_id`, no conflict, and returns `applied` (its period end is past `current_period_end`, so the paid tier is written over the free cohort) or `recorded`. Conditions 1 to 3 hold, so the alert fires in exactly the case it exists for. The gap is an owner who re-subscribed before paying the old invoice: the row holds the new live sub, the function returns `subscription_conflict`, and the plan never emits `bos_billing_paid_after_end`.
+
+| # | Ruling |
+|---|---|
+| R-1 | **Q-1: Stripe's fresh read alone decides.** Not "row OR Stripe": our row lags `.deleted`, and a row-only end against a live Stripe sub is no late payment. Our row stays as context (`recordEndedAt`). |
+| R-2 | **Q-2: yes.** Optional `cancellationReason` from the SAME retrieve, `cancellation_details?.reason` filtered to the three known values, else null. No new call. Add its unit test. |
+| R-3 | **Q-3: confirmed.** `paidAt > endedAt` stays. |
+| R-4 | **Binding change:** also emit the line on `subscription_conflict` when `eventRowId !== null` (a NEW refusal row, so it fires once), with `status: 'subscription_conflict'` and `planWritten: false`. Add a test for it. Replays and `already_*` stay silent. |
+| R-5 | Add `tierBefore` / `tierAfter` (from `result`, `applied` / `recorded` only, else null) to the allow-list: the operator needs to see the free cohort being overwritten. |
+| R-6 | Apply-path safety: the helper is pure, uses no `await`, and never throws. Nothing it returns reaches `applyPlanPayment` or the `upgradeGuard` / held-subscription logic. Test 7 (byte-identical outcome) is binding. |
+
+### Implementation notes (FU-P7a4-1, 2026-10-27)
+
+**Code complete, uncommitted**, on `feature/bos-plan-payments-fu-p7a4-1`. No migration, no wording, no UI, no new Stripe call, no new DB read. SA R-1 to R-6 applied.
+
+- **`planPaymentApply.ts`**: the pure `paidAfterEnd(facts, subscription)` (no `await`, whole body in `try`, anything unreadable answers `null`) decides on Stripe's step-9 read alone (R-1): `endedAt` a positive finite unix time, `periodEnd > endedAt`, `paidAt > endedAt` (R-3). It is called **after** `applyPlanPayment` returned (R-6), so nothing it answers can reach the apply, the U-4 guard or the held-subscription logic. Its answer, plus `billingRowId` and our row's `ended_at` (only when the row holds this invoice's subscription; context only), rides on `afterApply`'s `extra.paidAfterEnd`. One `logPaidAfterEnd` writes the line at `error` + `alert: true`: in `applied` / `recorded` immediately after `bos_billing_invoice_applied` (before the post-commit chain), with `tierBefore` / `tierAfter` from the result (R-5); in `subscription_conflict` only when `eventRowId !== null`, with `planWritten: false` and both tiers null (R-4). Replays, `already_*` and refusals stay silent. Header step 10a added.
+- **`StripeService.ts`** (R-2): `retrieveBusinessOsSubscription` gains optional `cancellationReason` from the SAME retrieve, `cancellation_details?.reason` kept to the exported `BUSINESS_OS_CANCELLATION_REASONS` (`payment_failed`, `cancellation_requested`, `payment_disputed`, the mirror's three), else null. The comment and feedback text are never read.
+- **Log keys (pinned):** `event`, `alert`, `accountId`, `billingRowId`, `invoiceId`, `subscriptionId`, `livemode`, `stripeEventId`, `eventRowId`, `status`, `planWritten`, `tierBefore`, `tierAfter`, `tier`, `billingReason`, `amountMinor`, `currency`, `periodEnd`, `paidAt`, `subscriptionEndedAt`, `subscriptionStatus`, `cancellationReason`, `recordEndedAt`. No customer id, email, name or metadata value.
+
+**Deviations for SA**
+1. `eventRowId` is in the line (not in the workplan's list): it names the money row (new `invoice_paid` or refusal) the operator acts on. An id, no PII.
+2. The tests sit in a new `describe` pair at the end of `planPaymentApply.test.ts`, not in a new file: they need that file's fake of the apply function (about 300 lines), which is not exported.
+3. The mirror keeps its own copy of the three reasons (`planSubscriptionMirror.ts` untouched, to keep this slice to the apply path); the lists are identical.
+
+**Tests:** `planPaymentApply.test.ts` 67 → 84 (+17): helper 5 (fires; each condition flipped; absent reason; 11 unreadable inputs incl. a throwing getter and a time `toISOString` cannot hold, no throw; pure, frozen inputs); webhook 12: 9 (X-4d shape fires once at `error`, keys pinned, placed right after the applied line; no PII with the fixture's email and metadata text; Stripe dunning end with our row's end as context; live `active` / `past_due` silent; period-end last invoice and late pre-end payment silent; row ended + Stripe live silent (R-1); replay and refusal silent; R-4 conflict fires once and its replay is silent; R-4 conflict with `eventRowId` null silent) and R-6 test 7 twice (applied and conflict paths: the apply argument, `recordEvent`, audits, order, cure calls, money rows, billing row, plan row, return value and every other log line deep-equal with and without Stripe's end), plus unreadable Stripe times never throw. `businessOsPlanWebhookReads.test.ts` 16 → 17 (R-2: the three reasons pass, five other shapes are null, the comment never leaves the read, one retrieve each).
+
+**Gates (run one after another, 2026-10-27)**
+
+| Gate | Result |
+|---|---|
+| `lib/business-os/billing` | 49 / 3 795 passed |
+| `app/api/stripe` | 22 / 581 passed |
+| `lib/stripe` | 10 / 104 passed |
+| `lib/admin/environment` | 4 / 122 passed |
+| `lib/server` | 11 / 148 passed |
+| `npm run test:bos-entitlements` | 319 suites / 9 559 tests passed |
+| Connect `connectPath.characterisation.test.ts.snap` md5 | `ab7528ea68309cffb309ffbd46c455ab`, unchanged (never `-u`) |
+| Typecheck (`tsc --noEmit`, 8 GB heap) | Completed, no OOM; **0 errors in the touched files** (1 849 pre-existing elsewhere, the same count as on P-7a.4) |
+| ESLint on the 4 touched files | 0 errors, 0 warnings |
+| `npm run build` | Not run (no `.env.local` in this worktree, as P-7a.1 to P-7a.4) |
+
+### SA code review: FU-P7a4-1
+
+**Code Review by SA — 2026-10-27**
+**Status:** ✅ Code Approved
+
+| Check | Result |
+|---|---|
+| R-1 to R-6 | ✅ Stripe's step-9 read alone decides; `cancellationReason` from the same retrieve, three values else null; `paidAt > endedAt`; conflict line only when `eventRowId !== null`; tiers from `result`; helper pure, in `try`, called after the apply; test 7 present on both paths |
+| Pino | ✅ context first, `error` + `alert: true`; no `console.*` in the diff |
+| PII | ✅ ids, amounts, dates, enums only; Stripe's free-text comment / feedback never read |
+| Supabase | ✅ no new DB call, no new Stripe call |
+| TypeScript | ✅ no `any`; `eventRowId` narrowed to `string` before the conflict call |
+| `StripeService` field | ✅ optional and additive; other callers (`planInvoiceResolver`, `planSubscriptionManage`) unaffected |
+| Untouched files | ✅ `planBillingHandler.ts` and `planSubscriptionMirror.ts` have no diff |
+| Jest (SA rerun) | ✅ the two suites, 101 / 101 |
+
+**Deviations**
+1. **Accepted.** `eventRowId` is the id an operator needs; no PII.
+2. **Accepted.** Reusing the unexported fake beats duplicating ~300 lines.
+3. **Accepted, no pin test now.** D3.1 touches the mirror next and is **bound** to delete its local `CANCELLATION_REASONS` and import `BUSINESS_OS_CANCELLATION_REASONS` from `StripeService.ts`. One list then exists, so no pin test is needed.
+
+### Code Approved for QA: Yes
+
+### QA report: FU-P7a4-1
+
+**QA — 2026-10-27**
+**Test mode:** full · **Strategy used:** A (Jest, in-memory; the alert is log-only, no DB or Stripe call) · **Focus:** api, security (PII) · **Skipped:** live Stripe / DB (forbidden by brief; not needed) · **Input source:** TL brief
+
+New QA file: `lib/business-os/billing/__tests__/planPaymentApply.paidAfterEnd.qa.test.ts` (45 tests, harness copied from `planPaymentApply.test.ts`).
+
+#### Test Coverage
+
+| Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| Strict `>`: `endedAt == paidAt`, `endedAt == periodEnd` | ✅ | Pass | Both null; 1 s before fires; 1 ms after fires, same ms does not |
+| Seconds vs milliseconds | ✅ | Pass | Seconds echoed as the right ISO; a ms value reads as far future, never fires, never throws |
+| `paidAt` null / '' / malformed / number | ✅ | Pass | null, no throw |
+| `endedAt` 0, negative, NaN, -Infinity, string, boolean, object | ✅ | Pass | null |
+| Malformed `periodEnd`, null facts object | ✅ | Pass | null, no throw |
+| `cancellationReason` three values pass; undefined / null → null | ✅ | Pass | |
+| `cancellationReason` outside the three ('other', '', new) → null | ⚠️ | Pass at the read | `cancellationReasonOf` filters (Dev test covers `something_new`, 42, null); `paidAfterEnd` itself does not (E-1) |
+| Fires on `applied` and `recorded` (planWritten false) | ✅ | Pass | once, `error`, `alert: true` |
+| `subscription_conflict`: fires with a row, silent with `eventRowId` null | ✅ | Pass | |
+| Silent on `already_applied`, `already_recorded`, `customer_mismatch`, `plan_row_missing`, `billing_row_missing` | ✅ | Pass | |
+| `endedAt` == paid_at / 0 / negative through the webhook | ✅ | Pass | applied as usual, no alert |
+| PII | ✅ | Pass | no email, name, `@`, customer id, metadata or owner text in the line; no such keys |
+
+#### Issues Found
+
+**Bugs:** none.
+
+**Edge cases (nice to fix):**
+1. **E-1: `paidAfterEnd` passes `cancellationReason` through unchecked** — File: `lib/business-os/billing/planPaymentApply.ts` (`cancellationReason: subscription.cancellationReason ?? null`) — Severity: Low. Repro: `paidAfterEnd(facts, { endedAt: <before paid>, status: 'canceled', cancellationReason: 'other' })` returns `'other'` (likewise `''`). Not reachable today: the only producer, `retrieveBusinessOsSubscription`, maps anything outside the three to null, and the type forbids it. Optional hardening: filter against `BUSINESS_OS_CANCELLATION_REASONS` in the helper too.
+
+#### Test Outputs / Counts (run sequentially)
+
+| Suite | Result |
+|---|---|
+| QA file | 45 / 45 |
+| `lib/business-os/billing` | 50 suites, 3 840 / 3 840 (incl. the QA file) |
+| `lib/stripe` | 10 suites, 104 / 104 |
+| `app/api/stripe` | 22 suites, 581 / 581 |
+| `lib/admin/environment` (CI guards) | 4 suites, 122 / 122 |
+| `lib/server` (CI guards) | 11 suites, 148 / 148 |
+| Connect harness `connectPath.characterisation.test.ts.snap` | md5 `ab7528ea68309cffb309ffbd46c455ab`, unchanged; never `-u` |
+| `tsc --noEmit` filtered to touched files + QA file | 0 errors (repo pre-existing errors only; no OOM) |
+
+#### Final Status
+
+- [x] All acceptance criteria pass — ready for commit (E-1 is Low and optional)
+- [ ] Issues found — Dev must address before commit
 
 ---
 
@@ -1061,6 +1344,70 @@ Not run by SA: `tsc` (Dev reports 0 errors in the touched files, no OOM) and `np
 
 #### Code Approved for QA: Yes (with F-3 and F-4 applied)
 
+### SA Code Review — P-7a.4 (2026-10-27)
+
+**Code Review by SA — 2026-10-27**
+**Status:** ✅ APPROVED WITH FIXES (F-3 applied by SA, F-4 doc correction applied by SA). Worktree `neuronforge-p7a4`, branch `feature/bos-plan-payments-p7a4` from `origin/main` `89cd0d90`, uncommitted. Read on the diff, not taken from the Implementation Notes.
+
+#### Verified
+
+| Check | Result |
+|---|---|
+| Ordering | Our row read (`findByUser`, session user + server mode), `planManageOffer`, every our-data refusal, then the one fresh `retrieveBusinessOsSubscription`. C-4's four cross-checks (id, customer, mode, `bos_user_id`) run before the mode decision. Immediate path: TQ-5 pending update refused before the cancel; the cancel's answer is checked (id, customer, livemode, `canceled`) before any void or mirror; each invoice is checked (non-empty id, our customer, this subscription, our mode) before its void. A mismatched answer → `outcomeUnknown`, no sweep, no mirror (pinned) |
+| Mode from Stripe (P-7a.1 binding note) | `PAYMENT_FAILED_STATUSES.includes(fresh.status) && fresh.endedAt === null` picks immediate. A `failing` row Stripe cured goes to the period-end path; a renewing row Stripe says is `past_due` ends now. Mutation (decide on `offer.kind === 'failing'`) caught |
+| Call shape (TQ-12, SX-2b agreement) | `subscriptions.cancel(id, { invoice_now: false, prorate: false }, { idempotencyKey })`, no `cancellation_details`. Mutation (add `cancellation_details`) caught by `businessOsPlanCancelNow.test.ts` |
+| Void scope (C-11) | `invoices.list({ subscription, status: 'open', limit: 20 })` then a per-invoice cross-check; `has_more` → `leftOpen: null` + alert, never guessed. Mutation (drop the customer check) caught |
+| Idempotency keys | `bos-plan-manage:{sub}:cancel_now:{attempt}`, `bos-plan-manage:{invoice}:void:{attempt}`, one random attempt id per call (D2 shape). Pinned not to appear in any log argument, nor the attempt id |
+| Engine-only methods | The three new `StripeService` methods are called only from `planSubscriptionManage.ts`. `cancelBusinessOsSubscriptionNow` / `voidBusinessOsInvoice` were in ENGINE_ONLY; the list read was not (F-3) |
+| Audit | Same `BOS_BILLING_SUBSCRIPTION_CANCELLED`, severity `info` (EVENT_METADATA), via the route's existing `logAndFlush` (WC-7 pattern; failure never fails the request). `details.mode`, `endsOn`, `invoicesVoided`, `invoicesLeftOpen` (immediate only), `reasonCode`, `livemode`, `actor: 'owner'`. `unknown` audited on a lost answer; `unchanged` / `ended` not audited |
+| Mirror | Existing `mirrorSubscriptionState` CAS (`{ count: 'exact' }`, keyed on user + mode + subscription id), never fails the request. The webhook's `.deleted` still records `subscription_ended`: the CAS update counts matched rows, so `mirrored` stays true after our pre-emptive mirror (read in `planSubscriptionMirror.ts`) |
+| Effects claimed | Banner via `ended_at` first, invoice list "Not charged" on `void`, one money-history row from `.deleted`, admin Ended: all follow from existing readers; no code needed. Confirmed by reading, not run live (QA demo step 10) |
+| Tenant isolation | Every id is from our row or from Stripe's list of that row's subscription, cross-checked; nothing from the request (body is `{ reasonCode? }`, `.strict()`). Service-role write is the existing user-scoped CAS |
+| Entitlements | No new import from `lib/business-os/entitlements/`; no catalog / matrix change. `test:bos-entitlements` green |
+| Logging / env / i18n | Pino only, no `console.*` added; no `process.env` read added (EC-3 unaffected). Five keys present in en / he / es; `plan.manage.payment_failed_contact` gone from all three dictionaries and all source (only a test asserting its absence names it) |
+
+#### Deviation rulings
+
+| # | Ruling |
+|---|---|
+| 1 | **Accepted: voiding + alert meets C-11 for P-7a.4. The apply-path REFUSAL as Dev drafted it is rejected; a narrower follow-up replaces it (FU-P7a4-1), and it is NOT a prerequisite for the production price switch.** Reasons: (a) X-4d/e prove C-11's first option, which is what C-11 asked for. (b) What a residual window actually costs: `applyPaidPlanInvoice` would apply the paid invoice with `subscriptionStatus: 'canceled'` and the invoice's OWN period, so the owner gets the tier only up to the paid-through date of a period they paid for. Money and access match; nothing renews; the harm is a broken "nothing left to pay" promise, not unpaid access or an unbounded tier. (c) A refusal would do worse: it would take the money and give nothing (a refund owed, by hand), and the drafted test ("`canceled` with `ended_at` before the invoice's period end") also matches a legitimate case, Stripe's own dunning end (`cancellation_details.reason = 'payment_failed'`, invoice left `open` or `uncollectible`) later paid by the owner; a period-end cancel's last invoice is not hit (its period ends at or before `ended_at`). (d) SX-2b: a refusal would also leave a paid invoice with no tier while SX-2b's free-period logic reads the end as owner-started, which makes the account state harder to reason about, not easier. **FU-P7a4-1 (webhook slice, before go-live row 13 is ideal, not blocking the switch):** on `invoice.paid` for a subscription Stripe reports ended before the invoice's period end, APPLY as today and log `error` + `alert: true` (`bos_billing_paid_after_end`) with invoice, subscription and `cancellation_details.reason`, so an operator decides honour vs refund. Alert-only, no refusal |
+| 2 | **Accepted.** The end has happened at Stripe; a 502 would misreport it and invite a retry that finds `unchanged` / `ended`. `invoicesLeftOpen` > 0 or `null` in the audit plus an `error` + `alert: true` line is the right signal. Mutation (rethrow a void failure) caught by engine and route tests |
+| 3 | **Accepted.** `unchanged` / `ended` is scoped to a `failing` row + Stripe `canceled` with `ended_at`; other rows keep `subscription_not_active` (P-7a.1 pins unchanged). Not re-running the sweep there is correct: a second tab's press is not the owner's first decision, and the first press already audited any leftover. Note for FU-P7a4-2: a Stripe dunning end reaching this branch leaves its open / uncollectible invoice untouched, which is Stripe's design for that path |
+| 4 | **Accepted, with the doc corrected (F-4).** Stripe decides both directions, as the binding note requires. The draft's claim that a `cancelling` + `past_due` row shows Reactivate was wrong: `planManageOffer` tests the failure first, so that row is `failing`, shows Cancel, and ends now. That is the right behaviour (Stripe would otherwise retry the card until the period end, BQ-3 option C, which SA would not approve) |
+| 5 | **Accepted.** Offering Cancel on a non-live status would only produce a `subscription_not_active` refusal. The narrowing is pinned in the matrix |
+| 6 | **Accepted.** Same `bos-plan-manage:` namespace and attempt id as D2; suffixes keep the cancel key and each void key distinct; a second void of the same invoice is refused by Stripe ("isn't open"), never a second write. Never logged (pinned) |
+| 7 | **Accepted**, as agreed in D2 |
+| 8 | **Accepted, binding on the P-7a.4 PR.** Rebase / merge `origin/main` after P-7a.3 (#534) merges, hand-merge the four textual conflicts, recount the `plan.manage.*` pin (27 + P-7a.3's), and show P-7a.3's Founding Partner sentence (`freeAccessAfter`, same BQ-5 rule: only when the free-access end is after the paid-through date + 24 h) in the `plan-manage-confirm-now` group too, with one render test for it. Any new wording there goes to G-5. Re-run this review's suite list after the merge-in; SA re-reviews only the `PlanManage.tsx` merge hunk |
+
+#### Fixes
+
+| # | File | Fix | Applied |
+|---|---|---|---|
+| F-3 | `lib/business-os/billing/__tests__/oneDontRenewPath.guard.test.ts` | `listBusinessOsOpenSubscriptionInvoices` added to ENGINE_ONLY (the sweep and its cross-checks have one home), and a FORBIDDEN entry for the SDK's `invoices.voidInvoice(` in the scanned tree (the Connect `voidInvoice` in `MutateExecutor.ts` is a different call and does not match). 10 / 10; a probe file naming the list method made it fail, then was removed | ✅ SA |
+| F-4 | This workplan, Deviations for SA item 4 | The `cancelling` + `past_due` sentence corrected (above) | ✅ SA |
+
+#### Follow-ups (not blocking QA)
+
+- **FU-P7a4-1** (deviation 1): alert-only detection of `invoice.paid` on a subscription that ended before the invoice's period end. Webhook slice; no refusal.
+- **FU-P7a4-2**: the sweep lists `status: 'open'` only. Under a Stripe dunning setting that marks failed invoices **uncollectible**, such an invoice is still payable from its hosted link and is not voided. Check the live account's dunning setting before go-live row 13; if it marks uncollectible, extend the sweep to `uncollectible` (a void works on both). Same bounded consequence as deviation 1 (b).
+- **FU-P7a4-3** (TL, SX-2b): X-4g shows the immediate cancel also records `cancellation_requested`, so SX-2b will treat an owner's cancel during a failed payment as owner-started (free period). If SX-2b means "failed-payment ends get none" to include this case, it needs another signal (this audit's `details.mode = 'immediate'`, or the status before the end); `cancellation_details` must stay unsent either way. TL to confirm with the deletion session.
+- **FU-P7a4-4** (P-7b.2, with D2's F-2): `failing` is decided before `change_pending`, so a failing row with `pending_tier` set ends now and leaves `pending_tier` on the row. Impossible today (no writer); P-7b.2 decides clear vs refuse for both paths.
+
+#### QA focus
+
+1. Demo step 10 end to end on a test clock, including the old hosted "Pay now" link opened after the cancel (void, not payable) and exactly one `subscription_ended` money-history row.
+2. A cured row (renewal paid after the failure, webhook delayed or replayed late): Cancel must give the period-end answer ("You keep … until …"), never "has ended".
+3. Two tabs: second press → "has ended" (`unchanged` / `ended`), no second audit, no Stripe write.
+4. Forced void failure and `has_more` (unit-level is enough): 200, `invoicesLeftOpen` 1 / `null`, one `error` line with `alert: true`, no key in any log.
+5. Reactivate POST on a failing row → 409 with the new `plan.manage.refusal.payment_failed` copy (en / he / es).
+6. he / es at 360 px: the ends-now confirmation and the payment-failed line wrap; the drafts go to G-5.
+
+#### SA runs (sequential, after F-3)
+
+`app/api/stripe` 22 / 581; `lib/business-os/billing` 49 / 3 768; `app/api/business-os/billing` 7 / 260; `components/business-os/settings` 51 / 952; `components/business-os/billing` 1 / 17; `lib/stripe` 10 / 103; `lib/audit` 16 / 189; `lib/admin/environment` 4 / 122; `lib/server` 11 / 148; `lib/business-os/purge` 16 / 388; `lib/repositories/__tests__` 120 / 2 896; `npm run test:bos-entitlements` 313 / 9 401. All passed. Connect snapshot md5 `ab7528ea68309cffb309ffbd46c455ab` unchanged (never `-u`). Mutations, one at a time, each restored by Edit and md5-checked: `cancellation_details` sent, mode from our row, invoice customer check dropped, void failure rethrown, `failing` wire without Cancel, UI `endsNow` forced false, list method used outside the engine: **7 / 7 caught**. ESLint on the edited guard: clean.
+
+#### Code Approved for QA: Yes (F-3 and F-4 applied). PR only after P-7a.3 merges, with deviation 8's merge work done in it.
+
 ---
 
 ## QA Testing Report
@@ -1244,6 +1591,64 @@ Not run by SA: `tsc` (Dev reports 0 errors in the touched files, no OOM) and `np
 - [x] All acceptance criteria in QA scope pass — ready for commit (after the user's diff view; demo steps above owed; `catalogueDrift.guard` must be green after RM merges `main`)
 - [ ] Issues found — Dev must address before commit
 
+### QA Report — P-7a.4
+
+**QA — 2026-10-27**
+**Test mode:** full (SA "QA focus" 1–6; the database-side halves of focus 1 are the user's demo)
+**Strategy used:** A + B (Jest: the REAL cancel and reactivate routes and the REAL engine over a STATEFUL fake repository whose mirror writes back into the row the next request reads; render on the REAL Settings view through `payloadFor` / `readPlanPurchaseView`) + C (a scratch script on the standard sandbox `acct_1UPKR4C7KDUGYIcA`, test mode, on a test clock: the REAL `managePlanSubscription` and the REAL `StripeService` over a fake repository; no database at all)
+**Focus:** api, ui, security, i18n
+**Skipped:** the database-side effects (one `subscription_ended` money-history row from `.deleted`, the banner switch, the admin list "Ended") and the hosted page's look after the void: user's demo. No production database touched
+**Input source:** TL prompt + SA "QA focus"
+
+#### Results per focus item
+
+| # | Focus item | Result | Evidence |
+|---|---|---|---|
+| 1 | End to end on a test clock: failing renewal → Cancel "ends now" → canceled, `cancellation_requested`, renewal invoice VOID, old "Pay now" refuses | ✅ PASS (Stripe side + engine) / ⚠️ DB half owed (demo) | Sandbox, 22 / 22. Two throwaway customers on clock `clock_1UVATvC7KDUGYIcAn2X94ywG` on `bos_plan_basic_monthly_usd`, card swapped to `pm_card_chargeCustomerFail`, clock past period end + 1 day: both `past_due`, A has one `open` renewal invoice with a hosted link. Engine on A (row `past_due`, `failed_attempts` 1): `cancelled` / `mode: 'immediate'`, audit facts `mode: immediate`, `invoicesVoided` 1, `invoicesLeftOpen` 0, one mirror `canceled` + `endedAtIso`. Stripe after: `canceled`, `ended_at` set, **`cancellation_details.reason = 'cancellation_requested'`**, comment / feedback null; the renewal invoice **`void`**; paying it with a good card → refused **"Voided invoices cannot be paid."** (the hosted link's own payment path); the hosted URL still opens (HTTP 200, Stripe's invoice page). Engine log lines: no idempotency key, no `sk_`, no hosted URL, no alert |
+| 2 | A cured row (renewal paid, webhook late or replayed) → period-end answer, never "has ended" | ✅ PASS | Route (QA): row `past_due` / `unpaid` / `active` + `failed_attempts` with Stripe `active`, and row `past_due` with Stripe `trialing` → 200 `{ outcome: 'cancelled', endsOn: <period end> }` with **no `mode`**, exactly one Stripe write (`update:true`), no immediate end, no list, no void, audit `mode: period_end`, row healed to Stripe's status. Replayed press (Stripe `active` + already cancelling) → `unchanged` / `cancelling` with the date, nothing written, not audited, row healed. Sandbox: B cured by paying its Due invoice, row still `past_due` → period-end cancel; Stripe B `active`, `cancel_at_period_end` true, not ended. Render (real view): both answers read "Cancelled. You keep {plan} until {date}", never `ended_now` |
+| 3 | Two tabs: second press → "has ended", no second audit, no Stripe write | ⚠️ PARTIAL — invariants PASS, wording differs (**E-1**) | Route (stateful) and sandbox agree. Tab B while our row still lags (mirror not landed) → 200 `unchanged` / `ended`, one Stripe read only, no audit; the screen reads "has ended". **Tab B after our mirror landed (the usual case) → 409 `subscription_not_active` from our row, no Stripe call at all, no audit; the screen reads "Your subscription is not active right now."**, not "has ended". No second write and no second audit in either case. UI: a double press on "Yes, end it now" posts once |
+| 4 | Forced void failure and `has_more` | ✅ PASS | Route (QA), each case → 200 `cancelled` / `immediate`, mirror ran, exactly **one** `error` line with `alert: true` (`bos_billing_cancel_now_invoice_left_open`) and no other alert: void throws → voided 0 / leftOpen 1; void answers not `void` → 0 / 1; list throws → 0 / `null`; `has_more` → 1 / `null`; another customer's invoice → 0 / 1 (not voided). No idempotency key, no attempt id, no `bos-plan-manage:` in any log line, the response or the audit details. Keys per attempt: two presses → two distinct `cancel_now` keys, all keys match `bos-plan-manage:{id}:(cancel_now|void):{uuid}` |
+| 5 | Reactivate POST on a failing row → 409, new copy en / he / es | ✅ PASS | Route: failing row → 409 `payment_failed_contact_us`, read our row only (no Stripe call), not audited; a stale cancelling row with a failure count is `failing` (failure first) → same 409, no Stripe call; a cancelling row with no failure recorded while Stripe says `past_due` → 409 after the one fresh read, nothing written. Render: a stale cancelling payload (Reactivate shown) answered 409 reads `plan.manage.refusal.payment_failed` in en / he / es; "contact us to cancel" (the server English) never shown. See **E-2** |
+| 6 | he / es at 360 px; five keys complete; `payment_failed_contact` gone | ✅ PASS (structural) / ⚠️ visual owed | The five keys present and non-empty in en / he / es, placeholders as en, he in Hebrew script, es not equal to en. Render in a 360 px `dir="rtl"` (he) and `ltr` (es) container: the payment-failed line, the ends-now confirmation (plan filled, no date) and the "has ended" line render in full; the button row is `flex-wrap`; no physical-direction, `whitespace-nowrap`, `truncate` or fixed-width class in the island; no raw key or unfilled placeholder. `plan.manage.payment_failed_contact`: absent from all three dictionaries and from every non-test source file under `app`, `components`, `lib`, `hooks`, `types` (scan). Real view: `past_due`, `unpaid`, `active` + failures, cancelling + `past_due` → `{ cancel, paymentFailed }`, no Reactivate, the ends-now confirmation; a failure count on an ended row → no Cancel (deviation 5). he / es remain **drafts** for G-5 |
+
+#### Issues Found
+
+**Bugs (must fix before commit):** none.
+
+**Performance issues:** none (the immediate path adds one list and one void per open invoice, only on the press).
+
+**Edge cases (nice to fix / record):**
+
+1. **E-1 — the second tab reads "not active", not "has ended"** (Low; SA / TL to rule). `unchanged` / `ended` is reached only while our row still says `failing` (Implementation Notes deviation 3). Once the first press's mirror (or the `.deleted` webhook) has written `canceled` + `ended_at`, `planManageOffer` answers `none` / `not_active` and the route refuses 409 `subscription_not_active` before any Stripe call; the stale tab then shows "Your subscription is not active right now." It is true, safe (no write, no audit) and cheaper, but it does not match QA focus 3's expected "has ended". Fix if wanted: on a cancel, a row with `ended_at` set could answer `unchanged` / `ended` with our row's `ended_at`, no Stripe call. Pinned as-is by `route.p7a4.qa.test.ts` and `PlanManage.p7a4.qa.render.test.tsx` so a change is visible.
+2. **E-2 — the server English for `payment_failed_contact_us` is stale** (Low). `PLAN_MANAGE_REFUSALS.payment_failed_contact_us.message` still says "Your payment failed. Update your card, or contact us to cancel." After BQ-3 = A the owner can cancel. The screen never shows it (dictionary key by code), but API clients and logs read it. Suggest "Your payment failed. Update your card first, or cancel your plan." (the en dictionary line); the code name may stay.
+3. **E-3 — the hosted page after the void** (demo). The API refusal of payment on the voided invoice was proved; how Stripe's hosted page looks (no "Pay" button, "void") was not checked in a browser. Demo step 4.
+
+#### Test Outputs / Counts
+
+| Run | Result |
+|---|---|
+| QA files (new, uncommitted): `app/api/business-os/billing/plan/cancel/__tests__/route.p7a4.qa.test.ts` (17), `components/business-os/settings/__tests__/PlanManage.p7a4.qa.render.test.tsx` (17 + the imported `upgradeModalPayloads` self-check = 18) | **2 suites, 35 tests, all passed**; ESLint clean; `tsc --noEmit` (8 GB heap, completed, no OOM): **0 errors** in the QA files (1 849 pre-existing elsewhere, Dev's count) |
+| Repository caller guard | `route.p7a4.qa.test.ts` registered in `BusinessOsBillingAccountRepository.test.ts` ALLOWED (sorted, before `route.p7a4.test.ts`); guard passes |
+| Requested set, run one after another (`--ci`, QA files included) | `app/api/stripe` 22 / 581; `lib/business-os/billing` 49 / 3 768; `app/api/business-os/billing` 8 / 277; `components/business-os/settings` 52 / 970; `components/business-os/billing` 1 / 17; `lib/stripe` 10 / 103; `lib/audit` 16 / 189; `lib/admin/environment` 4 / 122; `lib/server` 11 / 148; `lib/business-os/purge` 16 / 388; `lib/repositories/__tests__` 120 / 2 896: **all passed** |
+| `npm run test:bos-entitlements` | **313 suites, 9 401 tests, all passed** |
+| Connect harness snapshot md5 | `ab7528ea68309cffb309ffbd46c455ab` (unchanged, unmodified in git); never `-u` |
+| Sandbox script (scratchpad, not in the repo) | **22 / 22 passed**. Clock `clock_1UVATvC7KDUGYIcAn2X94ywG`; A `cus_VWCt1t1xWeSvbq` / `sub_1UVATxC7KDUGYIcA2iFhLfMO` (ends now), B `cus_VWCtdFdAwrvS0h` / `sub_1UVAU1C7KDUGYIcA5OoxaDyp` (cured). Both customers **deleted** (`deleted: true` on retrieve) and the clock **deleted** (`resource_missing`) in the same run; 0 QA clocks left. Account id asserted first; `cus_VQf9jX6fnfVlkK` not touched; key read from the env file, never printed (0 key matches in the run's output); dummy Supabase URL (127.0.0.1:9), no database |
+| CRLF | The new files are CRLF in this checkout; every source scan in the requested set passed |
+
+#### Owed demo steps (user, sandbox test mode, price switch on locally, a test-clock owner with a failing renewal)
+
+1. Settings → Plan shows "Your payment failed. Update your card to keep your plan, or cancel it to end it now." and **Cancel plan**; the confirmation says the plan **ends now**, names no date; "Yes, end it now".
+2. After the press: "Cancelled. {plan} has ended, and your card will not be charged again."; the banner switches to "Your {plan} subscription has ended. Choose a plan to continue."; the invoice list shows the renewal as **Not charged** with no "Pay now".
+3. Money history: exactly **one** `subscription_ended` row (from `.deleted`); admin Subscriptions list: **Ended**; one audit `BOS_BILLING_SUBSCRIPTION_CANCELLED` with `details.mode = 'immediate'`, `invoicesVoided` 1, `invoicesLeftOpen` 0.
+4. Open the renewal's old hosted "Pay now" link from Stripe's email: the page shows the invoice void, with no way to pay.
+5. Second tab (still showing Cancel): press it → expect "Cancelled. {plan} has ended, and your card will not be charged again." (E-1 closed by TL ruling 2026-10-27; it read "not active" before) and no second audit entry.
+6. Hebrew and Spanish at 360 px: the payment-failed line and the ends-now confirmation wrap cleanly; settle the he / es drafts in the G-5 pass.
+
+#### Final Status
+
+- [x] All acceptance criteria in QA scope pass — ready for commit (after the user's diff view, P-7a.3's merge-in per SA deviation 8, and an SA / TL ruling on E-1; demo steps above owed)
+- [ ] Issues found — Dev must address before commit
+
 ---
 
 ## Commit Info
@@ -1267,6 +1672,19 @@ Not run by SA: `tsc` (Dev reports 0 errors in the touched files, no OOM) and `np
 | Merge gate | Live demo owed by the user (§QA P-7a.3 "Owed demo steps"); do not merge until the user confirms |
 | Open follow-up | FU-P7a3-1 (QA E-1): the P-4.2 pre-purchase line `plan.choose.free_access_ends_today`, unchanged pending the user |
 
+### SA re-review: P-7a.4 after the P-7a.3 merge (dev-8)
+
+**Code Review by SA — 2026-10-27**
+**Status:** ✅ Code Approved (staged merge resolution, uncommitted)
+
+1. `components/business-os/settings/PlanManage.tsx`: `{foundingLine && <> {foundingLine}</>}` inside the `cancel_now_body` `<p>` uses the same `foundingLine` (from `manage.freeAccessAfter.endsAt`) as `plan-manage-confirm`. No new key; the pin is 28 (21 + 2 + 1 + 5 − 1), matching the en count. The render test covers both the founding and the non-founding case, and the order. Accepted.
+2. `planPurchaseView.test.ts`: moving `past_due` to "port answer is on manage" is correct. `planPurchaseView.ts` is unchanged against `main`, and its gate (`manage.cancel || manage.reactivate`) always meant "beside Cancel". P-7a.3's pin recorded the absence of a Cancel; it was not a deliberate cost guard. Cost: the port (`EntitlementService.getFreeAccessAfterPaidTier`) reads the snapshot cache that the my-plan route's `getSnapshot` has just filled, so normally no extra DB read. A failure is caught, logged and leaves the field out. Value: `endsAt` is the cohort's fixed end, and it is returned only when that end is later than the tier end + margin. A founding owner who ends the plan now lands on live free access, so the sentence is true.
+3. No conflict markers in tracked merge files. The only hits are in `archive/CLAUDE_BACKUP_1406.md`, which has the same markers on `origin/main` and is not part of this merge.
+
+**Optimisation Suggestions (Low, non-blocking):** FU-P7a4-5. `failing` has no period-end check, so an `unpaid` row long past `tierExpiresAt` could name a cohort end that is already past. Guard `endsAt > now` in the view or the port.
+
+### Code Approved for QA: Yes
+
 ---
 
 ## Change History
@@ -1285,3 +1703,9 @@ Not run by SA: `tsc` (Dev reports 0 errors in the touched files, no OOM) and `np
 | 2026-10-27 | G-5 approved for P-7a.2; FU-P7a2-1 built and closed (Dev) | User approved the P-7a.2 he / es wording (G-5) and accepted TL's FU-P7a2-1: a Due (`open`) invoice row's link reads "Pay now" (`plan.invoices.pay_now`: en "Pay now", he "לתשלום עכשיו", es "Pagar ahora"), same hosted URL, new tab, `noopener`. he / es comments marked approved. Key pins 19 → 20, QA RTL test updated, one new render test (en + he). Runs: 4 requested dirs 100 / 4 869 passed; `test:bos-entitlements` 9 269 / 9 270 (the one failure is the unregistered QA portal route test in the billing-repository caller guard, not this change); 0 type errors in touched files. Uncommitted |
 | 2026-10-27 | P-7a.3 code complete, uncommitted (Dev) | On `feature/bos-plan-payments-p7a3` (on top of P-7a.2 `f3176607`). T9 to T11: Reset / Purge control 3 `subscription_live` / `subscription_unreadable` (C-9), the self-delete blocker and R-3 clearing text point at Settings → Plan (G-6 SQL text unchanged, C-10), the PF-14 cross-path pin, the AC-F8.3 walk, the BQ-5 Founding Partner sentence (`EntitlementService.getFreeAccessAfterPaidTier` through the snapshot cache). 8 deviations for SA in Implementation Notes (P-7a.3); he / es drafts for G-5; demo checklist. No migration, no webhook change; Connect harness md5 unchanged |
 | 2026-10-27 | G-5 approved for P-7a.3; committed, PR opened (RM) | SA APPROVED WITH FIXES (F-3, F-4), QA PASS (no bugs). The user approved the he / es wording (G-5) as drafted and kept "Founding Partner" in English in he / es; he / es comments marked approved. QA E-1 (rewording the P-4.2 line `plan.choose.free_access_ends_today`) not answered: left unchanged, open as FU-P7a3-1. Committed on `feature/bos-plan-payments-p7a3`, `origin/main` merged in (P-7a.2 #528 MERGED 2026-10-27), PR #534 opened; no migration; auto-merge off, live demo owed before merge |
+| 2026-10-27 | P-7a.4 code complete, uncommitted (Dev) | On `feature/bos-plan-payments-p7a4` (from `origin/main` `89cd0d90`). X-4 on a test clock: after `subscriptions.cancel` (`invoice_now` / `prorate` false) the open renewal invoice stays payable and paying it sends `invoice.paid`, so C-11 is met by voiding every open invoice of the subscription after the cancel (a voided invoice cannot be paid); `cancellation_details.reason` is `cancellation_requested` after both the immediate and the period-end cancel (TL / SX-2b). `planManageOffer` `failing`; the engine picks immediate vs period end on Stripe's fresh status; `cancelBusinessOsSubscriptionNow`, `listBusinessOsOpenSubscriptionInvoices`, `voidBusinessOsInvoice` (engine-only, guard updated); same CANCELLED audit key with `mode: 'immediate'` and void counts; "ends now" confirmation; 5 keys (he / es drafts), 1 retired. No migration, webhook untouched. Deviations 1–8 for SA (1: the apply-path defence recommended as a follow-up) |
+| 2026-10-27 | SA code review of P-7a.4 (SA) | APPROVED WITH FIXES, approved for QA. Ordering, Stripe-decided mode, call shape (no `cancellation_details`), void scope and per-invoice cross-checks, keys never logged, audit, CAS mirror, tenant isolation, i18n verified. Deviation 1: voiding + alert meets C-11; the apply-path refusal is rejected (it would take money and give nothing, and would refuse a legitimate late payment after a Stripe dunning end); replaced by alert-only FU-P7a4-1, not blocking the price switch. Deviations 2–8 accepted (4 corrected, F-4). F-3: the guard's engine-only list gains the open-invoice list, and the SDK `invoices.voidInvoice(` is forbidden in the scanned tree. Follow-ups FU-P7a4-1 to -4. SA runs: 12 sets all green (`test:bos-entitlements` 313 / 9 401), Connect md5 unchanged, 7 / 7 mutations caught |
+| 2026-10-27 | QA E-1 / E-2 closed by TL ruling (Dev) | E-1: a cancel on a row our record shows ended answers `unchanged` / `ended` from the row (no Stripe call, no write, no audit); reactivate unchanged. E-2: `payment_failed_contact_us` server message = the en `plan.manage.refusal.payment_failed` line (code kept). Two QA pins and one engine test updated, two route tests added. Re-run: all requested sets green, `test:bos-entitlements` 313 / 9 401. Uncommitted; deviation 8's Founding Partner hunk waits for RM's merge of `main` |
+| 2026-10-27 | `origin/main` (P-7a.3, #534) merged into P-7a.4; SA dev-8 built (Dev) | Hand-merged the key-count pin (now 28: P-7a.1 21 + P-7a.2 2 + P-7a.3 1 + P-7a.4 +5 −1) and the status text in this workplan and the requirement. Dev-8: the "ends now" confirmation (`plan-manage-confirm-now`) shows P-7a.3's Founding Partner sentence (`plan.manage.cancel_confirm_founding`, no new key), one render test. Uncommitted, awaiting SA re-review |
+| 2026-10-27 | FU-P7a4-1 workplan written (Dev) | Alert-only `bos_billing_paid_after_end` on `invoice.paid` for a subscription that ended before the invoice's period end and was paid after the end; applied exactly as today. Decided from the fresh Stripe read the apply already makes (no new call or DB read); fires once on `applied` / `recorded`. Q-1 to Q-3 for SA. No code yet |
+| 2026-10-27 | FU-P7a4-1 code complete, uncommitted (Dev) | SA R-1 to R-6 applied: pure `paidAfterEnd` on Stripe's step-9 read, called after the apply; `bos_billing_paid_after_end` (`error`, `alert: true`) on `applied` / `recorded` and on `subscription_conflict` with a new row, with `tierBefore` / `tierAfter`; optional `cancellationReason` on `retrieveBusinessOsSubscription` (same call). +18 tests incl. R-6 byte-identical outcome on both paths. Gates green; Connect md5 unchanged. Deviations 1-3 for SA |

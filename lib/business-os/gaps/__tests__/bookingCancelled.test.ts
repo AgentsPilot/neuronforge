@@ -197,4 +197,145 @@ describe('booking_cancelled', () => {
 
     expect(await run()).toBeUndefined();
   });
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CLIENT WHO ALREADY CAME BACK.
+   *
+   * The cancellation email carries a booking button — the path a client
+   * cancels through does not suppress `offerRebooking` — and a good share of
+   * them press it. Nothing here noticed: the row filtered on the booking being
+   * cancelled and on who cancelled it, and neither changes when the same
+   * client books again. So the owner kept being told to "send booking link" to
+   * someone already sitting in Thursday's diary.
+   *
+   * Only the empty-slot case is dropped. Being back in the diary does not
+   * return a deposit or stop a plan debiting.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  describe('once the client has booked again', () => {
+    const upcoming = (overrides: Row = {}): Row => ({
+      id: 'b2',
+      contact_id: 'c1',
+      status: 'confirmed',
+      start_time: FUTURE,
+      ...overrides,
+    });
+
+    it('stops asking the owner to send a link', async () => {
+      tables.scheduling_bookings = [booking({}), upcoming()];
+
+      expect(await run()).toBeUndefined();
+    });
+
+    it('but only for that client', async () => {
+      tables.scheduling_bookings = [booking({}), upcoming({ contact_id: 'someone_else' })];
+
+      expect((await run())?.count).toBe(1);
+    });
+
+    it('does not count a cancelled or missed appointment as coming back', async () => {
+      /* A dead hour refills nothing. Both are still rows on the contact. */
+      for (const status of ['cancelled', 'no_show']) {
+        tables.scheduling_bookings = [booking({}), upcoming({ status })];
+
+        expect((await run())?.count).toBe(1);
+      }
+    });
+
+    it('does not count an hour that has already passed', async () => {
+      tables.scheduling_bookings = [booking({}), upcoming({ start_time: PAST })];
+
+      expect((await run())?.count).toBe(1);
+    });
+
+    it('never lets a reported row answer its own question', async () => {
+      /*
+       * The cancelled booking is itself a row on this contact. Counting it
+       * would have every row suppress itself and empty the gap entirely —
+       * which is precisely what the fake above would produce without the
+       * `cancelledIds` test, since it returns the same rows for every query.
+       */
+      tables.scheduling_bookings = [booking({})];
+
+      expect((await run())?.count).toBe(1);
+    });
+
+    it('still refunds, because being back does not return the money', async () => {
+      tables.scheduling_bookings = [booking({}), upcoming()];
+      tables.payment_transactions = [
+        { booking_id: 'b1', amount: 250, status: 'succeeded', refunded_amount: 0 },
+      ];
+
+      const gap = await run();
+
+      expect(gap?.count).toBe(1);
+      expect(gap?.items[0].value).toBe(250);
+    });
+
+    it('and a plan still charging outlives it too', async () => {
+      tables.scheduling_bookings = [booking({}), upcoming()];
+      tables.payment_plan_subscriptions = [{ booking_id: 'b1', status: 'active' }];
+
+      const gap = await run();
+
+      expect(gap?.count).toBe(1);
+      expect(gap?.items[0].planLive).toBe(true);
+    });
+  });
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A DAY TO COME BACK ON THEIR OWN.
+   *
+   * The cancellation email carries a booking button and reaches the client
+   * immediately. The row used to appear at that same moment, so the owner's
+   * first instruction was to send a link already sitting in the client's
+   * inbox. A day later the row means something the email cannot: they had the
+   * link and did not use it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  describe('the first day after they cancel', () => {
+    /* NOW is 2026-09-25T12:00Z. */
+    const JUST_NOW = '2026-09-25T11:00:00.000Z';
+    const YESTERDAY = '2026-09-24T09:00:00.000Z';
+
+    it('says nothing while the email is still fresh', async () => {
+      tables.scheduling_bookings = [booking({ updated_at: JUST_NOW })];
+
+      expect(await run()).toBeUndefined();
+    });
+
+    it('asks once the day has passed and they have not come back', async () => {
+      tables.scheduling_bookings = [booking({ updated_at: YESTERDAY })];
+
+      expect((await run())?.count).toBe(1);
+    });
+
+    it('does not make money wait', async () => {
+      /* A deposit sitting in the wrong place for a day is the cost of getting
+         this wrong, so the refund case ignores the grace entirely. */
+      tables.scheduling_bookings = [booking({ updated_at: JUST_NOW })];
+      tables.payment_transactions = [
+        { booking_id: 'b1', amount: 250, status: 'succeeded', refunded_amount: 0 },
+      ];
+
+      expect((await run())?.count).toBe(1);
+    });
+
+    it('nor a plan that is still charging them', async () => {
+      tables.scheduling_bookings = [booking({ updated_at: JUST_NOW })];
+      tables.payment_plan_subscriptions = [{ booking_id: 'b1', status: 'active' }];
+
+      expect((await run())?.count).toBe(1);
+    });
+
+    it('shows a row whose timestamp cannot be read rather than hiding it', async () => {
+      /* Seen early is a smaller failure than never seen, and nobody else is
+         watching this client. */
+      tables.scheduling_bookings = [booking({ updated_at: null, created_at: null })];
+
+      expect((await run())?.count).toBe(1);
+    });
+  });
 });

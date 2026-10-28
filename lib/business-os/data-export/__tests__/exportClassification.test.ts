@@ -1715,6 +1715,7 @@ function currencyConversionHits(source: string): string[] {
 const LOWER_CASE_EXEMPT: Readonly<Record<string, string>> = {
   'fileName.ts': 'the business-name slug of the zip file name is lower case by rule (requirement §0.4.1 E)',
   'zipEntries.ts': 'duplicate entry names in one zip folder are compared case-insensitively (Windows and macOS file systems)',
+  'columnLabels.ts': 'CI rule L-5 compares CSV header labels case-insensitively (MX-2b SA MX2B-5); labels only, never a cell value',
 };
 const LOWER_CASE_HIT = String(/\.toLowerCase\s*\(/);
 
@@ -1743,7 +1744,7 @@ describe('DE-5 M-5 no conversion, no FX, no currency rewriting in the export (SA
     expect(offenders).toEqual([]);
   });
 
-  it('DE-8b negative control: the lower-case exemption covers only its two files and only .toLowerCase(', () => {
+  it('DE-8b negative control: the lower-case exemption covers only its listed files and only .toLowerCase(', () => {
     const planted = ['const a = name.toLowerCase();', 'const b = code.toUpperCase();', ''].join('\n');
     expect(exportSourceHits('lib/business-os/data-export/fileName.ts', planted)).toEqual([String(/\.toUpperCase\s*\(/)]);
     expect(exportSourceHits('lib/business-os/data-export/zipExport.ts', planted)).toEqual([String(/\.toUpperCase\s*\(/), LOWER_CASE_HIT]);

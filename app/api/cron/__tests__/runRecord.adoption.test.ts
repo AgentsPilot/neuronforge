@@ -127,8 +127,14 @@ jest.mock('@/lib/repositories/PaymentRepository', () => ({
 // stripe-settlement-gap: Stripe reports no paid invoices. Mocked rather than
 // left to throw on an absent key, so "nothing to do" means a clean run here and
 // not a run whose every listing was refused.
+// bos-billing-reconcile (plan payments P-8b.2): the plan pass lists no plan
+// events and no plan subscriptions, so its run is clean too.
 jest.mock('@/lib/stripe/StripeService', () => ({
-  getStripeService: () => ({ listPaidInvoices: async () => ({ invoices: [], hasMore: false }) }),
+  getStripeService: () => ({
+    listPaidInvoices: async () => ({ invoices: [], hasMore: false }),
+    listBusinessOsPlanEvents: async () => ({ items: [], complete: true }),
+    listBusinessOsSubscriptionsByPrice: async () => ({ items: [], complete: true }),
+  }),
 }));
 
 // data-export (DE-8b): the bucket holds nothing and no account has files.

@@ -177,22 +177,86 @@ describe('the money question', () => {
     expect(dialog).toMatch(/onCheckedChange=\{extraToggle\.onChange\}/);
   });
 
+  /*
+   * The footer's question group, which now holds BOTH of the caller's
+   * questions — the money one and "what does this make up for".
+   *
+   * Sliced from the condition that opens the group, which is why it names both
+   * props. `{extraToggle && (` opens the INNER block these days, past the
+   * `me-auto` that does the pinning, so slicing from there measured the wrong
+   * half and this guard failed on a change that had not broken anything.
+   */
+  const questionGroup = () =>
+    dialog.slice(
+      dialog.indexOf('{(extraToggle || makeUpFor) && ('),
+      dialog.indexOf('Right side - Cancel and Save')
+    );
+
   it('sits on the inline start, which is the right in Hebrew', () => {
     /*
      * The footer is `justify-between` and the group beside it is empty on a
      * new booking, so without this the question floated near the middle. A
      * margin on the inline END pins it to the START in either script.
+     *
+     * On the group rather than on the switch, so a second question joins it
+     * there instead of drifting off towards the buttons.
      */
-    const block = dialog.slice(dialog.indexOf('{extraToggle && ('), dialog.indexOf('Right side - Cancel and Save'));
-    expect(block).toMatch(/className="me-auto flex items-center/);
+    expect(questionGroup()).toMatch(/className="me-auto flex flex-wrap items-center/);
   });
 
   it('does not wrap the switch in a direction of its own', () => {
     // `Switch` already carries a `:dir(rtl)` rule for its thumb. A `dir="ltr"`
     // wrapper here would neutralise it — the same correct-it-twice fault as
     // the inverted calendar icon.
-    const block = dialog.slice(dialog.indexOf('{extraToggle && ('), dialog.indexOf('Right side - Cancel and Save'));
-    expect(block).not.toMatch(/dir="ltr"/);
+    expect(questionGroup()).not.toMatch(/dir="ltr"/);
+  });
+});
+
+/**
+ * WHAT THIS SESSION MAKES UP FOR.
+ *
+ * A session standing in for one that was called off or missed could only be
+ * declared from the cancel/no-show dialog's own offer. Added from here instead
+ * — which is where an owner naturally goes — the fact was lost, and the missed
+ * session went on offering "change date" for the life of the package.
+ *
+ * What these lock is the GATING, because the risk in the change was never the
+ * feature, it was the ordinary add quietly behaving differently.
+ */
+describe('the make-up question', () => {
+  it('is asked only when the caller passes it', () => {
+    expect(dialog).toMatch(/\{makeUpFor && \(/);
+  });
+
+  it('offers "makes up for nothing" first, and that is what null shows as', () => {
+    /* The honest default. A claim nobody made must not be recorded for them,
+       so the absence is the selected option rather than an empty box. */
+    expect(dialog).toMatch(/value=\{makeUpFor\.value \?\? MAKES_UP_FOR_NOTHING\}/);
+    expect(dialog).toMatch(/<SelectItem value=\{MAKES_UP_FOR_NOTHING\}>/);
+  });
+
+  it('hands back null, never the sentinel', () => {
+    /* Radix refuses an empty item value, so the absence needs a name inside
+       the component. No caller should ever see it. */
+    expect(dialog).toMatch(/next === MAKES_UP_FOR_NOTHING \? null : next/);
+  });
+
+  it('is only offered when something is actually waiting to be made up', () => {
+    expect(drawer).toMatch(/addMeetingTo\?\.makeUpCandidates\.length/);
+  });
+
+  it('leaves the ordinary add posting exactly what it posted before', () => {
+    /*
+     * Spread in only when the owner answered. The body of a plain add is
+     * unchanged, which is the whole safety argument for the change.
+     */
+    expect(drawer).toMatch(/\.\.\.\(makeUpForId \? \{ replaces: makeUpForId \} : \{\}\)/);
+  });
+
+  it('only counts a session nothing has replaced yet', () => {
+    /* `was_replaced` is the recorded fact. A count cannot tell a gap that has
+       been made up from one still waiting on the client. */
+    expect(drawer).toMatch(/!row\.was_replaced/);
   });
 });
 

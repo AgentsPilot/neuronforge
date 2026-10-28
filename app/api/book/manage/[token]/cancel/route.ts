@@ -165,6 +165,60 @@ export async function POST(
     }
 
     /*
+     * ── A PACKAGE IS NOT CANCELLED FROM THE PORTAL ──────────────────────────
+     *
+     * A client holding a block of sessions may MOVE one; calling one off is
+     * the owner's decision, because it is the owner who then decides whether
+     * a replacement session is added and whether anything is returned. That is
+     * the rule asked for, and it closes a worse hole than it looks:
+     *
+     * `purchaseOutlivesTheHour` below is `payment_plan_id || parent_booking_id`,
+     * and a package CONTAINER has neither — its sessions are meetings on
+     * itself, not child bookings. So a client pressing Cancel on the container
+     * fell through to the whole-booking branch and called off the entire
+     * block, every remaining session with it, on a package they had paid for
+     * in full.
+     *
+     * Refused HERE rather than only in the portal, because the portal's button
+     * is not the only way to reach this route.
+     *
+     * Counted off `scheduling_meetings`: a package is a booking with sessions
+     * on it, which is the same fact `packageSessionLines` reads. One indexed
+     * count, on a path that is already several queries deep.
+     */
+    const { count: sessionCount, error: sessionCountError } = await supabaseServer
+      .from('scheduling_meetings')
+      .select('id', { count: 'exact', head: true })
+      .eq('booking_id', bookingId)
+      .eq('user_id', booking.user_id)
+      .not('session_number', 'is', null);
+
+    if (sessionCountError) {
+      /* Unknown is not "no": refusing to guess here would let the whole-block
+         cancellation through on a failed read, which is the thing being
+         prevented. */
+      requestLogger.error(
+        { err: sessionCountError, bookingId },
+        'Could not tell whether this booking is a package; cancellation refused'
+      );
+      return NextResponse.json(
+        { success: false, code: 'not_cancellable', error: 'This booking cannot be cancelled' },
+        { status: 400 }
+      );
+    }
+
+    if ((sessionCount ?? 0) > 1) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'package_not_cancellable',
+          error: 'Sessions in a package cannot be cancelled here. Please contact the business.',
+        },
+        { status: 400 }
+      );
+    }
+
+    /*
      * ── AND THE APPOINTMENT IS STILL OPEN ────────────────────────────────
      *
      * `status` stopped answering this when held and no-show began writing

@@ -33,7 +33,15 @@
 // adding a line for the errors it discards (reclaim, complete, release) is the
 // tracked follow-up FU-9 (SA Q-4), not part of a behaviour-preserving move.
 //
-// CALLERS: `app/api/stripe/webhook/route.ts` only.
+// CALLERS: `app/api/stripe/webhook/route.ts`, and the nightly plan reconcile
+// pass (`lib/business-os/billing/planReconcilePass.ts`, wired by
+// `planReconcileDeps.ts`; plan payments P-8b.2, SA ruling 2), which leases each
+// plan event it replays through this same table.
+//
+// NEW, NOT MOVED: `reclaimStale` (plan payments P-8b.1, PF-5; workplan
+// docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P8B_WORKPLAN.md §4.1, SA ruling 1)
+// and `reclaimFailedIfStillFailed` (P-8b.2, SA ruling 2). They are the two
+// methods here that did not exist inline before CF-5.
 
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
@@ -42,6 +50,13 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 export const CLAIM_COLUMNS = 'event_id, status';
 /** Closed set of column lists this repository may select. */
 export type ProcessedWebhookEventColumns = typeof CLAIM_COLUMNS;
+
+/**
+ * How old a `processing` claim must be before a delivery may take it back
+ * (plan payments P-8b, PF-5; SA-P4: 15 minutes, well over the webhook's 60 s
+ * `maxDuration`). One figure for the webhook and the nightly plan pass.
+ */
+export const STALE_CLAIM_AGE_MS = 15 * 60 * 1000;
 
 /** The claim states the table's CHECK constraint admits. */
 export type WebhookClaimStatus = 'processing' | 'completed' | 'failed';
@@ -126,9 +141,63 @@ export class ProcessedWebhookEventRepository {
   }
 
   /**
+   * ⟨unscoped-by-design⟩ Takes back a claim stuck at `processing` since before
+   * `cutoffIso` (plan payments P-8b.1, PF-5, SA-P4 part 1): `processing` again,
+   * the failure message cleared, a fresh `processed_at`. A row that old is
+   * provably dead, because the platform kills the function at `maxDuration`
+   * (60 s), far inside `STALE_CLAIM_AGE_MS`.
+   *
+   * ONE conditional UPDATE, so of two deliveries racing for the same stuck row
+   * exactly one wins. `won` is true only when it changed exactly one row. Read
+   * from `{ count: 'exact' }`, never from `.select()` (the PostgREST
+   * update-plus-select defect). A fresh `processing` row, or any other
+   * status, changes nothing and reads `won: false`.
+   */
+  async reclaimStale(eventId: string, cutoffIso: string): Promise<WebhookClaimResult<{ won: boolean }>> {
+    const { error, count } = await this.supabase
+      .from('processed_webhook_events')
+      .update(
+        { status: 'processing', failure_message: null, processed_at: new Date().toISOString() },
+        { count: 'exact' }
+      )
+      .eq('event_id', eventId)
+      .eq('status', 'processing')
+      .lt('processed_at', cutoffIso);
+    if (error) return { data: null, error };
+    return { data: { won: count === 1 }, error: null };
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ Takes a `failed` claim back ONLY if it is still
+   * `failed` (plan payments P-8b.2, SA ruling 2): `processing`, the failure
+   * message cleared, a fresh `processed_at`. The nightly plan pass is its only
+   * caller. Unlike the route's unconditional `reclaimFailed`, a nightly actor
+   * must not race Stripe's own retry of the same row: of the pass and a
+   * delivery that both read `failed`, exactly one wins.
+   *
+   * ONE conditional UPDATE, `won` only when it changed exactly one row. Read
+   * from `{ count: 'exact' }`, never from `.select()` (the PostgREST
+   * update-plus-select defect), and no `.or()`.
+   */
+  async reclaimFailedIfStillFailed(eventId: string): Promise<WebhookClaimResult<{ won: boolean }>> {
+    const { error, count } = await this.supabase
+      .from('processed_webhook_events')
+      .update(
+        { status: 'processing', failure_message: null, processed_at: new Date().toISOString() },
+        { count: 'exact' }
+      )
+      .eq('event_id', eventId)
+      .eq('status', 'failed');
+    if (error) return { data: null, error };
+    return { data: { won: count === 1 }, error: null };
+  }
+
+  /**
    * ⟨unscoped-by-design⟩ Marks a claim done, so later deliveries of the event
    * are skipped. The ONLY completing write: the route reaches it through its
-   * `completeClaim()` helper alone (pinned by `routerPlacement.guard`).
+   * `completeClaim()` helper alone (pinned by `routerPlacement.guard`), and the
+   * plan reconcile pass through its one `settleClaim` helper (P-8b.2, pinned by
+   * `planReconcilePass.guard`).
    */
   async complete(eventId: string): Promise<WebhookClaimResult<null>> {
     const { error } = await this.supabase
@@ -145,9 +214,8 @@ export class ProcessedWebhookEventRepository {
    * Known, pre-existing (FU-5 SA review; not changed by CF-5 PR 1): when the
    * database is fully down this write fails too. supabase-js returns that
    * failure as `error` rather than throwing, and the route does not act on it,
-   * so the row stays `processing` and later deliveries are answered
-   * "duplicate". Any fix (for example reclaiming a stale `processing` row) is
-   * its own change.
+   * so the row stays `processing`. Since P-8b.1 a later delivery takes such a
+   * row back once it is older than `STALE_CLAIM_AGE_MS` (`reclaimStale`).
    */
   async markFailed(eventId: string, failureMessage: string): Promise<WebhookClaimResult<null>> {
     const { error } = await this.supabase

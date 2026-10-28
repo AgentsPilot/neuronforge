@@ -46,6 +46,7 @@ import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import { buildCustomerPlanView } from '@/lib/business-os/entitlements/customerPlanView';
 import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
 import { getEntitlementService } from '@/lib/business-os/entitlements/EntitlementService';
+import { readPlanEndingView } from '@/lib/business-os/entitlements/planEndingView';
 import { billingEndsWhen, readPlanPurchaseView } from '@/lib/business-os/billing/planPurchaseView';
 import type { PlanPurchaseWire } from '@/lib/business-os/billing/planPurchaseTypes';
 import { createLogger } from '@/lib/logger';
@@ -135,6 +136,40 @@ export async function GET(request: NextRequest) {
       requestLogger.warn({ err, event: 'bos_billing_purchase_view_failed' }, 'Purchase view unavailable; plan shown without it');
     }
 
+    /*
+     * SX-2 (D3): what changes when the paid plan ends, for the Cancel drawer's
+     * "What changes" step. Built only where the drawer can open: Cancel is
+     * offered and our billing record says renewing, with its period end (SA
+     * Q-6). That date is the billing row's, never a request value (SA R-8).
+     * Display only (`planEndingView` refuses and writes nothing). A failure
+     * never hides the plan: `ending: null`, and the drawer says it could not
+     * work out what changes.
+     *
+     * D3 T-13 (P-7a.4, SA ruling 6): while a renewal payment is failing, Cancel
+     * ends the plan NOW (the drawer's `now` mode), so the view is built from
+     * TODAY, this server's clock, not the period end. Still never a request
+     * value (R-8). The route decides the real mode on Stripe's fresh status;
+     * the view only describes the expected one.
+     */
+    // Typed through the function, so the route imports exactly one new symbol (SA R-6).
+    let ending: Awaited<ReturnType<typeof readPlanEndingView>> = null;
+    const billing = purchase?.billing ?? null;
+    const endingFrom =
+      purchase?.manage?.cancel !== true
+        ? null
+        : purchase.manage.paymentFailed === true
+          ? new Date().toISOString()
+          : billing !== null && billing.state === 'renewing' && billing.date
+            ? billing.date
+            : null;
+    if (endingFrom !== null) {
+      try {
+        ending = await readPlanEndingView({ accountId, endsAt: endingFrom, locale });
+      } catch (err) {
+        requestLogger.warn({ err, event: 'bos_plan_ending_view_failed' }, 'Plan ending view unavailable; Cancel drawer shows the fallback');
+      }
+    }
+
     // F-2: a paid tier's "while the plan is paid for" becomes "Renews on" /
     // "Ends on" when our record knows the date. A free plan keeps its own.
     const recordEndsWhen = view.kind === 'tier' ? billingEndsWhen(purchase?.billing ?? null) : null;
@@ -148,13 +183,14 @@ export async function GET(request: NextRequest) {
         stale: snapshot.stale,
         offer: purchase ? purchase.offer.kind : null,
         billing: purchase?.billing?.state ?? null,
+        ending: ending ? ending.kind : null,
       },
       'Customer plan read'
     );
 
     return NextResponse.json({
       success: true,
-      data: { ...view, endsWhen: recordEndsWhen ?? view.endsWhen, purchase },
+      data: { ...view, endsWhen: recordEndsWhen ?? view.endsWhen, purchase, ending },
     });
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to read the customer plan');

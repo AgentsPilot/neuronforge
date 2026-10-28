@@ -85,6 +85,12 @@ jest.mock('@/lib/admin/environment/platformDenyList', () => {
   };
 });
 
+// EC-6 (SA-L8): a made-up project table, so the gate checks a known label without naming a real ref.
+jest.mock('@/lib/admin/environment/supabaseProjects', () => ({
+  SUPABASE_URL_ROW_NAMES: ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL'],
+  SUPABASE_PROJECTS: new Map([['fixtureknownref', { label: 'Fixture-project', role: 'development-staging' }]]),
+}));
+
 import { GET } from '@/app/api/admin/environment/route';
 import { ENVIRONMENT_CATALOGUE, ENVIRONMENT_GROUPS } from '../catalogue';
 import { UNCATALOGUED_ROLE } from '../classifyEnvironment';
@@ -145,6 +151,12 @@ fixtureEnv.STRIPE_CLIENT_ID = secretFor('key-shaped config', 48);
 fixtureEnv.NEXT_PUBLIC_APP_URL =
   `https://${secretFor('url user')}:${secretFor('url password')}@example.test/hook/${secretFor('url path')}` +
   `?token=${secretFor('url query')}#${secretFor('url fragment')}`;
+// S-3b (EC-6, SA-L8): a credential-bearing URL on a Supabase host, on both Supabase rows.
+const SUPABASE_FIXTURE_ORIGIN = 'https://fixtureknownref.supabase.co';
+fixtureEnv.NEXT_PUBLIC_SUPABASE_URL =
+  `https://${secretFor('supabase url user')}:${secretFor('supabase url password')}@fixtureknownref.supabase.co` +
+  `/rest/v1/${secretFor('supabase url path')}?apikey=${secretFor('supabase url query')}`;
+fixtureEnv.SUPABASE_URL = `https://${secretFor('supabase server url user')}@fixtureknownref.supabase.co/${secretFor('supabase server url path')}`;
 // S-4: an unrecognised flag value that is itself a secret, lenient and strict.
 fixtureEnv.ADMIN_BUSINESS_DELETE_ENABLED = secretFor('lenient flag value');
 fixtureEnv.CALIBRATION_AUTO_RCA_ENABLED = secretFor('strict flag value');
@@ -160,6 +172,8 @@ const ALLOWED_TEXT = [
   UNCATALOGUED_PLAIN,
   UNCATALOGUED_PATTERN,
   'https://example.test',
+  SUPABASE_FIXTURE_ORIGIN,
+  'Fixture-project',
 ].join('\n').toLowerCase();
 
 function windowsOf(secret: string): string[] {
@@ -277,6 +291,18 @@ describe('SA-C7 serialisation gate', () => {
     const data = parsed.data as { groups: Array<{ rows: Array<{ name: string; display: unknown }> }>; uncategorised: Array<{ name: string }> };
     const rows = new Map(data.groups.flatMap((g) => g.rows).map((r) => [r.name, r.display]));
     expect(rows.get('NEXT_PUBLIC_APP_URL')).toEqual({ kind: 'shown', text: 'https://example.test' });
+    // S-3b (EC-6): the label shows; no part of the credential does (checked by expectNoLeakAnywhere above).
+    const projects = new Map(
+      (parsed.data as { groups: Array<{ rows: Array<{ name: string; supabaseProject?: unknown; diagnostics: string[] }> }> }).groups
+        .flatMap((g) => g.rows)
+        .map((r) => [r.name, r])
+    );
+    for (const name of ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL']) {
+      expect(rows.get(name)).toEqual({ kind: 'shown', text: SUPABASE_FIXTURE_ORIGIN });
+      expect(projects.get(name)?.supabaseProject).toEqual({ kind: 'known', label: 'Fixture-project', role: 'development-staging' });
+      expect(projects.get(name)?.diagnostics).not.toContain('supabase-url-mismatch');
+    }
+    expect(body).toContain('Fixture-project');
     expect(rows.get('GOOGLE_SEARCH_ENGINE_ID')).toEqual({ kind: 'hidden', reason: 'not-plain-config' });
     expect(rows.get('STRIPE_CLIENT_ID')).toEqual({ kind: 'hidden', reason: 'not-plain-config' });
     expect(rows.get('ADMIN_BUSINESS_DELETE_ENABLED')).toEqual({ kind: 'flag', state: 'off', source: 'unrecognised' });
@@ -315,7 +341,7 @@ describe('SA-C7 serialisation gate', () => {
   });
 
   describe('S-7 (EC-4) every diagnostic code, under every label, leaks nothing', () => {
-    const CODES = ['required-not-set', 'should-not-be-set', 'unrecognised-flag', 'surrounding-whitespace'];
+    const CODES = ['required-not-set', 'should-not-be-set', 'unrecognised-flag', 'surrounding-whitespace', 'supabase-url-mismatch'];
     const LABELS: Array<[string, { VERCEL_ENV?: string; NODE_ENV: string }]> = [
       ['production', { VERCEL_ENV: 'production', NODE_ENV: 'production' }],
       ['preview', { VERCEL_ENV: 'preview', NODE_ENV: 'production' }],
@@ -323,7 +349,7 @@ describe('SA-C7 serialisation gate', () => {
       ['unknown', { NODE_ENV: 'test' }],
     ];
     const PADDED_SECRET = 'STRIPE_SECRET_KEY';
-    const REQUIRED_REMOVED = 'ENCRYPTION_SECRET';
+    const REQUIRED_REMOVED = 'SUPABASE_SERVICE_ROLE_KEY';
     let savedVercelEnv: string | undefined;
 
     type Row = { name: string; display: unknown; diagnostics: string[] };
@@ -381,7 +407,7 @@ describe('SA-C7 serialisation gate', () => {
         if (label !== 'local') expect(rows.find((r) => r.name === 'NODE_TLS_REJECT_UNAUTHORIZED')?.diagnostics).toContain('should-not-be-set');
       }
 
-      // The audit row: the EC-1 keys plus the four EC-4 counts, nothing else.
+      // The audit row: the EC-1 keys plus the four EC-4 counts and the EC-6 mismatch count, nothing else.
       const audit = auditRecords[0] as { details: Record<string, unknown> };
       expect(Object.keys(audit.details).sort()).toEqual(
         [
@@ -393,6 +419,7 @@ describe('SA-C7 serialisation gate', () => {
           'rows',
           'set',
           'shouldNotBeSet',
+          'supabaseUrlMismatch',
           'surroundingWhitespace',
           'uncategorised',
           'unrecognisedFlags',

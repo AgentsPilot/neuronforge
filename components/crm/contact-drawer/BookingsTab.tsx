@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Calendar, Clock, CreditCard, ClipboardCheck, Mail, CheckCircle2,
   XCircle, AlertCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Search, Plus, Edit2,
@@ -251,6 +251,35 @@ const RESENDABLE_KINDS = new Set([
   'booking_cancelled',
   'intake_requested',
 ]);
+
+/**
+ * Does this card hold the thing a link named?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `foldPackageMeetings` absorbs a package: its per-session cards stop being
+ * top-level rows and become `card.meetings`, hanging off the booking the quote
+ * came out of — or off the container, when that booking is not on screen. So a
+ * package session has a real id and no row of its own.
+ *
+ * Three ways a card can be the one meant, and the id can legitimately be any of
+ * them depending on which gap sent it: the row itself, one of its meetings, or
+ * its container.
+ *
+ * Declared once at module scope because TWO readers need the same answer — the
+ * effect that expands the card, and the pager that has to turn to the page it
+ * is on. They were separate tests before, and when only one of them was fixed
+ * the card opened on a page the owner never saw.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function holdsFocus(card: SessionCardData, focus: string): boolean {
+  return (
+    card.booking.id === focus ||
+    card.booking.parent_booking_id === focus ||
+    (card.meetings ?? []).some(
+      meeting => meeting.booking.id === focus || meeting.booking.parent_booking_id === focus
+    )
+  );
+}
 
 interface BookingsTabProps {
   sessions: SessionCardData[];
@@ -700,6 +729,11 @@ export function BookingsTab({
      * ───────────────────────────────────────────────────────────────────────
      */
     const open = new Set<string>();
+
+    /*
+     * Seeded with the named booking even though nothing can be checked yet —
+     * see the effect below for why the real decision cannot happen here.
+     */
     if (focusBookingId) open.add(focusBookingId);
 
     for (const session of sessions) {
@@ -715,6 +749,104 @@ export function BookingsTab({
     }
     return open;
   });
+  /**
+   * The decision this component could not make at mount.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY AN EFFECT AFTER ALL, WHEN THE INITIALISER EXISTS TO AVOID ONE.
+   *
+   * `sessions` is `useState([])` in the drawer and filled by a fetch, and this
+   * tab renders immediately — so at mount the list is EMPTY. Every rule that
+   * reads it therefore ran against nothing:
+   *
+   *   · a focused arrival could not be checked against the cards, so the one
+   *     booking the owner was sent to deal with was dropped and they landed
+   *     on a list with nothing open — the reported bug;
+   *   · `opensItself` iterated an empty array, so the "a card opens when the
+   *     ball is in your court" behaviour never happened at all. That one is
+   *     older than the focus handling and was never noticed, because a list
+   *     of shut cards looks like a design choice.
+   *
+   * The initialiser's reasoning still holds — an effect that re-ran would
+   * fight an owner who had just closed a card. So this runs ONCE, guarded by
+   * a ref, at the first moment the data exists. After that the owner's
+   * toggles are the only thing that moves these.
+   *
+   * A matched focus opens ALONE: the owner was sent to one row, and opening
+   * three others buries it. An unmatched or absent focus falls back to the
+   * cards that need them, which is the right thing to degrade to.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const settledOnce = useRef(false);
+
+  useEffect(() => {
+    if (settledOnce.current || sessions.length === 0) return;
+    settledOnce.current = true;
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE CARD THAT HOLDS IT — which is not always the card whose id it is.
+     *
+     * `foldPackageMeetings` ABSORBS a package: its per-session cards stop
+     * being top-level rows and become `card.meetings`, hanging off the booking
+     * the quote came out of (or off the container, when that booking is not on
+     * screen). So a package session has a real id and no row of its own, and
+     * matching `session.booking.id` alone found nothing — which is why the
+     * fallback ran and every owner-move card opened instead of the one.
+     *
+     * Three ways a card can be the one meant, and the id can legitimately be
+     * any of them depending on which gap sent it:
+     *
+     *   the row itself          a plain booking
+     *   one of its meetings     a package session, by meeting id
+     *   its container          a stage that named the package rather than
+     *                          the session
+     *
+     * What opens is always the TOP-LEVEL card, because that is the only thing
+     * this list can expand; the session inside it is then on screen.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const host = focusBookingId
+      ? sessions.find(session => holdsFocus(session, focusBookingId))
+      : undefined;
+
+    if (host) {
+      setExpandedBookings(new Set([host.booking.id]));
+      return;
+    }
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AT MOST ONE, and this is the correction to a fix of mine.
+     *
+     * The rule above it is "a card opens itself when the ball is in your
+     * court", written in the singular and meant that way. It had never
+     * actually run: it lived in a `useState` initialiser and `sessions` is
+     * empty at mount, so it iterated nothing. Moving it here so the focus
+     * handling could work also woke it up — and on a package with five
+     * sessions still to run, EVERY card qualifies, so opening the drawer
+     * normally expanded all of them at once.
+     *
+     * A drawer that opens everything has drawn no attention to anything, and
+     * it buries the thing the rule exists to surface. So: the first card that
+     * is waiting on the owner, and only that one. The rest are a click away
+     * and stay shut, which is what they were before any of this.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const waiting = sessions.find(session => {
+      try {
+        return opensItself(sessionNextStep(session));
+      } catch {
+        /* A card that cannot be read still has to render; shut is safe. */
+        return false;
+      }
+    });
+
+    /* Keep whatever the initialiser seeded — a focus that matches nothing yet
+       may match once a later fetch adds its card. */
+    if (waiting) setExpandedBookings(prev => new Set([...prev, waiting.booking.id]));
+  }, [sessions, focusBookingId]);
+
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
   /**
@@ -1379,8 +1511,11 @@ export function BookingsTab({
    * search has hidden it — both mean "no opinion", and the list opens at the
    * top as it always did.
    */
+  /* The same predicate the expansion uses — see `holdsFocus`. Matching only
+     `booking.id` here left the page on 1 while the card it opened sat on 3,
+     and the owner had to press next until they found it. */
   const focusIndex = focusBookingId
-    ? filteredSessions.findIndex(session => session.booking.id === focusBookingId)
+    ? filteredSessions.findIndex(session => holdsFocus(session, focusBookingId))
     : -1;
   const followFocus = focusIndex >= 0 ? Math.floor(focusIndex / PAGE_SIZE) : 0;
   const page = Math.min(bookingPage ?? followFocus, pageCount - 1);
@@ -6797,7 +6932,88 @@ export function BookingsTab({
                                                 row.meeting_status === 'cancelled' ||
                                                 (row.meeting_status == null &&
                                                   (row.status === 'cancelled' || row.status === 'no_show'));
-                                              const meetingStatus = getBookingStatusLabel(row.status, true, false, row.start_time);
+                                              /*
+                                               * ─────────────────────────────────────────────
+                                               * THE MEETING'S OWN OUTCOME DECIDES ITS BADGE.
+                                               *
+                                               * This passed `row.status` — the BOOKING's
+                                               * status — while the glyph beside it is chosen
+                                               * from `row.meeting_status`. Two columns, two
+                                               * answers, rendered a centimetre apart.
+                                               *
+                                               * Marking a package session held writes
+                                               * `meeting_status: 'held'` and deliberately
+                                               * leaves the booking `confirmed`: the booking is
+                                               * the package, and it is not over because one
+                                               * session happened. The resolver then hit its
+                                               * "confirmed, and the start has passed" branch
+                                               * and returned AMBER "awaiting an outcome" — so
+                                               * a session the owner had already marked wore a
+                                               * green tick in an amber colour, under a tooltip
+                                               * asking them to do the thing they had done.
+                                               *
+                                               * The outcome is mapped onto the vocabulary the
+                                               * resolver already speaks rather than teaching
+                                               * it a second one, and falls through to the
+                                               * booking's status when the meeting has no
+                                               * outcome yet — which is when "awaiting" is the
+                                               * right word and the clock is the right glyph.
+                                               * ─────────────────────────────────────────────
+                                               */
+                                              const outcomeStatus =
+                                                row.meeting_status === 'held'
+                                                  ? 'completed'
+                                                  : row.meeting_status === 'no_show'
+                                                    ? 'no_show'
+                                                    : row.meeting_status === 'cancelled'
+                                                      ? 'cancelled'
+                                                      : row.status;
+                                              const resolved = getBookingStatusLabel(outcomeStatus, true, false, row.start_time);
+
+                                              /*
+                                               * ─────────────────────────────────────────────
+                                               * AND WHO DECIDED IT.
+                                               *
+                                               * `auto_complete_meetings` marks a past meeting
+                                               * HELD twelve hours after it was due, because
+                                               * "held" is the only answer it can give — no-show
+                                               * and called-off are judgements about a room it
+                                               * was not in. A flat "Completed" therefore reads
+                                               * as a fact the owner established when it is a
+                                               * guess the platform made, and the owner has
+                                               * seven days to correct it (`meeting_auto_completed`).
+                                               *
+                                               * Only the word changes, not the colour: it IS
+                                               * held until somebody says otherwise, and amber
+                                               * here would be the same lie this row already
+                                               * told once, in the other direction.
+                                               *
+                                               * `held` rather than `outcomeStatus` so this
+                                               * covers a meeting the automation closed off
+                                               * however its status was written, and `system`
+                                               * explicitly — null means "not recorded", which
+                                               * is most old rows and is not a claim about a
+                                               * machine.
+                                               */
+                                              /*
+                                               * Read once, used twice — by the WORD below and
+                                               * by the GLYPH further down. They are the same
+                                               * claim about the same row, and two expressions
+                                               * saying it separately is how a cell ends up
+                                               * showing a person's tick over a machine's
+                                               * sentence.
+                                               */
+                                              const markedByMachine =
+                                                held && row.outcome_by === 'system';
+
+                                              const meetingStatus = markedByMachine
+                                                ? {
+                                                    ...resolved,
+                                                    text:
+                                                      t('crm.booking.status.auto_completed') ||
+                                                      'Marked automatically',
+                                                  }
+                                                : resolved;
 
                                               /*
                                                 WHETHER THE MONEY FOR THIS MEETING ARRIVED.
@@ -6970,7 +7186,34 @@ export function BookingsTab({
                                                       className={`inline-flex ${meetingStatus.color}`}
                                                       title={meetingStatus.text}
                                                     >
-                                                      {held ? (
+                                                      {markedByMachine ? (
+                                                        /*
+                                                         * A CLOCK'S ANSWER LOOKS DIFFERENT FROM
+                                                         * A PERSON'S.
+                                                         *
+                                                         * Both mean held, so the colour does not
+                                                         * change — it IS held until the owner
+                                                         * says otherwise, and amber here would
+                                                         * be the same lie the row told once
+                                                         * already, in the other direction.
+                                                         *
+                                                         * What changes is WHO is claiming it.
+                                                         * `auto_complete_meetings` marks a
+                                                         * meeting held because its date passed,
+                                                         * which is not evidence anyone attended
+                                                         * — and a tick identical to the one the
+                                                         * owner puts there hides exactly the
+                                                         * rows worth a second look. `Bot` is
+                                                         * what the automation wears everywhere
+                                                         * else in the product.
+                                                         *
+                                                         * The hover and the screen-reader text
+                                                         * already say "marked automatically":
+                                                         * `meetingStatus.text` is overridden
+                                                         * above from this same flag.
+                                                         */
+                                                        <Bot className="h-3.5 w-3.5" aria-hidden="true" />
+                                                      ) : held ? (
                                                         <Check className="h-3.5 w-3.5" aria-hidden="true" />
                                                       ) : row.meeting_status === 'no_show' ? (
                                                         /* Missed and called off are not the
@@ -7022,6 +7265,14 @@ export function BookingsTab({
                                                   <MeetingRowActions
                                                     status={row.status}
                                                     meetingStatus={row.meeting_status}
+                                                    /* WHO said so. A row the automation closed keeps
+                                                       both outcomes it could not judge, plus the
+                                                       confirmation that bills — see MeetingRowActions. */
+                                                    outcomeBy={row.outcome_by ?? null}
+                                                    /* Nothing left to confirm once its invoice
+                                                       exists — the Needs-you card can raise it
+                                                       from the other side. */
+                                                    alreadyBilled={Boolean(pay?.invoiceId)}
                                                     startTime={row.start_time ?? null}
                                                     /*
                                                      * The PURCHASE's state, not this hour's.
@@ -7066,8 +7317,31 @@ export function BookingsTab({
                                                        * MEETING and saves it at the session's own
                                                        * endpoint, which writes a second attempt and
                                                        * releases the hour the old one held.
+                                                       *
+                                                       * ── EXCEPT ONE THAT HAS ALREADY BEEN REPLACED ──
+                                                       *
+                                                       * Calling a session off or marking it missed offers
+                                                       * a replacement on the same dialog. Taking that
+                                                       * offer and then rescheduling the original is the
+                                                       * same hour arranged twice: the client ends up
+                                                       * holding two.
+                                                       *
+                                                       * `was_replaced` is the fact itself — something was
+                                                       * booked in this session's place — not an inference
+                                                       * from the block's size. The size reading failed the
+                                                       * moment a package had more than one gap: two missed
+                                                       * sessions, one made up and one waiting on the
+                                                       * client, are identical to any count and opposite to
+                                                       * each other. Measured on a live block of three with
+                                                       * six outcomes, where the count showed the action on
+                                                       * every row including the one already replaced.
+                                                       *
+                                                       * It also works where no count could: a per-session
+                                                       * package has no agreed ceiling to come back to.
                                                        */
-                                                      onEditSession ? () => onEditSession(row.id) : undefined
+                                                      onEditSession && !row.was_replaced
+                                                        ? () => onEditSession(row.id)
+                                                        : undefined
                                                     }
                                                     /*
                                                       THE SAME DIALOG THE PAYMENT STAGES USE.
@@ -7348,9 +7622,33 @@ export function BookingsTab({
                                               package, which is all of them
                                               until somebody stops one.
                                             */}
+                                            {/*
+                                              NOR ON AN UPFRONT BLOCK THAT IS FULL.
+                                              ─────────────────────────────────
+                                              `packageFull` is set where the
+                                              quote is in hand — see its note in
+                                              `foldPackageMeetings`. A package
+                                              paid in one sum cannot grow past
+                                              the count it was sold with: the
+                                              extra session has no money behind
+                                              it and the client's total stops
+                                              matching the quote they accepted.
+
+                                              Per-session blocks are NOT full,
+                                              ever: each session is paid after
+                                              it is held, so a seventh on a
+                                              block of six is priced when it
+                                              happens. That is the case the
+                                              control was written for.
+
+                                              Compared against `true` so a card
+                                              built before this field existed
+                                              behaves exactly as it did.
+                                            */}
                                             {onAddPackageMeeting &&
                                               session.booking.status !== 'cancelled' &&
-                                              session.booking.meeting_status !== 'cancelled' && (
+                                              session.booking.meeting_status !== 'cancelled' &&
+                                              step.metadata?.packageFull !== true && (
                                               <AddPackageMeeting
                                                 containerId={
                                                   (step.metadata?.containerId as string) ?? booking.id

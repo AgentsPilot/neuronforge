@@ -477,8 +477,13 @@ describe('source rules', () => {
       'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
       // P-5b.1: the N-2 apply test imports the same TYPES for its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.n2.test.ts',
+      // FU-P7a4-1: the QA edge test imports the same TYPES for its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.paidAfterEnd.qa.test.ts',
       // P-3b.2: the apply use case's test imports the input and result TYPES to build its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
+      // Plan payments P-8b.2 (SA ruling 12): the D3.1 replay-safety test runs the real plan handler
+      // behind the reconcile pass and imports the billing row and event input TYPES for its fakes.
+      'lib/business-os/billing/__tests__/planReconcilePass.d31.test.ts',
       // P-6a.2 (T10): the renewal captured-payload test imports the apply input and event TYPES for its fake.
       'lib/business-os/billing/__tests__/planRenewal.captured.test.ts',
       // P-6a.2: the mirror test imports the event input TYPE for its fake history.
@@ -499,6 +504,9 @@ describe('source rules', () => {
       'lib/repositories/__tests__/BusinessOsBillingEventRepository.test.ts',
       // P-5b.2: the tests and caller guards of the paid-line read (and its sibling reads).
       'lib/repositories/__tests__/BusinessOsPaymentVisibilityReads.test.ts',
+      // Not a caller (P-8b.2, SA ruling 9): the plan reconcile read repository's test asserts
+      // that repository names neither billing writer, so it names both as a pattern.
+      'lib/repositories/__tests__/PlanReconcileReadRepository.test.ts',
     ];
     const SYMBOLS = ['BusinessOsBillingEventRepository', 'businessOsBillingEventRepository'];
     const found = ['app', 'lib', 'components', 'hooks', 'scripts']

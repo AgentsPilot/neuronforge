@@ -18,6 +18,8 @@ import {
   rowValueWords,
   scopeWords,
   seeAlsoLink,
+  SUPABASE_LABEL_MAX,
+  SUPABASE_ROLE_WORDS,
   visibleView,
 } from '../environmentDisplay';
 import type { EnvDisplay, EnvironmentLabel, EnvironmentViewPayload, EnvRow } from '@/lib/admin/environment-types';
@@ -32,6 +34,7 @@ const ZERO_COUNTS = {
   shouldNotBeSet: 0,
   unrecognisedFlags: 0,
   surroundingWhitespace: 0,
+  supabaseUrlMismatch: 0,
 };
 
 describe('environmentDisplay', () => {
@@ -187,7 +190,7 @@ function envRow(name: string, display: EnvDisplay, diagnostics: EnvRow['diagnost
 describe('environmentDisplay: EC-4', () => {
   it('D4-1 every code has fixed, non-empty words, and every warning is amber', () => {
     const codes = Object.keys(DIAGNOSTIC_WORDS);
-    expect(codes.sort()).toEqual(['required-not-set', 'should-not-be-set', 'surrounding-whitespace', 'unrecognised-flag']);
+    expect(codes.sort()).toEqual(['required-not-set', 'should-not-be-set', 'supabase-url-mismatch', 'surrounding-whitespace', 'unrecognised-flag']);
     for (const code of codes) expect(DIAGNOSTIC_WORDS[code as keyof typeof DIAGNOSTIC_WORDS].text.length).toBeGreaterThan(5);
 
     const required = rowValueWords({ display: { kind: 'status', set: false }, diagnostics: ['required-not-set'] });
@@ -274,5 +277,113 @@ describe('environmentDisplay: EC-4', () => {
     expect(checkedNote({ ...data, environment: { ...data.environment, label: 'vercel-development', checkedAgainst: 'local' } })).toBe(
       'Checked against the local expectations.'
     );
+  });
+});
+
+// ── EC-6 (workplan §8.4 S6-7, S6-8; SA OQ-1, OQ-3, OQ-4, SA-L5, SA-L6) ──────────
+
+describe('environmentDisplay: EC-6 Supabase project label', () => {
+  const shownRow = (extra: Record<string, unknown> = {}) => ({
+    name: 'NEXT_PUBLIC_SUPABASE_URL',
+    role: 'Role.',
+    scope: 'browser-inlined',
+    group: 'database',
+    sensitivity: 'config',
+    expectedIn: null,
+    display: { kind: 'shown', text: 'https://fakeref1.supabase.co' },
+    diagnostics: [],
+    ...extra,
+  });
+  const withRow = (row: unknown) => ({
+    environment: { label: 'preview', checkedAgainst: 'preview', facts: { host: null, region: null, branch: null, commit: null } },
+    groups: [{ id: 'database', label: 'Database', description: 'D.', rows: [row] }],
+    uncategorised: [],
+    counts: ZERO_COUNTS,
+    generatedAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  it('S6-7 the guard accepts an absent, an unknown and a valid known project', () => {
+    expect(isEnvironmentViewPayload(withRow(shownRow()))).toBe(true);
+    expect(isEnvironmentViewPayload(withRow(shownRow({ supabaseProject: { kind: 'unknown' } })))).toBe(true);
+    for (const role of Object.keys(SUPABASE_ROLE_WORDS)) {
+      expect(isEnvironmentViewPayload(withRow(shownRow({ supabaseProject: { kind: 'known', label: 'Fake-project', role } })))).toBe(true);
+    }
+    const sixty = 'x'.repeat(SUPABASE_LABEL_MAX);
+    expect(isEnvironmentViewPayload(withRow(shownRow({ supabaseProject: { kind: 'known', label: sixty, role: 'production' } })))).toBe(true);
+    expect(isEnvironmentViewPayload(withRow(shownRow({ diagnostics: ['supabase-url-mismatch'] })))).toBe(true);
+  });
+
+  it('S6-7 the guard refuses a bad kind, an unknown role, and a non-string, empty or over-long label', () => {
+    const bad: Array<[string, unknown]> = [
+      ['null project', null],
+      ['a string', 'known'],
+      ['kind missing', { label: 'Fake', role: 'production' }],
+      ['kind odd', { kind: 'mystery', label: 'Fake', role: 'production' }],
+      ['kind a prototype name', { kind: 'constructor' }],
+      ['role unknown', { kind: 'known', label: 'Fake', role: 'staging' }],
+      ['role a prototype name', { kind: 'known', label: 'Fake', role: 'toString' }],
+      ['role missing', { kind: 'known', label: 'Fake' }],
+      ['label a number', { kind: 'known', label: 7, role: 'production' }],
+      ['label an object', { kind: 'known', label: {}, role: 'production' }],
+      ['label empty', { kind: 'known', label: '', role: 'production' }],
+      ['label too long', { kind: 'known', label: 'x'.repeat(SUPABASE_LABEL_MAX + 1), role: 'production' }],
+      ['label missing', { kind: 'known', role: 'production' }],
+    ];
+    for (const [label, project] of bad) {
+      expect({ label, ok: isEnvironmentViewPayload(withRow(shownRow({ supabaseProject: project }))) }).toEqual({ label, ok: false });
+    }
+    // On an uncategorised row too.
+    const uncat = { ...withRow(shownRow()), uncategorised: [shownRow({ supabaseProject: { kind: 'known', label: 'Fake', role: 'staging' } })] };
+    expect(isEnvironmentViewPayload(uncat)).toBe(false);
+    // The new count is required and must be a count.
+    expect(isEnvironmentViewPayload({ ...withRow(shownRow()), counts: { ...ZERO_COUNTS, supabaseUrlMismatch: undefined } })).toBe(false);
+    expect(isEnvironmentViewPayload({ ...withRow(shownRow()), counts: { ...ZERO_COUNTS, supabaseUrlMismatch: '1' } })).toBe(false);
+  });
+
+  it('role words, "Unknown project", and the value-cell words: the label sits beside a shown origin only', () => {
+    expect(SUPABASE_ROLE_WORDS).toEqual({ 'development-staging': 'Development and staging', production: 'Production' });
+    expect(DIAGNOSTIC_WORDS['supabase-url-mismatch']).toEqual({ text: 'Not the same address as the other Supabase URL', detail: null });
+
+    const known = rowValueWords({
+      display: { kind: 'shown', text: 'https://fakeref1.supabase.co' },
+      diagnostics: [],
+      supabaseProject: { kind: 'known', label: 'Fake-project', role: 'development-staging' },
+    });
+    expect(known.mono).toBe('https://fakeref1.supabase.co');
+    expect(known.project).toEqual({ label: 'Fake-project', muted: 'Development and staging' });
+
+    const unknown = rowValueWords({ display: { kind: 'shown', text: 'https://fakeref2.supabase.co' }, diagnostics: [], supabaseProject: { kind: 'unknown' } });
+    expect(unknown.project).toEqual({ label: null, muted: 'Unknown project' });
+    // OQ-3: not a diagnostic, not amber.
+    expect(unknown.warnings).toEqual([]);
+
+    expect(rowValueWords({ display: { kind: 'shown', text: 'https://db.example.test' }, diagnostics: [] }).project).toBeNull();
+    // SA-L1 on the page side: a non-shown display never shows a label, whatever the payload says.
+    const masked = rowValueWords({ display: { kind: 'status', set: true }, diagnostics: [], supabaseProject: { kind: 'unknown' } });
+    expect(masked.project).toBeNull();
+
+    const mismatch = rowValueWords({ display: { kind: 'shown', text: 'https://fakeref1.supabase.co' }, diagnostics: ['supabase-url-mismatch'] });
+    expect(mismatch.warnings.map((w) => [w.code, w.chip.text, w.chip.tone, w.detail])).toEqual([
+      ['supabase-url-mismatch', 'Not the same address as the other Supabase URL', 'warn', null],
+    ]);
+  });
+
+  it('S6-8 "Values to check" adds the mismatch once, extends its sub-line only above 0, and links to the row', () => {
+    const rows = [
+      envRow('NEXT_PUBLIC_SUPABASE_URL', { kind: 'shown', text: 'https://fakeref1.supabase.co' }, ['supabase-url-mismatch']),
+      envRow('SUPABASE_URL', { kind: 'shown', text: 'https://fakeref2.supabase.co' }, ['supabase-url-mismatch']),
+    ];
+    const data = payloadWith(rows, { rows: 2, set: 2, supabaseUrlMismatch: 1 });
+    const tile = kpiTiles(data, visibleView(data, { group: '', search: '' }))[3];
+    expect(tile).toMatchObject({ testId: 'kpi-values-to-check', value: '1', status: 'amber', href: '#env-row-NEXT_PUBLIC_SUPABASE_URL' });
+    expect(tile.sub).toBe('0 unrecognised switch values, 0 with spaces around, 1 Supabase address mismatch');
+
+    const both = payloadWith(rows, { rows: 2, set: 2, supabaseUrlMismatch: 1, surroundingWhitespace: 1 });
+    expect(kpiTiles(both, visibleView(both, { group: '', search: '' }))[3].value).toBe('2');
+
+    const none = payloadWith([], { supabaseUrlMismatch: 0 });
+    const quiet = kpiTiles(none, visibleView(none, { group: '', search: '' }))[3];
+    expect(quiet).toMatchObject({ value: '0', status: null, href: null });
+    expect(quiet.sub).toBe('0 unrecognised switch values, 0 with spaces around');
   });
 });

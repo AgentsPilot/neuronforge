@@ -146,18 +146,30 @@ export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProp
    */
   const describe = (meeting: PortalMeeting) => {
     if (meeting.meetingStatus === 'cancelled' || meeting.status === 'cancelled') {
-      return { label: t('cancelled'), Icon: X, spent: true };
+      return { label: t('cancelled'), Icon: X, spent: true, needsTime: false };
     }
     if (meeting.meetingStatus === 'no_show' || meeting.status === 'no_show') {
       // The business's word for this is "no-show". That is a judgement, and not
       // one to put in front of the client; what is true for both is that it did
       // not happen.
-      return { label: t('portal.missed'), Icon: X, spent: true };
+      /*
+       * ── IT IS NOT SPENT, AND IT MUST NOT LOOK LIKE A CANCELLATION ─────────
+       *
+       * This returned exactly what a cancellation returns: the same X, the
+       * same greyed-out row. Read as a client, those two say the same thing —
+       * "that one is over, nothing to do" — and for a missed session that is
+       * the opposite of true. The hour is still theirs and the business is
+       * waiting for them to say when.
+       *
+       * So it keeps its own tone and its own glyph. `spent: false` because the
+       * session is not used up; it is unplaced.
+       */
+      return { label: t('portal.missed'), Icon: CalendarClock, spent: false, needsTime: true };
     }
     if (meeting.held) {
-      return { label: t('portal.held'), Icon: CheckCheck, spent: true };
+      return { label: t('portal.held'), Icon: CheckCheck, spent: true, needsTime: false };
     }
-    return { label: null, Icon: CalendarClock, spent: false };
+    return { label: null, Icon: CalendarClock, spent: false, needsTime: false };
   };
 
   if (ordered.length === 0) return null;
@@ -199,7 +211,7 @@ export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProp
 
       <ul>
         {shown.map((meeting, index) => {
-          const { label, Icon, spent } = describe(meeting);
+          const { label, Icon, spent, needsTime } = describe(meeting);
 
           const body = (
             <>
@@ -207,8 +219,18 @@ export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProp
                 aria-hidden
                 className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
                 style={{
-                  background: meeting.upcoming ? 'var(--ap-brand-tint)' : 'var(--ap-surface-2)',
-                  color: meeting.upcoming ? 'var(--ap-brand)' : 'var(--ap-text-muted)',
+                  /* A missed session is the one row on this list waiting on the
+                     client, so it is the one row that is not grey. */
+                  background: needsTime
+                    ? 'var(--ap-warning-tint, rgba(217,119,6,0.14))'
+                    : meeting.upcoming
+                      ? 'var(--ap-brand-tint)'
+                      : 'var(--ap-surface-2)',
+                  color: needsTime
+                    ? 'var(--ap-warning, #D97706)'
+                    : meeting.upcoming
+                      ? 'var(--ap-brand)'
+                      : 'var(--ap-text-muted)',
                 }}
               >
                 <Icon className="h-3 w-3" />
@@ -219,7 +241,10 @@ export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProp
                   className="block truncate font-semibold"
                   style={{
                     color: spent ? 'var(--ap-text-muted)' : 'var(--ap-text)',
-                    textDecoration: meeting.status === 'cancelled' ? 'line-through' : undefined,
+                    /* Struck through only when it is OFF. A missed session is
+                       still a session, and striking it says otherwise. */
+                    textDecoration:
+                      meeting.status === 'cancelled' && !needsTime ? 'line-through' : undefined,
                   }}
                 >
                   <bdi>{meeting.serviceName || '—'}</bdi>

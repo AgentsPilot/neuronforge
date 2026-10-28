@@ -85,6 +85,28 @@ export interface BusinessOsCancelFacts {
   currentPeriodEnd: number | null;
 }
 
+/**
+ * P-8b.2 (Step B): one subscription on a Business OS plan price, as the nightly
+ * reconcile compares it with our billing record. Unix seconds. No customer
+ * data beyond ids.
+ */
+export interface BusinessOsReconcileSubscriptionFacts {
+  id: string;
+  status: Stripe.Subscription.Status;
+  customerId: string | null;
+  livemode: boolean;
+  cancelAtPeriodEnd: boolean;
+  endedAt: number | null;
+  /** The embedded items (first page only; a plan subscription has one item). */
+  items: BusinessOsSubscriptionItemFacts[];
+}
+
+/** P-8b.2: a bounded Stripe list. `complete: false` = the page cap was reached or a page gave no cursor. */
+export interface BusinessOsBoundedList<T> {
+  items: T[];
+  complete: boolean;
+}
+
 /** P-7a.2 (X-5): the portal locales the app sends. `he` is not one Stripe accepts; the caller sends `auto`. */
 export type BusinessOsPortalLocale = 'en' | 'es' | 'auto';
 
@@ -146,6 +168,21 @@ function isWholeMinor(value: unknown): value is number {
 
 function unixOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/**
+ * FU-P7a4-1 (SA R-2): Stripe's `cancellation_details.reason` values worth
+ * reporting, the same three the subscription mirror records. Anything else
+ * (absent, null, a value Stripe adds later) reads as null.
+ */
+export const BUSINESS_OS_CANCELLATION_REASONS = ['payment_failed', 'cancellation_requested', 'payment_disputed'] as const;
+export type BusinessOsCancellationReason = (typeof BUSINESS_OS_CANCELLATION_REASONS)[number];
+
+function cancellationReasonOf(subscription: Stripe.Subscription): BusinessOsCancellationReason | null {
+  const raw: unknown = subscription.cancellation_details?.reason ?? null;
+  return typeof raw === 'string' && (BUSINESS_OS_CANCELLATION_REASONS as readonly string[]).includes(raw)
+    ? (raw as BusinessOsCancellationReason)
+    : null;
 }
 
 function subscriptionItemFacts(item: Stripe.SubscriptionItem): BusinessOsSubscriptionItemFacts {
@@ -501,6 +538,82 @@ export class StripeService {
     return { subscriptions, complete: false };
   }
 
+  // ── Business OS nightly plan reconcile reads (plan payments P-8b.2, workplan §4.2, §5) ──
+  // Two Stripe-only READS for `planReconcilePass`: no database client, no
+  // write. Each pages at 100, stops after `maxPages` (10) and then answers
+  // `complete: false` with what it read, never a silent partial list. Platform
+  // account only: no `Stripe-Account` header is ever sent, so Connect events and
+  // subscriptions are never listed (SR-10).
+
+  /**
+   * The platform's events of the given types created at or after `createdGte`
+   * (unix seconds), as Stripe stores them. Stripe answers newest first; the
+   * caller orders them. Stripe keeps events for 30 days.
+   */
+  async listBusinessOsPlanEvents(params: {
+    createdGte: number;
+    types: readonly string[];
+    maxPages?: number;
+  }): Promise<BusinessOsBoundedList<Stripe.Event>> {
+    if (params.types.length === 0 || params.types.length > 20) {
+      throw new Error('listBusinessOsPlanEvents takes between one and twenty event types');
+    }
+    const maxPages = params.maxPages ?? 10;
+    const items: Stripe.Event[] = [];
+    let startingAfter: string | undefined;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const result = await this.stripe.events.list({
+        types: [...params.types],
+        created: { gte: params.createdGte },
+        limit: 100,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      items.push(...result.data);
+      if (!result.has_more) return { items, complete: true };
+      if (result.data.length === 0) return { items, complete: false };
+      startingAfter = result.data[result.data.length - 1].id;
+    }
+    return { items, complete: false };
+  }
+
+  /**
+   * The platform's subscriptions on one price that are not cancelled (Stripe's
+   * default when no `status` is given), with their embedded items.
+   */
+  async listBusinessOsSubscriptionsByPrice(
+    priceId: string,
+    options: { maxPages?: number } = {}
+  ): Promise<BusinessOsBoundedList<BusinessOsReconcileSubscriptionFacts>> {
+    const maxPages = options.maxPages ?? 10;
+    const items: BusinessOsReconcileSubscriptionFacts[] = [];
+    let startingAfter: string | undefined;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const result = await this.stripe.subscriptions.list({
+        price: priceId,
+        limit: 100,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      for (const subscription of result.data) {
+        const customer = subscription.customer;
+        items.push({
+          id: subscription.id,
+          status: subscription.status,
+          customerId: typeof customer === 'string' ? customer : customer?.id ?? null,
+          livemode: subscription.livemode,
+          cancelAtPeriodEnd: subscription.cancel_at_period_end,
+          endedAt: subscription.ended_at ?? null,
+          items: (subscription.items?.data ?? []).map(subscriptionItemFacts),
+        });
+      }
+      if (!result.has_more) return { items, complete: true };
+      if (result.data.length === 0) return { items, complete: false };
+      startingAfter = result.data[result.data.length - 1].id;
+    }
+    return { items, complete: false };
+  }
+
   /**
    * Open an EMBEDDED Stripe subscription checkout for one Business OS plan
    * price (SA-P8 card only, SA-P15 Adaptive Pricing off, SA-P14 expiry and
@@ -622,6 +735,13 @@ export class StripeService {
      */
     cancelAt?: number | null;
     endedAt: number | null;
+    /**
+     * FU-P7a4-1 (SA R-2): `cancellation_details.reason` from the SAME
+     * retrieve, kept to `BUSINESS_OS_CANCELLATION_REASONS`, else null. For the
+     * `bos_billing_paid_after_end` alert only; it decides nothing. Optional
+     * only so existing hand-built fakes stay valid; absent reads as null.
+     */
+    cancellationReason?: BusinessOsCancellationReason | null;
     livemode: boolean;
     metadata: Stripe.Metadata;
     priceIds: string[];
@@ -674,6 +794,7 @@ export class StripeService {
       cancelAtPeriodEnd: subscription.cancel_at_period_end,
       cancelAt: unixOrNull(subscription.cancel_at),
       endedAt: subscription.ended_at ?? null,
+      cancellationReason: cancellationReasonOf(subscription),
       livemode: subscription.livemode,
       metadata: subscription.metadata ?? {},
       priceIds,
@@ -724,6 +845,78 @@ export class StripeService {
       // On clover the period lives on the items; the latest end is when the plan stops.
       currentPeriodEnd: periodEnds.length > 0 ? Math.max(...periodEnds) : null,
     };
+  }
+
+  // ── Business OS immediate cancel during a failed payment (plan payments P-7a.4; workplan §4.3; SA C-11, TQ-12) ──
+  // Called ONLY by `planSubscriptionManage.ts` (pinned by
+  // oneDontRenewPath.guard.test.ts, D2 SA W-7). The caller passes ids from OUR
+  // billing row (the subscription) or from the open-invoice list of that same
+  // subscription, cross-checked; nothing here comes from a request.
+
+  /**
+   * End OUR row's subscription NOW: `subscriptions.cancel` with EXACTLY
+   * `{ invoice_now: false, prorate: false }` (TQ-12): no final invoice and no
+   * proration credit. No `cancellation_details` and nothing else (TL, agreed
+   * with the deletion session's SX-2b: Stripe then records
+   * `cancellation_details.reason = 'cancellation_requested'`, X-4 2026-10-27).
+   * The key is the caller's, fresh PER ATTEMPT (D2's pattern, SX C-4).
+   *
+   * X-4 (sandbox, 2026-10-27): the open renewal invoice stays `open` and
+   * payable (Stripe only stops its automatic retries); paying it afterwards
+   * succeeds and sends `invoice.paid`. So the caller voids it (C-11).
+   */
+  async cancelBusinessOsSubscriptionNow(subscriptionId: string, options: { idempotencyKey: string }): Promise<BusinessOsCancelFacts> {
+    const subscription = await this.stripe.subscriptions.cancel(
+      subscriptionId,
+      { invoice_now: false, prorate: false },
+      { idempotencyKey: options.idempotencyKey }
+    );
+    const customer = subscription.customer;
+    const periodEnds = (subscription.items?.data ?? [])
+      .map((item) => unixOrNull(item.current_period_end))
+      .filter((value): value is number => value !== null);
+    return {
+      id: subscription.id,
+      status: subscription.status,
+      customerId: typeof customer === 'string' ? customer : customer?.id ?? null,
+      livemode: subscription.livemode,
+      cancelAtPeriodEnd: subscription.cancel_at_period_end,
+      cancelAt: unixOrNull(subscription.cancel_at),
+      endedAt: unixOrNull(subscription.ended_at),
+      currentPeriodEnd: periodEnds.length > 0 ? Math.max(...periodEnds) : null,
+    };
+  }
+
+  /**
+   * The OPEN invoices of OUR row's subscription (C-11), facts only. One page
+   * of at most 20; `hasMore` lets the caller alert rather than guess.
+   */
+  async listBusinessOsOpenSubscriptionInvoices(subscriptionId: string): Promise<{
+    invoices: Array<{ id: string; status: string | null; customerId: string | null; subscriptionId: string | null; livemode: boolean }>;
+    hasMore: boolean;
+  }> {
+    const page = await this.stripe.invoices.list({ subscription: subscriptionId, status: 'open', limit: 20 });
+    return {
+      invoices: page.data.map((invoice) => ({
+        id: invoice.id ?? '',
+        status: invoice.status ?? null,
+        customerId: refId(invoice.customer),
+        subscriptionId: subscriptionIdFromInvoice(invoice),
+        livemode: invoice.livemode,
+      })),
+      hasMore: page.has_more,
+    };
+  }
+
+  /**
+   * Void one open invoice (C-11), so its hosted "Pay now" link can no longer
+   * be paid (X-4: "Voided invoices cannot be paid."). The key is the
+   * caller's, per attempt. A second void of the same invoice is refused by
+   * Stripe ("This invoice isn't open"), never a second write.
+   */
+  async voidBusinessOsInvoice(invoiceId: string, options: { idempotencyKey: string }): Promise<{ id: string; status: string | null }> {
+    const invoice = await this.stripe.invoices.voidInvoice(invoiceId, {}, { idempotencyKey: options.idempotencyKey });
+    return { id: invoice.id ?? '', status: invoice.status ?? null };
   }
 
   // ── Business OS card and invoices (plan payments P-7a.2, workplan §4.4, §4.5; SA C-6, TQ-6 to TQ-8) ──

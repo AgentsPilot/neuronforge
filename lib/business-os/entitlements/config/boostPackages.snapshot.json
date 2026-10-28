@@ -182,5 +182,189 @@
     },
     "retailVersion": 2,
     "creditValueVersion": 1
+  },
+  {
+    "id": "starter",
+    "version": 3,
+    "priceMinor": 1000,
+    "currency": "USD",
+    "taxExclusive": true,
+    "baseCredits": 2000,
+    "bonusCredits": 0,
+    "totalCredits": 2000,
+    "bonusPercent": 0,
+    "active": true,
+    "order": 1,
+    "labels": {
+      "name": {
+        "en": "Starter",
+        "he": "בסיסית",
+        "es": "Inicial"
+      },
+      "description": {
+        "en": "A one-off top-up of credits at the standard rate.",
+        "he": "טעינה חד-פעמית של קרדיטים במחיר הרגיל.",
+        "es": "Una recarga única de créditos a la tarifa estándar."
+      },
+      "badge": null
+    },
+    "retailVersion": 2,
+    "creditValueVersion": 1
+  },
+  {
+    "id": "plus",
+    "version": 3,
+    "priceMinor": 2500,
+    "currency": "USD",
+    "taxExclusive": true,
+    "baseCredits": 5000,
+    "bonusCredits": 500,
+    "totalCredits": 5500,
+    "bonusPercent": 10,
+    "active": true,
+    "order": 2,
+    "labels": {
+      "name": {
+        "en": "Plus",
+        "he": "מורחבת",
+        "es": "Plus"
+      },
+      "description": {
+        "en": "A one-off top-up of credits with a bonus.",
+        "he": "טעינה חד-פעמית של קרדיטים, עם בונוס.",
+        "es": "Una recarga única de créditos, con bonificación."
+      },
+      "badge": {
+        "en": "Most popular",
+        "he": "הפופולרית ביותר",
+        "es": "La más popular"
+      }
+    },
+    "retailVersion": 2,
+    "creditValueVersion": 1
+  },
+  {
+    "id": "max",
+    "version": 3,
+    "priceMinor": 5000,
+    "currency": "USD",
+    "taxExclusive": true,
+    "baseCredits": 10000,
+    "bonusCredits": 1500,
+    "totalCredits": 11500,
+    "bonusPercent": 15,
+    "active": true,
+    "order": 3,
+    "labels": {
+      "name": {
+        "en": "Max",
+        "he": "מקסימלית",
+        "es": "Max"
+      },
+      "description": {
+        "en": "A one-off top-up of credits with the largest bonus.",
+        "he": "טעינה חד-פעמית של קרדיטים, עם הבונוס הגדול ביותר.",
+        "es": "Una recarga única de créditos, con la mayor bonificación."
+      },
+      "badge": {
+        "en": "Best value",
+        "he": "המשתלמת ביותר",
+        "es": "Mejor valor"
+      }
+    },
+    "retailVersion": 2,
+    "creditValueVersion": 1
+  },
+  {
+    "id": "starter",
+    "version": 4,
+    "priceMinor": 1000,
+    "currency": "USD",
+    "taxExclusive": true,
+    "baseCredits": 2000,
+    "bonusCredits": 0,
+    "totalCredits": 2000,
+    "bonusPercent": 0,
+    "active": true,
+    "order": 1,
+    "labels": {
+      "name": {
+        "en": "Small",
+        "he": "קטנה",
+        "es": "Pequeña"
+      },
+      "description": {
+        "en": "A one-off top-up of credits at the standard rate.",
+        "he": "טעינה חד-פעמית של קרדיטים במחיר הרגיל.",
+        "es": "Una recarga única de créditos a la tarifa estándar."
+      },
+      "badge": null
+    },
+    "retailVersion": 2,
+    "creditValueVersion": 1
+  },
+  {
+    "id": "plus",
+    "version": 4,
+    "priceMinor": 2500,
+    "currency": "USD",
+    "taxExclusive": true,
+    "baseCredits": 5000,
+    "bonusCredits": 500,
+    "totalCredits": 5500,
+    "bonusPercent": 10,
+    "active": true,
+    "order": 2,
+    "labels": {
+      "name": {
+        "en": "Medium",
+        "he": "בינונית",
+        "es": "Mediana"
+      },
+      "description": {
+        "en": "A one-off top-up of credits with a bonus.",
+        "he": "טעינה חד-פעמית של קרדיטים, עם בונוס.",
+        "es": "Una recarga única de créditos, con bonificación."
+      },
+      "badge": {
+        "en": "Most popular",
+        "he": "הפופולרית ביותר",
+        "es": "La más popular"
+      }
+    },
+    "retailVersion": 2,
+    "creditValueVersion": 1
+  },
+  {
+    "id": "max",
+    "version": 4,
+    "priceMinor": 5000,
+    "currency": "USD",
+    "taxExclusive": true,
+    "baseCredits": 10000,
+    "bonusCredits": 1500,
+    "totalCredits": 11500,
+    "bonusPercent": 15,
+    "active": true,
+    "order": 3,
+    "labels": {
+      "name": {
+        "en": "Large",
+        "he": "גדולה",
+        "es": "Grande"
+      },
+      "description": {
+        "en": "A one-off top-up of credits with the largest bonus.",
+        "he": "טעינה חד-פעמית של קרדיטים, עם הבונוס הגדול ביותר.",
+        "es": "Una recarga única de créditos, con la mayor bonificación."
+      },
+      "badge": {
+        "en": "Best value",
+        "he": "המשתלמת ביותר",
+        "es": "Mejor valor"
+      }
+    },
+    "retailVersion": 2,
+    "creditValueVersion": 1
   }
 ]

@@ -472,6 +472,121 @@ export async function resolveRefundTargets(params: {
   }
 
   /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A FOURTH WAY: the id is a SESSION, and the money is on its PACKAGE.
+   *
+   * A package bought UPFRONT is one payment on the container and N sessions
+   * underneath it. The sessions carry no invoice and no transaction — by
+   * design, because nobody was billed per session — so every id above resolves
+   * to nothing and the dialog opens on "no payment recorded here", ₪0.00, with
+   * a dead refund button, over a payment sitting there succeeded in full.
+   *
+   * Reported from a live account: package `3af61374-…` paid ₪1,000 through
+   * `INV-00044`, refundable from the invoice and from the container and from
+   * neither of its four sessions.
+   *
+   * ── WHY THIS IS SAFE FOR THE OTHER PACKAGE TYPE ──
+   *
+   * Only when the id resolved to NO invoice of its own. A package billed per
+   * session gives each session its own invoice, and that invoice is found
+   * above — so those refund exactly as they did, against the session and not
+   * against the block. This fallback can only fire where the alternative is
+   * nothing at all.
+   *
+   * It does not repair the link, because there is no link to repair: the
+   * session genuinely has no money of its own. It reads the one the meeting
+   * already holds.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  let containerId: string | null = null;
+
+  if (bookingId && !invoiceId && invoiceIds.length === 0 && pointedAt.length === 0) {
+    const { data: meeting } = await supabaseServer
+      .from('scheduling_meetings')
+      .select('booking_id')
+      .eq('id', bookingId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const container = meeting?.booking_id as string | null | undefined;
+
+    if (container) {
+      containerId = container;
+
+      const { data: invoices } = await supabaseServer
+        .from('payment_invoices')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('booking_id', container);
+
+      invoiceIds.push(...(invoices ?? []).map(row => row.id as string));
+
+      /* And the pointer the container holds, for a package bought through
+         checkout — the same third way, one level up. */
+      const { data: containerBooking } = await supabaseServer
+        .from('scheduling_bookings')
+        .select('payment_id')
+        .eq('id', container)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      const paymentId = containerBooking?.payment_id as string | null | undefined;
+      if (paymentId) pointedAt.push(paymentId);
+    }
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A FIFTH WAY: the id is the QUOTE'S OWN BOOKING, and the money is on what
+   * accepting it created.
+   *
+   * A quote is raised against an appointment. Accepting it raises an INVOICE
+   * and, for a package, a CONTAINER booking — and the money lands on those.
+   * The quote's own booking keeps none of it, so "Manage payment" on the quote
+   * card resolved to nothing while the card beside it read "₪1,000 collected,
+   * ₪0 outstanding, paid".
+   *
+   * Measured on the reporting account: three accepted upfront quotes, ₪1,000,
+   * ₪950 and ₪700, every one of them refundable from its package and from its
+   * invoice and from NONE of its quote bookings. The dialog opened on the
+   * amount the card knew, the preflight answered, and the figure collapsed to
+   * ₪0.00 a second later.
+   *
+   * Both links are followed because they answer in different cases: a quote
+   * for a single appointment has `created_invoice_id` and no package; a
+   * package quote has both, and its container may also hold a checkout
+   * payment that no invoice covers.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (bookingId && !invoiceId && invoiceIds.length === 0 && pointedAt.length === 0) {
+    const { data: quotes } = await supabaseServer
+      .from('proposals')
+      .select('created_invoice_id, package_booking_id')
+      .eq('user_id', userId)
+      .eq('booking_id', bookingId);
+
+    for (const quote of quotes ?? []) {
+      const invoiceFromQuote = quote.created_invoice_id as string | null;
+      if (invoiceFromQuote) invoiceIds.push(invoiceFromQuote);
+
+      const packageBooking = quote.package_booking_id as string | null;
+      if (!packageBooking) continue;
+
+      /* The container the acceptance created: its own invoices, and the
+         transaction link one level up — the fourth way, reached from here. */
+      containerId = packageBooking;
+
+      const { data: packageInvoices } = await supabaseServer
+        .from('payment_invoices')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('booking_id', packageBooking);
+
+      invoiceIds.push(...(packageInvoices ?? []).map(row => row.id as string));
+    }
+  }
+
+  /*
    * Newest first, and newest is not arbitrary: refunding a plan from the last
    * period backwards means a run that stops halfway has returned the money the
    * client has least benefit from, and leaves the earliest periods — the ones
@@ -490,6 +605,19 @@ export async function resolveRefundTargets(params: {
         .select('id, created_at')
         .eq('user_id', userId)
         .eq('booking_id', bookingId)
+        .in('status', ['succeeded', 'refunded'])
+    );
+  }
+
+  /* The same link one level up, for a package whose payment was written
+     against the container rather than invoiced — see the fourth way above. */
+  if (containerId) {
+    queries.push(
+      supabaseServer
+        .from('payment_transactions')
+        .select('id, created_at')
+        .eq('user_id', userId)
+        .eq('booking_id', containerId)
         .in('status', ['succeeded', 'refunded'])
     );
   }

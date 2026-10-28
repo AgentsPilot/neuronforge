@@ -57,6 +57,11 @@ const INVITES = '@/lib/repositories/BusinessOsInviteRepository';
 // the admin test-clock use case reads and resets the target account's
 // test-mode billing row and reads its plan row for the status action.
 const ACCOUNT_PLANS = '@/lib/repositories/BusinessOsAccountPlanRepository';
+// P-8b.2 (workplan BUSINESS_OS_PLAN_PAYMENTS_P8B_WORKPLAN.md §4.2; SA rulings 2, 9): the
+// nightly plan pass's wiring leases events through the claim table, reads its
+// own read-only repository, and reads plan rows. The pass itself imports none.
+const WEBHOOK_CLAIMS = '@/lib/repositories/ProcessedWebhookEventRepository';
+const PLAN_RECONCILE_READS = '@/lib/repositories/PlanReconcileReadRepository';
 const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   'businessOsStripeCustomer.ts': [BILLING_ACCOUNTS],
   'planCheckout.ts': [BILLING_ACCOUNTS],
@@ -86,6 +91,12 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   // P-6a.2 (workplan §5.6, SA C-13): the owner banner reads the SESSION
   // account's billing row for the current mode (findByUser only).
   'readPaymentNotice.ts': [BILLING_ACCOUNTS],
+  // D3.1 (account deletion lifecycle SX-2b; DELETE-owned file, SA S-9): the after-plan
+  // move's production wiring reads the plan row and writes the move
+  // (findAfterPlanMoveInputs, applyAfterPlanMove). Its use case, afterPlanMove.ts, names
+  // no repository. Added at the end, existing order kept; reviewed by PLAN PAYMENTS with T-8.
+  'afterPlanMoveDeps.ts': [ACCOUNT_PLANS],
+  'planReconcileDeps.ts': [WEBHOOK_CLAIMS, PLAN_RECONCILE_READS, ACCOUNT_PLANS],
 };
 const BILLING_REPOSITORY_CALLERS = Object.keys(BILLING_REPOSITORY_IMPORTS);
 
@@ -288,7 +299,8 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
       }
     });
     expect(classMentions).toEqual([]);
-    for (const method of ['findClaim', 'reclaimFailed', 'insertClaim', 'markFailed']) {
+    // P-8b.1 (SA ruling 2): the stale-claim reclaim joins the claim methods POST calls exactly once.
+    for (const method of ['findClaim', 'reclaimStale', 'reclaimFailed', 'insertClaim', 'markFailed']) {
       expect(methodCallsTo(post!, 'processedWebhookEventRepository', method)).toHaveLength(1);
     }
   });
@@ -723,6 +735,14 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     { fn: 'handleCheckoutCompleted', call: 'pilotCreditsToTokens', argument: 1 },
     { fn: 'handleCheckoutCompleted', call: 'new QuotaAllocationService', argument: 0 },
     { fn: 'accountOwner', call: 'resolveAccountOwner', argument: 0 },
+    /*
+     * Confirming the package an invoice paid for. Two paths through
+     * `handleConnectInvoicePaid` need it — the one that records the payment,
+     * and the one that finds it already recorded — so the client lives in one
+     * wrapper and the call sites pass none. That is the shape this list exists
+     * to describe, and it keeps the exactly-once check below meaningful.
+     */
+    { fn: 'confirmPackageForInvoice', call: 'confirmPackageOnPayment', argument: 0 },
   ];
 
   /** Every rule-1 offence in a parsed file (the route, or a negative-control snippet). */
@@ -1060,8 +1080,12 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
       }
     };
     for (const dir of ['app', 'lib', 'components', 'hooks']) scan(path.join(ROOT, dir));
+    // P-8b.2 (SA rulings 2, 13): the nightly plan pass's wiring calls the SAME dispatcher to
+    // classify an event before it replays it. It is not a second endpoint: it lists Stripe's
+    // events and replays only `plan` ones, through the same claim table and plan handler.
     expect(offenders.sort()).toEqual([
       'app/api/stripe/webhook/route.ts',
+      'lib/business-os/billing/planReconcileDeps.ts',
       'lib/business-os/billing/webhookDispatcher.ts',
     ]);
   });

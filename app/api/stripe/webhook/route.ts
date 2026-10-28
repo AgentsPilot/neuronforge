@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { processedWebhookEventRepository } from '@/lib/repositories/ProcessedWebhookEventRepository';
+import { processedWebhookEventRepository, STALE_CLAIM_AGE_MS } from '@/lib/repositories/ProcessedWebhookEventRepository';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
 import { QuotaAllocationService } from '@/lib/services/QuotaAllocationService';
@@ -1340,6 +1340,29 @@ async function accountOwner(connectAccountId: string, log: Logger): Promise<stri
   return owner;
 }
 
+/**
+ * Confirm the package an invoice paid for, if it paid for one.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Two paths through `handleConnectInvoicePaid` need this — the one that records
+ * the payment, and the one that finds it already recorded — and CLAUDE.md rule
+ * 1 says the route holds no client except as a helper's argument. One wrapper
+ * keeps the client in a single place and the call sites free of it, which is
+ * also what `routerPlacement` checks: the allowed use must exist exactly once.
+ *
+ * Never throws. A package that could not be confirmed is logged and the
+ * webhook answers normally — Stripe retries a 500 into a handler that has
+ * already done its work.
+ */
+async function confirmPackageForInvoice(invoiceId: string, log: Logger): Promise<void> {
+  try {
+    const { confirmPackageOnPayment } = await import('@/lib/payments/confirmPackageOnPayment');
+    await confirmPackageOnPayment(supabaseServer, invoiceId, new Date().toISOString());
+  } catch (err) {
+    log.error({ err, invoiceId }, 'Invoice paid but a package it may have paid for was not confirmed');
+  }
+}
+
 async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountId: string, log: Logger) {
   log.info({ stripeInvoiceId: invoice.id, connectAccountId }, 'Processing Connect invoice.paid');
   // Keys only: Connect invoice metadata is written by the connected business
@@ -1571,6 +1594,40 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
       { invoiceId: platformInvoice.id, invoiceNumber: platformInvoice.invoice_number },
       'Payment already recorded for invoice'
     );
+
+    /*
+     * ── ALREADY RECORDED IS NOT ALREADY FINISHED ────────────────────────────
+     *
+     * The guard above is right about the thing it exists for: Stripe delivers
+     * `invoice.paid` more than once and a retry must not double the revenue.
+     * It was wrong about everything BELOW it, which it also skipped — the
+     * booking update and, with it, confirming the package this invoice paid
+     * for.
+     *
+     * And it is not a rare race. Stripe sends `payment_intent.succeeded`,
+     * `charge.succeeded` and `invoice.paid` together — observed arriving
+     * inside the same second — and the payment-intent handler records the
+     * transaction first. So on a package paid by card, `invoice.paid`
+     * ROUTINELY finds a transaction already there and returns, every time.
+     *
+     * The cost is specific: a package container stays `pending`, and the
+     * public reschedule route refuses anything whose booking is not
+     * `confirmed`. Three containers on this account were left that way —
+     * every one of them paid in full, every one of them unable to move a
+     * session. `INV-00042` is the measured case: paid 23:01:55, transaction
+     * 23:01:56, and the booking written at 23:01:57 by the payment-status
+     * writer alone.
+     *
+     * So the early return now means "do not record a second payment", not "do
+     * not finish the job". `confirmPackageOnPayment` filters on
+     * `status = 'pending'`, so a container already confirmed is untouched, and
+     * it answers nothing for every invoice that did not pay for a package.
+     *
+     * This is the same correction made to `settleInvoicePaid`, which carried
+     * the identical guard with the identical blind spot.
+     */
+    await confirmPackageForInvoice(platformInvoice.id, log);
+
     return;
   }
 
@@ -1742,6 +1799,36 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     } else {
       log.info({ bookingId: platformInvoice.booking_id }, 'Booking payment status updated to paid');
     }
+
+    /*
+     * ── AND A PACKAGE IS CONFIRMED, NOT MERELY MARKED PAID ──────────────────
+     *
+     * `markPaidUnscoped` writes `payment_status` and nothing else. Every other
+     * way an invoice settles runs through `settleInvoicePaid`, which finishes
+     * the job — this handler records the payment itself (see the receipt note
+     * below for why) and so finished only half of it.
+     *
+     * For a PACKAGE that half is the important one. The container's `status`
+     * is what says the block is agreed and under way, and the public
+     * reschedule route refuses anything whose booking is not `confirmed`. So a
+     * client who had paid in full for three sessions was told "This booking is
+     * no longer open for changes" on every one of them, while the invoice
+     * beside it read `paid`.
+     *
+     * Measured on INV-00041 ($700, three sessions, paid 2026-10-27 20:54):
+     * invoice `paid`, booking `payment_status: paid`, container still
+     * `pending`. The update that would have fixed it sets `status` and
+     * `payment_status` TOGETHER, which is how we know it never ran.
+     *
+     * Idempotent and non-fatal, like the same call inside `settleInvoicePaid`:
+     * it filters on `status = 'pending'`, so a container already confirmed is
+     * untouched, and it answers "nothing to do" for every invoice that did not
+     * pay for a package — which is most of them.
+     *
+     * It also sends the one email naming all the dates, which this path has
+     * never sent for a package.
+     */
+    await confirmPackageForInvoice(platformInvoice.id, log);
   } else {
     /*
      * ───────────────────────────────────────────────────────────────────────
@@ -2639,12 +2726,28 @@ export async function POST(request: NextRequest) {
     }
 
     if (existingEvent?.status === 'processing') {
-      // Another delivery of the same event is in flight right now.
-      log.info('Event is being processed by another request, skipping');
-      return NextResponse.json({ received: true, duplicate: true });
-    }
-
-    if (existingEvent) {
+      // Either another delivery is in flight right now, or an earlier attempt
+      // died holding the claim (killed at maxDuration, or its release write
+      // failed) and the row would otherwise answer "duplicate" for ever (PF-5).
+      // A claim older than STALE_CLAIM_AGE_MS cannot still be running, so one
+      // conditional UPDATE takes it back; of two racing deliveries exactly one
+      // wins (plan payments P-8b.1, SA-P4 part 1). Every event, Connect
+      // included: this protects client money too (SA ruling 1).
+      const { data: reclaim, error: reclaimError } = await processedWebhookEventRepository.reclaimStale(
+        event.id,
+        new Date(Date.now() - STALE_CLAIM_AGE_MS).toISOString()
+      );
+      if (reclaimError) {
+        // Never process without a claim: answer as before.
+        log.error({ err: reclaimError }, 'Could not check a processing claim for staleness');
+      }
+      if (!reclaim?.won) {
+        log.info('Event is being processed by another request, skipping');
+        return NextResponse.json({ received: true, duplicate: true });
+      }
+      log.warn({ event: 'bos_webhook_stale_claim_reclaimed' }, 'Stale processing claim taken back; processing the event');
+      processedEventId = event.id;
+    } else if (existingEvent) {
       // A previous attempt failed. Claim it for this attempt.
       log.info('Retrying previously failed event');
       await processedWebhookEventRepository.reclaimFailed(event.id);

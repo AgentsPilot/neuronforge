@@ -11,10 +11,12 @@
  *      retirement does not count).
  *   2. The JSON route and the old helper do not exist.
  *   3. Each of the four entry files imports DownloadMyDataButton, renders it,
- *      and has no fetch to an export path, no `export_success` /
- *      `export_error` key and no `downloadUserDataExport`.
+ *      and has no fetch to an export path (the ZIP routes or, from MX-1b, the
+ *      module export route), no `export_success` / `export_error` key and no
+ *      `downloadUserDataExport`.
  *   4. Outside app/api/, only lib/client/businessOsDataExport.ts names
- *      `/api/business-os/data-exports` (one client seam).
+ *      `/api/business-os/data-exports` or, from MX-1b (SA C-5),
+ *      `/api/business-os/export-requests` (one client seam).
  *   5. EXPORT_LIMITS has no JSON_BODY_MAX_BYTES (C-11 done).
  */
 
@@ -77,15 +79,17 @@ export function entryFileProblems({ source }: Source): string[] {
   }
   if (!/<DownloadMyDataButton\b/.test(code)) problems.push('does not render DownloadMyDataButton');
   if (/fetch\(\s*[`'"][^`'"]*data-export/.test(code)) problems.push('fetches an export path itself');
+  // MX-1b (SA C-5): the module export route is an export path too.
+  if (/fetch\(\s*[`'"][^`'"]*export-requests/.test(code)) problems.push('fetches the module export route itself');
   if (/export_success|export_error/.test(code)) problems.push('has its own export message key');
   if (/\bdownloadUserDataExport\b/.test(code)) problems.push('uses the retired helper');
   return problems;
 }
 
-/** Check 4. */
+/** Check 4: the ZIP routes and, from MX-1b (SA C-5), the module export route. */
 export function namesZipRouteOutsideSeam({ file, source }: Source): boolean {
   if (file === CLIENT_SEAM || file.startsWith('app/api/')) return false;
-  return /\/api\/business-os\/data-exports\b/.test(codeOf(source));
+  return /\/api\/business-os\/(data-exports|export-requests)\b/.test(codeOf(source));
 }
 
 const files: Source[] = SCAN_DIRS.filter((dir) => existsSync(join(ROOT, dir)))
@@ -113,10 +117,12 @@ describe('one "Download my data" control (DE-9)', () => {
     expect(entryFileProblems(entry!)).toEqual([]);
   });
 
-  it('4. outside app/api/, only the client seam names the zip routes', () => {
+  it('4. outside app/api/, only the client seam names the export routes (ZIP and module export)', () => {
     expect(files.filter(namesZipRouteOutsideSeam).map((f) => f.file)).toEqual([]);
-    // Non-vacuity: the seam itself does name them.
-    expect(codeOf(files.find((f) => f.file === CLIENT_SEAM)!.source)).toMatch(/\/api\/business-os\/data-exports/);
+    // Non-vacuity: the seam itself does name them, the ZIP routes and the module export route.
+    const seam = codeOf(files.find((f) => f.file === CLIENT_SEAM)!.source);
+    expect(seam).toMatch(/\/api\/business-os\/data-exports/);
+    expect(seam).toMatch(/\/api\/business-os\/export-requests/);
   });
 
   it('5. EXPORT_LIMITS has no JSON body cap (C-11)', () => {
@@ -149,6 +155,13 @@ describe('the guards themselves (negative controls)', () => {
       'does not render DownloadMyDataButton',
     ]);
     expect(entryFileProblems({ file: 'e.tsx', source: `${clean}fetch('/api/business-os/data-exports');` })).toContain('fetches an export path itself');
+    // MX-1b (SA C-5): the module export route, LF and CRLF.
+    expect(entryFileProblems({ file: 'e.tsx', source: `${clean}fetch('/api/business-os/export-requests', { method: 'POST' });` })).toContain(
+      'fetches the module export route itself'
+    );
+    expect(entryFileProblems({ file: 'e.tsx', source: crlf(`${clean}await fetch(\`/api/business-os/export-requests\`);\n`) })).toContain(
+      'fetches the module export route itself'
+    );
     expect(entryFileProblems({ file: 'e.tsx', source: `${clean}t('settings.security.export_success');` })).toContain('has its own export message key');
     expect(entryFileProblems({ file: 'e.tsx', source: `${clean}await downloadUserDataExport();` })).toContain('uses the retired helper');
   });
@@ -160,6 +173,15 @@ describe('the guards themselves (negative controls)', () => {
     expect(namesZipRouteOutsideSeam({ file: CLIENT_SEAM, source: planted })).toBe(false);
     expect(namesZipRouteOutsideSeam({ file: 'app/api/business-os/data-exports/route.ts', source: planted })).toBe(false);
     expect(namesZipRouteOutsideSeam({ file: 'components/other/Doc.tsx', source: '// calls /api/business-os/data-exports' })).toBe(false);
+  });
+
+  it('4 also flags a second client naming the module export route (MX-1b, SA C-5), LF and CRLF', () => {
+    const planted = "await fetch('/api/business-os/export-requests', { method: 'POST' });";
+    expect(namesZipRouteOutsideSeam({ file: 'components/business-os/data-export/ExportDrawer.tsx', source: planted })).toBe(true);
+    expect(namesZipRouteOutsideSeam({ file: 'hooks/useExport.ts', source: crlf(`x\n${planted}\n`) })).toBe(true);
+    expect(namesZipRouteOutsideSeam({ file: CLIENT_SEAM, source: planted })).toBe(false);
+    expect(namesZipRouteOutsideSeam({ file: 'app/api/business-os/export-requests/route.ts', source: planted })).toBe(false);
+    expect(namesZipRouteOutsideSeam({ file: 'components/other/Doc.tsx', source: ' * calls /api/business-os/export-requests' })).toBe(false);
   });
 
   it('codeOf keeps a URL after `//` and drops whole-line comments', () => {

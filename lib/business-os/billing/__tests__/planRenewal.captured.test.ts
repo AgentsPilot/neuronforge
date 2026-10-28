@@ -221,6 +221,8 @@ function harness(world: World, subscriptionNow: () => Stripe.Subscription | null
     recordPlanChange: jest.fn(async (input: RecordPlanChangeInput) => {
       world.audits.push(input);
     }),
+    // D3.1 (SX-2b): the after-plan move port, a stub (its own suite is afterPlanMove.test.ts).
+    afterPlanMove: jest.fn(async () => undefined),
     now: () => new Date('2026-10-15T09:00:00.000Z'),
   };
   return { deps, ports, retrieve };
@@ -305,6 +307,8 @@ describe('X-1 to X-4: a renewal paid, failed, recovered, then given up by Stripe
     expect(world.audits.filter((a) => a.action === 'BOS_BILLING_SUBSCRIPTION_ENDED')).toEqual([
       expect.objectContaining({ severity: 'info', details: expect.objectContaining({ cancellationReason: 'payment_failed' }) }),
     ]);
+    // D3.1: the captured Stripe give-up hands the after-plan port `payment_failed`, which never moves (today's path).
+    expect(deps.afterPlanMove).toHaveBeenCalledWith(expect.objectContaining({ cancellationReason: 'payment_failed', stripeEventId: x4Deleted.id }), expect.anything());
     // The owner reads "ended" while paused; a Founding Partner whose free access resumed reads nothing (AC-F6.5).
     expect(noticeFor(world, 'paused')).toEqual({ kind: 'ended', tier: BASIC, endedAt: world.billing.endedAt });
     expect(noticeFor(world, 'champion')).toBeNull();

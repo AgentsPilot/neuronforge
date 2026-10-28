@@ -25,6 +25,8 @@ import type {
   EnvironmentViewPayload,
   EnvRow,
   EnvScope,
+  EnvSupabaseProject,
+  EnvSupabaseRole,
 } from '@/lib/admin/environment-types';
 
 export interface ChipWords {
@@ -152,6 +154,21 @@ function isDiagnostics(value: unknown): boolean {
   );
 }
 
+/** EC-6 (SA-L5): absent, or a closed `kind`; a known project has a 1 to 60 character label and a role with words. */
+function isSupabaseProject(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isObject(value)) return false;
+  if (value.kind === 'unknown') return true;
+  if (value.kind !== 'known') return false;
+  return (
+    typeof value.label === 'string' &&
+    value.label.length >= 1 &&
+    value.label.length <= SUPABASE_LABEL_MAX &&
+    typeof value.role === 'string' &&
+    Object.prototype.hasOwnProperty.call(SUPABASE_ROLE_WORDS, value.role)
+  );
+}
+
 function isRow(value: unknown): boolean {
   return (
     isObject(value) &&
@@ -160,7 +177,8 @@ function isRow(value: unknown): boolean {
     (value.scope === 'server' || value.scope === 'browser-inlined') &&
     (value.seeAlsoPath === undefined || typeof value.seeAlsoPath === 'string') &&
     isDisplay(value.display) &&
-    isDiagnostics(value.diagnostics)
+    isDiagnostics(value.diagnostics) &&
+    isSupabaseProject(value.supabaseProject)
   );
 }
 
@@ -170,9 +188,16 @@ const isCountOrNull = (value: unknown) => value === null || isCount(value);
 function isCounts(value: unknown): boolean {
   return (
     isObject(value) &&
-    ['rows', 'set', 'notSet', 'uncategorised', 'platformHidden', 'unrecognisedFlags', 'surroundingWhitespace'].every((key) =>
-      isCount(value[key])
-    ) &&
+    [
+      'rows',
+      'set',
+      'notSet',
+      'uncategorised',
+      'platformHidden',
+      'unrecognisedFlags',
+      'surroundingWhitespace',
+      'supabaseUrlMismatch',
+    ].every((key) => isCount(value[key])) &&
     // SA Q4-8: only these two may be null (not checked).
     isCountOrNull(value.requiredNotSet) &&
     isCountOrNull(value.shouldNotBeSet)
@@ -226,17 +251,51 @@ export const DIAGNOSTIC_WORDS: Readonly<Record<EnvDiagnostic, DiagnosticWords>> 
     text: 'Spaces or line breaks around the value',
     detail: 'Code that does not trim them reads a different value.',
   },
+  // SA-L6: an address, not "a different project": two custom domains raise it too.
+  'supabase-url-mismatch': { text: 'Not the same address as the other Supabase URL', detail: null },
 };
+
+// ── EC-6: the Supabase project label (SA OQ-1, OQ-3, SA-L5) ──
+
+/**
+ * Words for each project role. Keyed by the closed union, so a new role fails
+ * to compile until it has words (and the payload guard refuses any role that
+ * is not a key here).
+ */
+export const SUPABASE_ROLE_WORDS: Readonly<Record<EnvSupabaseRole, string>> = {
+  'development-staging': 'Development and staging',
+  production: 'Production',
+};
+
+/** SA-L5: the longest project label the page accepts. */
+export const SUPABASE_LABEL_MAX = 60;
+
+/** OQ-3: neutral, muted text, not a diagnostic. */
+export const UNKNOWN_PROJECT_WORDS = 'Unknown project';
+
+/** How the project reads in the value cell: our label (if known), then muted words. */
+export interface ProjectWords {
+  label: string | null;
+  muted: string;
+}
+
+export function projectWords(project: EnvSupabaseProject | undefined): ProjectWords | null {
+  if (!project) return null;
+  if (project.kind === 'known') return { label: project.label, muted: SUPABASE_ROLE_WORDS[project.role] };
+  return { label: null, muted: UNKNOWN_PROJECT_WORDS };
+}
 
 const WARN = 'warn' as const;
 
 /** The value cell, with the EC-4 emphasis applied (all amber chips carry words and the warn icon). */
 export interface RowValueWords extends ValueWords {
+  /** EC-6: the project label after the shown origin; null when there is none. */
+  project: ProjectWords | null;
   /** Amber chips after the value, in the row's code order. */
   warnings: Array<{ code: EnvDiagnostic; chip: ChipWords; detail: string | null }>;
 }
 
-export function rowValueWords(row: Pick<EnvRow, 'display' | 'diagnostics'>): RowValueWords {
+export function rowValueWords(row: Pick<EnvRow, 'display' | 'diagnostics' | 'supabaseProject'>): RowValueWords {
   const base = describeDisplay(row.display);
   let chip = base.chip;
   let note = base.note;
@@ -257,7 +316,9 @@ export function rowValueWords(row: Pick<EnvRow, 'display' | 'diagnostics'>): Row
     }
     warnings.push({ code, chip: { text: words.text, tone: WARN }, detail: words.detail });
   }
-  return { chip, mono: base.mono, note, warnings };
+  // SA-L1: a label only ever sits beside a shown origin.
+  const project = base.mono !== null ? projectWords(row.supabaseProject) : null;
+  return { chip, mono: base.mono, note, project, warnings };
 }
 
 // Filters (FR-21). The group id list is typed against the union, so a new group fails to compile here.
@@ -367,7 +428,12 @@ function expectationTile(
 /** FR-20: the five tiles, from the server's counts only (K-5). Values are whole-payload figures (K-8). */
 export function kpiTiles(data: EnvironmentViewPayload, view: VisibleView): KpiTileModel[] {
   const { counts } = data;
-  const valueChecks = counts.unrecognisedFlags + counts.surroundingWhitespace;
+  const valueChecks = counts.unrecognisedFlags + counts.surroundingWhitespace + counts.supabaseUrlMismatch;
+  // OQ-4: the mismatch joins the sub-line only when there is one.
+  const mismatchWords =
+    counts.supabaseUrlMismatch > 0
+      ? `, ${formatCount(counts.supabaseUrlMismatch)} Supabase address ${counts.supabaseUrlMismatch === 1 ? 'mismatch' : 'mismatches'}`
+      : '';
   return [
     { testId: 'kpi-set', label: 'Set', value: formatCount(counts.set), sub: `of ${formatCount(counts.rows)} listed`, status: null, href: null },
     expectationTile('kpi-required-not-set', 'Required, not set', counts.requiredNotSet, 'required-not-set', view),
@@ -376,9 +442,9 @@ export function kpiTiles(data: EnvironmentViewPayload, view: VisibleView): KpiTi
       testId: 'kpi-values-to-check',
       label: 'Values to check',
       value: formatCount(valueChecks),
-      sub: `${formatCount(counts.unrecognisedFlags)} unrecognised switch ${counts.unrecognisedFlags === 1 ? 'value' : 'values'}, ${formatCount(counts.surroundingWhitespace)} with spaces around`,
+      sub: `${formatCount(counts.unrecognisedFlags)} unrecognised switch ${counts.unrecognisedFlags === 1 ? 'value' : 'values'}, ${formatCount(counts.surroundingWhitespace)} with spaces around${mismatchWords}`,
       status: valueChecks > 0 ? 'amber' : null,
-      href: valueChecks > 0 ? firstVisible(view, ['unrecognised-flag', 'surrounding-whitespace']) : null,
+      href: valueChecks > 0 ? firstVisible(view, ['unrecognised-flag', 'surrounding-whitespace', 'supabase-url-mismatch']) : null,
     },
     {
       testId: 'kpi-uncategorised',

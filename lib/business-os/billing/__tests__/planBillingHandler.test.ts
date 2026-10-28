@@ -24,6 +24,17 @@ jest.mock('@/lib/business-os/billing/planCheckoutSessionEvents', () => ({
 jest.mock('@/lib/business-os/billing/planSubscriptionMirror', () => ({
   mirrorPlanSubscription: (...args: unknown[]) => mockMirror(...args),
 }));
+// D3.1 (SX-2b): the production after-plan move port, a sentinel so the
+// production handler's ports can be inspected without reaching the plan table.
+const mockAfterPlanMove = jest.fn();
+jest.mock('@/lib/business-os/billing/afterPlanMoveDeps', () => ({
+  afterPlanMove: (...args: unknown[]) => mockAfterPlanMove(...args),
+}));
+// The production handler reads the server key mode; pinned to test here.
+jest.mock('@/lib/business-os/billing/stripeMode', () => ({
+  ...jest.requireActual('@/lib/business-os/billing/stripeMode'),
+  currentStripeMode: () => 'test',
+}));
 jest.mock('@/lib/logger', () => {
   const make = (): Record<string, unknown> => {
     const logger: Record<string, unknown> = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
@@ -73,7 +84,7 @@ const event = (type: string, livemode = false) =>
   ({ id: 'evt_H1', type, livemode, data: { object: { id: 'x' } } }) as unknown as Stripe.Event;
 
 beforeEach(() => {
-  for (const mock of [mockApplyPaid, mockRecordFailed, mockRecordActionRequired, mockSessionCompleted, mockSessionExpired, mockMirror]) {
+  for (const mock of [mockApplyPaid, mockRecordFailed, mockRecordActionRequired, mockSessionCompleted, mockSessionExpired, mockMirror, mockAfterPlanMove]) {
     mock.mockReset();
     mock.mockResolvedValue(undefined);
   }
@@ -147,5 +158,25 @@ describe('one use case per event type', () => {
 describe('the production handler', () => {
   it('is exported for the route registration', () => {
     expect(typeof handlePlanBillingEvent).toBe('function');
+  });
+
+  it('D3.1: its ports include the after-plan move, handed to the mirror (not called by the handler itself)', async () => {
+    const h = harness();
+    await handlePlanBillingEvent(event('customer.subscription.deleted'), h.log);
+    expect(mockMirror).toHaveBeenCalledTimes(1);
+    const ports = mockMirror.mock.calls[0][2] as PlanBillingHandlerDeps;
+    expect(typeof ports.afterPlanMove).toBe('function');
+    expect(mockAfterPlanMove).not.toHaveBeenCalled();
+    const input = { accountId: 'a', subscriptionId: 'sub_1', livemode: false, stripeEventId: 'evt_1', endedAt: null, cancellationReason: null };
+    await ports.afterPlanMove(input, h.log);
+    expect(mockAfterPlanMove).toHaveBeenCalledWith(input, h.log);
+  });
+
+  it('D3.1: PF-15 still first: an event from the other mode reaches neither the mirror nor the move', async () => {
+    const h = harness();
+    await expect(handlePlanBillingEvent(event('customer.subscription.deleted', true), h.log)).resolves.toBeUndefined();
+    expect(mockMirror).not.toHaveBeenCalled();
+    expect(mockAfterPlanMove).not.toHaveBeenCalled();
+    expect(h.lines.find((l) => l.ctx.event === 'bos_billing_mode_mismatch')).toMatchObject({ level: 'error', ctx: { alert: true } });
   });
 });

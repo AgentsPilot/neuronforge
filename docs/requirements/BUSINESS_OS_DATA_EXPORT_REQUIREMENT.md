@@ -92,7 +92,7 @@ Grep of `from('plugin_connections')` / `from("plugin_connections")` across `app/
 | S3 | `app/api/plugin-connections/disconnect/route.ts` L53 (V1, deprecated) | `authenticated` | UPDATE | `disconnected_at` | no UI caller | keep; covered |
 | S4 | `app/oauth/[plugin]/start` → V1 `chatgptResearchStrategy.connect` | `authenticated` | UPSERT | tokens (`'platform-key'`) | no UI caller; V1 deprecated | none — fails closed; QA notes it |
 
-**Writers of real tokens are server-side with the service role:** V2 OAuth callback `app/oauth/callback/[plugin]` → `UserPluginConnections` → `PluginConnectionRepository.upsert`; `app/oauth/token` → repository; `app/api/plugin-connections` POST/DELETE/GET → `createServerSupabaseClient` (service role). No browser INSERT or DELETE exists. No Realtime subscription on the table. The only view over it (`active_plugin_connections`) was already locked by 20261054 (PR #306).
+**Writers of real tokens are server-side with the service role:** V2 OAuth callback `app/oauth/callback/[plugin]` → `UserPluginConnections` → `PluginConnectionRepository.upsert`; `app/oauth/token` → repository; `app/api/plugin-connections` DELETE/GET (its POST was removed 2026-10-27) → `createServerSupabaseClient` (service role). No browser INSERT or DELETE exists. No Realtime subscription on the table. The only view over it (`active_plugin_connections`) was already locked by 20261054 (PR #306).
 
 #### 0.1.3 DE-0a — conditions (code only, PR 1)
 
