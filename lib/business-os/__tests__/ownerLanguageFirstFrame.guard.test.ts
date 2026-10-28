@@ -89,8 +89,12 @@ describe('G-2: the language read is started before the payment hold, used only a
 
   it('/business-os: (ii) the Promise.all over the plan pill and the pending language comes after the gate', () => {
     const { text, gate } = positions('app/business-os/layout.tsx');
-    // Plan payments P-6a.2 added the payment banner read as a third element (SA C-13).
-    const all = text.search(/await Promise\.all\(\[\s*readPlanBadge\(\),\s*initialLanguagePending,\s*readPaymentNotice\(\),?\s*\]\)/);
+    // Plan payments P-6a.2 added the payment banner read as a third element
+    // (SA C-13), and the header's owner initials are the fourth: same shape,
+    // same reason, read with the pill and after the gate.
+    const all = text.search(
+      /await Promise\.all\(\[\s*readPlanBadge\(\),\s*initialLanguagePending,\s*readPaymentNotice\(\),\s*readOwnerIdentity\(\),?\s*\]\)/
+    );
     expect(all).toBeGreaterThan(gate);
   });
 
@@ -98,6 +102,18 @@ describe('G-2: the language read is started before the payment hold, used only a
     const { text, gate } = positions('app/business-os/layout.tsx');
     expect(text.match(/readPaymentNotice\(\)/g)).toHaveLength(1);
     expect(text.indexOf('readPaymentNotice()')).toBeGreaterThan(gate);
+  });
+
+  it('/business-os: (vii) readOwnerIdentity() appears once, after the gate', () => {
+    /*
+     * The header's identity chip. It reads the session and `profiles`, so a
+     * render that started it BEFORE the hold would do that work for an owner
+     * the gate is about to redirect — and, worse, invite the next reader to
+     * move the plan read up beside it.
+     */
+    const { text, gate } = positions('app/business-os/layout.tsx');
+    expect(text.match(/readOwnerIdentity\(\)/g)).toHaveLength(1);
+    expect(text.indexOf('readOwnerIdentity()')).toBeGreaterThan(gate);
   });
 
   it('/business-os: (iii) readPlanBadge() appears once, after the gate', () => {

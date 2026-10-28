@@ -226,7 +226,16 @@ export async function GET(
     );
 
     if (notMine) {
-      return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
+      /*
+       * `code` so the client can say WHICH refusal this is. Without it the
+       * panel's `rescheduleErrorText` fell through to its default — "Could not
+       * reschedule. Please try again." — on a refusal that trying again can
+       * never clear, and the real reason reached nobody.
+       */
+      return NextResponse.json(
+        { success: false, code: 'not_found', error: 'Booking not found' },
+        { status: 404 }
+      );
     }
 
     /*
@@ -600,7 +609,16 @@ export async function POST(
     );
 
     if (notMine) {
-      return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
+      /*
+       * `code` so the client can say WHICH refusal this is. Without it the
+       * panel's `rescheduleErrorText` fell through to its default — "Could not
+       * reschedule. Please try again." — on a refusal that trying again can
+       * never clear, and the real reason reached nobody.
+       */
+      return NextResponse.json(
+        { success: false, code: 'not_found', error: 'Booking not found' },
+        { status: 404 }
+      );
     }
 
     /*

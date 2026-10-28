@@ -327,8 +327,8 @@ describe('a package whose sessions are MEETINGS', () => {
   beforeEach(() => {
     siblings = [];
     sessionRows = [
-      { id: 'sm-1', start_time: inHours(72), end_time: inHours(73), meeting_status: null, session_number: 1, occurrence_number: 1 },
-      { id: 'sm-2', start_time: inHours(96), end_time: inHours(97), meeting_status: null, session_number: 2, occurrence_number: 1 },
+      { id: 'sm-1', booking_id: 'container-1', start_time: inHours(72), end_time: inHours(73), meeting_status: null, session_number: 1, occurrence_number: 1 },
+      { id: 'sm-2', booking_id: 'container-1', start_time: inHours(96), end_time: inHours(97), meeting_status: null, session_number: 2, occurrence_number: 1 },
     ];
   });
 
@@ -350,8 +350,8 @@ describe('a package whose sessions are MEETINGS', () => {
     const movedTo = inHours(120);
 
     sessionRows = [
-      { id: 'sm-1a', start_time: inHours(72), end_time: inHours(73), meeting_status: 'moved', session_number: 1, occurrence_number: 1 },
-      { id: 'sm-1b', start_time: movedTo, end_time: inHours(121), meeting_status: null, session_number: 1, occurrence_number: 2 },
+      { id: 'sm-1a', booking_id: 'container-1', start_time: inHours(72), end_time: inHours(73), meeting_status: 'moved', session_number: 1, occurrence_number: 1 },
+      { id: 'sm-1b', booking_id: 'container-1', start_time: movedTo, end_time: inHours(121), meeting_status: null, session_number: 1, occurrence_number: 2 },
     ];
 
     const body = await (await GET(...request())).json();
@@ -378,7 +378,7 @@ describe('a package whose sessions are MEETINGS', () => {
     /* Same window the route enforces, so the page never offers a change that
        is about to be refused. */
     sessionRows = [
-      { id: 'sm-soon', start_time: inHours(2), end_time: inHours(3), meeting_status: null, session_number: 1, occurrence_number: 1 },
+      { id: 'sm-soon', booking_id: 'container-1', start_time: inHours(2), end_time: inHours(3), meeting_status: null, session_number: 1, occurrence_number: 1 },
     ];
 
     const body = await (await GET(...request())).json();
@@ -404,7 +404,7 @@ describe('a package whose sessions are MEETINGS', () => {
 
   it('offers nothing on a session that already happened', async () => {
     sessionRows = [
-      { id: 'sm-held', start_time: inHours(-48), end_time: inHours(-47), meeting_status: 'held', session_number: 1, occurrence_number: 1 },
+      { id: 'sm-held', booking_id: 'container-1', start_time: inHours(-48), end_time: inHours(-47), meeting_status: 'held', session_number: 1, occurrence_number: 1 },
     ];
 
     const body = await (await GET(...request())).json();
@@ -415,7 +415,7 @@ describe('a package whose sessions are MEETINGS', () => {
 
   it('says a called-off session is off', async () => {
     sessionRows = [
-      { id: 'sm-1', start_time: inHours(72), end_time: inHours(73), meeting_status: 'cancelled', session_number: 1, occurrence_number: 1 },
+      { id: 'sm-1', booking_id: 'container-1', start_time: inHours(72), end_time: inHours(73), meeting_status: 'cancelled', session_number: 1, occurrence_number: 1 },
     ];
 
     const body = await (await GET(...request())).json();
