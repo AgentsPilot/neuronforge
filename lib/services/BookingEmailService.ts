@@ -528,10 +528,62 @@ export class BookingEmailService {
       const effectivePaymentStatus = booking.payment_status || 'pending';
       const isPending = effectivePaymentStatus === 'pending';
       const hasPrice = service.price && service.price > 0;
-      const hasInvoice = !!options?.invoiceId;
+
+      /*
+       * ── THE BILL IS ON THE BOOKING, NOT ONLY IN THE CALLER'S HAND ──────────
+       *
+       * `hasInvoice` was `!!options?.invoiceId`, so the Pay button existed only
+       * for the ONE caller that happens to be holding the invoice it just
+       * raised — `createBooking`. Every other sender produced a confirmation
+       * carrying "Payment Required: please complete your payment of $70.00"
+       * and no way to pay it.
+       *
+       * The resend is the one an owner meets: "Send again" passes
+       * `skipInvoice: true` and nothing else, and its comment is right about
+       * what it is for — re-sending an email must not raise a second, real
+       * charge. But not RAISING an invoice is a different act from not LINKING
+       * to the one already on the booking, and the two were the same flag.
+       *
+       * So where no invoice was handed in, the booking's own open one is
+       * looked up. Nothing is created here, which is what `skipInvoice`
+       * protects, and the lookup is skipped entirely unless money is actually
+       * owed.
+       *
+       * `draft`, `sent` and `overdue` ONLY. A `cancelled` invoice is not owed
+       * — the drawer carries that same rule under "a refunded invoice is not
+       * an outstanding one" — and a `paid` or `refunded` one is already
+       * excluded by `isPending` above. Linking to a cancelled bill would
+       * invite a client to pay something the owner called off.
+       */
+      let linkableInvoiceId = options?.invoiceId;
+
+      if (!linkableInvoiceId && isPending && hasPrice) {
+        const { data: openInvoice, error: openInvoiceError } = await supabaseServer
+          .from('payment_invoices')
+          .select('id')
+          .eq('booking_id', bookingId)
+          .eq('user_id', userId)
+          .in('status', ['draft', 'sent', 'overdue'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (openInvoiceError) {
+          /* The email is worth more than the button: send it without. */
+          requestLogger.warn(
+            { err: openInvoiceError, bookingId },
+            'Could not look up an invoice for the pay button'
+          );
+        }
+
+        linkableInvoiceId = openInvoice?.id ?? undefined;
+      }
+
+      const hasInvoice = !!linkableInvoiceId;
 
       requestLogger.info({
-        invoiceId: options?.invoiceId,
+        invoiceId: linkableInvoiceId,
+        invoiceFrom: options?.invoiceId ? 'caller' : hasInvoice ? 'booking' : 'none',
         rawPaymentStatus: booking.payment_status,
         effectivePaymentStatus,
         isPending,
@@ -552,7 +604,8 @@ export class BookingEmailService {
          * themselves now, so the hosted page buys nothing and costs the frame.
          */
         paymentUrl = await invoicePayLink({
-          invoiceId: options!.invoiceId!,
+          /* The caller's, or the booking's own — see `linkableInvoiceId`. */
+          invoiceId: linkableInvoiceId!,
           bookingId,
           userId,
           baseUrl: appUrl(),
@@ -749,6 +802,70 @@ export class BookingEmailService {
           (found.data ?? []).find(inv => inv.status !== 'cancelled')?.id ?? null;
       }
 
+      /*
+       * ── A BILL THAT IS ALREADY PAID IS NOT ATTACHED ────────────────────────
+       *
+       * Attaching the invoice is for a client who OWES something: it hands
+       * them the document with their confirmation instead of in a second
+       * email. It was done for every confirmation, whatever the invoice said.
+       *
+       * Two things then went wrong on a package the client had already paid
+       * for in full. The obvious one: they receive a bill for money they have
+       * paid. The damaging one is below this block — the mark-sent that
+       * follows an attachment wrote `status: 'sent'`, and `sent` means OWED.
+       * So an email RESET A PAID INVOICE to unpaid.
+       *
+       * Measured on INV-00042 (₪950, paid 23:01:55): the owner added a session
+       * to the package at 23:26:38, which sends "a session has been added to
+       * your package"; the invoice was rewritten in the same second, and the
+       * card went from ₪950 collected to ₪950 outstanding on a block that was
+       * fully paid. Nobody had touched payments.
+       *
+       * So the attachment is resolved only while the invoice is still waiting
+       * for money. Dropping it here rather than only skipping the status write
+       * is what the owner asked for and is the better answer anyway: a paid
+       * client should not be sent their bill again, and with nothing attached
+       * the status write below cannot run at all — it is gated on
+       * `attachments.length`.
+       *
+       * The first confirmation of an unpaid booking is untouched: a draft or
+       * sent invoice still travels with it, and a draft still becomes `sent`.
+       */
+      if (invoiceIdToAttach) {
+        const { data: billNow } = await paymentInvoiceRepository.findById(
+          invoiceIdToAttach,
+          userId
+        );
+
+        /*
+         * `paid_at` as well as the status, and not belt-and-braces: this
+         * account holds invoices reading `sent` that carry a payment date and
+         * a succeeded charge, because the settlement path and this very
+         * attachment have both written `sent` over a paid row. Trusting the
+         * status alone would re-attach exactly the bills this is meant to stop
+         * — the money arrived, whatever the column says.
+         *
+         * The same test `packageSessionLines` makes when deciding whether a
+         * block's share reads paid, so the email and the card cannot disagree.
+         */
+        const settled =
+          billNow &&
+          (['paid', 'refunded', 'partially_refunded', 'cancelled'].includes(
+            String(billNow.status)
+          ) ||
+            Boolean(billNow.paid_at));
+
+        const stillOwed = !settled;
+
+        if (!stillOwed) {
+          requestLogger.info(
+            { invoiceId: invoiceIdToAttach, status: billNow?.status },
+            'Invoice already settled; not attached and not marked sent'
+          );
+          invoiceIdToAttach = null;
+        }
+      }
+
       if (invoiceIdToAttach) {
         const { buildInvoiceAttachment } = await import('@/lib/services/InvoiceDeliveryService');
         const attachment = await buildInvoiceAttachment(invoiceIdToAttach, userId, locale);
@@ -807,6 +924,7 @@ export class BookingEmailService {
          */
         if (invoiceIdToAttach && attachments.length > 0) {
           const invoiceId = invoiceIdToAttach;
+
           paymentInvoiceRepository
             .update(invoiceId, userId, {
               status: 'sent',
@@ -1269,6 +1387,13 @@ export class BookingEmailService {
        */
       offerRebooking?: boolean;
       /**
+       * The hour booked in place of the one being called off.
+       *
+       * Carried through to the template so the mail says WHY a new date has
+       * appeared in the session list. Absent for every ordinary cancellation.
+       */
+      replacementStart?: string | null;
+      /**
        * Whether the owner's free-text note goes to the client.
        *
        * ─────────────────────────────────────────────────────────────────────
@@ -1349,6 +1474,35 @@ export class BookingEmailService {
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendCancellationEmail' });
 
+    /*
+     * ── ENOUGH TO RECORD A FAILURE WITH ─────────────────────────────────────
+     *
+     * Hoisted out of the try for one reason: if anything below THROWS, the
+     * catch at the end returns `{ sent: false }` and `recordEmailSend` is
+     * never reached, so the failure leaves no `email_sends` row at all.
+     *
+     * That is not a theoretical hole. The journey draws its Resend button from
+     * an existing row, so a send that dies before the transport is invisible
+     * AND unrecoverable: nothing to see, nothing to press. Measured on this
+     * account, two of five owner-cancelled meetings ended exactly there — no
+     * client email, no row, a server log line and nothing else. Every refusal
+     * inside this method was ruled out against those bookings, which leaves a
+     * throw somewhere below as the likeliest cause, and a throw is precisely
+     * what writes nothing.
+     *
+     * A template throwing on bad data is a real shape here: the confirmation
+     * email did it earlier today, calling `Intl` on an invalid date for a
+     * service with no clock.
+     *
+     * These carry whatever was known at the moment of the throw. A row with
+     * the subject still blank is worth far more than no row: it marks the
+     * attempt, carries the error, and gives the owner the Resend they would
+     * otherwise never be offered.
+     */
+    let recipient: string | null = null;
+    let recipientContactId: string | null = null;
+    let composedSubject: string | null = null;
+
     try {
       // Fetch user's preferred language from profile
       const locale = await getBusinessLocale(userId);
@@ -1383,6 +1537,10 @@ export class BookingEmailService {
         requestLogger.warn({ bookingId }, 'No client email on this booking; nothing sent');
         return { sent: false, error: 'No client email' };
       }
+
+      /* Known from here on, so a throw below can still be written down. */
+      recipient = clientEmail;
+      recipientContactId = booking.contact_id ?? null;
 
       // Fetch service
       const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
@@ -1446,6 +1604,8 @@ export class BookingEmailService {
          * ───────────────────────────────────────────────────────────────────
          */
         sessionLines: await packageSessionLines(options?.sessionsFrom ?? bookingId, userId),
+        /* Only when one was actually booked — see the option. */
+        replacementStart: options?.replacementStart ? new Date(options.replacementStart) : null,
         meetingOnly: options?.meetingOnly
           ? {
               continuation: await resolveQuoteContinuation(
@@ -1524,6 +1684,9 @@ export class BookingEmailService {
         locale
       });
 
+      /* Captured for the catch below, which can no longer name it otherwise. */
+      composedSubject = subject;
+
       /*
        * A withdrawal for the client's calendar.
        *
@@ -1600,8 +1763,47 @@ export class BookingEmailService {
 
       return { sent: result.sent, error: result.error };
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+
       requestLogger.error({ err: error }, 'Error sending cancellation email');
-      return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
+
+      /*
+       * The attempt is written down even though nothing was sent.
+       *
+       * Without this a throw leaves NOTHING: no mail, no row, and therefore no
+       * Resend button, because the journey offers one per `email_sends` row.
+       * The owner is told the client was notified and has no way to discover
+       * otherwise. `recordEmailSend` already writes `status: 'failed'` with the
+       * error on it, so this only has to reach it.
+       *
+       * Skipped when there is no contact to file it against: `recordEmailSend`
+       * returns without writing when `contactId` is null. (The column itself
+       * has allowed null since 20261012, so that guard is now stricter than
+       * the table — left alone here, since a cancellation always has a client
+       * and widening it is not this fix's business.)
+       */
+      if (recipientContactId && recipient) {
+        await recordEmailSend({
+          userId,
+          contactId: recipientContactId,
+          bookingId,
+          toEmail: recipient,
+          /* Blank when the throw happened while composing it. The row still
+             marks the attempt, which is the point. */
+          subject: composedSubject ?? '',
+          bodyHtml: '',
+          kind: options?.meetingOnly ? 'meeting_cancelled' : 'booking_cancelled',
+          isResend: options?.isResend ?? false,
+          /* `none`, because no provider was reached: the throw happened on our
+             side of the transport. Saying `resend` would blame it for a
+             failure it never saw. */
+          result: { sent: false, error: message, provider: 'none' },
+        }).catch(err =>
+          requestLogger.warn({ err }, 'Could not record the failed cancellation email')
+        );
+      }
+
+      return { sent: false, error: message };
     }
   }
 
@@ -1623,6 +1825,15 @@ export class BookingEmailService {
     bookingId: string,
     userId: string,
     options?: {
+      /**
+       * The hour booked to make up for the missed one.
+       *
+       * Named in the mail so the client reads "we have booked you X" rather
+       * than an invitation to pick a time they have already been given. The
+       * two offers are alternatives on the dialog, and this is which one the
+       * owner took.
+       */
+      replacementStart?: string | null;
     /**
      * A REPEAT of mail the client already had — the owner pressing "send
      * again" on the journey.
@@ -1761,6 +1972,8 @@ export class BookingEmailService {
          * nothing — the same shape the other four emails use.
          */
         sessionLines: await packageSessionLines(bookingId, userId, options?.meetingId ?? null),
+        /* The make-up the owner booked, if they did — see the option. */
+        replacementStart: options?.replacementStart ? new Date(options.replacementStart) : null,
         branding,
         locale
       });

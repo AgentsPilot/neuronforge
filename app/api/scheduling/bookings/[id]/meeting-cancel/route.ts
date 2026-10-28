@@ -136,17 +136,50 @@ export async function POST(
      * cancelled; a mail server having a bad minute must not undo that or fail
      * a request the owner has already seen succeed.
      */
-    BookingEmailService.sendCancellationEmail(bookingId, user.id, undefined, {
-      meetingOnly: { proposalContinues },
-      /* The door left open, not an instruction: they may well not want
-         another meeting, and the quote reaches them either way. */
-      offerRebooking: true,
-    }).catch(err =>
+    /*
+     * Awaited, but still never fatal.
+     *
+     * It was fire-and-forget, and the comment above is right about why: the
+     * appointment IS cancelled and a mail server having a bad minute must not
+     * undo that. But "must not fail the request" was implemented as "must not
+     * be waited for", and those are different things. Detached, the result was
+     * unreachable, so the route answered `success: true` whether or not the
+     * client had been told — and a send that fell over before reaching the
+     * transport left no `email_sends` row either, so the journey had nothing
+     * to show and nothing to re-send.
+     *
+     * Waiting costs this request the send. It buys an answer the owner can
+     * act on, which is the whole point of telling the client at all.
+     */
+    let clientNotified: boolean | null = null;
+    let notifyError: string | null = null;
+
+    try {
+      const mail = await BookingEmailService.sendCancellationEmail(bookingId, user.id, undefined, {
+        meetingOnly: { proposalContinues },
+        /* The door left open, not an instruction: they may well not want
+           another meeting, and the quote reaches them either way. */
+        offerRebooking: true,
+      });
+
+      clientNotified = mail.sent;
+      notifyError = mail.sent ? null : mail.error ?? 'The email did not go out';
+
+      if (!mail.sent) {
+        requestLogger.warn(
+          { bookingId, error: mail.error },
+          'The meeting was cancelled but the client was not told'
+        );
+      }
+    } catch (err) {
+      clientNotified = false;
+      notifyError = err instanceof Error ? err.message : 'The email threw';
+
       requestLogger.error(
         { err, bookingId },
         'The meeting was cancelled but the client could not be told'
-      )
-    );
+      );
+    }
 
     /* Non-blocking, like every audit call (CLAUDE.md). An audit failure must
        not fail a write the owner has already seen succeed. */
@@ -162,7 +195,9 @@ export async function POST(
 
     requestLogger.info({ bookingId, userId: user.id }, 'Meeting cancelled; the job continues');
 
-    return NextResponse.json({ success: true, data: result.data });
+    /* `clientNotified` is false only when a mail was due and did not go — see
+       the send above. The meeting is cancelled either way. */
+    return NextResponse.json({ success: true, data: result.data, clientNotified, notifyError });
   } catch (error) {
     requestLogger.error({ err: error }, 'Request failed');
     return NextResponse.json(

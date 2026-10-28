@@ -293,7 +293,8 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
       }
     });
     expect(classMentions).toEqual([]);
-    for (const method of ['findClaim', 'reclaimFailed', 'insertClaim', 'markFailed']) {
+    // P-8b.1 (SA ruling 2): the stale-claim reclaim joins the claim methods POST calls exactly once.
+    for (const method of ['findClaim', 'reclaimStale', 'reclaimFailed', 'insertClaim', 'markFailed']) {
       expect(methodCallsTo(post!, 'processedWebhookEventRepository', method)).toHaveLength(1);
     }
   });
@@ -728,6 +729,14 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     { fn: 'handleCheckoutCompleted', call: 'pilotCreditsToTokens', argument: 1 },
     { fn: 'handleCheckoutCompleted', call: 'new QuotaAllocationService', argument: 0 },
     { fn: 'accountOwner', call: 'resolveAccountOwner', argument: 0 },
+    /*
+     * Confirming the package an invoice paid for. Two paths through
+     * `handleConnectInvoicePaid` need it — the one that records the payment,
+     * and the one that finds it already recorded — so the client lives in one
+     * wrapper and the call sites pass none. That is the shape this list exists
+     * to describe, and it keeps the exactly-once check below meaningful.
+     */
+    { fn: 'confirmPackageForInvoice', call: 'confirmPackageOnPayment', argument: 0 },
   ];
 
   /** Every rule-1 offence in a parsed file (the route, or a negative-control snippet). */

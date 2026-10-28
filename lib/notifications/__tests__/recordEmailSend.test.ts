@@ -18,6 +18,17 @@ jest.mock('@/lib/logger', () => ({
   createLogger: () => ({ debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }),
 }));
 
+/* Only reached for a mail that is about ONE APPOINTMENT — see
+   `ABOUT_ONE_APPOINTMENT`. Whether it is called at all is the assertion in the
+   invoice block below. */
+const listAttempts = jest.fn();
+
+jest.mock('@/lib/repositories/SchedulingRepository', () => ({
+  schedulingBookingRepository: {
+    listAttempts: (...args: unknown[]) => listAttempts(...args),
+  },
+}));
+
 const base = {
   userId: 'user-1',
   contactId: 'contact-1',
@@ -35,6 +46,87 @@ const sentOk = {
 beforeEach(() => {
   create.mockReset();
   create.mockResolvedValue({ data: { id: 'row-1' }, error: null });
+  listAttempts.mockReset();
+  listAttempts.mockResolvedValue({ 'booking-9': [{ id: 'meeting-1' }, { id: 'meeting-2' }] });
+});
+
+/**
+ * AN INVOICE IS A FACT ABOUT THE JOB.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Every invoice mail this platform ever sent was filed with no kind and no
+ * booking. The sender holds the invoice row and uses its `booking_id` to build
+ * the pay link, then dropped it when recording the send — so nothing could
+ * answer "was this client actually billed?". An owner who had just marked a
+ * session held and watched the invoice go out was shown no evidence of either,
+ * and reasonably concluded nothing had been sent.
+ *
+ * Measured on a live account: of six invoice mails to one client, one carried
+ * a booking and five did not.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('an invoice going out to the client', () => {
+  it('is filed against the booking it bills', async () => {
+    await recordEmailSend({
+      ...base,
+      bookingId: 'booking-9',
+      kind: 'invoice_sent',
+      result: sentOk as never,
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ booking_id: 'booking-9', email_kind: 'invoice_sent' })
+    );
+  });
+
+  it('does not land inside one appointment, the way a receipt does not', async () => {
+    /*
+     * The distinction `ABOUT_ONE_APPOINTMENT` exists for. The journey draws its
+     * rail from `meeting_id`, so filing a bill there would put a money fact
+     * inside the history of a single session — which is what put a cancellation
+     * under "you cancelled the meeting" and was fixed by the same rule.
+     *
+     * Asserted through `listAttempts` as well as the row: the resolver returns
+     * before it ever asks, so a kind added to that set by accident fails here.
+     */
+    await recordEmailSend({
+      ...base,
+      bookingId: 'booking-9',
+      kind: 'invoice_sent',
+      result: sentOk as never,
+    });
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ meeting_id: null }));
+    expect(listAttempts).not.toHaveBeenCalled();
+  });
+
+  it('records a copy as a resend, not as a second original', async () => {
+    await recordEmailSend({
+      ...base,
+      bookingId: 'booking-9',
+      kind: 'invoice_sent',
+      isResend: true,
+      result: sentOk as never,
+    });
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ is_resend: true }));
+  });
+
+  it('still records the send when the invoice belongs to no booking', async () => {
+    /* An invoice raised on its own — no booking behind it — must still be
+       recorded, or the delivery webhook has no row to match and a bounce is
+       lost. The booking is an attribution, never a condition. */
+    await recordEmailSend({
+      ...base,
+      bookingId: null,
+      kind: 'invoice_sent',
+      result: sentOk as never,
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ booking_id: null, email_kind: 'invoice_sent' })
+    );
+  });
 });
 
 describe('when there is no contact', () => {

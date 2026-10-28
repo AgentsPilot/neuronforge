@@ -52,6 +52,40 @@ interface MeetingRowActionsProps {
    * because `complete()` leaves `status` at `confirmed`.
    */
   meetingStatus?: string | null;
+  /**
+   * WHO recorded that outcome — and the only reason this component needs it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A meeting the OWNER marked held is settled: they were there, and the row
+   * deliberately offers nothing except a way to move it.
+   *
+   * A meeting the AUTOMATION marked held is a guess. `auto_complete_meetings`
+   * closes off a past meeting twelve hours after it was due, and "held" is the
+   * only answer it can give — no-show and called-off are judgements about a
+   * room it was not in. The date passing is not evidence the meeting happened.
+   *
+   * So a system-held row keeps all three answers open, and — because the
+   * automation deliberately does NOT bill — it also carries the one action
+   * that is otherwise unreachable: confirming it, which is what raises the
+   * invoice. The owner double-checks, then charges.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  outcomeBy?: 'owner' | 'client' | 'system' | null;
+  /**
+   * Its invoice has already been raised.
+   *
+   * Only narrows the system-held CONFIRMATION, which is defined as the gesture
+   * that raises that invoice — once it exists there is nothing left to
+   * confirm, and a button still offering to send it is describing work it
+   * cannot do. The Needs-you card can raise it from the other side
+   * (`bill_stage`), and `billStage` does not touch the meeting, so this row
+   * would otherwise keep asking for a decision the owner already made
+   * somewhere else.
+   *
+   * The corrections stay: discovering afterwards that the hour never happened
+   * is exactly when a no-show matters, and the refund path is built for it.
+   */
+  alreadyBilled?: boolean;
   /** The meeting's own start, which decides whether it can have an outcome. */
   startTime: string | null;
   /** Records an outcome. Absent in a read-only drawer. */
@@ -107,6 +141,8 @@ interface MeetingRowActionsProps {
 export function MeetingRowActions({
   status,
   meetingStatus,
+  outcomeBy,
+  alreadyBilled,
   startTime,
   onSetStatus,
   onReschedule,
@@ -149,6 +185,32 @@ export function MeetingRowActions({
     status === 'no_show';
 
   /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * SETTLED BY A CLOCK, WHICH IS NOT THE SAME AS SETTLED.
+   *
+   * `auto_complete_meetings` marks a past meeting held once it is overdue. It
+   * has to pick something, and "held" is the only answer available to it:
+   * no-show and called-off are judgements about a room it was not in. So
+   * `settled` is true here on the strength of the date having passed — and the
+   * date passing is not evidence the meeting happened.
+   *
+   * That is why the Needs-you card flags these rows, and this is where the
+   * owner answers it. Everything the automation closed stays open to them:
+   * both outcomes it could not choose between, and the one the owner alone can
+   * give, which is confirming it — because the automation deliberately does
+   * NOT bill, so a system-held session has never been invoiced. The money is
+   * waiting on a person saying the hour was real.
+   *
+   * `outcome_by` is how the row knows. It has carried the actor since
+   * migration 20261078; `complete()` writes `'system'` on this path and the
+   * owner's own route writes `'owner'` — so confirming here flips it, and the
+   * row stops offering a correction it no longer needs.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const systemHeld =
+    outcomeBy === 'system' && (meetingStatus === 'held' || status === 'completed');
+
+  /*
    * Its time has passed and nobody has said what happened — the same rule the
    * badge and the session card use, so a row offering "mark done" and a badge
    * saying "awaiting an outcome" can never disagree about one booking.
@@ -172,7 +234,9 @@ export function MeetingRowActions({
      * the reason the gate exists — a stray tap on a session three weeks out
      * bills a client for work nobody has done.
      */
-    (isEarlySessionOutcomeEnabled() && meetingStatus == null && !settled);
+    (isEarlySessionOutcomeEnabled() && meetingStatus == null && !settled) ||
+    /* Marked by a clock, not by a person — still an open question. */
+    systemHeld;
 
   type Item = {
     key: string;
@@ -196,8 +260,9 @@ export function MeetingRowActions({
     });
   }
 
-  /* Calling it off stays available while it is open, before or after the fact. */
-  if (!settled && onSetStatus) {
+  /* Calling it off stays available while it is open, before or after the fact —
+     and on a row the automation closed, which is open in everything but name. */
+  if ((!settled || systemHeld) && onSetStatus) {
     items.push({
       key: 'cancelled',
       /*
@@ -273,7 +338,12 @@ export function MeetingRowActions({
     });
   }
 
-  const showsPrimary = awaiting && Boolean(onSetStatus);
+  const showsPrimary =
+    awaiting && Boolean(onSetStatus) && !(systemHeld && alreadyBilled);
+
+  const primaryLabel = systemHeld
+    ? t('crm.booking.action.confirm_held') || 'Confirm it was held and bill'
+    : t('crm.stage.mark_done') || 'Mark done';
 
   if (!showsPrimary && items.length === 0) return null;
 
@@ -309,8 +379,13 @@ export function MeetingRowActions({
             event.stopPropagation();
             onSetStatus?.('completed');
           }}
-          title={t('crm.stage.mark_done') || 'Mark done'}
-          aria-label={t('crm.stage.mark_done') || 'Mark done'}
+          /* On a row the automation closed, this button is not "mark done" —
+             the row ALREADY says held. It is the owner agreeing with it, and
+             agreeing is what raises the invoice the automation withheld. The
+             accessible name has to say that, or the one control that moves
+             money announces itself as a status change. */
+          title={primaryLabel}
+          aria-label={primaryLabel}
           className="flex h-6 w-6 items-center justify-center rounded text-green-700 transition-colors hover:bg-green-500/10 dark:text-green-400"
         >
           <CheckCheck className="h-3.5 w-3.5" />

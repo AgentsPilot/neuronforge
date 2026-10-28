@@ -68,7 +68,10 @@ describe('the shipped catalogue (happy path)', () => {
       { id: 'max', priceMinor: 5000, baseCredits: 10000, bonusCredits: 1500, totalCredits: 11500, bonusPercent: 15 },
     ]);
     for (const pkg of packages) {
-      expect(pkg).toMatchObject({ currency: 'USD', taxExclusive: true, active: true, retailVersion: 2, version: 2 });
+      /* `version: 4` — renamed to sizes on 2026-10-27. The FIGURES are
+         untouched, which is what this test is about: same prices, same
+         bonuses, same retail version. */
+      expect(pkg).toMatchObject({ currency: 'USD', taxExclusive: true, active: true, retailVersion: 2, version: 4 });
       expect(pkg.creditValueVersion).toBe(currentCreditValue().version);
     }
     expect(packages.map((pkg) => pkg.labels.badge?.en ?? null)).toEqual([null, 'Most popular', 'Best value']);
@@ -147,7 +150,7 @@ describe('a changed base rate never passes unnoticed (acceptance criterion)', ()
     // Same (id, version) as the released snapshot but different credits: the
     // snapshot test (boostCatalogue.guard.test.ts) refuses this until each
     // version is bumped.
-    expect(result.packages.every((pkg) => pkg.version === 2)).toBe(true);
+    expect(result.packages.every((pkg) => pkg.version === 4)).toBe(true);
   });
 });
 
@@ -293,7 +296,10 @@ describe('the catalogue cannot be changed by a caller (SA CR-1)', () => {
 
     const again = await source.getActive('plus');
     expect(again).toMatchObject({ priceMinor: 2500, totalCredits: 5500, bonusPercent: 10 });
-    expect(again?.labels.name.en).toBe('Plus');
+    /* The NAME a caller could not overwrite, whatever it happens to be.
+       This test is about the freeze, not the wording: it is the package's
+       own label coming back rather than 'Cheap' that proves it held. */
+    expect(again?.labels.name.en).toBe('Medium');
     const listed = await source.listActive();
     expect(listed.find((pkg) => pkg.id === 'plus')?.priceMinor).toBe(2500);
   });

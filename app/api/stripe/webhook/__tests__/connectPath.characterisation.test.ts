@@ -336,6 +336,9 @@ let runStartedAt = Date.now();
 function sanitise(value: unknown): unknown {
   if (typeof value === 'string' && ISO.test(value)) {
     const t = Date.parse(value);
+    // P-8b.1: the stale-claim cutoff (run start − 15 min). A narrow band that
+    // cannot overlap the <NOW> band below, and no fixture timestamp falls in it.
+    if (Math.abs(t - (runStartedAt - 15 * 60 * 1000)) < 60 * 1000) return '<NOW-15MIN>';
     return Math.abs(t - runStartedAt) < 10 * 60 * 1000 ? '<NOW>' : value;
   }
   if (Array.isArray(value)) return value.map(sanitise);
@@ -694,6 +697,110 @@ describe('Stripe webhook, Connect path characterisation (P-0 baseline)', () => {
         },
       })
     ).toMatchSnapshot();
+  });
+
+  // P-8b.1 (PF-5, SA-P4 part 1; workplan §4.1, SA ruling 1). A `processing`
+  // claim older than 15 minutes is taken back by one conditional UPDATE. 9b
+  // above now also records that UPDATE, which does not win (no count), and
+  // answers exactly as before.
+  const STALE_SCENARIO = (count: number): Scenario => ({
+    fixture: 'invoice-finalized.json',
+    owners: OWNER_A,
+    db: {
+      'processed_webhook_events:select': ok({ event_id: 'evt_connect_invoice_finalized', status: 'processing' }),
+      'processed_webhook_events:update': { data: null, error: null, count },
+      'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }),
+    },
+  });
+
+  it('9d. a stale processing claim is reclaimed and processed', async () => {
+    expect(await run(STALE_SCENARIO(1))).toMatchSnapshot();
+  });
+
+  it('9e. a stale-claim reclaim that loses the race is a duplicate', async () => {
+    expect(await run(STALE_SCENARIO(0))).toMatchSnapshot();
+  });
+
+  it('9d ≡ 6b: after findClaim and the reclaim, the path is the fresh claim\'s minus its insertClaim (SA ruling 1b)', async () => {
+    const fresh = effectsOf(
+      await run({
+        fixture: 'invoice-finalized.json',
+        owners: OWNER_A,
+        db: { 'payment_invoices:select': ok({ id: 'pinv-0004', invoice_number: 'INV-004', user_id: 'owner-a' }) },
+      })
+    );
+    const reclaimed = effectsOf(await run(STALE_SCENARIO(1)));
+    const isClaim = (e: Effect, op: string) => e.type === 'db' && e.table === 'processed_webhook_events' && e.operation === op;
+
+    // The reclaim is the third effect (after signature check and findClaim), and only it differs.
+    expect(isClaim(reclaimed[1], 'select')).toBe(true);
+    expect(reclaimed[2]).toEqual({
+      type: 'db',
+      table: 'processed_webhook_events',
+      operation: 'update',
+      terminal: 'await',
+      chain: [
+        ['update', { status: 'processing', failure_message: null, processed_at: '<NOW>' }, { count: 'exact' }],
+        ['eq', 'event_id', 'evt_connect_invoice_finalized'],
+        ['eq', 'status', 'processing'],
+        ['lt', 'processed_at', '<NOW-15MIN>'],
+      ],
+    });
+    expect(isClaim(fresh[2], 'insert')).toBe(true);
+    const withoutIndex = (list: Effect[], i: number) => list.filter((_, j) => j !== i);
+    expect(JSON.stringify(withoutIndex(reclaimed, 2))).toBe(JSON.stringify(withoutIndex(fresh, 2)));
+  });
+
+  it('9e: a lost reclaim runs no handler: findClaim, the reclaim, and nothing else (SA ruling 1c)', async () => {
+    const result = await run(STALE_SCENARIO(0));
+    expect(statusOf(result)).toBe(200);
+    expect((result as { body: unknown }).body).toEqual({ received: true, duplicate: true });
+    const db = effectsOf(result).filter((e) => e.type === 'db');
+    expect(db.map((e) => `${e.table}:${e.operation}`)).toEqual([
+      'processed_webhook_events:select',
+      'processed_webhook_events:update',
+    ]);
+  });
+
+  it('9d: a won reclaim is logged once as a warning, and the claim ends completed', async () => {
+    const result = await run(STALE_SCENARIO(1));
+    expect(claimStatus(result)).toBe('completed');
+    expect(logged('bos_webhook_stale_claim_reclaimed').map((l) => l.level)).toEqual(['warn']);
+  });
+
+  it('a reclaim that errors never processes without a claim: duplicate, error logged, no handler', async () => {
+    const result = await run({
+      ...STALE_SCENARIO(1),
+      db: {
+        ...STALE_SCENARIO(1).db,
+        'processed_webhook_events:update': { data: null, error: { code: 'XX000', message: 'db down' } },
+      },
+    });
+    expect(statusOf(result)).toBe(200);
+    expect((result as { body: unknown }).body).toEqual({ received: true, duplicate: true });
+    expect(effectsOf(result).filter((e) => e.type === 'db').map((e) => `${e.table}:${e.operation}`)).toEqual([
+      'processed_webhook_events:select',
+      'processed_webhook_events:update',
+    ]);
+    expect(
+      mockLogLines.filter((l) => l.msg === 'Could not check a processing claim for staleness').map((l) => l.level)
+    ).toEqual(['error']);
+    expect(logged('bos_webhook_stale_claim_reclaimed')).toEqual([]);
+  });
+
+  it('9b: a fresh processing claim adds exactly one non-winning reclaim, same answer (SA ruling 1a)', async () => {
+    const result = await run({
+      fixture: 'invoice-finalized.json',
+      owners: OWNER_A,
+      db: { 'processed_webhook_events:select': ok({ event_id: 'evt_connect_invoice_finalized', status: 'processing' }) },
+    });
+    expect(statusOf(result)).toBe(200);
+    expect((result as { body: unknown }).body).toEqual({ received: true, duplicate: true });
+    const db = effectsOf(result).filter((e) => e.type === 'db');
+    expect(db.map((e) => `${e.table}:${e.operation}`)).toEqual([
+      'processed_webhook_events:select',
+      'processed_webhook_events:update',
+    ]);
   });
 
   it('10. a handler that throws releases the claim to failed and returns 500', async () => {

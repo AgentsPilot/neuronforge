@@ -23,6 +23,9 @@ jest.mock('@/lib/client/businessOsDataExport', () => ({
   downloadDataExportAgain: (jobId: string) => mockAgain(jobId),
   fetchLastDataExport: () => mockFetchLast(),
   saveSignedDownload: (v: unknown) => mockSave(v),
+  // MX-1b (SA C-12): the module export switch probe, answered "off" (the route's own 404),
+  // so every assertion below runs against today's ZIP control unchanged.
+  fetchModuleExportHistory: () => Promise.resolve({ kind: 'off' }),
 }));
 
 // The provider stub: `null` = no LanguageProvider (as on /v2/settings).

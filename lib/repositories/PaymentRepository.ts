@@ -1725,6 +1725,89 @@ export class PaymentInvoiceRepository {
   }
 
   /**
+   * Record that an invoice was delivered, WITHOUT undoing a payment.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE RACE THIS EXISTS TO LOSE SAFELY.
+   *
+   * Sending an invoice and paying it are two writes to one row, and a client
+   * who pays quickly makes them overlap. `InvoiceDeliveryService` stamped
+   * `status: 'sent'` unconditionally at the end of both its paths, so a payment
+   * that landed mid-send was overwritten:
+   *
+   *     17:50:40  invoice created, sending begins
+   *     17:54:45  client pays — `settleInvoicePaid` writes status 'paid' AND paid_at
+   *     17:54:46  the transaction is recorded
+   *      after    the send finishes and writes status 'sent' over 'paid'
+   *
+   * `paid_at` survived because the send never touched it, which is the
+   * fingerprint: `status: 'sent'` beside a non-null `paid_at` is a combination
+   * `settleInvoicePaid` cannot produce — it writes both in one statement. Live
+   * example INV1611-00034, ₪660 collected and recorded, invoice still reading
+   * `sent`, so the client's portal went on offering them a Pay button.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * TWO STATEMENTS, AND THAT IS THE POINT.
+   *
+   * The delivery facts are true whether or not the money arrived, so they are
+   * written unconditionally. The STATUS is only moved while the invoice is
+   * still unsettled, and the database decides that in the same statement —
+   * a read-then-write here would simply lose the race in a new place.
+   *
+   * `paid_at IS NULL` is checked as well as the status, because a refund can
+   * land on an invoice that was never marked paid: the same reasoning
+   * `isSettledInvoice` documents.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async markDelivered(
+    invoiceId: string,
+    userId: string,
+    delivery: {
+      stripe_invoice_id?: string;
+      stripe_hosted_invoice_url?: string;
+      stripe_invoice_pdf?: string;
+      sent_at: string;
+    }
+  ): Promise<PaymentRepositoryResult<null>> {
+    try {
+      const now = new Date().toISOString();
+
+      const { error: deliveryError } = await this.supabase
+        .from('payment_invoices')
+        .update({ ...delivery, updated_at: now })
+        .eq('id', invoiceId)
+        .eq('user_id', userId);
+
+      if (deliveryError) throw deliveryError;
+
+      const { data: moved, error: statusError } = await this.supabase
+        .from('payment_invoices')
+        .update({ status: 'sent', updated_at: now })
+        .eq('id', invoiceId)
+        .eq('user_id', userId)
+        .not('status', 'in', '("paid","refunded","partially_refunded")')
+        .is('paid_at', null)
+        .select('id');
+
+      if (statusError) throw statusError;
+
+      if (!moved || moved.length === 0) {
+        /* Not an error: the invoice was settled while it was being sent. The
+           delivery is recorded and the payment stands. */
+        logger.info(
+          { invoiceId },
+          'Invoice delivered after it was settled; status left as it was'
+        );
+      }
+
+      return { data: null, error: null };
+    } catch (error) {
+      logger.error({ err: error, invoiceId }, 'Failed to record invoice delivery');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Update Stripe invoice fields after invoice is finalized/sent
    */
   async updateStripeFields(

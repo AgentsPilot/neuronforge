@@ -53,7 +53,29 @@ export interface BoostPackageConfig {
   retailVersion: number;
 }
 
-const en = (text: string): Labels => ({ en: text, he: text, es: text });
+/**
+ * A label, in each language's own words.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE NAMES ARE SIZES, NOT TIERS
+ *
+ * They were Starter / Plus / Max, which is product-tier language: it tells a
+ * reader there is a ladder without telling them what they get, and it asks
+ * them to work out where "Plus" sits. Our owners are trainers, tutors and
+ * trades, and small / medium / large is the one naming scheme nobody has to
+ * learn. The same three words in every language, so a Hebrew or Spanish owner
+ * reads a size rather than an English brand.
+ *
+ * ⚠️ There was an `en(text)` helper here that put the SAME string in all three
+ * slots. It satisfied `labelsSchema` — which only requires `en`, `he` and `es`
+ * to be present — so every package passed validation and showed English to a
+ * Hebrew or Spanish owner, with nothing anywhere to flag it. All three
+ * packages carried their entire label set that way.
+ *
+ * Taking three arguments is the point: there is no way to write one of these
+ * without having decided what the other two say.
+ */
+const say = (en: string, he: string, es: string): Labels => ({ en, he, es });
 
 /**
  * Freezes every nested object, so no caller can change a price, a label or the
@@ -75,7 +97,7 @@ function deepFreeze<T>(value: T): T {
 export const BOOST_PACKAGES = deepFreeze([
   {
     id: 'starter',
-    version: 2,
+    version: 4,
     priceMinor: 1000,
     currency: 'USD',
     taxExclusive: true,
@@ -83,14 +105,18 @@ export const BOOST_PACKAGES = deepFreeze([
     active: true,
     order: 1,
     labels: {
-      name: en('Starter'),
-      description: en('A one-off top-up of credits at the standard rate.'),
+      name: say('Small', 'קטנה', 'Pequeña'),
+      description: say(
+        'A one-off top-up of credits at the standard rate.',
+        'טעינה חד-פעמית של קרדיטים במחיר הרגיל.',
+        'Una recarga única de créditos a la tarifa estándar.'
+      ),
     },
     retailVersion: 2,
   },
   {
     id: 'plus',
-    version: 2,
+    version: 4,
     priceMinor: 2500,
     currency: 'USD',
     taxExclusive: true,
@@ -98,15 +124,19 @@ export const BOOST_PACKAGES = deepFreeze([
     active: true,
     order: 2,
     labels: {
-      name: en('Plus'),
-      description: en('A one-off top-up of credits with a bonus.'),
-      badge: en('Most popular'),
+      name: say('Medium', 'בינונית', 'Mediana'),
+      description: say(
+        'A one-off top-up of credits with a bonus.',
+        'טעינה חד-פעמית של קרדיטים, עם בונוס.',
+        'Una recarga única de créditos, con bonificación.'
+      ),
+      badge: say('Most popular', 'הפופולרית ביותר', 'La más popular'),
     },
     retailVersion: 2,
   },
   {
     id: 'max',
-    version: 2,
+    version: 4,
     priceMinor: 5000,
     currency: 'USD',
     taxExclusive: true,
@@ -114,9 +144,13 @@ export const BOOST_PACKAGES = deepFreeze([
     active: true,
     order: 3,
     labels: {
-      name: en('Max'),
-      description: en('A one-off top-up of credits with the largest bonus.'),
-      badge: en('Best value'),
+      name: say('Large', 'גדולה', 'Grande'),
+      description: say(
+        'A one-off top-up of credits with the largest bonus.',
+        'טעינה חד-פעמית של קרדיטים, עם הבונוס הגדול ביותר.',
+        'Una recarga única de créditos, con la mayor bonificación.'
+      ),
+      badge: say('Best value', 'המשתלמת ביותר', 'Mejor valor'),
     },
     retailVersion: 2,
   },

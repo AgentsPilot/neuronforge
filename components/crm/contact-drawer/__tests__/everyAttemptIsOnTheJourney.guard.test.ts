@@ -496,14 +496,15 @@ describe('the confirmation node shows a CONFIRMATION, not any linked mail', () =
        it, so matching the raw source fails on the explanation. Which is the
        hazard this file's `code()` helper was written for. */
     expect(code(DRAWER)).not.toContain('?? linked[0]');
-    expect(code(DRAWER)).toContain('linked.find(saysConfirmed)');
+    expect(code(DRAWER)).toContain('saysConfirmed(email)');
   });
 
-  it('applies the strict test in BOTH copies', () => {
+  it('applies the strict test in BOTH copies, and excludes the bill in both', () => {
     /* `findConfirmationEmail` is declared twice — initial load and silent
        refresh. One fixed and one not shows a different mail after a refresh. */
     const declarations = DRAWER.match(/const findConfirmationEmail = \(/g) ?? [];
-    const strictUses = DRAWER.match(/linked\.find\(saysConfirmed\)/g) ?? [];
+    const strictUses =
+      code(DRAWER).match(/email\.email_kind !== 'invoice_sent' && saysConfirmed\(email\)/g) ?? [];
     expect(strictUses.length).toBe(declarations.length);
   });
 
@@ -526,6 +527,41 @@ describe('the confirmation node shows a CONFIRMATION, not any linked mail', () =
     expect(saysConfirmed(`Appointment rescheduled - ${service}`)).toBe(false);
     expect(saysConfirmed(`Tu cita está confirmada - ${service}`)).toBe(true);
     expect(saysConfirmed(`Cita reprogramada - ${service}`)).toBe(false);
+  });
+
+  it('and a BILL slips through that rule, which is why it is excluded by kind', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────
+     * The subject test cannot be asked to tell a bill apart, because both
+     * halves of an invoice subject are the business's own words:
+     *
+     *     `${noun} #${invoiceNumber} מ-${businessName}`
+     *
+     * `noun` is whatever that business calls the document — it is resolved
+     * from its settings precisely so a business can say "Receipt" or "Tax
+     * invoice" — and `אישור תשלום` is an ordinary thing to call one. The
+     * business name is free text and can contain the word too.
+     *
+     * Invoice mail could not reach the picker before: it carried no booking,
+     * so it never entered `linked`. Once it names its booking it does, and
+     * the only honest filter is the recorded KIND.
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    const templates = read('lib/email/templates/translations.ts');
+    expect(templates).toContain('מ-${businessName}');
+
+    /* The drawer's rule, restated — the test above pins it to the source. */
+    const saysConfirmed = (subject: string) => {
+      const s = subject.toLowerCase();
+      return s.includes('confirm') || s.includes('אושרה') || s.includes('אישור');
+    };
+
+    /* A real document noun a business may choose, in a real subject. */
+    expect(saysConfirmed('אישור תשלום #INV-00043 מ-בית הספר')).toBe(true);
+    expect(saysConfirmed('Payment confirmation #INV-00043 from The Studio')).toBe(true);
+
+    /* So the picker must not reach the subject test at all for a bill. */
+    expect(code(DRAWER)).toContain("email.email_kind !== 'invoice_sent' && saysConfirmed(email)");
   });
 });
 
@@ -606,10 +642,25 @@ describe('cancelling the MEETING is not cancelling the job', () => {
     expect(code(ROUTE)).toContain('meetingOnly: { proposalContinues }');
     expect(code(ROUTE)).toContain('proposalContinues: z.boolean().optional()');
 
-    /* Non-blocking: the appointment IS cancelled, and a mail server having a
-       bad minute must not fail a request the owner saw succeed. */
+    /*
+     * The appointment IS cancelled, and a mail server having a bad minute must
+     * not fail a request the owner saw succeed. That is the rule, and it still
+     * holds.
+     *
+     * This asserted `.catch(` on a DETACHED call, which was the mechanism
+     * rather than the rule — and the mechanism was wrong in a way that cost
+     * something real: detached, the result was unreachable, so the route
+     * answered `success` whether or not any mail went out. Two of five
+     * owner-cancelled meetings on a live account produced no client email and
+     * no `email_sends` row, and the owner was told the client had been told.
+     *
+     * The send is awaited now, inside a try/catch that swallows and logs. Same
+     * guarantee — a failure cannot fail the request — and the route can
+     * finally report whether the client heard, which is asserted below.
+     */
     const send = code(ROUTE).slice(code(ROUTE).indexOf('sendCancellationEmail'));
-    expect(send.slice(0, 400)).toContain('.catch(');
+    expect(send.slice(0, 900)).toContain('catch');
+    expect(code(ROUTE)).toContain('clientNotified');
   });
 
   it('but not once the owner has said no quote is coming', () => {

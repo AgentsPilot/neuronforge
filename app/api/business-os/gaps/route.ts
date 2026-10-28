@@ -372,7 +372,92 @@ export async function GET(request: NextRequest) {
         .map(row => [row.entity_id, row])
     );
 
-    const gaps = mine.map(gap => ({
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AN ENQUIRY THE CHASER HAS IN HAND IS NOT THE OWNER'S MOVE.
+     *
+     * `reply_to_enquiries` waits fifteen minutes before sending, so that an
+     * owner who wants to answer personally can get in first. The row was shown
+     * for that whole window carrying a `queued` block — "we will reply at
+     * 14:32, cancel?" — which is an honest thing to say and still the wrong
+     * thing to put on a card headed NEEDS YOU. Nothing is needed: the reply is
+     * written, scheduled and about to go.
+     *
+     * So a queued enquiry leaves the card, and the COUNT with it. A number on
+     * that card is a promise about how much is waiting on the owner, and
+     * counting work the platform has already taken makes the promise false.
+     *
+     * SELF-CORRECTING, which is what makes this safe to hide. The map holds
+     * only rows that are still `pending`: the moment a send fails, is claimed
+     * and abandoned, or is cancelled, the row stops being pending and the
+     * enquiry comes straight back onto the card. Hiding it is therefore "the
+     * chaser has this", never "the chaser silently dropped this".
+     *
+     * ONLY ENQUIRIES. `meeting_unmarked` has an automation too, and it stays
+     * visible on purpose — `auto_complete_meetings` can only ever answer
+     * "held", which is a judgement about a room it was not in, so the owner
+     * still wants the chance to say no-show. Its row carries `closingAt` as a
+     * deadline rather than a reassurance, and that difference is the reason
+     * these two are not treated alike.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    /*
+     * IS THE CHASER ON AT ALL — not merely "has it queued this one yet".
+     *
+     * `pendingByContact` only knows about enquiries the sweep has already
+     * picked up, and `enqueueApprovedChases` runs on a cron every five
+     * minutes. So for the first few minutes of an enquiry's life there is
+     * nothing pending to recognise, and the card showed it to an owner whose
+     * chaser was going to answer it without them — the exact nagging this
+     * suppression exists to stop, during the one window where the enquiry is
+     * newest and most tempting to act on.
+     */
+    const automations = await automationsPromise;
+    const autoReplyOn = automations.some(a => a.id === 'reply_to_enquiries' && a.enabled);
+
+    const visible = mine.map(gap => {
+      if (gap.id !== 'enquiry_unanswered') return gap;
+
+      /*
+       * Long enough to cover the cron's own interval (5 min) plus the reply's
+       * deliberate delay (15 min), with room for a late run. Past it, an
+       * enquiry still sitting here means the chaser did NOT deal with it —
+       * and that is the moment the owner most needs to be told, so the row
+       * comes back rather than being hidden for ever on the strength of a
+       * setting.
+       */
+      const GRACE_MS = 30 * 60 * 1000;
+      const now = Date.now();
+
+      const items = gap.items.filter(item => {
+        if (pendingByContact.has(item.contactId)) return false;
+        if (!autoReplyOn) return true;
+
+        const age = now - new Date(item.since).getTime();
+        return !(Number.isFinite(age) && age >= 0 && age < GRACE_MS);
+      });
+      const removed = gap.items.length - items.length;
+
+      /*
+       * The count follows the rows it describes.
+       *
+       * Only as exact as it can be: `findGaps` names at most `NAMED_PER_GAP`,
+       * and the queue was read for those contacts alone — so an enquiry beyond
+       * the fifth could be queued and still counted. The error is therefore
+       * always UPWARD, which is the safe direction: the card may say one more
+       * is waiting than truly is, and will never say one fewer and hide work.
+       */
+      return { ...gap, items, count: Math.max(items.length, gap.count - removed) };
+    })
+      /*
+       * A gap with a count and no rows is worse than no gap: the card shows a
+       * number with nothing under it and no way to reach what it refers to. If
+       * every enquiry we could name is in the chaser's hands, the card has
+       * nothing to say.
+       */
+      .filter(gap => gap.items.length > 0);
+
+    const gaps = visible.map(gap => ({
       id: gap.id,
       action: gap.action,
       count: gap.count,
@@ -404,6 +489,15 @@ export async function GET(request: NextRequest) {
            * is field by field, and a new one is dropped in silence otherwise.
            */
           sessionNumber: item.sessionNumber ?? null,
+          /* Whether a clock, rather than a person, said this hour happened.
+             Decides whether the row explains itself and whether its button
+             charges or confirms. Named here for the reason above: this list is
+             field by field, so a new one is dropped in silence. */
+          autoHeld: item.autoHeld ?? false,
+          /* Which channel brought the lead. Named here for the reason above:
+             this list is field by field, so a new one is dropped in silence. */
+          via: item.via ?? null,
+          viaProvider: item.viaProvider ?? null,
           /*
            * What is held on it, where money is involved.
            *
@@ -449,7 +543,7 @@ export async function GET(request: NextRequest) {
       }),
     }));
 
-    return NextResponse.json({ success: true, gaps, automations: await automationsPromise });
+    return NextResponse.json({ success: true, gaps, automations });
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to read business gaps');
     return NextResponse.json(

@@ -140,7 +140,18 @@ describe('paying happens in the portal', () => {
      */
     const route = codeOf(ROUTE);
     expect(route).toMatch(/invoiceId: outstanding > 0 \? payInvoiceId : null/);
-    expect(page).toMatch(/\{payment\.invoiceId && \(/);
+
+    /*
+     * The page reads that id through `canPayNow`, which ALSO requires the
+     * money to be owed.
+     *
+     * This asserted `{payment.invoiceId && (` directly, which was the whole
+     * condition at the time — and the whole condition was the bug: a settled
+     * booking keeps its invoice for ever, so a refunded one showed "Refunded"
+     * with a Pay button under it. The id is still what the button needs; it is
+     * simply no longer enough on its own.
+     */
+    expect(page).toMatch(/const canPayNow = payment\?\.state === 'due' && Boolean\(payment\.invoiceId\)/);
   });
 
   it('says what it is waiting for while the secret is fetched', () => {

@@ -95,6 +95,8 @@ export const publicMessages: Catalogue = {
     'portal.quote_open': 'Open the quote',
     'portal.held': 'Took place',
     'portal.missed': 'Did not take place',
+    /* A later session already stands in for this one. */
+    'portal.made_up': 'a new time was arranged',
     'portal.no_date': 'No date set',
     /* The row in "my bookings" that stands for a whole package. */
     'portal.package_of': 'package of {count}',
@@ -115,7 +117,8 @@ export const publicMessages: Catalogue = {
     'portal.morning': 'Morning',
     'portal.afternoon': 'Afternoon',
     'portal.evening': 'Evening',
-    'manage.package_title': 'This package: {count} sessions',
+    /* No number. The heading names the list; the rows say what each one is. */
+    'manage.package_title': 'The sessions in your booking',
     'manage.package_held': 'took place',
     'manage.package_cancelled': 'cancelled',
     'manage.package_too_soon': 'Too close to change online — please contact the business.',
@@ -187,6 +190,8 @@ export const publicMessages: Catalogue = {
     rescheduleFailed: 'Could not reschedule. Please try again.',
     back: 'Back',
     cannotReschedule: 'Cannot Reschedule',
+    /* Marks a session whose hour changed after it was booked. */
+    movedBadge: 'Time changed',
     /*
      * Why a change was refused, in the reader's language.
      *
@@ -408,6 +413,7 @@ export const publicMessages: Catalogue = {
     'portal.quote_open': 'Ver el presupuesto',
     'portal.held': 'Se realizó',
     'portal.missed': 'No se realizó',
+    'portal.made_up': 'se acordó una nueva hora',
     'portal.no_date': 'Sin fecha',
     'portal.package_of': 'paquete de {count}',
     'portal.all_meetings': 'Todas las citas',
@@ -427,7 +433,7 @@ export const publicMessages: Catalogue = {
     'portal.morning': 'Mañana',
     'portal.afternoon': 'Tarde',
     'portal.evening': 'Noche',
-    'manage.package_title': 'Este paquete: {count} sesiones',
+    'manage.package_title': 'Las sesiones de tu reserva',
     'manage.package_held': 'se realizó',
     'manage.package_cancelled': 'cancelada',
     'manage.package_too_soon': 'Demasiado cerca para cambiarla aquí: contacta con el negocio.',
@@ -492,6 +498,7 @@ export const publicMessages: Catalogue = {
     rescheduleFailed: 'No se pudo reprogramar. Inténtalo de nuevo.',
     back: 'Volver',
     cannotReschedule: 'No se puede reprogramar',
+    movedBadge: 'Hora cambiada',
     rescheduleTooLate: 'Esta reserva solo se puede cambiar con más de {hours} horas de antelación.',
     rescheduleLimit: 'Esta reserva ya se ha movido {limit} veces. Ponte en contacto para volver a cambiarla.',
     cancelTooLate: 'Esta reserva solo se puede cancelar con más de {hours} horas de antelación.',
@@ -691,6 +698,7 @@ export const publicMessages: Catalogue = {
     'portal.quote_open': 'צפייה בהצעה',
     'portal.held': 'התקיימה',
     'portal.missed': 'לא התקיימה',
+    'portal.made_up': 'נקבע מועד חדש',
     'portal.no_date': 'ללא תאריך',
     'portal.package_of': 'חבילה של {count}',
     'portal.all_meetings': 'כל הפגישות',
@@ -710,7 +718,7 @@ export const publicMessages: Catalogue = {
     'portal.morning': 'בוקר',
     'portal.afternoon': 'אחר הצהריים',
     'portal.evening': 'ערב',
-    'manage.package_title': '{count} מפגשים בחבילה הזו',
+    'manage.package_title': 'המפגשים בהזמנה שלכם',
     'manage.package_held': 'התקיימה',
     'manage.package_cancelled': 'בוטלה',
     'manage.package_too_soon': 'קרוב מדי לשינוי באתר. אפשר ליצור קשר עם העסק.',
@@ -774,6 +782,7 @@ export const publicMessages: Catalogue = {
     rescheduleFailed: 'לא הצלחנו לשנות את המועד. נסו שוב.',
     back: 'חזרה',
     cannotReschedule: 'לא ניתן לשנות מועד',
+    movedBadge: 'המועד שונה',
     rescheduleTooLate: 'אפשר לשנות את הפגישה רק יותר מ־{hours} שעות לפני תחילתה.',
     rescheduleLimit: 'כבר העברת את הפגישה הזאת {limit} פעמים. כדי לשנות שוב, אפשר ליצור קשר.',
     cancelTooLate: 'אפשר לבטל את הפגישה רק יותר מ־{hours} שעות לפני תחילתה.',
