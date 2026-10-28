@@ -667,13 +667,23 @@ export function createPlanReconcilePass(deps: PlanReconcileDeps): ReconcilePass 
       if (row.cancel_at_period_end !== subscription.cancelAtPeriodEnd) found.push('cancel_flag_differs');
       if (subscription.endedAt !== null) found.push('ended_differs');
       const stripeTier = tierOf(subscription);
-      if (stripeTier !== null && row.bought_tier !== null && row.bought_tier !== stripeTier) found.push('tier_differs');
 
       // The period and the plan row are compared only while Stripe and our
       // record both say "paying" (past_due excluded: a failed renewal moves
       // Stripe's period ahead of the paid one, by design).
       const paying = subscription.status === 'active' && row.subscription_status !== null && PAYING_STATUSES.has(row.subscription_status);
       const period = periodOf(subscription);
+
+      if (stripeTier !== null && row.bought_tier !== null && row.bought_tier !== stripeTier) found.push('tier_differs');
+      // FU-P8b-6 (SA P3-SA-2 item 6, P3-SA-10): a paying row whose mirror holds
+      // NO tier, while Stripe's resolves, is the same root difference. Only once
+      // the period is known to have started at least a day ago: inside a day,
+      // or with no known start, a null is a checkout still settling. A separate
+      // predicate on purpose: `settled` below treats an unknown start as settled.
+      const nullTierSettled =
+        paying && period.startMs !== null && nowMs - period.startMs >= PLAN_RECONCILE_LIMITS.RENEWAL_SETTLE_MS;
+      if (stripeTier !== null && row.bought_tier === null && nullTierSettled) found.push('tier_differs');
+
       // A renewal younger than a day may still be waiting for its paid invoice.
       const settled = period.startMs === null || nowMs - period.startMs >= PLAN_RECONCILE_LIMITS.RENEWAL_SETTLE_MS;
       const periodComparable = paying && settled && period.endMs !== null;

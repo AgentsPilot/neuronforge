@@ -55,6 +55,7 @@ const subRow = (extra: Partial<SubscriptionRow> = {}): SubscriptionRow => ({
   failedAttempts: 0,
   pendingPlan: null,
   discounted: false,
+  disagreements: [], // P-8b.3a: the new field, empty (agrees)
   ...extra,
 });
 
@@ -166,6 +167,7 @@ describe('the plan drawer', () => {
       paidByPlan: [{ id: 'tier_a', name: 'Plan A', accounts: 1 }],
       byStatus: { ended: 0, paused: 0, grace: 0, failed: 0, cancelling: 0, active: 1, other: 0, no_stripe: 2 },
       accounts: 3,
+      disagreeing: 0, // P-8b.3a
     },
     rows: [subRow()],
     matching: 3,
