@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-26",
+  "generated": "2026-10-27",
   "matrixVersion": 3,
   "tiers": {
     "basic": {
@@ -169,6 +169,13 @@
           "days": 1
         }
       ]
+    }
+  },
+  "afterPlan": {
+    "cohort": "trial",
+    "repeat": {
+      "divisor": 2,
+      "minimumDays": 1
     }
   }
 }

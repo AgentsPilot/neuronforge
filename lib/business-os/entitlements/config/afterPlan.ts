@@ -16,15 +16,35 @@
 //     cohort onto a plan row (it is a grant, not a display list), which is why
 //     SA Q-10 asks for it to join the drift snapshot. D3 ships the invariant
 //     test only (`afterPlan.test.ts`: grantable, and a cohort WITH a duration);
-//     SX-2b adds the snapshot line before it writes.
+//     SX-2b (D3.1) added the snapshot line before it writes: `afterPlan` in
+//     `entitlements.snapshot.json`, compared by `findDrift`.
+//
+// D3.1 / SX-2b (user decision 2026-10-27, workplan
+// docs/workplans/BUSINESS_OS_D3_1_FREE_COHORT_AFTER_CANCEL_WORKPLAN.md §4,
+// SA S-3): each REPEAT cancel halves the free period, rounded up, never below
+// `minimumDays`: 14 → 7 → 4 → 2 → 1 → 1 with today's config. The count never
+// resets (user U-1). The base length is the cohort's own `durationHistory`,
+// never a number here.
 
 import type { CohortId } from './cohorts';
 
 export interface AfterPlanConfig {
   /** The cohort a cancelled paid plan moves to. Must have a `durationHistory` (an end date). */
   cohort: CohortId;
+  /**
+   * The repeat-cancel halving: the free period is
+   * `max(minimumDays, ceil(base / divisor ^ priorMoves))` days.
+   */
+  repeat: {
+    /** An integer > 1. */
+    divisor: number;
+    /** An integer >= 1: the free period is never shorter. */
+    minimumDays: number;
+  };
 }
 
 export const AFTER_PLAN: AfterPlanConfig = {
   cohort: 'trial',
+  // User decision 2026-10-27: each repeat cancel halves the free period, to a minimum.
+  repeat: { divisor: 2, minimumDays: 1 },
 };

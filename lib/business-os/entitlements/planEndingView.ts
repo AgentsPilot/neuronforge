@@ -25,7 +25,11 @@ import 'server-only';
  *                 else the cohort's own end (`null` = open-ended).
  *   unknown       the current basis is not a tier, or the resolver reports an
  *                 anomaly, or the after-plan row does not resolve to a live
- *                 cohort: the drawer says so honestly.
+ *                 cohort, or (D3.1) the rule declined to move for a reason
+ *                 other than a surviving own cohort: the drawer says so honestly.
+ *
+ * D3.1 / SX-2b: `until` is the HALVED date for a repeat canceller, because
+ * the preview passes the stored repeat-cancel count into the one rule.
  *
  * `credits` (user G-5 approval, 2026-10-27): the free cohort's one-off credit
  * total, read from that cohort's CONFIG value (`credits.allowance`), never a
@@ -134,6 +138,13 @@ export function buildPlanEndingView(input: {
   const rows = input.rows ?? PLAN_COMPARISON_ROWS;
 
   if (current.anomaly || current.basis.kind !== 'tier' || !isLiveCohort(after) || after.basis.kind !== 'cohort') {
+    return { kind: 'unknown', endsAt };
+  }
+  // D3.1 (SA S-11 replacement, DR-4): the rule declined to move for a reason
+  // other than a surviving own cohort (paid through after the end, a
+  // misconfigured entry, no end date). The writer will not move either, so the
+  // drawer says it could not work it out rather than describing a move.
+  if (!moved && preview.skip !== undefined && preview.skip !== 'own_cohort_survives') {
     return { kind: 'unknown', endsAt };
   }
 

@@ -2,13 +2,20 @@
  * `EntitlementService.previewAfterPlan` (account-deletion lifecycle SX-2 / D3;
  * SA Q-4, R-5): same inputs and cache as `getSnapshot`, never mutates the
  * cached object, and resolves PAST the renewal settlement margin.
+ *
+ * D3.1 / SX-2b (workplan §4.2, C-9): it reads the repeat-cancel count, so the
+ * drawer's date is the halved one the writer stores; a failed count read is
+ * `null`, never the first-time period.
  */
 
 import { EntitlementService, CACHE_TTL_SECONDS } from '@/lib/business-os/entitlements/EntitlementService';
+import { LIFECYCLE_CONFIG } from '@/lib/business-os/entitlements/config/lifecycle';
+import { tierSettlementEndsAt } from '@/lib/business-os/entitlements/lifecycle';
 import { AFTER_PLAN } from '@/lib/business-os/entitlements/config/afterPlan';
 import { COHORTS, type CohortConfig } from '@/lib/business-os/entitlements/config/cohorts';
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 import { afterPlanAccount } from '@/lib/business-os/entitlements/afterPlan';
+import { buildPlanEndingView } from '@/lib/business-os/entitlements/planEndingView';
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { fromPlanRow, type EntitlementAccount } from '@/lib/business-os/entitlements/account';
@@ -30,8 +37,8 @@ function planRow(overrides: Partial<BusinessOsAccountPlan> = {}): BusinessOsAcco
   };
 }
 
-function fakeRepository(inputs: BusinessOsEntitlementInputs | null) {
-  const state = { calls: 0, error: null as Error | null };
+function fakeRepository(inputs: BusinessOsEntitlementInputs | null, moves: number | Error = 0) {
+  const state = { calls: 0, countCalls: 0, error: null as Error | null };
   return {
     state,
     async findEntitlementInputs() {
@@ -42,12 +49,17 @@ function fakeRepository(inputs: BusinessOsEntitlementInputs | null) {
     async findEntitlementInputsBatch() {
       return { data: {}, error: null };
     },
+    async findAfterPlanMoveState() {
+      state.countCalls += 1;
+      if (moves instanceof Error) return { data: null, error: moves };
+      return { data: { moves, lastSubscriptionId: moves === 0 ? null : 'sub_PREVIOUS' }, error: null };
+    },
   };
 }
 
-function service(inputs: BusinessOsEntitlementInputs | null, nowIso = NOW) {
+function service(inputs: BusinessOsEntitlementInputs | null, nowIso = NOW, moves: number | Error = 0) {
   let ms = Date.parse(nowIso);
-  const repo = fakeRepository(inputs);
+  const repo = fakeRepository(inputs, moves);
   const svc = new EntitlementService({ repository: repo, now: () => new Date(ms) });
   return { svc, repo, advance: (seconds: number) => (ms += seconds * 1000) };
 }
@@ -94,7 +106,7 @@ describe('previewAfterPlan', () => {
     // The same after-plan row, read one millisecond after the period end (inside the margin): still the tier.
     const config = getEntitlementConfig();
     const lifecycle = { cohorts: config.cohorts, tierOrder: config.tierOrder, subscriptionGraceHistory: config.lifecycle.subscriptionGraceHistory, renewalSettlementMarginHistory: config.lifecycle.renewalSettlementMarginHistory };
-    const row = afterPlanAccount(fromPlanRow(planRow()), ENDS, lifecycle).account;
+    const row = afterPlanAccount(fromPlanRow(planRow()), ENDS, lifecycle, { priorMoves: 0 }).account;
     const inside = resolveEntitlements({ config, account: row, overrides: [], addons: [], now: new Date(Date.parse(ENDS) + 1) });
     expect(inside.basis).toEqual({ kind: 'tier', tier: TOP });
   });
@@ -121,5 +133,67 @@ describe('previewAfterPlan', () => {
     await expect(noRow.svc.previewAfterPlan('acct-1', ENDS)).resolves.toBeNull();
     const ok = service({ plan: planRow(), overrides: [] });
     await expect(ok.svc.previewAfterPlan('acct-1', 'not a date')).resolves.toBeNull();
+  });
+});
+
+const SETTLED = tierSettlementEndsAt(ENDS, LIFECYCLE_CONFIG.renewalSettlementMarginHistory);
+const plusDays = (iso: string, days: number) => new Date(Date.parse(iso) + days * 24 * 60 * 60 * 1000).toISOString();
+
+describe('previewAfterPlan reads the repeat-cancel count (D3.1, workplan §4.2)', () => {
+  it('a first cancel: the free period starts at the settlement end and lasts 14 days (S-2, U-3)', async () => {
+    const { svc } = service({ plan: planRow(), overrides: [] });
+    const preview = (await svc.previewAfterPlan('acct-1', ENDS))!;
+    expect(preview).toMatchObject({ moved: true, days: 14 });
+    expect(preview.after.lifecycle.accessEndsAt).toBe(plusDays(SETTLED, 14));
+  });
+
+  it('two earlier moves: the halved 4 days, the same date the writer stores', async () => {
+    const { svc, repo } = service({ plan: planRow(), overrides: [] }, NOW, 2);
+    const preview = (await svc.previewAfterPlan('acct-1', ENDS))!;
+    expect(preview.days).toBe(4);
+    expect(preview.after.lifecycle.accessEndsAt).toBe(plusDays(SETTLED, 4));
+    const config = getEntitlementConfig();
+    const lifecycle = { cohorts: config.cohorts, tierOrder: config.tierOrder, subscriptionGraceHistory: config.lifecycle.subscriptionGraceHistory, renewalSettlementMarginHistory: config.lifecycle.renewalSettlementMarginHistory };
+    expect(preview.after.lifecycle.accessEndsAt).toBe(afterPlanAccount(fromPlanRow(planRow()), ENDS, lifecycle, { priorMoves: 2 }).account.trialEndsAt);
+    // Still one plan read; the count is its own small, uncached read.
+    expect(repo.state.calls).toBe(1);
+    expect(repo.state.countCalls).toBe(1);
+  });
+
+  it('a failed count read: null (the drawer says it could not work it out), never the first-time period', async () => {
+    const { svc } = service({ plan: planRow(), overrides: [] }, NOW, new Error('column does not exist'));
+    await expect(svc.previewAfterPlan('acct-1', ENDS)).resolves.toBeNull();
+  });
+
+  it('a repository without the count read: null', async () => {
+    const svc = new EntitlementService({
+      repository: {
+        async findEntitlementInputs() {
+          return { data: { plan: planRow(), overrides: [] }, error: null };
+        },
+        async findEntitlementInputsBatch() {
+          return { data: {}, error: null };
+        },
+      },
+      now: () => new Date(NOW),
+    });
+    await expect(svc.previewAfterPlan('acct-1', ENDS)).resolves.toBeNull();
+  });
+
+  it('SA code review comment 1: a lapsed tier ended now, 4 earlier moves → a 1-day free period, read inside it (AC-D31.5)', async () => {
+    // past_due: paid through a month ago, so the free period starts at the end itself.
+    const { svc } = service({ plan: planRow({ tier_expires_at: plusDays(NOW, -30) }), overrides: [] }, NOW, 4);
+    const preview = (await svc.previewAfterPlan('acct-1', NOW))!;
+    expect(preview).toMatchObject({ moved: true, days: 1 });
+    expect(preview.after.basis).toEqual({ kind: 'cohort', cohort: AFTER_PLAN.cohort });
+    expect(preview.after.lifecycle.accessEndsAt).toBe(plusDays(NOW, 1));
+    const view = buildPlanEndingView({ config: getEntitlementConfig(), preview, endsAt: NOW, locale: 'en' });
+    expect(view).toMatchObject({ kind: 'free_plan', until: plusDays(NOW, 1) });
+  });
+
+  it('S-11 replacement: a row paid through after the end is not moved and says why', async () => {
+    const { svc } = service({ plan: planRow({ tier_expires_at: plusDays(ENDS, 30) }), overrides: [] });
+    const preview = (await svc.previewAfterPlan('acct-1', ENDS))!;
+    expect(preview).toMatchObject({ moved: false, days: null, skip: 'paid_through_after_end' });
   });
 });

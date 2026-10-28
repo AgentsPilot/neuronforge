@@ -12,7 +12,8 @@ import { AFTER_PLAN } from '@/lib/business-os/entitlements/config/afterPlan';
 import { COHORTS, type CohortConfig } from '@/lib/business-os/entitlements/config/cohorts';
 import { PLAN_COMPARISON_ROWS } from '@/lib/business-os/entitlements/config/planComparison';
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
-import { historyAt } from '@/lib/business-os/entitlements/lifecycle';
+import { LIFECYCLE_CONFIG } from '@/lib/business-os/entitlements/config/lifecycle';
+import { historyAt, tierSettlementEndsAt } from '@/lib/business-os/entitlements/lifecycle';
 import { planLabel } from '@/lib/business-os/entitlements/planPresentation';
 import { buildPlanEndingView, readPlanEndingView } from '@/lib/business-os/entitlements/planEndingView';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
@@ -40,7 +41,7 @@ function planRow(overrides: Partial<BusinessOsAccountPlan> = {}): BusinessOsAcco
   };
 }
 
-function serviceFor(plan: BusinessOsAccountPlan | null) {
+function serviceFor(plan: BusinessOsAccountPlan | null, moves = 0) {
   return new EntitlementService({
     repository: {
       async findEntitlementInputs() {
@@ -49,16 +50,23 @@ function serviceFor(plan: BusinessOsAccountPlan | null) {
       async findEntitlementInputsBatch() {
         return { data: {}, error: null };
       },
+      // D3.1: the repeat-cancel count the preview reads.
+      async findAfterPlanMoveState() {
+        return { data: { moves, lastSubscriptionId: moves === 0 ? null : 'sub_PREVIOUS' }, error: null };
+      },
     },
     now: () => new Date(NOW),
   });
 }
 
-const read = (plan: BusinessOsAccountPlan | null, locale: 'en' | 'he' | 'es' = 'en') =>
-  readPlanEndingView({ accountId: 'acct-1', endsAt: ENDS, locale }, { service: serviceFor(plan) });
+const read = (plan: BusinessOsAccountPlan | null, locale: 'en' | 'he' | 'es' = 'en', moves = 0) =>
+  readPlanEndingView({ accountId: 'acct-1', endsAt: ENDS, locale }, { service: serviceFor(plan, moves) });
+
+/** D3.1 S-2: the free period starts when paid access really ends, the period end plus the settlement margin. */
+const SETTLED = tierSettlementEndsAt(ENDS, LIFECYCLE_CONFIG.renewalSettlementMarginHistory);
 
 describe('free_plan (user BQ-20)', () => {
-  it('the top paid tier, trial used long ago: the free cohort until endsAt + its duration, what is lost, then its grace', async () => {
+  it('the top paid tier, trial used long ago: the free cohort until the settlement end + its duration, what is lost, then its grace', async () => {
     const view = await read(planRow());
     const days = historyAt(AFTER_COHORT.durationHistory ?? [], new Date(ENDS))!.days;
     const grace = historyAt(AFTER_COHORT.graceHistory, new Date(ENDS))!.days;
@@ -66,11 +74,11 @@ describe('free_plan (user BQ-20)', () => {
       kind: 'free_plan',
       endsAt: ENDS,
       planName: planLabel(config, AFTER_PLAN.cohort, 'en'),
-      until: new Date(Date.parse(ENDS) + days * DAY).toISOString(),
+      until: new Date(Date.parse(SETTLED) + days * DAY).toISOString(),
       credits: (AFTER_COHORT.values['credits.allowance'] as { total: number }).total,
       loses: expect.any(Array),
       thenReadOnlyDays: grace,
-      thenPausedFrom: new Date(Date.parse(ENDS) + (days + grace) * DAY).toISOString(),
+      thenPausedFrom: new Date(Date.parse(SETTLED) + (days + grace) * DAY).toISOString(),
     });
     expect(days).toBe(14);
     expect(grace).toBe(7);
@@ -101,6 +109,28 @@ describe('free_plan (user BQ-20)', () => {
     const preview = (await service.previewAfterPlan('acct-1', ENDS))!;
     const view = buildPlanEndingView({ config, preview, endsAt: ENDS, locale: 'en', rows: [] });
     expect(view.kind === 'free_plan' ? view.loses : null).toEqual([]);
+  });
+});
+
+describe('a repeat canceller (D3.1, user decision 2026-10-27)', () => {
+  it.each([
+    [1, 7],
+    [2, 4],
+    [3, 2],
+    [4, 1],
+    [9, 1],
+  ])('after %i earlier move(s): until = settlement end + %i days, the halved date the writer stores', async (moves, days) => {
+    const view = await read(planRow(), 'en', moves);
+    if (view?.kind !== 'free_plan') throw new Error('kind');
+    expect(view.until).toBe(new Date(Date.parse(SETTLED) + days * DAY).toISOString());
+    // The credit total does not halve: it is the cohort's configured total.
+    expect(view.credits).toBe((AFTER_COHORT.values['credits.allowance'] as { total: number }).total);
+  });
+
+  it('U-3: a first cancel reads the period end + 15 days with the 1-day margin of today', async () => {
+    const view = await read(planRow());
+    if (view?.kind !== 'free_plan') throw new Error('kind');
+    expect(view.until).toBe(new Date(Date.parse(ENDS) + 15 * DAY).toISOString());
   });
 });
 
@@ -155,6 +185,11 @@ describe('unknown', () => {
 
   it('a resolver anomaly (a tier the config does not know)', async () => {
     const view = await read(planRow({ tier: 'no_such_tier' }));
+    expect(view).toEqual({ kind: 'unknown', endsAt: ENDS });
+  });
+
+  it('D3.1 S-11 replacement: a row paid through after the end (the writer will not move it)', async () => {
+    const view = await read(planRow({ tier_expires_at: new Date(Date.parse(ENDS) + 30 * DAY).toISOString() }));
     expect(view).toEqual({ kind: 'unknown', endsAt: ENDS });
   });
 

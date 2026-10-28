@@ -29,6 +29,20 @@ export interface EntitlementSnapshot {
   removals: MatrixRemoval[];
   /** Cohort durations and grace lengths, which S-7 freezes too. */
   histories: Record<string, Record<string, HistoryEntry[]>>;
+  /**
+   * D3.1 / SX-2b (D3 deviation 3, SA Q-10, DR-11): where a cancelled paid plan
+   * goes and how its free period halves (`config/afterPlan.ts`). The webhook
+   * WRITES this cohort onto plan rows, so it is a grant, frozen like a tier
+   * change: any edit is a finding until the snapshot is refreshed. Optional
+   * only so the fixture snapshots below need not carry it.
+   */
+  afterPlan?: SnapshotAfterPlan;
+}
+
+/** The after-plan config as the snapshot holds it. */
+export interface SnapshotAfterPlan {
+  cohort: string;
+  repeat: { divisor: number; minimumDays: number };
 }
 
 /**
@@ -72,7 +86,7 @@ export function rankValue(value: CapabilityValue, definition: CapabilityDef): nu
 }
 
 export interface DriftFinding {
-  kind: 'lowered' | 'changed' | 'removed_capability' | 'removed_tier' | 'history_edited';
+  kind: 'lowered' | 'changed' | 'removed_capability' | 'removed_tier' | 'history_edited' | 'after_plan_changed';
   where: string;
   detail: string;
 }
@@ -90,6 +104,8 @@ export function findDrift(
     tiers: Record<string, Record<string, CapabilityValue>>;
     removals: readonly MatrixRemoval[];
     histories: Record<string, Record<string, readonly HistoryEntry[]>>;
+    /** D3.1: the shipped `AFTER_PLAN`. Compared only when the snapshot holds one. */
+    afterPlan?: SnapshotAfterPlan;
     catalog: Readonly<Record<string, CapabilityDef>>;
   }
 ): DriftFinding[] {
@@ -170,6 +186,29 @@ export function findDrift(
           });
         }
       }
+    }
+  }
+
+  // D3.1 / SX-2b: the after-plan cohort and its halving are a grant the webhook
+  // writes. Any edit (cohort, divisor or minimum, or the entry dropped) needs a
+  // reviewed snapshot refresh, exactly like a tier change.
+  if (snapshot.afterPlan) {
+    const was = snapshot.afterPlan;
+    const now = current.afterPlan;
+    const same =
+      now !== undefined &&
+      now.cohort === was.cohort &&
+      now.repeat?.divisor === was.repeat.divisor &&
+      now.repeat?.minimumDays === was.repeat.minimumDays;
+    if (!same) {
+      findings.push({
+        kind: 'after_plan_changed',
+        where: 'afterPlan',
+        detail:
+          `${JSON.stringify(was)} → ${JSON.stringify(now ?? null)}. ` +
+          'Where a cancelled paid plan goes, and how its free period halves, is written onto plan rows: ' +
+          'have the change reviewed, then refresh the snapshot with `npm run entitlements:snapshot`.',
+      });
     }
   }
 

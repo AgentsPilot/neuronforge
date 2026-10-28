@@ -15,7 +15,10 @@
 // repository is a server-side admin route, cron or report that already knows
 // which account it is acting on, so the account id ALWAYS comes from server
 // context — a session, a claimed row or an admin route's validated path
-// parameter — and never from a request body.
+// parameter — and never from a request body. D3.1 / SX-2b adds one SYSTEM
+// writer, the webhook's after-plan move (`applyAfterPlanMove`, reached only
+// through `lib/business-os/billing/afterPlanMoveDeps.ts`), whose account id
+// comes from our own billing row, never from Stripe metadata.
 //
 // Every **per-account** read and write is scoped with `.eq('user_id', accountId)`,
 // per CLAUDE.md rule 4 — the PK is `user_id`, so that filter is also the row key.
@@ -144,6 +147,48 @@ export interface ResetBusinessOsPlanStateInput {
   reason: string;
 }
 
+/**
+ * D3.1 / SX-2b: the after-plan move state of one account (migration 20261097).
+ * `moves` is how many free-after-cancel moves it has had (never reset, user
+ * U-1); `lastSubscriptionId` is the subscription that gave the last one, the
+ * idempotency key of the writer.
+ */
+export interface BusinessOsAfterPlanMoveState {
+  moves: number;
+  lastSubscriptionId: string | null;
+}
+
+/** D3.1 / SX-2b: the plan row plus its after-plan move state, read fresh for the writer. */
+export interface BusinessOsAfterPlanMoveInputs extends BusinessOsAfterPlanMoveState {
+  plan: BusinessOsAccountPlan;
+}
+
+/**
+ * D3.1 / SX-2b: the system write of the after-plan move (SA S-9, DR-5).
+ *
+ * Named fields only, never a caller object (tenant-isolation-guard §3). There
+ * is no `tier_expires_at` here: the move never writes the paid tier (SA S-11
+ * replacement). `expected` is the compare-and-set: the EXACT `updated_at`
+ * string and the `after_plan_moves` count the caller read.
+ */
+export interface ApplyAfterPlanMoveInput {
+  accountId: string;
+  expected: { updatedAt: string; moves: number };
+  /** Already validated by the caller (`isGrantableCohort`). */
+  cohort: string;
+  trialStartedAt: string;
+  trialEndsAt: string;
+  /** True when a stale `grace_ends_at` pin is cleared (SA S-4); false leaves the column alone. */
+  clearGraceEndsAt: boolean;
+  /** The fresh credit total's anchor (SA S-5), written verbatim. */
+  periodAnchor: string;
+  /** The subscription that ended; becomes `after_plan_last_subscription_id`. */
+  subscriptionId: string;
+}
+
+/** `applied`: exactly the expected row changed. `stale`: no row matched the compare-and-set. */
+export type ApplyAfterPlanMoveResult = { outcome: 'applied'; moves: number } | { outcome: 'stale' };
+
 const PLAN_COLUMNS =
   'user_id, tier, plan_version, tier_expires_at, cohort, cohort_expires_at, ' +
   'onboarding_started_at, profile_created_at, trial_started_at, trial_ends_at, grace_ends_at, ' +
@@ -162,6 +207,29 @@ export const BOS_ENTITLEMENT_BATCH_LIMIT = 100;
 
 /** An account id is an auth user id (a UUID). */
 const ACCOUNT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * D3.1 / SX-2b: the two after-plan columns (migration 20261097). Selected ONLY
+ * by the after-plan methods, never by `PLAN_COLUMNS`, so the hot entitlement
+ * read does not change and a deploy before the migration breaks nothing else.
+ */
+const AFTER_PLAN_MOVE_COLUMNS = 'after_plan_moves, after_plan_last_subscription_id';
+
+/** The shape the 20261097 CHECK allows for `after_plan_last_subscription_id`. */
+const SUBSCRIPTION_ID_PATTERN = /^sub_[A-Za-z0-9]{1,251}$/;
+
+/** The after-plan columns of a row, checked: a count that is not a non-negative integer is an error, never 0. */
+function toAfterPlanMoveState(row: { after_plan_moves?: unknown; after_plan_last_subscription_id?: unknown }): BusinessOsAfterPlanMoveState {
+  const moves = row.after_plan_moves;
+  const last = row.after_plan_last_subscription_id;
+  if (typeof moves !== 'number' || !Number.isInteger(moves) || moves < 0) {
+    throw new Error('The plan row has no readable after-plan move count');
+  }
+  if (last !== null && typeof last !== 'string') {
+    throw new Error('The plan row has no readable after-plan subscription id');
+  }
+  return { moves, lastSubscriptionId: last };
+}
 
 /**
  * The answer from `business_os_tenants_missing_plan_row`.
@@ -710,6 +778,126 @@ export class BusinessOsAccountPlanRepository {
       return { data: data as unknown as BusinessOsAccountPlan, error: null };
     } catch (error) {
       methodLogger.error({ err: error }, 'Failed to update the plan row');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  // ── D3.1 / SX-2b: the after-plan move (workplan §6.3; SA S-9, DR-5) ───────
+
+  /**
+   * The plan row plus its after-plan move state, read FRESH (never the
+   * entitlement cache) for the webhook writer (`afterPlanMove.ts`, through
+   * `afterPlanMoveDeps.ts`). `null` when the account has no plan row. The
+   * row's `updated_at` comes back VERBATIM: it is the compare-and-set value of
+   * `applyAfterPlanMove`, so it must never pass through a `Date`.
+   */
+  async findAfterPlanMoveInputs(accountId: string): Promise<RepositoryResult<BusinessOsAfterPlanMoveInputs | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_os_account_plans')
+        .select(`${PLAN_COLUMNS}, ${AFTER_PLAN_MOVE_COLUMNS}`)
+        .eq('user_id', accountId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data === null) return { data: null, error: null };
+
+      const row = data as unknown as BusinessOsAccountPlan & { after_plan_moves?: unknown; after_plan_last_subscription_id?: unknown };
+      const state = toAfterPlanMoveState(row);
+      const plan: Record<string, unknown> = { ...row };
+      delete plan.after_plan_moves;
+      delete plan.after_plan_last_subscription_id;
+      return { data: { plan: plan as unknown as BusinessOsAccountPlan, ...state }, error: null };
+    } catch (error) {
+      this.logger.error({ err: error, accountId }, 'Failed to read the after-plan move inputs');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The after-plan move count ONLY, for the Cancel drawer's preview
+   * (`EntitlementService.previewAfterPlan`), so the drawer's `{until}` is the
+   * halved date the writer will store (SA comment 1). Uncached. `null` when the
+   * account has no plan row; a read error is an error, never "no moves".
+   */
+  async findAfterPlanMoveState(accountId: string): Promise<RepositoryResult<BusinessOsAfterPlanMoveState | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_os_account_plans')
+        .select(AFTER_PLAN_MOVE_COLUMNS)
+        .eq('user_id', accountId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data === null) return { data: null, error: null };
+      return { data: toAfterPlanMoveState(data as { after_plan_moves?: unknown; after_plan_last_subscription_id?: unknown }), error: null };
+    } catch (error) {
+      this.logger.error({ err: error, accountId }, 'Failed to read the after-plan move count');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The SYSTEM write of the after-plan move: ONE conditional UPDATE, so the
+   * cohort, the free-period pins, the credit anchor and the repeat-cancel count
+   * can never disagree (SA S-1 option A).
+   *
+   * A plan-state WRITE: listed in the entitlements imports guard's
+   * `WRITE_METHODS`, callable only from `afterPlanMoveDeps.ts` (SA S-9, rule 7:
+   * a system write of plan state). `updated_by_admin_id` is set to NULL: no
+   * admin made this change.
+   *
+   * Compare-and-set (SA DR-5): `.eq('user_id')`, `.eq('updated_at', <the exact
+   * string read>)` and `.eq('after_plan_moves', <the count read>)`. Every plan
+   * writer stamps `updated_at`, so a paid invoice, an admin `set_cohort` or a
+   * concurrent duplicate delivery between the read and this write makes it
+   * `stale`. `{ count: 'exact' }` and no `.select()` / `.or()` (the PostgREST
+   * update + or + select bug). Never writes `tier_expires_at` (S-11 replacement).
+   *
+   * Refuses, with no query, an account id that is not a UUID, a subscription id
+   * that is not `sub_…`, or an expected count that is not a non-negative integer.
+   */
+  async applyAfterPlanMove(input: ApplyAfterPlanMoveInput): Promise<RepositoryResult<ApplyAfterPlanMoveResult>> {
+    const methodLogger = this.logger.child({ method: 'applyAfterPlanMove', accountId: input.accountId });
+
+    try {
+      if (!ACCOUNT_ID_PATTERN.test(input.accountId)) throw new Error('applyAfterPlanMove needs a UUID account id');
+      if (!SUBSCRIPTION_ID_PATTERN.test(input.subscriptionId)) throw new Error('applyAfterPlanMove needs a Stripe subscription id');
+      if (!Number.isInteger(input.expected.moves) || input.expected.moves < 0) {
+        throw new Error('applyAfterPlanMove needs the expected move count');
+      }
+
+      const moves = input.expected.moves + 1;
+      const payload: Record<string, unknown> = {
+        cohort: input.cohort,
+        trial_started_at: input.trialStartedAt,
+        trial_ends_at: input.trialEndsAt,
+        period_anchor: input.periodAnchor,
+        after_plan_moves: moves,
+        after_plan_last_subscription_id: input.subscriptionId,
+        updated_at: new Date().toISOString(),
+        updated_by_admin_id: null,
+      };
+      if (input.clearGraceEndsAt) payload.grace_ends_at = null;
+
+      const { error, count } = await this.supabase
+        .from('business_os_account_plans')
+        .update(payload, { count: 'exact' })
+        .eq('user_id', input.accountId)
+        .eq('updated_at', input.expected.updatedAt)
+        .eq('after_plan_moves', input.expected.moves);
+
+      if (error) throw error;
+      if (count === 0) {
+        methodLogger.warn({ expectedMoves: input.expected.moves }, 'After-plan move matched no row; the plan row changed since it was read');
+        return { data: { outcome: 'stale' }, error: null };
+      }
+      if (count !== 1) throw new Error(`applyAfterPlanMove changed an unexpected number of rows: ${String(count)}`);
+
+      methodLogger.info({ fields: Object.keys(payload), moves }, 'After-plan move written');
+      return { data: { outcome: 'applied', moves }, error: null };
+    } catch (error) {
+      methodLogger.error({ err: error }, 'Failed to write the after-plan move');
       return { data: null, error: error as Error };
     }
   }
