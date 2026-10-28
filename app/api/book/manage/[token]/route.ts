@@ -134,7 +134,7 @@ async function packageMeetings(
      * ── WHICH SESSIONS HAVE ALREADY BEEN MADE UP ───────────────────────────
      *
      * A replacement points AT the session it stands in for
-     * (`replaces_meeting_id`, migration 20261095). One pass over every row
+     * (`replaces_meeting_id`, migration 20261097). One pass over every row
      * rather than a lookup per session.
      *
      * This is the fact the portal could not previously get at, and no count

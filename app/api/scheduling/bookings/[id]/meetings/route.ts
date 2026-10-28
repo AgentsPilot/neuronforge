@@ -557,7 +557,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
      *
      *   the ROW itself, so the link survives the request. Without it nothing
      *   can afterwards tell a session that has been made up from one that is
-     *   still waiting — see 20261095 for why a count cannot answer that.
+     *   still waiting — see 20261097 for why a count cannot answer that.
      *
      * Declared here, above the upfront-only guard, because the LINK matters on
      * every package. A per-session block has no ceiling to refuse against, so

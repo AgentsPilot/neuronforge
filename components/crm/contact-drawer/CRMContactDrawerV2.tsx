@@ -642,7 +642,7 @@ function sessionCardsFromMeetings(
    * This is the fact the card could not previously get at. Inferring it from
    * the block's size worked only while there was exactly one gap: on a package
    * with two missed sessions, one made up and one waiting on the client, no
-   * count can tell them apart — see 20261095.
+   * count can tell them apart — see 20261097.
    */
   const replaced = new Set(
     (card.booking.attempts ?? [])

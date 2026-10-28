@@ -259,7 +259,7 @@ export interface Appointment {
    * sessions (one made up, one waiting on the client) look identical to any
    * count.
    *
-   * Absent on every real booking and on sessions written before 20261095.
+   * Absent on every real booking and on sessions written before 20261097.
    * ───────────────────────────────────────────────────────────────────────────
    */
   was_replaced?: boolean;

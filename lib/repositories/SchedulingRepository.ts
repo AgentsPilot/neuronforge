@@ -204,7 +204,7 @@ export interface SchedulingMeetingInsert {
    *
    * Set only by the replacement toggle on the cancel and no-show dialogs. A
    * session something points at has already been made up, which is what stops
-   * the drawer offering to move it — see 20261095.
+   * the drawer offering to move it — see 20261097.
    */
   replaces_meeting_id?: string | null;
 }
@@ -217,7 +217,7 @@ export interface SchedulingMeetingAttempt {
    *
    * Read the other way round by the card: a session that something points at
    * has been made up, and is not offered Reschedule. Null on every ordinary
-   * session and on every row written before 20261095.
+   * session and on every row written before 20261097.
    */
   replaces_meeting_id?: string | null;
   /** Who recorded `meeting_status`. NULL on rows predating 20261078. */
@@ -1260,7 +1260,7 @@ export class SchedulingBookingRepository {
           /*
            * The session this one stands in for, when it came from the
            * replacement toggle. Null for every ordinary session, which is
-           * almost all of them — see the column's own comment (20261095).
+           * almost all of them — see the column's own comment (20261097).
            */
           replaces_meeting_id: meeting.replaces_meeting_id ?? null,
           /*
@@ -1770,7 +1770,7 @@ export class SchedulingBookingRepository {
            a column absent from a select is `undefined`, not null, and every
            session would read as "not a session". */
         /* `replaces_meeting_id` so a session that has already been made up can
-           be told from one still waiting — see 20261095. */
+           be told from one still waiting — see 20261097. */
         .select('id, booking_id, start_time, end_time, timezone, meeting_status, outcome_by, outcome_at, moved_by, session_number, occurrence_number, created_at, replaces_meeting_id')
         /* CLAUDE.md rule 4. The booking ids came from a list this user already
            owns, but a filter that depends on an earlier query being right is
