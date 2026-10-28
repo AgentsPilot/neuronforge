@@ -317,11 +317,41 @@ describe('the series reads as a table', () => {
      *
      * The current figure is binding in a way the earlier ones were not: under
      * `table-layout: fixed` the declared width IS the column, and
-     * `box-sizing: border-box` takes the `px-3` out of it, so 64 leaves 40 for
-     * the menu button. What matters, and what this still pins, is that the
-     * cell is always there with a width of its own.
+     * `box-sizing: border-box` takes the padding out of it. What matters, and
+     * what this still pins, is that the cell is always there with a width of
+     * its own.
      */
-    expect(tab).toContain('className="w-[64px] px-3 py-2.5 align-middle"');
+    expect(tab).toContain('className="w-[64px] px-1 py-2.5 align-middle"');
+  });
+
+  it('leaves room for BOTH controls, not just the menu', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────
+     * The note above worked out "64 leaves 40 for the menu button" — one
+     * button. The cell can hold TWO: `MeetingRowActions` renders the green
+     * confirm beside the ⋯ in a `flex shrink-0 gap-1`, which is 24 + 4 + 24 =
+     * 52px of content that cannot compress.
+     *
+     * So at `px-3` the pair overflowed a 40px box by 12px and sat over the
+     * money column — the one column with no declared width, which on a phone
+     * is whatever is left of the drawer and is already the tightest thing in
+     * the table.
+     *
+     * `px-1` gives 56px. Taken from the padding rather than the width, so the
+     * money column keeps every pixel it had.
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    const actions = read('components/crm/contact-drawer/MeetingRowActions.tsx');
+
+    /* The layout the arithmetic depends on. If this stops being a non-
+       shrinking row of two, the 56px above needs working out again. */
+    expect(actions).toContain('flex shrink-0 items-center gap-1');
+    expect(actions.match(/h-6 w-6/g) ?? []).toHaveLength(2);
+
+    /* Header and cell agree, or the column the body uses is not the one the
+       header declared. */
+    expect(tab).toContain('className="w-[64px] px-1 py-1.5 font-medium"');
+    expect(tab).toContain('className="w-[64px] px-1 py-2.5 align-middle"');
   });
 
   it('names the columns in every language', () => {

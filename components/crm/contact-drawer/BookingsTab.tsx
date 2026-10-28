@@ -6914,8 +6914,25 @@ export function BookingsTab({
                                                   </th>
                                                   {/* Room for the row menu's button plus its
                                                       padding, for the same border-box reason. */}
+                                                  {/* ── THE PADDING, NOT THE WIDTH ──────────────
+                                                      This column holds up to TWO controls: the
+                                                      green confirm and the ⋯ menu, which
+                                                      `MeetingRowActions` lays out as
+                                                      `flex shrink-0 gap-1` — 24 + 4 + 24, so 52px
+                                                      of content that cannot compress.
+
+                                                      At `px-3` the content box was 64 − 24 = 40px.
+                                                      Under `tableLayout: fixed` the cell does not
+                                                      grow, so the pair overflowed it and sat over
+                                                      the money column — which on a phone is the
+                                                      REMAINDER and already the tightest thing in
+                                                      the table.
+
+                                                      `px-1` gives 56px, which fits the pair with
+                                                      4px to spare, and takes it from padding so
+                                                      the money column keeps every pixel it has. */}
                                                   <th
-                                                    className="w-[64px] px-3 py-1.5 font-medium"
+                                                    className="w-[64px] px-1 py-1.5 font-medium"
                                                     style={{ borderBottom: '1px solid var(--v2-border)' }}
                                                   />
                                                 </tr>
@@ -7261,7 +7278,9 @@ export function BookingsTab({
                                                     )}
                                                   </td>
 
-                                                  <td className="w-[64px] px-3 py-2.5 align-middle">
+                                                  {/* `px-1` to match the header: the pair of
+                                                      controls needs 52px and `px-3` left 40. */}
+                                                  <td className="w-[64px] px-1 py-2.5 align-middle">
                                                   <MeetingRowActions
                                                     status={row.status}
                                                     meetingStatus={row.meeting_status}
