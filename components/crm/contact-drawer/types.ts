@@ -96,6 +96,19 @@ export interface MeetingAttempt {
    */
   outcome_at?: string | null;
   /**
+   * The session this one was booked to stand in for (20261097).
+   *
+   * Read the other way round to answer "has this been made up?": a session is
+   * replaced when something POINTS AT it, which is what `was_replaced` below
+   * is derived from. It cannot be inferred from a count — a package with two
+   * gaps, one made up and one still waiting on the client, is identical to any
+   * count and opposite in meaning.
+   *
+   * The drawer has read this column since the column existed; the type never
+   * declared it, so every read was an error `next.config.js` silently ignored.
+   */
+  replaces_meeting_id?: string | null;
+  /**
    * The mail sent about THIS attempt, oldest first.
    *
    * Matched on `email_sends.meeting_id`, which exists from 20261077 — so it is

@@ -841,6 +841,30 @@ async function sendByEmail(
       toEmail: invoice.client_email!,
       subject,
       bodyHtml: html,
+      /*
+       * ── WHICH JOB THIS BILL WAS FOR ─────────────────────────────────────
+       *
+       * The same `booking_id` the pay link above is built from, which is to
+       * say it was in hand all along and simply not recorded. Without it the
+       * mail belongs to no booking, so the card could not show that the client
+       * had been billed — and an owner who had just marked a session held, and
+       * watched the invoice go out, was shown no evidence of either.
+       *
+       * Measured on a live account: of six invoice mails to one client, one
+       * carried a booking and five did not.
+       *
+       * `meeting_id` stays null, via the kind below. An invoice is about the
+       * JOB, the same reading that keeps a receipt out of one appointment's
+       * history.
+       */
+      bookingId: (invoice as { booking_id?: string | null }).booking_id ?? null,
+      kind: 'invoice_sent',
+      /*
+       * A copy is a resend, and the card says so rather than showing it as a
+       * second original. `isCopy` is the same answer the watermark uses, so the
+       * document and its record cannot disagree about which this was.
+       */
+      isResend: isCopy,
       result: emailResult,
     });
 

@@ -769,6 +769,7 @@ export const he = {
     'crm.journey.mail_kind.missed_appointment': 'הודעה על פגישה שלא התקיימה',
     'crm.journey.mail_kind.meeting_reminder': 'תזכורת לפגישה',
     'crm.journey.mail_kind.meeting_reminder_owner': 'תזכורת לפגישה, אליך',
+    'crm.journey.mail_kind.invoice_sent': 'החשבונית',
     'crm.journey.mail_kind.payment_receipt': 'קבלה על תשלום',
     'crm.journey.mail_kind.payment_request_cancelled': 'ביטול דרישת תשלום',
     'crm.journey.mail_kind.refund_confirmed': 'אישור החזר כספי',

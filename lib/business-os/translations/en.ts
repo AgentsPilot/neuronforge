@@ -2753,6 +2753,7 @@ export const en = {
     'crm.journey.mail_kind.missed_appointment': 'the missed appointment notice',
     'crm.journey.mail_kind.meeting_reminder': 'a meeting reminder',
     'crm.journey.mail_kind.meeting_reminder_owner': 'a meeting reminder, to you',
+    'crm.journey.mail_kind.invoice_sent': 'the invoice',
     'crm.journey.mail_kind.payment_receipt': 'the payment receipt',
     'crm.journey.mail_kind.payment_request_cancelled': 'Payment request cancelled',
     'crm.journey.mail_kind.refund_confirmed': 'the refund confirmation',
