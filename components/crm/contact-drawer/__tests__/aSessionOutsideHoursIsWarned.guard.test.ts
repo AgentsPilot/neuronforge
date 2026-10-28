@@ -41,7 +41,26 @@ const modal = code('components/crm/contact-drawer/ProposalBuilderModal.tsx');
 
 describe('there are always hours to compare against', () => {
   it('uses the service\'s own weekly hours when it keeps any', () => {
-    expect(modal).toContain('setServiceHours(service.availability)');
+    expect(modal).toMatch(/setServiceHours\(service!?\.availability\)/);
+  });
+
+  it('and an EMPTY pattern does not count as keeping any', () => {
+    /*
+     * The regression this case exists for. The choice was
+     * `if (service?.availability)`, and the column on a package service is
+     * `{}` — an empty object, which is TRUTHY. So the service won with no
+     * hours in it, the business fallback never ran, and the check below
+     * silently skipped: it asks for the day's windows, gets none out of `{}`,
+     * and `windows.length > 0` is never true. Every session passed the hours
+     * test by having nothing to be tested against — which is the fault this
+     * whole file was written for, returning by a different door.
+     *
+     * `hasAnyAvailability` is the question actually being asked, and is the
+     * same function the publish gate and the booking page use, so all three
+     * agree about what "has hours" means.
+     */
+    expect(modal).toContain('hasAnyAvailability(service?.availability)');
+    expect(modal).not.toMatch(/if \(service\?\.availability\) \{/);
   });
 
   it('falls back to the business\'s hours when it does not', () => {
@@ -57,7 +76,7 @@ describe('there are always hours to compare against', () => {
     /* A service WITH hours is the more specific statement and wins; a second
        fetch behind it would be a request for nothing. */
     const effect = modal.slice(modal.indexOf('const response = await fetch(`/api/scheduling/services/'));
-    const serviceAt = effect.indexOf('setServiceHours(service.availability)');
+    const serviceAt = effect.search(/setServiceHours\(service!?\.availability\)/);
     const returnAt = effect.indexOf('return;', serviceAt);
     const businessAt = effect.indexOf("fetch('/api/scheduling/availability')");
 

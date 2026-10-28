@@ -324,12 +324,29 @@ describe('calling off one session is not cancelling the order', () => {
      * package would read as the whole thing being off. The session's own
      * endpoint stamps that hour, frees it, and leaves the other five.
      */
-    const confirm = drawerCode.slice(drawerCode.indexOf('onConfirm={async ({ proposalContinues })'));
+    /*
+     * Anchored on the parameter, not the whole destructuring: the dialog has
+     * since gained `addReplacement`, and pinning the exact argument list made
+     * this find nothing and assert against an empty string — which fails
+     * loudly, but for the wrong reason.
+     */
+    const confirm = drawerCode.slice(drawerCode.indexOf('onConfirm={async ({ proposalContinues'));
     const body = confirm.slice(0, confirm.indexOf('const data ='));
 
     expect(body).toContain('/outcome');
-    expect(body).toContain("{ status: 'cancelled', notifyClient: true }");
     expect(body).toContain('meeting-cancel');
+
+    /*
+     * The two facts the body must carry, asserted separately.
+     *
+     * This pinned the whole literal `{ status: 'cancelled', notifyClient: true }`,
+     * which stopped matching the moment the body gained a third field
+     * (`replacementStart`, for the hour booked in the cancelled one's place).
+     * What has to hold is that the session is called off and the client is
+     * told — not the shape of the object those two travel in.
+     */
+    expect(body).toMatch(/status: 'cancelled'/);
+    expect(body).toMatch(/notifyClient: true/);
   });
 });
 

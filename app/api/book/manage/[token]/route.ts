@@ -56,15 +56,34 @@ async function packageMeetings(
   booking: { id: string; parent_booking_id?: string | null; user_id: string },
   clientEmail: string,
   noticeHours: number,
-  now: Date
+  now: Date,
+  /**
+   * Packages this booking SOLD, which hold their sessions themselves.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Without these, a consultation that sold a package listed no dates at all.
+   *
+   * Everything below walks DOWNWARDS from `parent_booking_id ?? id`, which
+   * answers "what else is in my package" for a client already inside one. A
+   * consultation that SOLD a package is outside it: no parent, no children, so
+   * both queries asked about its own id and found nothing — the same blind
+   * spot that had already hidden the invoice.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  soldContainerIds: string[] = []
 ) {
   const containerId = booking.parent_booking_id ?? booking.id;
 
+  const containerIds = [...new Set([containerId, ...soldContainerIds])];
+
   const { data: rows } = await supabaseServer
     .from('scheduling_bookings')
-    .select('id, start_time, end_time, status, meeting_status, occurrence_number')
-    .eq('parent_booking_id', containerId)
+    .select('id, start_time, end_time, status, meeting_status, occurrence_number, parent_booking_id')
+    .in('parent_booking_id', containerIds)
     .eq('user_id', booking.user_id)
+    /* By package first, then by session within it: two packages sold from one
+       consultation would otherwise interleave their numbering. */
+    .order('parent_booking_id', { ascending: true })
     .order('occurrence_number', { ascending: true });
 
   /*
@@ -89,8 +108,8 @@ async function packageMeetings(
   if (!rows?.length) {
     const { data: sessionRows } = await supabaseServer
       .from('scheduling_meetings')
-      .select('id, start_time, end_time, meeting_status, session_number, occurrence_number')
-      .eq('booking_id', containerId)
+      .select('id, start_time, end_time, meeting_status, session_number, occurrence_number, booking_id, replaces_meeting_id')
+      .in('booking_id', containerIds)
       .eq('user_id', booking.user_id)
       .not('session_number', 'is', null)
       .order('session_number', { ascending: true })
@@ -103,16 +122,47 @@ async function packageMeetings(
      * client actually holds. A `moved` attempt is an hour they gave back, and
      * showing it would tell them to turn up at a time nobody is expecting them.
      */
-    const current = new Map<number, (typeof sessionRows)[number]>();
+    /*
+     * Keyed by the booking AND the session number.
+     *
+     * The number alone was enough while this only ever read one package. Now
+     * that a consultation can hand over two, session 1 of the second would
+     * silently overwrite session 1 of the first — a client shown half of what
+     * they bought, with no sign that anything was missing.
+     */
+    /*
+     * ── WHICH SESSIONS HAVE ALREADY BEEN MADE UP ───────────────────────────
+     *
+     * A replacement points AT the session it stands in for
+     * (`replaces_meeting_id`, migration 20261097). One pass over every row
+     * rather than a lookup per session.
+     *
+     * This is the fact the portal could not previously get at, and no count
+     * can supply it: on a package with two missed sessions, one made up and
+     * one still waiting on the client, both read identically through any
+     * aggregate. The migration's own note measures exactly that case.
+     */
+    const alreadyReplaced = new Set(
+      sessionRows
+        .map(row => row.replaces_meeting_id)
+        .filter((id): id is string => typeof id === 'string' && Boolean(id))
+    );
+
+    const current = new Map<string, (typeof sessionRows)[number]>();
 
     for (const row of sessionRows) {
       if (row.meeting_status === 'moved') continue;
-      current.set(Number(row.session_number), row);
+      current.set(`${row.booking_id}#${row.session_number}`, row);
     }
 
-    return [...current.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([session, row]) => {
+    return [...current.values()]
+      .sort(
+        (a, b) =>
+          String(a.booking_id).localeCompare(String(b.booking_id)) ||
+          Number(a.session_number) - Number(b.session_number)
+      )
+      .map(row => {
+        const session = Number(row.session_number);
         const start = row.start_time ? new Date(row.start_time as string) : null;
         const hoursAway = start ? (start.getTime() - now.getTime()) / 3_600_000 : null;
         const open = settleable(row.meeting_status as string | null);
@@ -126,6 +176,26 @@ async function packageMeetings(
              whether it has happened. */
           status: open ? 'confirmed' : 'cancelled',
           /*
+           * The REAL outcome, because the line above cannot carry it.
+           *
+           * `settleable` excludes only `held` and `cancelled` — a no-show is
+           * deliberately still settleable, because a missed session is
+           * unresolved and picking another time is the right next move. So a
+           * missed session arrives as `confirmed` and the list drew it as an
+           * ordinary upcoming hour, with nothing to say it had been missed.
+           *
+           * `PortalMeetings` already carries this field for the same reason.
+           */
+          meetingStatus: (row.meeting_status as string | null) ?? null,
+          /*
+           * Something already stands in for this hour.
+           *
+           * Moving it would leave the client holding two: the replacement they
+           * were given, and whatever this one was moved to. So it is reported
+           * and the action is withheld — see `canModify` below.
+           */
+          alreadyReplaced: alreadyReplaced.has(row.id as string),
+          /*
            * ─────────────────────────────────────────────────────────────────
            * THE SAME THREE CONDITIONS AS EVERY OTHER ROW: standing, dated,
            * and far enough away.
@@ -137,8 +207,32 @@ async function packageMeetings(
            * hours and nothing else.
            * ─────────────────────────────────────────────────────────────────
            */
-          canModify: open && hoursAway !== null && hoursAway > noticeHours,
-          tooSoon: open && hoursAway !== null && hoursAway <= noticeHours,
+          /*
+           * This session has been moved at least once.
+           *
+           * `occurrence_number` counts ATTEMPTS at one session —
+           * SchedulingRepository: "moving session 3 writes `session_number: 3,
+           * occurrence_number: 2`" — so anything past the first attempt is an
+           * hour that changed after the client booked it. The list already
+           * hides the `moved` rows and shows only the current attempt, which
+           * is right, but it left no sign that the hour on screen is not the
+           * hour they were originally given.
+           *
+           * Not to be confused with `occurrenceNumber` above, which carries
+           * the SESSION number — the "4" in "session 4 of 8".
+           */
+          wasMoved: Number(row.occurrence_number ?? 1) > 1,
+          /* A session that has already been made up is not moved again. */
+          canModify:
+            open &&
+            !alreadyReplaced.has(row.id as string) &&
+            hoursAway !== null &&
+            hoursAway > noticeHours,
+          tooSoon:
+            open &&
+            !alreadyReplaced.has(row.id as string) &&
+            hoursAway !== null &&
+            hoursAway <= noticeHours,
           /*
            * The PURCHASE's token, which is the only booking there is — and the
            * one this request has just proved the caller holds a link to.
@@ -434,9 +528,51 @@ export async function GET(
       .eq('parent_booking_id', moneyContainerId)
       .eq('user_id', booking.user_id);
 
-    const moneyIds = familyRows?.length
-      ? [moneyContainerId, ...familyRows.map(row => row.id as string)]
-      : [booking.id];
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * AND THE PACKAGE THIS BOOKING SOLD, WHICH IS WHERE ITS MONEY WENT.
+     *
+     * A quote accepted up front bills the PURCHASE, not the consultation it
+     * came out of: `raiseInvoice` points the invoice at the package container
+     * so the owner can refund it from the one row that represents the block.
+     * That is right, and it left the client with nothing to pay.
+     *
+     * The walk above only goes DOWNWARDS — a booking, its container, its
+     * siblings. A consultation that sold a package is none of those: it has no
+     * parent and no children, so `moneyIds` collapsed to its own id and the
+     * invoice sitting on the container was invisible. The client accepted a
+     * ₪700 quote and their portal showed no payment at all.
+     *
+     * `proposals.package_booking_id` records exactly which container each
+     * accepted quote created, and the block below already reads that link in
+     * the other direction to decide which booking a session belongs to. This
+     * is the same relationship, followed the other way, for the same reason:
+     * the client and the owner must be looking at one agreement.
+     *
+     * Containers only. Their sessions are picked up by the family walk once a
+     * client opens one of them, and adding every session here would widen the
+     * balance of a consultation that happens to have sold two packages.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const { data: soldPackages } = await supabaseServer
+      .from('proposals')
+      .select('package_booking_id')
+      .eq('booking_id', booking.id)
+      .eq('user_id', booking.user_id)
+      .not('package_booking_id', 'is', null);
+
+    const soldContainerIds = (soldPackages ?? [])
+      .map(row => row.package_booking_id as string)
+      .filter(id => id && id !== moneyContainerId);
+
+    const moneyIds = [
+      ...new Set([
+        ...(familyRows?.length
+          ? [moneyContainerId, ...familyRows.map(row => row.id as string)]
+          : [booking.id]),
+        ...soldContainerIds,
+      ]),
+    ];
 
     /*
      * ─────────────────────────────────────────────────────────────────────────
@@ -1055,7 +1191,10 @@ export async function GET(
        * meeting at a time.
        * ───────────────────────────────────────────────────────────────────────
        */
-      meetings: await packageMeetings(booking, contactEmail, noticeHours, now),
+      /* `soldContainerIds` so a consultation that sold a package lists the
+         sessions it bought, not an empty schedule — the same set the money
+         lookup above had to be widened with, for the same reason. */
+      meetings: await packageMeetings(booking, contactEmail, noticeHours, now, soldContainerIds),
       business: brand ? {
         name: brand.businessName,
         logoUrl: brand.logoUrl,

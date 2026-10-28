@@ -47,12 +47,27 @@ const logger = createLogger({ module: 'inboxChannelRunner' });
 /**
  * How long a channel waits between checks.
  *
- * The cron ticks every five minutes and this is five, so in practice every
- * due channel runs on every tick. It is expressed as a floor rather than
- * assumed from the schedule so that a tick which fires twice — a retry, an
- * overlapping invocation — cannot turn into two runs a few seconds apart.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * FIFTEEN, SET HERE RATHER THAN ON THE CRON.
+ *
+ * This is the knob that decides how often a mailbox is actually searched. The
+ * cron stays at five minutes, and the difference matters in one case: a channel
+ * created a moment ago has `last_run = null` and is due immediately, so it makes
+ * its first check within five minutes instead of waiting out a quarter of an
+ * hour. Slowing the SCHEDULE would have cost that, and cost it on the one run
+ * an owner is watching for.
+ *
+ * What it costs: the reply the client receives is sent fifteen minutes after
+ * the enquiry is filed, so the whole journey moves from about twenty minutes to
+ * at most thirty. Deliberate, and the reason the cron's own header no longer
+ * argues for five.
+ *
+ * Still a floor rather than an assumption about the schedule, so a tick that
+ * fires twice — a retry, an overlapping invocation — cannot become two runs a
+ * few seconds apart.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
-const MIN_MINUTES_BETWEEN_RUNS = 5;
+const MIN_MINUTES_BETWEEN_RUNS = 15;
 
 /**
  * How many channels one tick will run.

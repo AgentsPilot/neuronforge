@@ -40,7 +40,11 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 /* A leaf with no imports of its own — see the module for why the list cannot be
    taken from `ContactDocumentService`, which is where it used to live. */
 import { ATTACHABLE_DOCUMENT_TYPES, ATTACHABLE_ACCEPT } from '@/lib/crm/attachableDocumentTypes';
-import { windowsForDate, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
+import {
+  windowsForDate,
+  hasAnyAvailability,
+  type TimeOffEntry,
+} from '@/lib/scheduling/availabilityWindows';
 import { closedDayVerdict } from '@/lib/scheduling/closedDay';
 import { DocumentPreviewBody } from './DocumentPreviewBody';
 import {
@@ -968,8 +972,33 @@ export function ProposalBuilderModal({
          * acceptance books it regardless. It just stops being silent.
          * ─────────────────────────────────────────────────────────────────────
          */
-        if (service?.availability) {
-          setServiceHours(service.availability);
+        /*
+         * ── AN EMPTY PATTERN IS NOT A PATTERN ────────────────────────────
+         *
+         * This was `if (service?.availability)`, and the column on a package
+         * service is `{}` — an empty object, which is TRUTHY. So the service
+         * won the choice with no hours in it, `serviceHours` became `{}`, and
+         * the fallback below never ran.
+         *
+         * The check downstream then SKIPS rather than fails: it asks for the
+         * day's windows, gets none out of `{}`, and `windows.length > 0` is
+         * never true — so every session passed the hours test by having
+         * nothing to be tested against. That is the fault reported: sessions
+         * sold outside working hours with nothing said.
+         *
+         * Which makes this a regression of the fix described directly above,
+         * not a new bug: the fallback was added, the condition that selects it
+         * was not tightened, and an empty pattern still defeats it.
+         *
+         * `hasAnyAvailability` is the question actually being asked — does
+         * this pattern open on any day at all — and it is the same function
+         * the publish gate and the booking page use, so all three agree about
+         * what "has hours" means. It also parses the JSON-string shape of the
+         * column, which a truthiness test silently accepted and `{}`-tested
+         * code would not.
+         */
+        if (hasAnyAvailability(service?.availability)) {
+          setServiceHours(service!.availability);
           return;
         }
 

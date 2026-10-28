@@ -230,6 +230,40 @@ export async function GET(
     }
 
     /*
+     * ── A CONTAINER HAS NO HOUR OF ITS OWN ─────────────────────────────────
+     *
+     * Falling back to `booking.start_time` is right for an ordinary booking
+     * and meaningless for a package: the container's clock is the PURCHASE,
+     * often months old, so the notice window came out hugely negative and the
+     * client was told "you can only change it more than 24 hours before it
+     * starts" about a session three weeks away.
+     *
+     * The caller is supposed to name the session. When it does not, the honest
+     * answer is that we cannot tell which hour is meant — not a sentence about
+     * a deadline that was never the rule being applied. Logged, because
+     * reaching this means a caller lost its `meeting_id`.
+     */
+    if (!session) {
+      const { count: sessionCount } = await supabaseServer
+        .from('scheduling_meetings')
+        .select('id', { count: 'exact', head: true })
+        .eq('booking_id', bookingId)
+        .eq('user_id', booking.user_id as string)
+        .not('session_number', 'is', null);
+
+      if ((sessionCount ?? 0) > 0) {
+        requestLogger.error(
+          { bookingId, sessionCount },
+          'A package was asked to reschedule without naming a session'
+        );
+        return NextResponse.json(
+          { success: false, code: 'session_required', error: 'Which session should be moved?' },
+          { status: 400 }
+        );
+      }
+    }
+
+    /*
      * The session's clock where there is one: a purchase has none, so the
      * notice window would be measured against an invalid date and the page
      * would offer to move an hour that starts in ten minutes.

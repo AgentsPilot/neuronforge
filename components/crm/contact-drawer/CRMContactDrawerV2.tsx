@@ -633,6 +633,24 @@ function sessionCardsFromMeetings(
   if (numbered.length === 0) return [];
 
   /*
+   * ── WHICH SESSIONS HAVE ALREADY BEEN MADE UP ────────────────────────────
+   *
+   * Read the other way round from how it is written: a replacement names the
+   * session it stands in for, so a session is "replaced" when something points
+   * AT it. One pass over the attempts, rather than a lookup per row.
+   *
+   * This is the fact the card could not previously get at. Inferring it from
+   * the block's size worked only while there was exactly one gap: on a package
+   * with two missed sessions, one made up and one waiting on the client, no
+   * count can tell them apart — see 20261097.
+   */
+  const replaced = new Set(
+    (card.booking.attempts ?? [])
+      .map(attempt => attempt.replaces_meeting_id)
+      .filter((id): id is string => typeof id === 'string' && Boolean(id))
+  );
+
+  /*
    * The CURRENT attempt at each session: the highest `occurrence_number`.
    *
    * `moved` is skipped rather than ranked. A superseded attempt is an hour the
@@ -677,6 +695,15 @@ function sessionCardsFromMeetings(
           start_time: attempt.start_time,
           end_time: attempt.end_time,
           meeting_status: attempt.meeting_status,
+          /*
+           * Already made up: something was booked in its place. The row then
+           * does not offer to move it — the hour has been arranged once
+           * already, and moving it would leave the client holding two.
+           */
+          was_replaced: replaced.has(attempt.id),
+          /* And who said so — without it the table cannot tell a session the
+             owner confirmed from one the automation closed off. */
+          outcome_by: attempt.outcome_by ?? null,
           /*
            * ─────────────────────────────────────────────────────────────────
            * THE SESSION'S OWN STATE, NOT THE PURCHASE'S.
@@ -878,7 +905,62 @@ function foldPackageMeetings(
         key: 'package',
         status: packageCalledOff ? 'skipped' : nextUp ? 'active' : 'completed',
         timestamp: ordered[0]?.booking.start_time ?? undefined,
-        metadata: { count: ordered.length, containerId },
+        /*
+         * `packageFull` — an UPFRONT block already at the number of sessions
+         * it was sold with, so "Add another meeting" is not offered.
+         *
+         * A package paid in one sum is a contract for a stated count at a
+         * stated total. A session beyond it has no money behind it, and the
+         * client's own total stops matching the quote they accepted. Another
+         * session means another agreement.
+         *
+         * THREE THINGS THIS IS DELIBERATELY NARROW ABOUT:
+         *
+         *   A package billed PER SESSION is never full. Each session is paid
+         *   after it is held, so a seventh on a block of six is priced when it
+         *   happens and contradicts no agreed total — the scenario the control
+         *   itself was written for, and which must keep working.
+         *
+         *   Only a block with an agreed count can be full. A package with no
+         *   proposal behind it has no number to exceed, so it is left alone.
+         *
+         *   A session called off or MISSED does not hold its place. Both are
+         *   cases where the owner may offer another hour, and this decides
+         *   whether they can. The money says the other thing on purpose: a
+         *   no-show keeps its portion, because it consumed one, so a make-up
+         *   after a no-show is free — while a cancelled session's portion
+         *   moves to whatever replaces it. Growing the block is refused;
+         *   repairing it is not.
+         *
+         * The route refuses this too, with `package_already_complete`. This
+         * only stops offering what it would refuse.
+         */
+        metadata: {
+          count: ordered.length,
+          containerId,
+          packageFull: (() => {
+            const sold = proposals.find(
+              proposal => proposal.package_booking_id === containerId
+            );
+
+            if (sold?.sessions?.bill_per_session === true) return false;
+
+            const agreed = sold?.sessions?.dates?.length ?? 0;
+            if (agreed === 0) return false;
+
+            /* Neither called off nor missed — the same test the add-session
+               route makes, so the button and the route cannot disagree. */
+            const occupied = (status?: string | null) =>
+              status !== 'cancelled' && status !== 'no_show';
+
+            const standing = ordered.filter(
+              meeting =>
+                occupied(meeting.booking.meeting_status) && occupied(meeting.booking.status)
+            ).length;
+
+            return standing >= agreed;
+          })(),
+        },
       };
 
       const steps = card.journeySteps ? [...card.journeySteps] : [];
@@ -2623,6 +2705,25 @@ export function toAppointment(booking: BookingWithService): Appointment {
      */
     meeting_status: booking.meeting_status ?? null,
     /*
+     * WHO gave that outcome — the same mistake as `meeting_status` above, one
+     * column later, and the comment block above is the record of it.
+     *
+     * `auto_complete_meetings` marks an overdue meeting held and stamps
+     * `outcome_by: 'system'`, because held is the only answer available to a
+     * clock. The repository returns it (`select('*')`), the route passes it
+     * through untouched — and this mapper, which names its fields one by one,
+     * did not name it. So the value existed everywhere except the one place
+     * that reads it, and every consumer saw `undefined`:
+     *
+     *   · the row's correction controls — no-show, cancel, and the
+     *     confirmation that raises the invoice the automation withheld — are
+     *     offered only on a system-held row, so they never appeared.
+     *   · the "marked automatically" badge beside the status could not fire.
+     *
+     * Both read a booking that had already forgotten who answered for it.
+     */
+    outcome_by: booking.outcome_by ?? null,
+    /*
      * The attempts, where the fetch asked for them.
      *
      * Named here for the same reason as `meeting_status` above, which is the
@@ -3144,6 +3245,113 @@ export function CRMContactDrawerV2({
       meetingId?: string | null;
     } | null
   >(null);
+  /*
+   * The replacement session the outcome dialogs may offer.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Answered by the server, not worked out here, for three reasons the drawer
+   * cannot get round: the agreed session count lives on the proposal, the hour
+   * has to be clear of the WHOLE diary (this screen only ever sees one
+   * contact), and the rule about which outcomes free a place has to match the
+   * route that will refuse the write.
+   *
+   * Null means no offer, which is every ordinary booking, every full upfront
+   * block, and every case where nothing is free within reach. The dialogs hide
+   * the toggle on null, so a failed lookup costs the owner the offer and
+   * nothing else.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [replacementOffer, setReplacementOffer] = useState<{
+    containerId: string;
+    proposedStart: string;
+    /**
+     * The proposal and the rhythm's next free beats after it, proposal first.
+     *
+     * One date was not enough: the next beat can be right about the pattern
+     * and wrong about the week — the owner is away, or the client cannot make
+     * it — and the only answer then was to decline the replacement and place
+     * it by hand. These let them pick another without leaving the dialog.
+     */
+    options: string[];
+    /** Per-session blocks bill the replacement; upfront ones already paid. */
+    billsPerSession: boolean;
+  } | null>(null);
+  /**
+   * Book the replacement the owner just agreed to.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Deliberately NOT fatal to the outcome that preceded it. The cancellation or
+   * no-show is already recorded and the client has already been emailed about
+   * it; a replacement that cannot be placed — the hour went in the seconds
+   * since it was proposed, the block turned out to be full — must not make the
+   * owner think the outcome failed and record it twice.
+   *
+   * So it reports and returns. The owner still has "Add another meeting", which
+   * is the same write with a date they pick.
+   *
+   * ── WHETHER IT IS BILLED DEPENDS ON HOW THE BLOCK IS SOLD ────────────────
+   *
+   * UPFRONT: never. The client paid one agreed sum, and a cancelled session's
+   * portion moves to its replacement. Billing again would be a second sale,
+   * and the route refuses it outright.
+   *
+   * PER SESSION: for a cancelled session, yes. Nothing was ever paid for that
+   * hour — these are billed when HELD — so its replacement needs a stage of
+   * its own, or the client is given a session nobody invoices.
+   *
+   * A NO-SHOW make-up is never billed on either. The missed hour was held and
+   * the owner has already answered the money question on that dialog; the
+   * make-up is the thing they are choosing to give.
+   */
+  const bookReplacement = useCallback(
+    async (
+      containerId: string,
+      startTime: string,
+      charge: boolean,
+      /* The session being called off, which no longer holds its place. */
+      replaces: string | null
+    ): Promise<boolean> => {
+      try {
+        const response = await fetch(`/api/scheduling/bookings/${containerId}/meetings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          /*
+           * `notify: false` — this session does not announce itself. The
+           * outcome that follows sends ONE mail listing every session of the
+           * block, this one included, with what each is worth. Two mails a
+           * second apart, the first listing a block without the replacement
+           * in it, is what that avoids.
+           */
+          /*
+           * `replaces` matters because this runs BEFORE the outcome is
+           * recorded: without it the route still counts the session being
+           * cancelled and refuses the block as full, which is exactly what it
+           * did — the hour was called off and nothing replaced it.
+           */
+          body: JSON.stringify({
+            start_time: startTime,
+            charge,
+            notify: false,
+            ...(replaces ? { replaces } : {}),
+          }),
+        });
+        const data = await response.json();
+
+        if (!response.ok || data?.success === false) {
+          toast.error(data?.error || 'The replacement session could not be added');
+          return false;
+        }
+
+        return true;
+      } catch (err) {
+        logger.warn({ err, containerId }, 'Replacement session could not be added');
+        toast.error('The replacement session could not be added');
+        return false;
+      }
+    },
+    []
+  );
+
   const [pendingResendKind, setPendingResendKind] = useState<string>('booking_confirmed');
   const [showConfirmationResend, setShowConfirmationResend] = useState(false);
   const [pendingConfirmationBookingId, setPendingConfirmationBookingId] = useState<string | null>(null);
@@ -5418,6 +5626,73 @@ export function CRMContactDrawerV2({
                 onSetBookingStatus={async (bookingId, status, meetingId, chargeable) => {
                   /* Carried into the dialogs below, which ask and then write. */
                   setPendingOutcomeMeetingId(meetingId ?? null);
+
+                  /*
+                   * ── WHAT THE DIALOG CAN OFFER, ASKED BEFORE IT OPENS ──────
+                   *
+                   * Only for a SESSION of a package — `meetingId` is what says
+                   * so — and only for the two outcomes that free its place.
+                   * Completing a session frees nothing, and an ordinary
+                   * booking has no block to add to.
+                   *
+                   * `excluding` names the session being answered right now: it
+                   * has not been written yet, so without it a block at its
+                   * agreed size would report no room for the very replacement
+                   * the owner is about to be offered.
+                   *
+                   * ── NOT AWAITED, AND THAT IS THE WHOLE POINT ─────────────
+                   *
+                   * This was awaited so the toggle would be present the
+                   * instant the dialog appeared. The cost of that was the
+                   * dialog itself: opening it waited on a network round trip,
+                   * so pressing Cancel or No-show did nothing at all until the
+                   * lookup came back — and against a route being compiled for
+                   * the first time in dev, that is tens of seconds of a dead
+                   * button.
+                   *
+                   * A dialog that opens late is a broken dialog. A toggle that
+                   * arrives a moment after it is a toggle that arrives; it
+                   * sits below the question the owner is reading, and the
+                   * answer they came to give does not depend on it.
+                   *
+                   * So it is fired and forgotten. `setReplacementOffer(null)`
+                   * above means a stale offer from the previous row can never
+                   * be shown against this one, whatever order the replies
+                   * land in.
+                   */
+                  setReplacementOffer(null);
+
+                  if (meetingId && (status === 'cancelled' || status === 'no_show')) {
+                    const forMeeting = meetingId;
+
+                    void (async () => {
+                      try {
+                        const response = await fetch(
+                          `/api/scheduling/bookings/${bookingId}/meetings?excluding=${encodeURIComponent(forMeeting)}`
+                        );
+                        const offer = await response.json();
+                        if (offer?.success && offer.canAdd && offer.proposedStart) {
+                          setReplacementOffer({
+                            /*
+                             * The PURCHASE, as the route resolved it — not the
+                             * id sent to it. A package session's card carries
+                             * the meeting's id in `booking.id`, so what goes
+                             * out here is a meeting and what must come back is
+                             * the container the replacement hangs off.
+                             */
+                            containerId: String(offer.containerId ?? bookingId),
+                            proposedStart: String(offer.proposedStart),
+                            options: Array.isArray(offer.proposedStarts)
+                              ? offer.proposedStarts.map(String)
+                              : [String(offer.proposedStart)],
+                            billsPerSession: offer.billsPerSession === true,
+                          });
+                        }
+                      } catch (err) {
+                        logger.warn({ err, bookingId }, 'Could not look up a replacement session');
+                      }
+                    })();
+                  }
                   /*
                    * Whether the no-show dialog offers the charge decision. The
                    * row knows, because it is the thing showing the stage.
@@ -5525,6 +5800,44 @@ export function CRMContactDrawerV2({
                    * there is a quote to continue.
                    */
                   setPendingMeetingCancel({ bookingId, isQuoted: context?.isQuoted ?? false });
+
+                  /*
+                   * ── THIS PATH ASKS FOR A REPLACEMENT TOO ──────────────────
+                   *
+                   * There are two ways into this dialog — the session row's
+                   * outcome menu, and this button — and only the first was
+                   * wired to look for a replacement. An owner who cancelled
+                   * from here got the dialog with no toggle, which is the
+                   * fault as reported.
+                   *
+                   * The id is passed as-is: the endpoint resolves a session's
+                   * meeting id to its purchase itself, and answers "no offer"
+                   * for an ordinary booking, which is the right answer there.
+                   * Nothing to exclude, because this path does not name a
+                   * session — the count is simply read as it stands.
+                   */
+                  setReplacementOffer(null);
+
+                  void (async () => {
+                    try {
+                      const response = await fetch(
+                        `/api/scheduling/bookings/${bookingId}/meetings`
+                      );
+                      const offer = await response.json();
+                      if (offer?.success && offer.canAdd && offer.proposedStart) {
+                        setReplacementOffer({
+                          containerId: String(offer.containerId ?? bookingId),
+                          proposedStart: String(offer.proposedStart),
+                          options: Array.isArray(offer.proposedStarts)
+                            ? offer.proposedStarts.map(String)
+                            : [String(offer.proposedStart)],
+                          billsPerSession: offer.billsPerSession === true,
+                        });
+                      }
+                    } catch (err) {
+                      logger.warn({ err, bookingId }, 'Could not look up a replacement session');
+                    }
+                  })();
                 }}
                 onResendMail={(bookingId, kind) => {
                   /* Confirm first — the same as the other two sends. The KIND
@@ -6275,7 +6588,16 @@ export function CRMContactDrawerV2({
          * this dialog.
          */
         chargeable={Boolean(pendingOutcomeMeetingId) && pendingOutcomeChargeable}
-        onConfirm={async ({ notifyClient, chargeSession }) => {
+        /* Only for a session of a package — see `replacementOffer`. */
+        replacement={
+          replacementOffer && pendingOutcomeMeetingId
+            ? {
+                proposedStart: replacementOffer.proposedStart,
+                options: replacementOffer.options,
+              }
+            : null
+        }
+        onConfirm={async ({ notifyClient, chargeSession, addReplacement, replacementStart }) => {
           if (!pendingNoShowBookingId) return;
 
           try {
@@ -6290,6 +6612,43 @@ export function CRMContactDrawerV2({
              * stage to bill or waive, and sending it there would imply a
              * decision that surface cannot act on.
              */
+            /*
+             * The make-up goes in FIRST, and silently — the same ordering the
+             * cancellation uses and for the same reason: the missed-appointment
+             * mail lists every session of the block, and a make-up booked after
+             * it is absent from the one list the client reads.
+             *
+             * It carries no money. A missed session keeps its portion, so the
+             * replacement's row shows no figure — which is the truth, and what
+             * makes this the owner's gift rather than an accounting move.
+             */
+            /*
+             * The hour that makes up for the missed one, named so the mail can
+             * say which it is. Null unless the booking actually landed — an
+             * hour that failed to book must never be announced.
+             */
+            let madeUpWith: string | null = null;
+
+            if (addReplacement && replacementOffer) {
+              /* Never billed: the missed hour was held, and the owner has
+                 already answered the money question on this dialog. */
+              /*
+               * The hour the owner SETTLED on, which is the proposal unless
+               * they picked another from the dialog. Booking
+               * `proposedStart` regardless made the picker decorative: it
+               * moved the highlight and changed nothing.
+               */
+              const takes = replacementStart || replacementOffer.proposedStart;
+              const madeUp = await bookReplacement(
+                replacementOffer.containerId,
+                takes,
+                false,
+                pendingOutcomeMeetingId
+              );
+
+              if (madeUp) madeUpWith = takes;
+            }
+
             const response = await fetch(
               pendingOutcomeMeetingId
                 ? `/api/scheduling/meetings/${pendingOutcomeMeetingId}/outcome`
@@ -6299,9 +6658,18 @@ export function CRMContactDrawerV2({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(
                   pendingOutcomeMeetingId
-                    ? pendingOutcomeChargeable
-                      ? { status: 'no_show', notifyClient, chargeSession }
-                      : { status: 'no_show', notifyClient }
+                    ? {
+                        status: 'no_show',
+                        /*
+                         * A booked make-up is told to the client whatever the
+                         * invite toggle says. The two are alternatives — taking
+                         * this one puts that one down — so without this, adding
+                         * a make-up would book an hour and tell nobody.
+                         */
+                        notifyClient: notifyClient || Boolean(madeUpWith),
+                        ...(pendingOutcomeChargeable ? { chargeSession } : {}),
+                        ...(madeUpWith ? { replacementStart: madeUpWith } : {}),
+                      }
                     : { notifyClient }
                 ),
               }
@@ -6320,6 +6688,7 @@ export function CRMContactDrawerV2({
           } finally {
             setPendingNoShowBookingId(null);
             setPendingOutcomeMeetingId(null);
+            setReplacementOffer(null);
             /* Cleared with the rest, so the next row's dialog cannot inherit a
                charge question from a session that had one. */
             setPendingOutcomeChargeable(false);
@@ -6589,11 +6958,80 @@ export function CRMContactDrawerV2({
         onOpenChange={next => !next && setPendingMeetingCancel(null)}
         clientName={`${contact.first_name} ${contact.last_name || ''}`.trim() || null}
         isQuoted={pendingMeetingCancel?.isQuoted ?? false}
-        onConfirm={async ({ proposalContinues }) => {
+        /*
+         * The OFFER is the gate, nothing else.
+         *
+         * This also required `pendingMeetingCancel.meetingId`, which only one
+         * of the two ways into this dialog sets — so a cancellation started
+         * from the card's own button could never show the toggle even with an
+         * offer in hand. The offer already proves what that test was reaching
+         * for: the endpoint returns one only for a session of a package with
+         * room for another, and `setReplacementOffer(null)` on every open
+         * means a stale one cannot survive into the next dialog.
+         */
+        replacement={
+          replacementOffer
+            ? {
+                proposedStart: replacementOffer.proposedStart,
+                options: replacementOffer.options,
+              }
+            : null
+        }
+        onConfirm={async ({ proposalContinues, addReplacement, replacementStart }) => {
           const bookingId = pendingMeetingCancel?.bookingId;
           if (!bookingId) return;
           const meetingId = pendingMeetingCancel?.meetingId ?? null;
           try {
+            /*
+             * ── THE REPLACEMENT GOES IN FIRST, AND SILENTLY ────────────────
+             *
+             * Ordering, not preference. The cancellation mail carries every
+             * session of the block with its state and its share of the
+             * payment, built when the route runs — so a replacement booked
+             * afterwards is missing from the list the client actually reads,
+             * and arrives instead as a second mail about a session appearing
+             * from nowhere.
+             *
+             * Booked first, the one mail that follows says the whole thing:
+             * this hour is off, this one replaces it, here is what each is
+             * worth.
+             *
+             * If it fails, the cancellation still goes ahead — `bookReplacement`
+             * reports and returns false. An owner who sees that can place the
+             * session by hand; a cancellation blocked by a diary clash would
+             * be the worse outcome by far.
+             */
+            /*
+             * Whether a replacement actually landed, so the mail below can say
+             * so. A booking that FAILED must not be announced — the client
+             * would be told about an hour that does not exist.
+             */
+            let replacedWith: string | null = null;
+
+            if (addReplacement && replacementOffer) {
+              /*
+               * Billed only on a PER-SESSION block, where the cancelled hour
+               * was never paid for — those are invoiced when held. On an
+               * upfront block the money is already in and the portion simply
+               * moves across.
+               */
+              /*
+               * The hour the owner SETTLED on, which is the proposal unless
+               * they picked another from the dialog. Booking
+               * `proposedStart` regardless made the picker decorative: it
+               * moved the highlight and changed nothing.
+               */
+              const takes = replacementStart || replacementOffer.proposedStart;
+              const booked = await bookReplacement(
+                replacementOffer.containerId,
+                takes,
+                replacementOffer.billsPerSession,
+                meetingId ?? null
+              );
+
+              if (booked) replacedWith = takes;
+            }
+
             /*
              * A SESSION is called off on the meeting: the booking is the
              * purchase, and `meeting-cancel` would stamp the whole package's
@@ -6615,7 +7053,14 @@ export function CRMContactDrawerV2({
                 /* The owner's answer, which decides what the client reads. */
                 body: JSON.stringify(
                   meetingId
-                    ? { status: 'cancelled', notifyClient: true }
+                    ? {
+                        status: 'cancelled',
+                        notifyClient: true,
+                        /* Named only when one was really booked, so the mail
+                           explains the new date in the list rather than
+                           leaving the client to infer it. */
+                        ...(replacedWith ? { replacementStart: replacedWith } : {}),
+                      }
                     : { proposalContinues }
                 ),
               }
@@ -6638,13 +7083,39 @@ export function CRMContactDrawerV2({
              * It also names the send, because the client being told is the
              * part the owner cannot otherwise see from this card.
              */
-            toast.success(
-              proposalContinues
-                ? t('crm.booking.meeting_cancelled_done') ||
-                    'The meeting is off and the client has been told. The work continues.'
-                : t('crm.booking.meeting_cancelled_no_quote') ||
-                    'The meeting is off. The client has been told that no quote will follow.'
-            );
+            /*
+             * ── AND IT MUST NOT PROMISE A SEND THAT DID NOT HAPPEN ────────
+             *
+             * Both toasts state "the client has been told" as a fact, and
+             * until now neither route could contradict them: the send was
+             * detached or its result discarded, so the response said
+             * `success: true` whether or not any mail went out. Measured on
+             * this account, two of five owner-cancelled meetings produced no
+             * client email AND no `email_sends` row — the owner read "the
+             * client has been told", the journey showed nothing, and there
+             * was nothing to re-send.
+             *
+             * `clientNotified` is now returned by both routes: null when no
+             * mail was due, false when one was due and did not go. Only false
+             * changes what the owner reads — an older route that does not send
+             * the field leaves the message exactly as it was.
+             */
+            setReplacementOffer(null);
+
+            if (data.clientNotified === false) {
+              toast.warning(
+                t('crm.booking.meeting_cancelled_unsent') ||
+                  'The meeting is off, but the client could not be emailed. Use Resend to try again.'
+              );
+            } else {
+              toast.success(
+                proposalContinues
+                  ? t('crm.booking.meeting_cancelled_done') ||
+                      'The meeting is off and the client has been told. The work continues.'
+                  : t('crm.booking.meeting_cancelled_no_quote') ||
+                      'The meeting is off. The client has been told that no quote will follow.'
+              );
+            }
             /* The same silent pair the other outcomes use, so the card updates
                in place instead of closing the drawer. */
             fetchSessions(contact.id, { silent: true });

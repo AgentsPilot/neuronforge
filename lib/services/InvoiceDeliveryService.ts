@@ -348,11 +348,19 @@ export async function sendInvoice(
         invoicePdfUrl = sendResult.invoicePdf;
       }
 
-      await paymentInvoiceRepository.updateStripeFields(invoiceId, userId, {
+      /*
+       * `markDelivered`, not a plain status write.
+       *
+       * A client can pay while this very send is in flight, and stamping
+       * `sent` at the end of it overwrote their payment — see the repository
+       * method for the timeline that produced INV1611-00034. The delivery
+       * facts below are recorded either way; only the STATUS defers to a
+       * settlement that got there first.
+       */
+      await paymentInvoiceRepository.markDelivered(invoiceId, userId, {
         stripe_invoice_id: stripeInvoiceId,
         stripe_hosted_invoice_url: hostedInvoiceUrl || undefined,
         stripe_invoice_pdf: invoicePdfUrl || undefined,
-        status: 'sent',
         sent_at: new Date().toISOString(),
       });
 
@@ -843,10 +851,16 @@ async function sendByEmail(
       );
     }
 
-    // Only after the mail is away — an invoice marked sent that nobody received
-    // is the exact bug this module exists to prevent.
-    await paymentInvoiceRepository.update(invoice.id, userId, {
-      status: 'sent',
+    /*
+     * Only after the mail is away — an invoice marked sent that nobody received
+     * is the exact bug this module exists to prevent.
+     *
+     * And only while it is still unpaid. That guard was missing, so the same
+     * module prevented one bug and caused its mirror image: a client who paid
+     * during the send had their payment overwritten by `status: 'sent'`, and
+     * their portal went on asking for money it had already taken.
+     */
+    await paymentInvoiceRepository.markDelivered(invoice.id, userId, {
       sent_at: new Date().toISOString(),
     });
 

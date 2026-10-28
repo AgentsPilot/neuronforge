@@ -115,7 +115,9 @@ describe('Buy (5b.1)', () => {
     expect(JSON.parse(String(call.init?.body))).toEqual({ packageId: SHIPPED[1].id });
     expect(mockProviderProps[mockProviderProps.length - 1].options).toEqual({ clientSecret: SECRET });
     expect(mockLoadStripe).toHaveBeenCalledWith('pk_test_browser');
-    expect(screen.getByTestId('boost-checkout-summary')).toHaveTextContent('Plus');
+    /* `SHIPPED` is the real catalogue, so this follows its names: the
+       middle package was renamed from Plus to Medium on 2026-10-27. */
+    expect(screen.getByTestId('boost-checkout-summary')).toHaveTextContent('Medium');
     expect(screen.queryByTestId('boost-packages-list')).not.toBeInTheDocument();
     // The client secret is never printed on the page.
     expect(document.body.textContent).not.toContain(SECRET);

@@ -95,12 +95,38 @@ export default function BookingManagePage() {
     meetingId?: string | null;
   } | null>(null);
 
+  /*
+   * ─────────────────────────────────────────────────────────────────────────
+   * `meetingId` TRAVELS WITH THE TASK, OR THE PANEL ASKS ABOUT THE WRONG HOUR.
+   *
+   * This took `kind` and a token and built `{ kind, token }` — never the
+   * session — while the task type declared `meetingId` and `ReschedulePanel`
+   * reads it. So every row in a package list opened the panel with no session,
+   * and the route's `sessionOf` has one rule: no `meetingId`, no session.
+   *
+   * Both of its gates then fall back to `booking.start_time`, and for a
+   * package that is the CONTAINER's hour — the purchase, months old. The
+   * client was told "you can only change it more than 24 hours before it
+   * starts" about a meeting three weeks away, because the hour being measured
+   * was the one they bought it on.
+   *
+   * The toggle compares the session too: two sessions of one package share a
+   * token, so without it opening session 6 while session 4 was open read as
+   * closing session 4 and left the panel on the wrong hour.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
   const openOnly = (
     kind: 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay',
-    forToken: string = token
+    forToken: string = token,
+    forMeeting: string | null = null
   ) =>
     setTask(current =>
-      current && current.kind === kind && current.token === forToken ? null : { kind, token: forToken }
+      current &&
+      current.kind === kind &&
+      current.token === forToken &&
+      (current.meetingId ?? null) === forMeeting
+        ? null
+        : { kind, token: forToken, meetingId: forMeeting }
     );
 
   /* The three the booking card's own buttons read, unchanged in meaning. */
@@ -108,6 +134,32 @@ export default function BookingManagePage() {
   const intakeOpen = onThisBooking === 'intake';
   const quoteOpen = onThisBooking === 'quote';
   const payOpen = onThisBooking === 'pay';
+
+  /**
+   * Whether this page should offer to take money.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN INVOICE EXISTING IS NOT THE SAME AS MONEY BEING OWED.
+   *
+   * Both pay buttons were gated on `payment.invoiceId` alone, and a settled
+   * booking keeps its invoice for ever — so a client who had already paid
+   * opened the portal to a tile reading their amount, the word "paid"
+   * underneath it, and a "Pay now" button below that. The two statements
+   * contradicted each other on the same card, and the one that looked
+   * actionable was the wrong one.
+   *
+   * Worse on a refund: the money has gone back, and the page invited them to
+   * send it again.
+   *
+   * `state === 'due'` is the route's own derived answer, computed from the
+   * invoices rather than from any single status column, and the line that
+   * explains how to pay without a link already uses it. This is the same
+   * question, so it is now the same test — asked once, read by both buttons,
+   * because two copies of a rule about collecting money is how they came to
+   * disagree in the first place.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const canPayNow = payment?.state === 'due' && Boolean(payment.invoiceId);
   const rescheduleOpen = onThisBooking === 'reschedule';
   const cancelOpen = onThisBooking === 'cancel';
   const [error, setError] = useState<string | null>(null);
@@ -799,7 +851,7 @@ export default function BookingManagePage() {
               formatting changed.
               ─────────────────────────────────────────────────────────────────
             */}
-            {payment?.invoiceId && (
+            {canPayNow && (
               <button
                 type="button"
                 /* Opens only. Closing is the card's own × — see the note there. */
@@ -857,21 +909,38 @@ export default function BookingManagePage() {
                 {t(intake.completed ? 'portal.intake_review' : 'portal.intake_open')}
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => openOnly('cancel')}
-              aria-expanded={cancelOpen}
-              className={BOOKING_ACTION}
-              style={{
-                border: '1px solid var(--ap-border)',
-                background: cancelOpen ? 'var(--ap-danger-tint)' : 'var(--ap-surface)',
-                color: '#B3453C',
-                borderRadius: 'var(--ap-radius-md)',
-              }}
-            >
-              <X className="h-4 w-4" aria-hidden />
-              {t('cancel')}
-            </button>
+            {/*
+              A PACKAGE IS NOT CALLED OFF FROM HERE.
+
+              A client holding a block of sessions may move one; calling one
+              off is the owner's decision, because it is the owner who then
+              decides whether a replacement is added and whether anything goes
+              back. Reschedule above is deliberately untouched — it is the one
+              thing a client comes to this screen to do.
+
+              It also closes a hole rather than only a preference: this button
+              cancels the BOOKING, and a package's booking is the whole block,
+              so pressing it called off every remaining session of something
+              paid for in full. The route refuses it too, with
+              `package_not_cancellable` — this only stops offering it.
+            */}
+            {meetings.length === 0 && (
+              <button
+                type="button"
+                onClick={() => openOnly('cancel')}
+                aria-expanded={cancelOpen}
+                className={BOOKING_ACTION}
+                style={{
+                  border: '1px solid var(--ap-border)',
+                  background: cancelOpen ? 'var(--ap-danger-tint)' : 'var(--ap-surface)',
+                  color: '#B3453C',
+                  borderRadius: 'var(--ap-radius-md)',
+                }}
+              >
+                <X className="h-4 w-4" aria-hidden />
+                {t('cancel')}
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -906,6 +975,256 @@ export default function BookingManagePage() {
       {quoteOpen && quote?.token && (
         <section className="apc-panel p-5">
           <ProposalAnswer token={quote.token} embedded />
+        </section>
+      )}
+
+      {/*
+        ── THE SESSIONS, ABOVE THE BILL FOR THEM ─────────────────────────────
+        Moved here from below the payment panel.
+
+        A client who has just accepted a quote is looking at two things: the
+        dates they agreed to and the money they owe for them. The dates came
+        second, under an open card form, so the three sessions they had just
+        bought were off the bottom of the screen at the moment they were
+        deciding whether to pay.
+
+        What they bought, then what it costs. The order a person reads it in.
+
+        Each is cancelled or moved on its own token under the SAME notice
+        window a single booking is judged by. The server decides: `canModify`
+        is its answer and `tooSoon` is why it said no, so this never offers an
+        action that is about to be refused.
+      */}
+      {meetings.length > 0 && (
+        <section className="apc-panel p-5">
+          <h3 className="mb-3 text-sm font-bold" style={{ color: 'var(--ap-text)' }}>
+            {t('manage.package_title')}
+          </h3>
+
+          <ol className="flex flex-col">
+            {meetings.map((meeting, index) => {
+              const held = meeting.status === 'completed';
+              const off = meeting.status === 'cancelled' || meeting.status === 'no_show';
+              /*
+               * Missed, and waiting on them.
+               *
+               * NOT `off`: a cancelled hour is finished and a missed one is
+               * not — the session is still theirs and the business is waiting
+               * for them to say when. Drawing the two the same way told a
+               * client there was nothing to do about the one row that needed
+               * them.
+               */
+              const missed = meeting.meetingStatus === 'no_show' && !off;
+              /*
+               * Already made up: a later session stands in for this hour.
+               *
+               * It is still missed, and it no longer needs anything from the
+               * client — which is the difference the amber was claiming. So it
+               * says what happened and stops asking. `canModify` is already
+               * false for it server-side; this is the sentence that explains
+               * why there is no button.
+               */
+              const madeUp = meeting.alreadyReplaced === true;
+              const when = meeting.startTime ? new Date(meeting.startTime) : null;
+
+              return (
+                <li
+                  key={meeting.id}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t py-2.5 first:border-t-0"
+                  style={{ borderColor: 'var(--ap-border)' }}
+                >
+                  {/* The date as a block: every row of a package shares one
+                      service name, so the day is the only thing telling them
+                      apart and it cannot be the smallest thing on the row. */}
+                  <span
+                    className="flex h-11 w-11 shrink-0 flex-col items-center justify-center leading-none"
+                    style={{
+                      background: meeting.isCurrent
+                        ? 'var(--ap-brand)'
+                        : 'var(--ap-surface-2)',
+                      color: meeting.isCurrent ? 'var(--ap-on-brand)' : 'var(--ap-text)',
+                      borderRadius: 'var(--ap-radius-md)',
+                      /*
+                       * A session whose hour was changed is marked.
+                       *
+                       * The list shows only the CURRENT attempt and hides the
+                       * `moved` rows, which is right — telling a client to
+                       * turn up at an hour they gave back would be worse. But
+                       * it also meant a date that had changed looked exactly
+                       * like one that never had, and the client has no way to
+                       * tell this is not the hour they first agreed to.
+                       *
+                       * An outline rather than a fill: the fill already means
+                       * "this is the one you are looking at".
+                       */
+                      /* Missed outranks moved: an hour that needs rebooking
+                         matters more than one that merely changed. */
+                      boxShadow:
+                        (missed && !madeUp) || meeting.wasMoved
+                          ? 'inset 0 0 0 2px var(--ap-warning, #D97706)'
+                          : undefined,
+                    }}
+                  >
+                    {when ? (
+                      <>
+                        <span className="text-sm font-bold tabular-nums">
+                          {when.toLocaleString(intlLocale, {
+                            day: 'numeric',
+                            timeZone: subjectZone ?? undefined,
+                          })}
+                        </span>
+                        <span className="mt-0.5 text-[10px] font-semibold opacity-75">
+                          {when.toLocaleString(intlLocale, {
+                            month: 'short',
+                            timeZone: subjectZone ?? undefined,
+                          })}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-sm">—</span>
+                    )}
+                  </span>
+
+                  <span className="min-w-0">
+                    <span
+                      className="block text-sm font-semibold"
+                      style={{
+                        color: off ? 'var(--ap-text-muted)' : 'var(--ap-text)',
+                        textDecoration: off ? 'line-through' : undefined,
+                      }}
+                    >
+                      {meeting.occurrenceNumber ?? index + 1}
+                      {booking.service?.service_name ? ' · ' : ''}
+                      <bdi>{booking.service?.service_name ?? ''}</bdi>
+                    </span>
+                    <span className="block text-xs" style={{ color: 'var(--ap-text-muted)' }}>
+                      {when ? clock(when) : '—'}
+                      {held ? ` · ${t('manage.package_held')}` : ''}
+                      {off ? ` · ${t('manage.package_cancelled')}` : ''}
+                      {/*
+                        * Said in words as well as drawn in colour.
+                        *
+                        * The outline on the date alone would leave a client
+                        * who cannot distinguish it — or who is reading this on
+                        * a phone in sunlight — with no idea why one date looks
+                        * different. Colour is never the only carrier of a
+                        * fact the reader needs.
+                        *
+                        * Not shown on a cancelled or completed row: that the
+                        * hour once moved is of no use once it is settled, and
+                        * it would crowd the two labels that do matter.
+                        */}
+                      {missed ? (
+                        <>
+                          {' · '}
+                          <span
+                            style={{
+                              color: madeUp
+                                ? 'var(--ap-text-muted)'
+                                : 'var(--ap-warning, #D97706)',
+                              fontWeight: madeUp ? 400 : 600,
+                            }}
+                          >
+                            {t('portal.missed')}
+                            {madeUp ? ` · ${t('portal.made_up')}` : ''}
+                          </span>
+                        </>
+                      ) : null}
+                      {meeting.wasMoved && !off && !held && !missed ? (
+                        <>
+                          {' · '}
+                          <span style={{ color: 'var(--ap-warning, #D97706)', fontWeight: 600 }}>
+                            {t('movedBadge')}
+                          </span>
+                        </>
+                      ) : null}
+                    </span>
+                  </span>
+
+                  {/*
+                    ─────────────────────────────────────────────────────────
+                    THE SAME TWO ACTIONS THE BOOKING ABOVE OFFERS, THE SAME WAY.
+
+                    These were links, and one of them was broken: `/reschedule/
+                    [token]` was removed when that screen moved into the portal,
+                    so every package row has been offering a 404. The other sent
+                    the client out of the portal to a page of its own.
+
+                    Buttons now, opening the same `ReschedulePanel` and
+                    `CancelPanel` the booking card opens, under this list, and
+                    reporting back so the list and the booking both refresh.
+
+                    `isCurrent` uses the page's OWN token rather than the
+                    freshly minted sibling one: they address the same booking,
+                    and two different strings for it would let this row and the
+                    card above be open against "different" bookings at once.
+                    ─────────────────────────────────────────────────────────
+                  */}
+                  {meeting.canModify && (
+                    <span className="ms-auto flex items-center gap-2">
+                      {/*
+                        * A PACKAGE SESSION OFFERS MOVE, NOT CANCEL.
+                        *
+                        * The cancel route refuses one outright — "a client
+                        * holding a block of sessions may MOVE one; calling one
+                        * off is the owner's decision, because it is the owner
+                        * who then decides whether a replacement is added and
+                        * whether anything is returned". It refuses there
+                        * because the portal is not the only way in, but the
+                        * portal was still drawing the button, so the client
+                        * could press Cancel on a session and be told no.
+                        *
+                        * `meetingId` is set only on package sessions (the
+                        * sessions branch of the manage route); an ordinary
+                        * booking in a series has none, and keeps both actions.
+                        */}
+                      {(
+                        meeting.meetingId
+                          ? (['reschedule'] as const)
+                          : (['reschedule', 'cancel'] as const)
+                      ).map(kind => {
+                        const rowToken = meeting.isCurrent ? token : meeting.token;
+                        const rowMeeting = meeting.meetingId ?? null;
+                        const open =
+                          task?.kind === kind &&
+                          task.token === rowToken &&
+                          (task.meetingId ?? null) === rowMeeting;
+
+                        return (
+                          <button
+                            key={kind}
+                            type="button"
+                            onClick={() => openOnly(kind, rowToken, rowMeeting)}
+                            aria-expanded={open}
+                            className="rounded-full border px-3 py-1 text-xs font-medium"
+                            style={{
+                              borderColor: 'var(--ap-border)',
+                              background: open ? 'var(--ap-brand-tint)' : 'transparent',
+                              color:
+                                kind === 'cancel' && !open
+                                  ? 'var(--ap-text-muted)'
+                                  : 'var(--ap-text)',
+                            }}
+                          >
+                            {t(kind)}
+                          </button>
+                        );
+                      })}
+                    </span>
+                  )}
+
+                  {/* Said, not hidden: a client who cannot act needs to know
+                      why, and that the business is the way through. */}
+                  {meeting.tooSoon && (
+                    <span className="ms-auto text-xs" style={{ color: 'var(--ap-text-muted)' }}>
+                      {t('manage.package_too_soon')}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+
         </section>
       )}
 
@@ -966,145 +1285,6 @@ export default function BookingManagePage() {
       )}
 
 
-      {/*
-        ── THE WHOLE BLOCK, when this is one meeting of a package ────────────
-        Each is cancelled or moved on its own token under the SAME notice
-        window a single booking is judged by. The server decides: `canModify`
-        is its answer and `tooSoon` is why it said no, so this never offers an
-        action that is about to be refused.
-      */}
-      {meetings.length > 0 && (
-        <section className="apc-panel p-5">
-          <h3 className="mb-3 text-sm font-bold" style={{ color: 'var(--ap-text)' }}>
-            {t('manage.package_title').replace('{count}', String(meetings.length))}
-          </h3>
-
-          <ol className="flex flex-col">
-            {meetings.map((meeting, index) => {
-              const held = meeting.status === 'completed';
-              const off = meeting.status === 'cancelled' || meeting.status === 'no_show';
-              const when = meeting.startTime ? new Date(meeting.startTime) : null;
-
-              return (
-                <li
-                  key={meeting.id}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t py-2.5 first:border-t-0"
-                  style={{ borderColor: 'var(--ap-border)' }}
-                >
-                  {/* The date as a block: every row of a package shares one
-                      service name, so the day is the only thing telling them
-                      apart and it cannot be the smallest thing on the row. */}
-                  <span
-                    className="flex h-11 w-11 shrink-0 flex-col items-center justify-center leading-none"
-                    style={{
-                      background: meeting.isCurrent
-                        ? 'var(--ap-brand)'
-                        : 'var(--ap-surface-2)',
-                      color: meeting.isCurrent ? 'var(--ap-on-brand)' : 'var(--ap-text)',
-                      borderRadius: 'var(--ap-radius-md)',
-                    }}
-                  >
-                    {when ? (
-                      <>
-                        <span className="text-sm font-bold tabular-nums">
-                          {when.toLocaleString(intlLocale, {
-                            day: 'numeric',
-                            timeZone: subjectZone ?? undefined,
-                          })}
-                        </span>
-                        <span className="mt-0.5 text-[10px] font-semibold opacity-75">
-                          {when.toLocaleString(intlLocale, {
-                            month: 'short',
-                            timeZone: subjectZone ?? undefined,
-                          })}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="text-sm">—</span>
-                    )}
-                  </span>
-
-                  <span className="min-w-0">
-                    <span
-                      className="block text-sm font-semibold"
-                      style={{
-                        color: off ? 'var(--ap-text-muted)' : 'var(--ap-text)',
-                        textDecoration: off ? 'line-through' : undefined,
-                      }}
-                    >
-                      {meeting.occurrenceNumber ?? index + 1}
-                      {booking.service?.service_name ? ' · ' : ''}
-                      <bdi>{booking.service?.service_name ?? ''}</bdi>
-                    </span>
-                    <span className="block text-xs" style={{ color: 'var(--ap-text-muted)' }}>
-                      {when ? clock(when) : '—'}
-                      {held ? ` · ${t('manage.package_held')}` : ''}
-                      {off ? ` · ${t('manage.package_cancelled')}` : ''}
-                    </span>
-                  </span>
-
-                  {/*
-                    ─────────────────────────────────────────────────────────
-                    THE SAME TWO ACTIONS THE BOOKING ABOVE OFFERS, THE SAME WAY.
-
-                    These were links, and one of them was broken: `/reschedule/
-                    [token]` was removed when that screen moved into the portal,
-                    so every package row has been offering a 404. The other sent
-                    the client out of the portal to a page of its own.
-
-                    Buttons now, opening the same `ReschedulePanel` and
-                    `CancelPanel` the booking card opens, under this list, and
-                    reporting back so the list and the booking both refresh.
-
-                    `isCurrent` uses the page's OWN token rather than the
-                    freshly minted sibling one: they address the same booking,
-                    and two different strings for it would let this row and the
-                    card above be open against "different" bookings at once.
-                    ─────────────────────────────────────────────────────────
-                  */}
-                  {meeting.canModify && (
-                    <span className="ms-auto flex items-center gap-2">
-                      {(['reschedule', 'cancel'] as const).map(kind => {
-                        const rowToken = meeting.isCurrent ? token : meeting.token;
-                        const open = task?.kind === kind && task.token === rowToken;
-
-                        return (
-                          <button
-                            key={kind}
-                            type="button"
-                            onClick={() => openOnly(kind, rowToken)}
-                            aria-expanded={open}
-                            className="rounded-full border px-3 py-1 text-xs font-medium"
-                            style={{
-                              borderColor: 'var(--ap-border)',
-                              background: open ? 'var(--ap-brand-tint)' : 'transparent',
-                              color:
-                                kind === 'cancel' && !open
-                                  ? 'var(--ap-text-muted)'
-                                  : 'var(--ap-text)',
-                            }}
-                          >
-                            {t(kind)}
-                          </button>
-                        );
-                      })}
-                    </span>
-                  )}
-
-                  {/* Said, not hidden: a client who cannot act needs to know
-                      why, and that the business is the way through. */}
-                  {meeting.tooSoon && (
-                    <span className="ms-auto text-xs" style={{ color: 'var(--ap-text-muted)' }}>
-                      {t('manage.package_too_soon')}
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-
-        </section>
-      )}
 
       {/*
         ── CHANGING A TIME, OR CALLING ONE OFF ───────────────────────────────
@@ -1273,7 +1453,7 @@ export default function BookingManagePage() {
             same control on the booking card. Both drive one task, so opening
             from either closes whatever else was open.
           */}
-          {payment.invoiceId && (
+          {canPayNow && (
             <button
               type="button"
               /*

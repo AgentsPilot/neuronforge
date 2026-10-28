@@ -153,7 +153,21 @@ export function sessionNextStep(session: SessionCardData, now?: Date): NextStep 
      * exactly as it did before either field existed.
      */
     lastMoveBy: latestAttempt?.moved_by ?? null,
-    outcomeBy: latestAttempt?.outcome_by ?? null,
+    /*
+     * With no attempts there is no attempt to read, and the booking's own copy
+     * is then the ONLY record of who answered — not a second opinion about the
+     * same appointment, which is what the rule above guards against.
+     *
+     * This is the plain-consultation case, and it is the only shape
+     * `auto_complete_meetings` ever marks: it writes
+     * `meeting_status: 'held'` + `outcome_by: 'system'` straight onto
+     * `scheduling_bookings`. Read only from the attempt, that `'system'` was
+     * invisible, and the card moved on to the money as though a person had
+     * confirmed the hour. `bookingNextStep` re-opens it instead.
+     */
+    outcomeBy: latestAttempt
+      ? latestAttempt.outcome_by ?? null
+      : booking.outcome_by ?? null,
     /* On the BOOKING, not the attempt: it is an answer about the job, and the
        job outlives any one appointment. */
     proposalContinues: booking.proposal_continues ?? null,

@@ -3916,6 +3916,29 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X31. in
     {
       "chain": [
         [
+          "select",
+          "id, user_id, contact_id, package_booking_id, sessions",
+        ],
+        [
+          "eq",
+          "created_invoice_id",
+          "pinv-0001",
+        ],
+        [
+          "not",
+          "package_booking_id",
+          "is",
+          null,
+        ],
+      ],
+      "operation": "select",
+      "table": "proposals",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
           "update",
           {
             "completed_at": "<NOW>",
@@ -5036,6 +5059,29 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X37. in
       "operation": "update",
       "table": "scheduling_bookings",
       "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, user_id, contact_id, package_booking_id, sessions",
+        ],
+        [
+          "eq",
+          "created_invoice_id",
+          "pinv-0001",
+        ],
+        [
+          "not",
+          "package_booking_id",
+          "is",
+          null,
+        ],
+      ],
+      "operation": "select",
+      "table": "proposals",
+      "terminal": "maybeSingle",
       "type": "db",
     },
     {
@@ -7705,6 +7751,29 @@ exports[`Stripe webhook, CF-5 PR 3: the #257 attach arms X56. invoice.paid alrea
       "type": "db",
     },
     {
+      "chain": [
+        [
+          "select",
+          "id, user_id, contact_id, package_booking_id, sessions",
+        ],
+        [
+          "eq",
+          "created_invoice_id",
+          "pinv-0001",
+        ],
+        [
+          "not",
+          "package_booking_id",
+          "is",
+          null,
+        ],
+      ],
+      "operation": "select",
+      "table": "proposals",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
       "args": [
         {
           "action": "INVOICE_PAID",
@@ -7988,6 +8057,29 @@ exports[`Stripe webhook, CF-5 PR 3: the #257 attach arms X57. invoice.paid: the 
       "type": "db",
     },
     {
+      "chain": [
+        [
+          "select",
+          "id, user_id, contact_id, package_booking_id, sessions",
+        ],
+        [
+          "eq",
+          "created_invoice_id",
+          "pinv-0001",
+        ],
+        [
+          "not",
+          "package_booking_id",
+          "is",
+          null,
+        ],
+      ],
+      "operation": "select",
+      "table": "proposals",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
       "args": [
         {
           "action": "INVOICE_PAID",
@@ -8249,6 +8341,29 @@ exports[`Stripe webhook, CF-5 PR 3: the #257 attach arms X58. invoice.paid alrea
       "operation": "update",
       "table": "scheduling_bookings",
       "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, user_id, contact_id, package_booking_id, sessions",
+        ],
+        [
+          "eq",
+          "created_invoice_id",
+          "pinv-0001",
+        ],
+        [
+          "not",
+          "package_booking_id",
+          "is",
+          null,
+        ],
+      ],
+      "operation": "select",
+      "table": "proposals",
+      "terminal": "maybeSingle",
       "type": "db",
     },
     {
@@ -8551,6 +8666,29 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 1a. invoic
       "operation": "update",
       "table": "scheduling_bookings",
       "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, user_id, contact_id, package_booking_id, sessions",
+        ],
+        [
+          "eq",
+          "created_invoice_id",
+          "pinv-0001",
+        ],
+        [
+          "not",
+          "package_booking_id",
+          "is",
+          null,
+        ],
+      ],
+      "operation": "select",
+      "table": "proposals",
+      "terminal": "maybeSingle",
       "type": "db",
     },
     {

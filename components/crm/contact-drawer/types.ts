@@ -174,6 +174,24 @@ export interface Appointment {
    */
   meeting_status?: MeetingStatus;
   /**
+   * WHO recorded that outcome — the owner, the client, or an automation.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Carried beside `meeting_status` because the two are only useful together.
+   * `auto_complete_meetings` marks a past meeting HELD twelve hours after it
+   * was due, and "held" is the only answer it can give: no-show and called-off
+   * are judgements about a room it was not in. So a session the platform
+   * closed off and one the owner confirmed are the same word and very
+   * different facts, and the owner has seven days to correct the first.
+   *
+   * It was already on `MeetingAttempt` and read by the journey rail; the
+   * meetings table could not see it because the per-session mapping did not
+   * carry it across. Null on rows predating 20261078, which means "not
+   * recorded" rather than "a person did it".
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  outcome_by?: 'owner' | 'client' | 'system' | null;
+  /**
    * Every appointment that was arranged for this booking, oldest first.
    *
    * ───────────────────────────────────────────────────────────────────────────
@@ -226,6 +244,25 @@ export interface Appointment {
    * the drawer builds for a package's sessions; absent on every real booking.
    */
   meeting_id?: string | null;
+  /**
+   * Something has already been booked in this session's place.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Set by the drawer from `scheduling_meetings.replaces_meeting_id`, read the
+   * other way round: a replacement names what it stands in for, so a session is
+   * replaced when something points at it.
+   *
+   * One thing turns on it — a session already made up is not offered
+   * Reschedule, because moving an hour that has been arranged twice leaves the
+   * client holding two. It is a FACT rather than an inference: the block's size
+   * cannot answer it once a package has more than one gap, since two missed
+   * sessions (one made up, one waiting on the client) look identical to any
+   * count.
+   *
+   * Absent on every real booking and on sessions written before 20261097.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  was_replaced?: boolean;
   occurrence_number?: number | null;
   cancelled_by?: 'client' | 'owner' | 'system' | null;
   cancellation_reason?: string | null;
