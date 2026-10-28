@@ -359,6 +359,28 @@ describe('the period (S-4): the RPC’s own rule', () => {
     expect(r.leakPeriodStart).toBe(PLAN_PERIOD);
   });
 
+  // D3.1 / SX-2b (SA S-5, DR-9): the after-plan move re-anchors `period_anchor` mid-period
+  // (the PF-13 "no live subscription" shape). Charges keep their stored period_start, so
+  // charges on both sides of the move each match their usage and nothing is a leak.
+  it('an account re-anchored mid-period by the after-plan move, with charges on both sides, reports no leak', () => {
+    const moved = '2026-09-28T05:00:00.000Z';
+    const r = classifyLeakGroups({
+      accountId: A,
+      usageRows: [usage(G1, '2026-09-28T03:00:00Z', 0.002), usage(G2, '2026-09-28T09:00:00Z', 0.004)],
+      ledgerRows: [
+        charge(G1, '2026-09-28T03:00:01Z', 0.002, { period_start: PLAN_PERIOD }),
+        charge(G2, '2026-09-28T09:00:01Z', 0.004, { period_start: '2026-09-28T05:00:00+00:00' }),
+      ],
+      window: WINDOW,
+      periodOf: (atMs) => creditPeriodStartAt(moved, atMs),
+    });
+    expect(r.cases.get(G1)).toBe('matched');
+    expect(r.cases.get(G2)).toBe('matched');
+    expect(r.counts).toMatchObject({ matched: 2, uncharged: 0, undercharged: 0 });
+    // After the move, an uncharged call is labelled with the NEW period, never the old one.
+    expect(creditPeriodStartAt(moved, Date.parse('2026-09-28T09:00:00Z'))).toBe(moved);
+  });
+
   it('an uncharged group takes the plan anchor’s period at its first in-window call', () => {
     const r = classify([usage(G1, '2026-09-28T10:00:00Z', 0.003)], []);
     expect(r.examples.uncharged[0].periodStart).toBe('2026-09-23T19:55:01.286Z');

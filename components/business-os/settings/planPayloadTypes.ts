@@ -117,8 +117,40 @@ export interface PlanPayload {
    * `null` on every non-`ok` answer.
    */
   comparison?: PlanComparison | null;
+  /**
+   * SX-2 (D3): what changes when the paid plan ends, for the Cancel drawer's
+   * "What changes" step (`planEndingView`). Set only where Cancel is offered:
+   * from the period end when our billing record says renewing, or from today
+   * when a renewal payment is failing (P-7a.4 ends the plan now; D3 T-13);
+   * `null` otherwise or when it could not be built. Optional: an older payload
+   * has none.
+   */
+  ending?: PlanEndingWire | null;
   problem: PlanSentence | null;
 }
+
+/*
+ * The server's `PlanEndingView`, mirrored by hand (C-6: no import from the
+ * entitlements module, type-only included). Plan names and the lost rows are
+ * already in the reader's language; dates are ISO.
+ */
+export type PlanEndingWire =
+  /** The account's own free plan (a Founding Partner, an unexpired trial) outlives the paid plan. */
+  | { kind: 'back_to_plan'; endsAt: string; planName: string; until: string | null; loses: string[] }
+  /** User BQ-20: the free plan until `until`, then read-only for `thenReadOnlyDays`, then paused. */
+  | {
+      kind: 'free_plan';
+      endsAt: string;
+      planName: string;
+      until: string;
+      /** The free plan's one-off credit total (from its config), or `null`; the UI formats it. */
+      credits: number | null;
+      loses: string[];
+      thenReadOnlyDays: number | null;
+      thenPausedFrom: string | null;
+    }
+  /** The server could not work out what changes. */
+  | { kind: 'unknown'; endsAt: string };
 
 /*
  * The comparison table's data, mirrored field by field from the server's

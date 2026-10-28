@@ -64,6 +64,7 @@ import {
   type PlanCheckoutSessionDeps,
 } from '@/lib/business-os/billing/planCheckoutSessionEvents';
 import { mirrorPlanSubscription, type PlanSubscriptionMirrorDeps } from '@/lib/business-os/billing/planSubscriptionMirror';
+import { afterPlanMove } from '@/lib/business-os/billing/afterPlanMoveDeps';
 
 export type PlanBillingHandlerDeps = PlanPaymentDeps &
   PlanCheckoutSessionDeps &
@@ -183,6 +184,8 @@ export const handlePlanBillingEvent: BusinessOsFlowHandler = createPlanBillingHa
     inviterDeps: buildInviterNotificationDeps,
     writeAudit: writeChampionNotificationAudit,
   }),
+  // D3.1 (SX-2b): the after-plan move the mirror calls on an ended subscription.
+  afterPlanMove,
   stripeMode: currentStripeMode,
   now: () => new Date(),
 });

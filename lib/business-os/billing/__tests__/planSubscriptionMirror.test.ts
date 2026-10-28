@@ -14,6 +14,17 @@ import { isPlanSubscriptionLive } from '@/lib/business-os/purge/adminDeletionRef
 import type { BusinessOsBillingAccount } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 import type { BusinessOsBillingEventInput } from '@/lib/repositories/BusinessOsBillingEventRepository';
 import type { RecordPlanChangeInput } from '@/lib/business-os/entitlements/recordPlanChange';
+import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
+import {
+  AFTER_PLAN_MOVE_AUDIT_ACTION,
+  moveToFreeCohortAfterPlan,
+  type AfterPlanMoveDeps,
+  type AfterPlanMoveInput,
+  type AfterPlanMoveRead,
+  type AfterPlanMoveWrite,
+} from '@/lib/business-os/billing/afterPlanMove';
+import { AFTER_PLAN } from '@/lib/business-os/entitlements/config/afterPlan';
+import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 import type { Logger } from '@/lib/logger';
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'stripe');
@@ -80,6 +91,8 @@ function setup(initial: BusinessOsBillingAccount | null = row(), fresh: Record<s
     recordPlanChange: jest.fn(async (input: RecordPlanChangeInput) => {
       audits.push(input);
     }),
+    // D3.1 (SX-2b): the after-plan move port, a stub here (its own suite is afterPlanMove.test.ts).
+    afterPlanMove: jest.fn(async () => undefined),
     stripe: () => ({ retrieveBusinessOsSubscription: retrieve }) as unknown as ReturnType<PlanSubscriptionMirrorDeps['stripe']>,
     billingAccounts: {
       findByStripeSubscription: jest.fn(async (id: string, livemode: boolean) => ({
@@ -258,5 +271,268 @@ describe('customer.subscription.deleted: one subscription_ended row and one audi
     const h = setup(row(), { status: 'canceled', endedAt: ENDED_AT });
     await mirrorPlanSubscription(event('customer-subscription-deleted.json'), h.log, h.deps);
     expect(h.state.row).toMatchObject({ currentPeriodEnd: '2026-11-01T00:00:00.000Z', boughtTier: 'tier_one', lastInvoiceId: 'in_1' });
+  });
+});
+
+// ── D3.1 (SX-2b): the after-plan move port (workplan §6.1, §10; SA DR-8) ─────
+
+describe('customer.subscription.deleted: the after-plan move port (D3.1, SX-2b)', () => {
+  const ENDED_AT = 1_801_211_893;
+  const ENDED_ISO = new Date(ENDED_AT * 1000).toISOString();
+
+  /** The order the mirror's writes and the port run in. */
+  function ordered(h: ReturnType<typeof setup>) {
+    const order: string[] = [];
+    const recordEvent = h.deps.billingEvents.recordEvent as jest.Mock;
+    const recordEventImpl = recordEvent.getMockImplementation()!;
+    recordEvent.mockImplementation(async (input: BusinessOsBillingEventInput) => {
+      order.push('recordEvent');
+      return recordEventImpl(input);
+    });
+    const recordPlanChange = h.deps.recordPlanChange as jest.Mock;
+    const recordPlanChangeImpl = recordPlanChange.getMockImplementation()!;
+    recordPlanChange.mockImplementation(async (input: RecordPlanChangeInput) => {
+      order.push('recordPlanChange');
+      return recordPlanChangeImpl(input);
+    });
+    (h.deps.afterPlanMove as jest.Mock).mockImplementation(async () => {
+      order.push('afterPlanMove');
+    });
+    return order;
+  }
+
+  function deletedWith(reason: string | null): Stripe.Event {
+    const deleted = event('customer-subscription-deleted.json');
+    (deleted.data.object as Stripe.Subscription).cancellation_details = { comment: null, feedback: null, reason: reason as never };
+    return deleted;
+  }
+
+  it('deleted + mirrored: called once, AFTER the ended history and audit, with our account id, the event facts, the payload reason and endedAtIso', async () => {
+    const h = setup(row(), { status: 'canceled', endedAt: ENDED_AT });
+    const order = ordered(h);
+    const deleted = deletedWith('cancellation_requested');
+    await mirrorPlanSubscription(deleted, h.log, h.deps);
+    expect(order).toEqual(['recordEvent', 'recordPlanChange', 'afterPlanMove']);
+    expect(h.deps.afterPlanMove).toHaveBeenCalledTimes(1);
+    expect(h.deps.afterPlanMove).toHaveBeenCalledWith(
+      {
+        accountId: ACCOUNT,
+        subscriptionId: SUB,
+        livemode: false,
+        stripeEventId: deleted.id,
+        endedAt: ENDED_ISO,
+        cancellationReason: 'cancellation_requested',
+      },
+      h.log
+    );
+  });
+
+  it.each([['payment_failed'], ['payment_disputed'], [null], ['something_new']])(
+    'the payload reason %p is passed verbatim (the move decides; the ended audit keeps its own filtered reason)',
+    async (reason) => {
+      const h = setup(row(), { status: 'canceled', endedAt: ENDED_AT });
+      await mirrorPlanSubscription(deletedWith(reason), h.log, h.deps);
+      expect((h.deps.afterPlanMove as jest.Mock).mock.calls[0][0]).toMatchObject({ cancellationReason: reason });
+      expect(h.audits[0].details).toMatchObject({ cancellationReason: reason === 'something_new' ? null : reason });
+    }
+  );
+
+  it('a replayed .deleted (the money history is a duplicate) still calls it, so a move that threw runs again', async () => {
+    const h = setup(row(), { status: 'canceled', endedAt: ENDED_AT });
+    const deleted = deletedWith('cancellation_requested');
+    await mirrorPlanSubscription(deleted, h.log, h.deps);
+    await mirrorPlanSubscription(deleted, h.log, h.deps);
+    expect(h.logged('bos_billing_subscription_ended_replayed')).toHaveLength(1);
+    expect(h.history).toHaveLength(1);
+    expect(h.audits).toHaveLength(1);
+    expect(h.deps.afterPlanMove).toHaveBeenCalledTimes(2);
+  });
+
+  it('.updated (even reading an ended subscription) does not call it', async () => {
+    const h = setup(row(), { status: 'canceled', endedAt: ENDED_AT });
+    await mirrorPlanSubscription(event('customer-subscription-updated.json'), h.log, h.deps);
+    expect(h.deps.afterPlanMove).not.toHaveBeenCalled();
+  });
+
+  it('mirrored false (the row no longer holds this subscription) does not call it', async () => {
+    const h = setup(row(), { status: 'canceled', endedAt: ENDED_AT });
+    (h.deps.billingAccounts.mirrorSubscriptionState as jest.Mock).mockResolvedValueOnce({ data: { mirrored: false }, error: null });
+    await mirrorPlanSubscription(deletedWith('cancellation_requested'), h.log, h.deps);
+    expect(h.deps.afterPlanMove).not.toHaveBeenCalled();
+  });
+
+  it('a metadata mismatch, or no billing record, does not call it', async () => {
+    const mismatch = setup(row(), { status: 'canceled', endedAt: ENDED_AT, metadata: { bos_user_id: '22222222-2222-4222-8222-222222222222' } });
+    await mirrorPlanSubscription(deletedWith('cancellation_requested'), mismatch.log, mismatch.deps);
+    expect(mismatch.deps.afterPlanMove).not.toHaveBeenCalled();
+    const none = setup(null, { status: 'canceled', endedAt: ENDED_AT });
+    await mirrorPlanSubscription(deletedWith('cancellation_requested'), none.log, none.deps);
+    expect(none.deps.afterPlanMove).not.toHaveBeenCalled();
+  });
+
+  it('the history write failing throws before the move is reached', async () => {
+    const h = setup(row(), { status: 'canceled', endedAt: ENDED_AT });
+    (h.deps.billingEvents.recordEvent as jest.Mock).mockResolvedValueOnce({ data: null, error: new Error('db down') });
+    await expect(mirrorPlanSubscription(deletedWith('cancellation_requested'), h.log, h.deps)).rejects.toThrow('db down');
+    expect(h.deps.afterPlanMove).not.toHaveBeenCalled();
+  });
+
+  it("the move throwing (a read or write failure) throws through (claim released); the mirror's own writes are already done and unchanged; the retry runs the move again", async () => {
+    const h = setup(row(), { status: 'canceled', endedAt: ENDED_AT });
+    const deleted = deletedWith('cancellation_requested');
+    (h.deps.afterPlanMove as jest.Mock).mockRejectedValueOnce(new Error('plan row read failed'));
+    await expect(mirrorPlanSubscription(deleted, h.log, h.deps)).rejects.toThrow('plan row read failed');
+    const afterFirst = { row: { ...h.state.row }, history: [...h.history], audits: [...h.audits] };
+    expect(afterFirst.row).toMatchObject({ subscriptionStatus: 'canceled', endedAt: ENDED_ISO });
+    expect(afterFirst.history).toHaveLength(1);
+    expect(afterFirst.audits).toHaveLength(1);
+
+    // Stripe redelivers: the mirror is idempotent, the history a duplicate, and the move runs again.
+    await expect(mirrorPlanSubscription(deleted, h.log, h.deps)).resolves.toBeUndefined();
+    expect(h.state.row).toEqual(afterFirst.row);
+    expect(h.history).toEqual(afterFirst.history);
+    expect(h.audits).toEqual(afterFirst.audits);
+    expect(h.deps.afterPlanMove).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('the mirror with the REAL after-plan move (ports stubbed): only an owner-started end moves', () => {
+  const ENDED_AT = 1_801_211_893;
+
+  function realMove(read: { error?: Error } = {}) {
+    const reads: string[] = [];
+    const writes: unknown[] = [];
+    const lines: Array<{ level: string; ctx: Record<string, unknown> }> = [];
+    const at = (level: string) => (ctx: Record<string, unknown>) => void lines.push({ level, ctx });
+    const log: Record<string, unknown> = { info: at('info'), warn: at('warn'), error: at('error'), debug: () => undefined };
+    log.child = () => log;
+    const port = (input: AfterPlanMoveInput, l: Logger) =>
+      moveToFreeCohortAfterPlan(input, l, {
+        readMoveInputs: async (accountId) => {
+          reads.push(accountId);
+          if (read.error) return { data: null, error: read.error };
+          return { data: null, error: null };
+        },
+        writeMove: async (input) => {
+          writes.push(input);
+          return { data: { outcome: 'applied', moves: 1 }, error: null };
+        },
+        config: () => getEntitlementConfig(),
+        recordPlanChange: async () => undefined,
+        now: () => NOW,
+      });
+    return { port, reads, writes, lines, log: log as unknown as Logger };
+  }
+
+  it("payment_failed keeps today's path: history + ended audit, the move reads and writes nothing", async () => {
+    const h = setup(row(), { status: 'canceled', endedAt: ENDED_AT });
+    const move = realMove();
+    h.deps.afterPlanMove = move.port;
+    const deleted = event('customer-subscription-deleted.json');
+    (deleted.data.object as Stripe.Subscription).cancellation_details = { comment: null, feedback: null, reason: 'payment_failed' };
+    await mirrorPlanSubscription(deleted, move.log, h.deps);
+    expect(h.history).toHaveLength(1);
+    expect(h.audits.map((a) => a.action)).toEqual(['BOS_BILLING_SUBSCRIPTION_ENDED']);
+    expect(move.reads).toEqual([]);
+    expect(move.writes).toEqual([]);
+    expect(move.lines.find((l) => l.ctx.event === 'bos_plan_after_plan_skipped')?.ctx.skip).toBe('not_owner_end');
+  });
+
+  it('cancellation_requested reaches the plan read for OUR account; a failed read alerts and throws (retried)', async () => {
+    const h = setup(row(), { status: 'canceled', endedAt: ENDED_AT });
+    const move = realMove({ error: new Error('db down') });
+    h.deps.afterPlanMove = move.port;
+    const deleted = event('customer-subscription-deleted.json');
+    (deleted.data.object as Stripe.Subscription).cancellation_details = { comment: null, feedback: null, reason: 'cancellation_requested' };
+    await expect(mirrorPlanSubscription(deleted, move.log, h.deps)).rejects.toThrow('db down');
+    expect(move.reads).toEqual([ACCOUNT]);
+    expect(move.lines.find((l) => l.ctx.event === 'bos_plan_after_plan_read_failed')).toMatchObject({ level: 'error', ctx: { alert: true } });
+    // The mirror's own result stands.
+    expect(h.state.row).toMatchObject({ subscriptionStatus: 'canceled', endedAt: new Date(ENDED_AT * 1000).toISOString() });
+    expect(h.history).toHaveLength(1);
+  });
+
+  it('replay (P-8b reconcile): the same .deleted twice replayed through the mirror after a successful move: the port is called each time, reports already_applied, and nothing changes', async () => {
+    const endedIso = new Date(ENDED_AT * 1000).toISOString();
+    // A stateful plan store: the write lands on the row the next read returns, as the plan table does.
+    const store: AfterPlanMoveRead = {
+      plan: {
+        user_id: ACCOUNT, tier: TIER_ORDER[TIER_ORDER.length - 1], plan_version: 0, tier_expires_at: endedIso, cohort: AFTER_PLAN.cohort,
+        cohort_expires_at: null, onboarding_started_at: '2026-01-01T00:00:00.000Z', profile_created_at: null, trial_started_at: null,
+        trial_ends_at: null, grace_ends_at: null, period_anchor: '2026-10-01T00:00:00+00:00', origin: 'admin', updated_by_admin_id: null,
+        created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-10-01T00:00:00.123456+00:00',
+      },
+      moves: 0,
+      lastSubscriptionId: null,
+    };
+    const moveWrites: AfterPlanMoveWrite[] = [];
+    const moveDeps: AfterPlanMoveDeps = {
+      readMoveInputs: async () => ({ data: { plan: { ...store.plan }, moves: store.moves, lastSubscriptionId: store.lastSubscriptionId }, error: null }),
+      writeMove: async (input) => {
+        moveWrites.push(input);
+        if (input.expected.updatedAt !== store.plan.updated_at || input.expected.moves !== store.moves) return { data: { outcome: 'stale' }, error: null };
+        store.plan = {
+          ...store.plan,
+          cohort: input.cohort,
+          trial_started_at: input.trialStartedAt,
+          trial_ends_at: input.trialEndsAt,
+          grace_ends_at: input.clearGraceEndsAt ? null : store.plan.grace_ends_at,
+          period_anchor: input.periodAnchor,
+          updated_at: '2026-10-07T12:00:00.000001+00:00',
+        };
+        store.moves += 1;
+        store.lastSubscriptionId = input.subscriptionId;
+        return { data: { outcome: 'applied', moves: store.moves }, error: null };
+      },
+      config: () => getEntitlementConfig(),
+      recordPlanChange: async () => undefined,
+      now: () => NOW,
+    };
+
+    const h = setup(row(), { status: 'canceled', endedAt: ENDED_AT });
+    // One audit list for both: the mirror's ended audit and the move's free-period audit.
+    moveDeps.recordPlanChange = h.deps.recordPlanChange;
+    const lines: Array<{ level: string; ctx: Record<string, unknown> }> = [];
+    const at = (level: string) => (ctx: Record<string, unknown>) => void lines.push({ level, ctx });
+    const logRecord: Record<string, unknown> = { info: at('info'), warn: at('warn'), error: at('error'), debug: () => undefined };
+    logRecord.child = () => logRecord;
+    const log = logRecord as unknown as Logger;
+    const port = jest.fn((input: AfterPlanMoveInput, l: Logger) => moveToFreeCohortAfterPlan(input, l, moveDeps));
+    h.deps.afterPlanMove = port;
+    const deleted = event('customer-subscription-deleted.json');
+    (deleted.data.object as Stripe.Subscription).cancellation_details = { comment: null, feedback: null, reason: 'cancellation_requested' };
+    const freePeriodAudits = () => h.audits.filter((a) => a.action === AFTER_PLAN_MOVE_AUDIT_ACTION);
+
+    // First delivery: the move lands.
+    await mirrorPlanSubscription(deleted, log, h.deps);
+    expect(moveWrites).toHaveLength(1);
+    expect(store.moves).toBe(1);
+    expect(store.lastSubscriptionId).toBe(SUB);
+    expect(freePeriodAudits()).toHaveLength(1);
+    const after = {
+      store: JSON.parse(JSON.stringify(store)) as AfterPlanMoveRead,
+      row: { ...h.state.row },
+      history: [...h.history],
+      audits: [...h.audits],
+    };
+
+    // Two replays (Stripe redelivery, then the P-8b reconcile): the full mirror again, same event, each time.
+    for (const run of [2, 3]) {
+      await expect(mirrorPlanSubscription(deleted, log, h.deps)).resolves.toBeUndefined();
+      expect(port).toHaveBeenCalledTimes(run); // the replay path still calls the port
+      expect(lines.filter((l) => l.ctx.event === 'bos_plan_after_plan_skipped').map((l) => [l.level, l.ctx.skip])).toEqual(
+        Array.from({ length: run - 1 }, () => ['info', 'already_applied'])
+      );
+      expect(moveWrites).toHaveLength(1); // still one plan write in total
+      expect(store).toEqual(after.store); // after_plan_moves still 1, guarded by after_plan_last_subscription_id
+      expect(store.plan.period_anchor).toBe(after.store.plan.period_anchor); // no second credit grant
+      expect(freePeriodAudits()).toHaveLength(1); // still one BOS_PLAN_FREE_PERIOD_AFTER_CANCEL
+      expect(h.audits).toEqual(after.audits);
+      expect(h.state.row).toEqual(after.row); // the mirror's result is unchanged
+      expect(h.history).toEqual(after.history);
+      expect(lines.filter((l) => l.ctx.event === 'bos_billing_subscription_ended_replayed')).toHaveLength(run - 1);
+    }
+    // already_applied logged exactly twice: once per replay.
+    expect(lines.filter((l) => l.ctx.skip === 'already_applied')).toHaveLength(2);
   });
 });
