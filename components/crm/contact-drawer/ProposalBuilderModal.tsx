@@ -1043,36 +1043,63 @@ export function ProposalBuilderModal({
         // A day past the last one, so a meeting late on that day is included.
         const to = new Date(fromBusinessLocalInput(seriesTo, packageZone).getTime() + 86_400_000);
 
+        /*
+         * ── THE SAME SOURCE THE BOOKING PAGE READS ──────────────────────────
+         *
+         * This asked `/api/scheduling/bookings`, which answered correctly while
+         * a package was a container plus N CHILD BOOKINGS — each one a row with
+         * its own times, which is why the filter below still excludes this
+         * quote's own series by `parent_booking_id`.
+         *
+         * A package is now ONE booking with N MEETINGS. Its sessions left
+         * `scheduling_bookings`, and the container keeps `start_time: null` so
+         * the date filter drops it. The warning stayed on screen, kept catching
+         * ordinary appointments, and went blind to every package — the thing
+         * most likely to collide with a package.
+         *
+         * Measured: a quote offering 8, 15 and 22 November at 08:00 was sent
+         * and accepted while another package had held 15 and 22 since two hours
+         * before. One session of three was created and the database refused the
+         * rest, after the client had agreed and paid.
+         *
+         * `/api/scheduling/busy` is `busyMeetings` — the same function
+         * `free-slots`, the public page, the reschedule route and acceptance
+         * itself use. A quote and a booking page cannot disagree about a free
+         * hour when they are asking the same question.
+         * ───────────────────────────────────────────────────────────────────
+         */
         const params = new URLSearchParams({
-          start_date: from.toISOString(),
-          end_date: to.toISOString(),
-          limit: '200',
+          from: from.toISOString(),
+          to: to.toISOString(),
         });
 
-        const response = await fetch(`/api/scheduling/bookings?${params.toString()}`);
+        /* This quote's own package is not a clash with itself — the same
+           exclusion the old filter did by hand, now made by the reader. */
+        if (ownPackageId) params.set('exclude_booking_id', ownPackageId);
+
+        const response = await fetch(`/api/scheduling/busy?${params.toString()}`);
         const data = await response.json();
 
-        if (cancelled || !data?.success || !Array.isArray(data.bookings)) return;
+        const busy = data?.data?.busy;
+        if (cancelled || !data?.success || !Array.isArray(busy)) return;
 
+        /*
+         * No status filter here, and that is the point rather than an omission.
+         *
+         * The old list was `scheduling_bookings` rows, so it had to pick out
+         * the ones that hold their hour — `['confirmed','pending','completed']`
+         * — which are BOOKING statuses and never matched a meeting's
+         * `held`/`no_show`/`cancelled`/`moved` anyway. `busyMeetings` answers
+         * the question directly: everything it returns holds time, by the same
+         * rule the booking page and acceptance use.
+         */
         setTakenSlots(
-          (data.bookings as Array<Record<string, unknown>>)
-            .filter(
-              booking =>
-                booking.start_time &&
-                booking.end_time &&
-                ['confirmed', 'pending', 'completed'].includes(String(booking.status)) &&
-                /*
-                 * Minus this quote's own series — the container and every
-                 * session under it. See `basedOn.package_booking_id`: an
-                 * accepted package otherwise reports all six of its meetings
-                 * as hours already taken.
-                 */
-                !(
-                  ownPackageId &&
-                  (booking.id === ownPackageId || booking.parent_booking_id === ownPackageId)
-                )
-            )
-            .map(booking => ({ start: String(booking.start_time), end: String(booking.end_time) }))
+          (busy as Array<{ start_time?: unknown; end_time?: unknown }>)
+            .filter(interval => interval.start_time && interval.end_time)
+            .map(interval => ({
+              start: String(interval.start_time),
+              end: String(interval.end_time),
+            }))
         );
       } catch {
         /*
@@ -1186,6 +1213,66 @@ export function ProposalBuilderModal({
    */
   const [alsoMarkHeld, setAlsoMarkHeld] = useState(true);
 
+  /**
+   * The draft this modal has already written, if the send failed after it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Sending is two calls on purpose — the quote exists as a draft before
+   * anything is emailed, so a transport failure leaves something to retry
+   * rather than a lost hour of typing. The modal says exactly that when it
+   * happens, and leaves the button live.
+   *
+   * What it did not do was remember which draft it meant. Pressing send again
+   * started from the top, so every attempt wrote ANOTHER proposal: three tries
+   * at a flaky moment left three drafts, all of them orphans, and
+   * `quote_unsent` would then raise three rows about one quote.
+   *
+   * Held here so a retry resumes at the step that actually failed. Cleared
+   * whenever the content changes, because a draft is a snapshot of what was
+   * typed when it was written — see `resetDraft`.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [draftId, setDraftId] = useState<string | null>(null);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A DRAFT IS A SNAPSHOT, SO EDITING IT THROWS IT AWAY.
+   *
+   * `draftId` exists so a failed send can be retried without writing a second
+   * proposal. But the draft holds what was typed at the moment it was written,
+   * and the server sends the STORED row — not whatever is on screen now.
+   *
+   * So an owner who hits a transport failure, fixes the price, and presses
+   * send again would have mailed the client the old price, from a form showing
+   * the new one. Forgetting the draft is the safe direction: the worst case is
+   * one more orphan row, which `quote_unsent` will raise, and that is a great
+   * deal better than a quote that says something nobody agreed to.
+   *
+   * Every field the create call reads is listed. One left out is a field whose
+   * edit would be silently dropped.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    setDraftId(null);
+  }, [
+    title,
+    description,
+    totalNumber,
+    sendCurrency,
+    validUntil,
+    termsDays,
+    /* The ATTACHED FILE, not the `document_id` it becomes: that id is minted
+       inside the send itself, so it does not exist out here. Swapping the file
+       is the edit a reader would expect to invalidate the draft. */
+    file,
+    isPackage,
+    packagePay,
+    sessionMinutes,
+    sessionDates,
+    serviceId,
+    supersedesId,
+  ]);
+
   const handleSend = async () => {
     if (!canSend) return;
     setSending(true);
@@ -1297,10 +1384,18 @@ export function ProposalBuilderModal({
         documentId = uploaded.document.id;
       }
 
-      // Two calls on purpose: the proposal exists as a draft before anything is
-      // emailed, so a transport failure leaves something the owner can retry
-      // rather than a lost hour of typing.
-      const createRes = await fetch('/api/business-os/proposals', {
+      /*
+       * Two calls on purpose: the proposal exists as a draft before anything is
+       * emailed, so a transport failure leaves something the owner can retry
+       * rather than a lost hour of typing.
+       *
+       * The first is skipped where a previous attempt already got that far —
+       * see `draftId`. Without it a retry wrote a second proposal and the
+       * first became an orphan nothing would ever send.
+       */
+      const createRes = draftId
+        ? null
+        : await fetch('/api/business-os/proposals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1336,18 +1431,29 @@ export function ProposalBuilderModal({
           payment_terms_days: termsDays,
         }),
       });
-      const created = await createRes.json();
-      // `proposal`, not `data` — the route names it after the thing. Reading
-      // the wrong key threw a TypeError inside the try, which the catch below
-      // then reported as a transport failure: the quote HAD been saved, and
-      // the owner was told it had not.
-      if (!created.success || !created.proposal?.id) {
-        setError(created.error || t('proposal.error_create'));
-        setSending(false);
-        return;
+      let proposalId = draftId;
+
+      if (createRes) {
+        const created = await createRes.json();
+        // `proposal`, not `data` — the route names it after the thing. Reading
+        // the wrong key threw a TypeError inside the try, which the catch below
+        // then reported as a transport failure: the quote HAD been saved, and
+        // the owner was told it had not.
+        if (!created.success || !created.proposal?.id) {
+          setError(created.error || t('proposal.error_create'));
+          setSending(false);
+          return;
+        }
+        proposalId = created.proposal.id as string;
+        /*
+         * Remembered BEFORE the send is attempted, which is the whole point:
+         * the draft exists from this moment on, and a retry has to resume at
+         * the send rather than write a second one.
+         */
+        setDraftId(proposalId);
       }
 
-      const sendRes = await fetch(`/api/business-os/proposals/${created.proposal.id}/send`, {
+      const sendRes = await fetch(`/api/business-os/proposals/${proposalId}/send`, {
         method: 'POST',
       });
       const sent = await sendRes.json();

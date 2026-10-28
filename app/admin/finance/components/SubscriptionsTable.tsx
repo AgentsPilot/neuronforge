@@ -33,7 +33,7 @@ import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { businessesHref } from '@/app/admin/finance/financeLinks';
 import type { SubscriptionRow } from '@/lib/admin/billing/subscriptionsTypes';
 
-import { NO_ACCOUNT, NO_NAME, NONE, STATUS_LABEL, STATUS_TONE } from '../plansCopy';
+import { DISAGREES_LABEL, NO_ACCOUNT, NO_NAME, NONE, STATUS_LABEL, STATUS_TONE, disagreesTitle } from '../plansCopy';
 import { BUSINESS_DRAWER } from '../financeCopy';
 import { openableRowClass } from './BusinessDrawer';
 
@@ -134,6 +134,14 @@ export function SubscriptionsTable({
                         {STATUS_LABEL[status]}
                       </StatusChip>
                     ))}
+                  {/* P-8b.3a (AM-2, SA P3-SA-4): our two stored records disagree; the title names how.
+                      `?.`: a payload from a server older than P-8b.3a (a page open across a deploy) has no
+                      field, and shows no chip rather than failing the whole table. */}
+                  {row.disagreements?.length > 0 && (
+                    <span title={disagreesTitle(row.disagreements)} data-testid="subscription-disagrees">
+                      <StatusChip tone="warn">{DISAGREES_LABEL}</StatusChip>
+                    </span>
+                  )}
                 </div>
                 {row.stripeStatus !== null && <div className="mt-1 text-xs text-slate-400">Stripe: {row.stripeStatus}</div>}
               </td>

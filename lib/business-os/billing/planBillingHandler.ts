@@ -76,6 +76,60 @@ export type PlanBillingHandlerDeps = PlanPaymentDeps &
 /** The webhook's handler signature (`BUSINESS_OS_FLOW_HANDLERS`). */
 export type BusinessOsFlowHandler = (event: Stripe.Event, log: Logger) => Promise<void>;
 
+/**
+ * Every event type this handler's `switch` acts on, declared ONCE (plan
+ * payments P-8b.2, SA ruling 3). The nightly plan reconcile pass lists exactly
+ * these from Stripe and replays them; it keeps no second, hand-written list.
+ * A test pins this set to the `case` labels below, both ways.
+ */
+export const PLAN_HANDLER_EVENT_TYPES = [
+  'invoice.paid',
+  'invoice.payment_failed',
+  'invoice.payment_action_required',
+  'checkout.session.completed',
+  'checkout.session.expired',
+  'customer.subscription.updated',
+  'customer.subscription.deleted',
+] as const satisfies readonly Stripe.Event.Type[];
+
+export type PlanHandlerEventType = (typeof PLAN_HANDLER_EVENT_TYPES)[number];
+
+/**
+ * The (Stripe API version, event type) pairs whose payload shape this handler
+ * has been VERIFIED against (plan payments P-8b.2, SA API-version ruling,
+ * option (b); amends D-10 to two exports). The nightly reconcile replays an
+ * event only when its own `api_version` is a key here and its type is in that
+ * version's set; anything else is skipped and counted, never replayed in an
+ * unchecked shape. (`events.list` returns each event as rendered at the
+ * account's default version when it was created, which may differ from both
+ * the webhook endpoint's version and the SDK pin.)
+ *
+ * ADDING A VERSION OR A TYPE REQUIRES a captured fixture at that version in
+ * `lib/business-os/billing/__tests__/fixtures/stripe/` that passes the C-6
+ * field check (`planStripeFields.c6.test.ts`), AND SA review. The ratchet in
+ * V-4 ratchet in `__tests__/planStripeFields.c6.test.ts` fails otherwise.
+ *
+ *   - `2025-10-29.clover`: the SDK pin. All 7 (hand-built fixtures; the
+ *     action-required invoice is the same object as the failed one).
+ *   - `2025-09-30.clover`: the same major as the pin (monthly releases within a
+ *     major are additive), and what production's endpoint delivers. All 7.
+ *   - `2026-09-30.endive`: only the types captured at endive from the sandbox.
+ *     `checkout.session.expired` has no endive capture, so it is not verified.
+ */
+export const PLAN_HANDLER_VERIFIED_EVENT_SHAPES: Readonly<Record<string, readonly PlanHandlerEventType[]>> = {
+  '2025-10-29.clover': PLAN_HANDLER_EVENT_TYPES,
+  '2025-09-30.clover': PLAN_HANDLER_EVENT_TYPES,
+  '2026-09-30.endive': [
+    'invoice.paid',
+    'invoice.payment_failed',
+    'invoice.payment_action_required',
+    'customer.subscription.updated',
+    'customer.subscription.deleted',
+    // P-8b.2 V-3: captured read-only from the sandbox on 2026-10-28.
+    'checkout.session.completed',
+  ],
+};
+
 export function createPlanBillingHandler(deps: PlanBillingHandlerDeps): BusinessOsFlowHandler {
   return async function handlePlanBillingEvent(event, parentLog) {
     const log = parentLog.child({ flow: 'plan', eventType: event.type });

@@ -575,7 +575,17 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
      * `bos_boost_reconcile_finding` error log is the alert. The job is "partly
      * done" only when it could not finish its work: a row deferred to the next
      * run, the deadline, an unreadable list, no usable Stripe key, or a pass
-     * that failed. P-8b adds its pass's counts here.
+     * that failed.
+     *
+     * Plan payments P-8b.2 (PF-5, AM-5): the PLAN pass runs second
+     * (`lib/business-os/billing/planReconcilePass.ts`). It replays plan events
+     * the webhook did not finish, through the same claim table and handler, and
+     * compares Stripe's plan subscriptions with our records (flag only). Its
+     * findings are numbers that do not colour the job (the
+     * `bos_plan_reconcile_finding` error log is the alert). It is "partly done"
+     * when it could not finish (SA ruling 10): an event list or batch cut short,
+     * the deadline, a failed replay, a window clipped at 7 days, or a Stripe
+     * list or record it could not read in full.
      */
     id: 'bos-billing-reconcile',
     path: '/api/cron/bos-billing-reconcile',
@@ -583,7 +593,7 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     ...DAILY,
     ...MAX_60,
     label: 'Billing reconcile',
-    description: 'Recovers credit top-ups a Stripe webhook missed: credits, expires or fails them, re-reads open disputes and fills missing receipts',
+    description: 'Recovers credit top-ups and plan payments a Stripe webhook missed: credits, expires or fails top-ups, re-reads open disputes, fills missing receipts, replays unfinished plan events and flags plan subscriptions that disagree with Stripe',
     scheduleWords: 'Daily at 05:41 UTC',
     addedOn: '2026-10-09',
     drainsQueue: null,
@@ -609,6 +619,21 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
       { key: 'boostBatchFull', path: ['data', 'boostBatchFull'], label: 'a batch was full (1 = yes)' },
       { key: 'boostListFailed', path: ['data', 'boostListFailed'], label: 'a list read was refused' },
       { key: 'boostStripeUnavailable', path: ['data', 'boostStripeUnavailable'], label: 'Stripe could not be read (1 = yes)' },
+      // P-8b.2: the plan pass (planReconcilePass.ts, PLAN_RECONCILE_COUNT_KEYS; pinned both ways by its test).
+      // Few on purpose: the whole counts object must fit the run record's 1,024-byte CHECK.
+      { key: 'planEventsSeen', path: ['data', 'planEventsSeen'], label: 'plan events listed from Stripe' },
+      { key: 'planReplayed', path: ['data', 'planReplayed'], label: 'plan events replayed' },
+      { key: 'planReplayFailed', path: ['data', 'planReplayFailed'], label: 'plan events that could not be replayed' },
+      { key: 'planSkippedNotPlan', path: ['data', 'planSkippedNotPlan'], label: 'events that were not plan payments' },
+      { key: 'planApiVersionSkipped', path: ['data', 'planApiVersionSkipped'], label: 'events at an unverified Stripe API version or shape' },
+      { key: 'planStaleReclaimed', path: ['data', 'planStaleReclaimed'], label: 'stuck plan claims taken back' },
+      { key: 'planMismatch', path: ['data', 'planMismatch'], label: 'plan subscriptions that disagree with Stripe' },
+      { key: 'planOrphan', path: ['data', 'planOrphan'], label: 'plan subscriptions with no billing record' },
+      { key: 'planUnassigned', path: ['data', 'planUnassigned'], label: 'paid plan invoices with no plan assigned' },
+      { key: 'planIncomplete', path: ['data', 'planIncomplete'], label: 'plan events left for the next run (1 = yes)' },
+      { key: 'planDeadlineHit', path: ['data', 'planDeadlineHit'], label: 'plan pass stopped at the time limit (1 = yes)' },
+      { key: 'planWindowClipped', path: ['data', 'planWindowClipped'], label: 'plan window cut at 7 days (1 = yes)' },
+      { key: 'planCheckIncomplete', path: ['data', 'planCheckIncomplete'], label: 'plan records not all compared (1 = yes)' },
       { key: 'passesRun', path: ['data', 'passesRun'], label: 'passes run' },
       { key: 'passesFailed', path: ['data', 'passesFailed'], label: 'passes failed' },
     ],
@@ -617,6 +642,14 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
       { kind: 'atLeast', key: 'boostDeadlineHit', value: 1 },
       { kind: 'atLeast', key: 'boostListFailed', value: 1 },
       { kind: 'atLeast', key: 'boostStripeUnavailable', value: 1 },
+      // P-8b.2 (SA ruling 10): a starved or cut-short plan pass shows amber.
+      { kind: 'atLeast', key: 'planIncomplete', value: 1 },
+      { kind: 'atLeast', key: 'planDeadlineHit', value: 1 },
+      { kind: 'atLeast', key: 'planReplayFailed', value: 1 },
+      { kind: 'atLeast', key: 'planWindowClipped', value: 1 },
+      // SA P-8b.2 fix 4: an account default API version other than the handler's skips every event; amber, not green.
+      { kind: 'atLeast', key: 'planApiVersionSkipped', value: 1 },
+      { kind: 'atLeast', key: 'planCheckIncomplete', value: 1 },
       { kind: 'atLeast', key: 'passesFailed', value: 1 },
     ],
   },
