@@ -32,8 +32,8 @@
 // PERIODS (the failed invoice's line period end against `current_period_end`),
 // never by comparing `event.created` with a Stripe timestamp: under a test
 // clock they are two different clocks (C-1). `current_period_end` is written
-// only by the paid apply function (and cleared by the test-mode attach); a
-// source test keeps it so.
+// only by the paid apply function (and CLEARED, to null, by the test-mode
+// attach and, since P-8b.2 / F-1, by `replaceCustomer`); a source test keeps it so.
 //
 // ── THE TWO LOOKUPS BY A STRIPE ID (documented exception to CLAUDE.md rule 4) ─
 // The webhook does not know the account yet: finding it is the point (SR-8).
@@ -564,10 +564,21 @@ export class BusinessOsBillingAccountRepository {
    * missing (deleted at Stripe), by COMPARE-AND-SET on the old id (P-2 SA Q-2,
    * Q-6; P-3a §3.5, SA Q-8, C-3).
    *
-   * Clears the subscription mirror and the lock with it: a deleted customer has
-   * no live subscription, and keeping its subscription id would make the
-   * checkout refuse for ever. `replaced: false` means another request replaced
-   * it first (or the row is gone); the caller re-reads and uses what is stored.
+   * Clears the WHOLE subscription mirror and the lock with it: a deleted
+   * customer has no live subscription, and keeping its subscription id would
+   * make the checkout refuse for ever. `replaced: false` means another request
+   * replaced it first (or the row is gone); the caller re-reads and uses what
+   * is stored.
+   *
+   * P-6a follow-up F-1, fixed in plan payments P-8b.2 (TL decision 11): it now
+   * clears every subscription-scoped column of the 20261025 grant, exactly as
+   * the test-clock attach does (SA C-6), not only the subscription id, status
+   * and lock. The kept columns were the same stale-column class as C-6: a stale
+   * `ended_at` hid the next subscription's failures, a stale `current_period_end`
+   * could make the apply function treat the next purchase's invoice as not the
+   * newest, and stale mirror columns read as false disagreements in the nightly
+   * reconcile (Step B). `founder_discount_applied_at` is left alone: it is about
+   * the account, not one subscription.
    *
    * A unique violation (the new customer is already recorded for another
    * account) is an error with an alert, never a returned row, as in
@@ -604,8 +615,18 @@ export class BusinessOsBillingAccountRepository {
             stripe_customer_id: newCustomerId,
             stripe_subscription_id: null,
             subscription_status: null,
+            bought_tier: null,
+            current_period_end: null,
+            cancel_at_period_end: false,
+            pending_tier: null,
             open_checkout_session_id: null,
             open_checkout_expires_at: null,
+            last_invoice_id: null,
+            last_paid_at: null,
+            last_payment_failed_at: null,
+            failed_attempts: 0,
+            action_required_invoice_url: null,
+            ended_at: null,
             updated_at: nowIso,
           },
           { count: 'exact' }
@@ -636,14 +657,14 @@ export class BusinessOsBillingAccountRepository {
    * test-clock customer, by COMPARE-AND-SET on the old customer id, and clear
    * EVERY subscription-scoped column the 20261025 grant lists.
    *
-   * Why not `replaceCustomer`: it keeps `ended_at`, `current_period_end`,
-   * `last_paid_at` and the failure columns. A stale `ended_at` would make the
-   * next subscription read as not live and hide its failures; a stale,
-   * clock-future `current_period_end` from an earlier demo would make the apply
-   * function treat the next purchase's invoice as not the newest, so the plan
-   * row would never be written. `founder_discount_applied_at` is left alone (it
-   * is about the account, not one subscription). Production `replaceCustomer`
-   * is unchanged (follow-up F-1).
+   * Why it clears everything: a stale `ended_at` would make the next
+   * subscription read as not live and hide its failures; a stale, clock-future
+   * `current_period_end` from an earlier demo would make the apply function
+   * treat the next purchase's invoice as not the newest, so the plan row would
+   * never be written. `founder_discount_applied_at` is left alone (it is about
+   * the account, not one subscription). Since P-8b.2 (follow-up F-1)
+   * `replaceCustomer` clears the same set; this method stays separate because
+   * it is TEST MODE ONLY.
    *
    * Refuses a live-mode row (`livemode: true`) as invalid input: a test clock
    * has no meaning there. `{ count: 'exact' }`, no `.select()`, no `.or()`.
