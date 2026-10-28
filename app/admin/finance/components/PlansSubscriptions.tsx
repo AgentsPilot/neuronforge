@@ -29,15 +29,18 @@ import { ADMIN_COUNT_LINE } from '@/app/admin/components/layout/adminTable';
 import { formatCount, formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 import { StatusChip } from '@/app/admin/components/layout/StatusChip';
-import type { SubscriptionPlanName, SubscriptionStatus, SubscriptionsPayload } from '@/lib/admin/billing/subscriptionsTypes';
+import type { SubscriptionFilter, SubscriptionPlanName, SubscriptionsPayload } from '@/lib/admin/billing/subscriptionsTypes';
 import { SubscriptionsTable } from './SubscriptionsTable';
 import { money, mrrParts } from '../plansMoney';
 import { PLAN_DRAWER } from '../financeCopy';
 import { useBusinessQuickLook, useOpenBusinessAccountId } from './BusinessDrawer';
 import { PlanDrawer } from './PlanDrawer';
 import {
+  DISAGREEING_LABEL,
+  DISAGREES_LABEL,
   EMPTY_ALL,
   EMPTY_ALL_HINT,
+  EMPTY_DISAGREES,
   EMPTY_FILTERED,
   MODE_BADGE,
   MRR_LABEL,
@@ -49,6 +52,7 @@ import {
   SUBSCRIPTIONS_WHAT,
   TEST_KEY_NOTE,
   countLine,
+  disagreesOptionLabel,
   mrrDiscountNote,
   mrrUnpricedNote,
 } from '../plansCopy';
@@ -65,8 +69,9 @@ export function PlansSubscriptions({
   status,
   onStatus,
 }: {
-  status: SubscriptionStatus | null;
-  onStatus: (next: SubscriptionStatus | null) => void;
+  /** A status, or `disagrees` (P-8b.3a); null = all. */
+  status: SubscriptionFilter | null;
+  onStatus: (next: SubscriptionFilter | null) => void;
 }) {
   const [data, setData] = useState<SubscriptionsPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -145,7 +150,7 @@ export function PlansSubscriptions({
             value={status ?? 'all'}
             onChange={(event) => {
               const next = event.target.value;
-              onStatus(next === 'all' ? null : (next as SubscriptionStatus));
+              onStatus(next === 'all' ? null : (next as SubscriptionFilter));
             }}
             className={ADMIN_FIELD_CONTROL}
           >
@@ -155,6 +160,10 @@ export function PlansSubscriptions({
                 {STATUS_LABEL[s]}
               </option>
             ))}
+            {/* P-8b.3a (AM-2): after the statuses; the count ignores the filter, like every total. */}
+            <option value="disagrees">
+              {typeof totals?.disagreeing === 'number' ? disagreesOptionLabel(totals.disagreeing) : DISAGREES_LABEL}
+            </option>
           </select>
         </div>
       </header>
@@ -205,6 +214,16 @@ export function PlansSubscriptions({
               </span>
             </dd>
           </div>
+          {/* P-8b.3a (SA P3-SA-4): one line in the existing totals, no new tile. Absent from a payload
+              of a server older than P-8b.3a (a page open across a deploy): then the line is not shown. */}
+          {typeof totals.disagreeing === 'number' && (
+            <div>
+              <dt className="text-xs text-slate-400">{DISAGREEING_LABEL}</dt>
+              <dd className="text-sm text-white" data-testid="plans-subscriptions-disagreeing">
+                <span className="font-semibold tabular-nums">{formatCount(totals.disagreeing)}</span>
+              </dd>
+            </div>
+          )}
         </dl>
       )}
 
@@ -214,7 +233,7 @@ export function PlansSubscriptions({
         {data !== null && data.rows.length === 0 && (
           <AdminEmpty
             testId="plans-subscriptions-empty"
-            message={status === null ? EMPTY_ALL : EMPTY_FILTERED}
+            message={status === null ? EMPTY_ALL : status === 'disagrees' ? EMPTY_DISAGREES : EMPTY_FILTERED}
             hint={status === null ? EMPTY_ALL_HINT : undefined}
             onClear={status === null ? undefined : () => onStatus(null)}
           />

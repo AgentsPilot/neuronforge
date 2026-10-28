@@ -85,6 +85,28 @@ export interface BusinessOsCancelFacts {
   currentPeriodEnd: number | null;
 }
 
+/**
+ * P-8b.2 (Step B): one subscription on a Business OS plan price, as the nightly
+ * reconcile compares it with our billing record. Unix seconds. No customer
+ * data beyond ids.
+ */
+export interface BusinessOsReconcileSubscriptionFacts {
+  id: string;
+  status: Stripe.Subscription.Status;
+  customerId: string | null;
+  livemode: boolean;
+  cancelAtPeriodEnd: boolean;
+  endedAt: number | null;
+  /** The embedded items (first page only; a plan subscription has one item). */
+  items: BusinessOsSubscriptionItemFacts[];
+}
+
+/** P-8b.2: a bounded Stripe list. `complete: false` = the page cap was reached or a page gave no cursor. */
+export interface BusinessOsBoundedList<T> {
+  items: T[];
+  complete: boolean;
+}
+
 /** P-7a.2 (X-5): the portal locales the app sends. `he` is not one Stripe accepts; the caller sends `auto`. */
 export type BusinessOsPortalLocale = 'en' | 'es' | 'auto';
 
@@ -514,6 +536,82 @@ export class StripeService {
       startingAfter = result.data[result.data.length - 1].id;
     }
     return { subscriptions, complete: false };
+  }
+
+  // ── Business OS nightly plan reconcile reads (plan payments P-8b.2, workplan §4.2, §5) ──
+  // Two Stripe-only READS for `planReconcilePass`: no database client, no
+  // write. Each pages at 100, stops after `maxPages` (10) and then answers
+  // `complete: false` with what it read, never a silent partial list. Platform
+  // account only: no `Stripe-Account` header is ever sent, so Connect events and
+  // subscriptions are never listed (SR-10).
+
+  /**
+   * The platform's events of the given types created at or after `createdGte`
+   * (unix seconds), as Stripe stores them. Stripe answers newest first; the
+   * caller orders them. Stripe keeps events for 30 days.
+   */
+  async listBusinessOsPlanEvents(params: {
+    createdGte: number;
+    types: readonly string[];
+    maxPages?: number;
+  }): Promise<BusinessOsBoundedList<Stripe.Event>> {
+    if (params.types.length === 0 || params.types.length > 20) {
+      throw new Error('listBusinessOsPlanEvents takes between one and twenty event types');
+    }
+    const maxPages = params.maxPages ?? 10;
+    const items: Stripe.Event[] = [];
+    let startingAfter: string | undefined;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const result = await this.stripe.events.list({
+        types: [...params.types],
+        created: { gte: params.createdGte },
+        limit: 100,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      items.push(...result.data);
+      if (!result.has_more) return { items, complete: true };
+      if (result.data.length === 0) return { items, complete: false };
+      startingAfter = result.data[result.data.length - 1].id;
+    }
+    return { items, complete: false };
+  }
+
+  /**
+   * The platform's subscriptions on one price that are not cancelled (Stripe's
+   * default when no `status` is given), with their embedded items.
+   */
+  async listBusinessOsSubscriptionsByPrice(
+    priceId: string,
+    options: { maxPages?: number } = {}
+  ): Promise<BusinessOsBoundedList<BusinessOsReconcileSubscriptionFacts>> {
+    const maxPages = options.maxPages ?? 10;
+    const items: BusinessOsReconcileSubscriptionFacts[] = [];
+    let startingAfter: string | undefined;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const result = await this.stripe.subscriptions.list({
+        price: priceId,
+        limit: 100,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      for (const subscription of result.data) {
+        const customer = subscription.customer;
+        items.push({
+          id: subscription.id,
+          status: subscription.status,
+          customerId: typeof customer === 'string' ? customer : customer?.id ?? null,
+          livemode: subscription.livemode,
+          cancelAtPeriodEnd: subscription.cancel_at_period_end,
+          endedAt: subscription.ended_at ?? null,
+          items: (subscription.items?.data ?? []).map(subscriptionItemFacts),
+        });
+      }
+      if (!result.has_more) return { items, complete: true };
+      if (result.data.length === 0) return { items, complete: false };
+      startingAfter = result.data[result.data.length - 1].id;
+    }
+    return { items, complete: false };
   }
 
   /**

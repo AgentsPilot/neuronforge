@@ -21,6 +21,8 @@
 import fs from 'fs';
 import path from 'path';
 
+import { PLAN_HANDLER_VERIFIED_EVENT_SHAPES } from '@/lib/business-os/billing/planBillingHandler';
+
 const FIXTURES = path.join(__dirname, 'fixtures', 'stripe');
 
 type ObjectKind =
@@ -119,6 +121,10 @@ const CAPTURED_OBJECTS: readonly ObjectKind[] = [
   'pending_update',
   'stripe_error',
   'upgrade_response',
+  // P-8b.2 (SA ruling V-3): `checkout_session` gains an ENDIVE capture
+  // (`captured-p8b2-event-checkout-session-completed-*.json`, the sandbox's
+  // events as stored at `2026-09-30.endive`). Already listed above, so the set
+  // is unchanged; the verified-shapes ratchet below reads the capture itself.
 ];
 
 function has(value: unknown, segments: readonly string[]): boolean {
@@ -140,6 +146,8 @@ function missingFields(object: unknown, kind: ObjectKind): string[] {
 interface Fixture {
   name: string;
   source: string;
+  /** The event type, for a fixture that is a webhook event; '' otherwise. */
+  eventType: string;
   apiVersion: string;
   objects: Array<{ kind: ObjectKind; value: unknown }>;
 }
@@ -177,7 +185,8 @@ function load(name: string): Fixture {
   } else {
     addStripeObject((raw.data as { object: Record<string, unknown> }).object);
   }
-  return { name, source, apiVersion: String(raw.api_version ?? raw._fixture_api_version ?? ''), objects };
+  const eventType = typeof raw.type === 'string' && raw.data !== undefined ? raw.type : '';
+  return { name, source, eventType, apiVersion: String(raw.api_version ?? raw._fixture_api_version ?? ''), objects };
 }
 
 const fixtures = fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.json')).map(load);
@@ -216,5 +225,54 @@ describe('C-6: captured payloads (ratchet)', () => {
       expect(['2025-09-30.clover', '2025-10-29.clover', '2026-09-30.endive']).toContain(fixture.apiVersion);
       expect(fixture.source).toContain(fixture.apiVersion);
     }
+  });
+});
+
+/**
+ * P-8b.2 (SA API-version ruling, option (b), V-4): the RATCHET on the plan
+ * handler's verified (api_version, event type) pairs. Every pair in
+ * `PLAN_HANDLER_VERIFIED_EVENT_SHAPES` needs at least one event fixture of that
+ * type that passes the C-6 field check above:
+ *   - an `endive` (or any non-clover) pair needs a fixture CAPTURED at exactly
+ *     that version; no substitution;
+ *   - the two `clover` versions are one Stripe major (monthly releases within a
+ *     major are additive), so a fixture at either clover version counts for
+ *     both, captured or hand-built;
+ *   - at clover only, `invoice.payment_action_required` may be met by an
+ *     `invoice.payment_failed` fixture: both events carry the same Stripe
+ *     object (an invoice), which is what the handler reads.
+ * So the allow-list cannot grow without evidence.
+ */
+describe('P-8b.2 V-4: every verified (api_version, type) pair has a passing fixture (ratchet)', () => {
+  const CLOVER_MAJOR = ['2025-09-30.clover', '2025-10-29.clover'];
+  /** Clover only: the same Stripe object, so the failed-invoice fixture verifies the action-required event. */
+  const CLOVER_SUBSTITUTES: Readonly<Record<string, string>> = { 'invoice.payment_action_required': 'invoice.payment_failed' };
+
+  const passes = (fixture: Fixture) =>
+    fixture.objects.length > 0 && fixture.objects.every(({ kind, value }) => missingFields(value, kind).length === 0);
+
+  function evidenceFor(version: string, eventType: string): string[] {
+    const clover = CLOVER_MAJOR.includes(version);
+    const types = clover && CLOVER_SUBSTITUTES[eventType] ? [eventType, CLOVER_SUBSTITUTES[eventType]] : [eventType];
+    return fixtures
+      .filter((f) => types.includes(f.eventType) && passes(f))
+      .filter((f) => (clover ? CLOVER_MAJOR.includes(f.apiVersion) : f.apiVersion === version && f.source.startsWith('CAPTURED')))
+      .map((f) => f.name);
+  }
+
+  const pairs = Object.entries(PLAN_HANDLER_VERIFIED_EVENT_SHAPES).flatMap(([version, types]) => types.map((t) => [version, t] as const));
+
+  it('lists the three verified versions', () => {
+    expect(Object.keys(PLAN_HANDLER_VERIFIED_EVENT_SHAPES).sort()).toEqual(['2025-09-30.clover', '2025-10-29.clover', '2026-09-30.endive']);
+  });
+
+  it.each(pairs)('%s %s has a fixture', (version, eventType) => {
+    expect({ version, eventType, evidence: evidenceFor(version, eventType).length > 0 }).toEqual({ version, eventType, evidence: true });
+  });
+
+  it('the ratchet bites: endive checkout.session.expired has no endive capture, and a clover fixture never counts for endive', () => {
+    expect(evidenceFor('2026-09-30.endive', 'checkout.session.expired')).toEqual([]);
+    expect(PLAN_HANDLER_VERIFIED_EVENT_SHAPES['2026-09-30.endive']).not.toContain('checkout.session.expired');
+    expect(evidenceFor('2027-03-31.future', 'invoice.paid')).toEqual([]);
   });
 });

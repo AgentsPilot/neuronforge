@@ -5,8 +5,9 @@
  *
  * Pure: literal fixture rows, the real descriptors and the real module map
  * (an injected map or classification where a test needs a module off or a
- * target excluded). Headers are the key-echo default, so every assertion is
- * on keys, not wording (MX-2b owns the words).
+ * target excluded). Headers come from the key-echo labels defined below (test
+ * only; MX-2b SA R-1 keeps them out of production code), so every assertion is
+ * on keys, not wording (the words are columnLabels.test.ts).
  */
 import fs from 'fs';
 import path from 'path';
@@ -30,7 +31,6 @@ import { sectionColumns } from '@/lib/business-os/data-export/zipExport';
 import {
   CLASSIFIED,
   JOINED_CSV_FIXED_COLUMNS,
-  KEY_ECHO_LABELS,
   buildJoinedCsv,
   classifiedColumnsOf,
   isClassifiedExportable,
@@ -44,6 +44,17 @@ import {
 } from '@/lib/business-os/data-export/joinedCsv';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Echoes the keys (the fixed key, the section id, the column key). Defined here,
+ * not exported from joinedCsv.ts, so no production module can import it
+ * (MX-2b SA R-1).
+ */
+const KEY_ECHO_LABELS: JoinedCsvLabels = {
+  fixed: (key) => key,
+  recordType: (section) => section,
+  column: (_section, key) => key,
+};
 
 /** RFC 4180 parse of ONE encoded line (a quoted cell may hold CR / LF). */
 function parseLine(line: string): string[] {
@@ -78,8 +89,11 @@ function table(csv: JoinedCsv): Record<string, string>[] {
   });
 }
 
-function build(moduleId: ExportModuleId, rest: Omit<JoinedCsvInput, 'moduleId' | 'language'>): JoinedCsv {
-  return buildJoinedCsv({ moduleId, language: 'en', ...rest });
+function build(
+  moduleId: ExportModuleId,
+  rest: Omit<JoinedCsvInput, 'moduleId' | 'language' | 'labels'> & { labels?: JoinedCsvLabels }
+): JoinedCsv {
+  return buildJoinedCsv({ moduleId, language: 'en', labels: KEY_ECHO_LABELS, ...rest });
 }
 
 function mapWithOff(id: ExportModuleId): ExportModuleDefinition[] {
@@ -491,9 +505,17 @@ describe('T-15 labels interface', () => {
     column: (_section, key, language) => `${language}:עמודה:${key}`,
   };
 
-  it('key echo by default', () => {
+  // T-L13 (MX-2b): replaces MX-2a's "key echo by default". Jest is
+  // transpile-only, so the required type proves nothing on its own.
+  it('labels are required: a call without them throws', () => {
+    const noLabels = { moduleId: 'clients', language: 'en', rowsBySection: { clients: [DANA] } } as unknown as JoinedCsvInput;
+    expect(() => buildJoinedCsv(noLabels)).toThrow('Joined CSV labels are required');
+    const partial = { ...noLabels, labels: { fixed: KEY_ECHO_LABELS.fixed, recordType: KEY_ECHO_LABELS.recordType } } as unknown as JoinedCsvInput;
+    expect(() => buildJoinedCsv(partial)).toThrow('Joined CSV labels are required');
+  });
+
+  it('negative control: the test key-echo labels build the header from keys', () => {
     expect(parseLine(clientsCsv().header)[0]).toBe('record_type');
-    expect(KEY_ECHO_LABELS.recordType('clients', 'he')).toBe('clients');
   });
 
   it('injected labels name the header and the record type in the requested language; data cells unchanged', () => {

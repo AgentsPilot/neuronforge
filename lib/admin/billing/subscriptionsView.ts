@@ -37,10 +37,13 @@ import { planLabel, planMonthlyPriceUsd } from '@/lib/business-os/entitlements/p
 import { lifecycleInputs } from '@/lib/business-os/entitlements/report';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { computeMrr, mrrTreatment, type MrrPrice, type MrrResult } from '@/lib/business-os/billing/planMrr';
+import { isPayingBillingRow } from '@/lib/business-os/billing/payingSubscriptionStatuses';
 import { toHundredths } from '@/lib/business-os/finance/currencyGroups';
 import {
   SUBSCRIPTION_STATUSES,
   SUBSCRIPTIONS_ROW_CAP,
+  type BillingDisagreement,
+  type SubscriptionFilter,
   type SubscriptionPlanName,
   type SubscriptionRow,
   type SubscriptionStatus,
@@ -98,6 +101,51 @@ export function subscriptionStatuses(row: AdminBillingRow, lifecycle: LifecycleR
   return SUBSCRIPTION_STATUSES.filter((status) => has[status]);
 }
 
+/**
+ * The paid-through date and Stripe's period end are written from the same
+ * invoice (SA-P3 Q-7), so they normally match exactly. One second absorbs a
+ * difference in how the two timestamps are formatted, never a real gap.
+ * (Moved with the rule from `billingPanelView.ts`, P-8b.3a.)
+ */
+const SAME_INSTANT_MS = 1000;
+
+function sameInstant(a: string, b: string): boolean {
+  const ms = Math.abs(new Date(a).getTime() - new Date(b).getTime());
+  return Number.isFinite(ms) && ms <= SAME_INSTANT_MS;
+}
+
+/**
+ * Where our billing record and the plan row disagree (AM-1's stored
+ * disagreements). ONE rule for the billing panel and the Subscriptions list's
+ * "Disagrees" marker (plan payments P-8b.3a, SA P3-SA-4): moved here from
+ * `buildBillingPanel` unchanged. Stored records only, never Stripe itself
+ * (ruling 4, option A).
+ *
+ * Disagreements only while the subscription is paying: an ended or
+ * cancelled-and-lapsed subscription is expected to differ from the plan row.
+ */
+export function billingDisagreements(row: AdminBillingRow, plan: BusinessOsAccountPlan | null): BillingDisagreement[] {
+  const disagreements: BillingDisagreement[] = [];
+  if (isPayingBillingRow(row)) {
+    const planTier = plan?.tier ?? null;
+    if (planTier === null || planTier === '') {
+      disagreements.push('no_tier_on_plan');
+    } else if (row.bought_tier !== null && row.bought_tier !== planTier) {
+      disagreements.push('tier_differs');
+    }
+    const paidThrough = plan?.tier_expires_at ?? null;
+    if (
+      planTier !== null &&
+      planTier !== '' &&
+      row.current_period_end !== null &&
+      (paidThrough === null || !sameInstant(paidThrough, row.current_period_end))
+    ) {
+      disagreements.push('paid_through_differs');
+    }
+  }
+  return disagreements;
+}
+
 /** The statuses of an admin-assigned plan with no subscription in this mode. */
 function noStripeStatuses(lifecycle: LifecycleResult): SubscriptionStatus[] {
   const has: Partial<Record<SubscriptionStatus, boolean>> = {
@@ -142,7 +190,8 @@ export interface SubscriptionsInput {
   config: EntitlementConfig;
   now: Date;
   mode: 'test' | 'live';
-  status: SubscriptionStatus | null;
+  /** A status, or `disagrees` (P-8b.3a); null = all. */
+  status: SubscriptionFilter | null;
 }
 
 export function buildSubscriptions(input: SubscriptionsInput): SubscriptionsPayload {
@@ -182,6 +231,7 @@ export function buildSubscriptions(input: SubscriptionsInput): SubscriptionsPayl
       failedAttempts: billing.failed_attempts,
       pendingPlan: nameOf(config, billing.pending_tier),
       discounted: billing.founder_discount_applied_at !== null,
+      disagreements: billingDisagreements(billing, plan ?? null),
     });
   }
 
@@ -206,6 +256,8 @@ export function buildSubscriptions(input: SubscriptionsInput): SubscriptionsPayl
       failedAttempts: 0,
       pendingPlan: null,
       discounted: false,
+      // No billing row in this mode, so nothing to disagree with (the panel's answer too).
+      disagreements: [],
     });
   }
 
@@ -231,7 +283,9 @@ export function buildSubscriptions(input: SubscriptionsInput): SubscriptionsPayl
     .sort(([a], [b]) => tierIndex(a) - tierIndex(b) || a.localeCompare(b))
     .map(([tier, accounts]) => ({ id: tier, name: planLabel(config, tier), accounts }));
 
-  const matchingRows = status === null ? rows : rows.filter((row) => row.statuses.includes(status));
+  const matches = (row: SubscriptionRow): boolean =>
+    status === null || (status === 'disagrees' ? row.disagreements.length > 0 : row.statuses.includes(status));
+  const matchingRows = rows.filter(matches);
 
   return {
     generatedAt: now.toISOString(),
@@ -245,6 +299,7 @@ export function buildSubscriptions(input: SubscriptionsInput): SubscriptionsPayl
       paidByPlan,
       byStatus,
       accounts: rows.length,
+      disagreeing: rows.filter((row) => row.disagreements.length > 0).length,
     },
     rows: matchingRows.slice(0, SUBSCRIPTIONS_ROW_CAP),
     matching: matchingRows.length,

@@ -27,28 +27,15 @@ import { deriveLifecycle } from '@/lib/business-os/entitlements/lifecycle';
 import { planLabel } from '@/lib/business-os/entitlements/planPresentation';
 import { lifecycleInputs } from '@/lib/business-os/entitlements/report';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
-import { isPayingBillingRow } from '@/lib/business-os/billing/payingSubscriptionStatuses';
 import { mrrTreatment } from '@/lib/business-os/billing/planMrr';
 import { stripeDashboardUrl } from '@/lib/business-os/boost/boostAdminView';
 import { formatMinorAmount } from '@/lib/business-os/currency';
-import { catalogPriceOf, subscriptionStatuses } from './subscriptionsView';
-import type { BillingDisagreement, BillingPanelPayload, BillingPanelStripeSide } from './billingPanelTypes';
+import { billingDisagreements, catalogPriceOf, subscriptionStatuses } from './subscriptionsView';
+import type { BillingPanelPayload, BillingPanelStripeSide } from './billingPanelTypes';
 import type { SubscriptionPlanName } from './subscriptionsTypes';
-
-/**
- * The paid-through date and Stripe's period end are written from the same
- * invoice (SA-P3 Q-7), so they normally match exactly. One second absorbs a
- * difference in how the two timestamps are formatted, never a real gap.
- */
-const SAME_INSTANT_MS = 1000;
 
 function nameOf(config: EntitlementConfig, planId: string | null): SubscriptionPlanName | null {
   return planId === null || planId === '' ? null : { id: planId, name: planLabel(config, planId) };
-}
-
-function sameInstant(a: string, b: string): boolean {
-  const ms = Math.abs(new Date(a).getTime() - new Date(b).getTime());
-  return Number.isFinite(ms) && ms <= SAME_INSTANT_MS;
 }
 
 export interface BillingPanelInput {
@@ -97,26 +84,9 @@ export function buildBillingPanel(input: BillingPanelInput): BillingPanelPayload
     };
   }
 
-  // Disagreements only while the subscription is paying: an ended or
-  // cancelled-and-lapsed subscription is expected to differ from the plan row.
-  const disagreements: BillingDisagreement[] = [];
-  if (row !== null && isPayingBillingRow(row)) {
-    const planTier = plan?.tier ?? null;
-    if (planTier === null || planTier === '') {
-      disagreements.push('no_tier_on_plan');
-    } else if (row.bought_tier !== null && row.bought_tier !== planTier) {
-      disagreements.push('tier_differs');
-    }
-    const paidThrough = plan?.tier_expires_at ?? null;
-    if (
-      planTier !== null &&
-      planTier !== '' &&
-      row.current_period_end !== null &&
-      (paidThrough === null || !sameInstant(paidThrough, row.current_period_end))
-    ) {
-      disagreements.push('paid_through_differs');
-    }
-  }
+  // The stored-record disagreements: ONE rule, shared with the Subscriptions
+  // list's "Disagrees" marker (P-8b.3a, SA P3-SA-4), so the two cannot differ.
+  const disagreements = row === null ? [] : billingDisagreements(row, plan);
 
   return {
     generatedAt: now.toISOString(),
