@@ -536,6 +536,57 @@ export async function resolveRefundTargets(params: {
   }
 
   /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A FIFTH WAY: the id is the QUOTE'S OWN BOOKING, and the money is on what
+   * accepting it created.
+   *
+   * A quote is raised against an appointment. Accepting it raises an INVOICE
+   * and, for a package, a CONTAINER booking — and the money lands on those.
+   * The quote's own booking keeps none of it, so "Manage payment" on the quote
+   * card resolved to nothing while the card beside it read "₪1,000 collected,
+   * ₪0 outstanding, paid".
+   *
+   * Measured on the reporting account: three accepted upfront quotes, ₪1,000,
+   * ₪950 and ₪700, every one of them refundable from its package and from its
+   * invoice and from NONE of its quote bookings. The dialog opened on the
+   * amount the card knew, the preflight answered, and the figure collapsed to
+   * ₪0.00 a second later.
+   *
+   * Both links are followed because they answer in different cases: a quote
+   * for a single appointment has `created_invoice_id` and no package; a
+   * package quote has both, and its container may also hold a checkout
+   * payment that no invoice covers.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (bookingId && !invoiceId && invoiceIds.length === 0 && pointedAt.length === 0) {
+    const { data: quotes } = await supabaseServer
+      .from('proposals')
+      .select('created_invoice_id, package_booking_id')
+      .eq('user_id', userId)
+      .eq('booking_id', bookingId);
+
+    for (const quote of quotes ?? []) {
+      const invoiceFromQuote = quote.created_invoice_id as string | null;
+      if (invoiceFromQuote) invoiceIds.push(invoiceFromQuote);
+
+      const packageBooking = quote.package_booking_id as string | null;
+      if (!packageBooking) continue;
+
+      /* The container the acceptance created: its own invoices, and the
+         transaction link one level up — the fourth way, reached from here. */
+      containerId = packageBooking;
+
+      const { data: packageInvoices } = await supabaseServer
+        .from('payment_invoices')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('booking_id', packageBooking);
+
+      invoiceIds.push(...(packageInvoices ?? []).map(row => row.id as string));
+    }
+  }
+
+  /*
    * Newest first, and newest is not arbitrary: refunding a plan from the last
    * period backwards means a run that stops halfway has returned the money the
    * client has least benefit from, and leaves the earliest periods — the ones
