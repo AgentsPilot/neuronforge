@@ -98,7 +98,25 @@ const fetchMock = jest.fn();
 let answers: {
   timeOff: Array<Record<string, unknown>>;
   availability: Record<string, Array<{ start: string; end: string }>> | null;
-  bookings: Array<Record<string, unknown>>;
+  /**
+   * The hours already committed, as `/api/scheduling/busy` answers them.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This was `/api/scheduling/bookings`, and the fixtures were BOOKING rows
+   * with a status, filtered client-side. That answered correctly while a
+   * package was a container plus N child bookings; once a package became one
+   * booking with N MEETINGS its sessions left `scheduling_bookings`, and the
+   * check went blind to exactly the thing most likely to clash with a package.
+   *
+   * Two filters moved to the server with the source, and the fixtures say so:
+   *
+   *   · WHICH ROWS HOLD AN HOUR. `busyMeetings` returns only those, so there is
+   *     no status to filter here — a cancelled hour is simply absent.
+   *   · THE QUOTE'S OWN SERIES, via `exclude_booking_id`. The mock honours it
+   *     below, so a test that relies on it also proves the request carries it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  busy: Array<{ start_time: string; end_time: string; booking_id?: string | null }>;
 };
 
 beforeEach(() => {
@@ -110,7 +128,7 @@ beforeEach(() => {
    * off, the service (its length and its weekly hours), and what is already
    * booked across the window the dates cover.
    */
-  answers = { timeOff: [], availability: null, bookings: [] };
+  answers = { timeOff: [], availability: null, busy: [] };
 
   fetchMock.mockImplementation(async (url: string) => {
     if (url.includes('/time-off')) {
@@ -125,8 +143,14 @@ beforeEach(() => {
         }),
       };
     }
-    if (url.includes('/scheduling/bookings')) {
-      return { ok: true, json: async () => ({ success: true, bookings: answers.bookings }) };
+    if (url.includes('/scheduling/busy')) {
+      /* The server's own exclusion, modelled: `busyMeetings` drops every row
+         whose `booking_id` is the excluded one — the container and all its
+         sessions at once, since a meeting carries its container's id. */
+      const exclude = new URLSearchParams(url.split('?')[1] ?? '').get('exclude_booking_id');
+      const busy = answers.busy.filter(row => !exclude || row.booking_id !== exclude);
+
+      return { ok: true, json: async () => ({ success: true, data: { busy } }) };
     }
     return { ok: true, json: async () => ({ success: true, data: [] }) };
   });
@@ -563,10 +587,9 @@ describe('a date whose hour is already sold', () => {
     // Now something lands on the first meeting's hour, and the series is
     // re-checked against it.
     const first = firstKey();
-    answers.bookings = [
+    answers.busy = [
       {
-        id: 'other',
-        status: 'confirmed',
+        booking_id: 'other',
         start_time: new Date(`${first}T07:30:00.000Z`).toISOString(),
         end_time: new Date(`${first}T08:30:00.000Z`).toISOString(),
       },
@@ -588,14 +611,13 @@ describe('a date whose hour is already sold', () => {
     await turnPackageOn();
 
     const first = firstKey();
-    answers.bookings = [
-      {
-        id: 'other',
-        status: 'cancelled',
-        start_time: new Date(`${first}T07:30:00.000Z`).toISOString(),
-        end_time: new Date(`${first}T08:30:00.000Z`).toISOString(),
-      },
-    ];
+    /*
+     * An hour that was CALLED OFF holds nothing, so the source never returns
+     * it. The status filter moved to `busyMeetings` with the source — it is
+     * covered there, against the real rule, rather than re-stated here against
+     * a fixture this file invents.
+     */
+    answers.busy = [];
 
     const count = document.getElementById('proposal-session-count') as HTMLInputElement;
     await act(async () => {
@@ -621,10 +643,9 @@ describe('the headline above the dates', () => {
     await turnPackageOn();
 
     const first = firstKey();
-    answers.bookings = [
+    answers.busy = [
       {
-        id: 'other',
-        status: 'confirmed',
+        booking_id: 'other',
         start_time: new Date(`${first}T07:30:00.000Z`).toISOString(),
         end_time: new Date(`${first}T08:30:00.000Z`).toISOString(),
       },
@@ -795,11 +816,15 @@ describe('a revision of an ordinary staged job', () => {
  * `basedOn.package_booking_id`; everything else in the window still counts.
  * ─────────────────────────────────────────────────────────────────────────── */
 
-/** A whole UTC day, so the assertion does not depend on the business zone. */
-const dayBlock = (date: string, id: string, parent: string | null) => ({
-  id,
-  parent_booking_id: parent,
-  status: 'confirmed',
+/**
+ * A whole UTC day, so the assertion does not depend on the business zone.
+ *
+ * `booking_id` is which PURCHASE holds the hour — a package's sessions all
+ * carry their container's id, which is what makes one `exclude_booking_id`
+ * remove the whole series.
+ */
+const dayBlock = (date: string, bookingId: string) => ({
+  booking_id: bookingId,
   start_time: `${date.slice(0, 10)}T00:00:00.000Z`,
   end_time: `${date.slice(0, 10)}T23:59:00.000Z`,
 });
@@ -815,12 +840,11 @@ const SOLD_DATES = DECLINED_PACKAGE.sessions.dates;
 
 /** The package as the diary holds it, plus one unrelated meeting. */
 const diaryWithOwnSessions = () => [
-  // The container itself, which also holds an hour.
-  dayBlock(SOLD_DATES[0], 'pkg-1', null),
-  // Its six sessions.
-  ...SOLD_DATES.map((date, i) => dayBlock(date, `child-${i + 1}`, 'pkg-1')),
+  /* This quote's own six sessions. Every one carries the container's id, so
+     `exclude_booking_id=pkg-1` removes the series in a single clause. */
+  ...SOLD_DATES.map(date => dayBlock(date, 'pkg-1')),
   // Somebody else, on the third date. This one IS a conflict.
-  dayBlock(SOLD_DATES[2], 'other-1', null),
+  dayBlock(SOLD_DATES[2], 'other-1'),
 ];
 
 async function openAccepted(
@@ -862,7 +886,7 @@ describe('an accepted package read back', () => {
   it('says nothing about dates the client already approved', async () => {
     // The reported screen, exactly: its own six meetings in the diary, the
     // first one already held.
-    answers.bookings = diaryWithOwnSessions();
+    answers.busy = diaryWithOwnSessions();
 
     await openAccepted(STARTED_PACKAGE);
 
@@ -874,7 +898,7 @@ describe('an accepted package read back', () => {
   it('still shows the six dates it sold', async () => {
     // Silencing the warnings must not silence the panel: the owner opened
     // this to read the dates.
-    answers.bookings = diaryWithOwnSessions();
+    answers.busy = diaryWithOwnSessions();
 
     await openAccepted(STARTED_PACKAGE);
 
@@ -886,7 +910,7 @@ describe('revising a package that already exists', () => {
   it('does not count its own meetings as hours already sold', async () => {
     // Editable, so every warning is live again — but its own series is not
     // one of them. Only the stranger on the third date is.
-    answers.bookings = diaryWithOwnSessions();
+    answers.busy = diaryWithOwnSessions();
 
     await openAccepted(ACCEPTED_PACKAGE, { readOnly: false });
 
@@ -896,7 +920,7 @@ describe('revising a package that already exists', () => {
   it('warns about all six when the quote owns no package', async () => {
     // The contrast that proves the line above is the exclusion working, and
     // not the warning having quietly stopped rendering.
-    answers.bookings = diaryWithOwnSessions();
+    answers.busy = diaryWithOwnSessions();
 
     const { package_booking_id: _ignored, ...noPackageYet } = ACCEPTED_PACKAGE;
     await openAccepted(noPackageYet, { readOnly: false });
