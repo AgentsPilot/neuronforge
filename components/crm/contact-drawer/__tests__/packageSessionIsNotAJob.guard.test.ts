@@ -334,8 +334,19 @@ describe('calling off one session is not cancelling the order', () => {
     const body = confirm.slice(0, confirm.indexOf('const data ='));
 
     expect(body).toContain('/outcome');
-    expect(body).toContain("{ status: 'cancelled', notifyClient: true }");
     expect(body).toContain('meeting-cancel');
+
+    /*
+     * The two facts the body must carry, asserted separately.
+     *
+     * This pinned the whole literal `{ status: 'cancelled', notifyClient: true }`,
+     * which stopped matching the moment the body gained a third field
+     * (`replacementStart`, for the hour booked in the cancelled one's place).
+     * What has to hold is that the session is called off and the client is
+     * told — not the shape of the object those two travel in.
+     */
+    expect(body).toMatch(/status: 'cancelled'/);
+    expect(body).toMatch(/notifyClient: true/);
   });
 });
 

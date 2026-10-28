@@ -45,7 +45,12 @@ describe('it opens both outcomes, and only those', () => {
      */
     const gate = actions.slice(actions.indexOf('const awaiting ='));
     expect(gate.slice(0, gate.indexOf(';'))).toContain('isEarlySessionOutcomeEnabled()');
-    expect(actions).toContain('const showsPrimary = awaiting && Boolean(onSetStatus)');
+    /*
+     * Whitespace-tolerant: the declaration now wraps across two lines, and the
+     * rule being asserted is that the primary control hangs off `awaiting` and
+     * a handler — not how the line happens to be formatted.
+     */
+    expect(actions).toMatch(/const showsPrimary =\s*awaiting && Boolean\(onSetStatus\)/);
   });
 
   it('never overrides an outcome already recorded', () => {

@@ -1340,6 +1340,29 @@ async function accountOwner(connectAccountId: string, log: Logger): Promise<stri
   return owner;
 }
 
+/**
+ * Confirm the package an invoice paid for, if it paid for one.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Two paths through `handleConnectInvoicePaid` need this — the one that records
+ * the payment, and the one that finds it already recorded — and CLAUDE.md rule
+ * 1 says the route holds no client except as a helper's argument. One wrapper
+ * keeps the client in a single place and the call sites free of it, which is
+ * also what `routerPlacement` checks: the allowed use must exist exactly once.
+ *
+ * Never throws. A package that could not be confirmed is logged and the
+ * webhook answers normally — Stripe retries a 500 into a handler that has
+ * already done its work.
+ */
+async function confirmPackageForInvoice(invoiceId: string, log: Logger): Promise<void> {
+  try {
+    const { confirmPackageOnPayment } = await import('@/lib/payments/confirmPackageOnPayment');
+    await confirmPackageOnPayment(supabaseServer, invoiceId, new Date().toISOString());
+  } catch (err) {
+    log.error({ err, invoiceId }, 'Invoice paid but a package it may have paid for was not confirmed');
+  }
+}
+
 async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountId: string, log: Logger) {
   log.info({ stripeInvoiceId: invoice.id, connectAccountId }, 'Processing Connect invoice.paid');
   // Keys only: Connect invoice metadata is written by the connected business
@@ -1603,15 +1626,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
      * This is the same correction made to `settleInvoicePaid`, which carried
      * the identical guard with the identical blind spot.
      */
-    try {
-      const { confirmPackageOnPayment } = await import('@/lib/payments/confirmPackageOnPayment');
-      await confirmPackageOnPayment(supabaseServer, platformInvoice.id, new Date().toISOString());
-    } catch (err) {
-      log.error(
-        { err, invoiceId: platformInvoice.id },
-        'Payment already recorded but a package it paid for was not confirmed'
-      );
-    }
+    await confirmPackageForInvoice(platformInvoice.id, log);
 
     return;
   }
@@ -1813,15 +1828,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
      * It also sends the one email naming all the dates, which this path has
      * never sent for a package.
      */
-    try {
-      const { confirmPackageOnPayment } = await import('@/lib/payments/confirmPackageOnPayment');
-      await confirmPackageOnPayment(supabaseServer, platformInvoice.id, new Date().toISOString());
-    } catch (err) {
-      log.error(
-        { err, invoiceId: platformInvoice.id },
-        'Invoice paid but a package it may have paid for was not confirmed'
-      );
-    }
+    await confirmPackageForInvoice(platformInvoice.id, log);
   } else {
     /*
      * ───────────────────────────────────────────────────────────────────────

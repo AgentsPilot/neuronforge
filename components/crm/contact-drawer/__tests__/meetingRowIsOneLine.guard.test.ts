@@ -55,7 +55,8 @@ describe('every action survived the move', () => {
      */
     expect(actions).toMatch(/isMeetingPastDue\(/);
     expect(actions).toMatch(/if \(awaiting && onSetStatus\) \{/);
-    expect(actions).toMatch(/const showsPrimary = awaiting/);
+    /* Wrapped across two lines now; the gate is what matters, not the wrap. */
+    expect(actions).toMatch(/const showsPrimary =\s*awaiting/);
   });
 
   it('gates BOTH outcomes, not just the visible one', () => {
