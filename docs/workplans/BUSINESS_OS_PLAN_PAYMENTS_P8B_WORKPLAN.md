@@ -7,7 +7,7 @@
 **Depends on:** P-6a merged (row's dependency). Boost 4b.2 merged: it created `bos-billing-reconcile` and the pass seam. P-8a merged (#466, #467, #469): the billing panel's stored disagreements.
 **Date:** 2026-10-27
 **Branch:** `feature/bos-plan-payments-p8b`, worktree `neuronforge-p8b`, fresh from `main` `b088b51d` (#543). Confirmed with `git branch --show-current` on 2026-10-27. Highest migration on that main: `20261096`.
-**Status:** SA APPROVED WITH CHANGES (2026-10-27, rulings 1 to 18). P-8b.1 SA-approved, QA passed, **PR #555 opened 2026-10-28** (auto-merge). **P-8b.2 code complete 2026-10-28** (uncommitted, branch `feature/bos-plan-payments-p8b2`, cut from P-8b.1's `66189df1`), awaiting SA code review. P-8b.3 not started.
+**Status:** SA APPROVED WITH CHANGES (2026-10-27, rulings 1 to 18). P-8b.1 SA-approved, QA passed, **PR #555 opened 2026-10-28** (auto-merge). **P-8b.2 code complete 2026-10-28** (uncommitted, branch `feature/bos-plan-payments-p8b2`, cut from P-8b.1's `66189df1`), awaiting SA code review. **P-8b.2 merged (#559, 2026-10-28).** P-8b.3 plan SA-approved with changes (P3-SA-1 to P3-SA-13), split into 3a / 3b / 3c. **P-8b.3a code complete 2026-10-28** (uncommitted, branch `feature/bos-plan-payments-p8b3a` from `main` `abe9fd64`), awaiting SA code review; 3b and 3c not started.
 
 ## Overview
 
@@ -263,6 +263,7 @@ Stripe's read limit is 100 per second live and 25 in test mode. A run makes well
 - [ ] P-8b.3 Step 2: plan reconcile route + audit event + tests
 - [ ] P-8b.3 Step 3: Jobs page block and dialog; guard amendment; render tests
 - [ ] P-8b.3 Step 4: AM-2 "Disagrees" marker and filter
+- (P-8b.3 is broken down further, with FU-P8b-6, in "Plan: P-8b.3" § P3.5)
 - [ ] Each PR: `npm run test:bos-entitlements` if any entitlements import is touched (the AM-2 change is); build and typecheck filtered to touched files
 
 ---
@@ -954,6 +955,467 @@ None.
 - Inside 24 hours, a null is a checkout still settling and gives no finding.
 - Add one unit test for each case.
 
+### QA report: P-8b.3a
+
+**QA, 2026-10-28**
+**Test mode:** full
+**Strategy used:** A (unit: Step B through in-memory ports, the view builder, the URL parser) and B (route tests, the real admin gate, the real builder, mocked reads), plus jsdom render tests. No browser check: the demo is blocked on ruling B (P3-SA-13), and the render tests cover the chip, the option, the totals line and the plan drawer.
+**Focus:** api, ui, schema, security
+**Skipped:** the browser demo (P3-SA-13, blocked on ruling B). No production DB read or write, and no Stripe call.
+**Input source:** TL prompt (the P3-SA-* rulings and the edges listed in the brief)
+
+#### Test Coverage
+
+| Acceptance criterion / ruling | Tested? | Result | Notes |
+|---|---|---|---|
+| FU-P8b-6: a null `bought_tier` gives exactly one `tier_differs` only when paying, the start is known and it is at least 24 h old (P3-SA-2 item 6, P3-SA-10) | ✅ | Pass | Dev's 3 tests, plus QA: both-sides `past_due` gives nothing; ours `canceled` while Stripe is `active` gives only `status_differs` |
+| The 24 h boundary ±1 ms | ✅ | Pass | QA: `start + 24h − 1 ms` → `[]`; exactly 24 h → `['tier_differs']` (the `>=` is pinned); `+1 ms` → `['tier_differs']` |
+| An unknown start gives nothing | ✅ | Pass | Dev test |
+| A Stripe tier that does not resolve gives nothing | ✅ | Pass | QA: an unknown price, and two prices on two tiers (ambiguous) → `[]`, `mismatch = 0` |
+| No double finding alongside `plan_tier_differs` | ✅ | Pass | QA: a settled null mirror with the plan row on another tier, with no tier, or with no plan row → only `['tier_differs']`. Inside 24 h, the plan-row check still gives only `plan_tier_differs`; a set mirror tier that differs is still flagged inside 24 h (the old rule unchanged). The finding line carries no tier. Every pre-existing pass test is unchanged and green |
+| URL round trip | ✅ | Pass | Dev test, plus QA: with a window preset beside it (no repair); the redirected legacy link shape |
+| Unknown values | ✅ | Pass | QA: `Disagrees`, `DISAGREES`, a trailing space, `disagrees,active` → `''`; `toSubscriptionsFilter` and `SUBSCRIPTIONS_FILTER_SPEC` reject them; the route answers 400 for `''`, a repeated key and `DISAGREES` |
+| Combined with other filters and tabs | ✅ | Pass | QA: a business link with `tab=plans&status=disagrees` settles to no tab and no status over the repair passes; the exchange-rates tab drops it; Clear resets it and keeps the tab |
+| Counts and totals: empty list, all rows disagree | ✅ | Pass | QA: empty → `disagreeing 0`, `matching 0` with and without the filter; all disagree → `disagreeing = accounts = matching`, and the filter changes no row and no total; none disagree → an empty filtered list with whole totals; "No Stripe" rows only → 0; past the 200 cap → 200 rows, `matching` and `disagreeing` count all 203 |
+| The chip in the plan drawer (P3-SA-4) | ✅ | Pass | QA render: the chip shows on the disagreeing row only, with the same title |
+| A payload missing the new fields renders without a crash (D3a-1) | ✅ | Pass | QA render: the list shows its rows, no chip, no totals line, and the bare "Disagrees" option; the table alone renders a row with no `disagreements` key |
+| The tooltip never says "Stripe" | ✅ | Pass | Dev test on the copy, plus QA on every rendered `title` (each kind alone and all three) |
+| Empty words | ✅ | Pass | QA: no filter → `EMPTY_ALL`; a status → `EMPTY_FILTERED`; `disagrees` → `EMPTY_DISAGREES`; the totals line shows 0 rather than disappearing |
+| Route: 401, 403, and 400 for an invalid status, the 400 after the gate | ✅ | Pass | QA: 403 for a non-admin with a valid, an invalid or a repeated `status`; 401 (not 400) with no session and an invalid value; nothing is read before the gate in any case |
+| Route: no PII added | ✅ | Pass | QA: the response carries no owner email (planted in the name read), no admin email or id, and no `cus_`; every `disagreements` value is one of the three kinds; the row's keys are the old set plus `disagreements` (view test); no log line carries the email or a business name |
+| One rule for the panel and the list (P3-SA-4) | ✅ | Pass | Dev parity test (9 cases); `billingPanelView.test.ts` is untouched and green |
+| Entitlements, allow-lists, RC-15 | ✅ | Pass | No new file imports either billing repository, so no allow-list entry. The plan-row type is taken from `SubscriptionsInput['planRows'][number]` |
+
+#### Issues Found
+
+##### Bugs (must fix before commit)
+
+None.
+
+##### Performance Issues (should fix)
+
+None. `billingDisagreements` runs once per billing row, and `disagreeing` is one extra pass over at most the listed rows.
+
+##### Edge Cases (nice to fix)
+
+1. **A page open across the deploy that picks "Disagrees" gets the shared error.** The new client sends `status=disagrees`, and a server older than P-8b.3a rejects it with a 400. This is transient and recovers on reload, and D3a-1 already covers the reverse direction. Low. No action proposed.
+2. **The kinds are in the chip's `title` only.** A keyboard or touch user cannot read the tooltip. The same kinds are shown in words on the business drawer's billing panel (AM-1), so nothing is hidden. Low. This is for SA or the user to decide; it is not a commit blocker.
+
+#### Tests added by QA (42)
+
+| File | Tests |
+|---|---|
+| `lib/business-os/billing/__tests__/planReconcilePass.test.ts` (a new `describe` inside Step B, after Dev's FU-P8b-6 block; no existing test edited) | 13: the boundary ×3, not paying ×2, unresolved tier ×2, one root ×3, inside 24 h ×2, no tier in the log line |
+| `lib/admin/billing/__tests__/subscriptionsView.disagrees.qa.test.ts` (new) | 6 |
+| `app/admin/finance/__tests__/subscriptionsDisagrees.qa.render.test.tsx` (new) | 7 |
+| `app/admin/finance/__tests__/financeFilters.disagrees.qa.test.ts` (new) | 6 |
+| `app/api/admin/business-os/billing/subscriptions/__tests__/route.disagrees.qa.test.ts` (new) | 10 |
+
+#### Test Outputs / Logs (sequential, with the QA tests in place)
+
+| Gate | Result |
+|---|---|
+| `jest --ci lib/admin app/admin app/api/admin/business-os/billing` | 242 suites, 7,561 tests, pass |
+| `jest --ci lib/business-os/billing lib/repositories lib/cron` | 189 suites, 7,303 tests, pass |
+| `BusinessOsBillingAccountRepository.test.ts` + `BusinessOsBillingEventRepository.test.ts` | 2 suites, 198 tests, pass (no new importer) |
+| `npm run test:bos-entitlements` | 326 suites, 9,725 tests, pass |
+| Connect harness `connectPath.characterisation.test.ts --ci` | 152 / 152 tests, 111 / 111 snapshots; `app/api/stripe` clean against `HEAD` (`git status` and `git diff HEAD` empty) |
+| `tsc --noEmit` (full project, 8 GB heap) | Completed with no OOM (no heap or fatal line). 1,864 errors, the same as the baseline, and **0 in touched or new files**, the QA files included |
+| ESLint on the QA files | 0 problems |
+
+#### Final Status
+
+- [x] All acceptance criteria pass: ready for commit (after the SA code review)
+- [ ] Issues found: Dev must address before commit
+
+## Plan: P-8b.3 (Dev, 2026-10-28, for SA review before any code)
+
+**Branch:** `feature/bos-plan-payments-p8b3`, cut from P-8b.2 at `6312470e` (PR #559, on auto-merge), confirmed with `git branch --show-current`. **Not stacked:** the PR opens only after #559 has merged and the branch has been brought up to date with `main` (RM). No code written yet.
+
+**Scope title:** Webhook health and plan reconcile on the Jobs page. **Acceptance (§9):** `/admin/jobs-queues` shows Failed / Stuck / Oldest tiles and the list, oldest first, for the current mode; "Reconcile plan payments now" runs the plan pass and shows its counts in words, lost claims and failures included; the Subscriptions list marks and filters "Disagrees"; FU-P8b-6 is fixed with one unit test per case.
+
+**Out of scope (brief):** FU-P8b-1, FU-P8b-2, FU-P8b-5. No migration. No new `process.env` read. No change to the plan handler, the mirror, the apply, the webhook route, the Connect harness or the boost route.
+
+### P3.1 SA rulings that bear on P-8b.3
+
+| Ruling | What it says | How P-8b.3 honours it |
+|---|---|---|
+| 4 (Q-4) | "option A, no migration (SA-4). Step B never writes." | No migration. The AM-2 marker is built from STORED records (the panel's rule); Stripe-only findings stay `error` logs plus counts, and the button reports their counts only. B-1 default (flag only) needs nothing more |
+| 5 (Q-5) | "per-pass button, as proposed. The boost route and its guards stay untouched. The plan route calls `planReconcilePass.run` and never copies its logic." | A new route runs `runReconcilePasses([planReconcilePass], …)`, nothing else. The boost route, `ReconcileTopUpsDialog.tsx` and their pins (G-4 to G-11) are not edited |
+| 7 (Q-7) | "Show failure classes only. The dashboard link uses the row's own mode (the `/test/` path for test events)." | `failure_message` is read server-side, classified, and never sent or logged. The event link is built from the row's own `metadata.livemode`. See Q-P3-3 on the class set |
+| 10 | `partlyDoneWhen` for the plan counts, so a starved pass shows amber | Unchanged; the Billing reconcile row already shows the plan counts and amber from the registry. P-8b.3 adds no count (D-4 budget untouched) |
+| 15 | "`requireAdmin` is the first statement. The GET validates its query with strict Zod, and the POST takes an empty strict body. Both routes have tests for 401, 403 and invalid input. SR-8 holds: no account id is taken from any input." | Both routes, as stated; a source test pins the gate as the first statement |
+| 16 | Any new file importing `BusinessOsBillingAccountRepository` or `BusinessOsBillingEventRepository` is registered in both `ALLOWED` arrays; "the AM-2 entitlements import is registered per `business-os-entitlements`" | No planned file imports either repository (the plan route reaches them only through the lazy `planReconcileDeps`). Checked by grep before handover; any file that does is registered, sorted, and both guards run. AM-2 adds no symbol to any entitlements importer (P3.3 D3-6), so no registration changes; `npm run test:bos-entitlements` is run anyway |
+| 17 | "The new tests are unit tests only, with no new job and no new `process.env` read." | Unit, route and render tests in existing shards only |
+| SA fix 1 (P-8b.2 review) | The press "by design never writes `bos_cron_runs`, so its `planReplayFailed` never blocks anything" | The route never writes a run (source-pinned). Its lost claims and failures are made visible four ways (D3-4) |
+| SA ruling on Edge case 2 (FU-P8b-6) | "a paying row whose period started more than 24 hours ago and whose `bought_tier` is null while Stripe's tier resolves gives `tier_differs`, and the plan-row tier check is then skipped (the one-root rule). Inside 24 hours, a null is a checkout still settling and gives no finding. Add one unit test for each case." | D3-7 |
+| TL / B-1, B-2 defaults | Flag only; old failed events stay listed until someone acts | Step B unchanged (flag only). The AM-4 list has no age cut-off: a `failed` row stays until it completes |
+
+### P3.2 Code facts found while planning
+
+| # | Fact | Consequence |
+|---|---|---|
+| F3-1 | The claim row's `metadata` is `{ created, livemode }` only (`NewWebhookClaimRow`); the claim never writes `user_id` and records no `account` | §4.3's flow class (`plan`, `boost`, `connect`, `other`) **cannot be derived honestly** from `event_type` and `metadata`: `invoice.*` and `checkout.session.*` can be plan, boost or Connect. Q-P3-1 |
+| F3-2 | `processed_at` is rewritten by `reclaimFailed` and `reclaimStale` (the lease renewal, SA P-8b.1 check 2) | It is the **last attempt**, not "first seen". Stripe's creation time is `metadata.created`. Q-P3-2 |
+| F3-3 | A dispatcher deny and a plan-handler refusal both COMPLETE the claim (route comment: "retrying will not help"; §4.2 Step C note); `failed` is written only by `markFailed` after a throw, with `String(error.message).slice(0, 500)` | Q-7's `refused` class has no source in `failed` rows, and `timeout` can only come from message text (a killed function leaves `processing`, which is Stuck, not a failure class). Q-P3-3 |
+| F3-4 | `stripeDashboardUrl` (`lib/business-os/boost/boostAdminView.ts`) knows `payment`, `dispute`, `customer` only | Add an `event` kind (`^evt_…`, path `events`), same row-mode rule. One URL rule for the admin |
+| F3-5 | The Subscriptions list moved into Finance → Plans & subscriptions (Money MK-4): `app/admin/finance/components/PlansSubscriptions.tsx`, `SubscriptionsTable.tsx`, copy in `app/admin/finance/plansCopy.ts`; route `app/api/admin/business-os/billing/subscriptions/route.ts` (`status` query key, `z.enum(SUBSCRIPTION_STATUSES)`); `/admin/subscriptions` redirects there. The plan drawer (`buildPlanSubscriptions`) reuses `buildSubscriptions` | §6's "Subscriptions list view and page files (P-8a.1)" means these files. The page has ONE filter hook, the Finance URL's `status` key. Q-P3-5 |
+| F3-6 | The panel's disagreement rule is inline in `buildBillingPanel` (`lib/admin/billing/billingPanelView.ts`); `BillingDisagreement` is declared in `billingPanelTypes.ts`, which imports types from `subscriptionsTypes.ts` (a no-import file) | The rule moves to ONE exported function the list and the panel both call (D3-6) |
+| F3-7 | The boost route's shape (gate, strict empty body, `logAndFlush` write-ahead audit on a `system` entity, `runReconcilePasses` with `trigger: 'admin'`, counts-only answer, `maxDuration = 60`) and its test file (G, Z, A, R blocks) are the precedent | Copied in shape for the plan route; the pass is imported, never copied |
+| F3-8 | `JobsQueuesView.tsx` is pinned to exactly one fetch and one header sentence; `ReconcileTopUpsDialog` renders in the `RECONCILE_JOB_ID` branch | New client files carry their own requests; the view gains no fetch. The header sentence changes by one clause (a deliberate, named guard amendment) |
+| F3-9 | `BlockKpi` (`app/admin/components/layout/BlockKpi.tsx`) is the shared block-headline tile (KPI-first blocks; needs a leading / lagging indicator spec) | The webhook block's three tiles use it; the page's top `KpiStrip` is unchanged |
+| F3-10 | Step B's `tier_differs` requires `row.bought_tier !== null` (`planReconcilePass.ts` ≈ line 670); the plan-row tier check already skips when `tier_differs` is present | FU-P8b-6 is a local change in `stepB` (D3-7) |
+
+### P3.3 Design
+
+**D3-1. AM-4 read: `lib/repositories/AdminWebhookEventReadRepository.ts` (new, read-only, the D-1 pattern).**
+- Service role, documented: `processed_webhook_events` is a platform table with no owner the claim writes; the only caller is an admin route behind `requireAdmin`. Methods carry the `⟨unscoped-by-design⟩` marker. Never imported by the webhook or the pass; the writer repository is not touched.
+- `countUnfinishedAllEvents({ livemode, staleBeforeIso })` → `{ failed, stuck }`: two `select('event_id', { count: 'exact', head: true })` reads (`status = 'failed'`; `status = 'processing' AND processed_at < staleBefore`), each `.filter('metadata->>livemode', 'eq', String(livemode))`.
+- `listUnfinishedAllEvents({ livemode, staleBeforeIso, limit: 50 })`: two reads (failed; stale processing), `order('processed_at', { ascending: true }).limit(50)`, merged and cut to 50 in the repository. Column list fixed: `event_id, event_type, status, processed_at, failure_message, metadata`. No `.or()` (two plain reads instead), no write. Served by `idx_processed_webhook_events_unfinished`.
+- The cutoff is `now − STALE_CLAIM_AGE_MS`, imported from `ProcessedWebhookEventRepository.ts`: one figure for the webhook, the pass and this tile.
+
+**D3-2. The payload: `lib/admin/jobs/webhookEventsTypes.ts` (types only, no import; the client imports it with `import type`) and `lib/admin/jobs/webhookEventsView.ts` (`server-only`, pure).**
+- `{ generatedAt, mode, tiles: { failed, stuck, oldestAt }, rows, listed, matching }`. `matching` = failed + stuck, so "50 of N" is honest.
+- A row: `eventId`, `eventType`, `state` (`failed` | `stuck`), `createdAt` (from `metadata.created`, null when absent), `lastAttemptAt` (`processed_at`), `ageMinutes` (from `createdAt`, else `lastAttemptAt`), `failureClass`, `dashboardUrl` (row's own mode, F3-4).
+- `failureClass(state, message)` (Q-P3-3): `stuck` → `stuck`; a message matching a fixed timeout pattern → `timeout`; any other non-empty message → `handler_error`; empty or null → `unknown`. The message never leaves this function: not in the payload, not in a log line. A test feeds a message holding an email address and checks that neither the payload nor any log line contains it.
+- Tiles (KPI-first): **Failed** (red at 1 or more), **Stuck** (red at 1 or more), **Oldest unfinished** (age in words; neutral). The red rule repeats the row states and adds no threshold (the K-5 (i) precedent).
+
+**D3-3. `GET /api/admin/jobs-queues/webhook-events` (new; the `new-api-route` skill).** `requireAdmin` is the first statement. Strict empty query (`z.object({}).strict()`, 400 after the gate). The mode comes from `currentStripeMode()`, and an unreadable mode answers 409 with the existing `STRIPE_MODE_UNKNOWN` words (the Subscriptions precedent). A read error answers 500 with a fixed message (details in development only). Read-only, so no audit, as `GET /api/admin/jobs-queues`. Pino child with `correlationId`, logging counts and timings only. `Cache-Control: no-store`.
+
+**D3-4. `POST /api/admin/business-os/billing/reconcile` (new; ruling 5; the boost route's shape, F3-7).**
+- `requireAdmin` first → strict empty body → a write-ahead audit `BOS_BILLING_RECONCILE_TRIGGERED` through `logAndFlush`, on entity `system` with the run id (new key in `lib/audit/events.ts`, metadata entry beside the boost one, audience `'bos'` in `eventAudience.ts`) → `runReconcilePasses([planReconcilePass], { deadlineAt: now + RECONCILE_RUN_DEADLINE_MS, trigger: 'admin', … })` → counts only. `maxDuration = 60`.
+- **The press never writes `bos_cron_runs`** and never reads `CRON_SECRET`: no import of the recorder, `withCronRunRecord` or the cron route (source-pinned, as the boost route's R test).
+- **Its lost claims and failures are visible (SA fix 1 note), in four places:**
+  - (a) In the answer, in words. `planReconcileOutcome` names `planIncomplete` ("some events were left for the nightly run: another run held them, or a limit was reached") and `planReplayFailed` ("N events failed again") on their own lines, and never prints a clean "finished" sentence when either is above 0. A 200 whose pass failed, or which has no `planEventsSeen`, is a failure (the QA6b-M1 rule).
+  - (b) In the logs. The pass's own `bos_plan_reconcile_done` line already carries `trigger: 'admin'` and every count. The route adds one `warn`, `bos_plan_reconcile_admin_left_work`, with counts only, when `planIncomplete` or `planReplayFailed` is above 0.
+  - (c) On AM-4. A failed replay leaves its claim `failed` (`settleClaim`), and an unsettled one leaves it `processing`. Both appear in the webhook block, which re-reads after a press (Q-P3-4).
+  - (d) In recovery. The press records no run, so it can never move the nightly window: the next nightly relists everything the press left. That is why "never writes `bos_cron_runs`" is safe.
+- Concurrency: a press beside the nightly run, or a second press, loses claims rather than double-processing them (the lease). The loser counts `planIncomplete` (SA fix 1), and the words say so.
+
+**D3-5. Jobs page UI.**
+- `app/admin/components/jobs/WebhookEventsBlock.tsx` (new, client, read-only): one GET to the literal URL; three `BlockKpi` tiles; the table oldest first (event type, state chip, failure class in words, created, last attempt, age, the event id as a dashboard link with `rel="noopener noreferrer"`); the shared loading, error and empty states; a "50 of N" count line. A new `<section id="webhooks">` on the page, "Stripe webhook events", between Scheduled jobs and Queues.
+- `app/admin/components/jobs/ReconcilePlansDialog.tsx` (new): the `ReconcileTopUpsDialog` shape on the shared `AdminConfirmDialog`. One POST to the literal URL, body `'{}'`, the JSON header and `cache: 'no-store'`. It never renders server text, and its logger calls carry only status, passesFailed and err. It calls an `onFinished` prop after a run, so the webhook block re-reads.
+- `reconcileCopy.ts` gains `PLAN_RECONCILE_COPY`, `planReconcileOutcome` and `planReconcileSentences`, and still has no imports. The button is "Reconcile plan payments now". The description says the press checks Stripe for plan payment events of every business that the records do not show as handled, replays them as the webhook would, compares subscriptions, and is not recorded as a run.
+- `JobsQueuesView.tsx`:
+  - It renders `<ReconcilePlansDialog onFinished={…} />` beside the top-ups dialog, in the same `RECONCILE_JOB_ID` branch, and `<WebhookEventsBlock refreshKey={…} />`.
+  - The page's Refresh re-reads the block. A finished plan press bumps only the block's key: the jobs read is not repeated (the SQ-1 precedent).
+  - It still has one fetch of its own.
+  - The header sentence gains one clause, "…the Billing reconcile job has Reconcile top-ups now and Reconcile plan payments now buttons…".
+- **Source guard amendment, narrow and named (LF-4c style):**
+  - `WebhookEventsBlock.tsx` joins `FILES` (every read-only rule) and `CLIENT_FILES`, with a one-GET pin and no query built from data.
+  - `ReconcilePlansDialog.tsx` joins `CLIENT_FILES` with G-4 to G-7 and G-11 equivalents: one POST, the literal URL, the literal `'{}'` body, no account words, no server text, the import list, and the logger keys.
+  - The view pins each dialog to exactly one render, in the reconcile branch.
+  - `VIEW_HEADER_SENTENCE` is updated.
+  - Every other rule is unchanged, and the boost pins are untouched.
+
+**D3-6. AM-2 "Disagrees".**
+- **One rule.** `billingDisagreements(row, plan)` is exported from `lib/admin/billing/subscriptionsView.ts`, beside `subscriptionStatuses` ("one rule for both"). Its body is the panel's current logic moved as it is: paying only, `no_tier_on_plan`, `tier_differs`, `paid_through_differs`, 1 s. `buildBillingPanel` calls it, which preserves behaviour (the existing panel tests stay green unchanged), and `buildSubscriptions` calls it per billing row. A "No Stripe" row has no billing row, so it never disagrees, which is the panel's answer too.
+- **Types.** `BillingDisagreement` moves to `subscriptionsTypes.ts` (still no import), and `billingPanelTypes.ts` re-exports it, so no importer changes. `SubscriptionRow` gains `disagreements: BillingDisagreement[]`, and `SubscriptionsTotals` gains `disagreeing`.
+- **Marker.** The Status cell gains an amber `StatusChip` "Disagrees". Its `title` names the kinds in words from `plansCopy.ts`. The AM-1 panel is unchanged.
+- **Filter.** See Q-P3-5. The default extends the existing `status` key and select with one value, `disagrees`, so there is still one filter hook, and old links keep working. The route's Zod enum becomes `SUBSCRIPTION_FILTERS = [...SUBSCRIPTION_STATUSES, 'disagrees']`. The totals ignore the filter, as today.
+- **Entitlements.** No file gains or loses a symbol from `lib/business-os/entitlements/` (the moved logic uses `isPayingBillingRow` from billing), so `KNOWN_NON_GATE_IMPORTERS` does not change, and no tier literal is added (tests use neutral strings). `npm run test:bos-entitlements` runs before handover.
+- The plan drawer inherits the field through `buildPlanSubscriptions`, and its render is unchanged unless SA wants the chip there too.
+
+**D3-7. FU-P8b-6, in `planReconcilePass.ts` `stepB`.**
+```
+stripeTier !== null and:
+  bought_tier !== null and differs                                    → tier_differs (as today)
+  bought_tier === null and paying and period start known and ≥ 24 h  → tier_differs (new)
+  bought_tier === null otherwise (inside 24 h, or start unknown)     → nothing from this check
+```
+`paying` and the period are computed before the tier check (a reorder only). The plan-row tier check already skips when `tier_differs` is present, so a null mirror gives one finding, not two. Tests: (1) null `bought_tier`, period started 25 h ago, Stripe tier resolves, plan row matches Stripe → exactly one `tier_differs`, no `plan_tier_differs`, `mismatch = 1`; (2) the same at 23 h → no finding, `mismatch = 0`. No count added, and the guard's single-call pins are untouched.
+
+### P3.4 Files, by slice (regrouped after SA review P3-SA-1)
+
+**P-8b.3a: Records that disagree are marked** (branch `feature/bos-plan-payments-p8b3a`, from `main` `abe9fd64`, after #559 merged)
+
+| File | Action | Why |
+|---|---|---|
+| `lib/business-os/billing/planReconcilePass.ts` (+ `__tests__/planReconcilePass.test.ts`) | modify | FU-P8b-6 (D3-7, P3-SA-2 item 6, P3-SA-10); three tests |
+| `lib/admin/billing/subscriptionsTypes.ts` | modify | `BillingDisagreement`, `SUBSCRIPTION_FILTERS`, `isSubscriptionFilter`, `SubscriptionRow.disagreements`, `SubscriptionsTotals.disagreeing`, payload `status` widened (P3-SA-2 item 5) |
+| `lib/admin/billing/subscriptionsView.ts` | modify | `billingDisagreements` moved as is with `sameInstant` (P3-SA-4); the `disagrees` filter |
+| `lib/admin/billing/billingPanelView.ts`, `billingPanelTypes.ts` | modify | the panel calls the one rule; the type is re-exported |
+| `app/api/admin/business-os/billing/subscriptions/route.ts` | modify | `z.enum(SUBSCRIPTION_FILTERS)` |
+| `app/admin/finance/financeFilters.ts`, `FinanceView.tsx`, `components/PlansSubscriptions.tsx`, `components/SubscriptionsTable.tsx`, `plansCopy.ts` | modify | the URL parser, the filter type, the option, the totals line, the chip and its words |
+| tests: `subscriptionsView.test.ts`, the route test, `financeFilters` round trip, a finance render test | modify / create | P3-SA-2 item 5, P3-SA-4 |
+
+**P-8b.3b: Webhook health on the Jobs page** (own branch from `main` after 3a merges)
+
+| File | Action | Why |
+|---|---|---|
+| `lib/repositories/AdminWebhookEventReadRepository.ts` (+ test) | create | D3-1, P3-SA-5 (200 per state, no-mode counts); **not** in `lib/repositories/index.ts` |
+| `lib/admin/jobs/webhookEventsTypes.ts`, `webhookEventsView.ts` (+ test) | create | D3-2, P3-SA-2 items 2, 3 and 7, P3-SA-6 |
+| `lib/business-os/boost/boostAdminView.ts` (+ its test) | modify | the `event` kind (P3-SA-7) |
+| `app/api/admin/jobs-queues/webhook-events/route.ts` (+ test) | create | D3-3, P3-SA-3, P3-SA-6 |
+| `app/admin/components/jobs/WebhookEventsBlock.tsx`, `JobsQueuesView.tsx` | create / modify | D3-5 (block only; `refreshKey`; outside the jobs gate, P3-SA-7) |
+| `app/admin/__tests__/jobsQueues.source.guard.test.ts`, `jobsQueues.webhooks.render.test.tsx` | modify / create | P3-SA-9 (3b part) |
+
+**P-8b.3c: Reconcile plan payments now** (own branch from `main` after 3b merges)
+
+| File | Action | Why |
+|---|---|---|
+| `app/api/admin/business-os/billing/reconcile/route.ts` (+ test) | create | D3-4, P3-SA-8 |
+| `lib/audit/events.ts`, `lib/audit/eventAudience.ts` | modify | `BOS_BILLING_RECONCILE_TRIGGERED` |
+| `app/admin/components/jobs/ReconcilePlansDialog.tsx`, `reconcileCopy.ts`, `JobsQueuesView.tsx` | create / modify | dialog, words (P3-SA-2 item 8), `onFinished`, header sentence |
+| `app/admin/__tests__/jobsQueues.source.guard.test.ts`, `jobsQueues.reconcilePlans.render.test.tsx` | modify / create | P3-SA-9 (3c part), the copy-covers-`partlyDoneWhen` test |
+
+### P3.5 Tasks, by slice
+
+**3a**
+- [x] ✅ 3a-1: FU-P8b-6: a separate predicate (`paying` and a known start and `RENEWAL_SETTLE_MS`); three tests asserting the exact finding-kind list; existing pass tests unchanged
+- [x] ✅ 3a-2: AM-2: the rule moved as is; filters constant and guard; URL parser, route, view, select, totals line, chip; tests (URL round trip, unknown value, reset rule, route 400, view filter, chip title never says "Stripe"); existing panel tests unchanged
+- [x] ✅ 3a-3: gates: Connect harness `--ci` (unchanged), `test:bos-entitlements` (+ `KNOWN_NON_GATE_IMPORTERS` diff), both billing allow-lists, `lib/admin`, `app/admin`, `app/api/admin/business-os/billing`, `lib/business-os/billing`, `lib/repositories`; `tsc` filtered (no OOM); ESLint
+- [x] ✅ 3a-4: requirement §9.1 P-8b row note + Change History (the split, #559 merged, FU-P8b-6)
+
+**3b**
+- [ ] 3b-0: the R3-5 read-only check (unfinished rows with no mode), figure in the notes
+- [ ] 3b-1: repository, builder, GET route and tests (401, 403, 400, 409, 500, both modes, PII at two levels, created-seconds conversion, 200-per-state depth and "at least", classes)
+- [ ] 3b-2: the block, view wiring outside the jobs gate, guard amendment, render tests; Implementation Notes KPI report (P3-SA-7)
+
+**3c**
+- [ ] 3c-1: route, audit event, tests (G / Z / A / R shape, audit reject still runs, lost claim sentence, `left_work` warn on any `partlyDoneWhen` key, no run record or secret)
+- [ ] 3c-2: dialog, copy, `onFinished`, header sentence, guard amendment, render tests (`passesFailed > 0` and no `planEventsSeen` are failures)
+
+**Demo (P3-SA-13):** blocked on ruling B's user question; split by slice; it gates user acceptance only.
+
+### P3.6 Risks
+
+| # | Risk | Mitigation |
+|---|---|---|
+| R3-1 | The branch is cut from unmerged P-8b.2 | The PR opens after #559 merges and the branch is synced with `main`; never stacked |
+| R3-2 | `failure_message` can hold customer text (an email in a Stripe error) | It is selected only to classify, in a pure function; it is not in the payload or any log line; a test plants an email and checks both |
+| R3-3 | A press beside the nightly run | The claim lease serialises them; the loser counts `planIncomplete`, which holds the nightly window (fix 1); the words say so |
+| R3-4 | The press runs up to 45 s inside a 60 s function | The same budget as the boost route; the pass stops starting events 15 s before the deadline |
+| R3-5 | Rows written without `metadata.livemode` would drop out of a mode-filtered list | Checked read-only before building, with a count of unfinished rows that have no mode (no PII read). If there are any, Q-P3-7 |
+| R3-6 | The Finance `status` key gains a non-status value | Option A keeps one key and old links; Zod rejects anything else; `isSubscriptionStatus` is unchanged for the chip (the filter has its own guard) |
+| R3-7 | The jobs guard amendment widens what the page may do | Named, narrow, LF-4c style; boost pins untouched; the view keeps one fetch |
+| R3-8 | Stacked semantic conflicts with other open work on Finance files | Rebase on `main` before the PR; finance render tests in the gate |
+
+**Estimate:** about 1.2 dev-days (§9 said 1.0; the extra is FU-P8b-6 and the visibility work for the manual run).
+
+### P3.7 Questions for SA
+
+| # | Question | Dev's proposal |
+|---|---|---|
+| Q-P3-1 | The flow class (`plan` / `boost` / `connect` / `other`) cannot be derived from `event_type` and the claim's `metadata` (F3-1). Drop it, or derive it some other way? | **Drop the column** and show the event type. A guessed class would mislabel Connect money. Deriving it truly needs a Stripe call per row or a new claim field (a webhook-route change under the Connect evidence rules); neither belongs here |
+| Q-P3-2 | `processed_at` is the last attempt, not first seen (F3-2). Which time orders the list and drives the age? | Show both "Created at Stripe" (`metadata.created`) and "Last attempt". The age and the Oldest tile use `created`, falling back to `processed_at`. The read is ordered by `processed_at` (the index), and the at most 100 rows read are re-sorted by `created` in memory |
+| Q-P3-3 | Q-7 approved `handler_error`, `refused`, `timeout`, `unknown`, but `refused` cannot occur in a `failed` row (F3-3) | Classes: `handler_error`, `timeout` (message pattern), `unknown`, plus `stuck` for a stale `processing` row. Drop `refused` |
+| Q-P3-4 | After a plan press, re-read the webhook block (not the jobs), so a failed replay shows at once? | Yes: the block only. The jobs row does not change (no run recorded), as the SQ-1 precedent |
+| Q-P3-5 | The "Disagrees" filter: one more value on the existing `status` key and select, or a separate key and control? | **One more value** (`status=disagrees`): the page has one filter hook, old links keep working, and the totals stay filter-free. Option B, a `disagrees=1` key with a checkbox, needs Finance URL plumbing and a second control |
+| Q-P3-6 | FU-P8b-6 when Stripe's period start is unknown (null) | No finding (the strict reading of "period started more than 24 hours ago"); the plan-row tier check then runs as today |
+| Q-P3-7 | If R3-5 finds unfinished rows with no recorded mode | Show them under a sub-line count ("N events have no recorded mode"), never in either mode's list |
+| Q-P3-8 | Should the button's words include the Step B and C finding counts (mismatch, orphan, unassigned)? | Yes, counts only: "N disagreements with Stripe were logged for a person to check". Details stay in the `bos_plan_reconcile_finding` log lines (ruling 4, option A) |
+
+### SA review: Plan P-8b.3
+
+**Reviewed by SA, 2026-10-28**
+**Status:** APPROVED WITH CHANGES. Split into three PRs (ruling P3-SA-1). Dev regroups P3.4 and P3.5 by slice and folds in the rulings below before any code is written. No further SA pass is needed on the plan; the next SA pass is the 3a code review.
+
+Checked against: rulings 4, 5, 7, 10, 15, 16 and 17, SA fix 1, the FU-P8b-6 ruling, and the B-1 and B-2 defaults. Code read on `6312470e`: `planReconcilePass.ts` `stepB` (lines 579 to 712), `billingPanelView.ts` (the disagreement block and `sameInstant`), `subscriptionsView.ts` (`buildSubscriptions`, `buildPlanSubscriptions`), `subscriptionsTypes.ts`, `billingPanelTypes.ts`, the subscriptions route's Zod, `PlansSubscriptions.tsx`, `PlanDrawer.tsx`, `financeFilters.ts`, `plansCopy.ts`, `FinanceView.tsx`, the boost reconcile route, `JobsQueuesView.tsx`, `jobsQueues.source.guard.test.ts`, `BlockKpi.tsx`, `ProcessedWebhookEventRepository.ts` (metadata shape, `STALE_CLAIM_AGE_MS`), the `bosCronJobs.ts` plan counts and `partlyDoneWhen`, `lib/repositories/index.ts`, `isPayingBillingRow`, and `lib/audit/events.ts` / `eventAudience.ts`. F3-1 to F3-10 are confirmed. Two facts are added (P3-SA-6 and P3-SA-8).
+
+#### Rulings
+
+**P3-SA-1. Split into three PRs, in this order.** Each is cut from `main` after the previous one has merged (and the first after #559 has merged). None is stacked.
+
+| PR | Scope title | Contents | Est. |
+|---|---|---|---|
+| **P-8b.3a** | **Records that disagree are marked** | FU-P8b-6 (D3-7 and its tests); AM-2: the one `billingDisagreements` rule, the "Disagrees" chip, the `status=disagrees` filter value, `totals.disagreeing` | 0.4d |
+| **P-8b.3b** | **Webhook health on the Jobs page** | AM-4, read-only: `AdminWebhookEventReadRepository`, the types and view builder, `GET /api/admin/jobs-queues/webhook-events`, the `event` dashboard kind, `WebhookEventsBlock.tsx`, its `JobsQueuesView` wiring and its guard amendment | 0.45d |
+| **P-8b.3c** | **Reconcile plan payments now** | `POST /api/admin/business-os/billing/reconcile`, `BOS_BILLING_RECONCILE_TRIGGERED`, `ReconcilePlansDialog.tsx`, the copy, its wiring (`onFinished` → the block's re-read), the header sentence, and its guard amendment | 0.4d |
+
+- **Why three, not two.** 3b is read-only, and 3c is the only part that writes (claims, handler replays and audit). Splitting at that boundary puts the write path in its own small diff for review. 3c depends on 3b (Q-P3-4's re-read), so the order is fixed.
+- The current branch `feature/bos-plan-payments-p8b3` becomes 3a's branch, or RM renames it `…-p8b3a`. 3b and 3c each get their own branch from `main`.
+- §9's P-8b.3 row and its acceptance line are split the same way. Per the standing rule, TL also records the split in the requirement's main status.
+
+**P3-SA-2. Rulings on Q-P3-1 to Q-P3-8.**
+
+1. **Q-P3-1: drop the flow column and show the event type.** A guessed class would mislabel Connect money. This amends §4.3's AM-4 bullet. No Stripe call and no claim-row change in P-8b.
+2. **Q-P3-2: show "Created at Stripe" (`metadata.created`) and "Last attempt" (`processed_at`). Age is measured from created**, falling back to `processed_at` only when `created` is absent, and the row then says so ("created time not recorded"). Two binding details:
+   - `metadata.created` is Stripe's epoch **seconds**. Convert it once in the view builder (× 1000), and add a unit test with a known value.
+   - **Read deeper than you show.** The read is ordered by `processed_at`, which `reclaimFailed` and `reclaimStale` rewrite, so the 50 oldest by last attempt are not always the 50 oldest by creation. Read up to **200 per state**, sort in memory by created, and cut the list to 50. The Oldest tile is then exact whenever each state holds 200 rows or fewer. When either state's count is above what was read, the tile's value carries "at least" (the `BlockKpi` convention), and the count line says the order covers the first 200 read per state. Today's figure is 5 rows, so this is about honesty, not volume.
+3. **Q-P3-3: the classes are `handler_error`, `timeout`, `unknown` and `stuck`.** `refused` is dropped, which amends ruling 7 / Q-7: a refusal completes the claim (F3-3), so a `failed` row can never be one.
+   - The timeout pattern is one exported constant, with unit tests for a match, a non-match and the empty and null cases.
+   - Each class has words in the copy module. The browser receives the class key or its words and never the message.
+4. **Q-P3-4: only the webhook block re-reads after a press.** The jobs read is not repeated (SQ-1). The page's own Refresh re-reads both. This lands in 3c (the `onFinished` prop). 3b lays the block's `refreshKey` prop only.
+5. **Q-P3-5: add a `status=disagrees` filter value.** One constant, `SUBSCRIPTION_FILTERS = [...SUBSCRIPTION_STATUSES, 'disagrees'] as const`, goes in `subscriptionsTypes.ts` (still no import), with an `isSubscriptionFilter` guard beside it. `isSubscriptionStatus` stays as it is for the chip. **The plan's file list misses the URL parser.** The Finance page parses `status` in `app/admin/finance/financeFilters.ts` (`FINANCE_FILTER_SPEC.status = choiceFilter('status', SUBSCRIPTION_STATUSES, '')`), so without that change `?status=disagrees` would be dropped as invalid before it reaches the component. Every place below uses the one constant:
+   - `financeFilters.ts` `FINANCE_FILTER_SPEC.status`, plus the `filters.status` type down through `FinanceView.tsx` → `PlansSubscriptions` (`status` / `onStatus`).
+   - `plansCopy.ts` `SubscriptionsFilter`, `toSubscriptionsFilter` and `SUBSCRIPTIONS_FILTER_SPEC`.
+   - The subscriptions route's `z.enum(SUBSCRIPTION_FILTERS)` (still `.strict()`; any other value is a 400).
+   - `buildSubscriptions`'s `status` input and the payload's `status` field.
+   - The `<select>` gains one option, "Disagrees", after the statuses.
+
+   Tests: a `financeFilters` round trip (`?tab=plans&status=disagrees` → parse → serialise gives the same URL); an unknown value falls back to `''`; and the existing reset rule (`status` cleared off the plans tab) still holds for `disagrees`.
+6. **Q-P3-6: no finding when Stripe's period start is unknown.** Do **not** reuse the existing `settled` flag, because it treats a null start as settled. Write a separate predicate: start known **and** `nowMs − startMs ≥ PLAN_RECONCILE_LIMITS.RENEWAL_SETTLE_MS` (the same 24-hour constant, no new figure) **and** the existing `paying` (Stripe `active` and our status paying). Add a third unit test for the null-start case; it costs one test and pins this ruling. In tests (1) and (2), the fixture's mirror period end and the plan row's `tierExpiresAt` equal Stripe's period end, and the status and cancel flag match. Assert the exact list of finding kinds (`['tier_differs']` and `[]`), not only `mismatch`.
+7. **Q-P3-7: rows with no mode show as a count line only.** One more head-count read, `.is('metadata->>livemode', null)` across `failed` and stale `processing` (two reads, never `.or()`). The line is shown in either mode ("N unfinished events have no recorded mode and are not counted above"). Those rows are never in a tile or the list, and they have no link. Run the R3-5 read-only check before building 3b and record the figure in the notes; if it is 0, the line still exists and renders nothing at 0.
+8. **Q-P3-8: the button's words include the Step B and Step C counts.** Use "N plan subscriptions disagree with Stripe" (`planMismatch`), "N Stripe plan subscriptions have no billing record" (`planOrphan`) and "N paid plan invoices have no plan assigned" (`planUnassigned`), each followed by "logged for a person to check". **Also, every key in the plan pass's `partlyDoneWhen` set gets its own sentence when it is above 0**: `planIncomplete`, `planDeadlineHit`, `planReplayFailed`, `planWindowClipped`, `planApiVersionSkipped` and `planCheckIncomplete`. With those sentences, the press can never read cleaner than the nightly row would. `reconcileCopy.ts` keeps no imports, so a **test** (which may import both) pins that the copy's keys cover every plan `partlyDoneWhen` key. Wording: these findings are said to be "with Stripe". The list's "Disagrees" (ruling P3-SA-4) means our two records disagree with each other, and the two must not be worded alike.
+
+**P3-SA-3. Admin gates and Zod: approved as planned.** `requireAdmin` is the first statement in both routes (the admin-authz CI guard and a source test). The page is already under `app/admin/layout.tsx`'s `requireAdminPage`. There is no `profiles.role` read anywhere. The GET takes `z.object({}).strict()` over the query, and the POST takes the boost route's empty-body parse with a strict schema. Each route has tests for 401, 403 and 400, and the 400 comes after the gate. The GET's 409 is for an unknown mode, and its 500 has fixed words, with details in development only.
+
+**P3-SA-4. AM-2 (3a): approved, with these points.**
+- The rule moves **as it is**, together with its local `sameInstant` helper, into `subscriptionsView.ts`. Behaviour is preserved by the existing panel tests passing **unchanged**; if any one of them needs an edit, stop and report.
+- `PlanDrawer` renders `SubscriptionsTable`, so the chip shows in the plan drawer too. That is accepted: one table, one rule, and no drawer-specific work.
+- The chip's `title` says what the rule means: "Our billing record and the plan record disagree: …" followed by the kinds. It never says "Stripe", because the list shows stored records only (ruling 4, option A).
+- **KPI-first.** No new tile. `totals.disagreeing` is shown as one line in the existing totals `<dl>` ("Records that disagree: N"), and the option's label carries the count. Like every total, it ignores the filter.
+- **Entitlements.** No symbol from `lib/business-os/entitlements/` is added or removed in any file, and there is no tier literal (neutral test strings). Record the `KNOWN_NON_GATE_IMPORTERS` diff (expected empty) and the `npm run test:bos-entitlements` result in the notes. If the moved code ends up needing any entitlements symbol, walk the `business-os-entitlements` checklist before handover.
+
+**P3-SA-5. AM-4 read (3b): tenant isolation and the repository.**
+- The service-role, `⟨unscoped-by-design⟩` read is accepted. The table has no owner column, the claim carries no business data, and the only caller is behind `requireAdmin`. The file starts with `import 'server-only'` and has a header CALLERS line (the GET route only).
+- **Do not add it to `lib/repositories/index.ts`.** The admin and pass readers (`BusinessOsBillingAdminReadRepository`, `PlanReconcileReadRepository`) are not exported there either, and the index is imported widely.
+- The repository test pins: the fixed column list; `.filter('metadata->>livemode', 'eq', …)`; no `.or(`, `.update(`, `.insert(`, `.upsert(`, `.delete(` or `.rpc(`; no `user_id`; the stale cutoff taken from `STALE_CLAIM_AGE_MS` (imported, never a second 15-minute literal); and the per-state limit of 200 (ruling 2).
+- It imports neither billing repository, so neither `ALLOWED` array changes. Grep before handover, as planned.
+- Method naming (`…AllEvents`) is accepted. The marker is what reviewers grep for.
+
+**P3-SA-6. No PII (3b): approved, and made testable at two levels.** `failure_message` is selected only to be classified. It is not in the payload, not in a log line and not in an error detail. Plant an email address in a failed row's message, then:
+- In the view-builder test, check that `JSON.stringify(payload)` does not contain it.
+- In the route test, with a logger spy, check that the response body and every log call's arguments do not contain it. The development `details` on a 500 carry the read error's name only, never row content.
+
+**P3-SA-7. The Jobs block (3b): the admin layout standard and KPI-first.**
+- **The block must not be gated by the jobs read.** `JobsQueuesView` today renders its sections inside `{view && …}`. The webhook block has its own request, loading, error and empty states, so a failed jobs read must not hide webhook health. Place `<section id="webhooks" aria-labelledby="webhooks-title">` outside that gate (after it is fine), or gate each section separately. Dev picks the placement and notes it.
+- The block shows the mode chip (`MODE_BADGE`, the Subscriptions precedent) and shows the `STRIPE_MODE_UNKNOWN` words on a 409.
+- **KPI spec (LL-4: one definition constant each):**
+
+| KPI | Indicator | Tone |
+|---|---|---|
+| **Failed** | lagging | red at 1 or more |
+| **Stuck** (`processing` older than 15 min) | leading | red at 1 or more |
+| **Oldest unfinished** | leading | neutral; no threshold (K-5 (i)) |
+
+  Oldest unfinished is leading because Stripe keeps an event for 30 days. Past that age it can be neither resent nor replayed, and its definition says so.
+- **Report in the Implementation Notes:** the page (`/admin/jobs-queues#webhooks`), the three KPIs with their indicators, the breakdown (the list, oldest first, 50 shown of N), and the drawer: **none**, because each row links out to the Stripe event. A drawer is not required, since a row holds nothing a drawer could add without the raw message.
+- The `event` kind in `stripeDashboardUrl` matches `^evt_[A-Za-z0-9]+$` and is tested in both modes, with the `/test/` path for a test row. The link has `target="_blank"` and `rel="noopener noreferrer"`.
+
+**P3-SA-8. The plan reconcile route (3c): approved in the boost route's shape, with these pins.**
+- It imports `planReconcilePass` from its own module and calls `runReconcilePasses([planReconcilePass], { …, trigger: 'admin' })`. It never imports `RECONCILE_PASSES` and never copies pass logic (ruling 5).
+- **It never writes `bos_cron_runs` (SA fix 1).** Source pins: no import of `BosCronRunRepository`, `withCronRunRecord`, the cron route or the run recorder, and no `CRON_SECRET` string. Note that the pass **reads** the run history to anchor its window (ruling 8). That read is expected, and it is why a press can never move the window.
+- **Lost claims and failures stay visible:** D3-4 (a) to (d) are approved. Two changes to (a) and (b):
+  - The `bos_plan_reconcile_admin_left_work` warn fires when **any** plan `partlyDoneWhen` key is above 0, not only `planIncomplete` and `planReplayFailed`, and it carries counts only.
+  - In the client, a 200 with `passesFailed > 0`, or with no `planEventsSeen` key, renders as a failure (QA6b-M1), and the test covers both.
+- **Audit:** `BOS_BILLING_RECONCILE_TRIGGERED` is a write-ahead `logAndFlush` on a `system` entity with the run id. Its details are `{ run_id, correlationId }` only, its severity is `warning` (as boost), and its audience is `'bos'`, with a metadata entry beside the boost one. A bounded flush whose failure is logged and does not stop the run counts as non-blocking under the `new-api-route` skill (the WC-7 flush rule). A test makes the audit write reject and checks that the pass still runs and the answer is 200.
+- `maxDuration = 60` and `RECONCILE_RUN_DEADLINE_MS` are the same as boost.
+- **Concurrency (R3-3)** is accepted: a press beside the nightly run, or a double press, loses claims, the loser counts `planIncomplete`, and the words say so. One route test runs the pass with a lost claim and checks the sentence.
+
+**P3-SA-9. The Jobs source guard amendment: approved as narrow and named (LF-4c).**
+- In 3b, `WebhookEventsBlock.tsx` joins `FILES` and `CLIENT_FILES`, with exactly one GET to the literal URL and no query built from data.
+- In 3c, `ReconcilePlansDialog.tsx` joins `CLIENT_FILES`, with the G-4 to G-7 and G-11 equivalents.
+- `VIEW_HEADER_SENTENCE` changes in 3c only. The existing G-x assertion on the old header text (line 457) is updated in the same named amendment, and every boost pin stays byte-identical.
+- `JobsQueuesView` keeps exactly one fetch of its own.
+- The new files inherit the "no green class" and "no server import" rules automatically through `CLIENT_FILES`.
+
+**P3-SA-10. FU-P8b-6 (3a): approved as D3-7, with ruling P3-SA-2 item 6.**
+- The reorder (`paying` and `period` computed before the tier check) changes no other finding. Every existing `planReconcilePass` test passes unchanged, and if any needs an edit, stop and report.
+- Use the existing `paying` variable, not a new paying predicate.
+- No count is added, so the D-4 1,024-byte budget is unchanged.
+
+**P3-SA-11. CI time, env and allow-lists: pass.**
+- Unit, route and render tests only, in existing shards. There is no new job, no network and no new `process.env` read (EC-3; no catalogue change).
+- No migration.
+- The Connect harness `--ci` runs in 3a (the pass file changes, the webhook does not) and is expected to be byte-identical. 3b and 3c do not touch it.
+- `tsc` is filtered to touched files, with a check for an OOM crash.
+
+**P3-SA-12. B-1 and B-2: no design change.** Step B stays flag-only, and the press runs the same flag-only pass. Failed events stay listed with no age cut-off. The Oldest tile's "leading" definition (Stripe's 30 days) is the prompt for a person to act.
+
+**P3-SA-13. Demo (P3-6): it stays blocked on ruling B's user question,** and it is split by slice. 3a: a disagreeing test record marked "Disagrees" with exactly one kind. 3b: the block in test mode (expected empty) and in live mode (the 5 failed rows, read-only). 3c: the press and its words. None of the slices waits on the demo to reach code review. The demo gates the user's acceptance only.
+
+#### Approval
+
+[x] Plan P-8b.3 approved with changes. Dev regroups P3.4 and P3.5 into 3a, 3b and 3c, folds in P3-SA-1 to P3-SA-13, and starts 3a.
+
+## Implementation Notes (P-8b.3a)
+
+**Dev, 2026-10-28.** Code complete, uncommitted, on `feature/bos-plan-payments-p8b3a`. The branch was fast-forwarded to `main` `abe9fd64` (#559 merged) and renamed from `…-p8b3`. No migration, no new `process.env` read, and no change to the webhook route, the Connect harness, the plan handler, the mirror or the apply.
+
+| File | Change |
+|---|---|
+| `lib/business-os/billing/planReconcilePass.ts` | FU-P8b-6. `paying` and `period` are computed before the tier check (a reorder only). A separate predicate, `nullTierSettled`, requires `paying`, a known period start, and `nowMs − startMs ≥ RENEWAL_SETTLE_MS`. A null `bought_tier` with a Stripe tier that resolves gives `tier_differs`, and the existing skip then drops `plan_tier_differs` |
+| `lib/admin/billing/subscriptionsTypes.ts` | Holds `BillingDisagreement` (moved here), `SUBSCRIPTION_FILTERS`, `SubscriptionFilter` and `isSubscriptionFilter`. Adds `SubscriptionRow.disagreements` and `SubscriptionsTotals.disagreeing`, and widens the payload's `status` to `SubscriptionFilter \| null`. The file still has no import |
+| `lib/admin/billing/billingPanelTypes.ts` | Re-exports `BillingDisagreement` (type only), so no importer changes |
+| `lib/admin/billing/subscriptionsView.ts` | `billingDisagreements(row, plan)` is the panel's rule moved as it is, with `SAME_INSTANT_MS` and `sameInstant`. Each billing row carries its result, and a "No Stripe" row carries `[]`. `status = 'disagrees'` filters on it. `totals.disagreeing` ignores the filter |
+| `lib/admin/billing/billingPanelView.ts` | Calls `billingDisagreements`. The inline rule, `sameInstant` and the `isPayingBillingRow` import moved out |
+| `app/api/admin/business-os/billing/subscriptions/route.ts` | `z.enum(SUBSCRIPTION_FILTERS)`, still `.strict()`. The log line gains `disagreeing` (a count) |
+| `app/admin/finance/financeFilters.ts` | `FINANCE_FILTER_SPEC.status = choiceFilter('status', SUBSCRIPTION_FILTERS, '')`, and `FinanceFilters.status` becomes `'' \| SubscriptionFilter`. The type reaches `FinanceView.tsx`, whose source did not need to change |
+| `app/admin/finance/plansCopy.ts` | `SubscriptionsFilter`, `toSubscriptionsFilter` and `SUBSCRIPTIONS_FILTER_SPEC` now use `isSubscriptionFilter`. The new words are listed below |
+| `app/admin/finance/components/PlansSubscriptions.tsx` | Props are typed `SubscriptionFilter`. One `<option value="disagrees">` follows the statuses, and its label carries the count. One "Records that disagree" line is added to the existing totals `<dl>` (no tile). The filter has its own empty words |
+| `app/admin/finance/components/SubscriptionsTable.tsx` | An amber (`warn`) `StatusChip` "Disagrees" in the Status cell, inside a `span` whose `title` names the kinds. The shared chip has no `title` prop and is not edited |
+
+**SA rulings honoured.**
+
+| Ruling | How |
+|---|---|
+| P3-SA-1 | Only 3a is built: FU-P8b-6 and AM-2. Nothing from 3b or 3c |
+| P3-SA-2 item 5 | One `SUBSCRIPTION_FILTERS` constant, used by `financeFilters.ts`, `plansCopy.ts`, the route's Zod and `buildSubscriptions`. `isSubscriptionStatus` is unchanged for the chip. One new option follows the statuses. Tests: the URL round trip, an unknown value becoming `''`, and the reset rule off the plans tab |
+| P3-SA-2 item 6, P3-SA-10 | Uses the existing `paying`, a known start and `RENEWAL_SETTLE_MS`; `settled` is not reused. Three tests assert the exact lists of finding kinds (`['tier_differs']`, `[]`, `[]`). In each, the mirror's period end and the plan row's paid-through date equal Stripe's, and the status and cancel flag match. Every existing pass test is unchanged and passes. No count is added, so the D-4 byte budget is unchanged |
+| P3-SA-4 | The rule moved as it is, with `sameInstant`. **Every existing `billingPanelView.test.ts` test passes unchanged**; the file is not edited. A new parity test runs nine cases through both the list rule and `buildBillingPanel`. The chip also shows in the plan drawer, which uses the same table. The title never says "Stripe", tested over every kind and every new string. No new tile: one totals line and the count in the option, both ignoring the filter |
+| P3-SA-4 (entitlements) | No file adds or removes a symbol from `lib/business-os/entitlements/`: the import changes in `billingPanelView.ts` and `subscriptionsView.ts` touch only `payingSubscriptionStatuses` and local modules. The `KNOWN_NON_GATE_IMPORTERS` diff is **empty**. No tier literal: tests use the config's own tier order or the neutral `tier_a` |
+| P3-SA-11 | Unit and render tests in existing shards only. The Connect harness ran with `--ci` and is unchanged |
+
+**Deviations (for SA).**
+
+- **D3a-1 (the client tolerates a missing field).** `SubscriptionsTable` reads `row.disagreements?.length`. `PlansSubscriptions` shows the totals line, and the count in the option, only when `totals.disagreeing` is a number. A page left open across the deploy can receive a payload without these fields; it then shows no chip and no line instead of failing the whole table. The types still mark both fields required.
+- **D3a-2 (fixtures).** Two existing finance render test files gained the two new required fields so that `tsc` stays clean. In `financeDrawers.render.test.tsx`, these are `subRow` and the plan drawer's totals. In `financePage.render.test.tsx`, it is the Subscriptions payload. No assertion changed, and both files passed before this edit too, because of D3a-1.
+- **D3a-3 (RC-15).** The two new tests that need the plan-row type take it from `SubscriptionsInput['planRows'][number]`. They therefore name no plan repository, and the RC-15 `ALLOWED` list does not grow.
+
+**New tests.**
+- `planReconcilePass.test.ts`: 3 added, for FU-P8b-6.
+- `lib/admin/billing/__tests__/subscriptionsView.disagrees.test.ts` (22): the rule for each case, panel parity for each case, the marker, the filter, the count and the plan drawer.
+- `app/admin/finance/__tests__/financeFilters.disagrees.test.ts` (4).
+- `app/api/admin/business-os/billing/subscriptions/__tests__/route.disagrees.test.ts` (7): a 200 with the filter, three 400s, a 401 before any read, and a log line with counts only.
+- `app/admin/finance/__tests__/subscriptionsDisagrees.render.test.tsx` (5): the words never say Stripe, the chip and its title, the option with its count, the totals line inside the existing `<dl>`, and the request carrying `status=disagrees`.
+
+**Gates (2026-10-28, sequential).**
+
+| Gate | Result |
+|---|---|
+| `lib/admin`, `app/admin`, `app/api/admin/business-os/billing` (`--ci`) | 238 suites, 7,530 tests, pass |
+| `lib/business-os/billing`, `lib/business-os/boost`, `lib/repositories`, `lib/cron` (`--ci`) | 203 suites, 7,927 tests, pass. This includes the RC-15 imports guard and the `planReconcilePass*` suites (116 tests) |
+| Both `BusinessOsBilling*Repository.test.ts` allow-lists | 2 suites, 198 tests, pass. No new file imports either repository |
+| Connect harness `--ci` | 152 / 152 tests, 111 / 111 snapshots. `git status` is clean under `app/api/stripe` |
+| `npm run test:bos-entitlements` | 326 suites, 9,725 tests, pass |
+| `tsc --noEmit` (full project, 8 GB heap) | Completed with no OOM. 1,864 errors, all pre-existing (the P-8b.2 baseline), and **0 in touched or new files**. A first run found 4 in the two finance fixtures, fixed per D3a-2 |
+| ESLint, touched and new files | 0 errors. 1 pre-existing warning (`financePage.render.test.tsx` line 142, unused `k5Caption`), not on a touched line |
+
+**New user-facing words (G-5, for the user's approval).** All are in `app/admin/finance/plansCopy.ts`. The Finance admin page is English only.
+- Option and chip: "Disagrees". The option with its count: "Disagrees (N)".
+- Totals line: "Records that disagree".
+- Chip title: "Our billing record and the plan record disagree: {kinds}." The kinds are "the plan bought is not the plan on record", "the paid-through date is not the billed period end" and "the plan record has no plan", joined with "; ".
+- Empty list under the filter: "No subscriptions have records that disagree."
+
+**Demo (P3-SA-13):** still blocked on ruling B's user question.
+
+### SA code review: P-8b.3a
+
+**Code review by SA, 2026-10-28.**
+**Status:** Code Approved (APPROVED). No fix is required before QA or commit.
+
+Reviewed: `git diff` on `feature/bos-plan-payments-p8b3a` against `abe9fd64`, plus the four untracked test files. SA re-ran the touched and new suites (`financeFilters.disagrees`, `subscriptionsDisagrees.render`, `financeDrawers.render`, the subscriptions route tests, `lib/admin/billing/__tests__`, `planReconcilePass.test.ts`): 12 suites, 218 tests, all passing.
+
+**Rulings checked.**
+
+| Ruling | Verdict |
+|---|---|
+| P3-SA-1 | Pass. Only FU-P8b-6 and AM-2 are in the diff. Nothing from 3b or 3c, no migration, no webhook or Connect change |
+| P3-SA-2 item 5 | Pass. `SUBSCRIPTION_FILTERS = [...SUBSCRIPTION_STATUSES, 'disagrees'] as const` is declared once in `subscriptionsTypes.ts`, which still has no import. It is used by `financeFilters.ts` (`choiceFilter('status', SUBSCRIPTION_FILTERS, '')`, and `FinanceFilters.status` is `'' \| SubscriptionFilter`), by `plansCopy.ts` (`isSubscriptionFilter` in `toSubscriptionsFilter` and `SUBSCRIPTIONS_FILTER_SPEC`), by the route's `z.enum(SUBSCRIPTION_FILTERS)` (still `.strict()`), and by `buildSubscriptions`. `isSubscriptionStatus` is unchanged. The remaining `SUBSCRIPTION_STATUSES` readers (`PlanDrawer`'s status chips, `byStatus`, `subscriptionStatuses`) are correctly about statuses, not filters. One option follows the statuses. The round-trip, unknown-value and reset tests are present |
+| P3-SA-2 item 6, P3-SA-10 | Pass. `paying` and `period` are only moved above the tier check. `nullTierSettled` is a separate predicate (start known, `nowMs − startMs ≥ RENEWAL_SETTLE_MS`, existing `paying`), and `settled` is not reused. The existing "one finding per root difference" guard then drops `plan_tier_differs`, the same way it already does for a non-null tier mismatch. The three tests assert exact kind lists. The test-file diff is additions only. No count is added, so the D-4 budget is unchanged |
+| P3-SA-3 | Pass for this route. `requireAdmin` is still the first statement of `GET`, Zod is `.strict()`, and only the enum widened |
+| P3-SA-4 | Pass. `billingDisagreements` is the panel block verbatim (the `row !== null` check is now at the call site: `row === null ? [] : billingDisagreements(row, plan)`), and it moved with `SAME_INSTANT_MS` and `sameInstant`. `billingPanelView.test.ts` is byte-identical to `abe9fd64`, and it passes. The parity test runs both paths. The chip title says "Our billing record and the plan record disagree: …" and the copy never says "Stripe" (tested over every kind and combination). There is no tile: one `<dt>/<dd>` in the existing totals `<dl>`, and the count is in the option label. Both come from `totals.disagreeing`, which ignores the filter. `PlanDrawer` gets the chip through `SubscriptionsTable` and `buildPlanSubscriptions` → `buildSubscriptions`, as accepted |
+| P3-SA-11 | Pass. Tests are in existing shards. No new `process.env` read, job or network call. Per Dev's notes, the Connect harness output is unchanged and `tsc` gives 0 errors in touched files (no OOM) |
+
+**Deviations.**
+- **D3a-1: approved.** Tolerating a payload from a server older than this deploy is the right failure mode for a page left open across a deploy: no chip and no line, instead of a broken table. The types keep both fields required, so the server cannot omit them. The `?.` and `typeof … === 'number'` checks each carry a comment saying why.
+- **D3a-2: approved.** Adding the two new required fields to the fixtures (`disagreements: []`, `disagreeing: 0`) changes no assertion and is the minimum change that keeps `tsc` clean.
+- **D3a-3: approved.** Deriving the plan-row type from `SubscriptionsInput['planRows'][number]` keeps the RC-15 `ALLOWED` list from growing. The tests' `AdminBillingRow` type import is from `BusinessOsBillingAdminReadRepository`, which existing tests in the same folder already use, so it is not a new name for RC-15.
+
+**Other checks.**
+- **No PII.** A row gains only an enum array, and the totals gain a count. The log line adds `disagreeing` (a count).
+- **Entitlements.** The product files' `lib/business-os/entitlements/` imports are unchanged (`billingPanelView.ts` loses only the `payingSubscriptionStatuses` import, which is not in the entitlements module, and `subscriptionsView.ts` gains it). The new test files import `getEntitlementConfig`, and tests are exempt under the skill. No tier literal: tests use `tier_a` or the config order.
+- **Admin layout standard and tokens.** The change reuses `StatusChip tone="warn"`, `ADMIN_FIELD_CONTROL`, `AdminEmpty` and the existing totals `<dl>` classes (`text-xs text-slate-400` / `text-sm text-white`, as its sibling rows use). There is no green class and no new pattern.
+- **Logging.** No `console.*` appears in any touched file.
+
+**Optimisation suggestions (non-blocking).**
+1. The chip's explanation lives only in a `title` on a `span`, so keyboard and touch users cannot reach it. This matches how the table already uses `title`, so it is acceptable here. If the AM-2 demo shows admins miss the kinds, a follow-up could print them inline or in the business drawer.
+2. "the plan record has no plan" reads awkwardly. It is part of the G-5 words that the user approves, so it is flagged for that approval and does not block the code.
+
+**Code approved for QA: Yes.** The P3-SA-13 demo (a disagreeing test record with exactly one kind) still gates user acceptance and does not gate the commit.
+
 ## Commit Info
 
 _(RM populates.)_
@@ -975,3 +1437,8 @@ _(RM populates.)_
 | 2026-10-28 | SA check: V-1 to V-5 and Step 4 demo (SA) | APPROVED, ready for QA. Ruling A: the payment-mode endive `checkout.session.completed` capture is accepted (FU-P8b-4: replace with a subscription-mode capture). Ruling B: demo point 4 is covered by unit tests, no Stripe write; QA condition Q-C1 (a captured subscription fixture through the real list mapping into Step B); the real-data mismatch moves to the P-8b.3 demo, with the user question written out |
 | 2026-10-28 | QA report: P-8b.2 (QA) | PASS. Q-C1 met: 7 tests send the captured clover subscription through the real `listBusinessOsSubscriptionsByPrice` mapping into the real Step B. 29 edge-case tests: claim races and errors, unsettled claims, window anchoring, unverified shapes, deadline and batch caps, no PII. Bugs 0. Performance 1 (Medium, for SA): the batch cap can latch the window at 7 days and starve newer events at about 1,000 subscribers or more. Edge cases 2 (Low). All gates green, tsc 0 in touched files |
 | 2026-10-28 | SA rulings on P-8b.2 QA items (SA) | None blocks the commit. Performance 1 (cap latches the window) is FU-P8b-5, with a binding trigger (live mode passes 300 paying plan subscriptions, or two nights of `planIncomplete` with no replay failure or deadline) and a fixed design: separate replay and Step C budgets, day-sliced event listing (which also covers Edge case 1). Edge case 2 (null `bought_tier`) is FU-P8b-6, Low, fixed when next touched |
+| 2026-10-28 | P-8b.3a code complete (Dev) | P-8b.3 split per P3-SA-1; branch fast-forwarded to `main` `abe9fd64` (#559 merged) and renamed `…-p8b3a`. FU-P8b-6 (null mirror tier, three tests) and AM-2 "Disagrees" (one `billingDisagreements` rule moved unchanged, `SUBSCRIPTION_FILTERS`, chip, option with count, totals line). Panel tests unchanged; Connect harness unchanged; entitlements imports unchanged; tsc 0 in touched files. Implementation Notes (P-8b.3a) |
+| 2026-10-28 | SA code review: P-8b.3a (SA) | APPROVED. P3-SA-1, 2 (items 5 and 6), 3, 4, 10 and 11 verified; rule moved verbatim with `sameInstant`, panel test byte-identical; one `SUBSCRIPTION_FILTERS` incl. `financeFilters.ts`; no "Stripe" in the words; no tile; no PII; entitlements imports unchanged. D3a-1, D3a-2 and D3a-3 approved. Two non-blocking suggestions (title-only tooltip; G-5 wording of `no_tier_on_plan`). SA re-ran 12 suites / 218 tests: pass |
+| 2026-10-28 | QA report: P-8b.3a (QA) | PASS. 42 QA tests: FU-P8b-6 boundary ±1 ms, not paying, unresolved tier, one root; filter combinations, unknown values, empty / all-disagree / over-cap counts, plan-drawer chip, old payload, rendered titles never say Stripe; route 401 / 403 before 400 and no PII. Bugs 0; edge cases 2 (Low). All gates green, Connect harness unchanged, tsc 0 in touched files, no OOM |
+| 2026-10-28 | Plan: P-8b.3 (Dev) | On `feature/bos-plan-payments-p8b3` (from `6312470e`). AM-4 read repository + GET, plan reconcile POST (ruling 5) whose lost claims and failures show in its words, logs and AM-4 and never in `bos_cron_runs`, Jobs block and dialog with a named guard amendment, AM-2 "Disagrees" from one shared rule, FU-P8b-6. Facts F3-1 to F3-10; questions Q-P3-1 to Q-P3-8 for SA. No code yet |
+| 2026-10-28 | SA review: Plan P-8b.3 (SA) | APPROVED WITH CHANGES, rulings P3-SA-1 to P3-SA-13. Split into 3 PRs: 3a (FU-P8b-6 + AM-2 Disagrees), 3b (AM-4 read-only block), 3c (plan reconcile button). Q-P3-1 to Q-P3-8 ruled (flow column dropped; created + last attempt, 200-per-state read; classes handler_error/timeout/unknown/stuck; block-only re-read; status=disagrees incl. the missed `financeFilters.ts` parser; no finding on unknown start; no-mode count line; words for every partlyDoneWhen key). Block not gated by the jobs read; KPI indicators set; repo not in index; PII tested at builder and route |

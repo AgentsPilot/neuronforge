@@ -646,6 +646,111 @@ describe('Step B: Stripe vs our billing records (flag only, SA ruling 4)', () =>
     expect(kinds(h)).toEqual([]);
   });
 
+  // FU-P8b-6 (SA P3-SA-2 item 6, P3-SA-10). In each case the mirror's period end
+  // and the plan row's paid-through equal Stripe's, and the status and cancel
+  // flag match, so the tier is the only possible difference.
+  describe('FU-P8b-6: a paying row with no tier on the mirror', () => {
+    const at = (startSec: number | null) => [
+      sub({ items: [{ priceId: 'price_one', currentPeriodStart: startSec, currentPeriodEnd: periodEnd }] }),
+    ];
+
+    it('period started over a day ago, Stripe tier resolves → exactly one tier_differs, no plan_tier_differs', async () => {
+      const h = stepB({ subs: at(sec(NOW - 25 * HOUR)), rows: [row({ bought_tier: null })] });
+      const counts = await h.run();
+      expect(kinds(h)).toEqual(['tier_differs']);
+      expect(counts.mismatch).toBe(1);
+      expect(h.table.calls).toEqual([]);
+    });
+
+    it('period started under a day ago → no finding (a checkout still settling)', async () => {
+      const h = stepB({ subs: at(sec(NOW - 23 * HOUR)), rows: [row({ bought_tier: null })] });
+      const counts = await h.run();
+      expect(kinds(h)).toEqual([]);
+      expect(counts.mismatch).toBe(0);
+    });
+
+    it('period start unknown → no finding from the null tier (never treated as settled)', async () => {
+      const h = stepB({ subs: at(null), rows: [row({ bought_tier: null })] });
+      const counts = await h.run();
+      expect(kinds(h)).toEqual([]);
+      expect(counts.mismatch).toBe(0);
+    });
+  });
+
+  // QA P-8b.3a: edges of FU-P8b-6 beyond the three ruled cases.
+  describe('QA P-8b.3a: FU-P8b-6 edges', () => {
+    const START = sec(NOW - 30 * HOUR);
+    const START_MS = START * 1000;
+    const SETTLE = PLAN_RECONCILE_LIMITS.RENEWAL_SETTLE_MS;
+    const at = (startSec: number | null, priceIds: string[] = ['price_one'], status = 'active') => [
+      sub({ status, items: priceIds.map((priceId) => ({ priceId, currentPeriodStart: startSec, currentPeriodEnd: periodEnd })) }),
+    ];
+
+    it.each<[string, number, string[]]>([
+      ['1 ms short of 24 h → nothing', START_MS + SETTLE - 1, []],
+      ['exactly 24 h → tier_differs (>= boundary)', START_MS + SETTLE, ['tier_differs']],
+      ['1 ms past 24 h → tier_differs', START_MS + SETTLE + 1, ['tier_differs']],
+    ])('the 24 h boundary: %s', async (_name, clockMs, expected) => {
+      const h = stepB({ subs: at(START), rows: [row({ bought_tier: null })], clock: () => clockMs });
+      const counts = await h.run();
+      expect(kinds(h)).toEqual(expected);
+      expect(counts.mismatch).toBe(expected.length);
+    });
+
+    it('not paying on both sides (past_due / past_due) → no finding from the null tier', async () => {
+      const h = stepB({ subs: at(sec(NOW - 25 * HOUR), ['price_one'], 'past_due'), rows: [row({ bought_tier: null, subscription_status: 'past_due' })] });
+      await h.run();
+      expect(kinds(h)).toEqual([]);
+    });
+
+    it('our record not paying (canceled, still open) while Stripe is active → only status_differs, never tier_differs', async () => {
+      const h = stepB({ subs: at(sec(NOW - 25 * HOUR)), rows: [row({ bought_tier: null, subscription_status: 'canceled' })] });
+      await h.run();
+      expect(kinds(h)).toEqual(['status_differs']);
+    });
+
+    it.each<[string, string[]]>([
+      ['an unknown price', ['price_unknown']],
+      ['two prices on two tiers (ambiguous)', ['price_one', 'price_two']],
+    ])('the Stripe tier does not resolve (%s) → nothing from the null tier', async (_name, priceIds) => {
+      const h = stepB({ subs: at(sec(NOW - 25 * HOUR), priceIds), rows: [row({ bought_tier: null })] });
+      const counts = await h.run();
+      expect(kinds(h)).toEqual([]);
+      expect(counts.mismatch).toBe(0);
+    });
+
+    it.each<[string, Record<string, PlanReconcilePlanFacts>]>([
+      ['the plan row on another tier', plan({ tier: 'tier_b' })],
+      ['the plan row with no tier', plan({ tier: null })],
+      ['no plan row at all', {}],
+    ])('one root, one finding: null mirror tier settled + %s → only tier_differs', async (_name, plans) => {
+      const h = stepB({ subs: at(sec(NOW - 25 * HOUR)), rows: [row({ bought_tier: null })], plans });
+      const counts = await h.run();
+      expect(kinds(h)).toEqual(['tier_differs']);
+      expect(counts.mismatch).toBe(1);
+    });
+
+    it('inside 24 h the plan-row check still runs as before: plan row on another tier → only plan_tier_differs', async () => {
+      const h = stepB({ subs: at(sec(NOW - 23 * HOUR)), rows: [row({ bought_tier: null })], plans: plan({ tier: 'tier_b' }) });
+      await h.run();
+      expect(kinds(h)).toEqual(['plan_tier_differs']);
+    });
+
+    it('a set mirror tier that differs is still flagged inside 24 h (the old rule is unchanged)', async () => {
+      const h = stepB({ subs: at(sec(NOW - HOUR), ['price_two']), rows: [row({ bought_tier: 'tier_a' })], plans: plan({ tier: 'tier_b' }) });
+      await h.run();
+      expect(kinds(h)).toEqual(['tier_differs']);
+    });
+
+    it('the finding log line carries ids and the kind only, never a tier', async () => {
+      const h = stepB({ subs: at(sec(NOW - 25 * HOUR)), rows: [row({ bought_tier: null })] });
+      await h.run();
+      const text = JSON.stringify(h.logs.named('bos_plan_reconcile_finding'));
+      expect(text).not.toContain('tier_a');
+      expect(h.table.calls).toEqual([]);
+    });
+  });
+
   it('a plan-price subscription no billing row holds is an orphan; an incomplete one is not', async () => {
     const h = stepB({ subs: [sub(), sub({ id: 'sub_2' }), sub({ id: 'sub_3', status: 'incomplete' })] });
     const counts = await h.run();

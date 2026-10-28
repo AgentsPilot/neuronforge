@@ -15,16 +15,22 @@
 
 import { textFilter } from '@/app/admin/components/layout/useAdminFilters';
 import type { StatusTone } from '@/app/admin/components/layout/StatusChip';
-import { isSubscriptionStatus, type SubscriptionStatus } from '@/lib/admin/billing/subscriptionsTypes';
+import {
+  isSubscriptionFilter,
+  type BillingDisagreement,
+  type SubscriptionFilter,
+  type SubscriptionStatus,
+} from '@/lib/admin/billing/subscriptionsTypes';
 
-export type SubscriptionsFilter = 'all' | SubscriptionStatus;
+/** P-8b.3a (SA P3-SA-2 item 5): a status or `disagrees`, through the ONE `SUBSCRIPTION_FILTERS` constant. */
+export type SubscriptionsFilter = 'all' | SubscriptionFilter;
 
 export function toSubscriptionsFilter(raw: string): SubscriptionsFilter {
-  return isSubscriptionStatus(raw) ? raw : 'all';
+  return isSubscriptionFilter(raw) ? raw : 'all';
 }
 
 export const SUBSCRIPTIONS_FILTER_SPEC = {
-  status: textFilter({ key: 'status', defaultValue: 'all', isValid: (raw: string) => raw === 'all' || isSubscriptionStatus(raw) }),
+  status: textFilter({ key: 'status', defaultValue: 'all', isValid: (raw: string) => raw === 'all' || isSubscriptionFilter(raw) }),
 };
 
 /** The page's h1, equal to its sidebar label (Admin Layout D-3 (a)). */
@@ -70,6 +76,33 @@ export const STATUS_TONE: Record<SubscriptionStatus, StatusTone> = {
   other: 'unknown',
 };
 
+/**
+ * P-8b.3a (AM-2; SA P3-SA-4): "Disagrees" means OUR two stored records (the
+ * billing record and the plan record) disagree with each other. These words
+ * never say "Stripe": the list shows stored records only (ruling 4, option A),
+ * and the nightly reconcile's findings "with Stripe" are worded apart.
+ */
+export const DISAGREES_LABEL = 'Disagrees';
+
+/** The filter option, carrying the count (it ignores the filter, like every total). */
+export function disagreesOptionLabel(count: number): string {
+  return `${DISAGREES_LABEL} (${count})`;
+}
+
+/** One line in the totals (no new tile, KPI-first rule). */
+export const DISAGREEING_LABEL = 'Records that disagree';
+
+export const DISAGREEMENT_LIST_COPY: Record<BillingDisagreement, string> = {
+  tier_differs: 'the plan bought is not the plan on record',
+  paid_through_differs: 'the paid-through date is not the billed period end',
+  no_tier_on_plan: 'no plan is set on the account',
+};
+
+/** The chip's title: what the rule means, then the kinds. */
+export function disagreesTitle(kinds: readonly BillingDisagreement[]): string {
+  return `Our billing record and the plan record disagree: ${kinds.map((kind) => DISAGREEMENT_LIST_COPY[kind]).join('; ')}.`;
+}
+
 export const MODE_BADGE = { test: 'Stripe test mode', live: 'Stripe live mode' } as const;
 
 /** Under the header when the server's key is a test key (BoostBlock's test-key wording, for plans). */
@@ -101,6 +134,8 @@ export const PAID_ACCOUNTS_LABEL = 'Paid accounts';
 export const EMPTY_ALL = 'No subscriptions in this Stripe mode yet.';
 export const EMPTY_ALL_HINT = 'A subscription appears here once a business pays for a plan.';
 export const EMPTY_FILTERED = 'No subscriptions match this status.';
+/** P-8b.3a: the empty line when the filter is `disagrees`. */
+export const EMPTY_DISAGREES = 'No subscriptions have records that disagree.';
 
 export function countLine(shown: number, matching: number): string {
   if (shown === matching) return `${matching} subscription${matching === 1 ? '' : 's'}`;

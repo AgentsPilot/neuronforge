@@ -8,14 +8,14 @@
  * @module lib/admin/billing/billingPanelTypes
  */
 
-import type { SubscriptionPlanName, SubscriptionStatus } from './subscriptionsTypes';
+import type { BillingDisagreement, SubscriptionPlanName, SubscriptionStatus } from './subscriptionsTypes';
 
 /**
  * Where the stored mirror and the plan row disagree, while the subscription is
- * paying. These come from OUR stored records only. The check against Stripe
- * itself is P-8b's reconciliation (AM-5).
+ * paying. Declared in `subscriptionsTypes.ts` since P-8b.3a (the Subscriptions
+ * list marks the same rule) and re-exported here, so no importer changes.
  */
-export type BillingDisagreement = 'tier_differs' | 'paid_through_differs' | 'no_tier_on_plan';
+export type { BillingDisagreement };
 
 /** How this subscription counts in MRR (`mrrTreatment`, the one rule). */
 export type BillingMrrKind = 'counted' | 'not_paying' | 'unpriced' | 'discount_unknown';
