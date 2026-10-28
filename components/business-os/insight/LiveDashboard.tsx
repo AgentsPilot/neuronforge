@@ -1182,6 +1182,63 @@ export function LiveDashboard({
    */
   const showReachJourney = setupGraph.steps.length > 0 && !isReadyForClients(setupGraph);
 
+  /**
+   * Who gets the top row, and what the row is then shaped like.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Decided by whether anything is waiting, nothing else. Setup state does not
+   * enter into it: readiness keeps the top of the page either way, as a card
+   * when the row is free and as a line when it is not.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /*
+   * WORK WAITING OUTRANKS A CHECKLIST, FINISHED OR NOT.
+   *
+   * The slot belongs to readiness by default — it is the state of the account,
+   * and an unconfigured one makes every number below it moot. But the moment
+   * something is actually waiting on the owner, that is the more useful thing
+   * to be looking at, and readiness becomes a line rather than a list.
+   *
+   * Deliberately NOT gated on setup being finished. A business can be
+   * mid-setup and still have a client waiting, and when that happens the
+   * client wins. Readiness does not disappear in that case — it moves ABOVE
+   * the row as a full-width line that still says how many steps are left, so
+   * a business that cannot yet take a client is told so at the top of the
+   * page, in fewer words.
+   *
+   * The card renders nothing on an empty list, so an empty `gaps` must never
+   * reach the slot: a hero holding a component that draws nothing is the hole
+   * this arrangement exists to avoid.
+   */
+  const heroIsTasks = Boolean(gaps && gaps.length > 0);
+
+  /**
+   * The card that holds the top row, chosen once so the row and its shape can
+   * never disagree about what is in it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Order is urgency. An unconfigured system makes every number below it moot,
+   * so readiness outranks everything while anything compulsory is missing.
+   * After that the work waiting is the most useful thing on the page. When
+   * neither applies the slot is genuinely empty, and the row closes up rather
+   * than holding a space for a card that is not coming.
+   *
+   * `null` is a real answer here, not a failure: see the row's own comment.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const heroCard = heroIsTasks ? (
+    <NeedsYouCard gaps={gaps ?? []} onChanged={onGapsChanged} fill />
+  ) : (
+    <SystemReadiness
+      items={readinessItems}
+      shape={setupShape}
+      onAction={onAction}
+      pendingActions={pendingActions}
+      actionError={actionError}
+    />
+  );
+
+
   const reachesByLink = setupShape.presence === 'booking_only' || setupShape.presence === 'none';
   const hasHours = setupItems.some(item => item.id === 'availability' && item.completed);
   const hasPayments = setupItems.some(item => item.id === 'payments' && item.completed);
@@ -2418,31 +2475,94 @@ export function LiveDashboard({
           further down reads as nothing having happened. */}
       {assistantSlot}
 
-      {/* System readiness — sits directly under the timeline, ahead of every
-          metric, because an unconfigured system makes the numbers below it moot.
-          Consumption sits beside it: both answer "what is the state of my
-          account" rather than "what happened in my business", so they belong on
-          the same row. Usage is the narrower column — it is a glance, not a task
-          list — and it stacks above on narrow screens rather than being cut. */}
+      {/*
+        ─────────────────────────────────────────────────────────────────────
+        THE TOP ROW IS ONE HERO SLOT, NOT A FIXED PAIR.
+
+        It used to be readiness + usage, permanently. Readiness earns that
+        place only while something is unconfigured: an unfinished setup makes
+        every number below it moot, so it outranks everything. Once setup is
+        done it is a finished checklist sitting in the most valuable space on
+        the page, above the work actually waiting.
+
+        So the slot goes to whatever is genuinely most urgent, in order:
+
+          1. readiness   something compulsory is missing
+          2. needs-you   setup is done and tasks are waiting
+          3. nothing     setup is done and nothing is waiting
+
+        The third is not a hole to patch. Setup finished, nothing needs you,
+        here is your balance — that is the good state, and the row says it by
+        giving usage the whole width rather than leaving a gap where a card
+        used to be.
+
+        `isReadyForClients` is the graph's own test and is safe to branch on:
+        it answers FALSE for an empty graph, so a failed stats call cannot
+        promote anything by making the setup look finished. The same guard
+        that stops the status line claiming a business is running fine.
+
+        Usage keeps its own column throughout and is always the narrow one —
+        it is a glance, not a task list. Below 900px the row stacks and usage
+        stays on top, which is why it is first in the markup.
+        ─────────────────────────────────────────────────────────────────────
+      */}
+      {/*
+        Readiness, on one line, when the row below is busy with real work.
+        ─────────────────────────────────────────────────────────────────────
+        ABOVE the row, not below. It is still the state of the whole account,
+        and an unfinished one makes the numbers underneath it moot — so it
+        keeps the first line of the page even when it has given up the card.
+        What it loses is height, not position.
+
+        Says a different thing in each state, because a strip that only ever
+        reported success would be the quiet lie this card has told once
+        before: ready counts what is done, unfinished counts what is left.
+        Either way it opens to the full chain.
+
+        Derived, never stored. A mailbox that disconnects or a timezone that
+        gets cleared changes what this line says on the next load by itself —
+        there is no dismissal from three weeks ago able to hide a problem
+        happening now.
+        ─────────────────────────────────────────────────────────────────────
+      */}
+      {heroIsTasks && (
+        <div style={{ marginBottom: 16 }}>
+          <SystemReadiness
+            items={readinessItems}
+            shape={setupShape}
+            onAction={onAction}
+            pendingActions={pendingActions}
+            actionError={actionError}
+            collapsible
+          />
+        </div>
+      )}
+
       {(
-        <div className="usage-readiness-row">
+        <div
+          className={[
+            'usage-readiness-row',
+            /* Needs-you is tighter than readiness: a row carries a name, the
+               note that explains it, chips, an amount and a button, and the
+               card has already given up the year on its dates to buy width.
+               Three quarters instead of two thirds — usage is a dial and a
+               button and survives the squeeze. */
+            heroIsTasks ? 'ur-hero-tasks' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        >
           {/* Wrapped so the row's own scoped CSS can order them: styled-jsx
               cannot reach a child component's root node, and the source order
               here is what the stacked layout below 900px falls back to. */}
           <div className="ur-usage">
             <UsageCard />
           </div>
-          <div className="ur-readiness">
-            <SystemReadiness
-              items={readinessItems}
-              shape={setupShape}
-              onAction={onAction}
-              pendingActions={pendingActions}
-              actionError={actionError}
-            />
-          </div>
+          <div className="ur-hero">{heroCard}</div>
         </div>
       )}
+
+
 
       <style jsx>{`
         .usage-readiness-row {
@@ -2470,9 +2590,22 @@ export function LiveDashboard({
           align-items: stretch;
           margin-bottom: 16px;
         }
-        /* First track is readiness, second is usage — independent of which
+        /*
+           The hero is NEEDS-YOU rather than readiness: give it another
+           twelfth.
+
+           That card is already short of width. Each row carries a name, the
+           note that explains why it is there, chips, an amount pinned to the
+           edge and a button — and it has already dropped the year from its
+           dates to buy room, so the note is the first thing to suffer when the
+           column narrows. Usage is a dial and a button; a quarter is plenty.
+        */
+        .usage-readiness-row.ur-hero-tasks {
+          grid-template-columns: 3fr 1fr;
+        }
+        /* First track is the hero, second is usage — independent of which
            side those tracks land on, which direction decides. */
-        .ur-readiness {
+        .ur-hero {
           order: 1;
         }
         .ur-usage {
@@ -2482,7 +2615,7 @@ export function LiveDashboard({
            height 100%, and an auto-height wrapper between them and the
            stretched track would collapse that back. */
         .ur-usage,
-        .ur-readiness {
+        .ur-hero {
           min-width: 0;
           height: 100%;
         }
@@ -2493,7 +2626,7 @@ export function LiveDashboard({
           /* Stacked: source order wins again, so the glance sits above the
              task list rather than below it. */
           .ur-usage,
-          .ur-readiness {
+          .ur-hero {
             order: 0;
           }
         }
@@ -2539,7 +2672,7 @@ export function LiveDashboard({
         stuck, so a business that is on top of things sees the dashboard it had
         before.
       */}
-      {gaps && gaps.length > 0 && (
+      {gaps && gaps.length > 0 && !heroIsTasks && (
         <div style={{ marginBottom: 16 }}>
           <NeedsYouCard gaps={gaps} onChanged={onGapsChanged} />
         </div>

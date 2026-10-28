@@ -286,6 +286,50 @@ describe('booking_cancelled', () => {
 
   /*
    * ───────────────────────────────────────────────────────────────────────────
+   * THE OWNER HAS ALREADY ANSWERED.
+   *
+   * "Money owed stays until it is given back" held this row open forever, and
+   * keeping a forfeited deposit is an ordinary answer the card could not take.
+   * `POST .../keep-payment` records it as an activity and this reads it back,
+   * the same shape `booking_refunded` has used since it shipped.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  describe('once the owner says they are keeping it', () => {
+    const kept = { source_entity_id: 'b1', activity_type: 'booking_payment_kept' };
+
+    it('stops asking, even with the money still held', async () => {
+      tables.scheduling_bookings = [booking({})];
+      tables.payment_transactions = [
+        { booking_id: 'b1', amount: 250, status: 'succeeded', refunded_amount: 0 },
+      ];
+      tables.crm_activities = [kept];
+
+      expect(await run()).toBeUndefined();
+    });
+
+    it('outranks a plan that is still charging', async () => {
+      /* The decision is about this booking's money, and it is the owner's to
+         make whether or not a plan is live. */
+      tables.scheduling_bookings = [booking({})];
+      tables.payment_plan_subscriptions = [{ booking_id: 'b1', status: 'active' }];
+      tables.crm_activities = [kept];
+
+      expect(await run()).toBeUndefined();
+    });
+
+    it('leaves a booking nobody has answered for alone', async () => {
+      tables.scheduling_bookings = [booking({})];
+      tables.payment_transactions = [
+        { booking_id: 'b1', amount: 250, status: 'succeeded', refunded_amount: 0 },
+      ];
+      tables.crm_activities = [];
+
+      expect((await run())?.count).toBe(1);
+    });
+  });
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
    * A DAY TO COME BACK ON THEIR OWN.
    *
    * The cancellation email carries a booking button and reaches the client

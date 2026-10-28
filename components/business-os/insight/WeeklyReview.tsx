@@ -61,6 +61,36 @@ export function WeeklyReview({ summary, onOpenInsight }: WeeklyReviewProps) {
 
   const font = isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif';
 
+  /*
+   * The day this note was written, named rather than dated: "Sunday 25 Oct"
+   * tells an owner how old it is at a glance, where "25/10" makes them count.
+   *
+   * `created_at` is when the nightly run wrote it; `period_start` is the Sunday
+   * the week began. Normally the same day, and the fallback keeps the line on
+   * summaries written before that column reached this type.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND NO CLOCK MAY MOVE IT.
+   *
+   * The stamp is 03:30 UTC, so handing the raw timestamp to `toLocaleDateString`
+   * printed SATURDAY for anyone west of Greenwich: the correct instant, the
+   * wrong day, on a line whose whole job is to say which day. Measured, not
+   * guessed — it is what this component did when first written.
+   *
+   * Built from the date part with local parts and formatted with no `timeZone`,
+   * the way `formatPublicDay` (lib/i18n/public-pages.ts) settles the same
+   * question for the client-facing pages. The day named is then the Sunday the
+   * week belongs to, the same one for every reader.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const parts = /^(\d{4})-(\d{2})-(\d{2})/.exec(summary.created_at ?? summary.period_start ?? '');
+  const asOf = parts
+    ? new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])).toLocaleDateString(
+        language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-GB',
+        { weekday: 'long', day: 'numeric', month: 'short' }
+      )
+    : null;
+
   return (
     <div
       style={{
@@ -87,6 +117,24 @@ export function WeeklyReview({ summary, onOpenInsight }: WeeklyReviewProps) {
               improved: measures.improved,
               total: measures.improved + measures.declined + measures.steady,
             })}
+          </span>
+        )}
+
+        {/*
+          WHEN THIS WAS WORKED OUT, AND WHEN IT CHANGES.
+
+          The row is written once a week, on the first nightly run of the
+          period, and deliberately never recomputed until the next one. Without
+          this line the card reads as live: the first question asked of it was
+          "is this really updated?", by an owner looking on Wednesday at
+          Sunday's note, beside an issue they had dismissed on Tuesday.
+
+          Both halves matter. The date says how old it is; "updates again next
+          Sunday" says it is a weekly note rather than something broken.
+        */}
+        {asOf && (
+          <span style={{ fontSize: '12px', color: 'var(--v2-text-muted)' }}>
+            {t('health.as_of', { date: asOf })}
           </span>
         )}
       </div>

@@ -117,6 +117,17 @@ export interface BusinessHealthSummaryData {
   priorities: Array<{ rank: number; category: string; title: string; insight_id?: string }>;
   period_start: string;
   period_end: string;
+  /**
+   * When this was worked out.
+   *
+   * The row is written once, on the first nightly run of the week, and
+   * deliberately not recomputed until the next one (`createOrUpdateHealthSummary`
+   * returns early). So an owner reading on Wednesday is reading Sunday's note,
+   * and the card has to be able to say so — "is this live?" was the first thing
+   * asked of it. Selected all along by `getLatestHealthSummary`'s `select('*')`;
+   * only the type was missing it.
+   */
+  created_at?: string;
   // Stats fields from database
   insight_count: number;
   critical_count: number;

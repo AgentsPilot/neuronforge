@@ -37,12 +37,30 @@ import { LazySchedulingDialog } from '@/components/business-os/lazyDialogs';
  * What hiding costs is reach. This sits on every screen; settings is one. The
  * case worth remembering before removing it for good is an owner whose
  * language is wrong — a mis-tapped chip in onboarding — who then has to find
- * Settings in a script they may not read. The gear icon needs no reading, so
- * it is recoverable, but it is the reason this is a hide and not a delete.
+ * Settings in a script they may not read. The settings control needs no
+ * reading: it is a gear, or that owner's own initials, in their own script
+ * either way. So it is recoverable — but it is the reason this is a hide and
+ * not a delete.
  */
 const SHOW_HEADER_LANGUAGE_PICKER = false;
 
-export function BusinessOSHeader({ planBadge = null }: { planBadge?: PlanBadgeProps | null }) {
+/**
+ * `ownerInitials` is read by the layout, server-side, the same way `planBadge`
+ * is, and for the same reason: the name lives in `profiles`, which only a
+ * repository may read (CLAUDE.md rule 1), and this file is a client component.
+ *
+ * `null` — no session, no name, no email, an unreadable row — keeps the gear
+ * icon this button has always carried. A blank square in the corner of every
+ * screen would read as a broken avatar, and two wrong letters would be a claim
+ * about who is signed in.
+ */
+export function BusinessOSHeader({
+  planBadge = null,
+  ownerInitials = null,
+}: {
+  planBadge?: PlanBadgeProps | null;
+  ownerInitials?: string | null;
+}) {
   const router = useRouter();
   const { language, setLanguage, t } = useLanguage();
   const [isLanguageOpen, setIsLanguageOpen] = useState(false);
@@ -243,14 +261,49 @@ export function BusinessOSHeader({ planBadge = null }: { planBadge?: PlanBadgePr
           </div>
           )}
 
-          {/* Settings Icon - direct link */}
+          {/*
+            Settings — the owner's own initials, falling back to the gear.
+
+            THE SAME BUTTON AS BEFORE: same geometry as the calendar and theme
+            controls beside it, same destination, same `aria-label`, so the
+            route and the screen-reader announcement are untouched and only the
+            glyph inside has changed. The label is what carries the meaning
+            either way — initials alone do not say "settings", and the chip is
+            recognised by convention rather than read.
+
+            Tinted instead of the neutral surface its neighbours use: it is the
+            one control in the row that stands for a person rather than an
+            action, and the tint is what separates "you" from "a button".
+          */}
           <button
             onClick={() => router.push('/business-os/settings')}
-            className="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors"
+            className={
+              ownerInitials
+                ? 'flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-primary)]/10 border border-[var(--v2-primary)]/30 hover:bg-[var(--v2-primary)]/20 transition-colors'
+                : 'flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors'
+            }
             style={{ borderRadius: 'var(--v2-radius-button)' }}
             aria-label={t('settings.title')}
           >
-            <Settings className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-secondary)]" />
+            {ownerInitials ? (
+              /*
+                `leading-none` and `tracking-wide`: two capitals in a 36px
+                square sit low and crowded at the default line height, and the
+                letters are the whole content here.
+
+                `aria-hidden`, like the gear it replaces — the button's label
+                already says where this goes, and a screen reader reading "O O
+                settings" would be worse than either alone.
+              */
+              <span
+                aria-hidden="true"
+                className="text-xs sm:text-sm font-semibold leading-none tracking-wide text-[var(--v2-primary)]"
+              >
+                {ownerInitials}
+              </span>
+            ) : (
+              <Settings className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-secondary)]" />
+            )}
           </button>
         </div>
       </div>

@@ -272,11 +272,39 @@ const RESENDABLE_KINDS = new Set([
  * ─────────────────────────────────────────────────────────────────────────────
  */
 function holdsFocus(card: SessionCardData, focus: string): boolean {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE ID ARRIVING HERE IS NOT ALWAYS A BOOKING ID.
+   *
+   * `stage_awaiting_completion` deep-links to the SESSION a phase bills, and
+   * sends `meeting_id ?? booking_id` — the meeting first, deliberately, because
+   * a package's container carries no time and opening it would name the
+   * purchase rather than the hour in question.
+   *
+   * This only ever compared booking ids. So on every package whose stages
+   * carry a meeting — which is all of them — the match failed, `focusIndex`
+   * came back -1, the list fell back to page one and nothing expanded. It
+   * looked like a pagination bug because page one is where it landed; it was
+   * never finding the card at all.
+   *
+   * `attempts` is where a card keeps its `scheduling_meetings` rows, so asking
+   * it covers both package shapes: the newer one, whose per-session cards are
+   * built FROM meetings and already match on `booking.id`, and the older one
+   * of child bookings, where the meeting id lives only here.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const byMeeting = (one: SessionCardData): boolean =>
+    (one.booking.attempts ?? []).some(attempt => attempt.id === focus);
+
   return (
     card.booking.id === focus ||
     card.booking.parent_booking_id === focus ||
+    byMeeting(card) ||
     (card.meetings ?? []).some(
-      meeting => meeting.booking.id === focus || meeting.booking.parent_booking_id === focus
+      meeting =>
+        meeting.booking.id === focus ||
+        meeting.booking.parent_booking_id === focus ||
+        byMeeting(meeting)
     )
   );
 }

@@ -42,6 +42,24 @@ interface SystemReadinessProps {
   /** Action key -> message, shown under the list when a connection fails. */
   actionError?: { action: string; message: string } | null;
   /**
+   * Draw as a single line until asked to open.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * For the demoted position. Once nothing compulsory is left, the full chain
+   * is a finished checklist, and the dashboard has better uses for that much
+   * vertical space — but the card still owns the optional steps and is the
+   * only map of what this business has configured, so it shrinks rather than
+   * leaves.
+   *
+   * Has no effect while anything compulsory is missing: a business that cannot
+   * take a client is not told so on one collapsed line. The caller only passes
+   * it in the finished state, and the `ready` test below enforces it anyway —
+   * two independent reasons, because getting this wrong hides the one thing
+   * the card exists to say.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  collapsible?: boolean;
+  /**
    * What the onboarding chat learned about this business — whether money moves,
    * how it is collected, whether they wanted a site.
    *
@@ -62,8 +80,14 @@ export function SystemReadiness({
   pendingActions = [],
   actionError,
   shape = UNKNOWN_SHAPE,
+  collapsible = false,
 }: SystemReadinessProps) {
   const { t, isRTL } = useLanguage();
+  /*
+   * Opened for this visit only — never stored. See the strip below, and the
+   * same decision recorded on `ChannelsOverviewCard`.
+   */
+  const [expanded, setExpanded] = useState(false);
   /**
    * The step a blocked click is pointing at.
    *
@@ -133,6 +157,84 @@ export function SystemReadiness({
     );
   }
 
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE FINISHED CARD, ON ONE LINE.
+   *
+   * Reached only below the unknown-state return above, which is the whole
+   * point of the ordering: a check that could not run is never collapsed. It
+   * gets its sentence at full size, because a failed request that looks like a
+   * tidy finished strip is the same silent lie that `return null` used to tell
+   * here.
+   *
+   * `ready` is required as well as `collapsible`. The caller already only asks
+   * for this when setup is done, and this says it again locally — a business
+   * that cannot yet take a client must never have that fact folded away.
+   *
+   * The open state lives for as long as the page does and no longer. Storing
+   * it was tried on the channels card and removed: opening something once, to
+   * check one thing, should not reshape the dashboard on every load for weeks
+   * afterwards.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (collapsible && ready && !expanded) {
+    const done = items.length - missing.length;
+    return (
+      <button
+        type="button"
+        onClick={() => setExpanded(true)}
+        aria-expanded={false}
+        style={{
+          direction: isRTL ? 'rtl' : 'ltr',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          width: '100%',
+          background: 'var(--v2-surface)',
+          border: '1px solid var(--v2-border)',
+          borderRadius: '18px',
+          padding: '12px 16px',
+          fontFamily: bodyFont,
+          fontSize: '13px',
+          color: 'var(--v2-text-secondary)',
+          cursor: 'pointer',
+          textAlign: isRTL ? 'right' : 'left',
+        }}
+      >
+        <Check className="h-4 w-4" style={{ color: '#10B981', flexShrink: 0 }} aria-hidden="true" />
+        <span style={{ fontWeight: 600, color: INK }}>
+          {t('readiness.ready') || 'You are ready for clients'}
+        </span>
+        {done > 0 && (
+          <span style={{ whiteSpace: 'nowrap' }}>
+            {' · '}
+            {t('readiness.doneGroup', { count: done })}
+          </span>
+        )}
+        {/*
+          The optional steps are the reason this strip is a door rather than a
+          label. They are real improvements — a diary that syncs, a connected
+          account — and once the chain is folded away this count is the only
+          thing on the dashboard that still points at them.
+          Finished state only: while compulsory steps remain, the count that
+          matters is those, and an optional tally beside them competes with it.
+        */}
+        {ready && missing.length > 0 && (
+          <span style={{ whiteSpace: 'nowrap' }}>
+            {' · '}
+            {missing.length} {t('readiness.optional') || 'optional'}
+          </span>
+        )}
+        <span
+          aria-hidden="true"
+          style={{ marginInlineStart: 'auto', flexShrink: 0, opacity: 0.6 }}
+        >
+          {isRTL ? '‹' : '›'}
+        </span>
+      </button>
+    );
+  }
 
   const steps = allSteps(graph);
 
@@ -384,6 +486,40 @@ export function SystemReadiness({
                 ? (t('readiness.remaining.one') || '1 step left')
                 : (t('readiness.remaining.many', { count: mandatoryLeft }) || `${mandatoryLeft} steps left`)}
           </span>
+        )}
+        {/*
+          The way back to the line it came from.
+
+          Only where there IS a line to go back to. In the row position this
+          card has never collapsed and has no business growing a control that
+          would leave the slot empty — `collapsible` is what the caller uses to
+          say which position this is.
+
+          Without it, opening the strip was one-way for the rest of the visit:
+          a reader who tapped it to check one step had the full chain back
+          across the top of the page until they reloaded.
+        */}
+        {collapsible && (
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            aria-expanded
+            aria-label={t('common.collapse') || 'Collapse'}
+            title={t('common.collapse') || 'Collapse'}
+            style={{
+              flexShrink: 0,
+              background: 'transparent',
+              border: 'none',
+              padding: '2px 4px',
+              cursor: 'pointer',
+              color: MUTED,
+              fontFamily: bodyFont,
+              fontSize: '13px',
+              lineHeight: 1,
+            }}
+          >
+            ⌃
+          </button>
         )}
       </div>
 

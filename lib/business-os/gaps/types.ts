@@ -120,7 +120,24 @@ export type GapId =
    * quote stays where it was — the client has it, and nagging the owner about
    * it every morning is what `blocksOn` exists to prevent.
    */
-  | 'quote_deadline_unanswered';
+  | 'quote_deadline_unanswered'
+  /**
+   * A meeting that was held and never charged for.
+   *
+   * Distinct from `invoice_unpaid`, which reads `payment_invoices` and so
+   * needs an invoice to exist: here one never did. Distinct from
+   * `stage_awaiting_completion`, which reads plan installments, which a
+   * direct-price booking has none of.
+   */
+  | 'booking_unbilled'
+  /**
+   * A dateless service that was paid for and never handed over.
+   *
+   * The obligation to `booking_unbilled`'s debt: there, work was done and
+   * never charged; here, money arrived and the work has not been confirmed as
+   * given.
+   */
+  | 'delivery_unconfirmed';
 
 /**
  * What the owner can do about a gap, if anything.
@@ -156,6 +173,21 @@ export type GapAction =
    * three marks already are.
    */
   | 'mark_meeting'
+  /**
+   * Raise the invoice for work that was done and never charged for.
+   *
+   * NAVIGATES. An invoice carries an amount, a due date and tax, and raising
+   * one from a dashboard button would decide all three on the owner's behalf.
+   */
+  | 'send_invoice'
+  /**
+   * Confirm that a dateless service was actually handed over.
+   *
+   * NAVIGATES, and for the reason `mark_meeting` does: only the owner knows
+   * whether the work left their hands, and the booking is where that is
+   * recorded.
+   */
+  | 'mark_delivered'
   | null;
 
 /** One stuck thing, named the way a person would refer to it. */
@@ -257,6 +289,22 @@ export interface GapItem {
    * ───────────────────────────────────────────────────────────────────────────
    */
   autoHeld?: boolean;
+  /**
+   * The automation that owns this item has finished with it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A chaser works a finite schedule and then stops. Until it does, a row
+   * telling the owner to chase would be asking them to duplicate a robot; once
+   * it has, nobody is working the item at all and it belongs back on the card
+   * — switched on or not.
+   *
+   * Set only where the answer is knowable and the stakes justify asking. Money
+   * owed is the first: `payment_reminders` is a queue, so "nothing left
+   * pending and something was sent" is the whole test. Absent elsewhere, which
+   * the reader must treat as "still being worked" rather than "finished".
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  chaserDone?: boolean;
   /**
    * Which channel brought this one, as a KEY.
    *

@@ -77,11 +77,27 @@ describe('which task leads', () => {
    * Money still leaving an account beats somebody waiting, whatever the ages.
    * The ranking is proved in `mostUrgent.test.ts`; this proves the card asks it.
    */
+  /*
+   * ─────────────────────────────────────────────────────────────────────────
+   * EVERY SENTENCE NOW EXISTS TWICE IN THE DOM, AND ONCE ON SCREEN.
+   *
+   * The card renders the promoted task as its own block AND the full list
+   * beneath it, folding whichever one is not wanted — in the DOM, out of the
+   * accessibility tree, which is what the comment on the fold test below
+   * describes. While list rows read "{name} · {service}" the two never
+   * collided, because only the lead held the sentence.
+   *
+   * Both carry it now, so a text query matches two nodes and `getByText`
+   * refuses. `getAllByText` plus `toBeVisible` is the honest pair: it asserts
+   * what the OWNER sees rather than what the renderer emitted.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
   it('leads with the one that is costing money right now', () => {
     render(<NeedsYouCard gaps={[enquiry(), charging]} />);
 
-    expect(screen.getByText(/Dana Cohen cancelled/)).toBeInTheDocument();
-    expect(screen.queryByText(/Michal Avni got in touch/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Dana Cohen cancelled/).length).toBeGreaterThan(0);
+    /* In the DOM as a folded row; the fold is what hides it. */
+    expect(screen.getByText(/Michal Avni got in touch/)).not.toBeVisible();
   });
 
   it('says why it is first, not just what it is', () => {
@@ -97,7 +113,9 @@ describe('which task leads', () => {
   it('states it as a sentence with the client and the amount in it', () => {
     render(<NeedsYouCard gaps={[charging]} />);
 
-    expect(screen.getByText(/Dana Cohen cancelled the appointment/)).toHaveTextContent('₪1200');
+    expect(screen.getAllByText(/Dana Cohen cancelled the appointment/)[0]).toHaveTextContent(
+      '₪1200'
+    );
   });
 
   /*
@@ -120,9 +138,11 @@ describe('which task leads', () => {
     render(<NeedsYouCard gaps={[awkward]} />);
 
     // Present as its own line...
-    expect(screen.getByText('a renovation quote')).toBeVisible();
+    /* Its own node either way — it moved from the sentence's line down to the
+       context line beside the date, but it is still never inside the grammar. */
+    expect(screen.getAllByText('a renovation quote')[0]).toBeInTheDocument();
     // ...and not swallowed into the sentence.
-    expect(screen.getByText(/Dana Cohen cancelled the appointment/)).not.toHaveTextContent(
+    expect(screen.getAllByText(/Dana Cohen cancelled the appointment/)[0]).not.toHaveTextContent(
       'a renovation quote'
     );
   });
@@ -143,9 +163,19 @@ describe('the fold', () => {
   it('opens the full list, and the list still holds the other task', () => {
     render(<NeedsYouCard gaps={[enquiry(), charging]} />);
 
-    expect(screen.getByText('Michal Avni')).not.toBeVisible();
+    /*
+     * Matched on the SENTENCE, not the bare name.
+     *
+     * The folded rows used to read "{name} · {service}", so the name alone
+     * identified one. Every row now carries the same sentence the lead does —
+     * a status heading above a list of names told the owner what KIND of
+     * trouble each was in but never what to do about it, and that was the
+     * whole complaint. The name is still in the row; it is no longer the
+     * entire row.
+     */
+    expect(screen.getByText(/Michal Avni got in touch/)).not.toBeVisible();
     fireEvent.click(screen.getByText(/and 1 more waiting/));
-    expect(screen.getByText('Michal Avni')).toBeVisible();
+    expect(screen.getByText(/Michal Avni got in touch/)).toBeVisible();
   });
 
   /* One task is not a list, so there is nothing to offer to open. */
@@ -167,7 +197,9 @@ describe('a task the platform is already answering', () => {
 
     render(<NeedsYouCard gaps={[queuedEnquiry, charging]} />);
 
-    expect(screen.getByText(/Dana Cohen cancelled/)).toBeInTheDocument();
+    /* Twice in the DOM now — the headline and its own list row both carry the
+       sentence. That it appears at all is the claim here. */
+    expect(screen.getAllByText(/Dana Cohen cancelled/).length).toBeGreaterThan(0);
   });
 
   /*
@@ -179,6 +211,7 @@ describe('a task the platform is already answering', () => {
 
     render(<NeedsYouCard gaps={[queuedEnquiry]} />);
 
-    expect(screen.getByText('Michal Avni')).toBeInTheDocument();
+    /* By the sentence, not the bare name: a row is a sentence now. */
+    expect(screen.getByText(/Michal Avni got in touch/)).toBeVisible();
   });
 });

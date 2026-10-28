@@ -16,6 +16,7 @@ import { Space_Grotesk, Inter } from 'next/font/google';
 import { readPlanBadge } from '@/lib/business-os/entitlements/readPlanBadge';
 import { redirectIfAwaitingPayment } from '@/lib/business-os/invites/paymentHoldGate';
 import { readInitialLanguage } from '@/lib/business-os/readInitialLanguage';
+import { readOwnerIdentity } from '@/lib/business-os/readOwnerIdentity';
 import { OwnerDirScript } from '@/components/business-os/OwnerDirScript';
 import '@/lib/design-system-v2/v2-theme-tokens.css';
 import { V2ThemeScript } from '@/lib/design-system-v2/V2ThemeScript';
@@ -87,10 +88,15 @@ export default async function BusinessOSLayout({
   // Plan payments P-6a.2 (SA C-13): the owner's payment banner, read with the
   // pill and AFTER the hold (F5b-4). `readPaymentNotice` never rejects and makes
   // no query while the price switch is off.
-  const [planBadge, initialLanguage, paymentNotice] = await Promise.all([
+  // The header's identity chip (the owner's initials, in place of the settings
+  // gear). Read here with the pill and AFTER the hold, for the same reasons:
+  // the name lives in `profiles`, which only a repository may read, and the
+  // header is a client component. Never rejects; `null` keeps the gear.
+  const [planBadge, initialLanguage, paymentNotice, ownerIdentity] = await Promise.all([
     readPlanBadge(),
     initialLanguagePending,
     readPaymentNotice(),
+    readOwnerIdentity(),
   ]);
   // Already in flight since before the hold: no extra round trip. `known` is
   // false only when a cold read missed its deadline; the provider then
@@ -163,7 +169,7 @@ export default async function BusinessOSLayout({
                     body — `sticky` is gone, because nothing is scrolling past
                     this any more. */}
                 <div className="relative z-50 shrink-0">
-                  <BusinessOSHeader planBadge={planBadge} />
+                  <BusinessOSHeader planBadge={planBadge} ownerInitials={ownerIdentity?.initials ?? null} />
                   <BusinessOSTabs />
                   <PlanPaymentBanner notice={paymentNotice} />
                 </div>
