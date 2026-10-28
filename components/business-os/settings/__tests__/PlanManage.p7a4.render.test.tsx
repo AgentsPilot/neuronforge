@@ -6,14 +6,17 @@
  * 'ends now', not 'until {date}'").
  *
  * With `manage.paymentFailed` + `manage.cancel` the island shows the "cancel
- * to end it now" line and a Cancel whose confirmation names no date; it posts
- * `{}`; the line after the press follows the ROUTE's answer: `mode:
- * 'immediate'` or `state: 'ended'` → "has ended"; a period-end answer (Stripe
- * had already cured the payment) → the usual "You keep {plan} until {date}".
+ * to end it now" line and a Cancel that opens the Cancel drawer in `mode="now"`
+ * (D3 T-13): its review and confirm steps say the plan ends TODAY and name no
+ * date; the reason step is still required and the drawer posts
+ * `{ reasonCode }` (D3 SA ruling 6; P-7a.4 adds no body field). The line after
+ * the press follows the ROUTE's answer: `mode: 'immediate'` or
+ * `state: 'ended'` → "has ended"; a period-end answer (Stripe had already
+ * cured the payment) → the usual "You keep {plan} until {date}".
  */
 
 import '@testing-library/jest-dom';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 type Lang = 'en' | 'he' | 'es';
 const mockLang: { language: Lang } = { language: 'en' };
@@ -28,6 +31,10 @@ jest.mock('@/lib/business-os/LanguageContext', () => {
     }),
   };
 });
+
+jest.mock('@/components/business-os/data-export/DownloadMyDataButton', () => ({
+  DownloadMyDataButton: () => <div data-testid="download-my-data" />,
+}));
 
 import { PlanManage } from '@/components/business-os/settings/PlanManage';
 import type { PlanPayload } from '@/components/business-os/settings/planPayloadTypes';
@@ -61,6 +68,13 @@ function failing(): PlanPayload {
   } as unknown as PlanPayload;
 }
 
+/** D3 T-13: Cancel opens the drawer; walk it to the confirm step (reason → changes → review → confirm). */
+function walkToConfirm(reason = 'too_expensive') {
+  fireEvent.click(screen.getByTestId('plan-manage-cancel'));
+  fireEvent.click(screen.getByTestId(`plan-cancel-reason-${reason}`));
+  for (let step = 1; step < 4; step += 1) fireEvent.click(screen.getByTestId('plan-cancel-next'));
+}
+
 const fetchMock = jest.fn();
 beforeEach(() => {
   mockLang.language = 'en';
@@ -69,46 +83,51 @@ beforeEach(() => {
 });
 
 describe('PlanManage — P-7a.4 failed payment', () => {
-  it('shows the "end it now" line and Cancel; the confirmation says it ends NOW and names no date', () => {
+  it('shows the "end it now" line and Cancel; the drawer says it ends NOW (review + confirm) and names no date', async () => {
     render(<PlanManage plan={failing()} />);
     expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(translations.en['plan.manage.payment_failed_cancel_now']);
     fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    const confirm = screen.getByTestId('plan-manage-confirm-now');
-    expect(confirm).toHaveTextContent(translations.en['plan.manage.cancel_now_body'].replace('{plan}', 'Essentials'));
-    expect(confirm).toHaveTextContent(translations.en['plan.manage.cancel_now_confirm']);
-    expect(confirm.textContent).not.toMatch(/until|\{date\}/);
-    // The period-end confirmation is not shown.
-    expect(screen.queryByTestId('plan-manage-confirm')).not.toBeInTheDocument();
-    // "Keep my plan" backs out with no request.
-    fireEvent.click(screen.getByTestId('plan-manage-keep'));
+    // The reason step is still required in `now` mode (D3 SA ruling 6).
+    expect(screen.getByTestId('plan-cancel-next')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('plan-cancel-reason-too_expensive'));
+    fireEvent.click(screen.getByTestId('plan-cancel-next'));
+    fireEvent.click(screen.getByTestId('plan-cancel-next'));
+    expect(screen.getByTestId('plan-cancel-last-day')).toHaveTextContent(translations.en['settings.plan_cancel.review.ends_now']);
+    fireEvent.click(screen.getByTestId('plan-cancel-next'));
+    const confirm = screen.getByTestId('plan-cancel-confirm-body');
+    expect(confirm).toHaveTextContent(translations.en['settings.plan_cancel.confirm.body_now']);
+    expect(confirm.textContent).not.toMatch(/until|before|\{date\}|2026/);
+    // "Don't cancel" backs out with no request.
+    fireEvent.click(screen.getByTestId('plan-cancel-dismiss'));
+    await waitFor(() => expect(screen.queryByTestId('plan-cancel-drawer')).not.toBeInTheDocument());
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('confirm posts {} to the cancel route; `mode: immediate` → "has ended"', async () => {
+  it('confirm posts `{ reasonCode }` to the cancel route; `mode: immediate` → "has ended"', async () => {
     const onChanged = jest.fn();
     fetchMock.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { outcome: 'cancelled', endsOn: '2026-10-27T10:00:00.000Z', mode: 'immediate' } }) });
     render(<PlanManage plan={failing()} onChanged={onChanged} />);
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    fireEvent.click(screen.getByTestId('plan-manage-cancel-confirm'));
+    walkToConfirm('missing_feature');
+    fireEvent.click(screen.getByTestId('plan-cancel-confirm'));
     const done = await screen.findByTestId('plan-manage-done');
     expect(done).toHaveTextContent(translations.en['plan.manage.ended_now'].replace('{plan}', 'Essentials'));
-    expect(fetchMock).toHaveBeenCalledWith('/api/business-os/billing/plan/cancel', expect.objectContaining({ method: 'POST', body: '{}' }));
+    expect(fetchMock).toHaveBeenCalledWith('/api/business-os/billing/plan/cancel', expect.objectContaining({ method: 'POST', body: '{"reasonCode":"missing_feature"}' }));
     expect(onChanged).toHaveBeenCalledTimes(1);
   });
 
   it('`unchanged` / `ended` (a second tab) → "has ended" too', async () => {
     fetchMock.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { outcome: 'unchanged', state: 'ended', date: '2026-10-27T10:00:00.000Z' } }) });
     render(<PlanManage plan={failing()} />);
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    fireEvent.click(screen.getByTestId('plan-manage-cancel-confirm'));
+    walkToConfirm();
+    fireEvent.click(screen.getByTestId('plan-cancel-confirm'));
     expect(await screen.findByTestId('plan-manage-done')).toHaveTextContent(translations.en['plan.manage.ended_now'].replace('{plan}', 'Essentials'));
   });
 
   it('Stripe had cured it: a period-end answer reads "You keep {plan} until {date}", never "has ended"', async () => {
     fetchMock.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { outcome: 'cancelled', endsOn: '2099-11-26T10:00:00.000Z' } }) });
     render(<PlanManage plan={failing()} />);
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    fireEvent.click(screen.getByTestId('plan-manage-cancel-confirm'));
+    walkToConfirm();
+    fireEvent.click(screen.getByTestId('plan-cancel-confirm'));
     const done = await screen.findByTestId('plan-manage-done');
     expect(done.textContent).toContain('2099');
     expect(done.textContent).not.toContain(translations.en['plan.manage.ended_now'].replace('{plan}', 'Essentials'));
@@ -120,9 +139,32 @@ describe('PlanManage — P-7a.4 failed payment', () => {
     (plan.purchase as unknown as { billing: unknown }).billing = { state: 'renewing', date: '2099-11-26T10:00:00.000Z' };
     render(<PlanManage plan={plan} />);
     expect(screen.queryByTestId('plan-manage-payment-failed')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    expect(screen.getByTestId('plan-manage-confirm')).toBeInTheDocument();
-    expect(screen.queryByTestId('plan-manage-confirm-now')).not.toBeInTheDocument();
+    walkToConfirm();
+    expect(screen.getByTestId('plan-cancel-confirm-body')).toHaveTextContent('You can keep it any time before November 26, 2099.');
+    expect(screen.getByTestId('plan-cancel-confirm-body')).not.toHaveTextContent(translations.en['settings.plan_cancel.confirm.body_now']);
+  });
+
+  it.each(['en', 'he', 'es'] as const)('%s: the ends-now confirm keeps the P-7a.4 unpaid-invoice line under body_now; period_end has none', (lang) => {
+    mockLang.language = lang;
+    const dict = translations[lang];
+    const invoice = dict['plan.manage.cancel_now_body'].replace('{plan}', 'Essentials');
+    const { unmount } = render(<PlanManage plan={failing()} />);
+    walkToConfirm();
+    const body = screen.getByTestId('plan-cancel-confirm-body');
+    const line = screen.getByTestId('plan-cancel-confirm-invoice');
+    expect(body).toHaveTextContent(dict['settings.plan_cancel.confirm.body_now']);
+    expect(line).toHaveTextContent(invoice);
+    // Under body_now: the line follows the confirm body.
+    expect(body.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    unmount();
+
+    const renewing = failing();
+    (renewing.purchase as unknown as { manage: unknown }).manage = { cancel: true, reactivate: false, paymentFailed: false };
+    (renewing.purchase as unknown as { billing: unknown }).billing = { state: 'renewing', date: '2099-11-26T10:00:00.000Z' };
+    render(<PlanManage plan={renewing} />);
+    walkToConfirm();
+    expect(screen.queryByTestId('plan-cancel-confirm-invoice')).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(invoice);
   });
 
   it('a refused Reactivate during a failed payment reads the new line, never the server English', async () => {
@@ -141,9 +183,10 @@ describe('PlanManage — P-7a.4 failed payment', () => {
     host.setAttribute('dir', lang === 'he' ? 'rtl' : 'ltr');
     document.body.appendChild(host);
     render(<PlanManage plan={failing()} />, { container: host });
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    const confirm = screen.getByTestId('plan-manage-confirm-now');
-    expect(confirm.textContent).toContain('Essentials');
+    walkToConfirm();
+    expect(screen.getByTestId('plan-cancel-heading').textContent).toContain('Essentials');
+    const confirm = screen.getByTestId('plan-cancel-confirm-body');
+    expect(confirm).toHaveTextContent(translations[lang]['settings.plan_cancel.confirm.body_now']);
     expect(confirm.textContent).not.toMatch(/\{(plan|date)\}/);
     for (const el of Array.from(host.querySelectorAll('*'))) expect((el as HTMLElement).className?.toString() ?? '').not.toMatch(PHYSICAL);
     host.remove();
@@ -159,11 +202,11 @@ describe('PlanManage — P-7a.4 failed payment', () => {
       freeAccessAfter: { endsAt: FREE_UNTIL },
     };
     const sentence = translations.en['plan.manage.cancel_confirm_founding'].replace('{freeUntil}', 'March 1, 2100');
-    const endsNow = translations.en['plan.manage.cancel_now_body'].replace('{plan}', 'Essentials');
+    const endsNow = translations.en['settings.plan_cancel.confirm.body_now'];
 
     const { unmount } = render(<PlanManage plan={founding} />);
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    const text = screen.getByTestId('plan-manage-confirm-now').textContent ?? '';
+    walkToConfirm();
+    const text = screen.getByTestId('plan-cancel-confirm-body').textContent ?? '';
     expect(text).toContain(endsNow);
     expect(text).toContain(sentence);
     // "Ends now" first, then where the owner lands.
@@ -171,8 +214,8 @@ describe('PlanManage — P-7a.4 failed payment', () => {
     unmount();
 
     render(<PlanManage plan={failing()} />);
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    expect(screen.getByTestId('plan-manage-confirm-now')).not.toHaveTextContent('Founding Partner');
+    walkToConfirm();
+    expect(screen.getByTestId('plan-cancel-confirm-body')).not.toHaveTextContent('Founding Partner');
   });
 
   it('the retired P-7a.1 "contact us" key is gone from every dictionary', () => {

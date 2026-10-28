@@ -86,6 +86,11 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   // P-6a.2 (workplan §5.6, SA C-13): the owner banner reads the SESSION
   // account's billing row for the current mode (findByUser only).
   'readPaymentNotice.ts': [BILLING_ACCOUNTS],
+  // D3.1 (account deletion lifecycle SX-2b; DELETE-owned file, SA S-9): the after-plan
+  // move's production wiring reads the plan row and writes the move
+  // (findAfterPlanMoveInputs, applyAfterPlanMove). Its use case, afterPlanMove.ts, names
+  // no repository. Added at the end, existing order kept; reviewed by PLAN PAYMENTS with T-8.
+  'afterPlanMoveDeps.ts': [ACCOUNT_PLANS],
 };
 const BILLING_REPOSITORY_CALLERS = Object.keys(BILLING_REPOSITORY_IMPORTS);
 

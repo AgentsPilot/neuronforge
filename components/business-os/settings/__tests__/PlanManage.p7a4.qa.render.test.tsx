@@ -14,6 +14,11 @@
  *   - focus 6: the five new keys complete in en / he / es; he / es at 360 px in
  *     an RTL / LTR container; `plan.manage.payment_failed_contact` gone from
  *     every dictionary and every source file.
+ *
+ * D3 T-13: the inline "ends now" confirmation became the Cancel drawer in
+ * `mode="now"` (reason → what changes → review → confirm), so every press here
+ * walks the drawer and the "ends now" wording is the drawer's
+ * `settings.plan_cancel.review.ends_now` / `.confirm.body_now`.
  */
 
 import '@testing-library/jest-dom';
@@ -35,6 +40,9 @@ jest.mock('@/lib/business-os/LanguageContext', () => {
   return { useLanguage: value, useOptionalLanguage: value };
 });
 jest.mock('@/lib/supabaseClient', () => ({ supabase: {} }));
+jest.mock('@/components/business-os/data-export/DownloadMyDataButton', () => ({
+  DownloadMyDataButton: () => <div data-testid="download-my-data" />,
+}));
 
 import type { PlanPayload } from '@/components/business-os/settings/planPayloadTypes';
 import { PlanManage } from '@/components/business-os/settings/PlanManage';
@@ -66,9 +74,16 @@ const failingPayload = () => payloadFor({ billingRow: payingRow(LOWER, { subscri
 const planName = (p: PlanPayload) => (p as unknown as { name: string }).name;
 const fill = (s: string, vars: Record<string, string>) => s.replace(/\{(\w+)\}/g, (_m, k: string) => vars[k] ?? `{${k}}`);
 
-async function pressEndNow(): Promise<HTMLElement> {
+/** D3 T-13: Cancel opens the drawer; walk it to the confirm step (reason → changes → review → confirm). */
+function walkToConfirm(reason = 'too_expensive') {
   fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-  fireEvent.click(screen.getByTestId('plan-manage-cancel-confirm'));
+  fireEvent.click(screen.getByTestId(`plan-cancel-reason-${reason}`));
+  for (let step = 1; step < 4; step += 1) fireEvent.click(screen.getByTestId('plan-cancel-next'));
+}
+
+async function pressEndNow(): Promise<HTMLElement> {
+  walkToConfirm();
+  fireEvent.click(screen.getByTestId('plan-cancel-confirm'));
   return screen.findByTestId('plan-manage-done');
 }
 
@@ -84,9 +99,10 @@ describe('QA P-7a.4 — real view: a failing row offers Cancel that ends now', (
     expect(manage).toMatchObject({ cancel: true, reactivate: false, paymentFailed: true });
     render(<PlanManage plan={payload} />);
     expect(screen.queryByTestId('plan-manage-reactivate')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    expect(screen.getByTestId('plan-manage-confirm-now')).toBeInTheDocument();
-    expect(screen.queryByTestId('plan-manage-confirm')).not.toBeInTheDocument();
+    walkToConfirm();
+    // The drawer in `now` mode: "ends today", never the period-end date.
+    expect(screen.getByTestId('plan-cancel-confirm-body')).toHaveTextContent(translations.en['settings.plan_cancel.confirm.body_now']);
+    expect(screen.getByTestId('plan-cancel-confirm-body').textContent).not.toMatch(/before|until/);
   });
 
   it('a failure count on an ended row offers no Cancel (deviation 5)', async () => {
@@ -119,11 +135,11 @@ describe('QA focus 3 (UI): two presses, two tabs', () => {
     let resolve: (v: unknown) => void = () => undefined;
     fetchMock.mockImplementation(() => new Promise((r) => { resolve = r; }));
     render(<PlanManage plan={payload} />);
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    const confirm = screen.getByTestId('plan-manage-cancel-confirm');
+    walkToConfirm();
+    const confirm = screen.getByTestId('plan-cancel-confirm');
     fireEvent.click(confirm);
     fireEvent.click(confirm);
-    expect(screen.queryByTestId('plan-manage-cancel-confirm')).not.toBeInTheDocument();
+    expect(screen.getByTestId('plan-cancel-confirm')).toBeDisabled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await act(async () => resolve(answer(200, { success: true, data: { outcome: 'cancelled', endsOn: new Date().toISOString(), mode: 'immediate' } })));
     expect(await screen.findByTestId('plan-manage-done')).toHaveTextContent(fill(translations.en['plan.manage.ended_now'], { plan: planName(payload) }));
@@ -185,11 +201,11 @@ describe('QA focus 6: wording and layout', () => {
     render(<PlanManage plan={payload} />, { container: host });
     const dict = translations[lang];
     expect(screen.getByTestId('plan-manage-payment-failed')).toHaveTextContent(dict['plan.manage.payment_failed_cancel_now']);
-    fireEvent.click(screen.getByTestId('plan-manage-cancel'));
-    const confirm = screen.getByTestId('plan-manage-confirm-now');
-    expect(confirm).toHaveTextContent(fill(dict['plan.manage.cancel_now_body'], { plan: planName(payload) }));
-    expect(confirm).toHaveTextContent(dict['plan.manage.cancel_now_confirm']);
-    const row = screen.getByTestId('plan-manage-cancel-confirm').parentElement as HTMLElement;
+    walkToConfirm();
+    const confirm = screen.getByTestId('plan-cancel-confirm-body');
+    expect(confirm).toHaveTextContent(dict['settings.plan_cancel.confirm.body_now']);
+    expect(screen.getByTestId('plan-cancel-heading').textContent).toContain(planName(payload));
+    const row = screen.getByTestId('plan-cancel-confirm').parentElement as HTMLElement;
     expect(row.className).toMatch(/flex-wrap/);
     // No fixed width / nowrap that would stop a long Hebrew / Spanish line wrapping.
     for (const el of Array.from(host.querySelectorAll('*'))) {
@@ -197,7 +213,7 @@ describe('QA focus 6: wording and layout', () => {
       expect(cls).not.toMatch(PHYSICAL);
       expect(cls).not.toMatch(/whitespace-nowrap|truncate|(^|\s)w-\[\d/);
     }
-    fireEvent.click(screen.getByTestId('plan-manage-cancel-confirm'));
+    fireEvent.click(screen.getByTestId('plan-cancel-confirm'));
     expect(await screen.findByTestId('plan-manage-done')).toHaveTextContent(fill(dict['plan.manage.ended_now'], { plan: planName(payload) }));
     expect(host.textContent).not.toMatch(/\{(plan|date)\}|plan\.manage\./);
     host.remove();

@@ -16,6 +16,7 @@
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { AFTER_PLAN } from '@/lib/business-os/entitlements/config/afterPlan';
 import { CAPABILITIES } from '@/lib/business-os/entitlements/config/catalog';
 import { COHORTS } from '@/lib/business-os/entitlements/config/cohorts';
 import { LIFECYCLE_CONFIG } from '@/lib/business-os/entitlements/config/lifecycle';
@@ -43,6 +44,8 @@ function currentConfig() {
         margin: LIFECYCLE_CONFIG.renewalSettlementMarginHistory,
       },
     },
+    // D3.1 / SX-2b (D3 deviation 3, SA Q-10, DR-11): the after-plan grant.
+    afterPlan: { cohort: AFTER_PLAN.cohort, repeat: { ...AFTER_PLAN.repeat } },
     catalog: CAPABILITIES,
   };
 }
@@ -68,6 +71,8 @@ describe('the shipped configuration has not drifted', () => {
     // renewal margin would compare against nothing and never be caught.
     expect(snapshot.histories.subscription.grace.length).toBeGreaterThan(0);
     expect(snapshot.histories.subscription.margin?.length ?? 0).toBeGreaterThan(0);
+    // D3.1 (DR-11): the after-plan grant is frozen BEFORE the webhook first writes it.
+    expect(snapshot.afterPlan).toEqual({ cohort: AFTER_PLAN.cohort, repeat: AFTER_PLAN.repeat });
 
     expect(Object.keys(snapshot.tiers).sort()).toEqual(Object.keys(TIER_MATRIX.tiers).sort());
     for (const row of Object.values(snapshot.tiers)) {
@@ -329,5 +334,22 @@ describe('ranking, which is what makes "lowered" meaningful', () => {
 
     expect(rankValue({ perMonth: 500 }, allowance)).toBe(500);
     expect(rankValue({ total: 150 }, allowance)).toBe(150);
+  });
+});
+
+describe('D3.1 / SX-2b — the after-plan grant is frozen like a tier change (DR-11)', () => {
+  it.each([
+    ['the cohort', { cohort: 'champion', repeat: AFTER_PLAN.repeat }],
+    ['the divisor', { cohort: AFTER_PLAN.cohort, repeat: { ...AFTER_PLAN.repeat, divisor: 3 } }],
+    ['the minimum', { cohort: AFTER_PLAN.cohort, repeat: { ...AFTER_PLAN.repeat, minimumDays: 2 } }],
+  ])('changing %s without refreshing the snapshot is reported', (_label, afterPlan) => {
+    const findings = findDrift(snapshot, { ...currentConfig(), afterPlan });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'after_plan_changed', where: 'afterPlan' });
+  });
+
+  it('dropping the entry is reported too', () => {
+    const rest = { ...currentConfig(), afterPlan: undefined };
+    expect(findDrift(snapshot, rest).map((finding) => finding.kind)).toEqual(['after_plan_changed']);
   });
 });

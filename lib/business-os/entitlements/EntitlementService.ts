@@ -39,7 +39,9 @@ import {
 import { fromOverrideRow, fromPlanRow, type AccountId, type EntitlementAccount, type EntitlementOverride } from './account';
 import { ALWAYS_SUFFICIENT, type AiActionBalanceSource } from './balance';
 import { decide, failurePolicyFor, type EntitlementDecision, type EntitlementRequest } from './decide';
+import { afterPlanAccount, type AfterPlanSkip } from './afterPlan';
 import { freeAccessAfterPaidTier, type FreeAccessAfterPaidTier } from './freeAccess';
+import { tierSettlementEndsAt, type LifecycleInputs } from './lifecycle';
 import { resolveEntitlements, type EntitlementResolution } from './resolver';
 import { getEntitlementConfig, type EntitlementConfig, type TierMatrixSource } from './source';
 import type { CatalogLike } from './schema';
@@ -67,7 +69,11 @@ interface CacheEntry {
 }
 
 export interface EntitlementServiceOptions {
-  repository?: Pick<BusinessOsAccountPlanRepository, 'findEntitlementInputs' | 'findEntitlementInputsBatch'>;
+  repository?: Pick<BusinessOsAccountPlanRepository, 'findEntitlementInputs' | 'findEntitlementInputsBatch'> &
+    // Optional (D3.1): only `previewAfterPlan` reads it, and it fails closed
+    // (`null`, the drawer's "could not work out") when a repository lacks it,
+    // so the many fakes that never preview need not grow a method.
+    Partial<Pick<BusinessOsAccountPlanRepository, 'findAfterPlanMoveState'>>;
   balanceSource?: AiActionBalanceSource;
   /** Injected in tests. Production uses the wall clock. */
   now?: () => Date;
@@ -289,29 +295,102 @@ export class EntitlementService {
    */
   async getFreeAccessAfterPaidTier(accountId: AccountId): Promise<FreeAccessAfterPaidTier | null> {
     const config = this.config();
-    const nowMs = this.now().getTime();
 
-    let account: EntitlementAccount | null;
-    const cached = this.cache.get(accountId);
-    if (cached && nowMs - cached.storedAtMs <= CACHE_TTL_SECONDS * 1000) {
-      account = cached.inputs.account;
-    } else {
-      const result = await this.repository.findEntitlementInputs(accountId);
-      if (result.error || !result.data) {
-        logger.warn({ err: result.error, accountId }, 'Entitlement inputs unreadable; free access after the paid plan not shown');
-        return null;
-      }
-      const inputs = toDomain(result.data);
-      this.store(accountId, { inputs, storedAtMs: nowMs });
-      account = inputs.account;
+    const inputs = await this.readInputs(accountId, 'Entitlement inputs unreadable; free access after the paid plan not shown');
+    if (!inputs) return null;
+
+    return freeAccessAfterPaidTier(inputs.account, lifecycleInputsOf(config));
+  }
+
+  /**
+   * Account-deletion lifecycle SX-2 (D3; workplan §2.3, SA Q-4 / R-5): the
+   * account now, and as it will resolve just after its paid tier ends at
+   * `endsAt`, for the Cancel drawer's "What changes" step (`planEndingView`).
+   * Display only: it writes nothing, refuses and grants nothing.
+   *
+   *   current         the account as it resolves now
+   *   after           the after-plan row (`afterPlanAccount`, the one rule
+   *                   SX-2b also writes with), resolved one millisecond past
+   *                   the tier's settlement end (`tierSettlementEndsAt`), so a
+   *                   renewing subscriber is never read as lapsed inside the margin
+   *   afterTrialEnd   when `after` is a live cohort with an end: the same row
+   *                   one millisecond past that end (its grace, then paused)
+   *   moved           true when the row moves to the after-plan cohort
+   *   days / skip     the free period's length when moved; why not, when not
+   *                   (`afterPlanAccount`'s closed list)
+   *   freeAccessAfter P-7a.3's `freeAccessAfterPaidTier` on the same ended row
+   *                   (SA R-4b: the Founding Partner date is never computed twice)
+   *
+   * D3.1 / SX-2b (workplan §4.2): the rule needs the account's repeat-cancel
+   * count, so the preview reads it (`findAfterPlanMoveState`: one small,
+   * UNCACHED read of two columns) and the drawer's `{until}` is the halved date
+   * the writer will store. A failed or missing count read returns `null`
+   * (warn, ids only), so the drawer says "could not work out" and never shows a
+   * repeat canceller the first-time period (C-9). `after` is resolved one
+   * millisecond past the LATER of the two settlement ends (`endsAt`'s and the
+   * row's paid-through date's), which is when paid access really ends (S-2).
+   *
+   * Same inputs and cache as `getSnapshot` (one private `readInputs`). The
+   * cached object is never mutated: `afterPlanAccount` copies. `null` when the
+   * inputs are unreadable or there is no plan row.
+   */
+  async previewAfterPlan(accountId: AccountId, endsAt: string): Promise<AfterPlanPreview | null> {
+    const config = this.config();
+
+    const inputs = await this.readInputs(accountId, 'Entitlement inputs unreadable; plan ending not previewed');
+    if (!inputs) return null;
+    if (!inputs.account) return null;
+
+    const lifecycle = lifecycleInputsOf(config);
+    const endsAtMs = Date.parse(endsAt);
+    if (!Number.isFinite(endsAtMs)) return null;
+
+    const priorMoves = await this.readAfterPlanMoves(accountId);
+    if (priorMoves === null) return null;
+
+    const resolveAt = (account: EntitlementAccount, at: Date) =>
+      resolveEntitlements({ config, account, overrides: inputs.overrides, addons: [], now: at });
+
+    const current = this.resolve(config, inputs);
+    const { account: afterAccount, moved, days, skip } = afterPlanAccount(inputs.account, endsAt, lifecycle, { priorMoves });
+    const margin = lifecycle.renewalSettlementMarginHistory;
+    const endsSettledMs = Date.parse(tierSettlementEndsAt(endsAt, margin));
+    const paidThrough = inputs.account.tier ? inputs.account.tierExpiresAt : null;
+    const rowSettledMs = paidThrough === null ? NaN : Date.parse(tierSettlementEndsAt(paidThrough, margin));
+    const settledMs = Number.isFinite(rowSettledMs) ? Math.max(endsSettledMs, rowSettledMs) : endsSettledMs;
+    // SA code review part 1, comment 1: when the rule moves the account, read it one
+    // millisecond into the free period the writer stores (its own `trialStartedAt`).
+    // Reading one margin later would miss a 1-day period after a lapsed tier ended now.
+    const freeFromMs = moved && afterAccount.trialStartedAt ? Date.parse(afterAccount.trialStartedAt) : NaN;
+    const after = resolveAt(afterAccount, new Date((Number.isFinite(freeFromMs) ? freeFromMs : settledMs) + 1));
+
+    let afterTrialEnd: EntitlementResolution | null = null;
+    const liveCohort =
+      after.basis.kind === 'cohort' && !after.anomaly && after.state !== 'grace' && after.state !== 'paused';
+    const afterEndMs = after.lifecycle.accessEndsAt === null ? NaN : Date.parse(after.lifecycle.accessEndsAt);
+    if (liveCohort && Number.isFinite(afterEndMs)) afterTrialEnd = resolveAt(afterAccount, new Date(afterEndMs + 1));
+
+    const freeAccessAfter = freeAccessAfterPaidTier({ ...inputs.account, tierExpiresAt: endsAt }, lifecycle);
+
+    return { current, after, afterTrialEnd, moved, days, ...(skip ? { skip } : {}), freeAccessAfter };
+  }
+
+  /**
+   * D3.1: the account's after-plan move count, or `null` (logged at warn, ids
+   * only) when it cannot be read. Uncached: it changes only when the webhook
+   * moves the account, and it is read only when the Cancel drawer can open.
+   */
+  private async readAfterPlanMoves(accountId: AccountId): Promise<number | null> {
+    if (!this.repository.findAfterPlanMoveState) {
+      logger.warn({ accountId }, 'After-plan move count not readable here; plan ending not previewed');
+      return null;
     }
-
-    return freeAccessAfterPaidTier(account, {
-      cohorts: config.cohorts,
-      tierOrder: config.tierOrder,
-      subscriptionGraceHistory: config.lifecycle.subscriptionGraceHistory,
-      renewalSettlementMarginHistory: config.lifecycle.renewalSettlementMarginHistory,
-    });
+    const result = await this.repository.findAfterPlanMoveState(accountId);
+    if (result.error || !result.data) {
+      logger.warn({ err: result.error, accountId }, 'After-plan move count unreadable; plan ending not previewed');
+      return null;
+    }
+    return result.data.moves;
   }
 
   /**
@@ -334,6 +413,29 @@ export class EntitlementService {
   /** Tests only: how many entries are held. */
   get cacheSize(): number {
     return this.cache.size;
+  }
+
+  /**
+   * The cached inputs, or one repository read stored into the cache (SA R-5:
+   * the ONE cache-or-read block behind `getFreeAccessAfterPaidTier` and
+   * `previewAfterPlan`). Right after the my-plan route's `getSnapshot` for the
+   * same account it is a cache hit. `null` when the read fails, logged as a
+   * warn with the caller's message and ids only. Callers must not mutate what
+   * it returns: it may be the cache entry's own object.
+   */
+  private async readInputs(accountId: AccountId, unreadableMessage: string): Promise<CacheEntry['inputs'] | null> {
+    const nowMs = this.now().getTime();
+    const cached = this.cache.get(accountId);
+    if (cached && nowMs - cached.storedAtMs <= CACHE_TTL_SECONDS * 1000) return cached.inputs;
+
+    const result = await this.repository.findEntitlementInputs(accountId);
+    if (result.error || !result.data) {
+      logger.warn({ err: result.error, accountId }, unreadableMessage);
+      return null;
+    }
+    const inputs = toDomain(result.data);
+    this.store(accountId, { inputs, storedAtMs: nowMs });
+    return inputs;
   }
 
   private resolve(
@@ -368,6 +470,29 @@ function toDomain(inputs: BusinessOsEntitlementInputs): {
   return {
     account: inputs.plan ? fromPlanRow(inputs.plan) : null,
     overrides: inputs.overrides.map(fromOverrideRow),
+  };
+}
+
+/** What `previewAfterPlan` returns (SX-2, D3). */
+export interface AfterPlanPreview {
+  current: EntitlementResolution;
+  after: EntitlementResolution;
+  afterTrialEnd: EntitlementResolution | null;
+  moved: boolean;
+  /** D3.1: the free period's length in days when `moved`, after the repeat-cancel halving. */
+  days: number | null;
+  /** D3.1: why nothing moved (`afterPlanAccount`'s closed list); absent when `moved`. */
+  skip?: AfterPlanSkip;
+  freeAccessAfter: FreeAccessAfterPaidTier | null;
+}
+
+/** The four config pieces `deriveLifecycle` reads, from one config. */
+function lifecycleInputsOf(config: EntitlementConfig): LifecycleInputs {
+  return {
+    cohorts: config.cohorts,
+    tierOrder: config.tierOrder,
+    subscriptionGraceHistory: config.lifecycle.subscriptionGraceHistory,
+    renewalSettlementMarginHistory: config.lifecycle.renewalSettlementMarginHistory,
   };
 }
 

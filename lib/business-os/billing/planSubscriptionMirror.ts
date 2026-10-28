@@ -26,8 +26,17 @@
  *                event id, so a replay records nothing) and, when that row is
  *                new, one `BOS_BILLING_SUBSCRIPTION_ENDED` audit (`info`, C-10).
  *                A `.updated` that reads an ended subscription mirrors it and
- *                nothing more. No plan write, no entitlement invalidation: the
- *                lifecycle derives from the paid-through date (SA-P8)
+ *                nothing more. No plan write here, no entitlement invalidation:
+ *                the lifecycle derives from the paid-through date (SA-P8)
+ *   6  after     D3.1 (SX-2b, workplan BUSINESS_OS_D3_1_FREE_COHORT_AFTER_CANCEL_WORKPLAN.md
+ *                §6.1; SA DR-8): on the same `.deleted` + mirrored branch, ALSO on a
+ *                replay, the after-plan move runs through its port
+ *                (`afterPlanMove`, DELETE-owned). It decides everything itself
+ *                (only an owner-started end moves; idempotent per subscription).
+ *                It is handed our billing row's account id and the event's own
+ *                facts, never Stripe metadata. It throws only on a read or write
+ *                failure (alerted there), which releases the claim: Stripe
+ *                retries, steps 1 to 5 are idempotent, and the move runs again
  *
  * Otherwise no money history and no audit (Q-1); a pending downgrade is
  * P-7b's. A read or write failure throws (claim released, retried).
@@ -38,7 +47,7 @@
 import type Stripe from 'stripe';
 
 import type { Logger } from '@/lib/logger';
-import type { StripeService } from '@/lib/stripe/StripeService';
+import { BUSINESS_OS_CANCELLATION_REASONS, type StripeService } from '@/lib/stripe/StripeService';
 import type {
   BusinessOsBillingAccount,
   BusinessOsBillingAccountRepository,
@@ -48,6 +57,7 @@ import type { BusinessOsBillingEventRepository } from '@/lib/repositories/Busine
 import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import type { RecordPlanChangeInput } from '@/lib/business-os/entitlements/recordPlanChange';
 import { BOS_USER_ID_METADATA_KEY } from '@/lib/business-os/billing/stripeMetadataKeys';
+import type { AfterPlanMovePort } from '@/lib/business-os/billing/afterPlanMove';
 
 export interface PlanSubscriptionMirrorDeps {
   billingAccounts: Pick<BusinessOsBillingAccountRepository, 'findByStripeSubscription' | 'mirrorSubscriptionState'>;
@@ -56,11 +66,10 @@ export interface PlanSubscriptionMirrorDeps {
   stripe: () => Pick<StripeService, 'retrieveBusinessOsSubscription'>;
   /** P-6a.2: the `BOS_BILLING_SUBSCRIPTION_ENDED` audit, flushed bounded (PF-11). */
   recordPlanChange: (input: RecordPlanChangeInput) => Promise<void>;
+  /** D3.1 (SX-2b): the after-plan move, called on `.deleted` + mirrored (also on a replay). */
+  afterPlanMove: AfterPlanMovePort;
   now: () => Date;
 }
-
-/** Stripe's `cancellation_details.reason` values worth recording; anything else is recorded as null. */
-const CANCELLATION_REASONS: readonly string[] = ['payment_failed', 'cancellation_requested', 'payment_disputed'];
 
 const SUBSCRIPTION_ID_PATTERN = /^sub_[A-Za-z0-9]{1,251}$/;
 const SUBSCRIPTION_STATUSES: readonly BusinessOsSubscriptionStatus[] = [
@@ -138,6 +147,20 @@ export async function mirrorPlanSubscription(event: Stripe.Event, log: Logger, d
   // still holds this subscription.
   if (event.type === 'customer.subscription.deleted' && mirrored.data.mirrored) {
     await recordSubscriptionEnded(event, embedded, account, endedAtIso, log, deps);
+    // D3.1 (SX-2b): an owner-started end moves the account to the free cohort.
+    // Outside `recordSubscriptionEnded`, which returns early on a replay, and a
+    // replay is exactly when a move that threw must run again.
+    await deps.afterPlanMove(
+      {
+        accountId: resolveAccountId(account.accountId),
+        subscriptionId,
+        livemode: event.livemode,
+        stripeEventId: event.id,
+        endedAt: endedAtIso,
+        cancellationReason: embedded.cancellation_details?.reason ?? null,
+      },
+      log
+    );
   }
 }
 
@@ -171,7 +194,7 @@ async function recordSubscriptionEnded(
   }
 
   const rawReason = embedded.cancellation_details?.reason ?? null;
-  const cancellationReason = typeof rawReason === 'string' && CANCELLATION_REASONS.includes(rawReason) ? rawReason : null;
+  const cancellationReason = typeof rawReason === 'string' && (BUSINESS_OS_CANCELLATION_REASONS as readonly string[]).includes(rawReason) ? rawReason : null;
   log.info(
     { event: 'bos_billing_subscription_ended', cancellationReason, ended: endedAtIso !== null, eventRowId: recorded.data.eventRowId, ...ids },
     'Business OS plan subscription ended and recorded'

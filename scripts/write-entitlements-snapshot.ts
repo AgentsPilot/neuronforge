@@ -14,6 +14,7 @@
 
 import { writeFileSync } from 'fs';
 import { join } from 'path';
+import { AFTER_PLAN } from '../lib/business-os/entitlements/config/afterPlan';
 import { COHORTS } from '../lib/business-os/entitlements/config/cohorts';
 import { LIFECYCLE_CONFIG } from '../lib/business-os/entitlements/config/lifecycle';
 import { TIER_MATRIX } from '../lib/business-os/entitlements/config/tierMatrix';
@@ -40,6 +41,9 @@ const snapshot: EntitlementSnapshot = {
       margin: [...LIFECYCLE_CONFIG.renewalSettlementMarginHistory],
     },
   },
+  // D3.1 / SX-2b (D3 deviation 3, SA Q-10, DR-11): the after-plan cohort and its
+  // repeat-cancel halving, frozen because the webhook writes them onto plan rows.
+  afterPlan: { cohort: AFTER_PLAN.cohort, repeat: { ...AFTER_PLAN.repeat } },
 };
 
 writeFileSync(TARGET, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
