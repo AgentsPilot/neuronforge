@@ -55,6 +55,28 @@ const DB: Record<string, Record<string, unknown>[]> = {
     { id: 'invoice-pkg', user_id: USER, booking_id: 'package-1' },
     { id: 'invoice-child', user_id: USER, booking_id: 'child-1' },
   ],
+  /*
+   * A quote is raised against an APPOINTMENT. Accepting it creates the invoice
+   * and, for a package, the container — and the money lands on those, never on
+   * the quote's own booking.
+   */
+  proposals: [
+    {
+      id: 'quote-package',
+      user_id: USER,
+      booking_id: 'quote-booking-1',
+      created_invoice_id: 'invoice-pkg',
+      package_booking_id: 'package-1',
+    },
+    {
+      /* A quote for a single appointment: an invoice, and no package. */
+      id: 'quote-single',
+      user_id: USER,
+      booking_id: 'quote-booking-2',
+      created_invoice_id: 'invoice-child',
+      package_booking_id: null,
+    },
+  ],
   payment_transactions: [
     {
       id: 'tx-pkg',
@@ -162,6 +184,46 @@ describe('a package billed per session', () => {
     await resolveRefundTargets({ userId: USER, bookingId: 'child-1' });
 
     expect(touched).not.toContain('scheduling_meetings');
+  });
+});
+
+/**
+ * THE QUOTE CARD.
+ *
+ * The card reads "₪1,000 collected, ₪0 outstanding, paid" and its own Manage
+ * payment button opened a refund of ₪0.00 — because it passes the quote's
+ * booking, which holds none of the money the acceptance created.
+ *
+ * Three accepted upfront quotes on the reporting account, ₪1,000, ₪950 and
+ * ₪700, every one refundable from its package and its invoice and from none of
+ * its quote bookings.
+ */
+describe('a quote accepted and paid upfront', () => {
+  it('refunds from the quote card, through what accepting it created', async () => {
+    const result = await resolveRefundTargets({ userId: USER, bookingId: 'quote-booking-1' });
+
+    expect(result).toEqual({ transactionIds: ['tx-pkg'] });
+  });
+
+  it('works for a quote with an invoice and no package', async () => {
+    const result = await resolveRefundTargets({ userId: USER, bookingId: 'quote-booking-2' });
+
+    expect(result).toEqual({ transactionIds: ['tx-child'] });
+  });
+
+  it('does not consult quotes when the booking owns its money', async () => {
+    /* The gate. A booking with its own invoice is answered before any of this,
+       so the ordinary refund cannot be redirected through a quote. */
+    await resolveRefundTargets({ userId: USER, bookingId: 'child-1' });
+
+    expect(touched).not.toContain('proposals');
+  });
+
+  it('refuses a quote booking belonging to ANOTHER tenant', () => {
+    /* CLAUDE.md rule 4 — the quote read is scoped like the rest. */
+    return expect(
+      resolveRefundTargets({ userId: 'someone-else', bookingId: 'quote-booking-1' })
+    ).resolves.toHaveProperty('error', 'NOT_FOUND');
   });
 });
 
