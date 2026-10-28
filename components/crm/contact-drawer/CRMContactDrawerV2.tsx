@@ -3133,9 +3133,27 @@ export function CRMContactDrawerV2({
     nextLocal: string | null;
     /** And the few after that, to offer instead of "today, tomorrow". */
     upcoming: string[];
+    /**
+     * The sessions of this package that were called off or missed and have
+     * nothing standing in for them yet — so the dialog can ask which, if any,
+     * the new session makes up for.
+     *
+     * Empty for an ordinary package with nothing outstanding, and then the
+     * dialog asks nothing.
+     */
+    makeUpCandidates: { id: string; label: string }[];
   } | null>(null);
   /* The owner's answer about the money, asked beside the date in that dialog. */
   const [chargeNewMeeting, setChargeNewMeeting] = useState(false);
+  /*
+   * And their answer about WHICH missed session this one stands in for.
+   *
+   * Null is the default and the honest one: a session added to a package is an
+   * ordinary session unless the owner says it replaces something. Nothing is
+   * inferred — a package with two gaps, one made up and one still waiting on
+   * the client, is indistinguishable from any count. See 20261097.
+   */
+  const [makeUpForId, setMakeUpForId] = useState<string | null>(null);
   /*
    * What actually happened to a payment plan, per booking.
    *
@@ -4136,7 +4154,7 @@ export function CRMContactDrawerV2({
         }
         setLoadingSessions(false);
       } catch (error) {
-        console.error('Failed to load priority data:', error);
+        logger.error({ err: error }, 'Failed to load priority data');
         setLoadingSessions(false);
         setLoadingEmails(false);
       }
@@ -4691,7 +4709,7 @@ export function CRMContactDrawerV2({
         setIntakeResponses(intakes);
       }
     } catch (error) {
-      console.error('Failed to fetch sessions:', error);
+      logger.error({ err: error }, 'Failed to fetch sessions');
     } finally {
       if (!silent) setLoadingSessions(false);
     }
@@ -4718,7 +4736,7 @@ export function CRMContactDrawerV2({
         setActivities(data.activities || []);
       }
     } catch (error) {
-      console.error('Failed to fetch activities:', error);
+      logger.error({ err: error }, 'Failed to fetch activities');
     } finally {
       if (!silent) setLoadingActivities(false);
     }
@@ -4734,7 +4752,7 @@ export function CRMContactDrawerV2({
         setEmails(data.emails || []);
       }
     } catch (error) {
-      console.error('Failed to fetch emails:', error);
+      logger.error({ err: error }, 'Failed to fetch emails');
     } finally {
       setLoadingEmails(false);
     }
@@ -4750,7 +4768,7 @@ export function CRMContactDrawerV2({
         setTasks(data.tasks || []);
       }
     } catch (error) {
-      console.error('Failed to fetch tasks:', error);
+      logger.error({ err: error }, 'Failed to fetch tasks');
     } finally {
       setLoadingTasks(false);
     }
@@ -4766,7 +4784,7 @@ export function CRMContactDrawerV2({
         setDocuments(data.documents || []);
       }
     } catch (error) {
-      console.error('Failed to fetch documents:', error);
+      logger.error({ err: error }, 'Failed to fetch documents');
     } finally {
       setLoadingDocuments(false);
     }
@@ -4780,7 +4798,7 @@ export function CRMContactDrawerV2({
         setServices(data.services || []);
       }
     } catch (error) {
-      console.error('Failed to fetch services:', error);
+      logger.error({ err: error }, 'Failed to fetch services');
     }
   };
 
@@ -4800,7 +4818,7 @@ export function CRMContactDrawerV2({
         setAllBookings(data.bookings || []);
       }
     } catch (error) {
-      console.error('Failed to fetch all bookings:', error);
+      logger.error({ err: error }, 'Failed to fetch all bookings');
     }
   };
 
@@ -4845,7 +4863,7 @@ export function CRMContactDrawerV2({
         setErrorMessage(data.error || t('crm.drawer.save_error'));
       }
     } catch (error) {
-      console.error('Failed to save contact:', error);
+      logger.error({ err: error }, 'Failed to save contact');
       setErrorMessage(t('crm.drawer.save_error'));
     } finally {
       setSaving(false);
@@ -4869,7 +4887,7 @@ export function CRMContactDrawerV2({
         })
       });
     } catch (error) {
-      console.error('Failed to auto-save notes:', error);
+      logger.error({ err: error }, 'Failed to auto-save notes');
     }
   }, [contact.id, formData.custom_fields]);
 
@@ -4894,7 +4912,7 @@ export function CRMContactDrawerV2({
         onTasksUpdated?.();
       }
     } catch (error) {
-      console.error('Failed to create task:', error);
+      logger.error({ err: error }, 'Failed to create task');
     }
   };
 
@@ -4913,7 +4931,7 @@ export function CRMContactDrawerV2({
         onTasksUpdated?.();
       }
     } catch (error) {
-      console.error('Failed to toggle task:', error);
+      logger.error({ err: error }, 'Failed to toggle task');
     }
   };
 
@@ -4930,7 +4948,7 @@ export function CRMContactDrawerV2({
         onTasksUpdated?.();
       }
     } catch (error) {
-      console.error('Failed to delete task:', error);
+      logger.error({ err: error }, 'Failed to delete task');
     }
   };
 
@@ -4953,7 +4971,7 @@ export function CRMContactDrawerV2({
         fetchActivities(contact.id, { silent: true });
       }
     } catch (error) {
-      console.error('Failed to add activity:', error);
+      logger.error({ err: error }, 'Failed to add activity');
     }
   };
 
@@ -5061,7 +5079,7 @@ export function CRMContactDrawerV2({
         );
       }
     } catch (error) {
-      console.error('Failed to delete contact:', error);
+      logger.error({ err: error }, 'Failed to delete contact');
       setErrorMessage(t('crm.drawer.delete_error'));
     }
   };
@@ -5100,7 +5118,7 @@ export function CRMContactDrawerV2({
         setErrorMessage(data.error || t('crm.drawer.deactivate_error'));
       }
     } catch (error) {
-      console.error('Failed to deactivate contact:', error);
+      logger.error({ err: error }, 'Failed to deactivate contact');
       setErrorMessage(t('crm.drawer.deactivate_error'));
     }
   };
@@ -5189,7 +5207,7 @@ export function CRMContactDrawerV2({
         setErrorMessage(data.error || t('crm.drawer.upload_error') || 'Failed to upload document');
       }
     } catch (error) {
-      console.error('Failed to upload document:', error);
+      logger.error({ err: error }, 'Failed to upload document');
       setErrorMessage(t('crm.drawer.upload_error') || 'Failed to upload document');
     } finally {
       setUploadingDocument(false);
@@ -5521,8 +5539,58 @@ export function CRMContactDrawerV2({
                     running = [...running, next];
                   }
 
+                  /*
+                   * ── WHAT IS STILL WAITING TO BE MADE UP ─────────────────
+                   *
+                   * A session that was called off or missed and has nothing
+                   * booked in its place. `was_replaced` is the recorded fact,
+                   * written when the owner took the offer on the cancel or
+                   * no-show dialog — not a count, which cannot tell a gap that
+                   * has been made up from one that has not.
+                   *
+                   * Until now that offer was the ONLY place the fact could be
+                   * stated, so a session added here instead left the missed
+                   * one offering to be moved for the rest of the package's
+                   * life. That is what this list exists to close.
+                   */
+                  const makeUpCandidates = (packageCard?.meetings ?? [])
+                    .map(entry => entry.booking)
+                    .filter(
+                      row =>
+                        (row.meeting_status === 'cancelled' ||
+                          row.meeting_status === 'no_show') &&
+                        !row.was_replaced &&
+                        Boolean(row.meeting_id) &&
+                        Boolean(row.start_time)
+                    )
+                    .sort((a, b) =>
+                      String(a.start_time).localeCompare(String(b.start_time))
+                    )
+                    .map(row => ({
+                      id: String(row.meeting_id),
+                      /* The hour, on the business's clock, and what became of
+                         it — "9 Dec, 10:00 · No Show". Two sessions of the
+                         same package differ only by their date, so the date is
+                         what has to be in the label. */
+                      label: `${new Date(String(row.start_time)).toLocaleString(language, {
+                        timeZone: timezone,
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })} · ${t(
+                        row.meeting_status === 'no_show'
+                          ? 'crm.booking.status.no_show'
+                          : 'crm.booking.status.cancelled'
+                      )}`,
+                    }));
+
+                  /* A fresh dialog asks the question fresh. */
+                  setMakeUpForId(null);
+
                   setAddMeetingTo({
                     containerId,
+                    makeUpCandidates,
                     /*
                      * THREE SOURCES, MOST AUTHORITATIVE LAST RESORT FIRST.
                      *
@@ -5958,7 +6026,7 @@ export function CRMContactDrawerV2({
                       fetchDocuments(contact.id);
                     }
                   } catch (error) {
-                    console.error('Failed to delete document:', error);
+                    logger.error({ err: error }, 'Failed to delete document');
                   }
                 }}
                 isOpen={openSection === 'files'}
@@ -6136,6 +6204,9 @@ export function CRMContactDrawerV2({
           setEditingBooking(undefined);
           setReschedulingMeetingId(null);
           setAddMeetingTo(null);
+          /* Closed without adding: the answer dies with the dialog, so the
+             next session is not quietly recorded as replacing this one. */
+          setMakeUpForId(null);
         }}
         onBookingUpdated={() => {
           fetchSessions(contact.id, { silent: true });
@@ -6214,6 +6285,25 @@ export function CRMContactDrawerV2({
               }
             : undefined
         }
+        /*
+         * Asked only when there is something to ask about. A package with
+         * nothing outstanding — the ordinary case, and every other caller of
+         * this dialog — passes nothing and the footer is unchanged.
+         */
+        makeUpFor={
+          addMeetingTo?.makeUpCandidates.length
+            ? {
+                label: t('crm.booking.package.makes_up_for'),
+                noneLabel: t('crm.booking.package.makes_up_for_nothing'),
+                options: addMeetingTo.makeUpCandidates.map(candidate => ({
+                  value: candidate.id,
+                  label: candidate.label,
+                })),
+                value: makeUpForId,
+                onChange: setMakeUpForId,
+              }
+            : undefined
+        }
         onPickSlot={
           addMeetingTo
             ? async (start, end) => {
@@ -6232,6 +6322,16 @@ export function CRMContactDrawerV2({
                         Math.round((end.getTime() - start.getTime()) / 60_000)
                       ),
                       charge: chargeNewMeeting && addMeetingTo.billsPerMeeting,
+                      /*
+                       * Which missed session this one stands in for, when the
+                       * owner said so. Omitted entirely otherwise, so a plain
+                       * add sends exactly the body it always has.
+                       *
+                       * The route checks the id belongs to THIS container
+                       * before writing it, so a stale one from a dialog left
+                       * open is ignored rather than failing the add.
+                       */
+                      ...(makeUpForId ? { replaces: makeUpForId } : {}),
                     }),
                   }
                 );
@@ -6261,6 +6361,8 @@ export function CRMContactDrawerV2({
                  * ───────────────────────────────────────────────────────────
                  */
                 setAddMeetingTo(null);
+                /* Answered and written; the next dialog asks again. */
+                setMakeUpForId(null);
                 setShowBookingModal(false);
 
                 void fetchSessions(contact.id, { silent: true });

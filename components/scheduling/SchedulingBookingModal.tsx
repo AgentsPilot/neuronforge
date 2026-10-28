@@ -234,7 +234,44 @@ interface SchedulingBookingModalProps {
      */
     attention?: boolean;
   };
+  /**
+   * Which already-dead session this new one makes up for.
+   *
+   * ── WHY IT IS ASKED HERE ──────────────────────────────────────────────────
+   *
+   * "This session stands in for that one" is a fact only the owner holds, and
+   * the one moment they certainly hold it is while adding the session. Said
+   * here it is recorded; said nowhere it is lost, and the missed session goes
+   * on offering to be moved for the rest of the package's life.
+   *
+   * It cannot be inferred afterwards. A count of what is left compares a
+   * package with two gaps — one made up, one still waiting on the client —
+   * against a package with two gaps and finds them identical, when they are
+   * opposites. See 20261097.
+   *
+   * Absent whenever the package has nothing waiting to be made up, which is
+   * the ordinary case, and then nothing renders.
+   */
+  makeUpFor?: {
+    /** "Makes up for", beside the choice. */
+    label: string;
+    /** The honest default: this is simply another session. */
+    noneLabel: string;
+    /** The sessions that were called off or missed and have no stand-in yet. */
+    options: { value: string; label: string }[];
+    value: string | null;
+    onChange: (next: string | null) => void;
+  };
 }
+
+/*
+ * "This makes up for nothing" needs a name of its own.
+ *
+ * Radix treats an empty item value as "clear the selection" and throws on it,
+ * so the absence cannot be spelled `''`. It is converted back to `null` the
+ * moment it leaves this component — no caller ever sees the sentinel.
+ */
+const MAKES_UP_FOR_NOTHING = '__none__';
 
 // Source options for new clients (use existing CRM source keys)
 const SOURCE_OPTIONS = [
@@ -519,6 +556,7 @@ export function SchedulingBookingModal({
   prefilledStartLocal,
   seriesSlots,
   extraToggle,
+  makeUpFor,
   showStatusActions = true,
   existingBookings = [],
   timezone
@@ -3306,7 +3344,7 @@ export function SchedulingBookingModal({
                     `extraToggle`. In the footer because it is part of the
                     decision being confirmed, not part of describing the
                     appointment. */}
-                {extraToggle && (
+                {(extraToggle || makeUpFor) && (
                   /*
                     `me-auto`, which is the whole placement rule.
                     ─────────────────────────────────────────────────────────
@@ -3322,8 +3360,19 @@ export function SchedulingBookingModal({
                     which way its thumb travels in each script. No `dir`
                     wrapper here — that would neutralise the `:dir(rtl)` rule
                     the component carries and correct the same thing twice.
+
+                    ── WHY A WRAPPER ────────────────────────────────────────
+                    A package billed per session can ask BOTH questions at
+                    once. They share this one `me-auto` box so the second does
+                    not land against the buttons, and `flex-wrap` drops it to a
+                    second line rather than squeezing Cancel and Save on a
+                    narrow dialog. With only the toggle passed — every caller
+                    but the package add — the box holds one row and renders
+                    exactly as it did before.
                   */
-                  <div className="me-auto flex items-center gap-2.5">
+                  <div className="me-auto flex flex-wrap items-center gap-x-5 gap-y-2">
+                  {extraToggle && (
+                  <div className="flex items-center gap-2.5">
                     <Switch
                       id="booking-extra-toggle"
                       checked={extraToggle.checked}
@@ -3355,6 +3404,43 @@ export function SchedulingBookingModal({
                     >
                       {extraToggle.label}
                     </label>
+                  </div>
+                  )}
+
+                  {makeUpFor && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-[var(--v2-text-secondary)]">
+                        {makeUpFor.label}
+                      </span>
+                      <Select
+                        value={makeUpFor.value ?? MAKES_UP_FOR_NOTHING}
+                        onValueChange={next =>
+                          makeUpFor.onChange(next === MAKES_UP_FOR_NOTHING ? null : next)
+                        }
+                      >
+                        <SelectTrigger className="h-9 min-w-[200px] border-[var(--v2-border)] bg-[var(--v2-surface)] text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="border-[var(--v2-border)] bg-[var(--v2-surface)]">
+                          {/*
+                            FIRST, AND THE DEFAULT. A session added to a
+                            package is an ordinary session until the owner
+                            says otherwise — standing in for a missed hour is
+                            the claim, and a claim nobody made must not be
+                            recorded on their behalf.
+                          */}
+                          <SelectItem value={MAKES_UP_FOR_NOTHING}>
+                            {makeUpFor.noneLabel}
+                          </SelectItem>
+                          {makeUpFor.options.map(option => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   </div>
                 )}
 

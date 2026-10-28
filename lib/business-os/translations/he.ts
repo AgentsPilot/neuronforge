@@ -475,6 +475,8 @@ export const he = {
     'crm.booking.package.add_confirm': 'הוספה',
     'crm.booking.package.adding': 'מוסיף…',
     'crm.booking.package.charge_it': 'לחייב כמו השאר',
+    'crm.booking.package.makes_up_for': 'במקום',
+    'crm.booking.package.makes_up_for_nothing': 'לא במקום אף מפגש',
     'crm.booking.package.add_failed': 'לא הצלחנו להוסיף את הפגישה.',
     'crm.booking.step.package': 'הפגישות',
     'crm.booking.package.col_when': 'מועד',

@@ -2363,6 +2363,8 @@ export const es = {
     'crm.booking.package.add_confirm': 'Añadir',
     'crm.booking.package.adding': 'Añadiendo…',
     'crm.booking.package.charge_it': 'Cobrarla como las demás',
+    'crm.booking.package.makes_up_for': 'Recupera',
+    'crm.booking.package.makes_up_for_nothing': 'Nada, una sesión adicional',
     'crm.booking.package.add_failed': 'No se pudo añadir la sesión.',
     'crm.booking.step.package': 'Las sesiones',
     'crm.booking.package.col_when': 'Cuándo',
