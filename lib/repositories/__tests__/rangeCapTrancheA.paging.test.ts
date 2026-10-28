@@ -124,7 +124,7 @@ describe('uniqueVisitorsByLink: paged at 1,000 (FF-3 tranche A)', () => {
   it('2,500 clicks: three requests, each span <= 1,000; the link scope and total order on every page', async () => {
     const { result, requests } = await run(2500);
     expect(spans(requests)).toEqual([[0, 999], [1000, 1999], [2000, 2999]]);
-    expect(result.data).toEqual({ [LINK]: 2500 });
+    expect(result.data).toEqual({ counts: { [LINK]: 2500 }, atCap: false });
     for (const calls of requests) {
       expect(argsOf(calls, 'in')).toEqual([['smart_link_id', [LINK]]]);
       expect(argsOf(calls, 'order')).toEqual([['clicked_at', { ascending: true }], ['id', { ascending: true }]]);
@@ -142,14 +142,37 @@ describe('uniqueVisitorsByLink: paged at 1,000 (FF-3 tranche A)', () => {
     const { result, requests } = await run(25_000);
     expect(requests).toHaveLength(20);
     expect(Math.max(...spans(requests).map(([a, b]) => b - a + 1))).toBe(1000);
-    expect(result.data).toEqual({ [LINK]: 20_000 });
+    /* `atCap` carries the warning's fact to the caller. The log said the
+       count was a floor; nothing downstream could hear it, so the page
+       printed a ceiling-truncated number as though it were exact. */
+    expect(result.data).toEqual({ counts: { [LINK]: 20_000 }, atCap: true });
     expect(mockLog.warn).toHaveBeenCalledWith(expect.objectContaining({ cap: 20_000 }), expect.stringMatching(/floor/));
   });
 
-  it('a failed page gives no figure at all (the method’s existing never-fatal empty result), never a partial count', async () => {
+  it('a failed page gives NO figure — not a figure of zero, and never a partial count', async () => {
+    /*
+     * It used to answer `{ data: {}, error: null }`. Empty counts read
+     * downstream as "nobody came": the route wrote `?? 0` and the page printed
+     * a confident 0 against every link, telling an owner their links were dead
+     * when the truth was that the count had failed. Those two call for
+     * opposite responses.
+     *
+     * Still never fatal — the error is handed back so the caller can drop the
+     * figure and keep the list — but the absence is now an absence.
+     */
     const { result } = await run(2500, 2);
-    expect(result).toEqual({ data: {}, error: null });
+    expect(result.data).toBeNull();
+    expect(result.error).toBeTruthy();
     expect(mockLog.error).toHaveBeenCalled();
+  });
+
+  it('a business with no links gets empty counts, not an error', async () => {
+    /* "Nothing to count" really is zero visitors across zero links, and must
+       not be reported as a failure. */
+    const repo = new SmartLinkRepository();
+    const result = await repo.uniqueVisitorsByLink(USER, []);
+
+    expect(result).toEqual({ data: { counts: {}, atCap: false }, error: null });
   });
 });
 
