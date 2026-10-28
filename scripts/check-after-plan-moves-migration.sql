@@ -1,5 +1,5 @@
--- 20261097 checker, step 3 of the PROD apply (docs/workplans/BUSINESS_OS_D3_1_FREE_COHORT_AFTER_CANCEL_WORKPLAN.md section 3). Read-only
--- Run after 20261097. Rows 1 to 8 must say ok. Any FAIL row: stop, paste the output back to TL and roll 20261097 back
+-- 20261098 checker, step 3 of the PROD apply (docs/workplans/BUSINESS_OS_D3_1_FREE_COHORT_AFTER_CANCEL_WORKPLAN.md section 3). Read-only
+-- Run after 20261098. Rows 1 to 8 must say ok. Any FAIL row: stop, paste the output back to TL and roll 20261098 back
 -- in the same sitting
 -- Row 9 is information only, never a gate: how many accounts have had a free period after a cancel so far
 WITH

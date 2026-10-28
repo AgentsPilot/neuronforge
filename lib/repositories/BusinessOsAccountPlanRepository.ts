@@ -148,7 +148,7 @@ export interface ResetBusinessOsPlanStateInput {
 }
 
 /**
- * D3.1 / SX-2b: the after-plan move state of one account (migration 20261097).
+ * D3.1 / SX-2b: the after-plan move state of one account (migration 20261098).
  * `moves` is how many free-after-cancel moves it has had (never reset, user
  * U-1); `lastSubscriptionId` is the subscription that gave the last one, the
  * idempotency key of the writer.
@@ -209,13 +209,13 @@ export const BOS_ENTITLEMENT_BATCH_LIMIT = 100;
 const ACCOUNT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * D3.1 / SX-2b: the two after-plan columns (migration 20261097). Selected ONLY
+ * D3.1 / SX-2b: the two after-plan columns (migration 20261098). Selected ONLY
  * by the after-plan methods, never by `PLAN_COLUMNS`, so the hot entitlement
  * read does not change and a deploy before the migration breaks nothing else.
  */
 const AFTER_PLAN_MOVE_COLUMNS = 'after_plan_moves, after_plan_last_subscription_id';
 
-/** The shape the 20261097 CHECK allows for `after_plan_last_subscription_id`. */
+/** The shape the 20261098 CHECK allows for `after_plan_last_subscription_id`. */
 const SUBSCRIPTION_ID_PATTERN = /^sub_[A-Za-z0-9]{1,251}$/;
 
 /** The after-plan columns of a row, checked: a count that is not a non-negative integer is an error, never 0. */

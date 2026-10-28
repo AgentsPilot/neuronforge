@@ -70,7 +70,7 @@ See §3. In short, no:
 
 ### 1.3 Other facts
 
-- **One migration (20261097), columns only, no FK.** The plan table is never purged and is excluded from export (`descriptors.ts` line ~1476). So there is no descriptor change, no cleanup regeneration and no regen lock. If SA prefers a table (S-1 option B), then a regen (20261098, chained on `20261096_operator_test_account_cleanup_export_requests`, descriptors from 164) and the lock are needed.
+- **One migration (20261098), columns only, no FK.** The plan table is never purged and is excluded from export (`descriptors.ts` line ~1476). So there is no descriptor change, no cleanup regeneration and no regen lock. If SA prefers a table (S-1 option B), then a regen (20261098, chained on `20261096_operator_test_account_cleanup_export_requests`, descriptors from 164) and the lock are needed.
 - **`console.*` count** on every file D3.1 expects to touch (`planSubscriptionMirror.ts`, `planBillingHandler.ts`, `BusinessOsAccountPlanRepository.ts`, `afterPlan.ts`, `config/afterPlan.ts`, `EntitlementService.ts`, `planEndingView.ts`, `snapshot.ts`, `scripts/write-entitlements-snapshot.ts`, `lib/audit/events.ts`, `eventAudience.ts`): **0**.
 - **Not V6 work.** The new pattern is a system write of plan state from the webhook (SA Q-11 already chose where). The repository method and its wiring file are new entries in the entitlements imports guard (§8).
 - **The base is stacked.** This branch sits on D3, which is not on `main`. See §17 for how the two reach `main` together (C-9).
@@ -102,7 +102,7 @@ See §3. In short, no:
 | **A. Two columns on `business_os_account_plans`** (recommended) | Yes. Written in the same UPDATE as the move | Yes, one row per account. It needs no change to the hot entitlement read: only the new methods select the columns | 1 migration, no FK, no regen | **Recommended (S-1)** |
 | B. New table `business_os_after_plan_moves` (one row per move, unique subscription id) + an RPC that inserts it and updates the plan row in one transaction | Yes, and it keeps a per-move history | Yes | 2 migrations (table + function, then the cleanup regen 20261098 chained on 20261096, descriptors 164 → 165) + the regen lock | Fallback if SA wants per-move history in SQL |
 
-**Migration (option A): `supabase/migrations/20261097_business_os_account_plans_after_plan_moves.sql`**
+**Migration (option A): `supabase/migrations/20261098_business_os_account_plans_after_plan_moves.sql`**
 
 - `ALTER TABLE public.business_os_account_plans ADD COLUMN after_plan_moves integer NOT NULL DEFAULT 0`
 - `ADD COLUMN after_plan_last_subscription_id text NULL`
@@ -116,7 +116,7 @@ The project's companions:
 
 - `scripts/precheck-after-plan-moves.sql`;
 - `scripts/check-after-plan-moves-migration.sql`;
-- the rollback `supabase/SQL Scripts/20261097_business_os_account_plans_after_plan_moves_rollback.sql`;
+- the rollback `supabase/SQL Scripts/20261098_business_os_account_plans_after_plan_moves_rollback.sql`;
 - a migration test.
 
 It is a **manual prod gate**: the user applies it **before** the merge deploys. If code ever ran before the columns existed, nothing breaks:
@@ -126,7 +126,7 @@ It is a **manual prod gate**: the user applies it **before** the merge deploys. 
 
 The hot path (`findEntitlementInputs`, `PLAN_COLUMNS`) does **not** select the new columns.
 
-**Reservation:** TL reserves **20261097** in the coordination file before T-2 writes the file. Option A needs no regen lock.
+**Reservation:** TL reserves **20261098** in the coordination file before T-2 writes the file. Option A needs no regen lock.
 
 ---
 
@@ -295,8 +295,8 @@ applyAfterPlanMove(input: ApplyAfterPlanMoveInput): Promise<RepositoryResult<App
 
 | File | Action | Owner | Reason |
 |---|---|---|---|
-| `supabase/migrations/20261097_business_os_account_plans_after_plan_moves.sql` | create | DELETE | §3 option A |
-| `supabase/SQL Scripts/20261097_business_os_account_plans_after_plan_moves_rollback.sql` | create | DELETE | Rollback |
+| `supabase/migrations/20261098_business_os_account_plans_after_plan_moves.sql` | create | DELETE | §3 option A |
+| `supabase/SQL Scripts/20261098_business_os_account_plans_after_plan_moves_rollback.sql` | create | DELETE | Rollback |
 | `scripts/precheck-after-plan-moves.sql`, `scripts/check-after-plan-moves-migration.sql` | create | DELETE | Prod gate pre-check + checker |
 | `supabase/migrations/__tests__/business-os-after-plan-moves.migration.test.ts` | create | DELETE | Columns, defaults, checks, no FK, one transaction |
 | `lib/repositories/BusinessOsAccountPlanRepository.ts` | modify | shared (entitlements) | Three methods (§6.3); `PLAN_COLUMNS` untouched |
@@ -328,7 +328,7 @@ applyAfterPlanMove(input: ApplyAfterPlanMoveInput): Promise<RepositoryResult<App
 
 - ✅ **T-0** SA reviewed (DR-1 to DR-12, PLAN PAYMENTS conditions folded in); user answered U-1, U-2, U-3, U-5 (2026-10-27)
 - ✅ **T-1** Base check: P-7a.4 and FU-P7a4-1 merged → TL rebases this branch (D3's T-13 "now" seam resolved by D3's owner). Re-read the mirror and the handler port list after the rebase. `console.*` recount. **Done 2026-10-27 as merges, not a rebase** (the DELETE work was uncommitted): backup patch + untracked copies taken, tracked changes reset, `origin/feature/plan-cancel-drawer-d3` (`9e2b3f6a`) merged → `195b7afb`, `origin/main` (`b088b51d`) merged → `841163f4`, both without conflicts; the patch re-applied cleanly with `git apply --3way` (all 22 files clean) and unstaged; the drift snapshot regenerated and came out identical. The mirror and the handler port list are unchanged by P-7a.4 / FU-P7a4-1 (last touched by P-6a.2), so T-8 needed exactly the one handler-port line (DR-12 holds). `console.*`: 0 in every touched file
-- ✅ **T-2** Migration 20261097 + rollback + pre-check + checker + migration test. **Not applied anywhere**: the user pastes it on prod (U-4)
+- ✅ **T-2** Migration 20261098 + rollback + pre-check + checker + migration test. **Not applied anywhere**: the user pastes it on prod (U-4)
 - ✅ **T-3** Repository: `findAfterPlanMoveInputs`, `findAfterPlanMoveState`, `applyAfterPlanMove` (DR-5 compare-and-set on `updated_at` + `after_plan_moves`, `{ count: 'exact' }`, no `tier_expires_at`) + tests + imports guard
 - ✅ **T-4** `AFTER_PLAN.repeat` + `afterPlanAccount` (DR-4 order: paid-through, survival, halving, S-2 start, S-4 pin; `days`, closed `skip` list) + D3 test updates
 - ✅ **T-5** Drift snapshot: `afterPlan` in `EntitlementSnapshot`, `findDrift` (`after_plan_changed`), the script, regenerated JSON (`npm run entitlements:snapshot`)
@@ -374,7 +374,7 @@ Pure Jest with injected ports. No added CI time.
 - ⬜ **AC-D31.5** The drawer's `{until}` equals the `trial_ends_at` the writer stores, for a first and a repeat cancel (one rule, `afterPlanAccount`).
 - ⬜ **AC-D31.6** `AFTER_PLAN` is in the drift snapshot; `npm run test:bos-entitlements` is green.
 - ⬜ **AC-D31.7** The webhook diff is one port and one call in `planSubscriptionMirror.ts` plus one wiring line in `planBillingHandler.ts`, reviewed by PLAN PAYMENTS.
-- ⬜ **AC-D31.8** Migration 20261097 is applied on prod before the deploy, and its checker is green. No `console.*`; logs carry ids and codes only.
+- ⬜ **AC-D31.8** Migration 20261098 is applied on prod before the deploy, and its checker is green. No `console.*`; logs carry ids and codes only.
 
 ---
 
@@ -399,7 +399,7 @@ Pure Jest with injected ports. No added CI time.
 
 | # | Question | Dev recommendation |
 |---|---|---|
-| **S-1** | Where the repeat-cancel count lives (§3) | **Option A**, two plan-row columns, migration 20261097, no regen. B (table + RPC + regen 20261098) only if per-move history in SQL is wanted |
+| **S-1** | Where the repeat-cancel count lives (§3) | **Option A**, two plan-row columns, migration 20261098, no regen. B (table + RPC + regen 20261098) only if per-move history in SQL is wanted |
 | **S-2** | When the free period starts: at `endsAt` (D3 today) or when paid access really ends (`endsAt` + 1-day settlement for a period-end cancel)? | **Settlement end.** Otherwise every period is a day short and the 1-day minimum is 0 days (the drawer would show `unknown`). D3's tests move by one day. The user sees it as `{until}` = period end + 15 days on a first cancel (U-3) |
 | **S-3** | Rounding of the halving | **ceil**: 14, 7, 4, 2, 1 (the user's own sequence) |
 | **S-4** | A stale `grace_ends_at` pin earlier than the new trial end | **Clear it** inside `afterPlanAccount` (the preview then agrees). Keep a later pin |
@@ -433,7 +433,7 @@ Before T-8 is coded, and again on the diff:
 | **U-1** | Does the repeat-cancel count ever reset (say, after a year of paying)? | **Never** (the user's rule as stated). One cancel a year for five years ends at 1 day |
 | **U-2** | An admin who cancels a subscription in the Stripe dashboard also produces "owner requested", so that account gets the free period too | **Accept** (rare; an admin can change the cohort afterwards) |
 | **U-3** | If SA rules S-2: the 14 days start when paid access really ends (one day after the period end, Stripe's payment settlement window). So the drawer's "until" date is period end + 15 days on a first cancel | Pending SA |
-| **U-4** | Manual prod step: paste migration 20261097 (pre-check, apply, checker) **before** this step merges | Required |
+| **U-4** | Manual prod step: paste migration 20261098 (pre-check, apply, checker) **before** this step merges | Required |
 
 ---
 
@@ -460,8 +460,8 @@ T-11 (sandbox) is QA time. The difference from 1.5 d is the migration and its pr
 
 ## 17. Sequencing and hand-overs
 
-- **Order:** P-7a.4 merges → D3 merges `main` and wires its "now" mode (D3 T-13, which also passes through `previewAfterPlan`, so it gets the count automatically) → D3.1 builds on that → 20261097 applied on prod → **D3 and D3.1 reach `main` in the same deploy** (C-9, SA Q-9). Because D3.1 is stacked on D3, the simplest route is **one PR from this branch to `main` carrying both commits, with #539 closed as included**. The alternative is D3 merging immediately followed by D3.1 in one queue run. RM / TL decide, and never stacked-into-branch (memory: stacked PR hazard).
-- **Coordination file (TL):** reserve 20261097; add an SX-2b shared-items row: `planSubscriptionMirror.ts` + `planBillingHandler.ts` + their tests, sequenced with PLAN PAYMENTS (P-7a.4 first, FU-P7a4-1 either side); `afterPlanMove*.ts` DELETE-owned. No regen lock under S-1 A.
+- **Order:** P-7a.4 merges → D3 merges `main` and wires its "now" mode (D3 T-13, which also passes through `previewAfterPlan`, so it gets the count automatically) → D3.1 builds on that → 20261098 applied on prod → **D3 and D3.1 reach `main` in the same deploy** (C-9, SA Q-9). Because D3.1 is stacked on D3, the simplest route is **one PR from this branch to `main` carrying both commits, with #539 closed as included**. The alternative is D3 merging immediately followed by D3.1 in one queue run. RM / TL decide, and never stacked-into-branch (memory: stacked PR hazard).
+- **Coordination file (TL):** reserve 20261098; add an SX-2b shared-items row: `planSubscriptionMirror.ts` + `planBillingHandler.ts` + their tests, sequenced with PLAN PAYMENTS (P-7a.4 first, FU-P7a4-1 either side); `afterPlanMove*.ts` DELETE-owned. No regen lock under S-1 A.
 - **D6 (deletion request):** ends the plan through the same engine, so its Stripe end carries `cancellation_requested` and D3.1 covers it. D6 confirms on the sandbox.
 - **D4 (cancel emails):** the "what happens next" line can read the audit's `days` / `trial_ends_at`, or `planEndingView`.
 - **Admin view:** `describeAccountPlans` shows the trial cohort with its dates as it already does. Showing `after_plan_moves` there is a possible follow-up, not in D3.1.
@@ -543,7 +543,7 @@ Line numbers are in the working tree after the T-1 merges (HEAD `841163f4`).
 
 | # | Ruling |
 |---|---|
-| **S-1** | **Option A approved.** Two columns, 20261097, no FK, no regen, no lock (verified above). A whole-row delete removes the count with the row, which only matters for the test-account hard delete (a re-signup is a new account anyway). Data purge Reset never touches the table (`never`), so Reset cannot launder the count. Keep the pair CHECK. |
+| **S-1** | **Option A approved.** Two columns, 20261098, no FK, no regen, no lock (verified above). A whole-row delete removes the count with the row, which only matters for the test-account hard delete (a re-signup is a new account anyway). Data purge Reset never touches the table (`never`), so Reset cannot launder the count. Keep the pair CHECK. |
 | **S-2** | **Approved: the free period starts when paid access really ends**, `freeFrom = max(endsAt, tierSettlementEndsAt(row.tier_expires_at))`. Without it the 1-day minimum is 0 days, so the rule as written cannot meet the user's decision. U-3 tells the user about the +1 day. |
 | **S-3** | **ceil approved** (14, 7, 4, 2, 1). |
 | **S-4** | **Approved**, inside `afterPlanAccount`. Clear the pin only when it is earlier than the new `trial_ends_at`. `before` / `after` go in the audit `changes`. |
@@ -558,11 +558,11 @@ Line numbers are in the working tree after the T-1 merges (HEAD `841163f4`).
 ### Rulings that change the plan
 
 1. **DR-1 Sequencing: one PR, close #539.** Push D3's remaining work (T-13 "now" mode after P-7a.4, and its main merges) to the D3 branch as D3 commits. D3.1 merges that branch, and **one PR from `feature/free-cohort-after-cancel-d3-1` to `main`** carries both commits. #539 is closed with "included in #NNN". Why:
-   - Q-9(a) forbids D3 on `main` without the writer. "#539 then D3.1 straight after" leaves a window of at least one deploy where it is. If D3.1 is then held (the 20261097 paste, the T-8 review by PLAN PAYMENTS, or a red check), owners are promised a move nothing makes.
+   - Q-9(a) forbids D3 on `main` without the writer. "#539 then D3.1 straight after" leaves a window of at least one deploy where it is. If D3.1 is then held (the 20261098 paste, the T-8 review by PLAN PAYMENTS, or a red check), owners are promised a move nothing makes.
    - It is also the only form that is not stacked-into-branch (memory: stacked PR hazard).
    - The "every slice its own PR from main" rule yields to Q-9. D3 keeps its own reviewed commit. The PR body lists both slice ids and both SA reviews.
 2. **DR-2 Where the D3-file changes go.** S-2, S-4, the S-11 replacement and the `priorMoves` input are **D3.1 commits** (T-4). The D3 branch is frozen except for T-13 and main merges. D3's tests that pin `endsAt + 14 d` move in D3.1's T-4.
-3. **DR-3 Order.** P-7a.4 → **FU-P7a4-1 lands before D3.1** (PLAN PAYMENTS condition 2) → D3 T-13 → D3.1 T-1 rebases and re-reads the mirror and the handler port list → 20261097 applied on prod → the one PR merges.
+3. **DR-3 Order.** P-7a.4 → **FU-P7a4-1 lands before D3.1** (PLAN PAYMENTS condition 2) → D3 T-13 → D3.1 T-1 rebases and re-reads the mirror and the handler port list → 20261098 applied on prod → the one PR merges.
 4. **DR-4 The resolution order in `afterPlanAccount`** is fixed and tested:
    1. paid-through check (S-11 replacement);
    2. the Founding Partner survival check (`tierExpiresAt: endsAt`, unchanged);
@@ -596,12 +596,12 @@ Line numbers are in the working tree after the T-1 merges (HEAD `841163f4`).
 
 ### For the user (TL to relay)
 
-- **U-1** The count never resets. **U-2** An admin dashboard cancel counts as owner-started. **U-3** First cancel: `{until}` = period end + 15 days. **U-4** Paste 20261097 (pre-check, apply, checker) before the merge.
+- **U-1** The count never resets. **U-2** An admin dashboard cancel counts as owner-started. **U-3** First cancel: `{until}` = period end + 15 days. **U-4** Paste 20261098 (pre-check, apply, checker) before the merge.
 - **U-5 (decided 2026-10-27, FU-P7a4-3; ✅ answered: the user reconfirmed YES on 2026-10-27).** An owner cancel during a failed payment gets the free period. PLAN PAYMENTS asks the user to reconfirm, because the combination is: the unpaid renewal invoice is **voided** (P-7a.4 C-11), **and** the owner gets 14 free days **and** a fresh credit total. The default stands as decided unless the user reverses it. A reversal needs a second signal (status at cancel), which is a workplan change.
 
 ### Approval
 
-[x] Workplan approved with conditions DR-1 to DR-12. Proceed to T-1 after T-0 (TL reserves 20261097, adds the SX-2b shared-items row, records the one-PR decision and the #539 closure in the coordination file).
+[x] Workplan approved with conditions DR-1 to DR-12. Proceed to T-1 after T-0 (TL reserves 20261098, adds the SX-2b shared-items row, records the one-PR decision and the #539 closure in the coordination file).
 
 ### SA Code Review (part 1, DELETE-owned)
 
@@ -614,7 +614,7 @@ Scope: the uncommitted diff on `feature/free-cohort-after-cancel-d3-1` (base D3 
 
 | Area | Result |
 |---|---|
-| Migration 20261097 | One transaction with `lock_timeout`. Pre-guard: schema CREATE, table present, columns absent. `NOT NULL DEFAULT 0` plus nullable text, so existing rows get 0 / NULL (post-condition 4 proves it). Three CHECKs (count, `sub_` shape, pair). No `REFERENCES`, no GRANT, no policy, RLS untouched. Post-condition 5 refuses any anon / authenticated SELECT or UPDATE. No SQL-editor "into" hazard |
+| Migration 20261098 | One transaction with `lock_timeout`. Pre-guard: schema CREATE, table present, columns absent. `NOT NULL DEFAULT 0` plus nullable text, so existing rows get 0 / NULL (post-condition 4 proves it). Three CHECKs (count, `sub_` shape, pair). No `REFERENCES`, no GRANT, no policy, RLS untouched. Post-condition 5 refuses any anon / authenticated SELECT or UPDATE. No SQL-editor "into" hazard |
 | Rollback, pre-check, checker | The rollback locks before counting and refuses when any count is above 0 (U-1, correct). The pre-check is read-only, 5 rows. The checker covers type, default, nullability, each CHECK body, no FK on the new columns, browser roles still holding nothing, RLS on, and service_role read and write. Row 9 is information only |
 | Repository (DR-5, S-9) | `.eq('user_id')`, `.eq('updated_at', <verbatim read string>)`, `.eq('after_plan_moves', n)`, `update(payload, { count: 'exact' })`, no `.select()`, no `.or()`. `count === 0` → `stale`; `count !== 1` → error. Named fields only; `tier_expires_at` is not in the allow-list; `updated_by_admin_id: null`. UUID, `sub_` and count validated before any query. `PLAN_COLUMNS` and the hot read unchanged. An unreadable count is an error, never 0 |
 | `afterPlanAccount` (DR-4) | Order: paid-through → survival (`tierExpiresAt: endsAt`) → halving → S-2 → S-4. `max(minimumDays, ceil(base / divisor^n))` with `base` from `historyAt` (14/7/4/2/1/1 pinned). S-2: `freeFrom = max(endsAt, settlement(row.tierExpiresAt))`. `tierExpiresAt` is never written; a later paid-through date or an open-ended tier → `paid_through_after_end`. Founding Partner → `own_cohort_survives`, count unchanged. Input not mutated |
@@ -714,7 +714,7 @@ Condition: the alert on a thrown read or write (S-7 / PLAN PAYMENTS condition 1)
 3. `lib/business-os/billing/planSubscriptionMirror.ts`, the `account.accountId as string` in the port call — Priority: Low, no action. The earlier `account.accountId === null` return already narrows the value, so the cast is redundant. It matches `recordSubscriptionEnded`'s existing line, and the guard regex tolerates it. Leave it as is for consistency. **Superseded by PLAN PAYMENTS review item 8 (2026-10-27):** the redundant `as string` was dropped in the port call only (`recordSubscriptionEnded`'s line untouched); tsc stays clean on the touched files.
 4. **Process gates before the one PR merges** (not code defects):
    - (a) PLAN PAYMENTS records sign-off on this T-8 diff in the coordination log (DR-8 / condition 5). SA's part 2 covers the technical check, but the owner's acknowledgement is theirs to record. ✅ **PLAN PAYMENTS SA signed off on T-8, 2026-10-27: OK.** Their changes 7 (mirror replay test runs the event a third time, ruling 9) and 8 (drop the redundant cast) applied. Swallow-and-alert rejected; throw-means-retry kept
-   - (b) U-4: paste 20261097 on prod (pre-check, apply, checker) before the merge.
+   - (b) U-4: paste 20261098 on prod (pre-check, apply, checker) before the merge.
    - (c) U-5 reconfirmation is still with the user. ✅ **Answered:** the user reconfirmed YES on 2026-10-27.
 
 #### Optimisation Suggestions
@@ -726,11 +726,11 @@ Condition: the alert on a thrown read or write (S-7 / PLAN PAYMENTS condition 1)
 ## QA Testing Report
 
 **QA — 2026-10-27**
-**Verdict:** ⚠️ **PASS WITH NOTES.** The code (D3 + D3.1, HEAD `841163f4` + working tree) passes. One Medium bug sits in the prod-gate **checker script**, not in runtime code: it must be fixed before the user pastes 20261097 (B-1). T-11 cannot run until 97 is applied; its checklist is below.
+**Verdict:** ⚠️ **PASS WITH NOTES.** The code (D3 + D3.1, HEAD `841163f4` + working tree) passes. One Medium bug sits in the prod-gate **checker script**, not in runtime code: it must be fixed before the user pastes 20261098 (B-1). T-11 cannot run until 97 is applied; its checklist is below.
 **Test mode:** full (D3.1); regression only for D3 (what the merge could have broken)
 **Strategy used:** A + B (Jest with injected ports, fake repositories and the production config), a static migration review, read-only prod reads, and a written T-11 sandbox checklist (D). Option D for the drawer is covered by render tests; the items that only a human click proves are listed below.
 **Focus:** api, pipeline (webhook), schema, security, ui (drawer regression)
-**Skipped:** T-11 live sandbox (needs 20261097 on prod, not applied yet). Supabase MCP `execute_sql` was **not available** in this QA session, so the prod reads went through PostgREST with the service role, as GET/HEAD only. `supabase_migrations.schema_migrations` is not exposed there; see "Prod read-only results".
+**Skipped:** T-11 live sandbox (needs 20261098 on prod, not applied yet). Supabase MCP `execute_sql` was **not available** in this QA session, so the prod reads went through PostgREST with the service role, as GET/HEAD only. `supabase_migrations.schema_migrations` is not exposed there; see "Prod read-only results".
 **Input source:** prompt keywords (TL brief)
 
 ### Test runs
@@ -774,14 +774,14 @@ Each run separate, `--ci --testTimeout=60000`, sequential. There were **no timeo
 | AC-D31.5: the drawer preview matches the writer, including 1 day on the 5th+ cancel | ✅ | Pass | The QA parity test (14 rows, both modes), `previewAfterPlan.test.ts` "SA code review comment 1…" |
 | AC-D31.6: `AFTER_PLAN` in the drift snapshot; `test:bos-entitlements` green | ✅ | Pass | 324 suites green; the tier-matrix snapshot suite asserts `afterPlan` is in the JSON |
 | AC-D31.7: the webhook diff is one port, one call, one wiring line | ✅ | Pass | Diff read: mirror +1 port, +1 call after `recordSubscriptionEnded` inside `.deleted && mirrored`, the reason list swapped to `BUSINESS_OS_CANCELLATION_REASONS`; handler +1 import, +1 line. The guard pins the position and that no metadata reaches the port |
-| AC-D31.8: 20261097 applied before deploy, checker green; no `console.*`; ids-only logs | ⚠️ | Partial | Not applied yet (verified on prod, below). **Checker row 4 will falsely FAIL (B-1).** 0 `console.*`; the closed log-field set is tested on every path |
+| AC-D31.8: 20261098 applied before deploy, checker green; no `console.*`; ids-only logs | ⚠️ | Partial | Not applied yet (verified on prod, below). **Checker row 4 will falsely FAIL (B-1).** 0 `console.*`; the closed log-field set is tested on every path |
 | D3 regression after the merges | ✅ | Pass | Settings (57 suites), billing and entitlements API (9), stripe (32): all green. The `PlanCancelDrawer` render, QA-render and guard suites, the `PlanManage` P-7a.1/.3/.4 suites and the copy tests are green |
 
 ### Migration review (static)
 
 | Check | Result |
 |---|---|
-| `20261097_…after_plan_moves.sql` | One `BEGIN`/`COMMIT` with `lock_timeout 5s`. Pre-guard: schema CREATE, table present, columns absent. Two `ADD COLUMN`s (`integer NOT NULL DEFAULT 0`, `text NULL`). Three CHECKs (≥ 0, `sub_` shape ≤ 255, pair). Post-conditions 1-5. `NOTIFY pgrst`. **No `REFERENCES`, no GRANT, no policy, no index.** The word "into" does not appear anywhere (SQL-editor hazard) ✅ |
+| `20261098_…after_plan_moves.sql` | One `BEGIN`/`COMMIT` with `lock_timeout 5s`. Pre-guard: schema CREATE, table present, columns absent. Two `ADD COLUMN`s (`integer NOT NULL DEFAULT 0`, `text NULL`). Three CHECKs (≥ 0, `sub_` shape ≤ 255, pair). Post-conditions 1-5. `NOTIFY pgrst`. **No `REFERENCES`, no GRANT, no policy, no index.** The word "into" does not appear anywhere (SQL-editor hazard) ✅ |
 | Idempotent / safe re-run | A second paste stops at the pre-guard ("a column … already exists") and applies nothing. This is a guarded one-shot, not `IF NOT EXISTS`, and it is safe to re-run ✅ |
 | No regen needed | The plan table is a whole-row delete in the cleanup generator, and G-10/G-18 are FK-level (SA verified). No FK here, so no regen and no lock ✅ |
 | Rollback | It locks before counting and refuses while any `after_plan_moves > 0`. Then it drops the 3 constraints and the 2 columns, in one transaction ✅ (see E-3) |
@@ -802,13 +802,13 @@ All reads were GET/HEAD through PostgREST with the service role key from `.env.l
 | anon reads the plan table | ✅ refused, `42501 permission denied` (consistent with pre-check row 4 and post-condition 5) |
 | No `BOS_PLAN_FREE_PERIOD_AFTER_CANCEL` audit rows yet | ✅ 0 |
 | T-11 read-back columns exist (`audit_trail`, `business_os_billing_events`, `processed_webhook_events`) | ✅ |
-| Number 20261097 not taken | ✅ in git: no other `20261097*` file in the worktree, `origin/main` (highest 20261096) or any of 428 remote branches. The coordination log reserves 20261097 for D3.1 (2026-10-27). ⚠️ `supabase_migrations.schema_migrations` **could not be read** (PGRST106, the schema is not exposed, and the MCP tool was unavailable). The user, or a session with the MCP, should run `select version, name from supabase_migrations.schema_migrations where version >= '20261096' order by version;` (expect only `20261096`; manual pastes may not register there at all) |
+| Number 20261098 not taken | ✅ in git: no other `20261098*` file in the worktree, `origin/main` (highest 20261096) or any of 428 remote branches. The coordination log reserves 20261098 for D3.1 (2026-10-27). ⚠️ `supabase_migrations.schema_migrations` **could not be read** (PGRST106, the schema is not exposed, and the MCP tool was unavailable). The user, or a session with the MCP, should run `select version, name from supabase_migrations.schema_migrations where version >= '20261096' order by version;` (expect only `20261096`; manual pastes may not register there at all) |
 
 ### Issues Found
 
 #### Bugs (must fix before the U-4 paste)
 
-1. **B-1: checker row 4 will report FAIL on a correct apply.** File: `scripts/check-after-plan-moves-migration.sql` line 32. Severity: **Medium** (fails safe, no data harm, but the script tells the user to "roll 20261097 back in the same sitting" and blocks U-4).
+1. **B-1: checker row 4 will report FAIL on a correct apply.** File: `scripts/check-after-plan-moves-migration.sql` line 32. Severity: **Medium** (fails safe, no data harm, but the script tells the user to "roll 20261098 back in the same sitting" and blocks U-4).
    - The match is `pg_get_constraintdef(con.oid) LIKE '%left(after_plan_last_subscription_id, 4)%'`. `left` is a `type_func_name` keyword, so PostgreSQL's deparser **quotes it**: the definition reads `CHECK (((after_plan_last_subscription_id IS NULL) OR (("left"(after_plan_last_subscription_id, 4) = ('sub'::text || chr(95))) AND (char_length(after_plan_last_subscription_id) <= 255))))`. The substring `left(after…` is then not present (`left"(after…`).
    - Expected: row 4 ok. Actual (predicted from the deparser rules; QA could not run SQL here): FAIL.
    - Fix: copy the earlier checkers (`check-bos-billing-events-migration.sql` lines 135-138), e.g. `position('after_plan_last_subscription_id' IN def) > 0 AND position('<= 255' IN def) > 0 AND position('sub' IN def) > 0`, or match `'%left"(after_plan_last_subscription_id, 4)%'`. If unsure, the user can run `select pg_get_constraintdef(oid) from pg_constraint where conname = 'business_os_billing_accounts_subscription_id_shape';` on prod first: the 20261025 constraint uses the same `left(...)` and shows the real rendering.
@@ -822,7 +822,7 @@ None. The hot read (`PLAN_COLUMNS`, `findEntitlementInputs`) is unchanged. The p
 1. **E-1:** an **immediate** Stripe-dashboard cancel of a plan that is still paid (not failing) gets `paid_through_after_end` (error + alert) and no move. That is by design (S-11 replacement). So U-2 holds for period-end and failing-card dashboard cancels; an immediate cancel of a paid plan needs an operator. Worth one line to the user with U-2.
 2. **E-2:** a P-7a.4 "Ends now" within the first day after the period end (renewal failed < 24 h ago) starts the free period at `tier_expires_at + 1 day`, not at `ended_at` (S-2, correct). T-11 step 4 expects exactly that.
 3. **E-3:** after T-11, the sandbox accounts hold `after_plan_moves > 0` on the prod table, so the rollback will refuse until those rows are reset. This is acceptable, but TL should know before relying on the rollback.
-4. **E-4:** the coordination file's table row "Migration numbers … Next free: **20261097**" (line 55) was not bumped; only the log line reserves 97. This is a documentation fix for TL.
+4. **E-4:** the coordination file's table row "Migration numbers … Next free: **20261098**" (line 55) was not bumped; only the log line reserves 97. This is a documentation fix for TL.
 5. **E-5:** a replay of a `.deleted` whose claim is `completed` stops at the route (`duplicate: true`) and never reaches the mirror. The mirror-level no-op (`already_applied`) is reached only by P-8b's reconcile or a `failed` claim. Both are pinned in Jest; T-11 step 2 checks the route level, and optionally the deeper level.
 
 ### UI critical path (D3 drawer): what the render tests cover
@@ -843,7 +843,7 @@ None. The hot read (`PLAN_COLUMNS`, `findEntitlementInputs`) is unchanged. The p
 - (d) focus and Escape in a real browser with a screen reader;
 - (e) after the move, Settings → Plan and the usage card show the trial with a fresh 1,000 credits.
 
-### T-11: post-paste checklist (run after 20261097 is applied and the checker is green)
+### T-11: post-paste checklist (run after 20261098 is applied and the checker is green)
 
 **Setup** (as P-7a §10 "Before the demo"):
 - Use the **standard sandbox `acct_1UPKR4C7KDUGYIcA`**: its webhook does not forward to production. Do **not** use a sandbox whose events also reach the production endpoint. Production runs without D3.1, and the event claim is shared in one DB, so production could claim the `.deleted` first and the move would never run.
@@ -900,7 +900,7 @@ order by e.created_at;
 **Pass when:** steps 1-5 match. Each subscription moves exactly once, each replay changes nothing, the second cancel is 7 days, and every `{until}` equals the stored `trial_ends_at` date.
 
 ### Final Status
-- [x] All acceptance criteria pass — ready for commit. B-1 fixed (checker row 4 matches `"left"(`). U-4 done 2026-10-28: 20261097 applied on prod by the user; pre-check 5/5 ok, checker 8/8 ok (row 9: 0 accounts). SA comment 4 (a), (b), (c) all met. The user approved the diff and chose to ship now and run T-11 against the sandbox after the merge.
+- [x] All acceptance criteria pass — ready for commit. B-1 fixed (checker row 4 matches `"left"(`). U-4 done 2026-10-28: 20261098 applied on prod by the user; pre-check 5/5 ok, checker 8/8 ok (row 9: 0 accounts). SA comment 4 (a), (b), (c) all met. The user approved the diff and chose to ship now and run T-11 against the sandbox after the merge.
 - [ ] T-11 sandbox check: owed after merge (checklist above).
 
 ## Commit Info
@@ -923,3 +923,4 @@ _RM populates this section._
 | 2026-10-27 | QA (D3 + D3.1, one PR) | ⚠️ PASS WITH NOTES. 10 Jest runs green (no timeouts), `test:bos-entitlements` 324/9,658, tsc 0 errors in 33 touched files (no OOM), `lint:hooks` clean. QA test `afterPlanMove.previewParity.qa.test.ts` (14) pins drawer `{until}` = stored `trial_ends_at` for counts 0..6 in both modes. Prod read-only: table present (11 rows), both columns absent, 20261097 free in git. B-1 (Medium): checker row 4 matches unquoted `left(`, which the deparser renders `"left"(`, so it falsely FAILs; fix before U-4. T-11 post-paste checklist + read-back SQL written |
 | 2026-10-27 | SA code review, part 2 (T-1 + T-8) | ✅ Approved, no blocking items. T-1 re-application intact (preview fix, `planEndingView`, snapshot, D3 now mode, P-7a.4 line). T-8 meets DR-6/7/8/10 and PLAN PAYMENTS' conditions: one port and one call outside `recordSubscriptionEnded`, also on a replay; no metadata; canonical account id; only `cancellation_requested` moves; P-8b replay a no-op at both levels. Throw → claim released → Stripe retries **stands**. 302 targeted tests green, 0 `console.*`. Low: add `planRenewal.captured.test.ts` to §8; optional registry `why` clause. Merge gates: PLAN PAYMENTS sign-off, 20261097 on prod, U-5 |
 | 2026-10-28 | U-4 applied; ready to ship | User approved the D3 + D3.1 diff and pasted 20261097 on prod; pre-check 5/5 ok, checker 8/8 ok. All merge gates met. User chose to ship now; T-11 runs against the sandbox after merge. One PR from `feature/free-cohort-after-cancel-d3-1`; #539 closed |
+| 2026-10-28 | Migration renumbered 20261097 → 20261098 | main took 20261097 for `20261097_a_session_knows_what_it_replaced.sql` (40f642ef) and `migrationNumberUnique` guards numbers ≥ 20261093. File, rollback, pre-check, checker, migration test and repository comments renamed; the SQL is byte-identical to what the user applied on prod on 2026-10-28, so nothing is re-applied. Earlier history rows keep the old number |

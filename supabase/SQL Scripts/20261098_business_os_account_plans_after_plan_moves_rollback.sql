@@ -1,4 +1,4 @@
--- Rollback of supabase/migrations/20261097_business_os_account_plans_after_plan_moves.sql (account deletion lifecycle D3.1, SX-2b)
+-- Rollback of supabase/migrations/20261098_business_os_account_plans_after_plan_moves.sql (account deletion lifecycle D3.1, SX-2b)
 -- Run ONLY after the code that reads the two columns is reverted. Until then the webhook writer's read fails and Stripe
 -- retries, and the Cancel drawer shows its could-not-work-out line. Nothing else reads them
 -- Refuses when any account already holds a count above 0. That count is the only record of how many free periods an

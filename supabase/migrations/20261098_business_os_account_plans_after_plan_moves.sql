@@ -1,4 +1,4 @@
--- 20261097_business_os_account_plans_after_plan_moves. Account deletion lifecycle D3.1 (SX-2b), the repeat-cancel count
+-- 20261098_business_os_account_plans_after_plan_moves. Account deletion lifecycle D3.1 (SX-2b), the repeat-cancel count
 -- Requirement docs/requirements/BUSINESS_OS_ACCOUNT_DELETION_LIFECYCLE_REQUIREMENT.md section 3.2 (BQ-20) and SX-2b
 -- Workplan docs/workplans/BUSINESS_OS_D3_1_FREE_COHORT_AFTER_CANCEL_WORKPLAN.md section 3 with SA Review 2026-10-27 S-1 option A
 -- Adds two columns to public.business_os_account_plans
@@ -11,7 +11,7 @@
 -- still hold nothing on it. The test account cleanup removes the plan row whole, so it needs no regeneration (SA verified)
 -- Existing rows get 0 and NULL, which is true: no account has had this move before SX-2b
 -- Pre-check scripts/precheck-after-plan-moves.sql. Checker scripts/check-after-plan-moves-migration.sql
--- Rollback supabase/SQL Scripts/20261097_business_os_account_plans_after_plan_moves_rollback.sql
+-- Rollback supabase/SQL Scripts/20261098_business_os_account_plans_after_plan_moves_rollback.sql
 -- Apply BEFORE the D3 and D3.1 merge deploys (user U-4). Code that runs first breaks nothing: the writer's read fails and
 -- Stripe retries, and the Cancel drawer shows its honest could-not-work-out line
 -- The whole file is one transaction. A failed pre-guard or post-condition applies nothing

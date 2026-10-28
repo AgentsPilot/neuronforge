@@ -1,4 +1,4 @@
--- 20261097 pre-check, step 1 of the PROD apply (docs/workplans/BUSINESS_OS_D3_1_FREE_COHORT_AFTER_CANCEL_WORKPLAN.md section 3). Read-only
+-- 20261098 pre-check, step 1 of the PROD apply (docs/workplans/BUSINESS_OS_D3_1_FREE_COHORT_AFTER_CANCEL_WORKPLAN.md section 3). Read-only
 -- Every row must say ok. Any FAIL row stops the apply. Paste the output back to TL and apply nothing
 -- It proves the plan table exists, the two columns do not exist yet, no constraint of the same name exists,
 -- browser roles hold nothing on the plan table, and anon and authenticated may not create objects in schema public

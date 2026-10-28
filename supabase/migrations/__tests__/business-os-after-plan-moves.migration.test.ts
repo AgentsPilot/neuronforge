@@ -1,6 +1,6 @@
 /**
  * Account deletion lifecycle D3.1 / SX-2b (workplan §3, §10; SA S-1 option A):
- * migration 20261097, its rollback, the pre-check and the checker.
+ * migration 20261098, its rollback, the pre-check and the checker.
  *
  * Source pins only: no database, no network.
  */
@@ -11,7 +11,7 @@ import { join } from 'path';
 const ROOT = process.cwd();
 const read = (...parts: string[]) => readFileSync(join(ROOT, ...parts), 'utf8').replace(/\r\n/g, '\n');
 
-const NAME = '20261097_business_os_account_plans_after_plan_moves';
+const NAME = '20261098_business_os_account_plans_after_plan_moves';
 const MIGRATION = read('supabase', 'migrations', `${NAME}.sql`);
 const ROLLBACK = read('supabase', 'SQL Scripts', `${NAME}_rollback.sql`);
 const PRECHECK = read('scripts', 'precheck-after-plan-moves.sql');
@@ -24,9 +24,9 @@ const CONSTRAINTS = [
 /** The statements, comments removed. */
 const sql = (text: string) => text.replace(/^\s*--.*$/gm, '');
 
-describe('20261097: the two columns (S-1 option A)', () => {
-  it('is the only migration numbered 20261097', () => {
-    const files = readdirSync(join(ROOT, 'supabase', 'migrations')).filter((f) => f.startsWith('20261097'));
+describe('20261098: the two columns (S-1 option A)', () => {
+  it('is the only migration numbered 20261098', () => {
+    const files = readdirSync(join(ROOT, 'supabase', 'migrations')).filter((f) => f.startsWith('20261098'));
     expect(files).toEqual([`${NAME}.sql`]);
   });
 
@@ -64,7 +64,7 @@ describe('20261097: the two columns (S-1 option A)', () => {
   });
 });
 
-describe('20261097: rollback, pre-check, checker', () => {
+describe('20261098: rollback, pre-check, checker', () => {
   it('the rollback refuses while any account holds a count, then drops the constraints and the columns in one transaction', () => {
     expect(sql(ROLLBACK).match(/^BEGIN;$/gm)).toHaveLength(1);
     expect(ROLLBACK).toContain('LOCK TABLE public.business_os_account_plans IN ACCESS EXCLUSIVE MODE');
