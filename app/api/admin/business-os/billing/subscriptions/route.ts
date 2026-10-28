@@ -25,7 +25,7 @@ import { createLogger } from '@/lib/logger';
 import { currentStripeMode, type StripeMode } from '@/lib/business-os/billing/stripeMode';
 import { subscriptionsDeps } from '@/lib/admin/billing/subscriptionsDeps';
 import { buildSubscriptions } from '@/lib/admin/billing/subscriptionsView';
-import { STRIPE_MODE_UNKNOWN, SUBSCRIPTION_STATUSES } from '@/lib/admin/billing/subscriptionsTypes';
+import { STRIPE_MODE_UNKNOWN, SUBSCRIPTION_FILTERS } from '@/lib/admin/billing/subscriptionsTypes';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 
 const logger = createLogger({ module: 'AdminBosSubscriptionsAPI' });
@@ -49,7 +49,8 @@ function errorResponse(status: number, error: string, details?: unknown): NextRe
 
 const querySchema = z
   .object({
-    status: z.enum(SUBSCRIPTION_STATUSES).optional(),
+    // A status, or `disagrees` (P-8b.3a, SA P3-SA-2 item 5): the ONE filter constant.
+    status: z.enum(SUBSCRIPTION_FILTERS).optional(),
   })
   .strict();
 
@@ -126,6 +127,7 @@ export async function GET(request: NextRequest) {
         mode,
         status,
         accounts: payload.totals.accounts,
+        disagreeing: payload.totals.disagreeing,
         matching: payload.matching,
         shown: payload.rows.length,
         currencies: payload.totals.mrr.length,
