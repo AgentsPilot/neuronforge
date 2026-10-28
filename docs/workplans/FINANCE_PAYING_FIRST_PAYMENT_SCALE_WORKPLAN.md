@@ -1,12 +1,12 @@
 # Workplan: MK5B-FU-1, the first-payment read at scale
 
-> **Last Updated**: 2026-10-27
+> **Last Updated**: 2026-10-28
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) §0.4, row MK5B-FU-1 (Money MK-5b, SA-CR-MK5B). Sources: [ADMIN_MONEY_MK5B_CONVERTED_WORKPLAN.md](/docs/workplans/ADMIN_MONEY_MK5B_CONVERTED_WORKPLAN.md) (SA-CR-MK5B follow-up and the QA performance note), [ADMIN_MONEY_MK5B_RETROSPECTIVE.md](/docs/retrospectives/ADMIN_MONEY_MK5B_RETROSPECTIVE.md), [ADMIN_MONEY_MK9_PAYING_TRIAL_WORKPLAN.md](/docs/workplans/ADMIN_MONEY_MK9_PAYING_TRIAL_WORKPLAN.md) (SA-Q-MK9-1, option 1)
-**Branch:** `fix/finance-paying-first-payment-scale`, worktree `neuronforge-mk5bfu`, cut from origin/main `4e75ed9f` and fast-forwarded to origin/main `8967888c` (PR #536 merged). Nothing is committed. `node_modules` is a junction to the main checkout: never `npm install` here, never `git stash`, never `git worktree remove`.
+**Branch:** `fix/finance-paying-first-payment-scale`, worktree `neuronforge-mk5bfu`, cut from origin/main `4e75ed9f` and fast-forwarded to origin/main `8967888c` (PR #536 merged). 2026-10-28: committed locally (`713e83fb`) and synced with origin/main `abe9fd64` (merge `23b6eac0`); not pushed. `node_modules` is a junction to the main checkout: never `npm install` here, never `git stash`, never `git worktree remove`.
 **Date:** 2026-10-27 (item 8, approved by the user 2026-10-27; its own PR)
-**Status:** Code Complete 2026-10-27 (SA-WP-M5F approved with conditions M5F-C1 to C7, all applied). Uncommitted. **Nothing applied to production**: the apply waits for the user's go-ahead after SA code review and QA.
+**Status:** Code Complete 2026-10-27 (SA-WP-M5F approved with conditions M5F-C1 to C7, all applied). Committed locally and synced with main 2026-10-28; migration renumbered to `20261099`. **Nothing applied to production**: the apply waits for the user's go-ahead after SA code review and QA.
 **Path:** full cycle. **One additive production migration** (a read-only view and two partial indexes), which needs the user's go-ahead before it is applied.
 **Skills applied:** `business-os-schema-check` (live `select ... limit 0` facts, §2.3), `supabase-postgres-best-practices` (§6; see the note in §6.1), `tenant-isolation-guard` (§5.4), `new-repository` (§5.2), `business-os-entitlements` (one touched file imports the module, §8.3).
 
@@ -687,6 +687,52 @@ The machine was shared with other sessions, and the CPU was at 100% for part of 
 | `console.*` in touched files | None |
 | Not run | `npm run build`; `npm run schema:check`, which stays red by design until the view is applied (§6.5) |
 
+### Sync with main and renumbering (2026-10-28, CR-M5F-1)
+
+**Migration renumbered `20261097` → `20261099`.** Main took `20261097_a_session_knows_what_it_replaced.sql` and `20261098_business_os_account_plans_after_plan_moves.sql`; `20261098` is applied on prod. After `git fetch`, `git ls-tree origin/main supabase/migrations/` showed nothing at or above `20261099`, and no remote branch holds a `20261099` or later file. Renamed: the migration, the rollback in `supabase/SQL Scripts/`, and every reference in the checker, the EXPLAIN probe, the migration-text test, the repository comments, this workplan and FIN §0.4. No reference to `20261097` remains that belongs to this view; the ones left are history rows, each marked superseded.
+
+**Commits (local, not pushed).** `713e83fb` `fix(admin-finance): read first plan payments from a bounded view (MK5B-FU-1)`, then `23b6eac0`, the merge of origin/main `abe9fd64` (69 commits, through #559).
+
+**Conflicts.** One: `docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md`, Change History, where both sides appended a 2026-10-27 row (main: FU-SL-1 and FU-SL-2 to Offir; ours: MK5B-FU-1 built). Both kept, main's first. `financeHealth.test.ts` (main added the MK9-FU-2 capped-walk test) and `businessOsEntitlements.imports.guard.test.ts` (RC-15) merged cleanly; `payingBreakdown.ts` was changed by main only (one comment, MK9-FU-2) and is not touched by this slice.
+
+**20261098 (D3.1, after-plan moves).** It adds two columns to `business_os_account_plans` (`after_plan_moves`, `after_plan_last_subscription_id`) and three CHECKs. No index, grant, policy or view change, and nothing on `business_os_billing_events`. So:
+- **The view and its indexes:** unaffected. The view reads only `business_os_billing_events`.
+- **The plan walk (`PLAN_COLUMNS`):** unchanged on main; the new columns are read only by `findAfterPlanMoveInputs`.
+- **The equivalence assumptions:** hold. The trial ids we ask about and the trials MK-9 counts both come from `isTrialRow` and `trialEndOf` over the same plan rows, so the ask set stays a superset whatever writes the cohort.
+- **A meaning change outside this slice (for BA/SA):** D3.1's code sets an owner-cancelled paid account to cohort `trial` (`AFTER_PLAN.cohort`) with fresh trial dates. When that free period ends, MK-9 trial-to-paid counts it as an ended trial, as paid, and as paid before the end, because its first payment predates the period. Once D3.1 moves happen, repeat cancellers inflate the rate. This is the same under the old read and the new one, so it is not a regression from this slice. Converted this month is not affected: these accounts' first payment is never in the current month. Proposed follow-up: **MK5BFU-FU-2**, keep after-plan periods (`after_plan_moves > 0`, or a first payment before the trial start) out of the MK-9 base.
+
+**Main moved again during the sync.** At the end of the run, origin/main was 2 commits ahead (P-8b, the "disagrees" Subscriptions filter: `lib/admin/billing/subscriptions*`, `billingPanelView.ts`, the finance UI). No migration, and none of this slice's files. Merge it again before the PR.
+
+**Pins after the merge (LF-normalised).**
+
+| Pin | Value | Moved? |
+|---|---|---|
+| AC-145 `EXPECTED_SHA256` | `38897cd3295ae0c5e865503cf0394453c38f532b0ec87866610126281b1e4edf`, equal to main's | **No** |
+| AC-145 `EXPECTED_CALLS` | Only `'converted.firstPlanPayments'` differs from main | As ruled (M5F-11) |
+| Route test file | `88e729b0` (main `52f022fb`) | As before |
+| Pin A / Pin B | `a130d560` / `eac3590a` | No |
+| Pin C and its helper | `e57f2675`, `64a565e9` | No |
+| Pin D | `1f7cf07a` | No |
+| AC-173 and its helper | `3a1a2dd4`, `b84e0c96` | No |
+| T-12 | `c2891a35` | No |
+| Legacy block | `ac0ac49b…3e04` (asserted green) | No |
+| Range-cap guard | 11 entries, 17 call sites | No |
+
+Every value equals main's file hash, except the route test, which holds AC-145.
+
+**Runs after the merge (2026-10-28).**
+
+| Run | Result |
+|---|---|
+| Builder, equivalence and scale, `firstPaymentAsk`, route (AC-145), migration-text test, RC-15, range-cap, first-payment stamp, `lib/admin/billing`, repository | 15 suites, 589 tests, green. SC-1: 9.7 s (19,500 plan rows, 107,401 qualifying rows, 16 requests, 2,308 rows read; the machine was shared) |
+| `supabase/migrations/__tests__` | 56 suites, 2,776 tests |
+| `lib/business-os/finance` and `app/admin/finance` | 55 suites, 3,266 tests. Two UI suites (`exchangeRatesTab`, `chargeChecksRequest.pin`) failed under load and passed alone (31/31); this slice touches neither |
+| `npm run test:authz-guard` | 2 suites, 203 tests |
+| `typecheck:bos-llm` (8 GB) | Passed: 611 files, 11 errors, 0 new |
+| Scoped tsc (8 GB, the slice's 15 TS files) | Exit 0, 0 errors, no OOM. A canary in `firstPaymentAsk.ts` gave TS2322 (exit 2); the file was restored and is identical to HEAD |
+| `npm run lint:hooks` | Exit 0 |
+| Not run | `npm run build`, `test:bos-entitlements`, `schema:check` (red until the view is applied) |
+
 ## SA Review Notes
 
 ### SA Workplan Review (SA-WP-M5F)
@@ -854,5 +900,6 @@ The design is also sound:
 |---|---|---|
 | 2026-10-27 | Created (Dev) | Workplan for MK5B-FU-1 (item 8). Step 0 facts at `8967888c`, live limit-0 probes, the cost model, options (a), (b) and (c) compared; recommends (a), a read-only `security_invoker` anti-join view with two partial indexes (an additive production migration). AC-145 calls-only re-freeze with the hash unchanged; other pins fixed. SA-Q-M5F-1 to 16 |
 | 2026-10-27 | SA workplan review (SA-WP-M5F) | Approved with conditions M5F-C1 to M5F-C7. Option (a) view with anti-join, security_invoker, service role only; the DB design reviewed by SA (push-down, partial-index predicates, uuid tie-break, grants, locks). Added: statement_timeout and a row-count note, a PG15 guard, a read-only EXPLAIN probe, view column pins, and the AC-145 order rule with finfu2. No business questions; the production apply needs the user's go-ahead |
-| 2026-10-27 | Implemented (Dev) | Migration 20261097, rollback, checker, EXPLAIN probe, migration-text test (M5F-C1 to C4); repository Q1 and Q2 on the view; wiring; `firstPaymentAsk.ts`; builder; equivalence and scale tests (SC-1 about 7 s); AC-145 calls-only re-freeze with the hash unchanged at `38897cd3`; Pins A to D, AC-173 and T-12 unchanged. D-1 to D-6; MK5BFU-FU-1 (plan walk cap) recorded. Nothing applied to production |
+| 2026-10-27 | Implemented (Dev) | Migration 20261097 (renumbered `20261099` on 2026-10-28), rollback, checker, EXPLAIN probe, migration-text test (M5F-C1 to C4); repository Q1 and Q2 on the view; wiring; `firstPaymentAsk.ts`; builder; equivalence and scale tests (SC-1 about 7 s); AC-145 calls-only re-freeze with the hash unchanged at `38897cd3`; Pins A to D, AC-173 and T-12 unchanged. D-1 to D-6; MK5BFU-FU-1 (plan walk cap) recorded. Nothing applied to production |
 | 2026-10-27 | SA code review (SA-CR-M5F) | Code approved for QA with conditions CR-M5F-1 (sync with main, which now includes #541, and re-run AC-145 and the pins) and CR-M5F-2 (go-ahead → apply → checker `all_ok` → merge; no auto-merge before the apply). M5F-C1 to C5 and C7 verified in code; C6 is due at the sync. D-2 (RC-15 `ALLOWED` entry) approved; D-1 and D-3 to D-6 accepted. 506/506 green on SA's re-run. Three Low, non-blocking comments |
+| 2026-10-28 | CR-M5F-1 sync (Dev) | Migration renumbered `20261097` → `20261099` (main took 20261097 and 20261098). Committed locally `713e83fb`; merged origin/main `abe9fd64` in `23b6eac0`; one docs conflict (FIN Change History), both rows kept. 20261098 reviewed: no effect on the view or the equivalence; a meaning change in MK-9 from D3.1 recorded as MK5BFU-FU-2 (proposed). Re-runs green; `EXPECTED_SHA256` equals main; only `converted.firstPlanPayments` differs; pins unchanged |
