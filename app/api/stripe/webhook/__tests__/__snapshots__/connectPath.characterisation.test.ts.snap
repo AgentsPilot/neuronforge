@@ -10869,6 +10869,40 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 9b. an in-
       "terminal": "maybeSingle",
       "type": "db",
     },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "failure_message": null,
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+          {
+            "count": "exact",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_finalized",
+        ],
+        [
+          "eq",
+          "status",
+          "processing",
+        ],
+        [
+          "lt",
+          "processed_at",
+          "<NOW-15MIN>",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
   ],
   "status": 200,
 }
@@ -10980,6 +11014,204 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 9c. a prev
           "eq",
           "event_id",
           "evt_connect_invoice_finalized",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 9d. a stale processing claim is reclaimed and processed 1`] = `
+{
+  "body": {
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_finalized",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "failure_message": null,
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+          {
+            "count": "exact",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_finalized",
+        ],
+        [
+          "eq",
+          "status",
+          "processing",
+        ],
+        [
+          "lt",
+          "processed_at",
+          "<NOW-15MIN>",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "id, invoice_number, user_id",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_connect_final_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "args": [
+        "<supabase-admin>",
+        "acct_owner_a",
+      ],
+      "type": "resolveAccountOwner",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "stripe_hosted_invoice_url": "https://invoice.stripe.test/i/in_connect_final_1",
+            "stripe_invoice_pdf": "https://invoice.stripe.test/i/in_connect_final_1/pdf",
+            "updated_at": "<NOW>",
+          },
+        ],
+        [
+          "eq",
+          "id",
+          "pinv-0004",
+        ],
+      ],
+      "operation": "update",
+      "table": "payment_invoices",
+      "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "completed_at": "<NOW>",
+            "status": "completed",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_finalized",
+        ],
+      ],
+      "operation": "update",
+      "table": "processed_webhook_events",
+      "terminal": "await",
+      "type": "db",
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 9e. a stale-claim reclaim that loses the race is a duplicate 1`] = `
+{
+  "body": {
+    "duplicate": true,
+    "received": true,
+  },
+  "effects": [
+    {
+      "secret": "whsec_platform_test",
+      "type": "stripe.constructWebhookEvent",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "event_id, status",
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_finalized",
+        ],
+      ],
+      "operation": "select",
+      "table": "processed_webhook_events",
+      "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "update",
+          {
+            "failure_message": null,
+            "processed_at": "<NOW>",
+            "status": "processing",
+          },
+          {
+            "count": "exact",
+          },
+        ],
+        [
+          "eq",
+          "event_id",
+          "evt_connect_invoice_finalized",
+        ],
+        [
+          "eq",
+          "status",
+          "processing",
+        ],
+        [
+          "lt",
+          "processed_at",
+          "<NOW-15MIN>",
         ],
       ],
       "operation": "update",

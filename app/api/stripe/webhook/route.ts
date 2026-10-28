@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { processedWebhookEventRepository } from '@/lib/repositories/ProcessedWebhookEventRepository';
+import { processedWebhookEventRepository, STALE_CLAIM_AGE_MS } from '@/lib/repositories/ProcessedWebhookEventRepository';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
 import { QuotaAllocationService } from '@/lib/services/QuotaAllocationService';
@@ -2726,12 +2726,28 @@ export async function POST(request: NextRequest) {
     }
 
     if (existingEvent?.status === 'processing') {
-      // Another delivery of the same event is in flight right now.
-      log.info('Event is being processed by another request, skipping');
-      return NextResponse.json({ received: true, duplicate: true });
-    }
-
-    if (existingEvent) {
+      // Either another delivery is in flight right now, or an earlier attempt
+      // died holding the claim (killed at maxDuration, or its release write
+      // failed) and the row would otherwise answer "duplicate" for ever (PF-5).
+      // A claim older than STALE_CLAIM_AGE_MS cannot still be running, so one
+      // conditional UPDATE takes it back; of two racing deliveries exactly one
+      // wins (plan payments P-8b.1, SA-P4 part 1). Every event, Connect
+      // included: this protects client money too (SA ruling 1).
+      const { data: reclaim, error: reclaimError } = await processedWebhookEventRepository.reclaimStale(
+        event.id,
+        new Date(Date.now() - STALE_CLAIM_AGE_MS).toISOString()
+      );
+      if (reclaimError) {
+        // Never process without a claim: answer as before.
+        log.error({ err: reclaimError }, 'Could not check a processing claim for staleness');
+      }
+      if (!reclaim?.won) {
+        log.info('Event is being processed by another request, skipping');
+        return NextResponse.json({ received: true, duplicate: true });
+      }
+      log.warn({ event: 'bos_webhook_stale_claim_reclaimed' }, 'Stale processing claim taken back; processing the event');
+      processedEventId = event.id;
+    } else if (existingEvent) {
       // A previous attempt failed. Claim it for this attempt.
       log.info('Retrying previously failed event');
       await processedWebhookEventRepository.reclaimFailed(event.id);
