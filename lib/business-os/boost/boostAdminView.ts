@@ -103,18 +103,22 @@ export function adminBoostFlagReasonWords(code: string | null): string | null {
 
 // Plan payments P-8a.2 (SA-WP-P8a Q-4): `customer` added for the admin billing
 // panel, so dashboard links keep one rule. No other kind was changed.
-export type StripeDashboardKind = 'payment' | 'dispute' | 'customer';
+// Plan payments P-8b.3b (SA P3-SA-7): `event` added for the Jobs page's Stripe
+// webhook events block, same mode rule. No other kind was changed.
+export type StripeDashboardKind = 'payment' | 'dispute' | 'customer' | 'event';
 
 const STRIPE_ID: Readonly<Record<StripeDashboardKind, RegExp>> = {
   payment: /^pi_[A-Za-z0-9]{1,250}$/,
   dispute: /^(dp|du)_[A-Za-z0-9]{1,250}$/,
   customer: /^cus_[A-Za-z0-9]{1,250}$/,
+  event: /^evt_[A-Za-z0-9]{1,250}$/,
 };
 
 const STRIPE_PATH: Readonly<Record<StripeDashboardKind, string>> = {
   payment: 'payments',
   dispute: 'disputes',
   customer: 'customers',
+  event: 'events',
 };
 
 /**
