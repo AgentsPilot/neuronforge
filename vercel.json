@@ -87,6 +87,10 @@
       "schedule": "25 5 * * *"
     },
     {
+      "path": "/api/cron/data-export-modules",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/finance-snapshot",
       "schedule": "7 0 * * *"
     },

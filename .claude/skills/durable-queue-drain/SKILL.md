@@ -102,6 +102,22 @@ The required test: **the claim prevents double-processing.** Model `SKIP LOCKED`
 
 ---
 
+## Variant — one table, two claim models (the data export worker)
+
+The module export queue (`business_os_export_module_jobs`, migration `20261095`; worker `lib/business-os/data-export/moduleExportWorker.ts`, route `/api/cron/data-export-modules`, MX-3b) departs from Steps 2–5 in two deliberate ways. Copy it when an effect is a **multi-part external send** with its own follow-up message:
+
+- **The reaper judges a stale build by what it already sent, not by `attempts` alone.** Each part is written `sending` *before* the call and `accepted` with the provider id after (XC-9). A stale job with every part accepted becomes `sent`; with **any** part it becomes `interrupted` and is never retried (a retry would send a part twice); with no part it goes back to `waiting`, or `failed` after the max. Retry is allowed only while no part reached `sending`. The **compare-and-set** of the release enforces it (it also filters `parts = '[]'`), and the runner's error path never releases a job once a part write was attempted. A row CHECK such as `waiting ⇒ parts = []` does **not** enforce it: the release patch itself empties `parts`, so the CHECK passes.
+- **A second claimable effect on the same row: the failure notice.** A failed or interrupted job sets `notice_state = 'due'` and **clears the claim in the same update**, so the claim function picks the notice up through its own branch, with the lease in the claim predicate (`claimed_at IS NULL OR claimed_at < now() - lease`) and its own attempt counter. One RPC claims both kinds; the caller tells them apart by status.
+
+Two consequences any caller of such a claim must handle:
+
+- **A claim of a waiting row always spends an attempt.** The claim cannot be asked for one branch only, so stop claiming **anything** at the build cutoff (SA C-1), never "claim and release": three late claims would dead-letter a job that was never built.
+- **A released notice is claimable again at once.** Release a retryable notice's claim only **after** the claim loop ends, or one failing notice is re-claimed in the same run and burns every attempt in seconds.
+
+Lease 420 s against `maxDuration` 300 s is safe only while the route is the worker's one awaited runtime caller; the route suite pins that (SA C-5).
+
+---
+
 ## Checklist
 
 - [ ] Claim columns + partial index on the claim's `status`

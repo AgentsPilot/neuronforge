@@ -47,6 +47,7 @@ export type BosCronJobId =
   | 'booking-money-reconcile'
   | 'abandoned-bookings'
   | 'data-export'
+  | 'data-export-modules'
   | 'payment-reminders'
   | 'finance-snapshot'
   | 'inbox-enquiries';
@@ -758,6 +759,48 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     partlyDoneWhen: [
       { kind: 'atLeast', key: 'incompleteSteps', value: 1 },
       { kind: 'atLeast', key: 'expireFailed', value: 1 },
+    ],
+  },
+  {
+    /*
+     * The data export worker (module export MX-3b, BUSINESS_OS_EXPORT_MX3_WORKPLAN.md
+     * D-1, §9.2): a queue drain on the claim pattern of migration 20261095.
+     * Reaps first, then claims module jobs one at a time and emails each
+     * module as CSV parts to the owner's login email, or its one failure
+     * notice. `maxDuration` 300 s against a 420 s lease (XC-8). Every 5
+     * minutes, so it also runs at :50 beside the account deletion lifecycle
+     * job, on one shared Resend team limit: its own sends are 600 ms apart.
+     *
+     * No admin queue view yet (`drainsQueue: null`, SA Q-8). While the export
+     * switch is off nothing is queued, so a run reaps and claims nothing.
+     * "Partly done" = a module was cut off after a part had gone (interrupted),
+     * or a send was stopped by the time budget.
+     */
+    id: 'data-export-modules',
+    path: '/api/cron/data-export-modules',
+    schedule: '*/5 * * * *',
+    ...EVERY_5,
+    timeLimitSeconds: 300,
+    timeLimitSource: 'maxDuration',
+    label: 'Data export worker',
+    description: 'Emails each module of a data export to the owner as CSV parts, and a notice when a module fails',
+    scheduleWords: 'Every 5 minutes',
+    drainsQueue: null,
+    counts: [
+      { key: 'reaped', path: ['data', 'reaped'], label: 'recovered from a dead run' },
+      { key: 'claimed', path: ['data', 'claimed'], label: 'picked up' },
+      { key: 'modulesSent', path: ['data', 'modulesSent'], label: 'modules sent in full' },
+      { key: 'partsSent', path: ['data', 'partsSent'], label: 'emails with a file sent' },
+      { key: 'modulesFailed', path: ['data', 'modulesFailed'], label: 'modules failed' },
+      { key: 'modulesInterrupted', path: ['data', 'modulesInterrupted'], label: 'modules interrupted' },
+      { key: 'retried', path: ['data', 'retried'], label: 'modules put back for a retry' },
+      { key: 'noticesSent', path: ['data', 'noticesSent'], label: 'failure notices sent' },
+      { key: 'noticesFailed', path: ['data', 'noticesFailed'], label: 'failure notices not sent' },
+      { key: 'budgetStops', path: ['data', 'budgetStops'], label: 'stopped by the time budget' },
+    ],
+    partlyDoneWhen: [
+      { kind: 'atLeast', key: 'modulesInterrupted', value: 1 },
+      { kind: 'atLeast', key: 'budgetStops', value: 1 },
     ],
   },
   {

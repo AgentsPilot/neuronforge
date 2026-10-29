@@ -1,8 +1,8 @@
 /**
  * The production cron schedule (admin reorganisation slice 5, part A).
  *
- * `vercel.json` schedules exactly the Business OS jobs listed below (22 as of
- * 2026-10-25). The three
+ * `vercel.json` schedules exactly the Business OS jobs listed below (23 as of
+ * 2026-10-29). The three
  * AgentsPilot schedules were retired on Offir's instruction (OQ-4, "sunset them
  * for now"): `/api/run-scheduled-agents`, `/api/cron/update-template-scores`
  * and `/api/cron/memory-consolidation`. Their CODE is kept (FR-A2), so
@@ -111,6 +111,13 @@ const BOS_CRONS: CronEntry[] = [
    * job runs at :25.
    */
   { path: '/api/cron/data-export', schedule: '25 5 * * *' },
+  /*
+   * The data export worker (module export MX-3b, 2026-10-29), directly after
+   * the data export sweep. Every 5 minutes: a queue drain with a 300 s
+   * maxDuration under a 420 s lease. It also runs at :50, beside the account
+   * deletion lifecycle job, on one shared Resend team limit.
+   */
+  { path: '/api/cron/data-export-modules', schedule: '*/5 * * * *' },
   // The 20th: finance slice 8.2 (§11M.7): 00:07 UTC, a free minute (CF-6), appended last.
   { path: '/api/cron/finance-snapshot', schedule: '7 0 * * *' },
   /*
@@ -138,8 +145,8 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 22 Business OS jobs, unchanged and in order', () => {
-    expect(crons).toHaveLength(22);
+  it('schedules exactly the 23 Business OS jobs, unchanged and in order', () => {
+    expect(crons).toHaveLength(23);
     expect(crons).toEqual(BOS_CRONS);
   });
 
