@@ -79,6 +79,13 @@ const ALLOWED = new Set(
     // test replaces the instance.
     'app/api/admin/users/[id]/data-exports/route.ts',
     'app/api/admin/users/[id]/data-exports/__tests__/route.test.ts',
+    // Account deletion lifecycle D4a / SX-3 (SA S-7): the plan cancel emails
+    // read the SESSION user's own live address (`findUserIdentity`, keyed on
+    // the id from `getUser()`, never request data) to send them the cancel /
+    // keep email. The address goes to the transport only, never a log or audit
+    // row. The routes' email test replaces the instance.
+    'lib/business-os/billing/planCancelEmailDeps.ts',
+    'app/api/business-os/billing/plan/cancel/__tests__/route.d4a.test.ts',
   ].map((file) => file.split('/').join(sep))
 );
 

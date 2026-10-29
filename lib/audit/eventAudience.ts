@@ -124,6 +124,9 @@ export const AUDIT_EVENT_AUDIENCE = {
   [AUDIT_EVENTS.ACCOUNT_DELETION_REFUSED]: 'bos',
   // D3.1 / SX-2b (SA S-8): the free period after an owner-started cancel, as BOS_BILLING_SUBSCRIPTION_ENDED.
   [AUDIT_EVENTS.BOS_PLAN_FREE_PERIOD_AFTER_CANCEL]: 'bos',
+  // D4a / SX-3 (SA S-9): the owner's plan cancel / keep email, sent or not.
+  [AUDIT_EVENTS.BOS_PLAN_CANCEL_EMAIL_SENT]: 'bos',
+  [AUDIT_EVENTS.BOS_PLAN_CANCEL_EMAIL_NOT_SENT]: 'bos',
   [AUDIT_EVENTS.BUSINESS_AI_ACTION_COMPLETED]: 'bos',
   [AUDIT_EVENTS.BUSINESS_AI_ACTION_FAILED]: 'bos',
   [AUDIT_EVENTS.DATA_ACCESSED]: 'shared',
