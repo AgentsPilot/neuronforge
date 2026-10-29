@@ -27,6 +27,13 @@ import { getVerticalConfig, buildTerminologyInstruction, getVerticalDescriptor }
 import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
 import { resolveBusinessHealth } from '../health/resolveBusinessHealth';
 import { healthScore, MEASURE_IN_PLAIN_WORDS } from '../health/businessHealth';
+// What a count counts, in words, and the check that keeps it there.
+import { countNoun, describeCount } from '../health/countNouns';
+import {
+  verifyPriorities,
+  fallbackPriorities,
+  type PriorityFact,
+} from '../health/verifyPriorities';
 import { getCurrencySymbol } from '@/lib/utils/currencyHelpers';
 import type { BusinessHealth } from '../health/businessHealth';
 import { automationApplies } from '@/lib/business-os/gaps/automationApplies';
@@ -848,6 +855,23 @@ export class InsightRepository {
             baseline_value: detection.baselineValue,
             threshold_value: detection.thresholdValue,
             percent_change: detection.percentChange,
+            /*
+             * WHAT THE COUNT COUNTS, REFRESHED TOO.
+             *
+             * `affected_count` was refreshed here and its noun was not, so the
+             * type only ever reached a row on INSERT. An open insight therefore
+             * kept whatever it was created with for ever — and the detector
+             * that had been raising a nounless count for months takes this
+             * branch every night, because its row is already open.
+             *
+             * Measured on the reporting account: `ops_utilization_low` was
+             * detected on 20 Oct with a NULL type, and no number of further
+             * runs would have filled it in. The fix that records the noun would
+             * have applied to new businesses only.
+             *
+             * Writes the same value the insert does, from the same detector.
+             */
+            affected_entity_type: detection.affectedEntityType,
             affected_entity_ids: detection.affectedEntityIds,
             affected_count: detection.affectedCount,
             estimated_impact_usd: detection.estimatedImpactUsd,
@@ -1140,6 +1164,17 @@ export class InsightRepository {
         context = issueDescriptions[issueType] || context;
       }
 
+      /*
+       * `recommendation` is held to a tighter rule than it used to be.
+       *
+       * It is no longer only a suggestion inside a card. When the weekly
+       * verdict's own "do this first" line fails its fact check, the verdict
+       * falls back to THIS sentence (`fallbackPriorities`), so a woolly one now
+       * reaches the most-read line in the product. The live example that
+       * prompted the rule read "publish a special offer OR a discount on
+       * upcoming appointments in order to fill your free slots today": two
+       * actions, joined by "or", ending in filler.
+       */
       const prompt = `You are a business insights assistant for a ${verticalDescriptor}.
 
 Business Context:
@@ -1149,7 +1184,13 @@ Business Context:
 
 Detection details:
 - Issue type: ${context}
-- Affected items: ${detection.affectedCount}${detection.affectedEntityType ? ` (these are ${detection.affectedEntityType}s — NOT clients, NOT bookings, unless that is the word here)` : ''}
+- Affected items: ${detection.affectedCount}${
+        countNoun(detection.affectedEntityType)
+          ? ` (these are ${countNoun(detection.affectedEntityType)} — NOT clients, NOT bookings, unless that is the word here)`
+          : detection.affectedEntityType
+            ? ` (these are ${detection.affectedEntityType}s — NOT clients, NOT bookings, unless that is the word here)`
+            : ''
+      }
 ${describeCurrentValue(detection, businessContext.currency)}${describeImpact(detection, businessContext.currency)}${describeComparison(detection)}- Severity: ${detection.severity}
 ${detection.narrationSubject ? `- Specifically: ${detection.narrationSubject}` : ''}
 ${hasRealBaseline(detection) ? `- Change from baseline: ${detection.percentChange!.toFixed(0)}%` : ''}
@@ -1164,13 +1205,24 @@ WRITING STYLE:
 - Use simple, conversational language appropriate for a solo business owner
 - Avoid business jargon - explain numbers in plain terms
 - Be specific with numbers and concrete actions
-- For recommendations: Give clear, actionable next steps that feel achievable
+- Never use a dash in place of punctuation. No "—", no "–". A comma, a colon or
+  a full stop says the same thing and reads as something a person wrote.
+
+THE RECOMMENDATION, the line they act on:
+- ONE action. Never two joined by "or" or "and". Choose the one you would do first.
+- Start with the verb: send, call, ask, write, add, offer, check.
+- Name who or what it is about, using the count above and the thing it counts.
+- Under 70 characters. It has to fit on one line.
+- Stop when the action is stated. No "in order to…", no "so that you can…",
+  no "today" tacked on the end.
+- Never: review, consider, monitor, evaluate, analyse, assess, explore,
+  strategy, optimise, focus on, keep an eye on, make sure you.
 
 Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, no code blocks):
 {
   "title": "A short, impactful title (max 50 chars, include key numbers)",
   "description": "1-2 sentences explaining the issue with specific numbers in plain language",
-  "recommendation": "1 clear, actionable sentence that a busy solo owner can act on today"
+  "recommendation": "ONE action, starting with a verb, under 70 characters"
 }`;
 
       // The request is built INSIDE the attempt, so a retry on the code
@@ -3312,10 +3364,57 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       // Build context
       const trendEmoji = scoreChange === null ? '➡️' : scoreChange > 0 ? '📈' : scoreChange < 0 ? '📉' : '➡️';
 
-      // Top issues
+      /*
+       * ───────────────────────────────────────────────────────────────────
+       * THE ISSUES, AS FACTS RATHER THAN AS PROSE.
+       *
+       * This was one line per issue: its TITLE and its money, nothing else.
+       * A title is a sentence somebody already wrote, and handing the model a
+       * sentence invites it to write a different one around the same figure —
+       * which is exactly what happened. "29 empty hours in the calendar"
+       * became, in the priority list, "send reminders to 29 clients who
+       * missed meetings", on an account with six clients in total.
+       *
+       * The row always knew better. `affected_count` is a count OF something,
+       * `affected_entity_type` records what, and `recommendation` is a usable
+       * action already written in the owner's language. All three now travel,
+       * with the insight's id, so a priority can cite the issue it came from
+       * and `verifyPriorities` can check the arithmetic afterwards.
+       * ───────────────────────────────────────────────────────────────────
+       */
       const criticalInsights = allInsights.filter((i) => i.severity === 'critical').slice(0, 3);
+      const priorityFacts: PriorityFact[] = criticalInsights.map((i) => ({
+        insightId: i.id,
+        entityType: i.affected_entity_type ?? null,
+        figures: [
+          i.affected_count,
+          ...(i.estimated_impact_usd !== undefined && i.estimated_impact_usd !== null
+            ? [i.estimated_impact_usd]
+            : []),
+          ...(i.current_value !== undefined && i.current_value !== null ? [i.current_value] : []),
+        ].filter((n): n is number => typeof n === 'number' && Number.isFinite(n)),
+        recommendation: i.recommendation ?? null,
+        category: i.category,
+        detectorId: i.detector_id,
+      }));
+
       const issuesList = criticalInsights
-        .map((i) => `- ${i.title} (${currencySymbol}${i.estimated_impact_usd?.toLocaleString() || 0} impact)`)
+        .map((i, index) => {
+          const fact = priorityFacts[index];
+          const money =
+            i.estimated_impact_usd !== undefined && i.estimated_impact_usd !== null
+              ? `, worth about ${currencySymbol}${i.estimated_impact_usd.toLocaleString()}`
+              : '';
+
+          return [
+            `[${index + 1}] insight_id: ${fact.insightId}`,
+            `    what it is: ${i.title}`,
+            `    the count: ${describeCount(i.affected_count, i.affected_entity_type)}${money}`,
+            i.recommendation ? `    what we already suggested: ${i.recommendation}` : null,
+          ]
+            .filter(Boolean)
+            .join('\n');
+        })
         .join('\n');
 
       // Correlated patterns
@@ -3397,20 +3496,57 @@ RULES ABOUT THESE NUMBERS — these matter more than the writing:
   came with it. "92%, up 4 points from 88%" is the shape. A number with no
   comparison beside it is a number the reader cannot use.
 
-TOP CRITICAL ISSUES:
+THE ISSUES YOU MAY WRITE ABOUT, and nothing outside this list:
 ${issuesList || 'None'}
+
+RULES ABOUT THESE ISSUES:
+- Each number above belongs ONLY to the thing named beside it. Never move a
+  number onto a different subject. "29 empty hours" must never become "29
+  clients", "29 appointments" or "29 reminders". Those are three different
+  claims and all three would be false.
+- A number says how many of ONE thing. If what it counts is not recorded, do
+  not use that number at all; write the action without it.
+- You may not add up, divide or compare these numbers. If you did not receive
+  the figure, it does not exist.
 
 CONNECTED PATTERNS DETECTED:
 ${patterns || 'None'}
 
-Generate an executive summary that:
-1. Opens with the most important takeaway (good news or urgent concern)
-2. Explains what's working and what needs attention
-3. Provides context (is this improving or getting worse?)
-4. Ends with next steps that are ACTIONS, not topics. "Send a reminder to the
-   three people who have not paid" is an action. "Review cash flow strategies
-   to ensure stability" is a topic, and is the single most common failure here
-   — it tells someone who is not a business person to go and do homework.
+Write a short note that:
+1. Opens with the one thing that matters most this week, in the first sentence.
+   The reader sees ONLY THE FIRST THREE LINES unless they tap to read on, so
+   anything that matters cannot wait until the second paragraph.
+2. Says what changed and what needs attention, each with the figure beside it.
+3. Ends with what to do, as ACTIONS, not topics. "Send a reminder to the three
+   people who have not paid" is an action. "Review cash flow strategies to
+   ensure stability" is a topic, and is the single most common failure here:
+   it tells someone who is not a business person to go and do homework.
+4. Is two short paragraphs at most. If it does not fit, you have included
+   something that was not worth their Sunday evening.
+
+THE "DO THIS FIRST" LIST, the one part they will act on:
+
+This is the most-read line in the product. Someone with no business training
+reads it between clients and decides whether to do something today. Write it
+the way you would text a friend who is good at their job and busy.
+
+Each one:
+- ONE thing to do. Not a theme, not two things joined by "and".
+- Finishable in one sitting, this week, by one person at a desk or on a phone.
+- Starts with the verb: send, call, ask, write, add, offer, check.
+- Names exactly who or what it is about. "The three people who have not paid"
+  is specific. "Clients" is not.
+- Under 70 characters. It renders on one line.
+- Carries the insight_id of the issue it came from, copied exactly from the
+  list above. ALWAYS include it: it is what lets them tap the line and see the
+  issue behind it. A line that carries a NUMBER and no id is thrown away.
+- A number may appear only if it is that issue's own number, counting the thing
+  that issue counts. When in doubt, leave the number out: "call the clients who
+  have not paid" is better than a wrong count.
+- Never these words: review, consider, monitor, evaluate, analyse, assess,
+  explore, strategy, optimise, focus on, keep an eye on, make sure you.
+  Each of them hands the thinking back to someone who came here to be told.
+- At most three, ordered by what costs them most if they do nothing.
 
 HOW TO WRITE IT — this matters as much as the facts:
 
@@ -3431,6 +3567,8 @@ HOW TO WRITE IT — this matters as much as the facts:
     "stay proactive"         -> say what to actually do
     "leverage", "optimise", "streamline", "utilise" -> just say it simply
 - Short sentences. If a sentence needs reading twice, rewrite it.
+- Never use a dash in place of punctuation. No "—", no "–". A comma, a colon or
+  a full stop says the same thing and reads as something a person wrote.
 - Be concrete. "Two people asked about massages last week and never heard back"
   beats "your response rate has declined".
 - No pep talk and no filler. Do not open with "Hey there!" or "Great news!".
@@ -3441,14 +3579,14 @@ HOW TO WRITE IT — this matters as much as the facts:
 Generate in ${langName}. Respond with ONLY a JSON object:
 {
   "title": "One warm line naming WHAT MOVED this week, in their words. Never a score and never a number out of 100 — e.g. 'More invoices were paid on time this month' or 'Fewer enquiries got a reply than last month'. If nothing could be compared yet, say so plainly.",
-  "narrative": "2-3 paragraph executive summary (conversational, specific, actionable)",
+  "narrative": "Two short paragraphs at most, conversational and specific. The first sentence is the whole point; the reader may never see the rest.",
   "highlights": [
     {"type": "positive", "text": "Something good"},
     {"type": "negative", "text": "Something concerning"},
     {"type": "neutral", "text": "Something informational"}
   ],
   "priorities": [
-    {"rank": 1, "category": "cash_flow", "title": "What to do first"}
+    {"rank": 1, "category": "cash_flow", "insight_id": "the id of the issue above this came from, copied exactly", "title": "One thing to do, starting with a verb, under 70 characters"}
   ]
 }`;
 
@@ -3473,6 +3611,50 @@ Generate in ${langName}. Respond with ONLY a JSON object:
       const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       const parsed = JSON.parse(jsonStr);
 
+      /*
+       * ───────────────────────────────────────────────────────────────────
+       * CHECKED BEFORE IT IS STORED.
+       *
+       * `priorities: parsed.priorities || []` went straight into the table and
+       * straight onto the dashboard. That is how "send reminders to 29 clients
+       * who missed meetings" reached an owner with six clients: a figure
+       * belonging to empty calendar hours, re-pointed at people, with nothing
+       * between the model and the screen.
+       *
+       * `verifyPriorities` keeps only the lines whose figures belong to the
+       * issue they cite. What it drops is logged with its reason, because a
+       * pattern of drops is the signal the prompt needs work — silence here
+       * would make the fix invisible the next time it is needed.
+       * ───────────────────────────────────────────────────────────────────
+       */
+      const allowedRates = health.categories.flatMap(c =>
+        [c.rate, c.previousRate, c.change === null ? null : Math.abs(c.change)].filter(
+          (n): n is number => typeof n === 'number'
+        )
+      );
+
+      const checked = verifyPriorities({
+        priorities: Array.isArray(parsed.priorities) ? parsed.priorities : [],
+        facts: priorityFacts,
+        allowedRates,
+        language,
+      });
+
+      if (checked.dropped.length > 0) {
+        logger.warn(
+          { userId, dropped: checked.dropped, kept: checked.kept.length },
+          'Weekly priorities failed their fact check and were dropped'
+        );
+      }
+
+      /*
+       * Never an empty list where there is something to do. The insights' own
+       * recommendations are written one per insight, in this language, already
+       * naming a single action — blunter than the model's prose and true.
+       */
+      const priorities =
+        checked.kept.length > 0 ? checked.kept : fallbackPriorities(priorityFacts);
+
       return {
         /*
          * No score here either. A model that returned no title must not be
@@ -3481,7 +3663,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
         title: parsed.title || 'How your week went',
         narrative: parsed.narrative || 'Your business health summary is being generated.',
         highlights: parsed.highlights || [],
-        priorities: parsed.priorities || [],
+        priorities,
       };
     } catch (error) {
       logger.warn({ err: error }, 'LLM health narrative generation failed, using fallback');

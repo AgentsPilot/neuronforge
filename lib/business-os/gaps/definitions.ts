@@ -504,16 +504,63 @@ const invoiceUnpaid: GapDefinition = {
         .order('due_date', { ascending: true })
         .limit(50);
 
-      return (data || [])
-        .filter(row => row.contact_id)
-        .map(row => ({
-          contactId: row.contact_id as string,
-          name: str(row.client_name) || 'Someone',
-          since: (row.due_date as string) || (row.created_at as string),
-          entityId: row.id as string,
-          value: Number(row.amount) || undefined,
-          currency: str(row.currency) || undefined,
-        }));
+      const owing = (data || []).filter(row => row.contact_id);
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * HAS THE CHASER RUN OUT OF MOVES ON THIS ONE?
+       *
+       * `chase_invoices` works a finite schedule — the owner sets the days
+       * past due, typically three of them — and then it is finished. The
+       * invoice is no less unpaid afterwards; it simply has nobody left
+       * working it.
+       *
+       * That is the moment it becomes the owner's again, and the moment this
+       * gap is allowed back onto the Needs-you card even though the chaser is
+       * switched ON. Before it, the row would be telling the owner to do the
+       * thing a robot is actively doing.
+       *
+       * Read off the QUEUE rather than counting days: `payment_reminders`
+       * holds one row per scheduled reminder, so "nothing pending or in
+       * flight, and at least one actually went" is the same sentence as "it
+       * has been chased and there is no more chasing coming". Cancelled rows
+       * are not sends and are deliberately not counted — a schedule the owner
+       * called off never ran.
+       *
+       * Absent, not false, where it has not finished: the route only looks for
+       * `true`, and an invoice nobody has queued a reminder for yet is not a
+       * chaser that gave up.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const spent = new Set<string>();
+      const invoiceIds = owing.map(row => row.id as string);
+      for (const ids of chunked(invoiceIds)) {
+        const { data: reminders } = await supabaseServer
+          .from('payment_reminders')
+          .select('invoice_id, status')
+          .eq('user_id', userId)
+          .in('invoice_id', ids);
+        const queued = new Set<string>();
+        const sent = new Set<string>();
+        for (const reminder of reminders || []) {
+          const invoiceId = reminder.invoice_id as string | null;
+          if (!invoiceId) continue;
+          const status = reminder.status as string;
+          if (status === 'pending' || status === 'processing') queued.add(invoiceId);
+          if (status === 'sent') sent.add(invoiceId);
+        }
+        for (const id of sent) if (!queued.has(id)) spent.add(id);
+      }
+
+      return owing.map(row => ({
+        contactId: row.contact_id as string,
+        name: str(row.client_name) || 'Someone',
+        since: (row.due_date as string) || (row.created_at as string),
+        entityId: row.id as string,
+        value: Number(row.amount) || undefined,
+        currency: str(row.currency) || undefined,
+        chaserDone: spent.has(row.id as string) || undefined,
+      }));
     }),
 };
 
@@ -842,6 +889,18 @@ const bookingCancelled: GapDefinition = {
        * the diary does not return a deposit or stop a debit.
        * ───────────────────────────────────────────────────────────────────────
        */
+      /*
+       * THE DECISION, WHERE ONE HAS BEEN MADE.
+       *
+       * Checked before anything else below because it outranks everything: an
+       * owner who has answered the question is not asked it again, whatever
+       * the money, the plan or the diary say.
+       */
+      const answered = await keptThePayment(
+        userId,
+        rows.map(row => row.id as string)
+      );
+
       const rebooked = new Set<string>();
       /* A row this gap is reporting on can never be its own answer. Held
          separately from the status test below because it is a different
@@ -887,6 +946,8 @@ const bookingCancelled: GapDefinition = {
 
       return rows
         .filter(row => {
+          /* Answered. See `keptThePayment` — nothing below can reopen it. */
+          if (answered.has(row.id as string)) return false;
           const held = heldByBooking.get(row.id as string);
           /*
            * A plan still charging NEVER ages off. The slot being gone does not
@@ -1545,7 +1606,10 @@ const meetingAutoCompleted: GapDefinition = {
        */
       const { data: bookings } = await supabaseServer
         .from('scheduling_bookings')
-        .select('id, contact_id, start_time, status, meeting_status, service:scheduling_services(service_name)')
+        .select(
+          'id, contact_id, start_time, status, meeting_status, outcome_by, ' +
+            'service:scheduling_services(service_name)'
+        )
         .eq('user_id', userId)
         /*
          * Still marked HELD, which is `meeting_status` — the column the
@@ -1556,7 +1620,33 @@ const meetingAutoCompleted: GapDefinition = {
         .eq('meeting_status', 'held')
         .in('id', [...markedAt.keys()]);
 
-      const rows = (bookings || []).filter(row => row.contact_id);
+      /*
+       * …and still the MACHINE'S answer, which the status alone cannot say.
+       *
+       * The rule above was written for a CORRECTION: an owner who answers
+       * no-show or called-off changes `meeting_status`, and the row drops out
+       * on its own. But the likeliest answer of the three is agreement — the
+       * meeting did happen — and confirming it leaves `meeting_status: 'held'`
+       * exactly as the automation left it. Nothing moved, so nothing noticed.
+       *
+       * The owner was therefore asked "did this happen?" about a meeting they
+       * had already confirmed AND raised the invoice for, every day, with the
+       * only way out being to answer it wrongly.
+       *
+       * `outcome_by` is the distinction and has been carried since migration
+       * 20261078: `'system'` is the clock; `'owner'` and `'client'` are
+       * people, and a person's answer ends the question.
+       */
+      const rows = (bookings || []).filter(
+        row =>
+          row.contact_id &&
+          /* Both halves of "still the automation's answer", in memory. The
+             status is named in the query above as well; said twice because a
+             filter that silently stopped matching would put this question back
+             in front of owners who had already answered it. */
+          row.meeting_status === 'held' &&
+          row.outcome_by === 'system'
+      );
       if (rows.length === 0) return [];
 
       const { data: contacts } = await supabaseServer
@@ -1661,6 +1751,328 @@ const quoteDeadlineUnanswered: GapDefinition = {
     }),
 };
 
+
+/**
+ * The meeting happened and nobody ever asked to be paid for it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The card has always offered `send_invoice` for this — `moneyStep` returns it
+ * the moment a held booking's money reads `needs_invoice` — but nothing ever
+ * raised it as a TASK. The owner had to open the booking to find out, which
+ * means they had to already suspect.
+ *
+ * `invoice_unpaid` does not cover it: that gap reads `payment_invoices`, so it
+ * needs an invoice to exist. The whole failure here is that one never did.
+ * `stage_awaiting_completion` does not either — it reads plan installments,
+ * which a direct-price booking has none of.
+ *
+ * So the one case nothing watched was work done and never charged for, which
+ * is the most expensive thing on this list to miss.
+ *
+ * NAVIGATES rather than posts. An invoice carries an amount, a due date and
+ * tax, and a one-click raise from a dashboard would be deciding all three on
+ * the owner's behalf — the same reasoning `bill_stage` and `write_quote` are
+ * built on.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const bookingUnbilled: GapDefinition = {
+  id: 'booking_unbilled',
+  blocksOn: 'owner',
+  /* The hour is over and the price was agreed when it was booked. Nothing is
+     pending here but the asking. */
+  staleAfterHours: 0,
+  action: 'send_invoice',
+  find: (userId, now) =>
+    safely('booking_unbilled', async () => {
+      const { data } = await supabaseServer
+        .from('scheduling_bookings')
+        .select(
+          'id, contact_id, start_time, created_at, status, meeting_status, ' +
+            'service:scheduling_services(service_name, price), ' +
+            'contact:crm_contacts(first_name, last_name)'
+        )
+        .eq('user_id', userId)
+        /* `complete()` writes this for an appointment AND for a handover, so
+           one test covers a meeting that was held and a product that was given
+           over. */
+        .eq('meeting_status', 'held')
+        .neq('status', 'cancelled')
+        .order('start_time', { ascending: true })
+        .limit(100);
+
+      const held = (data || []).filter(row => row.contact_id);
+      if (held.length === 0) return [];
+
+      const bookingIds = held.map(row => row.id as string);
+
+      /*
+       * Three ways a booking can already be settled, and any one of them means
+       * there is nothing to ask for:
+       *
+       *   an invoice      raised at all, in any state. A draft is somebody
+       *                   part-way through this very task.
+       *   a payment       taken at checkout, which is most direct-price work.
+       *   a plan stage    `stage_awaiting_completion` owns those, and raising
+       *                   both would ask twice for one sum.
+       */
+      const settled = new Set<string>();
+      for (const ids of chunked(bookingIds)) {
+        const [invoices, payments, stages] = await Promise.all([
+          supabaseServer
+            .from('payment_invoices')
+            .select('booking_id')
+            .eq('user_id', userId)
+            .in('booking_id', ids),
+          supabaseServer
+            .from('payment_transactions')
+            .select('booking_id')
+            .eq('user_id', userId)
+            .eq('status', 'succeeded')
+            .in('booking_id', ids),
+          supabaseServer
+            .from('payment_plan_installments')
+            .select('booking_id')
+            .eq('user_id', userId)
+            .in('booking_id', ids),
+        ]);
+        for (const source of [invoices.data, payments.data, stages.data]) {
+          for (const row of source || []) {
+            if (row.booking_id) settled.add(row.booking_id as string);
+          }
+        }
+      }
+
+      const nowMs = new Date(now).getTime();
+
+      return held
+        .filter(row => {
+          if (settled.has(row.id as string)) return false;
+          /* Said again in memory, not only as a query filter. Billing for a
+             booking that was called off is the worst thing this gap could
+             cause, and a `.neq` that silently stopped matching would cause
+             exactly that with nothing to show for it. */
+          if (row.status === 'cancelled') return false;
+          const service = (Array.isArray(row.service) ? row.service[0] : row.service) as
+            | { price?: number | null }
+            | undefined;
+          /* Free work is not unbilled, it is free. A consultation offered at no
+             charge must never become a task about money. */
+          if (!service?.price || Number(service.price) <= 0) return false;
+          /* Its hour has to have passed. `meeting_status` can be written early
+             behind the testing flag, and billing for an hour still ahead is
+             the one mistake this must never prompt. */
+          const start = row.start_time ? new Date(row.start_time as string).getTime() : NaN;
+          return !Number.isFinite(start) || start <= nowMs;
+        })
+        .map(row => {
+          const service = (Array.isArray(row.service) ? row.service[0] : row.service) as
+            | { service_name?: string; price?: number | null }
+            | undefined;
+          const contact = ((Array.isArray(row.contact) ? row.contact[0] : row.contact) ||
+            {}) as { first_name?: string; last_name?: string };
+          return {
+            contactId: row.contact_id as string,
+            name: personName(contact),
+            note: str(service?.service_name),
+            since: (row.start_time as string) || (row.created_at as string),
+            entityId: row.id as string,
+            bookingId: row.id as string,
+            value: Number(service?.price) || undefined,
+          };
+        });
+    }),
+};
+
+/**
+ * Paid for, and never handed over.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A dateless service — a course, a block of hours, a document — ends at a
+ * handover rather than at a meeting, and `bookingNextStep` has drawn that step
+ * for a long time: `DELIVER`, with `mark_delivered` on it. Its own comment
+ * records what was missing, which is that nothing ASKED. The money landing
+ * returned DONE, so the badge read "all finished" directly above a step that
+ * was still open.
+ *
+ * This is the obligation half of the same pair as `booking_unbilled`: there,
+ * work was done and never charged; here, money was taken and the work has not
+ * been confirmed as given. Both can sit for months with nothing watching, and
+ * this one is the one a client would complain about.
+ *
+ * Only ever a DATELESS service. A scheduled one ends at its meeting, and
+ * `meeting_unmarked` already asks about that — the resolver draws the same
+ * line, in the same words, for the same reason.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const deliveryUnconfirmed: GapDefinition = {
+  id: 'delivery_unconfirmed',
+  blocksOn: 'owner',
+  staleAfterHours: 0,
+  action: 'mark_delivered',
+  find: (userId) =>
+    safely('delivery_unconfirmed', async () => {
+      const { data } = await supabaseServer
+        .from('scheduling_bookings')
+        .select(
+          'id, contact_id, start_time, created_at, status, meeting_status, ' +
+            'service:scheduling_services(service_name, is_scheduled), ' +
+            'contact:crm_contacts(first_name, last_name)'
+        )
+        .eq('user_id', userId)
+        .neq('status', 'cancelled')
+        .order('created_at', { ascending: true })
+        .limit(100);
+
+      /*
+       * `delivered` and `isUnscheduled`, in the resolver's own words — see
+       * `bookingNextStep`. Applied here rather than as query filters because
+       * both read the SERVICE, which is an embedded row, and because the
+       * definitions have to stay recognisably the same as the card's or the
+       * two will drift into disagreeing about one booking.
+       */
+      const waiting = (data || []).filter(row => {
+        if (!row.contact_id) return false;
+        /* As above: stated in memory as well as in the query, because a
+           cancelled job has no handover owed. */
+        if (row.status === 'cancelled') return false;
+        const service = (Array.isArray(row.service) ? row.service[0] : row.service) as
+          | { is_scheduled?: boolean | null }
+          | undefined;
+        const dateless =
+          service?.is_scheduled === false ||
+          (service?.is_scheduled == null && !row.start_time);
+        if (!dateless) return false;
+        const delivered =
+          row.meeting_status === 'held' ||
+          (row.meeting_status == null && row.status === 'completed');
+        return !delivered;
+      });
+
+      if (waiting.length === 0) return [];
+
+      /*
+       * A PACKAGE CONTAINER IS NOT A DATELESS PRODUCT.
+       *
+       * It carries no `start_time` — deliberately, because the hours belong to
+       * its sessions and not to the purchase — so the "dateless" test above
+       * swallows it whole. The first run on a real account duly asked the
+       * owner to confirm they had "handed over" a course of treatments that is
+       * three sessions into six.
+       *
+       * A package is delivered THROUGH its sessions, and each of those is
+       * answered by `meeting_unmarked` or billed by
+       * `stage_awaiting_completion`. There is no separate handover to confirm,
+       * and asking for one would be asking about work the owner is still in
+       * the middle of.
+       *
+       * Both shapes are excluded, because both exist: the newer package hangs
+       * its sessions off the container as `scheduling_meetings`, the older one
+       * as child bookings naming it as `parent_booking_id`.
+       */
+      const containers = new Set<string>();
+      const candidateIds = waiting.map(row => row.id as string);
+      for (const ids of chunked(candidateIds)) {
+        const [meetings, children] = await Promise.all([
+          supabaseServer
+            .from('scheduling_meetings')
+            .select('booking_id')
+            .eq('user_id', userId)
+            .in('booking_id', ids),
+          supabaseServer
+            .from('scheduling_bookings')
+            .select('parent_booking_id')
+            .eq('user_id', userId)
+            .in('parent_booking_id', ids),
+        ]);
+        for (const row of meetings.data || []) {
+          if (row.booking_id) containers.add(row.booking_id as string);
+        }
+        for (const row of children.data || []) {
+          if (row.parent_booking_id) containers.add(row.parent_booking_id as string);
+        }
+      }
+
+      /*
+       * The money has to have ARRIVED. An unpaid course is the invoice gaps'
+       * business, not this one — asking the owner to hand over work nobody has
+       * paid for would be the opposite advice.
+       */
+      const bookingIds = waiting.map(row => row.id as string);
+      const paid = new Set<string>();
+      /*
+       * A PLAN THAT IS STILL COLLECTING IS NOT A PAID-FOR JOB.
+       *
+       * The first version asked only whether any payment had succeeded, and on
+       * a real account that lit up six courses bought on instalments — every
+       * one of them still being charged for. `moneyStateFrom` has always drawn
+       * this line properly: a plan counts as paid when `periodsPaid` reaches
+       * `installmentCount`, not when it starts.
+       *
+       * So any instalment still to come disqualifies the booking. Cancelled
+       * periods are not outstanding — a plan stopped halfway leaves the owner
+       * with money and a decision, which `PLAN_STOPPED_UNDELIVERED` is the
+       * card's answer to and which is not this row's question.
+       */
+      const stillCollecting = new Set<string>();
+      for (const ids of chunked(bookingIds)) {
+        const [payments, invoices, periods] = await Promise.all([
+          supabaseServer
+            .from('payment_transactions')
+            .select('booking_id')
+            .eq('user_id', userId)
+            .eq('status', 'succeeded')
+            .in('booking_id', ids),
+          supabaseServer
+            .from('payment_invoices')
+            .select('booking_id, status')
+            .eq('user_id', userId)
+            .eq('status', 'paid')
+            .in('booking_id', ids),
+          supabaseServer
+            .from('payment_plan_installments')
+            .select('booking_id, status')
+            .eq('user_id', userId)
+            .in('booking_id', ids),
+        ]);
+        for (const source of [payments.data, invoices.data]) {
+          for (const row of source || []) {
+            if (row.booking_id) paid.add(row.booking_id as string);
+          }
+        }
+        for (const row of periods.data || []) {
+          const status = row.status as string;
+          if (!row.booking_id) continue;
+          if (status === 'paid' || status === 'cancelled') continue;
+          stillCollecting.add(row.booking_id as string);
+        }
+      }
+
+      return waiting
+        .filter(
+          row =>
+            paid.has(row.id as string) &&
+            !stillCollecting.has(row.id as string) &&
+            /* Delivered through its sessions — see `containers` above. */
+            !containers.has(row.id as string)
+        )
+        .map(row => {
+          const service = (Array.isArray(row.service) ? row.service[0] : row.service) as
+            | { service_name?: string }
+            | undefined;
+          const contact = ((Array.isArray(row.contact) ? row.contact[0] : row.contact) ||
+            {}) as { first_name?: string; last_name?: string };
+          return {
+            contactId: row.contact_id as string,
+            name: personName(contact),
+            note: str(service?.service_name),
+            since: (row.created_at as string),
+            entityId: row.id as string,
+            bookingId: row.id as string,
+          };
+        });
+    }),
+};
+
 export const GAP_DEFINITIONS: GapDefinition[] = [
   enquiryUnanswered,
   quoteUnwritten,
@@ -1675,6 +2087,8 @@ export const GAP_DEFINITIONS: GapDefinition[] = [
   meetingUnmarked,
   meetingAutoCompleted,
   quoteDeadlineUnanswered,
+  bookingUnbilled,
+  deliveryUnconfirmed,
 ];
 
 /* ------------------------------------------------------------------ helpers */
@@ -1720,6 +2134,29 @@ async function settledPayments(
  * column for "the owner thought about this", and inventing one to hold an
  * answer would be a migration for a sentence.
  */
+/**
+ * The bookings whose money the owner has decided to keep.
+ *
+ * The mirror of `keptAfterRefund`, recorded by
+ * `POST /api/scheduling/bookings/[id]/keep-payment`, and read here for the
+ * same reason: a decision the owner has already made must stop the card asking
+ * for it. A forfeited deposit inside its cancellation window is an ordinary
+ * answer, and until this existed the one row on the card that could not be
+ * dismissed was the one about money.
+ */
+async function keptThePayment(userId: string, bookingIds: string[]): Promise<Set<string>> {
+  if (bookingIds.length === 0) return new Set();
+
+  const { data } = await supabaseServer
+    .from('crm_activities')
+    .select('source_entity_id')
+    .eq('user_id', userId)
+    .eq('activity_type', 'booking_payment_kept')
+    .in('source_entity_id', bookingIds);
+
+  return new Set((data || []).map(row => row.source_entity_id as string).filter(Boolean));
+}
+
 async function keptAfterRefund(userId: string, bookingIds: string[]): Promise<Set<string>> {
   if (bookingIds.length === 0) return new Set();
 

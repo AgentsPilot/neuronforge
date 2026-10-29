@@ -122,15 +122,89 @@ export interface GapView {
 
 interface NeedsYouCardProps {
   gaps: GapView[];
+  /**
+   * Fill the height it is given rather than stopping at its content.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * For the dashboard's top row, where this card shares a stretched grid track
+   * with the usage dial. Both tracks are as tall as the taller card, and a
+   * card that sizes to its own content leaves a gap under itself inside its
+   * own track — which reads as one of the pair having failed to load rather
+   * than as two cards of different lengths.
+   *
+   * The row's other two cards already do this; the comment on
+   * `usage-readiness-row` records why. Off by default, because in its original
+   * full-width position there is no track to fill and nothing to match.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  fill?: boolean;
   /** Refetch, so a cleared row leaves the list. */
   onChanged?: () => void;
 }
 
 type RowState =
   | { kind: 'idle' }
+  /**
+   * Asked, not yet done — the second tap is the real one.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Six of this card's actions used to fire on a single tap with nothing in
+   * between: four of them put an email in a client's inbox, and one cancelled
+   * a booking and told them about it. None could be taken back, and none of
+   * the labels hinted at it — "Send it" and "Follow up" look exactly like
+   * "Say what happened", which merely opens a screen.
+   *
+   * The inconsistency was the clearest sign something was wrong: refunding
+   * money opened a confirmation, while mailing a client did not. The less
+   * exposed action was the guarded one.
+   *
+   * Confirmed INLINE rather than in a dialog. The card holds several rows and
+   * a modal per row would bury the list the owner came to read; the row simply
+   * says what is about to leave and offers to go ahead.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  | { kind: 'confirming' }
   | { kind: 'working' }
   | { kind: 'done' }
   | { kind: 'refused'; message: string };
+
+/**
+ * Actions that change something outside this screen the moment they run.
+ *
+ * Four put an email in a client's inbox; `cancel_booking` calls off a booking
+ * and tells them. Everything NOT listed here either opens a screen
+ * (`write_quote`, `bill_stage`, `mark_meeting`) or raises its own dialog
+ * (`refund`), and asking twice for those would be a click with nothing behind
+ * it.
+ */
+/**
+ * Actions that take the owner somewhere rather than doing anything.
+ *
+ * They open the contact drawer at the booking in question, and the work
+ * happens there. Visually identical to the sending actions until now — the
+ * same filled button in the same place — so nothing distinguished "this writes
+ * an email to your client" from "this scrolls you to a form". Marked with a
+ * chevron, which is the one convention a reader does not have to be taught.
+ */
+const OPENS_A_SCREEN = new Set<string>([
+  'write_quote',
+  'bill_stage',
+  'mark_meeting',
+  /* Raising an invoice decides an amount, a due date and tax; confirming a
+     handover decides that work left the owner's hands. Neither is a thing a
+     dashboard button should settle on their behalf. */
+  'send_invoice',
+  'mark_delivered',
+]);
+
+const LEAVES_THE_BUILDING = new Set<string>([
+  'send_booking_link',
+  'send_quote',
+  'chase_quote',
+  'chase_intake',
+  'chase_payment',
+  'cancel_booking',
+]);
 
 /** What `formatCurrency` can render. Anything else is shown as a bare figure. */
 const SUPPORTED_CURRENCIES: CurrencyCode[] = ['USD', 'EUR', 'ILS', 'GBP'];
@@ -194,6 +268,9 @@ function moneyHeld(item: GapItemView): boolean {
  * ─────────────────────────────────────────────────────────────────────────────
  */
 const VALUE_LABEL: Record<string, string> = {
+  /* What the work came to, and nobody has asked for it. Not held: the client
+     has not been charged at all. */
+  booking_unbilled: 'gaps.value.to_bill',
   stage_awaiting_completion: 'gaps.value.to_bill',
   invoice_unpaid: 'gaps.value.owed',
   quote_unsent: 'gaps.value.quoted',
@@ -261,6 +338,23 @@ function leadSentence(
  *
  * Absent for most gaps, and then nothing is rendered rather than a blank line.
  */
+/**
+ * Does this gap's sentence already name the money?
+ *
+ * Only `booking_cancelled` does — "…and you are holding {amount}" — and where
+ * it does, the row must not ALSO print the figure in its own column: one row
+ * stating one sum twice reads as two sums. The column keeps every other row,
+ * which is what makes the money a column at all.
+ *
+ * Asked of the template rather than hardcoded to a gap id, so a sentence that
+ * grows an amount later takes care of itself.
+ */
+function sentenceCarriesAmount(gapId: string, t: (key: string) => string): boolean {
+  const key = `gaps.lead.say.${gapId}`;
+  const say = t(key);
+  return say !== key && say.includes('{amount}');
+}
+
 function leadQualifier(gapId: string, item: GapItemView, t: (key: string) => string): string | null {
   if (item.planLive) return t('gaps.lead.why.plan_live');
 
@@ -288,7 +382,7 @@ function rowKey(gap: GapView, item: GapItemView): string {
   return `${gap.id}:${item.contactId}:${item.entityId ?? ''}`;
 }
 
-export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
+export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProps) {
   const { t, isRTL, formatCurrency } = useLanguage();
 
   /**
@@ -411,6 +505,43 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
    * default. Saying "keep it" also lets the client's reminder resume, which is
    * held while the question is open.
    */
+  /**
+   * "I am keeping this." The answer the refund row never had.
+   *
+   * A deposit forfeited inside its own cancellation window is ordinary and
+   * agreed in advance, but the gap's rule is "money owed stays until it is
+   * given back" — so an owner who decided to keep it was asked again the next
+   * day, and the day after. The one row on this card that could not be
+   * dismissed was the one about money.
+   *
+   * Records the decision and touches nothing else: the payment stays where it
+   * already was. Same shape as `keepAfterRefund`, which answers the opposite
+   * question, and the two sit together on the client's timeline.
+   */
+  const keepThePayment = async (gap: GapView, item: GapItemView) => {
+    const key = rowKey(gap, item);
+    if (!item.entityId) return;
+
+    setRow(key, { kind: 'working' });
+    try {
+      const response = await fetch(`/api/scheduling/bookings/${item.entityId}/keep-payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json();
+
+      if (data?.success) {
+        setRow(key, { kind: 'done' });
+        setTimeout(() => onChanged?.(), 1200);
+        return;
+      }
+      setRow(key, { kind: 'refused', message: translateReason(t, data?.reason || data?.code) });
+    } catch {
+      setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
+    }
+  };
+
   const keepAfterRefund = async (gap: GapView, item: GapItemView) => {
     const key = rowKey(gap, item);
     if (!item.entityId) return;
@@ -519,6 +650,12 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
       openBooking(item);
       return;
     }
+    /* Both navigate — see `OPENS_A_SCREEN`. The booking is where the amount
+       and the handover both live. */
+    if (action === 'send_invoice' || action === 'mark_delivered') {
+      openBooking(item);
+      return;
+    }
 
     /*
      * Refunding opens the dialog rather than posting.
@@ -553,6 +690,22 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
     const endpoint = endpointFor(action, item);
     if (!endpoint) {
       setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
+      return;
+    }
+
+    /*
+     * ASK ONCE, FOR THE THINGS THAT CANNOT BE TAKEN BACK.
+     *
+     * Reached on the FIRST tap only: the row goes to `confirming`, and the
+     * control the owner then presses calls straight back in with the row
+     * already in that state, which falls through to the send below.
+     *
+     * The check reads the ROW rather than taking a flag from the caller. A
+     * second entry point that forgot to pass the flag would silently skip the
+     * question, and the question is the whole point.
+     */
+    if (LEAVES_THE_BUILDING.has(action) && rows[key]?.kind !== 'confirming') {
+      setRow(key, { kind: 'confirming' });
       return;
     }
 
@@ -641,6 +794,8 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
         display: 'flex',
         flexDirection: 'column',
         boxSizing: 'border-box',
+        /* See `fill`: matches the dial beside it in the dashboard's top row. */
+        height: fill ? '100%' : undefined,
       }}
     >
       <div className="flex items-center justify-between mb-3">
@@ -711,14 +866,48 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
           )}
 
           <div className="flex gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={() => act(leadGap!, lead.item as GapItemView)}
-              className="text-[13px] font-semibold px-4 py-2 rounded-lg text-white"
-              style={{ background: 'var(--v2-primary)' }}
-            >
-              {t(`gaps.action.${actionFor(leadGap!, lead.item as GapItemView)}`)}
-            </button>
+            {/*
+              THE PROMOTED ROW CONFIRMS TOO, AND HAD TO BE SAID SEPARATELY.
+
+              This button has its own render and reads none of the row state
+              the list below tracks — no working, no done. So the moment the
+              irreversible actions started asking first, its first tap set the
+              row to `confirming` and NOTHING on screen changed: the label
+              stayed put, and a reader who assumed nothing had happened tapped
+              again and sent it. A confirmation that is invisible is worse than
+              none, because it trains the second tap.
+            */}
+            {(() => {
+              const leadKey = rowKey(leadGap!, lead.item as GapItemView);
+              const leadAction = actionFor(leadGap!, lead.item as GapItemView);
+              const asking = rows[leadKey]?.kind === 'confirming';
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => act(leadGap!, lead.item as GapItemView)}
+                    className="text-[13px] font-semibold px-4 py-2 rounded-lg text-white"
+                    style={{ background: 'var(--v2-primary)' }}
+                  >
+                    {asking
+                      ? (leadAction === 'cancel_booking'
+                          ? t('gaps.confirm.cancel_booking') || 'Cancel and tell {name}'
+                          : t('gaps.confirm.email') || 'Email {name} now'
+                        ).replace('{name}', lead.item.name)
+                      : t(`gaps.action.${leadAction}`)}
+                  </button>
+                  {asking && (
+                    <button
+                      type="button"
+                      onClick={() => setRow(leadKey, { kind: 'idle' })}
+                      className="text-[13px] font-semibold px-3 py-2 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                    >
+                      {t('common.cancel') || 'Cancel'}
+                    </button>
+                  )}
+                </>
+              );
+            })()}
             <button
               type="button"
               onClick={() => openContact(lead.item.contactId)}
@@ -782,7 +971,21 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
               the owner cannot act on. The names under it are the content; this
               only has to label them.
             */}
-            <p className="text-[12px] font-semibold text-[var(--v2-text-secondary)] mb-1.5">
+            {/*
+              A LABEL NOW, NOT A HEADLINE.
+
+              It was the heaviest line in each block, which was right while the
+              rows beneath it were bare names: the heading was the only thing
+              saying what kind of trouble they were in. Every row now carries
+              its own sentence, so the heading repeats what is directly under
+              it — "the client cancelled" above "{name} cancelled the
+              appointment, and you are holding ₪250".
+
+              Kept, because it still groups rows of one kind and carries the
+              overflow count. Demoted, because emphasis belongs on the line the
+              owner can act on.
+            */}
+            <p className="text-[11px] font-medium text-[var(--v2-text-muted)] mb-1.5">
               {t(`gaps.kind.${gap.id}`)}
               {gap.count > gap.items.length && (
                 <span className="font-normal text-[var(--v2-text-muted)]"> · {gap.count}</span>
@@ -892,11 +1095,54 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                           * one.
                           */}
                         <p className="text-sm text-[var(--v2-text-primary)] flex items-baseline gap-2">
-                          <span className="truncate">
-                            <span className="font-medium">{item.name}</span>
-                            {item.note && (
-                              <span className="text-[var(--v2-text-muted)]"> · {item.note}</span>
-                            )}
+                          {/*
+                            CLAMPED TO TWO LINES, NOT TRUNCATED TO ONE.
+
+                            `truncate` was right for "{name} · {service}":
+                            a name that does not fit is still recognisable from
+                            its first half. A sentence cut mid-clause is not —
+                            "this phase of Dana's job is finished as far as…"
+                            states a client and then stops before the point,
+                            which is worse than the bare name it replaced.
+
+                            Two lines holds every sentence in the set at this
+                            column width, and `min-w-0` is what lets it shrink
+                            inside the flex row instead of pushing the money
+                            and the button off the end.
+                          */}
+                          <span className="line-clamp-2 min-w-0">
+                            {/*
+                              * THE SENTENCE, ON EVERY ROW — NOT ONLY THE LEAD.
+                              *
+                              * These rows used to read "{name} · {service}"
+                              * under a heading that stated a STATUS: "the
+                              * client cancelled", "waiting for an answer". A
+                              * status plus a name is a record, not a task, and
+                              * the owner had to infer the job from the button.
+                              *
+                              * The sentence that does say it already existed
+                              * and was already translated — `leadSentence` —
+                              * but only the single promoted row was given it.
+                              * So the card explained itself least at the exact
+                              * moment it had most to explain: opening it to
+                              * see all the work replaced the one sentence with
+                              * a list of names.
+                              *
+                              * Same function the lead uses, so the two can
+                              * never describe one row differently.
+                              */}
+                            <span className="font-medium">
+                              {/*
+                                No full stop, because something always follows
+                                it here: the channel chip, the session number,
+                                the amount. "…and nobody has replied. · from
+                                the form" collides two fragments; without the
+                                stop the chips read as the continuation they
+                                are. The lead keeps its stop — nothing follows
+                                it there, and it is a sentence on its own.
+                              */}
+                              {leadSentence(gap.id, item, t, money).replace(/[.。]\s*$/, '')}
+                            </span>
                             {/*
                               * WHICH session, where the row is one of several.
                               *
@@ -980,7 +1226,7 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                             * with first. See `VALUE_LABEL` for why the WORD in
                             * front of it changes per gap.
                             */}
-                          {moneyHeld(item) && (
+                          {moneyHeld(item) && !sentenceCarriesAmount(gap.id, t) && (
                             <span className="ms-auto shrink-0 text-[11px]">
                               <span className="text-[var(--v2-text-muted)]">
                                 {t(VALUE_LABEL[gap.id] ?? 'gaps.held')}{' '}
@@ -993,6 +1239,25 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                         </p>
 
                         <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 flex items-center gap-1">
+                          {/*
+                            THE JOB, DOWN HERE WITH THE REST OF THE CONTEXT.
+
+                            It used to sit on the line above as "{name} ·
+                            {service}", which worked while that line was a
+                            name. It is a sentence now, and a sentence ends in
+                            a full stop — "…and you are holding ₪250. · Payment
+                            review" reads as two fragments collided.
+
+                            It belongs here anyway: which service they bought
+                            is the same KIND of fact as when it happened and
+                            which session it was, and those were already here.
+                          */}
+                          {item.note && (
+                            <>
+                              <span className="truncate">{item.note}</span>
+                              <span aria-hidden="true">·</span>
+                            </>
+                          )}
                           <Clock className="w-3 h-3 shrink-0" />
                           {/*
                             * "17 days" alone is a measurement, not a fact.
@@ -1158,7 +1423,51 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                         </p>
                       </div>
 
-                      {action && (
+                      {/*
+                        THE SECOND TAP, FOR WHAT CANNOT BE UNDONE.
+
+                        Replaces the button in place rather than opening a
+                        dialog: the owner is looking at a list, and a modal per
+                        row would cover the thing they came to read. The row
+                        itself asks, and the answer is one control away in
+                        either direction.
+
+                        The confirm NAMES THE CONSEQUENCE — "Email Dana now",
+                        "Cancel and tell Dana" — because the original label was
+                        the problem. "Send it" and "Follow up" gave no sign
+                        that a real message reaches a real client the instant
+                        they are pressed.
+                      */}
+                      {action && state.kind === 'confirming' && (
+                        <span className="shrink-0 self-start inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => act(gap, item)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
+                            style={{ background: 'var(--v2-primary)', color: '#fff' }}
+                          >
+                            {(action === 'cancel_booking'
+                              ? t('gaps.confirm.cancel_booking') ||
+                                'Cancel and tell {name}'
+                              : t('gaps.confirm.email') || 'Email {name} now'
+                            ).replace('{name}', item.name)}
+                          </button>
+                          {/* The way out. Quiet, because backing out of
+                              something irreversible should not need deciding
+                              between two loud buttons. */}
+                          <button
+                            type="button"
+                            onClick={() => setRow(key, { kind: 'idle' })}
+                            aria-label={t('common.cancel') || 'Cancel'}
+                            title={t('common.cancel') || 'Cancel'}
+                            className="px-2 py-1.5 text-xs rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )}
+
+                      {action && state.kind !== 'confirming' && (
                         <button
                           type="button"
                           onClick={() => act(gap, item)}
@@ -1212,6 +1521,14 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                               {state.kind === 'working'
                                 ? t('gaps.working')
                                 : t(`gaps.action.${actionKey}`)}
+                              {/* See `OPENS_A_SCREEN`: this one goes somewhere
+                                  rather than doing something. Mirrored, because
+                                  it points the way the reader is going. */}
+                              {state.kind === 'idle' && OPENS_A_SCREEN.has(action) && (
+                                <span aria-hidden="true" className="opacity-70">
+                                  {isRTL ? '‹' : '›'}
+                                </span>
+                              )}
                             </>
                           )}
                         </button>
@@ -1280,6 +1597,47 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                         </button>
                       </div>
                     )}
+
+                    {/*
+                      THE OTHER ANSWER TO A CANCELLED BOOKING.
+
+                      Refunding is the likelier move and keeps the primary
+                      button. This is the one that says the money stays — a
+                      deposit forfeited inside its cancellation window, which
+                      is ordinary, agreed in advance, and was impossible to
+                      record. The gap holds a row for as long as money is
+                      unreturned, so without this the owner was asked the same
+                      question every day and had no way to answer it.
+
+                      Only where money is actually held: with nothing to keep
+                      the offer is meaningless, and the row is then about
+                      refilling the hour rather than about the money.
+
+                      Quiet text, not a second loud button — the same treatment
+                      its mirror above uses, and for the same reason: backing a
+                      decision out of a list should not look like the headline
+                      act.
+                    */}
+                    {gap.id === 'booking_cancelled' &&
+                      moneyHeld(item) &&
+                      state.kind === 'idle' && (
+                        <div
+                          className="mt-2 pt-2 border-t flex items-center justify-between gap-2"
+                          style={{ borderColor: 'var(--v2-border)' }}
+                        >
+                          <p className="text-[11px] text-[var(--v2-text-muted)] min-w-0">
+                            {t('gaps.kept_payment_hint') ||
+                              'Keeping it? We will stop asking about this one.'}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => keepThePayment(gap, item)}
+                            className="text-[11px] font-medium text-[var(--v2-primary)] hover:opacity-70 shrink-0"
+                          >
+                            {t('gaps.action.keep_payment') || 'Keep it'}
+                          </button>
+                        </div>
+                      )}
 
                     {rows[`queued:${item.contactId}`]?.kind === 'refused' && (
                       <p className="mt-2 text-[11px] flex items-start gap-1.5 text-[var(--v2-text-muted)]">

@@ -415,7 +415,93 @@ export async function GET(request: NextRequest) {
     const automations = await automationsPromise;
     const autoReplyOn = automations.some(a => a.id === 'reply_to_enquiries' && a.enabled);
 
-    const visible = mine.map(gap => {
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A ROBOT THAT IS SWITCHED OFF IS NOT DOING THE WORK.
+     *
+     * `ownerGaps` filters on `blocksOn`, and four gaps are marked as blocking
+     * on the CLIENT: an unpaid invoice, an unreturned form, a quote sitting
+     * unanswered, a meeting coming up. The reasoning was sound — a list that
+     * includes things you cannot do teaches people to stop reading it — and it
+     * held because each of those four has a chaser that handles it.
+     *
+     * But the chaser is a SWITCH, and the filter never looked at it. Turn
+     * `chase_invoices` off and nobody chases: not the platform, because it is
+     * off, and not the owner, because the row was filtered out before it could
+     * tell them. The work does not move and nothing says so. That is the worst
+     * of the three possible states, and it was the one the owner chose by
+     * hand.
+     *
+     * So visibility follows the automation rather than `blocksOn`: a
+     * chaser-owned gap comes back to the card exactly when its chaser is not
+     * going to deal with it. The actions are already built and correct —
+     * `chase_payment`, `chase_intake`, `chase_quote` all have endpoints and
+     * labels, and have been unreachable from this card since it shipped.
+     *
+     * Only gaps a chaser OWNS are eligible. One with no automation behind it
+     * is client-blocked for its own reasons and stays where it is.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const unmanned = new Set(
+      OPERATIONAL_AUTOMATIONS.filter(
+        automation => !automations.some(a => a.id === automation.id && a.enabled)
+      ).map(automation => automation.gapId)
+    );
+
+    /*
+     * AND THE ONES THE CHASER HAS FINISHED WITH.
+     *
+     * A switch that is ON is not the same as work still happening. A chaser
+     * runs a finite schedule — the owner's three days past due — and then it
+     * is done; the invoice is no less unpaid for that, it simply has nobody
+     * left working it.
+     *
+     * So an item carrying `chaserDone` comes back even under a live chaser,
+     * and only that item does: its neighbours on the same invoice list may
+     * still have reminders queued, and those stay with the robot. The gap is
+     * rebuilt around the subset rather than admitted whole.
+     */
+    const spent = all
+      .filter(gap => gap.blocksOn !== 'owner' && Boolean(gap.action))
+      .map(gap => ({ ...gap, items: gap.items.filter(item => item.chaserDone) }))
+      .filter(gap => gap.items.length > 0 && !unmanned.has(gap.id));
+
+    const abandoned = all.filter(
+      gap =>
+        gap.blocksOn !== 'owner' &&
+        unmanned.has(gap.id) &&
+        gap.items.length > 0 &&
+        /*
+         * A ROW WITH NO BUTTON IS NOT A TASK.
+         *
+         * `meeting_upcoming` has no action — it is a heads-up the reminder
+         * robot acts on, not something the owner does — and no sentence or
+         * label of its own either, because nothing has ever rendered it. Let
+         * it through and the card draws a raw translation key with nothing to
+         * press beside it.
+         *
+         * Tested on the gap rather than listed by id, so any future
+         * notification-shaped gap is excluded for the same reason without
+         * anyone having to remember this.
+         */
+        Boolean(gap.action)
+    );
+
+    if (abandoned.length > 0) {
+      requestLogger.info(
+        { gaps: abandoned.map(gap => gap.id) },
+        'Chaser is off, so its gap goes to the owner'
+      );
+    }
+
+    if (spent.length > 0) {
+      requestLogger.info(
+        { gaps: spent.map(gap => ({ id: gap.id, items: gap.items.length })) },
+        'Chaser has finished with these, so they go to the owner'
+      );
+    }
+
+    const visible = [...mine, ...abandoned, ...spent].map(gap => {
       if (gap.id !== 'enquiry_unanswered') return gap;
 
       /*

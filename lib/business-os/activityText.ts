@@ -104,6 +104,24 @@ const SENTENCES: Record<string, Record<ActivityLocale, string>> = {
     es: 'Reembolsado, la cita sigue en pie — {date}',
     he: 'הוחזר תשלום, הפגישה מתקיימת כרגיל — {date}',
   },
+  /*
+   * The opposite decision, on the other side of the same question.
+   *
+   * `booking_refund_kept` is "the money went back, the session stands". This
+   * is "the client called it off and the money stays with me" — a deposit
+   * inside its cancellation window, which is an ordinary and legitimate answer
+   * that nothing could record.
+   *
+   * Written as an activity for the reason the one above gives: there is no
+   * column for a decision, and inventing one to hold an answer would be a
+   * migration for a sentence. The Needs-you card reads it back and stops
+   * asking.
+   */
+  booking_payment_kept: {
+    en: 'Cancelled by the client, payment kept — {date}',
+    es: 'Cancelada por el cliente, pago retenido — {date}',
+    he: 'הלקוח ביטל, התשלום נשאר אצלכם — {date}',
+  },
   booking_no_show: {
     en: 'Client did not show — {date}',
     es: 'El cliente no se presentó — {date}',

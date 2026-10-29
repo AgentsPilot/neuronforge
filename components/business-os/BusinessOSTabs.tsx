@@ -41,7 +41,7 @@ interface TabDef {
    * have never been a page; they are the modal the capability card on My Day
    * opens, and the tab opens the same modal so the two agree.
    *
-   * The account settings reached by the gear in the header —
+   * The account settings reached by the initials chip in the header —
    * `/business-os/settings`, holding profile, business details, invoice details
    * and password — are a different screen and stay where they are.
    */

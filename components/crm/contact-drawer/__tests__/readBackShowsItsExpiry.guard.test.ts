@@ -157,3 +157,52 @@ describe('nothing overwrites it afterwards', () => {
     expect(writes).toHaveLength(3);
   });
 });
+
+/**
+ * A failed send leaves ONE draft, however many times it is retried.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Sending is two calls on purpose — the quote is written as a draft before
+ * anything is emailed, so a transport failure leaves something to retry rather
+ * than a lost hour of typing. The modal says so and leaves the button live.
+ *
+ * It did not remember WHICH draft. Pressing send again started from the top,
+ * so each attempt wrote another proposal: three tries at a flaky moment left
+ * three orphans, and `quote_unsent` would raise three rows about one quote.
+ *
+ * There is no save-as-draft anywhere in the product — the modal offers send
+ * and cancel — so every draft that exists at all got there this way.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('retrying a failed quote send', () => {
+  /* `fs`/`path`, matching what this file already imports. */
+  const modal = fs.readFileSync(
+    path.join(process.cwd(), 'components', 'crm', 'contact-drawer', 'ProposalBuilderModal.tsx'),
+    'utf-8'
+  );
+
+  it('remembers the draft it already wrote', () => {
+    expect(modal).toMatch(/const \[draftId, setDraftId\]/);
+    /* Stamped before the send is attempted: the draft exists from that moment
+       and a retry has to resume at the send. */
+    expect(modal).toMatch(/setDraftId\(proposalId\)/);
+  });
+
+  it('skips the create when one is already held', () => {
+    expect(modal).toMatch(/const createRes = draftId\s*\n?\s*\? null/);
+    expect(modal).toMatch(/proposals\/\$\{proposalId\}\/send/);
+  });
+
+  it('and throws it away the moment the content changes', () => {
+    /*
+     * The server sends the STORED row, not what is on screen. Without this, an
+     * owner who hit a failure, fixed the price and pressed send again would
+     * have mailed the old price from a form showing the new one.
+     */
+    expect(modal).toMatch(/setDraftId\(null\);/);
+    for (const field of ['title', 'description', 'totalNumber', 'validUntil', 'termsDays']) {
+      expect(`${field}:${modal.includes(field)}`).toBe(`${field}:true`);
+    }
+  });
+});
+

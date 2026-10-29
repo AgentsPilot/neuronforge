@@ -234,12 +234,27 @@ async function packageMeetings(
             hoursAway !== null &&
             hoursAway <= noticeHours,
           /*
-           * The PURCHASE's token, which is the only booking there is — and the
-           * one this request has just proved the caller holds a link to.
-           * `meetingId` is what says which session it is about; the route
-           * refuses a meeting that is not this booking's.
+           * THE TOKEN NAMES THE SESSION'S OWN CONTAINER, NOT THE PAGE'S.
+           *
+           * This was `containerId`, on the reasoning quoted below it that the
+           * purchase is "the only booking there is". That stopped being true
+           * when the query above moved to `.in('booking_id', containerIds)` so
+           * a consultation could hand over more than one package — see the note
+           * on keying by booking AND session number.
+           *
+           * The mismatch was invisible until something tried to USE the token:
+           * the reschedule route resolves the booking from the token and the
+           * session from `meetingId`, and `sessionOf` refuses a meeting whose
+           * `booking_id` is not that booking's. So every session living in a
+           * SOLD container — the normal shape for a quote that hands over a
+           * package — was offered a Reschedule button that could only ever
+           * answer "Booking not found".
+           *
+           * `meetingId` is what says which session it is about; the route still
+           * refuses a meeting that is not this booking's, which is the check
+           * this line was failing.
            */
-          token: generateBookingToken(containerId, clientEmail),
+          token: generateBookingToken(String(row.booking_id), clientEmail),
           meetingId: row.id as string,
           isCurrent: false,
         };

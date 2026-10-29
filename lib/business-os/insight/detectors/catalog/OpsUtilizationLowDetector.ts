@@ -411,6 +411,22 @@ export class OpsUtilizationLowDetector extends BaseDetector {
       percentChange,
       direction: 'below',
       affectedCount: Math.round(unfilledHours),
+      /*
+       * HOURS. Not meetings, and certainly not clients.
+       *
+       * `unfilledHours` is empty hours in an average WEEK (the line above
+       * divides by `measured.weeks`). This detector was the only one in the
+       * catalogue that left `affectedEntityType` unset, and the count then had
+       * no noun anywhere downstream — so each narrator chose its own. The
+       * generated title said "29 empty meetings", and the weekly verdict went
+       * one further: "send reminders to 29 clients who missed meetings", to an
+       * owner with six clients in total.
+       *
+       * One word on the row fixes every reader at once: the title prompt names
+       * it, and `verifyPriorities` refuses to let the figure be handed to
+       * people. See `COUNT_NOUN.open_hour` for the words it renders as.
+       */
+      affectedEntityType: 'open_hour',
       estimatedImpactUsd: estimatedOpportunity,
       impactDirection: 'opportunity',
       impactPeriod: 'weekly',
