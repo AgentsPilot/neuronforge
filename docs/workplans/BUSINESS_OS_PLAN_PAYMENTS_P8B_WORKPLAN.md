@@ -1173,8 +1173,8 @@ stripeTier !== null and:
 - [ ] 3b-2: the block, view wiring outside the jobs gate, guard amendment, render tests; Implementation Notes KPI report (P3-SA-7)
 
 **3c**
-- [ ] 3c-1: route, audit event, tests (G / Z / A / R shape, audit reject still runs, lost claim sentence, `left_work` warn on any `partlyDoneWhen` key, no run record or secret)
-- [ ] 3c-2: dialog, copy, `onFinished`, header sentence, guard amendment, render tests (`passesFailed > 0` and no `planEventsSeen` are failures)
+- [x] ✅ 3c-1: route, audit event, tests (G / Z / A / R shape, audit reject still runs, lost claim sentence, `left_work` warn on any `partlyDoneWhen` key, no run record or secret)
+- [x] ✅ 3c-2: dialog, copy, `onFinished`, header sentence, guard amendment, render tests (`passesFailed > 0` and no `planEventsSeen` are failures)
 
 **Demo (P3-SA-13):** blocked on ruling B's user question; split by slice; it gates user acceptance only.
 
@@ -1708,8 +1708,232 @@ Dev, 2026-10-28. Applied after SA approved and QA passed, as the coordinator dir
 | ESLint, the 8 changed files | 0 errors, 0 warnings |
 | `tsc --noEmit` (full project, 8 GB heap) | Completed with no OOM: 2,748 lines, no heap or FATAL text. 1,864 errors, the baseline, and **0** in touched, new or QA files |
 
+---
+
+## Implementation Notes (P-8b.3c)
+
+**Dev, 2026-10-29.** Branch `feature/bos-plan-payments-p8b3c` (from `main` `e49db10c`, with #560 and #564 merged). Nothing committed. Tasks 3c-1 and 3c-2 are done.
+
+### Files
+
+| File | Action | What |
+|---|---|---|
+| `app/api/admin/business-os/billing/reconcile/route.ts` | create | `POST`, the boost route's shape: `requireAdmin` first, strict empty body, write-ahead `logAndFlush` audit, `runReconcilePasses([planReconcilePass], { …, trigger: 'admin' })`, counts only, `maxDuration = 60`, `RECONCILE_RUN_DEADLINE_MS`. The `bos_plan_reconcile_admin_left_work` warn uses keys read from the registry's `partlyDoneWhen` (`findBosCronJob`, a pure module), so the warn and the nightly amber cannot drift |
+| `app/api/admin/business-os/billing/reconcile/__tests__/route.test.ts` | create | G / Z / A / R, 36 tests |
+| `lib/audit/events.ts`, `lib/audit/eventAudience.ts` | modify | `BOS_BILLING_RECONCILE_TRIGGERED`: key, metadata (`warning`, SOC2) beside the boost entry, audience `'bos'` |
+| `lib/audit/__tests__/eventAudience.test.ts` | modify | split pin 63 → 64 Business OS, 224 → 225 total, with a dated `+1` line |
+| `lib/business-os/billing/__tests__/moneyEventAudit.coverage.test.ts` | modify | the new key goes in `NON_MONEY` (an admin press on a system entity; the replays are audited by the handler) |
+| `app/admin/components/jobs/ReconcilePlansDialog.tsx` | create | the `ReconcileTopUpsDialog` shape on `AdminConfirmDialog`; `onFinished` prop |
+| `app/admin/components/jobs/reconcileCopy.ts` | modify | `PLAN_RECONCILE_COPY`, `PLAN_LEFT_WORK_SENTENCES`, `PLAN_FINDING_SENTENCES`, `planReconcileOutcome`, `planReconcileSentences`. Still no imports. Boost exports are byte-identical |
+| `app/admin/components/jobs/JobsQueuesView.tsx` | modify | the plan dialog after the top-ups dialog in the `RECONCILE_JOB_ID` branch; `bumpWebhooks` (bumps `webhookRefreshKey` only); the header sentence. Still one fetch |
+| `app/admin/components/jobs/WebhookEventsBlock.tsx` | modify | the request-sequence ref (SA's 3b suggestion) |
+| `app/admin/__tests__/jobsQueues.source.guard.test.ts` | modify | the 3c amendment (below) |
+| `app/admin/__tests__/jobsQueues.reconcilePlans.render.test.tsx` | create | PR, PRF, PRC and WSEQ, 26 tests |
+| `app/admin/__tests__/jobsQueues.render.test.tsx`, `jobsQueues.layout.render.test.tsx`, `jobsQueues.retry.render.test.tsx` | modify | each names the header sentence or the row's button set. Each is amended in place, with a dated comment (see Deviations 1) |
+| `app/api/admin/__tests__/adminGate.writes.test.ts` | modify | the new route is gated from birth: one case, count 68 → 69 (see Deviations 2) |
+
+### SA rulings honoured
+
+| Ruling | How |
+|---|---|
+| Ruling 5, P3-SA-8 | The route imports `planReconcilePass` from `planReconcileDeps` and runs only that pass. It never imports `RECONCILE_PASSES` or the boost pass (source-pinned). In the test, the cron pass list is mocked with a decoy, and the decoy is never called |
+| P3-SA-8, no run record | No `BosCronRunRepository`, `withCronRunRecord`, `cronRunRecorder`, `bos_cron_runs`, `/api/cron/` or `CRON_SECRET` in the code (source test). The only `process.env` read is `NODE_ENV`, for the development details |
+| P3-SA-8, left work | One warn when **any** of the six plan `partlyDoneWhen` keys is above 0, with `event`, `runId` and the keys above 0 only. There is one test per key, a test that the key set equals the registry's six, and a test that findings alone do not warn |
+| P3-SA-8, lost claim | The route test builds the **real** `createPlanReconcilePass` over fake ports whose insert loses the race (23505). The answer has `planIncomplete: 1` and the warn fires. `planReconcileOutcome` of the answer gives the lost-claim sentence and no "finished" line |
+| P3-SA-8, audit | `logAndFlush` before the pass, on `system` with id = the run id. The admin is user and actor, severity is `warning`, and the details are exactly `{ run_id, correlationId }`. Audit-reject test: the route runs through the **real** `logAndFlush`, and the audit sink's `log` rejects. The pass still runs and the answer is 200 |
+| P3-SA-8, QA6b-M1 | The client treats a 200 as a failure when `passesFailed > 0`, when `planEventsSeen` is missing, or when there are no counts. All three, plus 500 and network, are tested in the page render and directly on `planReconcileOutcome` |
+| P3-SA-3 | `requireAdmin` is the first statement (source test G-6). Tests cover 401, 403, a throwing admin check, a throwing auth lookup, and an invalid body that still gets 401 or 403 when signed out or not an admin. Eleven bad bodies give 400 after the gate (`isAdmin` was called) |
+| P3-SA-2 item 4 (Q-P3-4) | `onFinished` → `bumpWebhooks` → `setWebhookRefreshKey` only. The render test checks that the jobs GET stays at 1 and the block GET goes to 2. A source pin checks that `bumpWebhooks` appears exactly twice and does not call `load`. `onFinished` fires after any press that **reached** the route, the failure answers included, because a pass that failed part-way may have left claims. A network failure does not fire it |
+| P3-SA-2 item 8 (Q-P3-8) | Each of the six plan `partlyDoneWhen` keys has a sentence, and `PRC` pins `Object.keys(PLAN_LEFT_WORK_SENTENCES)` equal to the registry's plan keys. With any of them above 0, the first line is "did not finish everything", never "finished". The three findings each end "logged for a person to check". A test bans "Disagrees", "our records" and "each other" in them |
+| P3-SA-9 | `ReconcilePlansDialog.tsx` joins `CLIENT_FILES` (client-only, C-21 imports, no green). It has G-4p (one POST to the literal URL), G-5p (literal `'{}'`, JSON header, no-store), G-6p ×2 (no account words or action words, no server text), G-7p ×2 (the import list; one shared dialog and one opener) and G-11p (logger keys `status`, `passesFailed`, `err`). The view pins the dialog to one render, right after `<ReconcileTopUpsDialog />` in the reconcile branch. `VIEW_HEADER_SENTENCE` changed, and the one G-9 self-test line that quoted the old text was updated with it. G-4 to G-8, G-9's render pin and G-11 are byte-identical. The view still has one `fetch(` |
+| P3-SA-11 | No migration and no new env read. No new job, workflow or Jest config: the new suites sit in existing folders. The Connect harness was not touched or run |
+| Billing allow-lists, entitlements | No touched file imports either billing repository or anything from `lib/business-os/entitlements/` (grep), so no allow-list changes |
+
+**SA's 3b suggestion (request sequence).** `WebhookEventsBlock.load` takes `seq = ++latestRead.current`. Only the newest read may set the data, the error or the loading flag. Three tests: an older success landing after a newer one is ignored; an older failure landing after a newer success shows no error; and a control, where a later failure with no overlap still shows its error. A mutation check (guard forced true) fails the first two.
+
+### Deviations (for SA)
+
+1. **Three more render tests pinned the old header or the row's buttons:** `jobsQueues.layout.render` (PURPOSE), `jobsQueues.retry.render` (U-12) and `jobsQueues.render` (the button census). P3-SA-9 names only the source guard's line. Each is updated in the same named amendment, with a dated comment. The census now expects `1 + 5 + 5 + 1 + 1` buttons, and the row's buttons as `[top-ups, plan]`.
+2. **`adminGate.writes.test.ts` gains the route** (68 → 69), as the boost route was gated from birth. This was not in the file table. The admin case runs the real lazy plan wiring with no Stripe key and answers 200.
+3. **`moneyEventAudit.coverage.test.ts`** lists the new `BOS_BILLING_*` key as non-money. Without that, its "every BOS_BILLING_* key is mapped" pin fails. This was not in the file table.
+4. **`PLAN_LEFT_WORK_KEYS` is a module constant, not exported.** Next.js allows a route file to export only its handlers and config. The route test reads the registry itself.
+
+### New user-facing words (for the user's approval)
+
+| Where | Words |
+|---|---|
+| Button and dialog title | Reconcile plan payments now |
+| Dialog description | This checks Stripe for plan payment events of every business that our records do not show as handled, and replays them the way the webhook would. It also compares plan subscriptions with Stripe and logs any difference for a person to check; it changes nothing to match. A press is not recorded as a run of the Billing reconcile job: its last run and counts stay as they are. |
+| Confirm / busy | Run now · Running… (as boost) |
+| Failure line | The plan reconcile could not finish. Nothing is lost: the nightly run will try again. |
+| First line, clean | Plan reconcile finished: N plan events listed from Stripe, N replayed. (singular "1 plan event") |
+| First line, work left | Plan reconcile did not finish everything: N plan events listed from Stripe, N replayed. |
+| `planIncomplete` | Some plan events were left for the nightly run: another run held them, or a limit was reached. |
+| `planDeadlineHit` | It stopped at its time limit; the nightly run picks up the rest. |
+| `planReplayFailed` | N plan events failed when replayed; the nightly run will try again. (Post-review fix 2; was "failed again") |
+| `planWindowClipped` | Only the last 7 days of Stripe events were checked. |
+| `planApiVersionSkipped` | N plan events were skipped because Stripe used a version we have not checked. |
+| `planCheckIncomplete` | Not every plan subscription could be compared with Stripe; the nightly run will try again. |
+| `planMismatch` | N plan subscriptions disagree with Stripe: logged for a person to check. |
+| `planOrphan` | N Stripe plan subscriptions have no billing record: logged for a person to check. |
+| `planUnassigned` | N paid plan invoices have no plan assigned: logged for a person to check. |
+| Page header (changed clause) | …the Billing reconcile job has Reconcile top-ups now and Reconcile plan payments now buttons; everything else here is read-only. |
+| Route 400 / 500 (not shown by the dialog) | This action takes no input · The plan reconcile stopped with an error. Some events may already have been replayed. |
+
+Each count sentence has a singular form for N = 1 (for example "1 plan subscription disagrees with Stripe…").
+
+### Gates (2026-10-29)
+
+| Gate | Result |
+|---|---|
+| Jest: `app/admin`, `app/api/admin`, `lib/admin`, `lib/audit`, `lib/business-os/billing`, `lib/repositories` | 528 suites, 17,669 tests, pass |
+| `npm run test:bos-entitlements` | 329 suites, 9,819 tests, pass |
+| `tsc --noEmit` (full project, 8 GB heap) | Completed with no OOM: 2,805 lines, no heap or FATAL text. 1,920 errors repo-wide, and **0** in the 16 touched or new files |
+| ESLint, the 16 touched or new files | 0 errors. 1 warning, already there before this work (`lib/audit/events.ts` line 1874, an unused `_`) |
+| Connect harness | Not run: nothing under `app/api/stripe` changed (P3-SA-11) |
+
+### SA code review: P-8b.3c
+
+**Code Review by SA, 2026-10-29**
+**Status:** Code Approved (APPROVED). No fix is required before QA or commit. Three non-blocking suggestions follow.
+
+Read: the full `git diff` on `feature/bos-plan-payments-p8b3c` (from `e49db10c`), the new route and its test, `ReconcilePlansDialog.tsx`, the new render test, and, for comparison, the boost route, `ReconcileTopUpsDialog.tsx`, `reconcilePassRunner.ts`, `planReconcileDeps.ts` and the `bos-billing-reconcile` entry in `lib/cron/bosCronJobs.ts`. SA re-ran `npx jest app/admin/__tests__/jobsQueues app/api/admin/business-os/billing app/api/admin/__tests__/adminGate.writes lib/audit lib/business-os/billing/__tests__/moneyEventAudit.coverage`: 35 suites, 990 tests, pass.
+
+#### Verified
+
+| Check | Result |
+|---|---|
+| P3-SA-3: gate and Zod | Pass. `requireAdmin(requestLogger)` is the first statement after the correlation id and the child logger (route.ts:73), as in the boost route. No `profiles.role`. The body is read only after the gate, with `z.object({}).strict()` over an empty-or-`{}` body. The 400 comes after the gate, with details in development only. Tests G-1 to G-6 and Z cover 401, 403, a throwing check, and an invalid body that still gets 401 or 403 |
+| P3-SA-8: plan pass only | Pass. `runReconcilePasses([planReconcilePass], { deadlineAt: started + RECONCILE_RUN_DEADLINE_MS, now, log, trigger: 'admin' })`. `planReconcilePass` comes from `planReconcileDeps`. There is no `RECONCILE_PASSES`, no boost pass and no copied pass logic. The test mocks the cron pass list with a decoy that is never called |
+| P3-SA-8: no run record, no secret | Pass. There is no import of `BosCronRunRepository`, `withCronRunRecord`, the recorder or the cron route, and no `CRON_SECRET`. The only `process.env` read is `NODE_ENV`. Source-pinned. There is no direct Supabase access in the route (CLAUDE.md rule 1) |
+| P3-SA-8: audit | Pass. One write-ahead `logAndFlush` runs before the pass, with `entityType: 'system'`, `entityId` = the run id, the admin as user and actor, and `severity: 'warning'`. The details are exactly `{ run_id, correlationId }`. The bounded flush never rejects, and the audit-reject test goes through the **real** `logAndFlush`: the pass still runs and the answer is 200 (non-blocking under WC-7). The key, the metadata (beside the boost entry, `warning`, SOC2) and audience `'bos'` are added. The split pin is 64 / 77 / 84, total 225 |
+| P3-SA-8: left-work warn | Pass. One `bos_plan_reconcile_admin_left_work` warn fires when any of the six plan `partlyDoneWhen` keys is above 0. It carries `event`, `runId` and only the keys above 0. There is one test per key, a set-equality test, and a findings-alone test (no warn) |
+| P3-SA-8: lost claim (R3-3) | Pass. The route test builds the real `createPlanReconcilePass` over fake ports whose insert loses (23505). The result is `planIncomplete: 1`, the warn fires, and the words give the lost-claim sentence with no "finished" line |
+| `maxDuration` and deadline | Pass. 60 s and `RECONCILE_RUN_DEADLINE_MS`, as boost |
+| Logging, PII, secrets | Pass. Pino `createLogger` + `child({ correlationId, route })`, with errors as `{ err }`. The logs carry the admin's UUID, the run id and counts only (the boost route's set). No touched file has a `console.*` call. The client logger keys are `status`, `passesFailed` and `err` only (G-11p) |
+| QA6b-M1 in the client | Pass. `planReconcileOutcome` returns null (the failure line) on `passesFailed > 0`, on no counts, and on a missing `planEventsSeen`. The dialog only accepts `response.ok && success === true`. Tested in the render (PRF) and directly |
+| Q-P3-4: `onFinished` | Pass. `bumpWebhooks = useCallback(() => setWebhookRefreshKey(k => k + 1), [])` touches only the block's key and never calls `load`. The render test shows that the jobs GET stays at 1 and the block GET goes to 2. It fires on any answer that reached the route (failures included) and not on a network failure. That is correct: a pass that failed part-way may have left claims `failed` or `processing` |
+| JobsQueuesView: one fetch | Pass. It still has exactly one `fetch(` and never names the plan route (source-pinned) |
+| P3-SA-2 item 8: words | Pass. Each plan `partlyDoneWhen` key has one sentence. PRC pins the keys equal to the registry's, and every copy key is a real plan counter. Any left work turns the first line into "did not finish everything". The three findings use "with Stripe", "no billing record" and "no plan assigned", as the ruling worded them, and each ends "logged for a person to check". A test bans "Disagrees", "our records" and "each other" in them, so they cannot be read as the Finance list's "Disagrees" chip. `reconcileCopy.ts` still has no imports |
+| P3-SA-9: guard amendment; boost pins | Pass. `ReconcilePlansDialog.tsx` joins `CLIENT_FILES` with G-4p, G-5p, G-6p ×2, G-7p ×2 and G-11p, plus the one-render pin and the `bumpWebhooks` pin. The only pre-existing assertion that changed is the LF-4c self-test line that quoted the header (the line P3-SA-9 named). `ReconcileTopUpsDialog.tsx` is untouched, and the `reconcileCopy.ts` diff adds lines only. The boost pins and boost exports are byte-identical |
+| 3b suggestion: request sequence | Pass. A `latestRead` ref means only the newest read sets the data, the error or the loading flag (the `finally` included). Three WSEQ tests, with a no-overlap control |
+| P3-SA-11 | Pass. Tests sit in existing folders. There is no new job, no new env read and no migration, and the Connect harness is untouched. Dev reports tsc 0 errors in the 16 touched files, with no OOM |
+| Entitlements | No touched file imports from `lib/business-os/entitlements/`, so no checklist walk is needed |
+
+#### Rulings on the deviations
+
+1. **Three more render tests amended in place: approved.** `jobsQueues.layout.render` (PURPOSE), `jobsQueues.retry.render` (U-12) and the `jobsQueues.render` button census pin exactly the two things this slice was approved to change: the header clause and the row's button set. Each change is the minimum, with a dated comment naming P3-SA-9, in the LF-4c style. P3-SA-9 named only the source guard because those were the pins SA had read. Its intent, a narrow and named amendment of the header and the row, covers these three.
+2. **`adminGate.writes.test.ts` gains the route (68 → 69): approved, and required.** Every new admin write handler is gated from birth (the boost precedent). The count comment is updated with its own `+ 1` line.
+3. **`moneyEventAudit.coverage` `NON_MONEY` gains `BOS_BILLING_RECONCILE_TRIGGERED`: approved.** The row is an admin action on a system entity and moves no money. Each replayed event is audited by the plan handler, which the AM-7 map already covers. Classing the press as a money event would be wrong.
+4. **`PLAN_LEFT_WORK_KEYS` as a private route constant read from `findBosCronJob`: approved.** A route file may export only its handlers and config, and `bosCronJobs.ts` has no imports, so the read is safe in a route. Reading the registry is better than a second list, because the warn and the nightly amber cannot drift. The private constant is still covered: the route test drives each of the six keys through `POST` and asserts the warn, and a set-equality test pins the six. If the job id were ever renamed, `findBosCronJob` would return undefined and the set would be empty. Those per-key tests would then fail, so the `?? []` fallback cannot go silent.
+
+#### Code Review Comments
+
+None blocking.
+
+#### Optimisation suggestions (non-blocking)
+
+1. `route.ts` (the left-work loop): the job's `partlyDoneWhen` also has `passesFailed`, which has no `plan` prefix. So a press whose pass threw answers 200 with `passesFailed: 1` and no `bos_plan_reconcile_admin_left_work` warn. This is already visible (the runner's own `error` line, and the client's failure line), so it is not a defect. If the warn is meant to be the one grep for "a press left work", add `passesFailed > 0` to it in a later touch.
+2. `reconcileCopy.ts` `planWindowClipped`: "the last 7 days" restates `PLAN_RECONCILE_LIMITS.MAX_WINDOW_MS`. The file has no imports by design, so a one-line test that pins the figure against the constant (the JREC-T1 pattern) would stop it drifting.
+3. `ReconcilePlansDialog.tsx`: a 400, 401 or 403 answer also calls `onFinished`, which is a harmless extra read of the block. It could be narrowed, but that is not worth the extra branch today.
+
+#### Code Approved for QA: Yes
+
+### QA report: P-8b.3c
+
+**QA, 2026-10-29**
+**Test mode:** full
+**Strategy used:** A (unit: the words and `planReconcileOutcome`), B (route integration over a recording Supabase stub and the real production pass wiring, with Stripe stubbed), and render tests of the dialog and the webhook block (jsdom). The source-level Jest guards stand in for option D, because Playwright is not installed. No live browser check was run.
+**Focus:** api, ui, security
+**Skipped:** the live browser press (there is no E2E tool, and a press on a real account would replay real events) and the Connect harness (nothing under `app/api/stripe` changed, P3-SA-11)
+**Input source:** the TL brief
+
+#### Test coverage
+
+| Area | Result | Notes |
+|---|---|---|
+| Words: singular and plural | Pass | The first line was tested at N = 0, 1 and 250. Every count sentence was tested at N = 1, 2 and 37. The singular appears only at 1 |
+| Words: each sentence only above 0 | Pass | All 9 keys (6 for left work, 3 for findings) are absent at 0 and present at 1 and at 5. `planSkippedNotPlan` and `planStaleReclaimed` never add a line |
+| Words: never "finished" with work left | Pass | All 64 combinations of the six left-work keys were tested, with every finding raised in each. The 63 combinations with some work left never contain the word "finished" anywhere. The empty combination does. Lines come in a fixed order and none repeats |
+| Words: no clash with "Disagrees" | Pass | Every plan string was checked: the copy, the left-work sentences, the findings at N = 0, 1 and 2, and a run with everything raised. None contains "Disagrees", "records disagree", "each other" or "our two records". Every "disagree" reads "with Stripe" |
+| Words: "the last 7 days" | Pass | Pinned to `PLAN_RECONCILE_LIMITS.MAX_WINDOW_MS` (SA suggestion 2 is now covered by a test) |
+| Client: failure answers | Pass | Fifteen answers give the fixed failure line, keep the dialog open, show no notice and render no server text. The 200 answers: `passesFailed` 1, no counts, a non-numeric `planEventsSeen`, `data` null, `success` false, `success` as the string "true", a non-JSON body and a JSON array. The 4xx answers: 400, 401, 403 and a 404 in HTML. The 5xx answers: 500, a 502 in HTML and a 504 that carries a success body. In each case `onFinished` is called once and the logger never carries server text |
+| Client: network error | Pass | The failure line shows, `onFinished` is never called, and the one log line has the key `err` only. A network error followed by a press that reaches the route calls `onFinished` once, for the second press |
+| Dialog: double press while busy | Pass | Two form submits and one click in the same tick send one POST and call `onFinished` once |
+| Dialog: closing while running | Pass | Close is disabled. Escape and an outside press are refused, and `aria-busy` is true. The answer still lands and closes the dialog, and the notice shows the left-work lines. After the answer, Escape closes it again |
+| Dialog: once per press | Pass | A failure and then a success give two calls. Unmounting during a press throws nothing and logs no React error. Every POST carries the literal body `'{}'` |
+| Route: gate order | Pass | Six bodies were sent signed out (401) and as a non-admin (403): 1 MB, an array, null, a string, non-JSON and extra keys. In each case `request.text` is never called, and nothing is audited, run or read |
+| Route: odd bodies after the gate | Pass | Each of these gets a 400 with exactly `{ success, error, code }`, and no body text reaches a log: 1 MB, `__proto__`, `constructor`, a nested object, `[{}]`, `{}{}`, `true` and `{"":0}`. These are accepted as empty: `{}` with whitespace around it, whitespace only, and a BOM before `{}` (the UTF-8 decode strips the BOM). In development a 400's details are a Zod message, never the body |
+| Route: audit hangs or throws | Pass | With the real `logAndFlush` and a flush that never settles, the answer is 200 after about 2.0 s, inside `AUDIT_FLUSH_TIMEOUT_MS` + 1.5 s. The pass ran and a warning was logged. With `log()` throwing synchronously, the answer is 200 and the pass ran |
+| Route: the runner throws | Pass | In production and in test, the answer is a 500 with exactly `{ success: false, error: <fixed words>, code: 'reconcile_failed' }`. In development the details carry the message. A thrown string is handled the same way. One error line is logged |
+| Route: no PII, secret or raw Stripe text | Pass | The pass threw with an email, a `sk_live_` string and "No such customer: cus_…" in its message. The answer was a 200 with `passesFailed` 1, and neither the answer nor any log line contains that text. The runner logs the error class name only. The admin's email appears nowhere |
+| Route: odd counts | Pass | Fractions, strings, NaN, Infinity and malformed keys are dropped by the runner. The answer keeps the safe integers only, and a dropped left-work key raises no warn |
+| Route: no `bos_cron_runs` write | Pass | Tested at runtime, not only in source. The real `planReconcilePass` ran over the real lazy wiring, with a recording Supabase stub, Stripe stubbed, and one `invoice.paid` event claimed and replayed. `bos_cron_runs` was only ever selected from. The only table written was `processed_webhook_events`, and no cron rpc was called |
+| Webhook block: sequence guard | Pass | Three overlapping reads were resolved in all 6 orders, under 3 scenarios (18 tests): all succeed; the two older ones fail (one 500, one network error) and the newest succeeds; the two older ones succeed and the newest fails. The newest read always decides the figures and the error. The block stays busy until the newest read answers. A mutation that disables the guard fails all 18 |
+| Regression: boost | Pass | `ReconcileTopUpsDialog.tsx` and the boost route have no diff. The `reconcileCopy.ts` diff only adds lines, and the boost button and its words are byte-identical to HEAD. The boost route, dialog and render suites pass within the gate |
+
+#### Issues found
+
+##### Bugs (must fix before commit)
+
+None.
+
+##### Performance issues
+
+None.
+
+##### Edge cases (all Low, for SA or the user to rule)
+
+1. **A non-numeric count reads as 0.** In `reconcileCopy.ts:118`, `n()` maps any count that is not a number to 0. So a string `planIncomplete: "1"` would read "finished", and in `reconcileCopy.ts:109` a missing or non-numeric `passesFailed` is not treated as a failure. This cannot happen through the route, because the runner drops every count that is not a safe integer (test QC). The current behaviour is pinned by test QO. Accept, or fail closed in a later touch.
+2. **"failed again" is not always true.** `reconcileCopy.ts:88` reads "N plan events failed again". An event the webhook never received, which fails on its first replay, has not failed before. Suggested wording, for the user (G-5): "N plan events failed when replayed; the nightly run will try again."
+3. **Button labels do not match.** `reconcileCopy.ts:66` labels the plan button "Reconcile plan payments now". The top-ups button beside it in the same row reads "Reconcile top-ups now (all accounts)", although both run across every business. The plan dialog's description does say "every business". This is a wording choice for the user.
+4. **The body has no size cap and whitespace is accepted.** At `route.ts:85`, a whitespace-only body of any size is accepted as `{}`, and a 1 MB JSON body is parsed before its 400. The route is admin-only, the platform caps request bodies, and the boost route behaves the same way. Accept.
+5. **The correlation id is not checked.** At `route.ts:72`, `x-correlation-id` goes into the audit row's details and into the logs with no length or format check. The route is admin-only and the boost route does the same. Accept, or bound it in a shared helper later.
+
+SA suggestions 1 (the warn ignores `passesFailed`) and 3 (`onFinished` on a 4xx) are still open as SA filed them. QA confirmed both behaviours in tests: QP for the first, and the `QD` 400/401/403 cases for the second.
+
+#### Tests added (QA): 2 files, 97 tests, all passing
+
+| File | Tests | Covers |
+|---|---|---|
+| `app/admin/__tests__/jobsQueues.reconcilePlans.qa.test.tsx` | 70 | QW (the words), QO (odd answers), QD (the dialog on its own, with an `onFinished` spy) and QS (three overlapping block reads, every order) |
+| `app/api/admin/business-os/billing/reconcile/__tests__/route.qa.test.ts` | 27 | QG (gate order with odd and huge bodies), QZ (bodies), QA (audit hangs or throws), QE (runner throws), QP (no PII, secret or raw Stripe text), QC (odd counts) and QR (the real wiring never writes `bos_cron_runs`) |
+
+#### Gates (2026-10-29, `--ci`)
+
+| Gate | Result |
+|---|---|
+| Jest: `app/admin`, `app/api/admin`, `lib/admin`, `lib/audit`, `lib/business-os/billing`, `lib/repositories` | 530 suites and 17,766 tests pass: Dev's 528 / 17,669, plus the 2 QA suites. The 2 QA suites hold 97 tests, so this count is also 97 above Dev's |
+| `npm run test:bos-entitlements` | 329 suites, 9,819 tests, pass |
+| `tsc --noEmit` (full project, 8 GB heap) | Completed, with no heap or FATAL text. 1,920 errors repo-wide, the same as Dev reported. **0** errors in the touched files and the 2 QA files |
+| ESLint, the 2 QA files | 0 errors, 0 warnings |
+
+#### Final status
+
+- [x] All acceptance criteria pass: ready for commit. No High or Medium issue is open, and edge cases 2 and 3 are wording points for the user's G-5 approval.
+- [ ] Issues found: Dev must address before commit
+
+### Post-review fixes (P-8b.3c, Dev, 2026-10-29)
+
+| # | Source | Fix |
+|---|---|---|
+| 1 | QA edge 1 | `planReconcileOutcome` fails closed. It returns the failure line unless `passesFailed` is present and exactly 0, `planEventsSeen` is present, and every `plan…` count that is present is a whole number, 0 or more (`Number.isSafeInteger`, ≥ 0). An array as the answer or as the counts is also a failure. QA's QO block: the two "documented" tests (a non-numeric left-work count read as 0; `passesFailed` missing or non-numeric not a failure) are replaced. Their inputs move into the `→ null` table, which gains 12 rows: `passesFailed` missing, `'1'`, `'0'`, `-1` and `0.5`; left-work counts `'1'`, `null`, `-1` and `0.5`; a finding count `'2'`; `planEventsSeen` `-3`; `planReplayed` `'1'`. A control test checks that whole-number counts with `passesFailed: 0` still read "finished". The other QO rows are unchanged |
+| 2 | QA edge 2 | `planReplayFailed` now reads "N plan events failed when replayed; the nightly run will try again." For 1 it reads "1 plan event failed when replayed; …". Pins updated: QA's N = 1, 2 and 37 test and its two-line notice, and the render test's PRC words test |
+| 3 | SA suggestion 1 | The `bos_plan_reconcile_admin_left_work` warn also fires when `passesFailed > 0`. It adds `passesFailed` to the counts and stays one warn with counts only. New route test: a pass that throws gives exactly one warn with keys `event`, `passesFailed` (1) and `runId`, and no error text |
+
+Unchanged, as accepted: the button label, the body cap, the correlation id and `onFinished` on a 4xx.
+
+**Gates:**
+
+| Gate | Result |
+|---|---|
+| Jest `app/admin/__tests__/jobsQueues*`, `app/api/admin/business-os/billing`, `lib/audit` | 35 suites, 733 tests, pass |
+| `tsc --noEmit` (8 GB heap) | Completed, with no heap or FATAL text. 1,920 errors repo-wide (unchanged), **0** in the 5 touched files |
+| ESLint, the 5 touched files | 0 errors, 0 warnings |
 
 ---
+
+**Sync with `main` (TL, 2026-10-29).** Fast-forwarded to `main` `32effb8d` (#566, D4a, which added `BOS_PLAN_CANCEL_EMAIL_SENT` / `_NOT_SENT`). The audit count pin in `lib/audit/__tests__/eventAudience.test.ts` now reads 66 Business OS and 227 total (not 64 / 225), with both comment lines kept. Gates re-run on the synced tree: jest on app/admin, app/api/admin, lib/admin, lib/audit, lib/business-os/billing, lib/repositories 533 suites / 17,905 tests pass; `test:bos-entitlements` 329 / 9,823 pass.
 
 ## Commit Info
 
@@ -1738,3 +1962,5 @@ _(RM populates.)_
 | 2026-10-28 | Plan: P-8b.3 (Dev) | On `feature/bos-plan-payments-p8b3` (from `6312470e`). AM-4 read repository + GET, plan reconcile POST (ruling 5) whose lost claims and failures show in its words, logs and AM-4 and never in `bos_cron_runs`, Jobs block and dialog with a named guard amendment, AM-2 "Disagrees" from one shared rule, FU-P8b-6. Facts F3-1 to F3-10; questions Q-P3-1 to Q-P3-8 for SA. No code yet |
 | 2026-10-28 | SA review: Plan P-8b.3 (SA) | APPROVED WITH CHANGES, rulings P3-SA-1 to P3-SA-13. Split into 3 PRs: 3a (FU-P8b-6 + AM-2 Disagrees), 3b (AM-4 read-only block), 3c (plan reconcile button). Q-P3-1 to Q-P3-8 ruled (flow column dropped; created + last attempt, 200-per-state read; classes handler_error/timeout/unknown/stuck; block-only re-read; status=disagrees incl. the missed `financeFilters.ts` parser; no finding on unknown start; no-mode count line; words for every partlyDoneWhen key). Block not gated by the jobs read; KPI indicators set; repo not in index; PII tested at builder and route |
 | 2026-10-28 | P-8b.3b SA approved, QA pass, fixes applied (TL) | Notes folded in as "Implementation Notes (P-8b.3b)". SA APPROVED (D3b-1..7); QA PASS (109 tests, Lows 1-2 fixed, 3-4 accepted); FX-1 accepted by TL; G-5 wording approved by the user with a Jobs-only 409 ending ("…so no webhook events are shown"). Demo correction: the 5 failed rows are test mode, live is empty (P3-SA-13). Awaiting the user's diff review |
+| 2026-10-29 | SA code review: P-8b.3c (SA) | APPROVED. P3-SA-2 items 4 and 8, P3-SA-3, P3-SA-8, P3-SA-9, P3-SA-11, D3-4 and the 3b request-sequence suggestion verified. Gate first; strict empty body; write-ahead `logAndFlush` with `{ run_id, correlationId }` only, reject-tested; plan pass only, no `bos_cron_runs`, no secret; left-work warn on all six keys; QA6b-M1 client failure; `onFinished` bumps the webhook key only; view still one fetch; boost pins byte-identical; findings wording kept apart from "Disagrees". Deviations 1 to 4 approved. Three non-blocking suggestions. SA re-ran 35 suites / 990 tests: pass |
+| 2026-10-29 | QA report: P-8b.3c (QA) | PASS. 97 QA tests in 2 files. Words: plural at 0, 1 and many; all 64 left-work combinations (63 never say "finished"); no "Disagrees" clash; the 7 days pinned to `MAX_WINDOW_MS`. Client: 15 failure answers, network, double press, close while busy, `onFinished` once per press. Route: 401/403 before 400 with huge bodies, a hanging audit bounded at about 2 s, a runner throw giving a 500 with fixed words, no PII, secret or Stripe text, and `bos_cron_runs` only read by the real wiring. Webhook block: 3 overlapping reads in all 6 orders. Bugs 0; Lows 5 (2 wording points for the user). Gates green: 530 / 17,766; entitlements 329 / 9,819; tsc 0 in touched files, no OOM |

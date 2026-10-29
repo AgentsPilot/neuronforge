@@ -27,6 +27,12 @@
  * bumps `webhookRefreshKey`, which re-reads the block; this file still makes
  * exactly one fetch of its own.
  *
+ * Plan payments P-8b.3c (D3-5, SA P3-SA-2 item 4, P3-SA-9): the Billing
+ * reconcile row also has "Reconcile plan payments now"
+ * (ReconcilePlansDialog.tsx), which owns its one POST. When a press finishes
+ * it calls `onFinished`, which bumps `webhookRefreshKey` only: the webhook
+ * block reads again, the jobs are not read again (the press records no run).
+ *
  * Green appears only on a job the computation called Healthy (a recorded
  * Vercel cron run and a good read) or a queue called Clear (a good read), and
  * only through the shared StatusChip's `ok` tone: no Jobs file holds a green
@@ -52,6 +58,7 @@ import { StatusChip, type StatusTone } from '@/app/admin/components/layout/Statu
 import { DrainNowDialog, isDrainQueueId } from './DrainNowDialog';
 import { QueueItemsPanel } from './QueueItemsPanel';
 import { ReconcileTopUpsDialog } from './ReconcileTopUpsDialog';
+import { ReconcilePlansDialog } from './ReconcilePlansDialog';
 import { WebhookEventsBlock } from './WebhookEventsBlock';
 import { ageWords } from './jobsFormat';
 import type { BosCronJobId } from '@/lib/cron/bosCronJobs';
@@ -75,7 +82,7 @@ const PURPOSE_LEGEND =
   'The Business OS scheduled jobs and the queues they drain. Red needs action, amber needs a look, and the ' +
   'green label Healthy or Clear means checked and clear. Grey means no run recorded yet or could not check.';
 const PURPOSE_ACTIONS =
-  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; the Billing reconcile job has a Reconcile top-ups now button; everything else here is read-only.";
+  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; the Billing reconcile job has Reconcile top-ups now and Reconcile plan payments now buttons; everything else here is read-only.";
 const PURPOSE = `${PURPOSE_LEGEND} ${PURPOSE_ACTIONS}`;
 
 // The one job whose row carries an on-demand action (LF-4c, BD-6, SA-C2). Typed
@@ -183,7 +190,7 @@ function runWords(run: RunView): string {
   return `${run.outcomeWords}${cls}${who}`;
 }
 
-function JobRow({ job }: { job: JobView }) {
+function JobRow({ job, onPlansReconciled }: { job: JobView; onPlansReconciled: () => void }) {
   return (
     <tr data-testid={`job-${job.id}`} className="border-t border-slate-700/60 align-top">
       <td className="py-2 pr-4">
@@ -197,6 +204,9 @@ function JobRow({ job }: { job: JobView }) {
         {job.id === RECONCILE_JOB_ID && (
           <div className="pt-2">
             <ReconcileTopUpsDialog />
+            <div className="pt-1">
+              <ReconcilePlansDialog onFinished={onPlansReconciled} />
+            </div>
           </div>
         )}
       </td>
@@ -357,6 +367,8 @@ export function JobsQueuesView() {
   // on mount and again on each Refresh (a drain or an item action re-reads the
   // jobs, not the webhook events).
   const [webhookRefreshKey, setWebhookRefreshKey] = useState(0);
+  // P-8b.3c (Q-P3-4): a finished plan press re-reads the webhook block only.
+  const bumpWebhooks = useCallback(() => setWebhookRefreshKey((key) => key + 1), []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -452,7 +464,7 @@ export function JobsQueuesView() {
                 </thead>
                 <tbody>
                   {view.jobs.map((job) => (
-                    <JobRow key={job.id} job={job} />
+                    <JobRow key={job.id} job={job} onPlansReconciled={bumpWebhooks} />
                   ))}
                 </tbody>
               </table>

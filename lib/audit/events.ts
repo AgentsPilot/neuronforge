@@ -324,6 +324,13 @@ export const AUDIT_EVENTS = {
   // user and actor), NEVER against a purchase, so it reaches no owner's audit.
   // Details: the run id and the correlation id; never an account or a payment.
   BOS_BOOST_RECONCILE_TRIGGERED: 'BOS_BOOST_RECONCILE_TRIGGERED',
+  // Plan payments P-8b.3c: an admin ran the PLAN reconcile pass now
+  // (POST /api/admin/business-os/billing/reconcile). One write-ahead row per
+  // press, flushed before the pass runs, as the boost one above: written
+  // against a system entity ('system', id = the run id the route generates,
+  // the admin as user and actor), never against an account or a subscription.
+  // Details: the run id and the correlation id only (SA P3-SA-8).
+  BOS_BILLING_RECONCILE_TRIGGERED: 'BOS_BILLING_RECONCILE_TRIGGERED',
   // Credits boost slice 6b: an admin set or ended ONE account's spending limit
   // for top-ups (FR-22), through the entitlements admin route (set_boost_cap /
   // end_boost_cap). Entity 'business_os_account_plan' (operator-only, BD-26),
@@ -1194,6 +1201,14 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin ran the Business OS credits boost reconcile pass now',
+  },
+  // Plan payments P-8b.3c: 'warning' + SOC2, as the boost one above. An admin
+  // made the platform replay plan payment events across every account,
+  // outside the schedule.
+  [AUDIT_EVENTS.BOS_BILLING_RECONCILE_TRIGGERED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin ran the Business OS plan payments reconcile pass now',
   },
   // ADMIN_BOS_CLEANUP slice 7d. 'warning': an admin made the platform process
   // (and possibly send) queued items across every account, outside the schedule.
