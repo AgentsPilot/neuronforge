@@ -97,6 +97,14 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   // no repository. Added at the end, existing order kept; reviewed by PLAN PAYMENTS with T-8.
   'afterPlanMoveDeps.ts': [ACCOUNT_PLANS],
   'planReconcileDeps.ts': [WEBHOOK_CLAIMS, PLAN_RECONCILE_READS, ACCOUNT_PLANS],
+  // D4a (account deletion lifecycle SX-3; DELETE-owned file): the plan cancel email's
+  // production wiring reads the session owner's address, language and time zone. Its
+  // composer, planCancelEmail.ts, names no repository. Added at the end, existing order kept.
+  'planCancelEmailDeps.ts': [
+    '@/lib/repositories/AuthAccountRepository',
+    '@/lib/repositories/BusinessProfileRepository',
+    '@/lib/repositories/UserPreferencesRepository',
+  ],
 };
 const BILLING_REPOSITORY_CALLERS = Object.keys(BILLING_REPOSITORY_IMPORTS);
 

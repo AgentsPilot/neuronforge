@@ -86,6 +86,9 @@ const ALLOWED = new Set(
     // row. The routes' email test replaces the instance.
     'lib/business-os/billing/planCancelEmailDeps.ts',
     'app/api/business-os/billing/plan/cancel/__tests__/route.d4a.test.ts',
+    // The billing router-placement guard lists planCancelEmailDeps.ts's repository
+    // imports by name (its allow-list); it imports nothing.
+    'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
   ].map((file) => file.split('/').join(sep))
 );
 

@@ -61,7 +61,10 @@ import type { PlanEndingView } from '@/lib/business-os/entitlements/planEndingVi
 import { resolveUserLanguage, type LanguageSource, type SupportedLanguage } from '@/lib/business-os/userLanguage';
 import { generatePlanCancelEmail, type PlanCancelAfter, type PlanCancelEmailEvent } from '@/lib/email/templates/plan-cancel';
 import type { SendEmailParams, SendEmailResult } from '@/lib/notifications/emailTransport';
-import type { AgentRepositoryResult as RepositoryResult } from '@/lib/repositories/types';
+// The repositories' `{ data, error }` shape, written here rather than imported: billing
+// modules other than the allow-listed callers import nothing from lib/repositories/
+// (routerPlacement guard, SA P1-C6). planCancelEmailDeps.ts passes the real methods.
+type RepositoryResult<T> = { data: T | null; error: Error | null };
 import { safeTimezone } from '@/lib/scheduling/businessTime';
 
 export type { PlanCancelEmailEvent };
