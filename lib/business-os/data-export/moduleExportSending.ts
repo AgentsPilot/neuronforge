@@ -10,7 +10,7 @@
 // file mirrors SQL literals one for one and its migration test pins every key,
 // and none of these is in SQL.
 //
-// The worker that uses all of this is MX-3b. Nothing calls it yet.
+// The worker that uses all of this is moduleExportWorker.ts (MX-3b).
 
 import type { EmailAttachment, SendEmailBase, SendEmailResult } from '@/lib/notifications/emailTransport';
 import { CODE_SHAPE, MODULE_EXPORT_POLICY } from '@/lib/business-os/data-export/moduleExportPolicy';
@@ -35,15 +35,22 @@ export const PART_SEND_TRIES = 3;
 /** C-8: the transport aborts a part send after this (up to about 9.4 MB of base64 upload). */
 export const PART_SEND_TIMEOUT_MS = 45_000;
 
+/**
+ * SA MX-3b F-2: a part try starts only if, timed out at PART_SEND_TIMEOUT_MS,
+ * it still ends this far before the route's maxDuration (300 s).
+ */
+export const SEND_DEADLINE_MARGIN_MS = 5_000;
+
 /** C-8: the transport aborts a notice send after this (the MX-1b value). */
 export const NOTICE_SEND_TIMEOUT_MS = 10_000;
 
 /**
- * D-10: no new build is started after this many seconds of a run, so a fresh
- * job has at least 180 s of the 270 s budget. Whether a run stops claiming
- * altogether here (SA C-1 option a, preferred) or refunds the attempt of a late
- * claim (option b) is settled in MX-3b; no separate notice cutoff is defined
- * until then.
+ * D-10 as amended by SA C-1 (option a, MX-3b): a run claims NOTHING after this
+ * many seconds, build or notice, so a fresh job has at least 180 s of the
+ * 270 s budget. The claim function cannot be asked for notices only, so any
+ * claim after this would turn a waiting job into `working` and spend one of
+ * its three attempts without building it. A notice left over waits for the
+ * next run (at most 5 minutes). There is no separate notice cutoff.
  */
 export const BUILD_CLAIM_CUTOFF_SECONDS = 90;
 
@@ -79,6 +86,8 @@ export const MODULE_JOB_RETRY_CODES = {
   OWNER_UNREADABLE: 'owner_unreadable',
   BUDGET_SPENT: 'budget_spent',
   SEND_REFUSED_BEFORE_FIRST_PART: 'send_refused',
+  /** MX-3b: anything else that went wrong before a part reached `sending` (a throw, a failed write). */
+  BUILD_FAILED: 'build_failed',
 } as const;
 
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

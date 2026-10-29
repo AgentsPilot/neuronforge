@@ -89,6 +89,12 @@ const ALLOWED = new Set(
     // The billing router-placement guard lists planCancelEmailDeps.ts's repository
     // imports by name (its allow-list); it imports nothing.
     'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
+    // Data export MX-3b: the module export worker's production wiring reads ONE
+    // account's login email with `findUserIdentity`, keyed on the claimed job's
+    // own user_id (never request data), to send that owner their export emails.
+    // The address goes to the transport only (recipient redacted in logs, C-3),
+    // never a log or audit row. The worker test replaces the deps.
+    'lib/business-os/data-export/moduleExportWorkerDeps.ts',
   ].map((file) => file.split('/').join(sep))
 );
 
