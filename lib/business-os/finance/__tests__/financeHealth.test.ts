@@ -2743,6 +2743,9 @@ describe('Money MK-5 C-1: Paying % leaves platform accounts out of the numerator
 });
 
 // ── Money MK-5b (§5.1 F-K5b, SA-10): Converted this month through the builder ──
+/** MK5B-FU-1: the converted dep's one argument (SA-WP-M5F M5F-5). */
+type FirstPaymentQuery = Parameters<NonNullable<FinanceHealthDeps['converted']>['firstPlanPayments']>[0];
+
 describe('Money MK-5b: converted (F-K5b) through the builder', () => {
   // NOW is 2026-11-09: "this month" is November 2026 in UTC, whatever the window.
   const NOV = { from: '2026-11-01T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' };
@@ -2762,7 +2765,7 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
         ]) as never
     );
     const converted = {
-      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [readonly string[]]>(() => ok(first)),
+      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [FirstPaymentQuery]>(() => ok(first)),
       signupSources: jest.fn<Result<Array<{ account_id: string; source: 'admin_invite' | 'account_invite' | 'organic'; stamped_at: string | null }>>, [string[]]>(
         () => ok(sources)
       ),
@@ -2777,7 +2780,7 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
     expect(result.counts).not.toHaveProperty('converted');
   });
 
-  it('all businesses: asks for exactly the non-platform plan-row ids; counts the paying accounts that first paid this month', async () => {
+  it('all businesses: asks for this UTC month (MK5B-FU-1) plus the trials MK-9 looks up; counts the paying accounts that first paid this month', async () => {
     const deps = convertedDeps([
       { accountId: B, paidAt: '2026-11-03T10:00:00.000Z' },
       // C first paid last month: not converted this month (G-3: once only).
@@ -2786,7 +2789,8 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
     const { result } = await run(deps as never);
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(deps.converted.firstPlanPayments).toHaveBeenCalledTimes(1);
-    expect([...(deps.converted.firstPlanPayments.mock.calls[0][0] as string[])].sort()).toEqual([A, B, C].sort());
+    // MK5B-FU-1 (SA-WP-M5F): no plan row here is a trial, so no id is asked; this month comes by range.
+    expect(deps.converted.firstPlanPayments).toHaveBeenCalledWith({ accountIds: [], firstPaymentIn: NOV });
     expect(result.payload.converted).toEqual({
       scope: 'all',
       status: 'ok',
@@ -2812,7 +2816,7 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
     // Names and sources for the shown rows only.
     expect(deps.converted.signupSources).toHaveBeenCalledWith([B]);
     expect(result.counts.converted).toEqual({
-      scope: 'all', status: 'ok', asked: 3, found: 2, converted: 1, stopped: 0, shown: 1, namesFound: 0, sourcesFound: 1, stampDiffers: 0,
+      scope: 'all', status: 'ok', asked: 0, inMonthAsked: true, found: 2, converted: 1, stopped: 0, shown: 1, namesFound: 0, sourcesFound: 1, stampDiffers: 0,
     });
   });
 
@@ -2894,7 +2898,9 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
     const yes = picked([{ accountId: B, paidAt: '2026-11-03T00:00:00.000Z' }], true);
     const r1 = await run(yes as never, B);
     if (r1.result.kind !== 'ok') throw new Error('expected ok');
-    expect(yes.converted.firstPlanPayments).toHaveBeenCalledWith([B]);
+    // MK5B-FU-1 (M5F-C5): exactly the picked id, and never this month's cross-account range read.
+    expect(yes.converted.firstPlanPayments).toHaveBeenCalledWith({ accountIds: [B], firstPaymentIn: null });
+    expect(yes.converted.firstPlanPayments.mock.calls.every(([q]) => q.firstPaymentIn === null)).toBe(true);
     expect(yes.converted.signupSources).not.toHaveBeenCalled();
     expect(r1.result.payload.converted).toEqual({ scope: 'one', status: 'ok', month: NOV, state: 'converted', firstPaymentAt: '2026-11-03T00:00:00.000Z' });
 
@@ -2919,6 +2925,25 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
     const { result } = await run(deps as never, null, logger(), NOW, lastWeek);
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.payload.converted).toEqual(expect.objectContaining({ month: NOV, converted: 1 }));
+  });
+
+  it('MK5B-FU-1: no plan rows means no first-payment read, and the figure is a real 0 of 0', async () => {
+    const deps = convertedDeps([]);
+    deps.plans.pagePlans.mockImplementation(() => ok([plan(PLATFORM)]) as never);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(deps.converted.firstPlanPayments).not.toHaveBeenCalled();
+    expect(result.payload.converted).toEqual(expect.objectContaining({ status: 'ok', converted: 0, stopped: 0 }));
+    expect(result.counts.converted).toEqual(expect.objectContaining({ asked: 0, inMonthAsked: false, found: 0 }));
+  });
+
+  it('MK5B-FU-1: the counts on the log carry no id and no date', async () => {
+    const deps = convertedDeps([{ accountId: B, paidAt: '2026-11-03T10:00:00.000Z' }]);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const text = JSON.stringify(result.counts.converted);
+    expect(text).not.toContain(B);
+    expect(text).not.toContain('2026-11');
   });
 
   it('the production wiring supplies the converted reads by name', () => {
@@ -2950,7 +2975,7 @@ describe('Money MK-9: payingBreakdown through the builder', () => {
     );
     if (firstPayments === 'absent') return { deps, converted: undefined };
     const converted = {
-      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [readonly string[]]>(() =>
+      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [FirstPaymentQuery]>(() =>
         firstPayments === 'fail' ? ({ data: null, error: new Error('boom') } as never) : ok(firstPayments)
       ),
       signupSources: jest.fn(() => ok([])),
@@ -2963,6 +2988,12 @@ describe('Money MK-9: payingBreakdown through the builder', () => {
     const { result } = await run(deps as never);
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(converted?.firstPlanPayments).toHaveBeenCalledTimes(1);
+    // MK5B-FU-1: the trials asked are those that ended in the window (C), never one still running past it (D)
+    // or a platform account; this month's first payments come by range in the same call.
+    expect(converted?.firstPlanPayments).toHaveBeenCalledWith({
+      accountIds: [C],
+      firstPaymentIn: { from: '2026-11-01T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' },
+    });
     expect(result.payload.payingBreakdown).toEqual({
       comped: { total: 1, assignedNoSubscription: 1, endedOrNotPaying: 0 },
       trials: { status: 'ok', endedInWindow: 1, stillRunning: 1, paid: 1, paidBeforeEnd: 1, rate: null, minimumForRate: 10 },

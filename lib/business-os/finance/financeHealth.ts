@@ -115,6 +115,13 @@
  * `partial` ("at least"). Without the dep, no `converted` key (AC-145 holds
  * for every fixture written before MK-5b).
  *
+ * MK5B-FU-1 (SA-WP-M5F): that read is now two BOUNDED questions in one dep
+ * call: every account whose first payment is in this UTC month (all
+ * businesses only, never with a business picked, M5F-C5), and the first
+ * payment of exactly the trials MK-9 looks up (`trialAccountsToAsk`, a
+ * superset), or of exactly the picked id. Same rule, same result shape, so
+ * `convertedThisMonth` and `trialsToPaid` are unchanged.
+ *
  * READ-ONLY: no write, no LLM call, no audit entry. Logs read failures only,
  * with the read's name: never a figure, a name or an account id.
  *
@@ -176,6 +183,9 @@ import { classifyAccounts, isTrialRow, tierLabelForGroup, trialEndOf, type Class
 import { compedSplit, trialsToPaid } from './payingBreakdown';
 import { FINANCE_TRIAL_TO_PAID } from './financeRules';
 import { CONVERTED_SHOWN_LIMIT, convertedThisMonth, currentUtcMonth } from './convertedThisMonth';
+import { trialAccountsToAsk } from './firstPaymentAsk';
+// MK5B-FU-1: a separate import, so the type list below stays unedited.
+import type { FinanceMonthSpan } from './financeTypes';
 import type {
   FinanceAccountEconomicsSection,
   FinanceAccountMargin,
@@ -356,12 +366,17 @@ export interface FinanceHealthDeps {
   metricParams?: unknown;
   /**
    * Money MK-5b (§5.1, SA-10): Converted this month. Optional: absent, the
-   * payload has no `converted` key. `firstPlanPayments` reads exactly the given
-   * ids, in the current billing mode (decided by the wiring, never here);
-   * `signupSources` reads where each shown account came from (at most 200 ids).
+   * payload has no `converted` key. `firstPlanPayments` reads, in the current
+   * billing mode (decided by the wiring, never here), the first payment of
+   * exactly `accountIds` and, when `firstPaymentIn` is given, of every account
+   * whose first payment falls in it (MK5B-FU-1, SA-WP-M5F); `signupSources`
+   * reads where each shown account came from (at most 200 ids).
    */
   converted?: {
-    firstPlanPayments: (accountIds: readonly string[]) => Promise<RepoResult<Array<{ accountId: string; paidAt: string }>>>;
+    firstPlanPayments: (query: {
+      accountIds: readonly string[];
+      firstPaymentIn: FinanceMonthSpan | null;
+    }) => Promise<RepoResult<Array<{ accountId: string; paidAt: string }>>>;
     signupSources: (
       accountIds: string[]
     ) => Promise<RepoResult<Array<{ account_id: string; source: FinanceSignupSource; stamped_at: string | null }>>>;
@@ -503,9 +518,11 @@ export interface FinanceHealthCounts {
   converted?: {
     scope: 'all' | 'one';
     status: FinanceConverted['status'];
-    /** Accounts asked about; null when no read was made. */
+    /** MK5B-FU-1: accounts asked about BY ID (the trials MK-9 looks up, or the picked one); null when no read was made. */
     asked: number | null;
-    /** First payments found (any month); null when the read failed or was not made. */
+    /** MK5B-FU-1: whether this month's first payments were asked for too (all businesses only); null when no read was made. */
+    inMonthAsked: boolean | null;
+    /** First payments found (both questions together); null when the read failed or was not made. */
     found: number | null;
     converted: number | null;
     stopped: number | null;
@@ -873,18 +890,39 @@ export async function buildFinanceHealth(
   let firstPaymentsAll: ReadonlyArray<{ accountId: string; paidAt: string }> | null = null;
   if (deps.converted) {
     const month = currentUtcMonth(now);
-    // MK5B-FU-1: every plan-row account is asked about, so the requests grow with the accounts (rework past 1,000).
-    const askIds = accountId !== null ? [accountId] : planRows ? planRows.map((row) => row.user_id) : null;
-    const canRead = askIds !== null && payingIds !== null;
-    const firstRead = canRead
-      ? await settle(() => (deps.converted as NonNullable<FinanceHealthDeps['converted']>).firstPlanPayments(askIds))
-      : null;
+    // MK5B-FU-1 (SA-WP-M5F): the figure is over the non-platform plan rows (or the picked id), as before.
+    // The read asks two bounded questions instead of every plan row's history: this UTC month's first
+    // payments (all businesses only, M5F-C5), and exactly the trials MK-9 looks up (a superset) or the
+    // picked id. No plan rows: nothing to ask, no read (as the empty `.in()` made none before).
+    const accountIds = accountId !== null ? [accountId] : planRows ? planRows.map((row) => row.user_id) : null;
+    const query =
+      accountIds === null
+        ? null
+        : accountId !== null
+          ? { accountIds, firstPaymentIn: null }
+          : {
+              accountIds: trialAccountsToAsk(
+                (planRows ?? []).filter(isTrialRow).map((row) => ({ accountId: row.user_id, endsAt: trialEndOf(row, deps.config, now) })),
+                { start: window.start, end: window.end }
+              ),
+              firstPaymentIn: month,
+            };
+    const canRead = accountIds !== null && query !== null && payingIds !== null;
+    const firstRead = !canRead
+      ? null
+      : accountIds.length === 0
+        ? { data: [] as Array<{ accountId: string; paidAt: string }>, error: null }
+        : await settle(() => (deps.converted as NonNullable<FinanceHealthDeps['converted']>).firstPlanPayments(query));
     if (firstRead?.error) failed('first_plan_payments', firstRead.error);
     if (accountId === null && firstRead?.data) firstPaymentsAll = firstRead.data;
-    const base = { asked: canRead ? askIds.length : null, found: firstRead?.data ? firstRead.data.length : null };
+    const base = {
+      asked: canRead && accountIds.length > 0 ? query.accountIds.length : canRead ? 0 : null,
+      inMonthAsked: canRead ? accountIds.length > 0 && query.firstPaymentIn !== null : null,
+      found: firstRead?.data ? firstRead.data.length : null,
+    };
     const result =
       canRead && firstRead?.data
-        ? convertedThisMonth({ firstPayments: firstRead.data, accountIds: new Set(askIds), payingIds, month })
+        ? convertedThisMonth({ firstPayments: firstRead.data, accountIds: new Set(accountIds), payingIds, month })
         : null;
 
     if (accountId !== null) {

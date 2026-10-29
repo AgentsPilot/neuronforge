@@ -24,6 +24,11 @@
  * not know fails the test, as does any console error or warning.
  */
 
+// P-8b.3b (AM-4): the view now also renders the webhook events block, which owns its
+// own GET. This file's fetch mock answers the jobs route only, so the block is stubbed
+// here; its behaviour is tested in jobsQueues.webhooks.render.test.tsx.
+jest.mock('@/app/admin/components/jobs/WebhookEventsBlock', () => ({ WebhookEventsBlock: () => null }));
+
 import React from 'react';
 import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 

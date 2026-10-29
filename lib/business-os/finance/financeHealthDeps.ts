@@ -189,7 +189,8 @@ export function financeHealthDeps(): Omit<
     },
     // Money MK-5b: the first plan payments (current billing mode, decided in lib/admin/billing) and the sources.
     converted: {
-      firstPlanPayments: (accountIds) => listCurrentModeFirstPlanPayments(accountIds),
+      // MK5B-FU-1: one query object (this month by range, plus ids), one mode, one rule.
+      firstPlanPayments: (query) => listCurrentModeFirstPlanPayments(query),
       signupSources: (accountIds) => businessOsAccountLineageRepository.findSignupSourcesForAccountsForAdmin(accountIds),
     },
   };
