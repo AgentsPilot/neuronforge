@@ -71,6 +71,13 @@
  * first-payment read with exactly the plan-row ids; with `converted`
  * stripped the payload gives MK-5's `a13f1ccd…0060`.
  *
+ * MK5B-FU-1 (SA-WP-M5F M5F-11, ruled re-freeze of the CALLS only): the
+ * first-payment dep now takes one query object, this UTC month by range plus
+ * the trial ids MK-9 looks up (none in this fixture), instead of every
+ * plan-row id. One `EXPECTED_CALLS` entry changes; `EXPECTED_SHA256` does NOT
+ * move, which is the proof that no figure changed. Restore proof: the map with
+ * `MK5B_FIRST_PAYMENT_CALLS` put back equals the MK-5b map entry for entry.
+ *
  * Client payments in approximate dollars (FIN BD-56, slice 1a, SA-RR-CPU
  * SA-Q-4, CPU-6): the rates wiring is faked at its module and joins
  * `allReads()`. The AC-145 baseline gets ONE ruled update: the rates read in
@@ -1322,8 +1329,11 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     ],
     'lots.allAccounts': [[]],
     'lots.forAccount': [],
-    // MK-5b (ruled): one first-payment read with exactly the plan-row ids; no converted row, so no source read.
-    'converted.firstPlanPayments': [[[ACCOUNT]]],
+    // MK-5b (ruled): one first-payment read; no converted row, so no source read.
+    // MK5B-FU-1 (ruled re-freeze, calls only, M5F-11): one query object, this UTC month by range and the
+    // trials MK-9 looks up by id (none here), instead of every plan-row id. MK5B_FIRST_PAYMENT_CALLS below
+    // is the MK-5b value it replaces.
+    'converted.firstPlanPayments': [[{ accountIds: [], firstPaymentIn: { from: '2026-10-01T00:00:00.000Z', to: '2026-11-01T00:00:00.000Z' } }]],
     'converted.signupSources': [],
     readQueueFigures: [
       [{ correlationId: '<correlationId>', adminId: ADMIN.id }, 'payment_reminders', '2026-10-14T12:00:00.000Z', { signal: '<signal>' }],
@@ -1341,6 +1351,8 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     // BD-56 (slice 1a, ruled): the rates read, once, with no argument, in the same request.
     'rates.clientPayments': [[]],
   };
+  // MK5B-FU-1 restore proof: the MK-5b value of the one entry this slice moved.
+  const MK5B_FIRST_PAYMENT_CALLS = [[[ACCOUNT]]];
   // Section 3's top accounts, the plans by business (none here), Section 4's rows, takings and overdue rows.
   const EXPECTED_NAME_CALLS = [[[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]]];
   // Money MK-4 (ruled): the two MRR keys, last.
@@ -1384,6 +1396,11 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     const body = JSON.parse(await res.text());
     const calls = Object.fromEntries(Object.entries(namedReads()).map(([k, fn]) => [k, serialise(fn.mock.calls)]));
     expect(calls).toEqual(EXPECTED_CALLS);
+    // MK5B-FU-1 restore proof: only that one entry moved. Put its MK-5b value back and nothing else differs
+    // from the MK-5b map (every other key and value is the same object as above).
+    const callsBeforeFu1 = { ...EXPECTED_CALLS, 'converted.firstPlanPayments': MK5B_FIRST_PAYMENT_CALLS };
+    expect(Object.keys(callsBeforeFu1)).toEqual(Object.keys(EXPECTED_CALLS));
+    expect(Object.entries(callsBeforeFu1).filter(([k, v]) => v !== (EXPECTED_CALLS as Record<string, unknown>)[k]).map(([k]) => k)).toEqual(['converted.firstPlanPayments']);
     expect(serialise(mockFindNames.mock.calls)).toEqual(EXPECTED_NAME_CALLS);
     expect(Object.keys(body.data)).toEqual(EXPECTED_KEYS);
     expect(body.data).not.toHaveProperty('accountEconomics');
@@ -2160,7 +2177,8 @@ describe('Money MK-5b: converted through the route', () => {
     mockDeps.converted.firstPlanPayments.mockResolvedValue({ data: [{ accountId: ACCOUNT, paidAt: FIRST_PAID }], error: null });
     mockDeps.converted.signupSources.mockResolvedValue({ data: [{ account_id: ACCOUNT, source: 'admin_invite', stamped_at: FIRST_PAID }], error: null });
     const body = await (await call()).json();
-    expect(mockDeps.converted.firstPlanPayments).toHaveBeenCalledWith([ACCOUNT]);
+    // MK5B-FU-1: this UTC month by range (ACCOUNT is not a trial, so no id is asked).
+    expect(mockDeps.converted.firstPlanPayments).toHaveBeenCalledWith({ accountIds: [], firstPaymentIn: expect.objectContaining({ from: expect.any(String), to: expect.any(String) }) });
     expect(mockDeps.converted.signupSources).toHaveBeenCalledWith([ACCOUNT]);
     expect(body.data.converted).toEqual(expect.objectContaining({ scope: 'all', status: 'ok', converted: 1, paying: 1, stopped: 0 }));
     expect(body.data.converted.rows).toEqual([
@@ -2171,7 +2189,7 @@ describe('Money MK-5b: converted through the route', () => {
     const line = mockLog.info.mock.calls.find((c) => c[1] === 'Admin read the Business OS finance page')?.[0];
     expect(line.sections.converted).toBe('ok');
     expect(line.counts.converted).toEqual({
-      scope: 'all', status: 'ok', asked: 1, found: 1, converted: 1, stopped: 0, shown: 1, namesFound: 1, sourcesFound: 1, stampDiffers: 0,
+      scope: 'all', status: 'ok', asked: 0, inMonthAsked: true, found: 1, converted: 1, stopped: 0, shown: 1, namesFound: 1, sourcesFound: 1, stampDiffers: 0,
     });
     const text = JSON.stringify(mockLog.info.mock.calls);
     expect(text).not.toContain(NAME);
@@ -2192,7 +2210,8 @@ describe('Money MK-5b: converted through the route', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(mockDeps.converted.firstPlanPayments).toHaveBeenCalledTimes(1);
-    expect(mockDeps.converted.firstPlanPayments).toHaveBeenCalledWith([ACCOUNT]);
+    // MK5B-FU-1 (M5F-C5): exactly that id, and never the cross-account month range.
+    expect(mockDeps.converted.firstPlanPayments).toHaveBeenCalledWith({ accountIds: [ACCOUNT], firstPaymentIn: null });
     expect(mockDeps.converted.signupSources).not.toHaveBeenCalled();
     expect(body.data.converted).toEqual(expect.objectContaining({ scope: 'one', status: 'ok', state: 'not_converted' }));
   });
