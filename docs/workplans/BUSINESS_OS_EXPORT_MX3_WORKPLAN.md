@@ -6,9 +6,9 @@
 **Requirement:** [BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md) §3, §4.3, §4.4, §7 (AC MX-3), §8 X-1…X-8, §9 (BQ-28, BQ-42, BQ-43 answered 2026-10-28), §10 XC-8, XC-9, XC-13, §11 S-9, S-10, S-11
 **Plan:** [BUSINESS_OS_EXPORT_REDESIGN_PLAN.md](/docs/workplans/BUSINESS_OS_EXPORT_REDESIGN_PLAN.md) §4.6 (quoted in §2), §4.6a R-6
 **Earlier slices this builds on:** [MX-1a](/docs/workplans/BUSINESS_OS_EXPORT_MX1A_WORKPLAN.md) (tables, claim / reap RPCs, migration `20261095`), [MX-1b](/docs/workplans/BUSINESS_OS_EXPORT_MX1B_WORKPLAN.md) (request route, "requested" email), [MX-2b](/docs/workplans/BUSINESS_OS_EXPORT_MX2B_WORKPLAN.md) (`columnLabels.ts`, labels required)
-**Branch:** MX-3a on `feature/bos-export-mx3a-transport-parts` (worktree `neuronforge-mx3`, off `main` `415f726e`, which holds MX-2b #558; renamed by RM from `feature/bos-export-mx3-worker`). MX-3b gets its own branch from `main` after MX-3a merges (proposed `feature/bos-export-mx3b-worker`, SA split ruling: sequential, not stacked). Not `main`.
-**Date:** 2026-10-28
-**Status:** MX-3a Code Complete (waits for SA code review); MX-3b Planning
+**Branch:** MX-3a on `feature/bos-export-mx3a-transport-parts` (worktree `neuronforge-mx3`, off `main` `415f726e`, which holds MX-2b #558; renamed by RM from `feature/bos-export-mx3-worker`), merged as PR #565. MX-3b on `feature/bos-export-mx3b-worker` (worktree `neuronforge-mx3b`, off `main` `32effb8d`, which holds MX-3a #565 and DELETE's D4a #566; SA split ruling: sequential, not stacked). Not `main`.
+**Date:** 2026-10-28 (MX-3b: 2026-10-29)
+**Status:** MX-3a Committed (PR #565, merged); MX-3b Code Complete (waits for SA code review)
 
 ---
 
@@ -41,7 +41,7 @@ MX-3 also adds the shared `idempotencyKey` option to `emailTransport.ts` (S-10, 
 15. [Risks](#15-risks)
 16. [Open questions for SA](#16-open-questions-for-sa)
 17. [Business questions](#17-business-questions)
-18. [Implementation Notes (MX-3a)](#implementation-notes-mx-3a) · [SA Review Notes](#sa-review-notes)
+18. [Implementation Notes (MX-3a)](#implementation-notes-mx-3a) · [SA Review Notes](#sa-review-notes) · [Implementation Notes (MX-3b)](#implementation-notes-mx-3b)
 19. [QA Testing Report](#qa-testing-report)
 20. [Commit Info](#commit-info)
 21. [Change History](#change-history)
@@ -119,7 +119,7 @@ MX-3 also adds the shared `idempotencyKey` option to `emailTransport.ts` (S-10, 
 | D-7 | **SA-P4 proposal: a module that is switched off (or unknown) at claim time fails closed.** The worker checks `isModuleEnabled(job.module)` before any read or `buildJoinedCsv` (carry-over). If false: `failed`, code `module_switched_off` (or `module_unknown` for an id not in the map), the generic failed email, no rows read | A switch-off is the emergency stop for a module (switches only remove; for example a privacy fault found in a section). Sending it anyway would defeat the stop. The plan's earlier proposal ("still runs") honours the "requested" email's promise, but the failed email keeps the owner told. The drawer no longer offers the module, so "please try again" leads nowhere. §16 Q-1 asks SA to choose, and whether the failed copy should say "not available right now" instead | SA (SA-P4) |
 | D-8 | **Retry only while no part reached `sending`** (XC-9). Before the first `markPartSending`, any failure (a section read failed, the owner identity unreadable, the budget spent before part 1, a send refused before part 1 was marked) releases the job to `waiting` with backoff, or ends it `failed` `attempts_exhausted` when `attempts ≥ BUILD_MAX_ATTEMPTS`. After the first `markPartSending`, any failure the run cannot finish ends it `interrupted` | The DB already enforces half of this: `waiting` requires `parts = []` (D-10 of MX-1a), so a buggy release after a part was marked is refused by the row CHECK |
 | D-9 | **Inside one run, a part that is `sending` may be re-sent with the same idempotency key and the same bytes** after a timeout, a 5xx, a 429 (after `retry-after`) or a 409 `concurrent_idempotent_requests`, up to `PART_SEND_TRIES = 3` and only inside the budget | This is not a rebuild: the bytes are the ones already cut, so the boundaries cannot shift (the reason XC-9 forbids a retry across runs). Resend answers a repeated key with the first send's result, so a send that timed out but was accepted is not delivered twice (K-7). Across runs, a `sending` part is never re-sent: the reaper makes it `interrupted`. §16 Q-3 asks SA to confirm |
-| D-10 | **Budget.** `WORKER_BUDGET_SECONDS = 270` (policy) is checked before each part. A new **build** claim is taken only while elapsed < `BUILD_CLAIM_CUTOFF_SECONDS = 90`; a new **notice** claim only while elapsed < `NOTICE_CLAIM_CUTOFF_SECONDS = 250`. Budget spent before part 1 → release for retry (`budget_spent`). Budget spent after a part was marked → `interrupted` now, with the notice due and the claim cleared, so the next run (or this one) sends the notice instead of waiting 420 s for the reaper | A job claimed late in a run is the likeliest to be cut in half. With 180 s or more left for a fresh job, a ceiling-size module fits (F-9: build 3.6 s for 100,000 rows; the DB read time is the measured unknown, QA T-Q1). Ending it `interrupted` at once is what the reaper would do anyway, minus the wait |
+| D-10 | **Budget.** `WORKER_BUDGET_SECONDS = 270` (policy) is checked before each part. **As amended by SA C-1 (option a, implemented in MX-3b): no claim of any kind, build or notice, is taken once elapsed ≥ `BUILD_CLAIM_CUTOFF_SECONDS = 90`; there is no separate notice cutoff, and a notice left over waits for the next run (≤ 5 min).** ~~A new **build** claim is taken only while elapsed < 90; a new **notice** claim only while elapsed < `NOTICE_CLAIM_CUTOFF_SECONDS = 250`.~~ Budget spent before part 1 → release for retry (`budget_spent`). Budget spent after a part was marked → `interrupted` now, with the notice due and the claim cleared, so the next run (or this one) sends the notice instead of waiting 420 s for the reaper | A job claimed late in a run is the likeliest to be cut in half. With 180 s or more left for a fresh job, a ceiling-size module fits (F-9: build 3.6 s for 100,000 rows; the DB read time is the measured unknown, QA T-Q1). Ending it `interrupted` at once is what the reaper would do anyway, minus the wait. **C-1:** the claim function cannot be asked for notices only, so any claim after the cutoff would turn a waiting job into `working` and spend one of its three attempts without building it |
 | D-11 | **Sends are sequential, at least `SEND_GAP_MS = 600` apart across the whole run** (parts and notices), through one pacer. On a 429, wait `retry-after` (seconds, default 1 when absent, capped at the remaining budget); if the wait does not fit, the budget rule of D-10 applies | XC-8: Resend's default team limit is 2 per second, shared with every platform email, including DELETE's lifecycle job at :50 and D4b's 05:53 reminder |
 | D-12 | **Send timeout `PART_SEND_TIMEOUT_MS = 45_000`** for a part (up to about 9.4 MB of base64 upload), `NOTICE_SEND_TIMEOUT_MS = 10_000` for a notice (the MX-1b value). The worker races the send against a timer, as the MX-1b route does; a timeout is "unknown, maybe accepted" and is retried under D-9 with the same key | The transport has no timeout of its own. A hung upload would otherwise eat the whole budget. §16 Q-4 offers the alternative of an additive `timeoutMs` on the transport (cancels the request instead of abandoning it) |
 | D-13 | **Notices are their own claimable effect** (MX-1a D-11). When the worker ends a job `failed` / `interrupted`, the same update sets `notice_state = 'due'` and **clears the claim** (carry-over MX-1a code review 3), so this run or the next can claim the notice at once. The notice is sent with key `export-notice:{job_id}` (MX-1a SA MX1A-5). Success → `notice_state = 'sent'`, `notice_sent_at`, `notice_resend_id`, claim cleared. A refusal that retrying cannot change (`.invalid` recipient, no login email) → `given_up` at once. Any other failure → claim cleared, retried next run until the reaper gives up after 5 claims | One notice per job, at least once, never twice inside Resend's key window |
@@ -405,14 +405,14 @@ MX-3a lets DELETE's D4b use the key earlier. If SA prefers one PR, the 3.0 d est
 - ✅ 7. Typecheck the touched files, `npm test` for the touched suites; hand to SA code review.
 
 **MX-3b**
-- [ ] 8. Post CC-6 claims (`vercel.json`, `bosCronJobs.ts`, `events.ts`, `eventAudience.ts`).
-- [ ] 9. Audit constants, definitions, audience; severity guard 6 → 8.
-- [ ] 10. `moduleExportWorker.ts` + deps; T-W1…T-W20.
-- [ ] 11. Route; T-C1…T-C6.
-- [ ] 12. Registry + `vercel.json` + both cron tests (cron wired **last**, skill step 8).
-- [ ] 13. Callers guard; E-1 pin T-E1; skill two-model note.
-- [ ] 14. Typecheck and tests for the touched files; `npm run build` before hand-over (ship drill step 1).
-- [ ] 15. QA: T-Q1 (local 100,000 rows inside 270 s), T-Q2 (C-10 confirmation), the live-free checks in §13.4.
+- ✅ 8. Post CC-6 claims (`vercel.json`, `bosCronJobs.ts`, `events.ts`, `eventAudience.ts`). Done by TL before the code.
+- ✅ 9. Audit constants, definitions, audience; severity guard 6 → 8; `eventAudience` split 226 → 228 (shared 77 → 79).
+- ✅ 10. `moduleExportWorker.ts` + deps; T-W1…T-W24 (32 tests).
+- ✅ 11. Route; T-C1…T-C6 + the SA C-5 caller pin (10 tests).
+- ✅ 12. Registry + `vercel.json` + both cron tests (cron wired **last**, skill step 8); count 22 → 23 (SA C-6).
+- ✅ 13. Callers guard; E-1 pin T-E1; skill two-model note.
+- ✅ 14. Typecheck and tests for the touched files; `npm run build` before hand-over (ship drill step 1). See Implementation Notes (MX-3b).
+- ✅ 15. QA: T-Q1 (local 100,000 rows inside 270 s), T-Q2 (C-10 confirmation), the live-free checks in §13.4. T-Q3 moved to E6.1's go-live check (c) by the user, 2026-10-29.
 
 ---
 
@@ -498,7 +498,7 @@ All Jest, pure or with mocked repositories and a mocked `fetch`; small fixtures;
 | T-W18 | Language and clock resolved once per request: two modules of one request in one run share one language even if the mocked preference changes between calls; a language read error → `'en'` + `language_unreadable` warn | MX2B-11 |
 | T-W19 | Labels: `buildJoinedCsv` receives `EXPORT_COLUMN_LABELS` (identity check), never a constructed set | MX-2b D-3 |
 | T-W20 | Notice path: notice keyed `export-notice:{id}`; accepted → `sent`; 500 → claim released; `.invalid` recipient → `given_up`; 409 `invalid_idempotent_request` → treated as sent | D-13 |
-| T-W21 | Build claim cutoff: after 90 s elapsed a claimed build is released without being built; notices still claimed until 250 s | D-10 |
+| T-W21 | Claim cutoff (SA C-1 option a): once 90 s have elapsed the run claims nothing more; a waiting job's `attempts` (and a due notice's `notice_attempts`) are unchanged by the late run, and `claimDue` is called no more | D-10, C-1 |
 | T-W22 | Claim lost (`count 0` on `markPartAccepted`): no further send for that job, `claim_lost` error logged, run continues | §5 |
 | T-W23 | Logs: no address, subject, file name or cell value in any captured line | §12 privacy |
 | T-W24 | Audit `details` keys exactly `request_id, job_id, module, origin, rows, parts, parts_accepted` (+ `failure_code, interrupted` on FAILED) | XC-13 |
@@ -762,7 +762,358 @@ C-1, C-3's T-W23 transport log capture, C-4's cache and `request_mismatch` branc
 
 ---
 
+## Implementation Notes (MX-3b)
+
+**Branch:** `feature/bos-export-mx3b-worker` (worktree `neuronforge-mx3b`), off `main` `32effb8d` (MX-3a #565 and DELETE D4a #566 merged). Not committed: SA code review, QA and the user's diff review come first. **No migration.**
+
+### Files
+
+| File | Action | What |
+|---|---|---|
+| `lib/business-os/data-export/moduleExportWorker.ts` | create | `runModuleExportWorker(deps, log)`: reap first (and audit what the reaper ended), claim one job at a time before the 90 s cutoff, build or notice, release retryable notices after the loop. All I/O injected through `ModuleExportWorkerDeps`; the store is a structural port (`ModuleExportJobStore`), so the file names no repository class |
+| `lib/business-os/data-export/moduleExportWorkerDeps.ts` | create | `server-only` production wiring: the two export repositories, `findUserIdentity`, `findPreferredLanguage`, `ownerClock`, `runExportSections` over `EXPORT_SECTIONS` filtered to the asked ids (registry order kept), `buildJoinedCsv`, `EXPORT_MODULES`, `sendEmail`, `platformSenderAddress`, clock, sleep, uuid. The audit port is added by the route |
+| `app/api/cron/data-export-modules/route.ts` | create | Cron route: `runtime 'nodejs'`, `maxDuration = 300`, fail-closed `CRON_SECRET`, Pino child with `correlationId`, `withCronRunRecord('data-export-modules', …)`, the audit port → `logAndFlush` (bounded), counts in `data`, 500 with no details outside development |
+| `lib/business-os/data-export/__tests__/moduleExportWorker.test.ts` | create | T-W1…T-W24 plus the C-4 mismatch, a part answered 409 `invalid_idempotent_request`, and K-7 (32 tests). In-memory store that mirrors the claim / reap SQL and refuses any write the 20261095 row CHECKs refuse |
+| `app/api/cron/data-export-modules/__tests__/route.test.ts` | create | T-C1…T-C6 and the SA C-5 caller pin (10 tests) |
+| `lib/business-os/data-export/__tests__/historyStatuses.pin.test.ts` | create | T-E1: the DB CHECK, `MODULE_JOB_STATUSES`, `ExportHistoryStatus` and `HISTORY_STATUSES` hold the same five words in the same order; two negative controls (4 tests) |
+| `lib/audit/events.ts`, `lib/audit/eventAudience.ts` | modify | `DATA_EXPORT_MODULE_SENT` (info, GDPR + SOC2) and `DATA_EXPORT_MODULE_FAILED` (warning, GDPR): constants, definitions and `shared` audience, directly after `DATA_EXPORT_DOWNLOADED_BY_ADMIN` (SA-P5) |
+| `lib/audit/__tests__/dataExportSeverity.guard.test.ts` | modify | six → eight |
+| `lib/audit/__tests__/eventAudience.test.ts` | modify | main's 226 / shared 77 → 228 / 79 (+2), with a dated comment line |
+| `lib/business-os/data-export/moduleExportSending.ts` | modify | The `BUILD_CLAIM_CUTOFF_SECONDS` comment states C-1 (option a); `MODULE_JOB_RETRY_CODES.BUILD_FAILED` added (`build_failed`: a throw or a failed write before part 1); header line updated |
+| `lib/cron/bosCronJobs.ts` | modify | `'data-export-modules'` in `BosCronJobId` after `'data-export'`; registry entry after the `data-export` entry: `EVERY_5`, `timeLimitSeconds 300` / `'maxDuration'`, `drainsQueue: null` (SA Q-8), the ten counts of §9.2, partly done when `modulesInterrupted ≥ 1` or `budgetStops ≥ 1`. Comment by name, no ordinal (C-6) |
+| `vercel.json` | modify | `{ "path": "/api/cron/data-export-modules", "schedule": "*/5 * * * *" }` directly after `/api/cron/data-export`. Wired last (skill step 8) |
+| `lib/cron/__tests__/bosCronJobs.test.ts`, `lib/cron/__tests__/vercelCrons.test.ts` | modify | 22 → 23 (literal kept, C-6), the new row after `data-export`; comments by name |
+| `lib/repositories/__tests__/exportRequestRepositories.callers.guard.test.ts` | modify | `moduleExportWorkerDeps.ts` allowed in the two class rules only |
+| `.claude/skills/durable-queue-drain/SKILL.md` | modify | "Variant — one table, two claim models": the reaper that judges a build by its parts, the notice branch with the lease in the claim predicate, and the two consequences for a caller (stop claiming at the cutoff; release a retryable notice only after the loop) |
+| `docs/requirements/BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md`, `docs/workplans/BUSINESS_OS_EXPORT_REDESIGN_PLAN.md` | modify | Status and Change History for E6b |
+
+### How each SA change was met
+
+| Change | Where |
+|---|---|
+| **C-1 (High), option (a)** | The claim loop runs only `while (elapsed < BUILD_CLAIM_CUTOFF_SECONDS × 1000)`: no claim of any kind after 90 s and no notice cutoff (none was ever defined). D-10 restated above. **T-W21 rewritten:** the first build's reads take 95 s; the run then calls `claimDue` no more (`claimCalls === 1`), the waiting job keeps `attempts 0` and the due notice keeps `notice_attempts 0` |
+| **C-3** | Every send goes through `buildPartSend` / `buildNoticeSend` (MX-3a), whose type forces `redactRecipientInLogs: true`. **T-W23** runs the worker against the REAL `sendEmail` with a mocked Resend `fetch` and captures every line of the transport's own logger as well as the worker's: no full address, no file name and no cell value in any line, and no subject in the worker's lines (deviation 4) |
+| **C-4** | `ownerFactsKey(user_id, request_id)` keys the per-run cache. `findRequest(job.request_id, job.user_id)` returning null ends the job `failed` `request_mismatch` with the notice `given_up` (no send, not even a notice), one `error` line with `code: 'request_mismatch'`, and no retry. **T-W16**, second case: account B's job on account A's request fails that way; A's sibling job on the same request is still sent, to A only; a later run does not touch it again |
+| **C-5** | Route suite, `SA C-5` block: a scan of `app`, `lib`, `components`, `hooks`, `scripts`, `pages` (comments stripped, tests excluded) finds `runModuleExportWorker` in code only in the worker and the route; the route has exactly one call and it is awaited; the route exports `maxDuration = 300` and `runtime = 'nodejs'`; the policy's 300 is at least 60 s under the 420 s lease. Lease 420 s, the 270 s budget and reaper-first are in the worker (T-W9, T-W10, T-W5) |
+| **C-6** | `toHaveLength(23)` kept as a literal in both cron tests, with a comment naming the slice and saying why it is a literal. Every new comment names "the data export worker" / `data-export-modules`, no ordinal. Main at `32effb8d` had 22 entries (D4b's cron is not on main), so 23 |
+| MX-3a SA code review #1 | Already in `classifyKeyedSend` (Resend-only id); not redone |
+| 409 `invalid_idempotent_request` | Part → `interrupted` (test "a part answered 409 …"); notice → `markNoticeSent(null)`, treated as sent (T-W20) |
+| Module switched off | `isModuleEnabled` first, before the owner facts, the section reads and the builder → `failed module_switched_off` (or `module_unknown`), notice due → "This part is not available for export right now." (T-W13, T-W14) |
+| K-7 (optional, SA suggestion) | Implemented: the write that records a delivered part (`markPartAccepted` / `markSent`) is retried once on a DB error (not on a lost claim). Test "K-7: one transient error on markSent …" |
+| SA-P5 audit | §9.1 constants, definitions and audience; entries carry exactly the XC-13 keys (T-W24); severity and flags are read from `EVENT_METADATA`, not written by hand; one bounded flush per ended job, one for the reaped rows |
+| Owner clock | `ownerClock(user_id)` → `user_preferences.timezone`; the templates take it as input |
+
+### Deviations and decisions for SA
+
+1. **Retryable notices are released after the claim loop, not at once.** D-13 says "claim cleared, retried next run", and `releaseNotice` clears the claim. Released inside the loop, the claim function would hand the same notice straight back (its claim is free and `notice_attempts < 5`), and one failing notice would burn all five attempts in a few seconds. The run keeps the claim until the loop ends and releases it then, so the next run retries it (T-W20 "a 500": one send per run, `notice_attempts` 1 then 2). If a run is killed first, the lease (420 s) frees it.
+2. **`build_failed`** is a new retry code (`MODULE_JOB_RETRY_CODES.BUILD_FAILED`) for a throw or a failed write before any part reached `sending`. It fits `CODE_SHAPE`; no SQL lists codes.
+3. **A missing or `.invalid` login email is checked before part 1** (`isInvalidDomainRecipient`), so the job ends `failed recipient_unavailable` with the notice `given_up` without a part ever being marked. The transport's own refusal stays as a second line of defence (it would end the job `interrupted` after part 1 was marked).
+4. **The transport's subject line (T-W23).** The transport's own "Attempting to send email" line logs the first 50 characters of the subject, for every caller. An export subject holds only the localised module name and "email n of X", no owner data. T-W23 therefore asserts no subject in the WORKER's lines, and no address, file name or cell value in ANY line. Changing the transport's subject logging is outside this slice (MX-3a's merged file, every caller's behaviour). SA to confirm.
+5. **The callers guard allows only the deps file**, not "the deps file and its test" (§7): there is no deps test, and the worker and route tests name neither repository class (an allow-list entry for a missing file fails the guard's no-stale-exemption rule).
+6. **Audit `rows`** is `null` when the job ended before its rows were counted (switched off, read failure, mismatch); `parts` is `parts_total` or 0, as D-18 says. `origin` is null when the request was never read (a module switched off ends before the owner facts). The reaped-row audit reads the request for `origin` (one read per reaped terminal row).
+7. **Registry `partlyDoneWhen`**: `modulesInterrupted ≥ 1` or `budgetStops ≥ 1`. The workplan named the counts but no amber rule. `modulesFailed` is deliberately not amber: too large and switched off are correct outcomes, not a run fault.
+8. **Task 10 named T-W1…T-W20**; §13.4 has 24 rows, and all 24 are covered.
+
+### Verification
+
+- **Jest.** New suites: `moduleExportWorker` 32, data-export-modules `route` 10, `historyStatuses.pin` 4, all pass. One run over every touched and related suite (`lib/business-os/data-export`, `lib/notifications`, the two export repository suites and the callers guard, `lib/audit`, `lib/cron`, `app/api/cron` including `runRecord.adoption` (which now loads the new route), `app/api/business-os/export-requests`, the 20261095 migration test, `lib/admin/environment`, `lib/admin/jobs`, `app/api/admin/jobs-queues`, the Tailwind escape guard): **96 suites, 2,918 tests, all pass**. The `app/admin` jobs-queues render suites: 46 suites, 1,673 tests, all pass (run with the cron suites). `qa-slice5-pr2.recorder.test.ts` failed once while a full `tsc` ran beside it and passed alone and in the final run (load-timing, not this slice).
+- **Typecheck.** Full `tsc --noEmit -p tsconfig.json` (8 GB heap) **completed** (no OOM; it printed diagnostics and exit 2 for the repo's pre-existing errors, 1,921 in all). One error was in a touched file (a section-status union in the new worker test), fixed. A scoped `tsc` over all 15 touched TypeScript files and their imports then exits **0**.
+- **Build.** `npm run build` with the Build workflow's placeholder environment (the `https://ci.invalid` values of `.github/workflows/build.yml`; the worktree has no `.env.local`, and without any Supabase URL `Collecting page data` fails on unrelated admin routes): **exit 0**, `ƒ /api/cron/data-export-modules` in the route list.
+- **`console.*`:** 0 in every touched file. **Backslash + hex:** none in a new or changed line under `app/` or `lib/` (the Tailwind escape guard passes).
+- **No migration.** No SQL touched; 20261100 stays DELETE's.
+
+### SA fixes (code review 2026-10-29) and QA pass-1 tests
+
+| Item | Change | Test |
+|---|---|---|
+| **F-1 (a)** | `releaseForRetry`'s compare-and-set also filters `parts = '[]'` (`WriteGuard.partsEmpty`, `.eq('parts', '[]')` on the jsonb column). A row holding any part matches nothing and comes back `{ updated: false }`. **QA must confirm this filter against the real database** (PostgREST `parts=eq.[]` on jsonb); the in-memory store and the mocked client cannot prove it | Repository: "SA MX-3b F-1: releaseForRetry also requires parts = []…" (filter present, count 0 → `{ updated: false }`, no other write carries it). The worker's fake store mirrors the guard |
+| **F-1 (b)** | The run's build `catch` reads a `BuildProgress` kept outside `runBuild`: before any part write, `retryOrFail`; once a part write was attempted, never a retry. With parts known it ends the job `interrupted`; if the first part's write itself threw, the job is left to the reaper (an `error` line, `left_to_reaper`) | Worker: "a throw while building part 2, after part 1 was delivered: interrupted, part 1 never sent again" and "the store refuses a release once a part is stored" |
+| F-1 comments | The "row CHECK refuses it" claim is corrected in the repository doc comment, the worker's `markPartSending` error comment and the `durable-queue-drain` skill paragraph: the CAS guard enforces XC-9, the CHECK cannot (the patch empties `parts`). D-8's "The DB already enforces half of this" in §3 has the same flaw; it is superseded by this row | — |
+| **F-2** | New `SEND_DEADLINE_MARGIN_MS = 5_000` (`moduleExportSending.ts`). A part try, the first included, starts only if `elapsed + wait + SEND_GAP_MS + PART_SEND_TIMEOUT_MS ≤ 300 s − 5 s`; the first try is gated in the part loop before the part is marked `sending` (budget stop: a retry before any part, `interrupted` after), and each re-try in `sendPart` | Worker: "a part reached at 255 s is not started…" (retry, `budget_spent`) and "after part 1, a part whose try would not end in time ends the job interrupted at once" |
+| F-4 | Route comment: 120 s under the 420 s lease (the policy requires at least 60) | — |
+| F-5 | Route test anchors `;\r?$` (CRLF checkouts) | Route suite |
+| F-6 | T-W23 restores the global `fetch` in `afterEach` | T-W23 |
+| F-3, F-7 | No change (accepted by SA) | — |
+| QA E-1 | Tests only, no bug found: budget spent before part 1 → `waiting`, `budget_spent`; no login email, an `.invalid` one, or an account gone → `failed recipient_unavailable`, notice `given_up`, no part marked, nothing read or sent; a failed request or identity read → `owner_unreadable`, released for retry | Worker: "QA E-1" block (6 tests) |
+| QA E-2 | T-W16 case 1 asserts the read list is non-empty and holds both accounts, and that `findIdentity`, `findPreferredLanguage` and `ownerClock` are each called with only the jobs' own user_ids | T-W16 |
+| QA E-3 | T-W1 asserts the exact owner-zone times: requested 11:55, produced 12:00 (Asia/Jerusalem), no "(UTC)" | T-W1 |
+
+**Verification after the fixes:** worker suite 42 tests, repository suite (+1), route suite 10, all pass; the touched-suite run (`lib/business-os/data-export`, the module-job repository and callers guard, `app/api/cron`, `lib/cron`, `lib/audit`, `lib/notifications`, `app/api/business-os/export-requests`): **68 suites, 1,841 tests, all pass**. Scoped `tsc` over the 17 touched TS files: exit 0. `console.*` 0. The route changed in a comment only, so the build was not rerun.
+
+### For SA / QA next
+
+- SA code review of the diff. **C-6 check at the PR:** if DELETE's D4b cron lands first, rebase, set 24 by hand in both tests, and rerun `bosCronJobs.test` and `vercelCrons.test`.
+- QA task 15: T-Q1 (local 100,000-row module inside 270 s, peak RSS), T-Q2 (C-10: no export request row left from testing), T-Q3 (Resend test-mode two-part send; Gmail, Outlook and Excel; a repeated key returns the same id).
+
+## SA Code Review — MX-3b — 2026-10-29
+
+**Reviewed by SA — 2026-10-29** (uncommitted diff on `feature/bos-export-mx3b-worker` against `main` `32effb8d`)
+**Status:** APPROVED WITH CHANGES. Fix F-1 (High) and F-2 (Medium) before QA's T-Q runs. Correct the four comments listed under F-1. No SA re-review is needed if the fixes are made as written and each has its test. F-3…F-7 are Low.
+
+### What SA verified
+
+- **C-1 (option a):** the claim loop is `while (elapsedMs() < CLAIM_CUTOFF_MS)`, with no notice cutoff. T-W21 proves that a late run calls `claimDue` once, and that `attempts` and `notice_attempts` stay 0. The D-10 comment in `moduleExportSending.ts` is restated. **Met.**
+- **C-3:** every send goes through `buildPartSend` / `buildNoticeSend` (`redactRecipientInLogs: true` typed as a literal). T-W23 runs the real `sendEmail` against a mocked Resend `fetch` and captures the transport's own lines. **Met.**
+- **C-4:** the cache is keyed by `ownerFactsKey(user_id, request_id)`. `findByIdForUser(job.request_id, job.user_id)` returning null gives `failed request_mismatch`, notice `given_up`, an `error` line, no send and no retry. It is cached for the run. The notice branch gives up on a mismatch too. T-W16, case 2. **Met.**
+- **C-5:** the source scan finds one caller (the route), with the call awaited, `maxDuration = 300`, `runtime = 'nodejs'`, and the lease ≥ 300 + 60. **Met** (see F-5 for the CRLF anchor).
+- **C-6:** `toHaveLength(23)` is a literal in both cron tests and every new comment is by name. `main` `32effb8d` has 22 `vercel.json` crons, so 23 is correct. The D4b check at the PR is still owed (TL/RM).
+- **C-8 / carried MX-3a #1:** the transport `timeoutMs` is used (45 s for a part, 10 s for a notice). `classifyKeyedSend` takes the id only from Resend.
+- **Tenant isolation (step 6):** every write is a CAS on id + user_id + claimed_by + the expected state. Every read and effect (`findRequest`, `findIdentity`, language, `ownerClock`, the section `ExportContext`) is keyed on the claimed row's `user_id`. The route reads no input, and the reaped-row audit reads the request with the row's own user_id. Service-role use is documented in `moduleExportWorkerDeps.ts`. Only the deps file names the repositories (repository pattern, rule 1).
+- **durable-queue-drain:** the order is reap first → claim one → guardrails at the point of effect (module switch, recipient, request match) → effect → terminal CAS. Dedupe is by terminal status plus the provider key. The cron is wired last, auth is fail-closed `CRON_SECRET` (identical to `/api/cron/data-export`), `withCronRunRecord` is used, and the dead letter is `attempts_exhausted` / notice `given_up` after 5. The exception is F-1.
+- **CLAUDE.md:** Pino child with `correlationId`, 0 `console.*` in touched files, no `any`. The error format has `details` only in development. The audit is non-blocking (`logAndFlush`, one bounded flush per ended job and one for the reaped rows). Severity and flags are read from `EVENT_METADATA`. The new events sit directly after `DATA_EXPORT_DOWNLOADED_BY_ADMIN` in all three maps, and the audience counts are 228 / 79. No entitlements import. The timezone comes from `user_preferences` via `ownerClock`.
+- **Tests rerun by SA:** `lib/business-os/data-export`, the route, `lib/cron`, the two audit guards and the callers guard: **34 suites, 1,090 tests, all pass.**
+
+### Code Review Comments
+
+1. **`moduleExportWorker.ts:776-782` + `BusinessOsExportModuleJobRepository.ts:486-511`: a part already at `sending` can be wiped and the job retried (XC-9). Priority: High.**
+   - **What happens:** the build `catch` always calls `retryOrFail`. `releaseForRetry`'s patch **sets** `parts = []`, so the row CHECK `waiting ⇒ parts = '[]'` is satisfied by the patch itself and refuses nothing.
+   - **When it fires:** a throw after part n was marked `sending` or accepted puts the job back to `waiting` with its delivered parts erased. One example is `Buffer.from` / `csvPartTextOf` / `buildModulePartEmail` for part n+1. The next run rebuilds the job and re-sends from part 1 with a new `producedAt`. The Resend key usually turns that into a 409 and then `interrupted`, but XC-9's "never retried once a part reached `sending`" is broken. The row history and the audit become wrong, and outside the key window it would send twice.
+   - **Wrong claims:** the claim "the row CHECK refuses it" also appears in the repository doc comment (MX-3a; SA approved it in error), in the worker comment at `:625-627`, and in the new skill paragraph ("the row CHECK … enforces it").
+   - **Required fix (both parts):**
+     - (a) **Root cause, repository:** `releaseForRetry`'s CAS also requires `parts = '[]'` (a guard such as `.eq('parts', '[]')` on the jsonb column; confirm PostgREST accepts it against the real DB in QA, since the in-memory store cannot). Add a repository test: release with a part present gives `{ updated: false }`. Add a worker test: a throw after part 1 was accepted leaves the job not `waiting` and never re-sends part 1. The fake store must mirror the new guard.
+     - (b) **Worker:** track whether any part reached `sending` for the job in hand. In the `catch`, if one did, call `interrupt` (or leave the job to the reaper), never `retryOrFail`.
+   - **Comments to correct:** the repository doc comment, the worker comment at `:625-627`, and the skill sentence. Each should say the CAS guard enforces it, not the CHECK. The `markPartSending` error path itself is safe, because no send happened before the release.
+2. **`moduleExportWorker.ts:466-487, 595-603`: a send can outlive `maxDuration`. Priority: Medium.**
+   - **What happens:** the budget gate is `elapsed < 270 s` before a part, and `elapsed + wait < 270 s` before a re-try. Each try can block for `PART_SEND_TIMEOUT_MS` = 45 s. A part that starts after 255 s and hangs runs past 300 s, and the platform kills the run.
+   - **Cost when it fires:** correctness holds, because the reaper ends the job `interrupted` after 420 s. But the run record is left unfinished, the counts and audit for that run are lost, the released-after-loop notices wait for the lease, and a job with no part sent yet loses its clean retry.
+   - **Required fix:** gate each try, the first one included, on `elapsedMs() + waitMs + PART_SEND_TIMEOUT_MS <= WORKER_MAX_DURATION_SECONDS × 1000 − a small margin` (for example 5 s). Otherwise take the existing budget-stop path (a retry before any part, `interrupted` after). A test with the fake clock is enough.
+   - **Notices:** they are claimed before 90 s with a 10 s timeout, so they are not affected.
+3. **`moduleExportWorker.ts:644-657` (K-7): the markSent retry can miss the SENT audit. Priority: Low.**
+   - **Why K-7 is safe:** the one retry is safe and idempotent under the CAS. A retried `markPartAccepted` rewrites the same array on a still-`working` row. A retried `markSent` whose first write landed now matches 0 rows (status `sent`, claim NULL), so it returns `lost` and can never double-send or regress the row.
+   - **The gap:** in that case the job is `sent` but this run logs `claim_lost` at `error`, does not count `modulesSent`, and writes no SENT audit. The reaper never sees it again.
+   - **Accepted as is.** Optionally, on `lost` after a retried `markSent`, log `sent_unconfirmed` at `warn` instead.
+4. **`app/api/cron/data-export-modules/route.ts:38`: wrong headroom figure. Priority: Low.** "60 s under the 420 s lease" should read 120 s (420 − 300). The policy only requires at least 60.
+5. **`route.test.ts:173-174`: the anchors fail on a Windows CRLF checkout. Priority: Low.** `/^export const maxDuration = 300;$/m` and the `runtime` anchor fail on CRLF (`$` does not match before `\r`; see the CRLF scan flake, #394). CI on Linux passes. Use `;\r?$`.
+6. **`moduleExportWorker.test.ts:942-979` (T-W23): global `fetch` is replaced and never restored. Priority: Low.** Restore it in `afterEach`.
+7. **`lib/cron/__tests__/vercelCrons.test.ts:4-5`: a second line both slices will edit. Priority: Low.** The header "(23 as of 2026-10-29)" is a count and date that D4b will also edit, so it is a second conflict line beside the C-6 literal. That is harmless (it is also a tripwire), but dropping the count from the prose is cleaner.
+
+### Rulings on the declared deviations and questions
+
+1. **Retryable notices released after the claim loop: approved.** The reasoning is correct (an immediate release is re-claimed at once and burns all 5 attempts). If the run is killed, the 420 s lease frees the claim. Five runs is about 25 min, inside the Q-6 one-hour bound.
+2. **`build_failed`: approved.** It fits `CODE_SHAPE`, and no SQL lists retry codes. Its use is limited to "before any part reached `sending`" once F-1(b) is in.
+3. **Missing or `.invalid` login email: approved** as `failed recipient_unavailable`, notice `given_up`, checked before part 1. It matches §4.1 row 8. The transport refusal stays as the second line of defence.
+4. **The transport logs the first 50 characters of the subject: acceptable for this slice.** An export subject holds only the localised module name and "email n of X", with no owner data. T-W23's scope is right. **Follow-up for TL to park (not MX-3):** the transport logs a subject prefix for **every** caller, and other callers' subjects can carry client or business names. It belongs in a transport-wide privacy slice, with every caller considered.
+5. **The callers guard allows only `moduleExportWorkerDeps.ts`: approved.** No deps test exists, and an allow-list entry for a missing file would trip the no-stale-exemption rule.
+6. **Audit `rows` / `origin` null cases: approved.** Null means "not known when the job ended", which is honest. Reading the request for `origin` on reaped terminal rows is approved: it uses the row's own user_id, it is bounded by the reaped count, and a read error gives null.
+7. **`partlyDoneWhen` on `modulesInterrupted ≥ 1` or `budgetStops ≥ 1`: approved.** `modulesFailed` is correctly not amber.
+8. **Requirement EOL: no action needed.** `git ls-files --eol` shows `i/lf w/lf`, there is no `.gitattributes` rule for `docs/**`, and `core.autocrlf=true` normalises to LF in the index. `git diff --stat` shows 3 lines for the requirement (and 15 for `moduleExportSending.ts`, also `w/lf`), so the commit carries no whole-file EOL change. TL does not need to restore CRLF. Git will convert the working copy on its next checkout.
+
+**T-W numbering (Dev note 8):** all 24 §13.4 rows are present. Noted.
+
+### Optimisation suggestions (non-blocking)
+
+- Reaped-row audit: `findRequest` runs sequentially per row. That is fine at the expected volume. Cache by `ownerFactsKey` if reaps ever come in bulk.
+- Notice `key_conflict` / accepted path: log "notice sent" only when `recorded === 'ok'` (otherwise `claim_lost` is already logged).
+
+### Code Approved for QA: Yes, with conditions
+
+QA may start T-Q2 (the C-10 gate) and the Jest review now. **T-Q1, T-Q3 and the commit wait for F-1 (a + b, with tests) and F-2 (with test)**, plus the comment corrections. TL/RM: C-6, check D4b on `main` before auto-merge and set 24 by hand if it landed first.
+
+---
+
 ## QA Testing Report
+
+## QA Report — MX-3b (pass 2) — 2026-10-29
+
+**QA — 2026-10-29** (uncommitted diff on `feature/bos-export-mx3b-worker`, worktree `neuronforge-mx3b`, after Dev's SA F-1 / F-2 / F-4…F-6 fixes and the QA pass-1 tests E-1 / E-2 / E-3. QA edited no code file, wrote no DB row, made no live send, did not commit or stash. The two throwaway harnesses were deleted after their runs.)
+**Test mode:** full
+**Strategy used:** A (Jest: every touched suite) + C (a temporary T-Q1 harness: the real worker, the real `buildJoinedCsv`, the real transport over a mocked Resend `fetch`, a real clock and real sleep) + a read-only PostgREST probe against the real database for F-1(a)
+**Focus:** pipeline (worker), api (route), security (XC-9 guard), performance (T-Q1)
+**Skipped:** T-Q3 (needs a live Resend send and a person to open the mail; see below)
+**Input source:** prompt keywords (TL brief)
+
+### Verdict: PASS WITH NOTES
+
+The code is ready for the user's diff review. One manual gate is still open: **T-Q3**, which needs a live send. The workplan does not let QA defer it on its own (§12 split row: T-Q3 is an MX-3b gate). TL and the user decide whether to run it now or move it to E6.1's go-live check.
+
+### Gates
+
+| Gate | Result | Evidence |
+|---|---|---|
+| **T-Q2** (C-10 / MX-1b K-4) | ✅ **Pass** | Run by TL, read-only, on prod `jgccgkyhpwirgknnceoh`, 2026-10-29. `business_os_export_requests` held 0 rows, `business_os_export_module_jobs` held 0 rows, and there were 0 orphan jobs. No ids to record. Pass 1's "not yet run" is closed |
+| **F-1(a) real DB** | ✅ **Pass** | Service-role supabase-js, read-only `HEAD`/`GET`, project ref `jgccgkyhpwirgknnceoh`. `business_os_export_module_jobs` `.select('id', {count:'exact', head:true}).eq('parts','[]')` gave **status 200, no error, count 0**, and the table holds 0 rows in all. Negative controls: a bogus column gave **400, `42703`** ("column … no_such_column_qa does not exist"), so errors do surface. `.eq('parts','not-json')` gave **400, `22P02`** ("invalid input syntax for type json"). That shows PostgREST casts the filter value to the jsonb column type, so `parts=eq.[]` is a jsonb equality with `'[]'::jsonb`, not a text compare. With 0 rows the probe cannot show a row matching, but jsonb `[] = []` is equality by value, and the default `'[]'` is stored the same way |
+| **T-Q1** (100,000 rows inside 270 s, peak RSS) | ✅ **Pass** | See below: 15.5 s total with a 2 s Resend latency, 184 s with a 30 s latency. Peak RSS 530 MB |
+| **T-Q3** (two-part send through Resend test mode) | ⛔ **Blocked here** | Needs a real `RESEND_API_KEY`, a live send to a real `+test` inbox, and a person to open it in Gmail, Outlook and Excel. QA does not make live sends. Steps for TL / the user are below |
+
+### T-Q1: measurement
+
+**How:** a temporary Jest file (deleted after the run) reused the worker suite's in-memory store (which enforces the 20261095 row CHECKs and the F-1 guard) and replaced the rest. The clock was `Date.now()` and `sleep` was a real `setTimeout`, so the 600 ms pacing is real. The builder was the real `buildJoinedCsv` with the real `EXPORT_COLUMN_LABELS`, language `he`. The send was the real `sendEmail` (base64 encoding, JSON body, keyed path) over a mocked Resend `fetch` that answers 200 after a fixed latency. The fixture was the `clients` module with 100,000 rows: 99,000 `crm_contacts` rows with every live column (`de4-live-columns.json`), half of them in Hebrew, plus 990 documents and 10 stages. The section reader was in memory, and the fixture was generated in the reader. That is not a local Supabase: no `supabase start` stack exists in this environment, and §13.7 forbids the shared database.
+
+| Mocked Resend latency per send | Read (in memory) | Build | Parts | Send phase | **Total** | Peak RSS (baseline) | Outcome |
+|---|---|---|---|---|---|---|---|
+| 2 s | 0.4 s | 2.0 s | 6 | 12.8 s (6 sends, about 2.15 s apart) | **15.5 s** | **530 MB** (155 MB) | `sent`, 6/6 accepted, `budgetStops 0` |
+| 30 s (stress, near the 45 s timeout) | 0.4 s | 2.6 s | 6 | 180.8 s | **184.0 s** | 415 MB (143 MB) | `sent`, 6/6 accepted, `budgetStops 0` |
+
+- The request bodies were 9.33 MB × 5 and 6.36 MB, the base64 of a 7,000,000-byte part plus the JSON. That is under Resend's 40 MB per email.
+- Headroom: the build finishes in under 3 s, so the time is almost all sends. Six parts fit in 270 s while each send takes up to about 44 s. That is the 45 s part timeout, so F-2's gate (not the budget) is the binding limit. A 10-part module would need sends of about 26 s or less to finish in one run. Otherwise it ends `interrupted` by design (BQ-43), not with a timeout.
+- **Not measured:** the real section read time against Postgres (the reader was in memory). The production reader pages 100,000 rows. That is the one figure an E6.1 live check should record. Peak RSS is for the Jest process (Jest itself was about 150 MB). Vercel's default 1 GB / 2 GB function memory has room.
+
+### Pass-1 gaps and SA fixes: present and meaningful
+
+| Item | Present | Assessment |
+|---|---|---|
+| F-1(a) repository guard | ✅ | `WriteGuard.partsEmpty` → `.eq('parts','[]')`, set only by `releaseForRetry`. The repository test pins the filter, count 0 → `{ updated: false }`, and that `markInterrupted` does not carry it. Confirmed against the real DB above |
+| F-1 fake store mirrors the guard | ✅ | `releaseForRetry` predicate is `working(r) && r.parts.length === 0` (`moduleExportWorker.test.ts:252-253`). The test "the store refuses a release once a part is stored" pins it |
+| F-1(b) worker catch | ✅ | "a throw while building part 2, after part 1 was delivered": `interrupted`, no `releaseForRetry` call, `retried 0`, and a later run sends key `export:{id}:1` exactly once. This is the regression XC-9 needs |
+| F-2 send deadline | ✅ | Both branches: 255 s before part 1 → `waiting` with `budget_spent` and no send. After part 1, a 250 s send → `interrupted` with only part 1 sent. Both hit the new 295 s gate, not the 270 s budget (255 < 270), so they would fail if the gate were missing |
+| F-5 CRLF anchors, F-6 `fetch` restore | ✅ | The route suite passes on this Windows checkout. `afterEach` restores `fetch` |
+| E-1 | ✅ | Budget spent before part 1 (`attempts 1`, `parts_total null`). No email, an `.invalid` email, or no account → `recipient_unavailable`, notice `given_up`, no `setPartsTotal` / `markPartSending`, no read, no send. A request or identity read error → `owner_unreadable`, released |
+| E-2 | ✅ | T-W16 asserts that the read list is not empty and holds exactly both accounts' contexts, and that the identity, language and clock lookups take only the jobs' own user_ids |
+| E-3 | ✅ | T-W1 asserts "at 11:55" and "at 12:00" (Asia/Jerusalem, UTC+2) |
+| E-4…E-9 (Low) | ⬜ | Not added. Nice to have, not blocking. E-9 (no deps test) is partly covered by T-Q1: the real builder, labels and transport ran end to end. The deps file's section filtering and repository wiring were not covered, because T-Q1 replaced the reader. They get their first real run in E6.1's live check |
+
+### Jest
+
+**Run:** `npx jest lib/business-os/data-export lib/notifications lib/repositories/__tests__/BusinessOsExportModuleJobRepository.test.ts lib/repositories/__tests__/BusinessOsExportRequestRepository.test.ts lib/repositories/__tests__/exportRequestRepositories.callers.guard.test.ts lib/audit lib/cron app/api/cron/data-export-modules app/api/cron/__tests__/runRecord.adoption.test.ts`
+
+- **58 suites, 1,531 tests, all pass** (16 s), on Windows with a CRLF checkout. There were no pre-existing or CRLF failures in this set.
+- New suites: `moduleExportWorker` **42**, data-export-modules `route` **10**, `BusinessOsExportModuleJobRepository` **54** (includes the F-1 test), `historyStatuses.pin` **4**. All pass.
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None.
+
+#### Performance Issues (should fix)
+None. T-Q1 is 15.5 s at a realistic latency, against a 270 s budget.
+
+#### Edge Cases / notes
+1. **T-Q3 is open (manual gate, blocked in this session).** TL / the user must either run it as below, or rule it moved to E6.1 and add it to that slice's go-live check (c), which today checks only "one module email arrive[s]". If it is moved, the two-part, Outlook, Excel and repeated-key (Q-6) checks have to be added there explicitly, or they are lost.
+2. Pass-1 E-4…E-9 (Low) stay open as optional test additions.
+3. T-Q1 did not time a real Postgres read of 100,000 rows. The E6.1 live check should record it.
+
+### T-Q3: what TL / the user must do
+
+1. **Preconditions.** `RESEND_API_KEY` is set in the main checkout's `.env.local`. Note that Resend has no separate "test mode": with an unverified `agentspilot.ai`, Resend sends only from `onboarding@resend.dev` to the Resend account owner's own address. A Gmail `+test` alias of the owner's address works. Outlook needs the domain verified, which is the E6.1 ops gate (SPF, DKIM, DMARC).
+2. **Run locally (no DB write).** Use a one-off script outside the repo, or a `.tmp.test.ts` that is deleted afterwards. It calls the real `buildModulePartEmail` / `buildPartSend` and `sendEmail` for a Hebrew `he` fixture whose CSV cuts into exactly 2 parts (just over 7,000,000 bytes, for example the T-Q1 generator at about 18,000 rows). It sends parts 1 and 2 with keys `export:<uuid>:1` and `export:<uuid>:2` to `<owner>+test@gmail.com` (and an Outlook address once the domain is verified).
+3. **Q-6.** Send part 1 again with the same key and bytes. Pass: the same Resend id comes back, and no third email arrives.
+4. **Inspect.** Both emails arrive and open in Gmail and Outlook. The Hebrew body reads right to left, and the date and time read correctly (the `<bdi>` / FSI isolates work). Both CSVs open in Excel with the header row and Hebrew intact (the BOM works), and "email 1 of 2" and "2 of 2" are in the subjects and file names.
+5. Record the two Resend ids and the result here.
+
+### Test Outputs / Logs
+
+```text
+QA-TQ1 {"sendLatencyMockedMs":2000,"status":"sent","rows":100000,"partsTotal":6,"partsAccepted":6,"readMs":401,"buildMs":2022,"sendPhaseMs":12818,"requestBodyBytes":[9334045,9334221,9334221,9334221,9334221,6364757],"totalMs":15474,"rssBaselineMB":155,"rssPeakMB":530,"counts":{"claimed":1,"modulesSent":1,"partsSent":6,"budgetStops":0,...}}
+QA-TQ1 {"sendLatencyMockedMs":30000,"status":"sent","rows":100000,"partsTotal":6,"partsAccepted":6,"readMs":424,"buildMs":2554,"sendPhaseMs":180810,"totalMs":184043,"rssBaselineMB":143,"rssPeakMB":415,...}
+F-1(a) probe: parts=eq.[] -> {"error":null,"count":0,"status":200}; all rows -> count 0
+              bogus column -> 400 42703; parts=eq.not-json -> 400 22P02 "invalid input syntax for type json"
+Jest: Test Suites: 58 passed, 58 total; Tests: 1531 passed, 1531 total
+```
+
+### Final Status
+- [x] Code and all automated criteria pass: no open bug. F-1 / F-2 are verified, including F-1(a) against the real DB. T-Q1 and T-Q2 pass
+- [ ] **T-Q3 open:** a live Resend two-part send is needed (TL / user), or a TL / user ruling that moves it into E6.1's go-live check with the items listed above
+
+---
+
+## QA Report — MX-3b (pass 1: T-Q2 + test review) — 2026-10-29
+
+**QA — 2026-10-29** (uncommitted diff on `feature/bos-export-mx3b-worker`, worktree `neuronforge-mx3b`, while Dev applies SA F-1 / F-2. No code file edited by QA, no suite run, no commit, no stash.)
+**Test mode:** limited pass, by SA's conditions: T-Q2 and a read-only review of the new suites. T-Q1, T-Q3 and the full Jest run come in pass 2, after F-1 / F-2.
+**Strategy used:** E-style static review (each suite read against §13.4–13.6, D-8…D-21, the SA workplan review C-1…C-8 and the MX-3b code review) + a read-only DB check for T-Q2.
+**Focus:** pipeline (worker), api (route), security (tenant isolation, log privacy)
+**Skipped:** running Jest (Dev is mid-edit on the worker, repository and tests); T-Q1 and T-Q3 (they wait for F-1 / F-2, per SA)
+**Input source:** prompt keywords (TL brief)
+
+### T-Q2 (C-10 / MX-1b K-4 merge gate): NOT YET RUN
+
+This QA session had no Supabase database tool, so the read-only check could not be run here. The gate stays **open**. TL (or a session with the Supabase MCP) should run the SQL below against project `jgccgkyhpwirgknnceoh`. Preview and local share this database. It is SELECT only, and it avoids the word that breaks the SQL editor.
+
+**File:** none (paste in the SQL editor or `execute_sql`)
+
+```sql
+-- 1. Every export request row, with its owner (expected: 0 rows)
+SELECT r.id, r.user_id, u.email, r.origin, r.modules, r.requested_at, r.requested_email_sent_at
+FROM public.business_os_export_requests r
+LEFT JOIN auth.users u ON u.id = r.user_id
+ORDER BY r.requested_at;
+
+-- 2. Module jobs by state (expected: 0 rows)
+SELECT status, notice_state, count(*) AS jobs
+FROM public.business_os_export_module_jobs
+GROUP BY status, notice_state
+ORDER BY status, notice_state;
+
+-- 3. Jobs whose request is gone (expected: 0; the FK cascade should make this impossible)
+SELECT count(*) AS orphan_jobs
+FROM public.business_os_export_module_jobs j
+WHERE NOT EXISTS (SELECT 1 FROM public.business_os_export_requests r WHERE r.id = j.request_id);
+```
+
+**Expected:** 0 / 0 / 0. The export switch is off in every environment, MX-1b Dev and QA created no live rows (MX-1b QA report: "no live database"), and every MX-3a / MX-3b test is mocked. **Pass:** all three return zero. **Any row is a merge blocker:** record its id, owner email and `requested_at` here. The worker would claim it the moment MX-3.1 removes the switch. Then remove it through the test-account cleanup, never by hand-written SQL.
+
+### Test Coverage (review against the plan; nothing run in this pass)
+
+| Plan row / SA item | Present? | Assessment |
+|---|---|---|
+| T-W1 happy path, 3 modules | ✅ | Sound: recipient, `redactRecipientInLogs`, subjects, `sent` rows, SENT audit, counts. **Weak:** requested-at / produced-at checked only by `/Requested on .+ Produced on /`, so the owner's timezone (AC 1) is not proven at worker level (E-3) |
+| T-W2 parts, keys, `parts_total` first, `sending` before each send | ✅ | Strong: event order pins `setPartsTotal` → `markPartSending` → send for each part |
+| T-W3 pacing ≥ 600 ms, parts + notices | ✅ | Sound |
+| T-W4 / T-W6 in-run re-send, same key, same payload | ✅ | Strong: payload identity (`toBe`) |
+| T-W5 retry-after beyond budget → interrupted | ✅ | Sound. Covers the after-part branch of D-10 only (see E-1) |
+| T-W7 all tries time out | ✅ | Sound, incl. FAILED audit `interrupted: true` |
+| T-W8 pre-part failure → backoff → `attempts_exhausted` | ✅ | Sound (section read failure only) |
+| T-W9 / T-W10 reaper | ✅ | Sound. Only the `interrupted` reap is audited in a test (E-6) |
+| T-W11 / T-W12 too large / over ceiling | ✅ | Sound |
+| T-W13 / T-W14 switched off / unknown | ✅ | Sound: no read, no builder, "not available" copy |
+| T-W15 one fails among three | ✅ | Sound |
+| T-W16 cross-tenant + C-4 `request_mismatch` | ✅ | C-4 case strong. First case **weak** (E-2) |
+| T-W17 no switch / entitlements import | ✅ | Sound (comment-stripped source scan of the worker and deps) |
+| T-W18 language / clock once per request; unreadable → en + warn | ✅ | Sound |
+| T-W19 labels identity | ✅ | Strong (`toBe(EXPORT_COLUMN_LABELS)` with the real builder) |
+| T-W20 notices: key, accepted, 500 released after the loop, `.invalid` given up, 409 → sent | ✅ | Strong. Approved deviation 1 is pinned (`notice_attempts` 1 then 2) |
+| T-W21 C-1 option (a) | ✅ | Strong: `claimCalls === 1`, attempts and `notice_attempts` stay 0 |
+| T-W22 claim lost + K-7 one retry | ✅ | Sound. F-3 (`sent_unconfirmed`) is not tested. SA accepted it as is |
+| T-W23 log privacy through the real transport (C-3) | ✅ | Sound for the happy and notice paths. `fetch` is never restored (SA F-6, Dev fixing). The failure paths are not covered (E-7) |
+| T-W24 audit keys exactly XC-13 | ✅ | Strong, incl. severity and flags from `EVENT_METADATA` and no address |
+| T-C1…T-C6 route | ✅ | Sound. `maxDuration` / `runtime` asserted both on the module and by source anchor. The anchors break on CRLF (SA F-5, Dev fixing). Small gaps in E-8 |
+| C-5 one caller, awaited | ✅ | Strong: repo-wide scan with a guard that the scan ran (>500 files, route and worker found) |
+| C-6 literal 23, by-name comments | ✅ | Met in both cron tests. `vercelCrons.test.ts` header still carries "(23 as of 2026-10-29)" (SA F-7, Low) |
+| T-E1 status pin | ✅ | Sound: DB CHECK is the authority, order-sensitive. Two negative controls (client list, DB CHECK). A no-op `replace` would make the control fail rather than pass silently. Good |
+| Guards (§13.6): severity 6 → 8, audience 228 / 79, cron 23, callers guard (deps file only) | ✅ | Diffs read. Consistent with §9 and approved deviation 5 |
+| SA F-1 (a + b) and F-2 tests | ⬜ | Not in the suites yet (Dev in flight). Pass 2 must find: repository `releaseForRetry` with a part present → `{ updated: false }`; worker throw after part 1 accepted → not `waiting`, part 1 never re-sent; the fake store's `releaseForRetry` guard also requires `parts.length === 0` (today it guards `status 'working'` only, at `moduleExportWorker.test.ts:251-262`); a fake-clock test that a try which cannot finish (elapsed + wait + 45 s) under 300 − margin takes the budget-stop path, both before part 1 (retry) and after (interrupted) |
+| T-Q1 / T-Q3 | ⬜ | Pass 2 |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None found in the code by this review, beyond SA's open F-1 and F-2, which Dev is fixing now. Pass 2 verifies them.
+
+#### Performance Issues (should fix)
+None.
+
+#### Edge Cases (test gaps; E-1 and E-2 should be added before commit, the rest are nice to have)
+1. **Approved worker paths with no test.** File: `lib/business-os/data-export/__tests__/moduleExportWorker.test.ts`. Severity: Medium.
+   - **Budget spent before part 1** gives `retryOrFail('budget_spent')` (D-10; worker `budgetStops` before `setPartsTotal` and in the part loop with `parts.length === 0`). Only the after-part branch (T-W5) is tested. This is the branch XC-9 depends on, so it needs a test.
+   - **Build-path `recipient_unavailable`** (approved deviation 3, §4.1 row 8): a missing or `.invalid` login email on a **working** job ends `failed recipient_unavailable` with notice `given_up`, no `markPartSending` and no send. Only the notice branch's `.invalid` case is tested.
+   - **`owner_unreadable`** (D-8): `findRequest` or `findIdentity` returns an error → released for retry, not failed. Untested.
+2. **T-W16 first case is weak.** Severity: Medium.
+   - `readsByUser.every(r => r === A || r === B)` passes on an empty list, and it passes if job A were read with B's context. Assert per job: exactly two reads, A's job with A's context and B's with B's.
+   - `findIdentity`, `findPreferredLanguage` and `ownerClock` are never asserted to receive the job's own `user_id`. Only `findRequest` is. Step 6 asks for "every read".
+3. **T-W1 does not prove the owner's timezone (AC 1).** Severity: Low. The harness clock is `Asia/Jerusalem`, so `requestedAt` 09:55Z should read 11:55 (Israel is UTC+2 after 2026-10-25). Assert that time in the text, as T-M3 does for the template, so a worker that passed UTC instead of the owner's clock would fail.
+4. **D-15 lookup fallback is untested in the worker.** Severity: Low. A failed or over-ceiling lookup section should give a `lookup_unreadable` warn, the job still `sent` and the builder called without that lookup's rows.
+5. **Resilience branches are untested.** Severity: Low. The run continues after `reapStale` errors (`reap_failed`). It stops claiming after `claimDue` errors (`claim_failed`). A throwing `audit` port does not stop the run (`audit_failed`). A `setPartsTotal` or `markPartSending` DB error before part 1 → `build_failed` retry. After F-1, check that the CAS guard turns a landed-then-errored `markPartSending` into a lost claim, not a wipe.
+6. **Reaper audit and notice-branch edges.** Severity: Low.
+   - A reaped job that turns `sent` (all parts accepted) should write a SENT audit, and a reaped `attempts_exhausted` job a FAILED audit. Only the reaped `interrupted` job is tested (T-W9).
+   - A notice job whose request does not match (C-4, notice branch) should end `given_up`. SA verified this by reading the code, and no test pins it.
+   - Owner unreadable on a notice should release the notice after the loop.
+   - `counts.noticesSent` is never asserted.
+7. **T-W23 covers only the success and notice paths.** Severity: Low. The transport's lines on a 429, a timeout and a 500 (the error path can log a provider body) are not captured. Add one failing-part run to the same privacy loop.
+8. **Route gaps.** File: `app/api/cron/data-export-modules/__tests__/route.test.ts`. Severity: Low.
+   - T-C1 should also send `Bearer undefined`, the literal a careless `` `Bearer ${cronSecret}` `` comparison would accept when the secret is unset.
+   - T-C4 could pin that `details` appears only when `NODE_ENV === 'development'`.
+9. **`moduleExportWorkerDeps.ts` has no unit test.** Severity: Low. This is the production wiring: sections filtered to the asked ids in registry order, and the service-role repositories. T-Q1 / T-Q3 in pass 2 exercise it end to end. Record that in pass 2 rather than add a test now (approved deviation 5 notes no deps test exists).
+
+### Test Outputs / Logs
+
+- No suite run in this pass (by instruction). Line counts: `moduleExportWorker.test.ts` 999 (32 tests per Dev), `route.test.ts` 180 (10), `historyStatuses.pin.test.ts` 86 (4).
+- File times at review: the worker (11:09) and the repository (11:08) were edited after the worker test (10:44). Dev's F-1 / F-2 work is in progress, so pass 2 must re-read the suites before running them.
+
+### Final Status
+- [ ] All acceptance criteria pass — ready for commit
+- [x] Issues found — not ready: **T-Q2 not yet run** (no DB tool in this session; SQL above for TL); SA F-1 / F-2 and their tests pending (Dev); E-1 and E-2 test gaps should be added; T-Q1, T-Q3 and the full Jest run in pass 2
+
+---
 
 ## QA Report — MX-3a — 2026-10-28
 
@@ -829,7 +1180,7 @@ None.
 | PR | [#565](https://github.com/AgentsPilot/neuronforge/pull/565) — auto-merge (merge commit) via the merge queue |
 | Migration | None |
 
-**MX-3b** — not started (own branch from `main`).
+**MX-3b** — code complete on `feature/bos-export-mx3b-worker` (from `main` `32effb8d`), not committed: SA code review, QA (T-Q1, T-Q2, T-Q3) and the user's diff review first. No migration.
 
 ---
 
@@ -842,3 +1193,7 @@ None.
 | 2026-10-28 | MX-3a implemented (EXPORT Dev, E6a) | Branch line updated (MX-3a on `feature/bos-export-mx3a-transport-parts`; MX-3b on its own branch from `main`). Transport S-10 + `timeoutMs` + Q-7 + F-7; `moduleExportSending.ts`, `csvParts.ts`, `moduleExportEmails.ts`; ten compare-and-set writes with `updated_at`; tests. C-2, C-3, C-8, Q-1, Q-3, Q-7 folded in; C-4 partly (key + code), rest with C-1, C-5, C-6, C-7 carried to MX-3b. User decision on the too-large question recorded (§17; requirement §9 BQ-44; plan SA-P8). Implementation Notes (MX-3a) added. Not committed |
 | 2026-10-28 | SA code review MX-3a (SA) | APPROVED. Un-keyed transport behaviour unchanged apart from F-7; Q-7 production-only refusal, `timeoutMs` abort and timer cleanup, ten CAS writes with `updated_at` and id + user_id + claimed_by filters, part cutter and templates verified; 37 suites / 1,097 tests rerun green. Two Low comments (an SMTP message id classified as a Resend id outside production; an inaccurate "no backslash" comment). All six deviations accepted. C-1, the rest of C-4, C-5, C-6 and the rest of C-7 confirmed carried to MX-3b. Code approved for QA |
 | 2026-10-29 | MX-3a committed (RM) | Three commits on `feature/bos-export-mx3a-transport-parts` (`6efceefd`, `c5032a4e`, `8c51bd9b`); PR #565 opened to `main` on auto-merge. Commit Info populated |
+| 2026-10-29 | MX-3b implemented (EXPORT Dev, E6b) | Branch `feature/bos-export-mx3b-worker` off `main` `32effb8d`. The worker (`moduleExportWorker.ts`) and its wiring (`moduleExportWorkerDeps.ts`), the cron route `/api/cron/data-export-modules` (`maxDuration` 300), `DATA_EXPORT_MODULE_SENT` / `_FAILED` (SA-P5), the registry and `vercel.json` entries wired last (22 → 23), the callers guard, the E-1 pin, the skill's two-model note. SA C-1 option (a) stated in D-10 and T-W21 rewritten; C-3 (T-W23 through the real transport), C-4, C-5, C-6 met; K-7 one-retry implemented. Task list 9–14 ticked; Implementation Notes (MX-3b) added. Not committed |
+| 2026-10-29 | SA code review MX-3b (SA) | APPROVED WITH CHANGES. C-1, C-3, C-4, C-5, C-6, C-8 met; 34 suites / 1,090 tests rerun green. F-1 (High): `releaseForRetry` empties `parts` itself, so the row CHECK does not stop a retry after a part reached `sending`; the build catch can retry such a job — guard the CAS on empty parts + interrupt in the catch. F-2 (Medium): gate each part try on the 45 s timeout fitting under `maxDuration`. Five Low. Rulings 1–8 all approved; EOL: no whole-file change. QA may start T-Q2; T-Q1/T-Q3 and commit wait for F-1/F-2 |
+| 2026-10-29 | QA MX-3b pass 2 (QA) | PASS WITH NOTES. 58 suites / 1,531 tests green; F-1/F-2 and E-1/E-2/E-3 tests present and meaningful; F-1(a) `parts=eq.[]` accepted by PostgREST on the real DB (200, count 0; controls 42703 / 22P02); T-Q2 0/0/0 (TL, prod read-only); T-Q1 100,000 rows in 15.5 s (2 s sends) / 184 s (30 s sends), peak RSS 530 MB; T-Q3 open (needs a live Resend send, or a TL/user ruling moving it into E6.1's go-live check) |
+| 2026-10-29 | User approved the MX-3b diff; T-Q3 moved (TL) | User: "E6b diff reviewed and approved: RM commit + PR + auto-merge. Move T-Q3 (live two-part Resend send) into E6.1's go-live check." T-Q3 (two parts, repeated key, Gmail / Outlook RTL, Excel) and the real-database 100,000-row read time are added to plan §4 MX-3.1 manual gate (c) |
