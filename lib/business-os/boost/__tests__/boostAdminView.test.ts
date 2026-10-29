@@ -97,6 +97,9 @@ describe('SA C-4: Stripe dashboard links', () => {
     // Plan payments P-8a.2: the customer kind, same mode rule.
     expect(stripeDashboardUrl('customer', 'cus_Abc123', false)).toBe('https://dashboard.stripe.com/test/customers/cus_Abc123');
     expect(stripeDashboardUrl('customer', 'cus_Abc123', true)).toBe('https://dashboard.stripe.com/customers/cus_Abc123');
+    // Plan payments P-8b.3b (SA P3-SA-7): the event kind, same mode rule, both modes.
+    expect(stripeDashboardUrl('event', 'evt_1AbC23', false)).toBe('https://dashboard.stripe.com/test/events/evt_1AbC23');
+    expect(stripeDashboardUrl('event', 'evt_1AbC23', true)).toBe('https://dashboard.stripe.com/events/evt_1AbC23');
   });
 
   it.each([
@@ -114,6 +117,12 @@ describe('SA C-4: Stripe dashboard links', () => {
     ['dispute', 'dp_x#y'],
     ['customer', 'sub_123'],
     ['customer', 'cus_abc/../x'],
+    ['event', 'evt_'],
+    ['event', 'pi_3Abc123'],
+    ['event', 'xevt_abc'],
+    ['event', 'evt_abc/../x'],
+    ['event', 'evt_abc?x=1'],
+    ['event', 'evt_abc\n'],
   ] as const)('%s %p → no link (plain text)', (kind, id) => {
     expect(stripeDashboardUrl(kind, id, true)).toBeNull();
   });
