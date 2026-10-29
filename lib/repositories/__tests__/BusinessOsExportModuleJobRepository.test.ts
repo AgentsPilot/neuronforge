@@ -419,6 +419,22 @@ describe('the worker writes (MX-3a, §7)', () => {
     }
   });
 
+  it('SA MX-3b F-1: releaseForRetry also requires parts = [] (XC-9), and a row holding a part is { updated: false }', async () => {
+    const { c, calls } = client(done);
+    await repo(c).releaseForRetry(JOB(1), OWNER, RUNNER, { errorCode: 'build_failed', nextAttemptAt: T });
+    expect(written(calls).filters).toContainEqual(['eq', 'parts', '[]']);
+    // The database answers count 0 when a part is stored: the guard matched nothing.
+    const held = client({ error: null, count: 0 });
+    expect(await repo(held.c).releaseForRetry(JOB(1), OWNER, RUNNER, { errorCode: 'build_failed', nextAttemptAt: T })).toEqual({
+      data: { updated: false },
+      error: null,
+    });
+    // No other write carries the guard.
+    const other = client(done);
+    await repo(other.c).markInterrupted(JOB(1), OWNER, RUNNER, [accepted(1)]);
+    expect(written(other.calls).filters.some((f) => f[1] === 'parts')).toBe(false);
+  });
+
   it('T-R7 releaseForRetry: waiting, parts [], parts_total NULL, next_attempt_at, last_error_code, claim cleared', async () => {
     const { c, calls } = client(done);
     await repo(c).releaseForRetry(JOB(1), OWNER, RUNNER, { errorCode: 'budget_spent', nextAttemptAt: T });

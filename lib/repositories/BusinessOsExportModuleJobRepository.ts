@@ -206,6 +206,8 @@ interface WriteGuard {
   value: string;
   /** setPartsTotal only: parts_total must still be NULL. */
   partsTotalIsNull?: true;
+  /** releaseForRetry only: no part may be stored yet (XC-9; SA MX-3b code review F-1). */
+  partsEmpty?: true;
 }
 
 const WORKING: WriteGuard = { column: 'status', value: 'working' };
@@ -404,6 +406,9 @@ export class BusinessOsExportModuleJobRepository {
         .eq('claimed_by', key.runnerId)
         .eq(guard.column, guard.value);
       if (guard.partsTotalIsNull) query = query.is('parts_total', null);
+      // jsonb equality: PostgREST `parts=eq.[]` compares the column with the
+      // jsonb literal `[]`. Confirmed against the real database by QA (MX-3b).
+      if (guard.partsEmpty) query = query.eq('parts', '[]');
       const { error, count } = await query;
       if (error) throw error;
       const updated = count === 1;
@@ -484,8 +489,12 @@ export class BusinessOsExportModuleJobRepository {
 
   /**
    * No part reached `sending` and a retry may help: back to `waiting` with a
-   * backoff, parts emptied, claim cleared. The row CHECK refuses it if a part
-   * exists (XC-9: once a part is `sending`, never a retry).
+   * backoff, parts emptied, claim cleared. XC-9 (once a part is `sending`,
+   * never a retry) is enforced by THIS compare-and-set: it also requires
+   * `parts = '[]'`, so a row holding any part matches nothing and comes back
+   * `{ updated: false }`. The row CHECK `waiting ⇒ parts = '[]'` does NOT
+   * enforce it, because this very patch empties `parts` (SA MX-3b code
+   * review F-1).
    */
   async releaseForRetry(
     jobId: string,
@@ -499,7 +508,7 @@ export class BusinessOsExportModuleJobRepository {
       code.safeParse(input?.errorCode).success &&
       z.string().datetime({ offset: true }).safeParse(input?.nextAttemptAt).success;
     if (!ok) return this.invalid('releaseForRetry');
-    return this.compareAndSet('releaseForRetry', key, WORKING, {
+    return this.compareAndSet('releaseForRetry', key, { ...WORKING, partsEmpty: true }, {
       status: 'waiting',
       parts: [],
       parts_total: null,
