@@ -1,6 +1,6 @@
 # Workplan: Business OS Export MX-3 (E6) — Cron worker and email splitting
 
-> **Last Updated**: 2026-10-28
+> **Last Updated**: 2026-10-29
 
 **Developer:** Dev (EXPORT session)
 **Requirement:** [BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md) §3, §4.3, §4.4, §7 (AC MX-3), §8 X-1…X-8, §9 (BQ-28, BQ-42, BQ-43 answered 2026-10-28), §10 XC-8, XC-9, XC-13, §11 S-9, S-10, S-11
@@ -818,7 +818,18 @@ None.
 
 ## Commit Info
 
-(RM to populate.)
+**MX-3a**
+
+| Item | Value |
+|---|---|
+| Branch | `feature/bos-export-mx3a-transport-parts` (from `main` `415f726e`) |
+| Commit 1 | `6efceefd` — feat(email): idempotency key and timeout on keyed Resend sends |
+| Commit 2 | `c5032a4e` — feat(business-os): module export part cutter, emails and job writes (MX-3a) |
+| Commit 3 | `8c51bd9b` — docs(business-os): MX-3a workplan, requirement and plan updates |
+| PR | [#565](https://github.com/AgentsPilot/neuronforge/pull/565) — auto-merge (merge commit) via the merge queue |
+| Migration | None |
+
+**MX-3b** — not started (own branch from `main`).
 
 ---
 
@@ -830,3 +841,4 @@ None.
 | 2026-10-28 | SA workplan review (SA) | APPROVED WITH CHANGES. Q-1…Q-11 ruled: SA-P4 fails closed, with a "not available" copy variant (BA adds it to requirement §4.3); per-run language cache accepted, no column; in-run re-send by reference with the same key; transport `timeoutMs` instead of the worker race; 24 h key window accepted with a one-hour design bound; keyed send refused in production when Resend is not configured. Required changes: C-1 (the build cutoff burns attempts), C-2 (`updated_at` on every write), C-3 (`redactRecipientInLogs`), C-4 (cache key + `request_mismatch`), C-5 (worker caller pin), C-6 (count literal and no ordinals, so a merge with D4b conflicts on that line), C-7 (S-10 announced at MX-3a), C-8. No migration needed (confirmed). Split MX-3a / MX-3b approved, sequential from `main`; C-10 and the 100k measurement gate MX-3b only. Too-large business question: technical cost and risk recorded, left for the user to decide |
 | 2026-10-28 | MX-3a implemented (EXPORT Dev, E6a) | Branch line updated (MX-3a on `feature/bos-export-mx3a-transport-parts`; MX-3b on its own branch from `main`). Transport S-10 + `timeoutMs` + Q-7 + F-7; `moduleExportSending.ts`, `csvParts.ts`, `moduleExportEmails.ts`; ten compare-and-set writes with `updated_at`; tests. C-2, C-3, C-8, Q-1, Q-3, Q-7 folded in; C-4 partly (key + code), rest with C-1, C-5, C-6, C-7 carried to MX-3b. User decision on the too-large question recorded (§17; requirement §9 BQ-44; plan SA-P8). Implementation Notes (MX-3a) added. Not committed |
 | 2026-10-28 | SA code review MX-3a (SA) | APPROVED. Un-keyed transport behaviour unchanged apart from F-7; Q-7 production-only refusal, `timeoutMs` abort and timer cleanup, ten CAS writes with `updated_at` and id + user_id + claimed_by filters, part cutter and templates verified; 37 suites / 1,097 tests rerun green. Two Low comments (an SMTP message id classified as a Resend id outside production; an inaccurate "no backslash" comment). All six deviations accepted. C-1, the rest of C-4, C-5, C-6 and the rest of C-7 confirmed carried to MX-3b. Code approved for QA |
+| 2026-10-29 | MX-3a committed (RM) | Three commits on `feature/bos-export-mx3a-transport-parts` (`6efceefd`, `c5032a4e`, `8c51bd9b`); PR #565 opened to `main` on auto-merge. Commit Info populated |
