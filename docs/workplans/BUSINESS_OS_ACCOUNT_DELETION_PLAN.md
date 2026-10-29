@@ -1,6 +1,6 @@
 # Plan: Business OS account deletion lifecycle, Keep my account, Cancel plan (DELETE scope)
 
-> **Last Updated**: 2026-10-27
+> **Last Updated**: 2026-10-28
 
 ## Overview
 
@@ -17,7 +17,8 @@ There is no SX-4. It was v1's deletion slice and is replaced by the DL track.
 | **SX-1** | Cancel and keep engine | `StripeService.setBusinessOsPlanCancelAtPeriodEnd`, `planCancellation.ts`, cancel / keep routes, SA-2 eligibility, fresh key (C-4), mirror write, audit, `isPlanSelfCancelEnabled()` off | — | — | none (BQ-11 carried: suggestion = refuse on failed payment) | 🟡 2.5 d |
 | **SX-2** | Cancel drawer | `planEndingView` in `lib/business-os/entitlements/` + registrations (XC-19); reason, what changes, review, confirm; en/he/es | SX-1 | — · **PR held without auto-merge until SX-2b merges** (SA Q-9 / R-2) | BQ-20 ✅, BQ-7 ✅, BQ-17 ✅ (answered 2026-10-27) | 🟡 2.5 d |
 | **SX-2b** | After-plan move to the free cohort (D3.1 in the coordination file) | Webhook `customer.subscription.deleted` with `cancellation_details.reason = 'cancellation_requested'`; account from our billing row by subscription id; only if still the current subscription; repository + `recordPlanChange`; `afterPlan` config in the entitlements drift snapshot; repeat-cancel tracking (halving rule) | SX-2 (`planEndingView`), P-7a.4 merged | none expected · own coordination row (webhook files are PLAN PAYMENTS') | BQ-20 ✅ | 🟡 ≈ 1.5 d |
-| **SX-3** | Cancel emails, switch on | Cancelled / kept / 3-day reminder; R-3 refusal text; P-7a note | SX-2 | — · ops gate: Resend domain + `RESEND_FROM_EMAIL`, support address | BQ-36, open issue 1 / BQ-3 ✅ (answered 2026-10-27) | 🟢 1.5 d |
+| **SX-3 / D4a** | Cancel emails, switch off | Cancelled / ended-now / kept emails from the cancel and reactivate routes; P-7a note (C-1); R-3 already met by P-7a.3 (S-13) | SX-2 | No migration · ops gate: Resend domain + `RESEND_FROM_EMAIL`, support address. **Merges with the email switch off** (`BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED`); switched on after the user confirms Resend. See the [D4 workplan](/docs/workplans/BUSINESS_OS_D4_PLAN_CANCEL_EMAILS_WORKPLAN.md) | BQ-36 ✅ (answered 2026-10-28: yes), U-2 ✅ (ended-now email: yes), open issue 1 / BQ-3 ✅ (answered 2026-10-27) | 🟢 ≈ 1.1 d |
+| **SX-3 / D4b** | 3-day cancel reminder | Reminder once per subscription period, only while still set to end; skips deletion-pending accounts (DR-2) and late cancels (U-3); own cron job `/api/cron/bos-plan-cancel-reminders` at 05:53 UTC (R-A) | D4a merged | Migration **20261099** (reserved; claim columns + claim function on `business_os_billing_accounts`) · manual prod gate (user pastes) · PLAN PAYMENTS sign-off on the repository seam (R-C, DR-4) · uses EXPORT MX-3a `idempotencyKey` once merged | U-1 ✅ (daily send accepted), U-3 ✅ (cancel email only inside the last 3 days) | 🟢 ≈ 1.5 d |
 | **SX-5** | Stripe Connect fixes | C-5 delete only on confirmed deletion, OAuth deauthorize, D-2 via the check, G-8 wording | — | only if needed | BQ-12, BQ-19 | 🟡 2 d |
 | **DL-1a** | Closure schema + regen | Table `business_os_account_closures`, claim RPC, session-cut function (spike first), closure + lock repositories, descriptor, regenerated cleanup function, duplicate-prefix guard (SR-7) | — (precondition: 20261092 applied, checker green ✅ 2026-10-25) | ✅ **20261093 + 20261094** (O-1), S-1 regen lock | none | 🟡 2 d |
 | **DL-1b** | Request and keep routes | `account/delete` → request route; two-phase write (XC-2); blockers at A (XC-5); keep (A–C); checkout / Boost refusal; mirror C-3; anonymise-import guard (XC-6); audit rows that survive E | DL-1a, SX-1 | — | **BQ-21**, BQ-33, BQ-34, BQ-38 (carried BQ-11, BQ-18) | 🟡 2.5 d |
@@ -69,7 +70,7 @@ Lane 3:             SX-5 (any time before DL-2)
 |---|---|
 | SX-2 | BQ-20, BQ-7, BQ-17 (all answered 2026-10-27) |
 | SX-2b | BQ-20 (answered 2026-10-27) |
-| SX-3 | BQ-36, open issue 1 / BQ-3 (answered 2026-10-27: `notifications@agentspilot.ai`) |
+| SX-3 | BQ-36 (answered 2026-10-28: yes), open issue 1 / BQ-3 (answered 2026-10-27: `notifications@agentspilot.ai`) |
 | SX-5 | BQ-12, BQ-19 |
 | DL-1a | **none** |
 | DL-1b | BQ-21, BQ-33, BQ-34, BQ-38 (BQ-11, BQ-18 carried) |
@@ -89,3 +90,5 @@ Lane 3:             SX-5 (any time before DL-2)
 | 2026-10-25 | Created (Dev) | Slice order, lanes, gates and BQ map from the DELETE requirement §6 and the SA split review; DL-1a numbering proposal O-1 (20261093 schema, 20261094 regeneration) |
 | 2026-10-27 | User decisions + SX-2b (BA) | BQ-7, BQ-17, BQ-20, BQ-35 marked answered. New slice SX-2b (D3.1, ≈ 1.5 d) in §1 and the lane diagram: the webhook write to the free cohort, after SX-2 is built and P-7a.4 merged; SX-2's PR held without auto-merge until SX-2b merges. §4 gains an SX-2b row. `reasonCode` and "Keep my plan" hand-overs noted. Totals 23.5 d / 25 d |
 | 2026-10-27 | EXPORT re-cut synced (TL) | MX-3.1 added (export switch + ZIP removed), MX-6 folded: DL-5 depends on EXPORT MX-4 merged (§1, lane diagram, §2, §3 gates); DL-2's soft dependency MX-1b → MX-3.1. Open issue 1 / BQ-3 answered (`notifications@agentspilot.ai`, Resend ops check stays); open issue 2 (legal) moved from DL-5 switch-on to a launch gate before the first real customer (§1 DL-5, §3 Legal, §4) |
+| 2026-10-28 | BQ-36 answered; D4 workplan (Dev) | User: yes to the 3-day reminder. The Resend ops gate is not confirmed, so SX-3 (D4) merges with its email switch off and is switched on later. §1 SX-3 row: a migration is expected for the reminder's once-only record (number to be reserved by TL), workplan estimate ≈ 2.1 d against 1.5 d. §4 SX-3 row updated |
+| 2026-10-28 | SX-3 split into D4a / D4b (SA S-1, DR-14) | §1 SX-3 row replaced by two rows. D4a: emails from the routes, no migration, switch off, ≈ 1.1 d. D4b: 3-day reminder on its own cron job (05:53 UTC), migration 20261099 (reserved), manual prod gate, ≈ 1.5 d. User answers U-1 (daily send), U-2 (ended-now email: yes), U-3 (no reminder inside the last 3 days) recorded |

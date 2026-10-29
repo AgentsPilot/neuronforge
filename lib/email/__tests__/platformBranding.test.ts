@@ -99,6 +99,9 @@ describe('who uses the platform branding', () => {
     // N-1: "your invitation was accepted", a platform message to the invite's
     // issuer (a champion or an admin), from the system sender.
     'lib/email/templates/invite-accepted.ts',
+    // D4a (account deletion lifecycle SX-3): the plan cancelled / ended / continues
+    // emails, an AgentPilot billing message to the owner, from the system sender.
+    'lib/email/templates/plan-cancel.ts',
   ]);
 
   function walk(dir: string, out: string[]): void {

@@ -82,9 +82,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +2 Business OS (BOS_BILLING_SUBSCRIPTION_CANCELLED, _REACTIVATED): plan payments P-7a.1, the owner's cancel and reactivate (2026-10-26).
   // +1 shared (ADMIN_ENVIRONMENT_VIEWED): admin environment view EC-1, SA OQ-8 (2026-10-26).
   // +1 Business OS (BOS_PLAN_FREE_PERIOD_AFTER_CANCEL): account deletion lifecycle D3.1 / SX-2b, the free period after a cancel (2026-10-27).
-  it('pins the split: 63 Business OS, 77 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(224);
-    expect(eventsTagged('bos')).toHaveLength(63);
+  // +2 Business OS (BOS_PLAN_CANCEL_EMAIL_SENT, _NOT_SENT): account deletion lifecycle D4a / SX-3, the plan cancel / keep email (2026-10-28).
+  it('pins the split: 65 Business OS, 77 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(226);
+    expect(eventsTagged('bos')).toHaveLength(65);
     expect(eventsTagged('shared')).toHaveLength(77);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

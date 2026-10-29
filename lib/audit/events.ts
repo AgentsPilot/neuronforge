@@ -201,6 +201,16 @@ export const AUDIT_EVENTS = {
   // reason, subscription id, endedAt, days, priorMoves, cohort, livemode, event
   // id. Never an email, a name or the owner's leave reason code.
   BOS_PLAN_FREE_PERIOD_AFTER_CANCEL: 'BOS_PLAN_FREE_PERIOD_AFTER_CANCEL',
+  // Account deletion lifecycle D4a / SX-3 (SA S-9): the owner's "Plan
+  // cancelled" / "Your plan has ended" / "Plan kept" email, sent or not. Written
+  // by the cancel and reactivate routes only (planCancelEmailDeps.ts), after
+  // their own audit, through logAndFlush. Entity type
+  // 'business_os_billing_account', id = the account. Details: email (cancelled
+  // | ended_now | kept), outcome, reason class, provider, language and its
+  // source, subscription id, periodEnd, livemode, actor 'owner', correlationId.
+  // Never an address, a name, a plan name or the leave reason.
+  BOS_PLAN_CANCEL_EMAIL_SENT: 'BOS_PLAN_CANCEL_EMAIL_SENT',
+  BOS_PLAN_CANCEL_EMAIL_NOT_SENT: 'BOS_PLAN_CANCEL_EMAIL_NOT_SENT',
   // Business OS AI activity (Layer 3): one entry per AI action or background
   // job, summarising its LLM calls. Written by the server only; a browser can
   // never write one (lib/audit/requestSchemas.ts) and owners never read one
@@ -1345,6 +1355,19 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: "A Business OS owner's cancelled paid plan ended and the account moved to the free plan for a free period (shorter on each repeat cancel)",
+  },
+  // D4a / SX-3 (SA S-9). Both 'info', as the invite pair: a skipped courtesy
+  // email is not an operator alert. A missing sender while the switch is on is
+  // the operator signal, and goes out as a Pino error with alert: true.
+  [AUDIT_EVENTS.BOS_PLAN_CANCEL_EMAIL_SENT]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner was emailed that their plan was cancelled, ended now, or kept',
+  },
+  [AUDIT_EVENTS.BOS_PLAN_CANCEL_EMAIL_NOT_SENT]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner was not emailed about their plan cancel or keep, or the send was not confirmed in time (reason class only)',
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',

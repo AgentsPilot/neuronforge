@@ -24,10 +24,14 @@
 // Slice 3b adds `createConfirmedUserWithoutPassword`: the same creation for a
 // mailbox proven by a verified Google ID token, with no password.
 // Admin delete AD-1b adds `findUserIdentity` (D-1): id, email and joined date
-// of ONE account. Two callers: the admin-gated deletion preview, and (N-1, SA
+// of ONE account. Callers: the admin-gated deletion preview and commit and the
+// admin data export (DE-10a), each for an admin-gated path id; (N-1, SA
 // Q-6) the inviter notification, which reads the LIVE email of an invite's
 // issuer, by the issuer id on the invite row the token matched (wired in
-// `redemptionDeps.ts`), never by an id from a request.
+// `redemptionDeps.ts`), never by an id from a request; and (account deletion
+// lifecycle D4a / SX-3, SA S-7) the plan cancel / keep email
+// (`planCancelEmailDeps.ts`), which reads the SESSION user's own live email,
+// keyed on the id from `getUser()`.
 //
 // No method here deletes a user, now or later (Slice 1 invariant I-1; the
 // repo-wide no-deletion-paths guard). A signup that stops halfway keeps its
