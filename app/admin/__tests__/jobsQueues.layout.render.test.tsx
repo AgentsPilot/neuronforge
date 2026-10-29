@@ -61,7 +61,8 @@ const PURPOSE =
   'The Business OS scheduled jobs and the queues they drain. Red needs action, amber needs a look, and the green ' +
   'label Healthy or Clear means checked and clear. Grey means no run recorded yet or could not check. ' +
   // LF-4c (deliberate): the action sentence names Reconcile top-ups now.
-  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; the Billing reconcile job has a Reconcile top-ups now button; everything else here is read-only.";
+  // P-8b.3c (deliberate, P3-SA-9): and Reconcile plan payments now.
+  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; the Billing reconcile job has Reconcile top-ups now and Reconcile plan payments now buttons; everything else here is read-only.";
 
 /**
  * The payload, built by the real server computation (SA S-1), so the tiles and
