@@ -1180,7 +1180,19 @@ None.
 | PR | [#565](https://github.com/AgentsPilot/neuronforge/pull/565) — auto-merge (merge commit) via the merge queue |
 | Migration | None |
 
-**MX-3b** — code complete on `feature/bos-export-mx3b-worker` (from `main` `32effb8d`), not committed: SA code review, QA (T-Q1, T-Q2, T-Q3) and the user's diff review first. No migration.
+**MX-3b**
+
+| Item | Value |
+|---|---|
+| Branch | `feature/bos-export-mx3b-worker` (from `main` `32effb8d`) |
+| Commit 1 | `a1268fd8` — fix(business-os): never retry a module export job after a part was stored |
+| Commit 2 | `4aa05cc9` — feat(business-os): module export cron worker and route (MX-3b) |
+| Commit 3 | `4d0c0339` — feat(audit): data export module sent/failed events |
+| Commit 4 | `343db78a` — chore(cron): register the data export worker every 5 minutes |
+| Commit 5 | `c27c7840` — docs(business-os): MX-3b workplan, SA/QA reports, T-Q3 moved to E6.1 |
+| PR | [#568](https://github.com/AgentsPilot/neuronforge/pull/568) — auto-merge (merge commit) via the merge queue |
+| Migration | None |
+| C-6 | `origin/main` still `32effb8d` at commit time; no rebase. Cron count literal 23 (22 on main + this worker) |
 
 ---
 
@@ -1197,3 +1209,4 @@ None.
 | 2026-10-29 | SA code review MX-3b (SA) | APPROVED WITH CHANGES. C-1, C-3, C-4, C-5, C-6, C-8 met; 34 suites / 1,090 tests rerun green. F-1 (High): `releaseForRetry` empties `parts` itself, so the row CHECK does not stop a retry after a part reached `sending`; the build catch can retry such a job — guard the CAS on empty parts + interrupt in the catch. F-2 (Medium): gate each part try on the 45 s timeout fitting under `maxDuration`. Five Low. Rulings 1–8 all approved; EOL: no whole-file change. QA may start T-Q2; T-Q1/T-Q3 and commit wait for F-1/F-2 |
 | 2026-10-29 | QA MX-3b pass 2 (QA) | PASS WITH NOTES. 58 suites / 1,531 tests green; F-1/F-2 and E-1/E-2/E-3 tests present and meaningful; F-1(a) `parts=eq.[]` accepted by PostgREST on the real DB (200, count 0; controls 42703 / 22P02); T-Q2 0/0/0 (TL, prod read-only); T-Q1 100,000 rows in 15.5 s (2 s sends) / 184 s (30 s sends), peak RSS 530 MB; T-Q3 open (needs a live Resend send, or a TL/user ruling moving it into E6.1's go-live check) |
 | 2026-10-29 | User approved the MX-3b diff; T-Q3 moved (TL) | User: "E6b diff reviewed and approved: RM commit + PR + auto-merge. Move T-Q3 (live two-part Resend send) into E6.1's go-live check." T-Q3 (two parts, repeated key, Gmail / Outlook RTL, Excel) and the real-database 100,000-row read time are added to plan §4 MX-3.1 manual gate (c) |
+| 2026-10-29 | MX-3b committed (RM) | Five commits on `feature/bos-export-mx3b-worker` (`a1268fd8`, `4aa05cc9`, `4d0c0339`, `343db78a`, `c27c7840`); PR #568 opened to `main` on auto-merge. Commit Info populated |
