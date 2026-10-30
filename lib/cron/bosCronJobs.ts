@@ -50,7 +50,8 @@ export type BosCronJobId =
   | 'data-export-modules'
   | 'payment-reminders'
   | 'finance-snapshot'
-  | 'inbox-enquiries';
+  | 'inbox-enquiries'
+  | 'bos-plan-cancel-reminders';
 
 export type BosQueueId =
   | 'payment_reminders'
@@ -867,6 +868,50 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     partlyDoneWhen: [
       { kind: 'atLeast', key: 'familiesSkipped', value: 1 },
       { kind: 'atLeast', key: 'lateRun', value: 1 },
+    ],
+  },
+  {
+    /*
+     * Account deletion lifecycle D4b / SX-3 part 2 (workplan
+     * BUSINESS_OS_D4_PLAN_CANCEL_EMAILS_WORKPLAN.md D4b addendum R-A): the
+     * "Your plan ends on {date}" reminder, about 3 days before a cancelled plan
+     * ends. Its own job rather than a pass of the billing reconcile, whose
+     * counts already fill the run record's 1,024-byte CHECK. It claims its
+     * rows itself (FOR UPDATE SKIP LOCKED on the billing table's reminder
+     * columns), so `drainsQueue` stays null: it drains none of the five
+     * queues listed below. Counts are unprefixed and few; a test pins the
+     * worst case under 1,024 bytes (PLAN_CANCEL_REMINDER_COUNT_KEYS, pinned
+     * both ways). `skipped` = 1 while BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED
+     * is off, which does not make a run partly done.
+     */
+    id: 'bos-plan-cancel-reminders',
+    path: '/api/cron/bos-plan-cancel-reminders',
+    schedule: '53 5 * * *',
+    ...DAILY,
+    ...MAX_60,
+    label: 'Plan-ends reminders',
+    description: 'Emails an owner whose cancelled plan ends within 3 days, once per period end, after checking with Stripe that it is still set to end',
+    scheduleWords: 'Daily at 05:53 UTC',
+    // QA4b-B1: the deploy day. RM: set to the real merge day if it is later.
+    addedOn: '2026-10-30',
+    drainsQueue: null,
+    counts: [
+      { key: 'examined', path: ['data', 'examined'], label: 'cancelled plans examined' },
+      { key: 'sent', path: ['data', 'sent'], label: 'reminders sent' },
+      { key: 'notSent', path: ['data', 'notSent'], label: 'reminders not confirmed sent (refused, failed or timed out)' },
+      { key: 'notCancelling', path: ['data', 'notCancelling'], label: 'plans no longer set to end' },
+      { key: 'periodMismatch', path: ['data', 'periodMismatch'], label: 'plans whose end date differs at Stripe' },
+      { key: 'mismatch', path: ['data', 'mismatch'], label: 'billing records that disagree with Stripe' },
+      { key: 'covered', path: ['data', 'covered'], label: 'already covered by the cancel email' },
+      { key: 'deferred', path: ['data', 'deferred'], label: 'left for the next run' },
+      { key: 'deadlineHit', path: ['data', 'deadlineHit'], label: 'stopped at the time limit (1 = yes)' },
+      { key: 'skipped', path: ['data', 'skipped'], label: 'switched off (1 = yes)' },
+    ],
+    partlyDoneWhen: [
+      { kind: 'atLeast', key: 'deferred', value: 1 },
+      { kind: 'atLeast', key: 'deadlineHit', value: 1 },
+      { kind: 'atLeast', key: 'mismatch', value: 1 },
+      { kind: 'atLeast', key: 'notSent', value: 1 },
     ],
   },
 ];

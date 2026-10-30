@@ -14,3 +14,10 @@ scripts/test-account-cleanup-*.sql text eol=lf
 # The drift test and the applied sha256 pins read them as LF.
 supabase/migrations/*_operator_test_account_cleanup*.sql text eol=lf
 supabase/SQL[[:space:]]Scripts/*_operator_test_account_cleanup*_rollback.sql text eol=lf
+
+# Account deletion lifecycle D4b (SA code review F-1): migration 20261100, its rollback, pre-check
+# and checker are pasted in the SQL editor and must stay LF on every checkout; the text test pins LF.
+supabase/migrations/20261100_business_os_plan_cancel_reminders.sql text eol=lf
+supabase/SQL[[:space:]]Scripts/20261100_business_os_plan_cancel_reminders_rollback.sql text eol=lf
+scripts/precheck-plan-cancel-reminders.sql text eol=lf
+scripts/check-plan-cancel-reminders-migration.sql text eol=lf

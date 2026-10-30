@@ -84,6 +84,10 @@ const ALLOWED = new Set(
     // the id from `getUser()`, never request data) to send them the cancel /
     // keep email. The address goes to the transport only, never a log or audit
     // row. The routes' email test replaces the instance.
+    // D4b (SX-3 part 2): the same file wires the plan-ends reminder cron, which
+    // reads the address of the CLAIMED billing row's own account (its `user_id`,
+    // from `claim_bos_plan_cancel_reminders`, never input) to send that owner
+    // their reminder. Same rule: transport only, never a log or audit row.
     'lib/business-os/billing/planCancelEmailDeps.ts',
     'app/api/business-os/billing/plan/cancel/__tests__/route.d4a.test.ts',
     // The billing router-placement guard lists planCancelEmailDeps.ts's repository

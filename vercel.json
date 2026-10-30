@@ -97,6 +97,10 @@
     {
       "path": "/api/cron/inbox-enquiries",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/bos-plan-cancel-reminders",
+      "schedule": "53 5 * * *"
     }
   ],
   "rewrites": [

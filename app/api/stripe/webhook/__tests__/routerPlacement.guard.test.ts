@@ -62,6 +62,11 @@ const ACCOUNT_PLANS = '@/lib/repositories/BusinessOsAccountPlanRepository';
 // own read-only repository, and reads plan rows. The pass itself imports none.
 const WEBHOOK_CLAIMS = '@/lib/repositories/ProcessedWebhookEventRepository';
 const PLAN_RECONCILE_READS = '@/lib/repositories/PlanReconcileReadRepository';
+// D4a (account deletion lifecycle SX-3): the plan cancel email reads the owner's address,
+// language and time zone. Named here as the other entries are (PLAN PAYMENTS nit, D4b).
+const AUTH_ACCOUNTS = '@/lib/repositories/AuthAccountRepository';
+const BUSINESS_PROFILES = '@/lib/repositories/BusinessProfileRepository';
+const USER_PREFERENCES = '@/lib/repositories/UserPreferencesRepository';
 const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   'businessOsStripeCustomer.ts': [BILLING_ACCOUNTS],
   'planCheckout.ts': [BILLING_ACCOUNTS],
@@ -100,11 +105,15 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   // D4a (account deletion lifecycle SX-3; DELETE-owned file): the plan cancel email's
   // production wiring reads the session owner's address, language and time zone. Its
   // composer, planCancelEmail.ts, names no repository. Added at the end, existing order kept.
-  'planCancelEmailDeps.ts': [
-    '@/lib/repositories/AuthAccountRepository',
-    '@/lib/repositories/BusinessProfileRepository',
-    '@/lib/repositories/UserPreferencesRepository',
-  ],
+  // D4b (SA R-D): it also marks the session user's reminder as covered after a cancel email
+  // inside the window (markCancelReminderCovered, user-scoped), and wires the reminder
+  // cron's email for the claimed row's account (the same three reads).
+  'planCancelEmailDeps.ts': [AUTH_ACCOUNTS, BILLING_ACCOUNTS, BUSINESS_PROFILES, USER_PREFERENCES],
+  // D4b (account deletion lifecycle SX-3 part 2; DELETE-owned file): the plan-ends reminder
+  // cron's wiring claims, completes and releases its rows (claimCancelReminders,
+  // completeCancelReminder, releaseCancelReminder, ⟨unscoped-by-design⟩). The run itself,
+  // planCancelReminderPass.ts, names no repository.
+  'planCancelReminderPassDeps.ts': [BILLING_ACCOUNTS],
 };
 const BILLING_REPOSITORY_CALLERS = Object.keys(BILLING_REPOSITORY_IMPORTS);
 

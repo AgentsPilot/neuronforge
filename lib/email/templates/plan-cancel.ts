@@ -1,10 +1,10 @@
 /**
  * The plan-cancel emails to a Business OS owner (account deletion lifecycle
- * D4a / SX-3; workplan docs/workplans/BUSINESS_OS_D4_PLAN_CANCEL_EMAILS_WORKPLAN.md
- * §3.2, §4; SA S-7, S-8, DR-6, DR-7, DR-9, DR-10, DR-11; user U-2).
+ * D4a and D4b / SX-3; workplan docs/workplans/BUSINESS_OS_D4_PLAN_CANCEL_EMAILS_WORKPLAN.md
+ * §3.2, §3.4, §4; SA S-7, S-8, DR-6, DR-7, DR-9, DR-10, DR-11; user U-2).
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * THREE EMAILS, ONE TEMPLATE
+ * FOUR EMAILS, ONE TEMPLATE
  *
  *   cancelled   the owner cancelled in Settings → Plan; the plan runs to
  *               `date` (the period end), then does not renew
@@ -12,8 +12,11 @@
  *               once; `date` is when it ended. "ended on {date}", never
  *               "today", because the mail may be read later (DR-7)
  *   kept        the owner pressed Keep my plan; it renews on `date`
- *
- * The reminder (about three days before the end) is D4b's and is not here.
+ *   reminder    D4b: the plan is still set to end on `date`, about three days
+ *               ahead; sent once by the reminder cron. "ends on {date}", never
+ *               "in 3 days", so it is true whichever run sends it. No "as you
+ *               asked" and no "Changed your mind?": the cron also reminds a
+ *               plan set to end from the Stripe dashboard (DR-9, C-9)
  *
  * EVERY CLAIM IS ONE THE CODE MAKES TRUE (C-9)
  *
@@ -33,7 +36,8 @@
  *
  * THE SUBJECT CARRIES NO ADDRESS, NO NAME AND NO PLAN NAME
  *
- * The transport logs subjects.
+ * The transport logs subjects. The reminder's subject carries the end date
+ * and nothing else (DR-9: "Your plan ends on {date}").
  *
  * THE SUPPORT LINE IS THE PLATFORM SENDER
  *
@@ -49,7 +53,7 @@ import { platformEmailBranding } from '@/lib/email/platformBranding';
 import type { Locale } from '@/lib/i18n/config';
 import { emailButton, emailPalette, wrapInBrandedTemplate } from './base-template';
 
-export type PlanCancelEmailEvent = 'cancelled' | 'ended_now' | 'kept';
+export type PlanCancelEmailEvent = 'cancelled' | 'ended_now' | 'kept' | 'reminder';
 
 /**
  * What happens once the plan has ended, already formatted for the reader.
@@ -79,7 +83,7 @@ export type PlanCancelAfter =
 export interface PlanCancelEmailData {
   event: PlanCancelEmailEvent;
   locale: Locale;
-  /** The end (cancelled), the end that happened (ended_now) or the renewal (kept), formatted. */
+  /** The end (cancelled, reminder), the end that happened (ended_now) or the renewal (kept), formatted. */
   date: string;
   /** `null`: the "after that" paragraph is left out (unknown view, or kept). */
   after: PlanCancelAfter | null;
@@ -95,6 +99,11 @@ interface Copy {
   cancelled: { subject: string; lead: string; noRefund: string; keepUntil: string; button: string };
   endedNow: { subject: string; lead: string; invoicesCancelled: string; invoiceMayBeOpen: string };
   kept: { subject: string; lead: string };
+  /**
+   * D4b. `keepBefore` names the button through `{button}`, so the sentence and the button cannot differ.
+   * No `lead`: the heading is the subject, "ends on {date}", so a first line saying it again was dropped (user, G-5).
+   */
+  reminder: { subject: string; keepBefore: string };
   /** The drawer's `settings.plan_cancel.changes.*` strings, verbatim (DR-11; pinned by the test). */
   changes: {
     freePlan: string;
@@ -132,6 +141,10 @@ export const PLAN_CANCEL_EMAIL_COPY: Readonly<Record<Locale, Copy>> = {
       subject: 'Your plan continues',
       lead: 'Your plan continues and renews on {date}.',
     },
+    reminder: {
+      subject: 'Your plan ends on {date}',
+      keepBefore: 'Want to keep it? Choose "{button}" before {date}.',
+    },
     changes: {
       freePlan: 'On {date} your plan moves to the free plan, {plan}, with {credits} credits, until {until}.',
       freePlanNoCredits: 'On {date} your plan moves to the free plan, {plan}, until {until}.',
@@ -162,6 +175,10 @@ export const PLAN_CANCEL_EMAIL_COPY: Readonly<Record<Locale, Copy>> = {
       subject: 'התוכנית שלכם ממשיכה',
       lead: 'התוכנית שלכם ממשיכה ותתחדש ב-{date}.',
     },
+    reminder: {
+      subject: 'התוכנית שלכם מסתיימת ב-{date}',
+      keepBefore: 'רוצים להשאיר אותה? בחרו "{button}" לפני {date}.',
+    },
     changes: {
       freePlan: 'ב-{date} התוכנית שלכם עוברת לתוכנית החינמית, {plan}, עם {credits} קרדיטים, עד {until}.',
       freePlanNoCredits: 'ב-{date} התוכנית שלכם עוברת לתוכנית החינמית, {plan}, עד {until}.',
@@ -191,6 +208,10 @@ export const PLAN_CANCEL_EMAIL_COPY: Readonly<Record<Locale, Copy>> = {
     kept: {
       subject: 'Tu plan continúa',
       lead: 'Tu plan continúa y se renueva el {date}.',
+    },
+    reminder: {
+      subject: 'Tu plan termina el {date}',
+      keepBefore: '¿Quieres mantenerlo? Elige «{button}» antes del {date}.',
     },
     changes: {
       freePlan: 'El {date} tu plan pasa al plan gratuito, {plan}, con {credits} créditos, hasta el {until}.',
@@ -255,6 +276,12 @@ export function generatePlanCancelEmail(data: PlanCancelEmailData): { subject: s
     lead = [fill(t.endedNow.lead, date), data.unpaidInvoicesCancelled ? t.endedNow.invoicesCancelled : t.endedNow.invoiceMayBeOpen];
     after = [...afterSentences(t, data.after), t.changes.dataKept];
     button = t.settingsButton;
+  } else if (data.event === 'reminder') {
+    // D4b (DR-9): the same "after that" paragraph as the cancelled email, from the view.
+    subject = fill(t.reminder.subject, date);
+    lead = [];
+    after = [...afterSentences(t, data.after), t.changes.dataKept, fill(t.reminder.keepBefore, { ...date, button: t.cancelled.button })];
+    button = t.cancelled.button;
   } else {
     subject = t.kept.subject;
     lead = [fill(t.kept.lead, date)];
@@ -280,7 +307,9 @@ export function generatePlanCancelEmail(data: PlanCancelEmailData): { subject: s
     </div>
   `;
 
-  const text = [subject, '', ...lead, ...(after.length ? ['', ...after] : []), '', `${button}: ${data.actionUrl}`, '', support, t.footer].join('\n');
+  // A blank line between the lead and the "after that" paragraph, and none for a part that is empty (the reminder has no lead).
+  const body = [lead, after].filter((part) => part.length > 0).flatMap((part, i) => (i > 0 ? ['', ...part] : part));
+  const text = [subject, '', ...body, '', `${button}: ${data.actionUrl}`, '', support, t.footer].join('\n');
 
   return { subject, html: wrapInBrandedTemplate(content, branding), text };
 }

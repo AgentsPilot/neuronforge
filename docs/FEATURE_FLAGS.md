@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: 2026-10-28
-> **Version**: 1.16.0
+> **Last Updated**: 2026-10-29
+> **Version**: 1.16.1
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-10-29 | 1.16.1 | Dev | `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` (account deletion lifecycle D4b / SX-3 part 2) now also gates the daily 3-day "Your plan ends on {date}" reminder cron `/api/cron/bos-plan-cancel-reminders`. No new variable. Needs migration 20261100 before it can send |
 | 2026-10-28 | 1.16.0 | Dev | Added `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` (account deletion lifecycle D4a / SX-3): the plan cancel / keep emails. Server-only, **default off** (`true` or `1` turn it on, case-insensitive). While off the cancel and reactivate routes send and audit nothing extra. On without `RESEND_FROM_EMAIL`: nothing is sent, `BOS_PLAN_CANCEL_EMAIL_NOT_SENT` (`sender_not_configured`) is audited and an `error` with `alert: true` is logged. Reader `isPlanCancelEmailsEnabled()`. |
 | 2026-10-27 | 1.15.0 | Dev | Added `BUSINESS_OS_MODULE_EXPORT_ENABLED` (export redesign MX-1b): the per-module export's switch. Server-only, **default off**, on only for the exact string `true`. While off `POST`/`GET /api/business-os/export-requests` answer 404 and "Download my data" builds the ZIP as before. Reader `isModuleExportEnabled()`. **Never on in Preview before MX-4.** |
 | 2026-10-27 | 1.14.0 | Dev | Added "Adding an environment variable" and step 5 of "Adding a New Feature Flag" (admin environment view EC-3): every new environment variable gets an entry in `lib/admin/environment/catalogue.ts` in the same PR, which the catalogue drift guard enforces in the Jest gate. |
@@ -411,6 +412,8 @@ Account deletion lifecycle D4a / SX-3 ([workplan](/docs/workplans/BUSINESS_OS_D4
 | On, `RESEND_FROM_EMAIL` unset | Nothing is sent. `BOS_PLAN_CANCEL_EMAIL_NOT_SENT` with reason `sender_not_configured` is audited, and an `error` with `alert: true` is logged |
 
 No email for a refusal, an `unchanged` answer, a lost Stripe answer, or a change made in the Stripe dashboard. Turn it on only after the sending domain is verified in Resend and `RESEND_FROM_EMAIL` is set in that environment. Rollback: unset it and redeploy.
+
+**D4b (SX-3 part 2): the same switch gates the 3-day reminder.** While on, the daily cron `/api/cron/bos-plan-cancel-reminders` (05:53 UTC) emails "Your plan ends on {date}" once per period end to an owner whose plan is set to end within 3 days, after checking with Stripe that it still is. This includes a plan set to end from the Stripe dashboard. An account with a deletion request gets none, and a cancel made inside the last 3 days gets the cancel email only. While off the cron records `skipped: 1` and claims nothing. It needs migration 20261100 applied first; before that the cron logs an error and sends nothing.
 
 ```bash
 # Vercel, once Resend is confirmed for the environment

@@ -301,6 +301,10 @@ describe('QA: D6 safety — the engine never sends, and only the two routes wire
       'app/api/business-os/billing/plan/cancel/route.ts',
       'app/api/business-os/billing/plan/reactivate/route.ts',
       'lib/business-os/billing/planCancelEmailDeps.ts',
+      // D4b (SX-3 part 2): the plan-ends reminder run (types and the window) and its wiring, called only
+      // by the reminder cron route. Neither is the engine, so D6 still cannot send these emails.
+      'lib/business-os/billing/planCancelReminderPass.ts',
+      'lib/business-os/billing/planCancelReminderPassDeps.ts',
     ]);
   });
 });

@@ -52,6 +52,15 @@ import 'server-only';
  * `redactRecipientInLogs: true`. Audit: the SENT / NOT_SENT pair (S-9), both
  * `info` in the registry, written through the caller's `audit` port.
  *
+ * ── D4b: the reminder, and the cancel that covers it ────────────────────────
+ * The reminder cron (`planCancelReminderPass.ts`) sends `event: 'reminder'`
+ * through this same composer, with `actor: 'system'` and the provider key
+ * `plan-cancel-reminder:{billingRowId}:{periodEnd}` (S-10 follow-up), for the
+ * claimed row's own account only. R-D (user U-3): when a `cancelled` email
+ * goes out (or its outcome is unknown) for an end at most
+ * `PLAN_CANCEL_REMINDER_WINDOW_SECONDS` away, `coverReminderAfterCancelEmail`
+ * records that period end as covered, so no reminder follows the cancel email.
+ *
  * ── Entitlements ────────────────────────────────────────────────────────────
  * Imports the `PlanEndingView` TYPE only (a declared non-gate importer, S-16).
  */
@@ -102,15 +111,19 @@ export const PLAN_CANCEL_EMAIL_AUDIT_ACTIONS = {
 
 export interface PlanCancelEmailInput {
   event: PlanCancelEmailEvent;
-  /** The session user. Never a request value. */
+  /** The session user (routes) or the claimed billing row's account (reminder). Never a request value. */
   userId: string;
-  /** `endsOn` (cancelled / ended_now) or `renewsOn` (kept), as the engine returned it. */
+  /** `endsOn` (cancelled / ended_now), `renewsOn` (kept), or the claimed row's period end (reminder). */
   date: string | null;
   /** ended_now only: the engine's `invoicesLeftOpen` (`null` = could not tell). */
   invoicesLeftOpen?: number | null;
   subscriptionId: string | null;
   livemode: boolean | null;
   correlationId: string;
+  /** Who acted, for the audit row: `owner` from the routes (default), `system` from the reminder cron. */
+  actor?: 'owner' | 'system';
+  /** D4b (S-10 follow-up): the provider idempotency key, ids only. Absent = an un-keyed send, as D4a. */
+  idempotencyKey?: string;
 }
 
 export interface PlanCancelEmailAuditEntry {
@@ -275,6 +288,7 @@ async function run(input: PlanCancelEmailInput, deps: PlanCancelEmailDeps): Prom
       html: email.html,
       text: email.text,
       redactRecipientInLogs: true,
+      ...(input.idempotencyKey !== undefined ? { idempotencyKey: input.idempotencyKey } : {}),
     });
   } catch {
     return notSent(PLAN_CANCEL_EMAIL_NOT_SENT_REASONS.transportFailed, withLanguage);
@@ -365,7 +379,7 @@ export async function sendPlanCancelEmail(input: PlanCancelEmailInput, deps: Pla
         subscriptionId: input.subscriptionId,
         periodEnd: input.date,
         livemode: input.livemode,
-        actor: 'owner',
+        actor: input.actor ?? 'owner',
         correlationId: input.correlationId,
       },
     });
@@ -374,4 +388,109 @@ export async function sendPlanCancelEmail(input: PlanCancelEmailInput, deps: Pla
   }
 
   return outcome;
+}
+
+// ── D4b: the reminder window, and the cancel email that covers it (SA R-D) ──
+
+/**
+ * How far ahead the reminder looks (BQ-36: about 3 days before the end). The
+ * reminder cron claims rows whose end is at most this far away, and a cancel
+ * email for an end this close covers the reminder (R-D). One constant for both.
+ */
+export const PLAN_CANCEL_REMINDER_WINDOW_SECONDS = 3 * 24 * 60 * 60;
+
+/** True when `endIso` is in the future and at most the reminder window away. */
+export function isInsideReminderWindow(endIso: string, now: Date): boolean {
+  const end = Date.parse(endIso);
+  if (Number.isNaN(end)) return false;
+  const ahead = end - now.getTime();
+  return ahead > 0 && ahead <= PLAN_CANCEL_REMINDER_WINDOW_SECONDS * 1000;
+}
+
+export interface PlanCancelReminderCoverDeps {
+  /** `markCancelReminderCovered`, user-scoped (the session user). */
+  markCovered: (input: {
+    userId: string;
+    livemode: boolean;
+    stripeSubscriptionId: string;
+    periodEnd: string;
+  }) => Promise<RepositoryResult<{ marked: boolean }>>;
+  logger: PlanCancelEmailLogger;
+  now?: () => Date;
+  /** Overrides `PLAN_CANCEL_REMINDER_COVER_TIMEOUT_MS` (tests). */
+  timeoutMs?: number;
+}
+
+/**
+ * SA code review F-3: the covered mark runs after the email's 4 s deadline, so
+ * it gets its own short bound. A mark that does not answer in time is `failed`
+ * (logged; the reminder may then follow, and both emails are true).
+ */
+export const PLAN_CANCEL_REMINDER_COVER_TIMEOUT_MS = 2_000;
+
+export type PlanCancelReminderCoverResult = 'marked' | 'not_marked' | 'not_needed' | 'failed';
+
+/**
+ * SA R-D (user U-3): after the "Plan cancelled" email, record its period end
+ * as covered when the end is inside the reminder window, so the reminder does
+ * not follow a day later with the same date.
+ *
+ * Only for `cancelled` (the ended email ends the plan; kept clears it), only
+ * when the email's outcome is `sent` or `unknown` (S-3 b's at-most-once rule:
+ * an unknown cancel email may have gone). A `not_sent` or `skipped` email
+ * leaves the reminder to go. Never throws: a failed mark is logged and the
+ * caller's response is unchanged (the reminder may then follow; both are true).
+ */
+export async function coverReminderAfterCancelEmail(
+  input: PlanCancelEmailInput,
+  outcome: PlanCancelEmailOutcome,
+  deps: PlanCancelReminderCoverDeps
+): Promise<PlanCancelReminderCoverResult> {
+  try {
+    if (input.event !== 'cancelled') return 'not_needed';
+    if (outcome.outcome !== 'sent' && outcome.outcome !== 'unknown') return 'not_needed';
+    if (!input.date || !input.subscriptionId || typeof input.livemode !== 'boolean') return 'not_needed';
+    const end = Date.parse(input.date);
+    if (Number.isNaN(end)) return 'not_needed';
+    // The repository compares and writes the canonical ISO form.
+    const periodEnd = new Date(end).toISOString();
+    if (!isInsideReminderWindow(periodEnd, (deps.now ?? (() => new Date()))())) return 'not_needed';
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<'timedOut'>((resolve) => {
+      timer = setTimeout(() => resolve('timedOut'), deps.timeoutMs ?? PLAN_CANCEL_REMINDER_COVER_TIMEOUT_MS);
+    });
+    let result: Awaited<ReturnType<PlanCancelReminderCoverDeps['markCovered']>> | 'timedOut';
+    try {
+      result = await Promise.race([
+        deps.markCovered({
+          userId: input.userId,
+          livemode: input.livemode,
+          stripeSubscriptionId: input.subscriptionId,
+          periodEnd,
+        }),
+        timedOut,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    const context = { event: 'bos_plan_cancel_reminder_covered', userId: input.userId, subscriptionId: input.subscriptionId, livemode: input.livemode, periodEnd };
+    if (result === 'timedOut') {
+      deps.logger.warn({ ...context, reason: 'mark_timed_out' }, 'Plan-ends reminder not marked as covered in time; the reminder may still follow');
+      return 'failed';
+    }
+    if (result.error || !result.data) {
+      deps.logger.warn({ ...context, reason: 'mark_failed' }, 'Plan-ends reminder not marked as covered; the reminder may still follow');
+      return 'failed';
+    }
+    deps.logger.info({ ...context, marked: result.data.marked }, 'Plan-ends reminder covered by the cancel email');
+    return result.data.marked ? 'marked' : 'not_marked';
+  } catch {
+    try {
+      deps.logger.warn({ event: 'bos_plan_cancel_reminder_covered', userId: input.userId, reason: 'threw' }, 'Plan-ends reminder not marked as covered; the reminder may still follow');
+    } catch {
+      // Nothing left to tell.
+    }
+    return 'failed';
+  }
 }
