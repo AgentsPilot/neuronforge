@@ -175,6 +175,22 @@ describe('it scrolls on a phone', () => {
     expect(editor).toMatch(/maxWidth: '100%'/);
   });
 
+  it('clips the pinned name instead of letting it cover the next column', () => {
+    /*
+     * A sticky cell paints its background over the cell BOX. Text that
+     * overflows the box is painted on top of whatever is scrolling underneath
+     * — so "Website enquiries from Gmail" rendered across the Watches column
+     * and the two read as one smeared line. Seen on a phone, invisible on a
+     * desktop where the column is wide enough for any name.
+     */
+    const nameCell = card.slice(card.indexOf('{agent.name}') - 900, card.indexOf('{agent.name}') + 60);
+
+    expect(nameCell).toMatch(/truncate/);
+    expect(nameCell).toMatch(/maxWidth: '45vw'/);
+    /* And the whole name still reachable, since clipping hides information. */
+    expect(nameCell).toMatch(/title=\{agent\.name\}/);
+  });
+
   it('keeps the table wider than a phone, so there is something to scroll', () => {
     /* Six genuine facts per agent. The answer to a narrow screen is scrolling,
        not dropping the column that says when it runs next. */

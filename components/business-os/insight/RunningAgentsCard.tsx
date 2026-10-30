@@ -555,7 +555,32 @@ export function RunningAgentsCard() {
                           ))}
                         </span>
                       )}
-                      <span className="text-[13px] font-semibold text-[var(--v2-text-primary)] whitespace-nowrap">
+                      {/*
+                        ──────────────────────────────────────────────────────
+                        TRUNCATED, BECAUSE THIS CELL IS PINNED.
+
+                        `whitespace-nowrap` with no width cap let a long name —
+                        "Website enquiries from Gmail" — run past the cell it
+                        lives in. A sticky cell paints its background over the
+                        cell BOX, not over whatever its text overflows into, so
+                        the name rendered on top of the Watches column and the
+                        two read as one smeared line on a phone.
+
+                        Capped in `vw` rather than at a breakpoint: 45% of a
+                        narrow screen is about 175px and clips, while on a
+                        desktop it is far wider than any agent name and changes
+                        nothing — which matters, because the desktop layout is
+                        right as it is.
+
+                        `title` so the full name is still available to anyone
+                        who needs it, including a screen reader.
+                        ──────────────────────────────────────────────────────
+                      */}
+                      <span
+                        className="text-[13px] font-semibold text-[var(--v2-text-primary)] truncate"
+                        style={{ maxWidth: '45vw' }}
+                        title={agent.name}
+                      >
                         {agent.name}
                       </span>
                       {state !== 'running' && (
