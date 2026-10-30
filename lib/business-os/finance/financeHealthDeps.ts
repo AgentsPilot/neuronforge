@@ -128,7 +128,9 @@ export function financeHealthDeps(): Omit<
 > {
   return {
     plans: {
-      pagePlans: (options) => businessOsAccountPlanRepository.pagePlans(options),
+      // MK5BFU-FU-2: the Finance walk alone also reads `after_plan_moves`, so MK-9 can leave
+      // after-plan free periods out of trial-to-paid. Every other walker's select is unchanged.
+      pagePlans: (options) => businessOsAccountPlanRepository.pagePlans({ ...options, withAfterPlanMoves: true }),
     },
     findPlanForAccount: findPlanWithoutOverrides,
     ledger: {

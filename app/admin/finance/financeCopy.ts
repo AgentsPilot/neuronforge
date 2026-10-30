@@ -922,7 +922,9 @@ export const PAYING_BREAKDOWN = {
   noRateCutOff: 'No rate: not every account could be read',
   stillRunning: (count: string) => `Still running: ${count}`,
   trialsUnknown: 'Trials could not be read.',
-  limits: 'Paid means a first plan payment, counted as for Converted this month. Boosts are not a conversion.',
+  // MK5BFU-FU-2: an after-plan free period is left out of the trials (the owner already paid).
+  limits:
+    'Paid means a first plan payment, counted as for Converted this month. Boosts are not a conversion. An owner back on a free period after cancelling a paid plan is not counted as a trial: they already paid.',
   cutOff: 'Not every account could be read, so these counts are "at least".',
   unknown: 'Unknown',
 } as const;

@@ -3058,6 +3058,86 @@ describe('Money MK-9: payingBreakdown through the builder', () => {
     expect(breakdown?.comped?.assignedNoSubscription).toBe(breakdown?.comped?.total);
   });
 
+  // ── MK5BFU-FU-2 (user decision 2026-10-30): an after-plan free period is not a trial ──
+  describe('MK5BFU-FU-2: after-plan free periods are out of the trial base', () => {
+    const E = '55555555-5555-4555-8555-555555555555';
+    const F = '66666666-6666-4666-8666-666666666666';
+    const MONTH = { from: '2026-11-01T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' };
+    /** C: a real trial that ended in the window. E: an after-plan period that ended in it. F: one still running. */
+    function mixedDeps(moves: { E: number; F: number }, firstPayments: Array<{ accountId: string; paidAt: string }>) {
+      const { deps, converted } = breakdownDeps(firstPayments);
+      deps.plans.pagePlans.mockImplementation(
+        () =>
+          ok([
+            plan(B, { tier: TIER, cohort: null, after_plan_moves: 0 }),
+            { ...trialPlan(C, '2026-11-03T00:00:00.000Z'), after_plan_moves: 0 },
+            { ...trialPlan(E, '2026-11-04T00:00:00.000Z'), after_plan_moves: moves.E },
+            { ...trialPlan(F, '2026-11-20T00:00:00.000Z'), after_plan_moves: moves.F },
+          ]) as never
+      );
+      return { deps, converted: converted as NonNullable<typeof converted> };
+    }
+    // E first paid long before its free period: under the old rule it counted as paid AND paid before the end.
+    const PAYMENTS = [
+      { accountId: C, paidAt: '2026-11-02T00:00:00.000Z' },
+      { accountId: E, paidAt: '2026-08-01T00:00:00.000Z' },
+      { accountId: F, paidAt: '2026-07-01T00:00:00.000Z' },
+    ];
+
+    it('an after-plan row is excluded: neither ended, running, paid nor asked', async () => {
+      const { deps, converted } = mixedDeps({ E: 1, F: 2 }, PAYMENTS);
+      const { result } = await run(deps as never);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      expect(result.payload.payingBreakdown?.trials).toEqual({
+        status: 'ok', endedInWindow: 1, stillRunning: 0, paid: 1, paidBeforeEnd: 1, rate: null, minimumForRate: 10,
+      });
+      expect(converted.firstPlanPayments).toHaveBeenCalledWith({ accountIds: [C], firstPaymentIn: MONTH });
+    });
+
+    it('control: the same rows with no after-plan move count every trial (the old figures)', async () => {
+      const { deps, converted } = mixedDeps({ E: 0, F: 0 }, PAYMENTS);
+      const { result } = await run(deps as never);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      expect(result.payload.payingBreakdown?.trials).toEqual({
+        status: 'ok', endedInWindow: 2, stillRunning: 1, paid: 2, paidBeforeEnd: 2, rate: null, minimumForRate: 10,
+      });
+      expect(converted.firstPlanPayments).toHaveBeenCalledWith({ accountIds: [C, E], firstPaymentIn: MONTH });
+    });
+
+    it('a real trial is still counted when every other trial is an after-plan period', async () => {
+      const { deps } = mixedDeps({ E: 3, F: 1 }, [{ accountId: C, paidAt: '2026-11-05T00:00:00.000Z' }]);
+      const { result } = await run(deps as never);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      // C paid after its trial ended: paid, not before the end.
+      expect(result.payload.payingBreakdown?.trials).toEqual(
+        expect.objectContaining({ endedInWindow: 1, stillRunning: 0, paid: 1, paidBeforeEnd: 0 })
+      );
+    });
+
+    it('a mixed set: only the after-plan rows leave; the ask is still a superset of the ids the count reads', async () => {
+      const { deps, converted } = mixedDeps({ E: 1, F: 0 }, PAYMENTS);
+      const { result } = await run(deps as never);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      const trials = result.payload.payingBreakdown?.trials;
+      expect(trials).toEqual(expect.objectContaining({ endedInWindow: 1, stillRunning: 1, paid: 1, paidBeforeEnd: 1 }));
+      const asked = new Set(converted.firstPlanPayments.mock.calls[0][0].accountIds);
+      // The ids the count looks a first payment up for: the real trials that ended in the window and by now.
+      for (const counted of [C]) expect(asked.has(counted)).toBe(true);
+      expect(asked.has(E)).toBe(false);
+      // F is still running: never asked, as before (outside the window's ended set).
+      expect(asked.has(F)).toBe(false);
+    });
+
+    it('Converted this month is not affected by the after-plan count', async () => {
+      const thisMonth = [{ accountId: B, paidAt: '2026-11-03T10:00:00.000Z' }, ...PAYMENTS];
+      const withMoves = await run(mixedDeps({ E: 1, F: 1 }, thisMonth).deps as never);
+      const without = await run(mixedDeps({ E: 0, F: 0 }, thisMonth).deps as never);
+      if (withMoves.result.kind !== 'ok' || without.result.kind !== 'ok') throw new Error('expected ok');
+      expect(withMoves.result.payload.converted).toEqual(without.result.payload.converted);
+      expect(withMoves.result.payload.converted).toEqual(expect.objectContaining({ status: 'ok', converted: 1 }));
+    });
+  });
+
   it('a business picked: no breakdown key (one account is not a rate)', async () => {
     const { deps } = breakdownDeps([]);
     const { result } = await run(deps as never, A);

@@ -23,6 +23,8 @@ import { classifyAccounts, groupFor } from '../planGroups';
 import type { FinanceGroupKey } from '../financeTypes';
 // Slice 1c: a separate import, so the lines above stay unedited.
 import { paidTierOf } from '../planGroups';
+// MK5BFU-FU-2: a separate import too.
+import { isAfterPlanRow, isTrialRow, trialEndOf, trialsForTrialToPaid } from '../planGroups';
 
 const config = getEntitlementConfig();
 const TIER = config.tierOrder[0];
@@ -424,5 +426,43 @@ describe('slice 6a: the non-wire foundingPartnerNote set (SA-W77)', () => {
     const owner = planRow({ tier: TIER, cohort: CHAMPION });
     const result = classifyAccounts({ rows: [owner], payingIds: null, window: WINDOW, now: NOW, config });
     expect(result.foundingPartnerNote.size).toBe(0);
+  });
+});
+
+// MK5BFU-FU-2 (user decision 2026-10-30): an after-plan free period is not a trial for MK-9.
+describe('MK5BFU-FU-2: isAfterPlanRow and trialsForTrialToPaid', () => {
+  const trial = (extra: Partial<BusinessOsAccountPlan> = {}) =>
+    planRow({ cohort: TRIAL, trial_started_at: '2026-09-20T00:00:00.000Z', trial_ends_at: '2026-10-04T00:00:00.000Z', ...extra });
+
+  it('isAfterPlanRow: true only for a count above 0; a row read without the column counts as 0', () => {
+    expect(isAfterPlanRow({ after_plan_moves: 1 })).toBe(true);
+    expect(isAfterPlanRow({ after_plan_moves: 3 })).toBe(true);
+    expect(isAfterPlanRow({ after_plan_moves: 0 })).toBe(false);
+    expect(isAfterPlanRow({})).toBe(false);
+  });
+
+  it('an after-plan trial row is left out', () => {
+    const back = trial({ after_plan_moves: 1 });
+    expect(isTrialRow(back)).toBe(true); // still a trial by cohort: the plan mix is unchanged
+    expect(trialsForTrialToPaid([back], config, NOW)).toEqual([]);
+  });
+
+  it('a real trial is kept, with the same end trialEndOf gives (moves 0, or no column)', () => {
+    const fresh = trial({ after_plan_moves: 0 });
+    const old = trial();
+    expect(trialsForTrialToPaid([fresh, old], config, NOW)).toEqual([
+      { accountId: fresh.user_id, endsAt: trialEndOf(fresh, config, NOW) },
+      { accountId: old.user_id, endsAt: trialEndOf(old, config, NOW) },
+    ]);
+    expect(trialEndOf(fresh, config, NOW)).toBe('2026-10-04T00:00:00.000Z');
+  });
+
+  it('a mixed set: only the real trials, in input order; non-trial rows stay out whatever their count', () => {
+    const a = trial({ after_plan_moves: 0 });
+    const b = trial({ after_plan_moves: 2 });
+    const c = planRow({ tier: TIER, cohort: null, after_plan_moves: 0 });
+    const d = planRow({ cohort: CHAMPION, after_plan_moves: 1 });
+    const e = trial();
+    expect(trialsForTrialToPaid([a, b, c, d, e], config, NOW).map((t) => t.accountId)).toEqual([a.user_id, e.user_id]);
   });
 });

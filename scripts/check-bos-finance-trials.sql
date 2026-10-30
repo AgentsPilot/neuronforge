@@ -6,6 +6,8 @@
 -- over all time: the page figures for any window are at most these.
 -- Platform accounts are left out, as on the page: the all-zero id, and the server SYSTEM_ADMIN_USER_ID.
 -- Set system_admin_user_id in the p block to that value, or leave it null when it is not set.
+-- MK5BFU-FU-2: a free period after a cancelled paid plan (after_plan_moves above 0) is not a trial,
+-- as on the page: that owner already paid.
 with p as (
   select false as livemode,
          null::uuid as system_admin_user_id
@@ -15,6 +17,7 @@ t as (
   from public.business_os_account_plans r
   cross join p
   where r.cohort = 'trial'
+    and r.after_plan_moves = 0
     and r.user_id <> '00000000-0000-0000-0000-000000000000'
     and (p.system_admin_user_id is null or r.user_id <> p.system_admin_user_id)
 ),
