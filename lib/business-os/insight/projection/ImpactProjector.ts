@@ -55,7 +55,20 @@ export interface ImpactProjection {
   /** What happens if they let the system handle it */
   letMeHandleIt: {
     summary: string;
-    details: string;
+    /**
+     * The second line, where there is an honest one.
+     *
+     * Optional because sometimes there is not. The overdue-invoice projection
+     * had "and anything 7+ days late from now on — you do nothing", and both
+     * halves were false: the button makes no ongoing arrangement, and the 7 was
+     * borrowed from the detector's NOTICE threshold rather than from anything
+     * that chases. Removing it left this field required and unfilled, which is
+     * how the scoped type check found it.
+     *
+     * A projection with one true line beats one with a true line and an invented
+     * second, so the type admits the shorter form rather than inviting filler.
+     */
+    details?: string;
     summaryLine?: ProjectionLine;
     detailsLine?: ProjectionLine;
     projectedOutcome: {

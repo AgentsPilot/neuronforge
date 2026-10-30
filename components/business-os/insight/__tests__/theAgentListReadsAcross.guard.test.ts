@@ -133,6 +133,24 @@ describe('both themes', () => {
       [...card.matchAll(/var\((--v2-[a-z0-9-]+)/g)].map(m => m[1])
     );
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE BRAND COLOUR IS NOT A THEME TOKEN, AND MUST NOT BE DEFINED TWICE.
+     *
+     * Every token above is a pair — `--v2-surface` is #FFFFFF on light and
+     * #1E293B on dark — and a single definition is the bug this test exists
+     * for. `--v2-primary` is the opposite: ONE value that holds in both
+     * themes, because it is the owner's brand colour and a white-labelled
+     * account overrides it. Indigo on light and something else on dark would
+     * mean the business had two brands.
+     *
+     * The card started spending it when the schedule editor arrived: the Save
+     * button and the editor's tint both take the accent, matching the
+     * Needs-you buttons an owner meets on the same screen.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    used.delete('--v2-primary');
+
     expect(used.size).toBeGreaterThan(4);
 
     for (const token of used) {

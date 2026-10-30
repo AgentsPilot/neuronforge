@@ -65,7 +65,7 @@ describe('the database refuses a duplicate', () => {
   it('ships the unique index', () => {
     /* The only thing that actually closes the window. */
     const migration = join(
-      root, 'supabase', 'migrations', '20261099_one_automation_agent_per_business.sql'
+      root, 'supabase', 'migrations', '20261102_one_automation_agent_per_business.sql'
     );
 
     expect(existsSync(migration)).toBe(true);
