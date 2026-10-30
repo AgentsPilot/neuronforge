@@ -172,14 +172,14 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * blocks. Chained on 20261094, stamp 792d801e13101316, live since 2026-10-26.
  * Not in FUNCTION_REQUIRED_TABLES (SA O-3, MX1A-3): step B names both only as
  * VALUES literals and skips them while absent.
- * 20261101 (account deletion lifecycle, DELETE stream): the self-link
+ * 20261104 (account deletion lifecycle, DELETE stream): the self-link
  * scheduling_meetings.replaces_meeting_id (20261097, scheduling, ON DELETE SET
  * NULL) reviewed for G-18 (INBOUND_FOREIGN_KEYS, owner column user_id). 20261097
  * landed outside this generator, so on prod G-18 refused every check, delete
  * and anonymise (seen live 2026-10-30, the closurespike admin check). The same
  * class as 20261092. Chained on 20261096, stamp b1203c526bc9ec91, live.
  */
-export const FUNCTION_MIGRATION = '20261101_operator_test_account_cleanup_meeting_replaces';
+export const FUNCTION_MIGRATION = '20261104_operator_test_account_cleanup_meeting_replaces';
 /** The applied migration whose function the rollback restores, byte for byte. */
 export const PREVIOUS_FUNCTION_MIGRATION = '20261096_operator_test_account_cleanup_export_requests';
 /**
@@ -646,7 +646,7 @@ export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, strin
   ['scheduling_bookings', 'scheduling_bookings_service_id_fkey', 'user_id'],
   ['scheduling_meetings', 'scheduling_meetings_booking_id_fkey', 'user_id'],
   ['scheduling_meetings', 'scheduling_meetings_business_fk', 'user_id'],
-  // 20261101: the session a meeting replaced (20261097, ON DELETE SET NULL); a meeting of another account pointing at the target's blocks.
+  // 20261104: the session a meeting replaced (20261097, ON DELETE SET NULL); a meeting of another account pointing at the target's blocks.
   ['scheduling_meetings', 'scheduling_meetings_replaces_meeting_id_fkey', 'user_id'],
   ['scheduling_services', 'scheduling_services_business_fk', 'user_id'],
   ['shadow_failure_snapshots', 'shadow_failure_snapshots_agent_id_fkey', 'user_id'],

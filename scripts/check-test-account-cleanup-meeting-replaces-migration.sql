@@ -1,5 +1,5 @@
--- 20261101 checker, step 3 of the PROD apply (docs/workplans/TEST_ACCOUNT_CLEANUP_MEETING_REPLACES_FK_FIX_WORKPLAN.md). Read-only
--- Run after 20261101. Every row must say ok, row 8 included. Any FAIL row: paste the output back before the merge
+-- 20261104 checker, step 3 of the PROD apply (docs/workplans/TEST_ACCOUNT_CLEANUP_MEETING_REPLACES_FK_FIX_WORKPLAN.md). Read-only
+-- Run after 20261104. Every row must say ok, row 8 included. Any FAIL row: paste the output back before the merge
 -- Row 8 is an operator gate. ok proves the exact committed body. A FAIL there is resolved before the merge
 -- by comparing the pasted bytes and their line endings with the PR head, and is never ignored
 -- Until the build pinning 41d799d7a76e829b is deployed, the Danger Zone check and delete refuse on the version stamp. Deploy fast
@@ -37,7 +37,7 @@ checks AS (
     EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn)
       AND position(pg_catalog.quote_literal('scheduling_meetings_replaces_meeting_id_fkey') in p.prosrc) > 0)
   UNION ALL
-  SELECT 8, 'operator gate. md5 of the body is 95adf58340f1344bd4fc6be7e36c1df3, the committed 20261101 body',
+  SELECT 8, 'operator gate. md5 of the body is 95adf58340f1344bd4fc6be7e36c1df3, the committed 20261104 body',
     EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND pg_catalog.md5(p.prosrc) = '95adf58340f1344bd4fc6be7e36c1df3')
 )
 SELECT checks.ord, checks.check_name, CASE WHEN checks.passed THEN 'ok' ELSE 'FAIL' END AS status

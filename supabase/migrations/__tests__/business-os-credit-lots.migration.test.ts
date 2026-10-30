@@ -808,7 +808,7 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
     // the plan gained business_os_account_closures) and its rollback, which restores 20261092: same
     // again, so 20261092 is listed by name. 20261096 (MX-1a: the plan gained the export request and
     // module job tables) and its rollback, which restores 20261094: same again, so 20261094 is listed
-    // by name. 20261101 (the replaces_meeting_id link reviewed for G-18) and its rollback, which
+    // by name. 20261104 (the replaces_meeting_id link reviewed for G-18) and its rollback, which
     // restores 20261096: same again, so 20261096 is listed by name. Taken from the
     // generator's constants, so this file does not spell the next version's name (R-7).
     const testAccountCleanup = [

@@ -506,7 +506,7 @@ describe('audit row (SA TQ-5, C-7)', () => {
     // operator_sql: the pasted file never sets an actor or a source, so user_id = actor_id = NULL.
     expect(deleteSql).not.toMatch(/set_config\('cleanup\.(actor_id|source)'/);
     // The rollback restores the previous function (PREVIOUS_FUNCTION_MIGRATION). Since
-    // 20261075 (data export DE-8a) that names the admin too; since 20261101 the previous function is
+    // 20261075 (data export DE-8a) that names the admin too; since 20261104 the previous function is
     // MX-1a's 20261096 (the export history tables). The 20261046 shape (user_id NULL) is gone from it.
     expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,
     ${ACTOR}, ${ACTOR},`);
@@ -783,7 +783,7 @@ describe('applied history: a function migration is never edited once applied', (
     ['supabase/migrations/20261094_operator_test_account_cleanup_account_closures.sql', 'eb04be0682923bfebe093ba83b1b2c8901cd1530eb9006eb734406b8a169ea33'],
     ['supabase/SQL Scripts/20261094_operator_test_account_cleanup_account_closures_rollback.sql', '9e79c08b2c55e7ed840adb34c3a36794b5689e7a50d1853b5700a2927ef119dd'],
     // MX-1a's 20261096 (the export request and module job tables in step B, stamp b1203c526bc9ec91).
-    // Live on prod, confirmed 2026-10-30 before 20261101 was written. 20261101 replaces it, and its
+    // Live on prod, confirmed 2026-10-30 before 20261104 was written. 20261104 replaces it, and its
     // rollback restores these bytes. Never regenerate it.
     ['supabase/migrations/20261096_operator_test_account_cleanup_export_requests.sql', '8947050f96fc645e4c5357e50111342b064e7354019304351c442716642b516d'],
     ['supabase/SQL Scripts/20261096_operator_test_account_cleanup_export_requests_rollback.sql', 'f05d8e27c158e563fa248c026297992a28ce7cd3caaebb569d409d4fd297fa70'],
@@ -801,9 +801,9 @@ describe('applied history: a function migration is never edited once applied', (
    * its bytes are final. If a pin fails, put the change in a NEW dated FUNCTION_MIGRATION.
    */
   const APPLIED_TARGET: ReadonlyArray<[string, string]> = [
-    // 20261101 (the replaces_meeting_id self-link reviewed for G-18), stamp 41d799d7a76e829b.
-    [MIGRATION_FILE, '4ae4c6b7287622879fcf24eb5b5ac968b41c349c850f21c2c0c5095be628b0cb'],
-    [ROLLBACK_FILE, '377aa347579b30c8ec9be04dfae2fb9c05b5b7c080fb65fd6ddf44748b446fa3'],
+    // 20261104 (the replaces_meeting_id self-link reviewed for G-18), stamp 41d799d7a76e829b.
+    [MIGRATION_FILE, '123c04b24cfde8cf3406b3ea160721b34550ed3f197302406346942c7e0cc9fa'],
+    [ROLLBACK_FILE, 'f6b85388ab9c13afcef27bc8c1d8eb355d192e313f91df324104dfa043d4c7ed'],
   ];
 
   it.each([...APPLIED, ...PENDING_PREVIOUS, ...APPLIED_TARGET])('%s is byte-identical to what was applied', (file, sha256) => {
@@ -1673,8 +1673,8 @@ describe('20261096: the export history tables join step B (MX-1a)', () => {
   const CHECKER_95 = readSql('scripts/check-export-requests-migration.sql');
   const CHECKER_96 = readSql('scripts/check-test-account-cleanup-export-requests-migration.sql');
   /**
-   * Frozen when 20261101 became the target: every reference that moved with the generator is a
-   * literal here, because STAMP_96, MIGRATION_96 and ROLLBACK_96 now mean 20261101.
+   * Frozen when 20261104 became the target: every reference that moved with the generator is a
+   * literal here, because STAMP_96, MIGRATION_96 and ROLLBACK_96 now mean 20261104.
    * The bytes of MIGRATION_96 and ROLLBACK_96 are pinned by sha256 in APPLIED.
    */
   const STAMP_96 = 'b1203c526bc9ec91';
@@ -1806,7 +1806,7 @@ describe('20261096: the export history tables join step B (MX-1a)', () => {
   });
 });
 
-describe('20261101: the replaces_meeting_id self-link is reviewed (G-18)', () => {
+describe('20261104: the replaces_meeting_id self-link is reviewed (G-18)', () => {
   /** The stamp of 20261096 as applied and live (checked 2026-10-30), literal so it never moves with the generator. */
   const STAMP_96 = 'b1203c526bc9ec91';
   const MEETINGS = 'scheduling_meetings';
@@ -1817,8 +1817,8 @@ describe('20261101: the replaces_meeting_id self-link is reviewed (G-18)', () =>
   const CHECKER = readSql('scripts/check-test-account-cleanup-meeting-replaces-migration.sql');
 
   it('is the generator target and chains on 20261096 as applied', () => {
-    expect(MIGRATION_FILE).toBe('supabase/migrations/20261101_operator_test_account_cleanup_meeting_replaces.sql');
-    expect(ROLLBACK_FILE).toBe('supabase/SQL Scripts/20261101_operator_test_account_cleanup_meeting_replaces_rollback.sql');
+    expect(MIGRATION_FILE).toBe('supabase/migrations/20261104_operator_test_account_cleanup_meeting_replaces.sql');
+    expect(ROLLBACK_FILE).toBe('supabase/SQL Scripts/20261104_operator_test_account_cleanup_meeting_replaces_rollback.sql');
     expect(PREVIOUS_MIGRATION_FILE).toBe('supabase/migrations/20261096_operator_test_account_cleanup_export_requests.sql');
     expect(MIGRATION_96).toContain(`'version', '${STAMP_96}'`);
     expect(rollbackSql).toContain(`'version', '${STAMP_96}'`);
@@ -1875,7 +1875,7 @@ ${previousFunctionSql(MIGRATION_96)};
     const start = migrationSql.indexOf(tag) + tag.length;
     const md5 = createHash('md5').update(migrationSql.slice(start, migrationSql.indexOf(tag, start))).digest('hex');
     expect(CHECKER).toContain(`AND pg_catalog.md5(p.prosrc) = '${md5}')`);
-    expect(CHECKER).toContain(`'operator gate. md5 of the body is ${md5}, the committed 20261101 body'`);
+    expect(CHECKER).toContain(`'operator gate. md5 of the body is ${md5}, the committed 20261104 body'`);
   });
 
   it.each([
