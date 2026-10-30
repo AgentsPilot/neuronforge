@@ -62,7 +62,9 @@ const ZIP_LABEL = DOWNLOAD_MY_DATA_COPY.en.label;
 const REQ_A = '33333333-3333-4333-8333-333333333333';
 const REQ_B = '22222222-2222-4222-8222-222222222222';
 const T = '2026-10-27T10:05:00.000Z';
-const RETRY = '2026-10-28T09:00:00.000Z';
+// Far in the future: the drawer keeps a daily-limit refusal only until retryAt,
+// so a fixed date that has passed makes the alert vanish and the test fail.
+const RETRY = '2099-10-28T09:00:00.000Z';
 const EMAIL = 'owner@example.com';
 const FSI = '⁨';
 const PDI = '⁩';
@@ -333,17 +335,25 @@ describe('QA 7: Hebrew / RTL', () => {
   });
 
   it('daily limit: the time is on the owner clock inside <bdi>, as an alert, and Export stays off', async () => {
-    postAnswer = async () => jsonRes(409, { success: false, code: 'export_daily_limit', retryAt: RETRY });
-    await openHe();
-    fireEvent.click(screen.getByTestId('export-module-clients'));
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('export-submit'));
-    });
-    const alert = screen.getByTestId('export-alert');
-    await waitFor(() => expect(alert.querySelector('bdi')).not.toBeNull());
-    expect(alert.querySelector('bdi')!.textContent).toBe(heTime(RETRY));
-    expect(screen.getByTestId('export-status')).toBeEmptyDOMElement();
-    expect(screen.getByTestId('export-submit')).toBeDisabled();
+    // Pin the clock before RETRY: a retry time already past lifts the limit at
+    // once, so against the real clock this test broke on 2026-10-28 09:00 UTC.
+    // Only Date.now is pinned; waitFor still needs real timers.
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-27T12:00:00.000Z'));
+    try {
+      postAnswer = async () => jsonRes(409, { success: false, code: 'export_daily_limit', retryAt: RETRY });
+      await openHe();
+      fireEvent.click(screen.getByTestId('export-module-clients'));
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('export-submit'));
+      });
+      const alert = screen.getByTestId('export-alert');
+      await waitFor(() => expect(alert.querySelector('bdi')).not.toBeNull());
+      expect(alert.querySelector('bdi')!.textContent).toBe(heTime(RETRY));
+      expect(screen.getByTestId('export-status')).toBeEmptyDOMElement();
+      expect(screen.getByTestId('export-submit')).toBeDisabled();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('history: requested and sent dates each in their own <bdi>, Asia/Jerusalem', async () => {

@@ -31,6 +31,29 @@ export function isSubscriptionStatus(raw: unknown): raw is SubscriptionStatus {
   return typeof raw === 'string' && (SUBSCRIPTION_STATUSES as readonly string[]).includes(raw);
 }
 
+/**
+ * Where the stored mirror and the plan row disagree, while the subscription is
+ * paying. These come from OUR stored records only (plan payments P-8a.2;
+ * moved here from `billingPanelTypes.ts` by P-8b.3a, which re-exports it, so
+ * the list and the panel share one type). The check against Stripe itself is
+ * the nightly reconcile's (AM-5), and is never shown as this.
+ */
+export type BillingDisagreement = 'tier_differs' | 'paid_through_differs' | 'no_tier_on_plan';
+
+/**
+ * The list's filter values (plan payments P-8b.3a, AM-2; SA P3-SA-2 item 5):
+ * every status, plus `disagrees` (rows whose stored records disagree). ONE
+ * constant for the Finance URL parser, the copy, the route's Zod and the view.
+ * The chip keeps `isSubscriptionStatus`: `disagrees` is a filter, never a status.
+ */
+export const SUBSCRIPTION_FILTERS = [...SUBSCRIPTION_STATUSES, 'disagrees'] as const;
+
+export type SubscriptionFilter = (typeof SUBSCRIPTION_FILTERS)[number];
+
+export function isSubscriptionFilter(raw: unknown): raw is SubscriptionFilter {
+  return typeof raw === 'string' && (SUBSCRIPTION_FILTERS as readonly string[]).includes(raw);
+}
+
 /** The route's 409 message when the server's Stripe key mode cannot be read. Never echoes the key. */
 export const STRIPE_MODE_UNKNOWN =
   'The server’s Stripe key mode could not be read, so no subscription figures are shown.';
@@ -68,6 +91,11 @@ export interface SubscriptionRow {
   pendingPlan: SubscriptionPlanName | null;
   /** A founder discount is recorded (MRR then reads "amount not recorded"). */
   discounted: boolean;
+  /**
+   * P-8b.3a (AM-2): where our billing record and the plan row disagree, by the
+   * billing panel's own rule (`billingDisagreements`). Empty when they agree.
+   */
+  disagreements: BillingDisagreement[];
 }
 
 export interface SubscriptionsMrrLine {
@@ -92,14 +120,16 @@ export interface SubscriptionsTotals {
   byStatus: Record<SubscriptionStatus, number>;
   /** Every listed row. */
   accounts: number;
+  /** P-8b.3a: listed rows whose stored records disagree. Ignores the filter, like every total. */
+  disagreeing: number;
 }
 
 export interface SubscriptionsPayload {
   generatedAt: string;
   /** The current Stripe mode (PF-15): every row and figure is this mode only. */
   mode: 'test' | 'live';
-  /** The status filter applied to `rows`; `null` = all. Totals ignore it. */
-  status: SubscriptionStatus | null;
+  /** The filter applied to `rows` (a status, or `disagrees`); `null` = all. Totals ignore it. */
+  status: SubscriptionFilter | null;
   totals: SubscriptionsTotals;
   rows: SubscriptionRow[];
   /** Rows matching the filter, before the cap. */

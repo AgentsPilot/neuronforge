@@ -38,7 +38,7 @@ import { customRangeProblem } from '@/app/admin/components/adminWindowPresets';
 import { windowEquals, windowFilter, type AdminWindowExtra, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
 import { textFilter, type AdminFilterField, type AdminFilterSpec } from '@/app/admin/components/layout/useAdminFilters';
 import type { FinanceAccountsShow, FinanceAccountsSort } from '@/lib/business-os/finance/financeTypes';
-import { SUBSCRIPTION_STATUSES, type SubscriptionStatus } from '@/lib/admin/billing/subscriptionsTypes';
+import { SUBSCRIPTION_FILTERS, type SubscriptionFilter } from '@/lib/admin/billing/subscriptionsTypes';
 
 import {
   DEFAULT_FINANCE_QUERY,
@@ -69,9 +69,10 @@ export interface FinanceFilters {
   /**
    * Money MK-4: the Subscriptions list's status filter, only with `tab=plans`
    * ('' = all). The old `/admin/subscriptions?status=…` links keep it through
-   * the redirect. Never sent to the finance route.
+   * the redirect. Never sent to the finance route. P-8b.3a: also `disagrees`
+   * (SA P3-SA-2 item 5), through the ONE `SUBSCRIPTION_FILTERS` constant.
    */
-  status: '' | SubscriptionStatus;
+  status: '' | SubscriptionFilter;
   /**
    * Admin Exchange Rates slice 2a (SQ-20): the Exchange rates tab's Show, only
    * with that tab (default `enabled`, never written). Never sent to the finance route.
@@ -151,7 +152,7 @@ export const FINANCE_FILTER_SPEC: AdminFilterSpec<FinanceFilters> = {
   sort: choiceFilter('sort', FINANCE_ACCOUNTS_SORTS, DEFAULT_FINANCE_QUERY.sort),
   group: textFilter({ key: 'group', defaultValue: '', isValid: (raw) => FINANCE_GROUP_SHAPE.test(raw) }),
   show: choiceFilter('show', FINANCE_ACCOUNTS_SHOWS, DEFAULT_FINANCE_QUERY.show),
-  status: choiceFilter('status', SUBSCRIPTION_STATUSES, ''),
+  status: choiceFilter('status', SUBSCRIPTION_FILTERS, ''),
   // Admin Exchange Rates slice 2a (SQ-20, SA-2-5): two specs own `currencies` safely because they
   // share this ONE field object (never a copy), so both hooks parse and serialise it identically,
   // and the rates view's hook exists only while its tab is shown (Finance unmounts hidden panels).

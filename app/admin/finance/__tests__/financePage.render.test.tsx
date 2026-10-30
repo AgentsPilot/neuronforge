@@ -2652,6 +2652,7 @@ describe('Money MK-4: Recurring now and the Plans & subscriptions tab', () => {
       paidByPlan: [{ id: 'tier_a', name: 'Plan A', accounts: 3 }],
       byStatus: { ended: 0, paused: 0, grace: 0, failed: 1, cancelling: 1, active: 1, other: 0, no_stripe: 0 },
       accounts: 3,
+      disagreeing: 0, // P-8b.3a
     },
     rows: [
       {
@@ -2671,6 +2672,7 @@ describe('Money MK-4: Recurring now and the Plans & subscriptions tab', () => {
         failedAttempts: 0,
         pendingPlan: null,
         discounted: false,
+        disagreements: [], // P-8b.3a
       },
     ],
     matching: 1,

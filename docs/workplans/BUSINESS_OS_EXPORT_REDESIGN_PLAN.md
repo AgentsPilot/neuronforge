@@ -1,6 +1,6 @@
 # Plan: Business OS — Export Redesign (MX-0 to MX-7)
 
-> **Last Updated**: 2026-10-27
+> **Last Updated**: 2026-10-28
 
 **Developer:** Dev (written by the DELETE session's Dev for hand-off to the EXPORT session)
 **Requirement:** [BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md) (incl. `## SA Split Review — 2026-10-25`, conditions SR-1 to SR-12, and the parent's XC conditions copied in §10)
@@ -164,7 +164,8 @@ Meaning changes of `findDeletionFacts` (MX-4, MX-7) are announced in the coordin
 | Touches | New `columnLabels.ts` (`import 'server-only'`), its test; MX-2a builder reads it. **Not** the client translation bundles (XC-10) |
 | Lock / migration | No / none |
 | Effort | 🟢 1.5 d |
-| Business questions | **BQ-31** (translate headers only, or values too) before the workplan |
+| Business questions | **BQ-31** (translate headers only, or values too) before the workplan. ✅ Answered 2026-10-28 (user): "headers, record types and fixed labels only, not the owner's values." Which cell values are "fixed labels" goes back to the user as MX2B-Q1 / MX2B-Q2 ([MX-2b workplan](/docs/workplans/BUSINESS_OS_EXPORT_MX2B_WORKPLAN.md) §8) |
+| Workplan | [BUSINESS_OS_EXPORT_MX2B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_EXPORT_MX2B_WORKPLAN.md) |
 | Done when | CI: every `include` column of every section has en and he (es non-empty, may be a draft); CI: no two different keys in one module share a label in any language; the builder emits the owner's language headers; negative controls for both tests |
 
 **Coordination checklist (MX-2b):** CC-1, CC-5, CC-8. No shared file.
@@ -337,7 +338,7 @@ A module switched off in the map is not offered in the drawer and refused by the
 | **BQ-E6.1-2** questions that waited for "switch-on" (BQ-25, BQ-27, open issues 1 and 2) | **MX-3.1 workplan** | There is no switch-on any more; go-live is MX-3.1's merge ✅ answered 2026-10-27: **ship the defaults**; legal open issue 2 is a launch gate before the first real customer |
 | BQ-26 joined CSV shape | MX-2a workplan | Shape of the builder |
 | BQ-29 the limit | **MX-1a** workplan | Written into SQL literals |
-| BQ-31 translate headers only | MX-2b workplan | Label file scope |
+| BQ-31 translate headers only | MX-2b workplan | Label file scope ✅ answered 2026-10-28: **headers, record types and fixed labels only, not the owner's values** (follow-ups MX2B-Q1 / MX2B-Q2 in the MX-2b workplan) |
 | BQ-35 files reversal record | MX-1b drawer copy | Drawer sentence |
 | BQ-28 max emails per module | MX-3 workplan | Constant + "too large" email |
 | BQ-42 7 MB vs 10 MB | **MX-3** workplan | Byte-budget constant |
@@ -387,3 +388,4 @@ Without a claim in the coordination file first (SR-10, SR-11, B.1):
 | 2026-10-25 | Created (Dev, DELETE session, for hand-off) | End-to-end EXPORT plan MX-0 → MX-2a → MX-2b → MX-1a → MX-1b → MX-3 → MX-4 → MX-5 → MX-6 → MX-7 per SA SR-4; per-slice touches, locks, migration numbers, gates, switch states, effort (18 d), done-when, BQ timing, coordination checklists, frozen interfaces, hotspot anchors, files not to edit; open items SA-P1…SA-P7 |
 | 2026-10-27 | User decision: new slice E6.1 = MX-3.1, remove the export switch and the ZIP download code (SA amendment) | The user decided on 2026-10-27 ("we are still in testing mode … let's not create a parameter that is not needed"). SA ruled the consequences (§4.6a R-1…R-7). New §4.6a MX-3.1 (`feature/bos-export-mx3-1-remove-switch-and-zip`, 🟡 2.5 d, go-live gate, no migration): it removes `isModuleExportEnabled()` / `BUSINESS_OS_MODULE_EXPORT_ENABLED`, the route 404, the browser probe, the ZIP-vs-drawer choice, the flag doc rows, the admin environment catalogue entry and the tests, then the Vercel var after deploy. It also removes the owner and admin ZIP routes and UI, the ZIP builder, the sweep cron and the ZIP guards, and the bucket is emptied after deploy. MX-3 is unchanged except that SA-P5 is binding and C-10 is its merge gate. MX-4 loses the switch-on, the ZIP start 404 and C-9, and gains the contents doc; it is renamed `…-mx4-history-receipt`. MX-5 loses the admin ZIP 404. MX-6 is folded (0 d). MX-7 grows to 1.5 d and no longer waits 72 h. The slice table gains E numbers and ✅ for E1, E2, E4 and E5. Switch table, critical path and BQ timing are updated (new BQ-E6.1-1, BQ-E6.1-2). Frozen `DownloadMyDataButton` now runs through MX-7. Hotspot anchors are updated. Total 18 → 19.5 d |
 | 2026-10-27 | BQ-E6.1-1 / BQ-E6.1-2 answered (EXPORT TL) | Admin ZIP removed in MX-3.1 (gap until MX-5 accepted, placeholder line on `/admin/users`); go-live ships the defaults; legal open issue 2 is a launch gate, not an MX-3.1 gate |
+| 2026-10-28 | BQ-31 answered; MX-2b workplan linked (EXPORT Dev, E3) | User: "headers, record types and fixed labels only, not the owner's values." §4.3 and §6 marked answered; §4.3 links the MX-2b workplan. What counts as a "fixed label" in a cell goes back to the user as MX2B-Q1 / MX2B-Q2 |

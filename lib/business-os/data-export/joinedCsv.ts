@@ -17,8 +17,11 @@
 //
 // Data cells are written as stored, through csv.ts `csvLine` (BC-1). Only the
 // header, the record type and the looked-up labels are text this file
-// chooses; headers and record types come through `JoinedCsvLabels` (MX-2b
-// fills it with en/he/es; until then `KEY_ECHO_LABELS` echoes the keys).
+// chooses; headers and record types come through `JoinedCsvLabels`, which the
+// caller MUST pass (MX-2b: `EXPORT_COLUMN_LABELS` in columnLabels.ts gives
+// en/he/es). There is no default on purpose: columnLabels.ts is server-only,
+// so this pure file cannot import it (T-17), and a key-echo default would let
+// a caller ship raw keys as headers with every test green (MX-2b SA MX2B-1).
 //
 // Lookups (XC-10) are DECLARED in joinedCsvReferences.ts. A lookup falls back
 // to the raw value when the reference is not found, the label is empty, the
@@ -53,7 +56,7 @@ import {
   type LookupTargetId,
 } from '@/lib/business-os/data-export/joinedCsvReferences';
 
-// ── Labels (SA-P3; MX-2b fills them) ────────────────────────────────────────
+// ── Labels (SA-P3; the words live in columnLabels.ts, MX-2b) ────────────────
 
 /** The four fixed columns every module CSV has. */
 export type JoinedCsvFixedColumn = 'record_type' | 'belongs_to' | 'record_id' | 'parent_id';
@@ -69,13 +72,6 @@ export interface JoinedCsvLabels {
   /** Header of a column, named by the section where the key first appears. */
   column(section: ExportSectionId, key: string, language: ExportModuleLanguage): string;
 }
-
-/** MX-2a default until MX-2b: echoes the keys (the fixed key, the section id, the column key). */
-export const KEY_ECHO_LABELS: JoinedCsvLabels = {
-  fixed: (key) => key,
-  recordType: (section) => section,
-  column: (_section, key) => key,
-};
 
 // ── Classification seam (C-4) ───────────────────────────────────────────────
 
@@ -239,8 +235,8 @@ export interface JoinedCsvInput {
   rowsBySection: JoinedCsvRows;
   /** Rows of `lookupSectionsFor(moduleId)`, for labels only. Other sections are ignored. */
   lookupRowsBySection?: JoinedCsvRows;
-  /** Default `KEY_ECHO_LABELS` (until MX-2b). */
-  labels?: JoinedCsvLabels;
+  /** Required, no default (MX-2b): production passes `EXPORT_COLUMN_LABELS` from columnLabels.ts. */
+  labels: JoinedCsvLabels;
   /** Default `EXPORT_MODULES` (tests inject a module switched off). */
   map?: readonly ExportModuleDefinition[];
   /** Default `CLASSIFIED` (tests inject an excluded target, C-4). */
@@ -257,13 +253,25 @@ export interface JoinedCsv {
 }
 
 /**
- * The joined CSV of one module. Throws for an unknown module (fail closed) and
- * lets a classification error on the module's OWN sections propagate (C-4):
- * that section must fail, never be written with a guessed column list.
+ * The joined CSV of one module. Throws for an unknown module or missing labels
+ * (fail closed) and lets a classification error on the module's OWN sections
+ * propagate (C-4): that section must fail, never be written with a guessed
+ * column list.
  */
 export function buildJoinedCsv(input: JoinedCsvInput): JoinedCsv {
   const map = input.map ?? EXPORT_MODULES;
-  const labels = input.labels ?? KEY_ECHO_LABELS;
+  const labels = input.labels;
+  // The type already requires labels; this guards JavaScript callers and
+  // transpile-only tests, where the type proves nothing (MX-2b MX2B-1).
+  if (
+    labels === null ||
+    typeof labels !== 'object' ||
+    typeof labels.fixed !== 'function' ||
+    typeof labels.recordType !== 'function' ||
+    typeof labels.column !== 'function'
+  ) {
+    throw new Error('Joined CSV labels are required');
+  }
   const classification = input.classification ?? CLASSIFIED;
   const language = input.language;
   const sections = sectionsOfModule(input.moduleId, map);

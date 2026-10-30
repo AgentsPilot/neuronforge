@@ -1,0 +1,146 @@
+{
+  "_fixture_source": "CAPTURED (2026-09-30.endive, webhook event) plan payments P-8b.2 (SA ruling V-3), read-only from the Events API on 2026-10-28: a checkout.session.completed event (a payment-mode session: the sandbox's only subscription-mode one in the 30-day retention belongs to a customer this capture must not touch; the checkout.session object and every field the handler reads are the same in both modes, and the subscription field is present with a null value) as stored by acct_1UPKR4C7KDUGYIcA (test mode), event created 2026-10-12, event api_version 2026-09-30.endive. Scrubbed before commit: emails, names, phones, addresses, every URL and client secret replaced with placeholders, and the bos_user_id metadata value replaced with a fake UUID (as is the purchase_id metadata value). Ids, prices, amounts, statuses, timestamps, metadata keys and api_version as Stripe sent them.",
+  "id": "evt_1UPnZgC7KDUGYIcAy4AhLSvR",
+  "object": "event",
+  "api_version": "2026-09-30.endive",
+  "created": 1791828228,
+  "data": {
+    "object": {
+      "id": "cs_test_a16MS5Enui8ulHHsg3sFl9yMDEmnRmWA7zMz7A8UrTFyrlsmDygfy090DN",
+      "object": "checkout.session",
+      "adaptive_pricing": {
+        "enabled": false
+      },
+      "after_expiration": null,
+      "allow_promotion_codes": false,
+      "allowed_payment_method_types": null,
+      "amount_subtotal": 1000,
+      "amount_total": 1000,
+      "automatic_tax": {
+        "enabled": false,
+        "liability": null,
+        "provider": null,
+        "status": null
+      },
+      "billing_address_collection": null,
+      "branding_settings": {
+        "background_color": "#ffffff",
+        "border_style": "rounded",
+        "button_color": "#0074d4",
+        "display_name": "MeiriBarak-AgentsPilot-TestAccount sandbox",
+        "font_family": "default",
+        "icon": null,
+        "logo": null
+      },
+      "cancel_url": null,
+      "client_reference_id": "cd3e8beb-3841-4c36-966e-c3873dc2fcf9",
+      "client_secret": null,
+      "collected_information": {
+        "business_name": null,
+        "individual_name": null,
+        "shipping_details": null
+      },
+      "consent": null,
+      "consent_collection": null,
+      "created": 1791828158,
+      "currency": "usd",
+      "currency_conversion": null,
+      "custom_fields": [],
+      "custom_text": {
+        "after_submit": null,
+        "shipping_address": null,
+        "submit": null,
+        "terms_of_service_acceptance": null
+      },
+      "customer": null,
+      "customer_account": null,
+      "customer_creation": "if_required",
+      "customer_details": {
+        "address": "<scrubbed-address-object>",
+        "business_name": null,
+        "email": "<scrubbed-email>",
+        "individual_name": null,
+        "name": "<scrubbed-name>",
+        "phone": null,
+        "tax_exempt": "none",
+        "tax_ids": "<scrubbed-tax_ids-object>"
+      },
+      "customer_email": "<scrubbed-customer_email>",
+      "discounts": [],
+      "expires_at": 1791830016,
+      "integration_identifier": null,
+      "invoice": null,
+      "invoice_creation": {
+        "enabled": false,
+        "invoice_data": {
+          "account_tax_ids": null,
+          "custom_fields": null,
+          "description": null,
+          "footer": null,
+          "issuer": null,
+          "metadata": {},
+          "rendering_options": null
+        }
+      },
+      "livemode": false,
+      "locale": null,
+      "managed_payments": {
+        "enabled": false
+      },
+      "metadata": {
+        "package_id": "starter",
+        "package_version": "1",
+        "product": "business_os_boost",
+        "purchase_id": "00000000-0000-4000-8000-000000000002"
+      },
+      "mode": "payment",
+      "origin_context": null,
+      "payment_intent": "pi_3UPnZeC7KDUGYIcA2le2yhBi",
+      "payment_link": null,
+      "payment_method_collection": "if_required",
+      "payment_method_configuration_details": {
+        "id": "pmc_1UPKRbC7KDUGYIcAesiC2dY3",
+        "parent": null
+      },
+      "payment_method_options": {},
+      "payment_method_types": [
+        "card",
+        "link",
+        "cashapp",
+        "amazon_pay"
+      ],
+      "payment_status": "paid",
+      "permissions": null,
+      "phone_number_collection": {
+        "enabled": false
+      },
+      "recovered_from": null,
+      "redirect_on_completion": "always",
+      "return_url": "<scrubbed-return_url>",
+      "saved_payment_method_options": null,
+      "setup_intent": null,
+      "shipping_address_collection": null,
+      "shipping_cost": null,
+      "shipping_options": [],
+      "status": "complete",
+      "submit_type": null,
+      "subscription": null,
+      "success_url": null,
+      "total_details": {
+        "amount_discount": 0,
+        "amount_shipping": 0,
+        "amount_tax": 0
+      },
+      "ui_mode": "embedded_page",
+      "url": null,
+      "wallet_options": null
+    }
+  },
+  "livemode": false,
+  "pending_webhooks": 0,
+  "request": {
+    "id": null,
+    "idempotency_key": null
+  },
+  "type": "checkout.session.completed"
+}

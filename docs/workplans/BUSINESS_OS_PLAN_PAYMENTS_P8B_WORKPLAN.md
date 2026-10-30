@@ -1,13 +1,13 @@
 # Workplan: Business OS Plan Payments, P-8b (Reconciliation and webhook health)
 
-> **Last Updated**: 2026-10-27
+> **Last Updated**: 2026-10-28
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md): §9.1 P-8b row; §7 AM-4, AM-5 and the "Data source" line; §4 PF-5; §8 SR-3, SR-4, SR-8, SR-10, SR-11; §9.4 row "Stuck-event recovery and reconciliation"; §11 SA-P4 and its ruling in "SA Review — 2026-10-02" (SA-2), the P-8b row of SA-4 (no migration; `bos_cron_runs` and the billing record suffice); §9.5 row 1 (PF-5 is on the go-live floor)
 **Depends on:** P-6a merged (row's dependency). Boost 4b.2 merged: it created `bos-billing-reconcile` and the pass seam. P-8a merged (#466, #467, #469): the billing panel's stored disagreements.
 **Date:** 2026-10-27
 **Branch:** `feature/bos-plan-payments-p8b`, worktree `neuronforge-p8b`, fresh from `main` `b088b51d` (#543). Confirmed with `git branch --show-current` on 2026-10-27. Highest migration on that main: `20261096`.
-**Status:** SA APPROVED WITH CHANGES (2026-10-27, rulings 1 to 18). **P-8b.1 code complete 2026-10-27** (uncommitted), awaiting SA code review. P-8b.2 and P-8b.3 not started.
+**Status:** SA APPROVED WITH CHANGES (2026-10-27, rulings 1 to 18). P-8b.1 SA-approved, QA passed, **PR #555 opened 2026-10-28** (auto-merge). **P-8b.2 code complete 2026-10-28** (uncommitted, branch `feature/bos-plan-payments-p8b2`, cut from P-8b.1's `66189df1`), awaiting SA code review. **P-8b.2 merged (#559, 2026-10-28).** P-8b.3 plan SA-approved with changes (P3-SA-1 to P3-SA-13), split into 3a / 3b / 3c. **P-8b.3a code complete 2026-10-28** (uncommitted, branch `feature/bos-plan-payments-p8b3a` from `main` `abe9fd64`), awaiting SA code review; 3b and 3c not started.
 
 ## Overview
 
@@ -253,14 +253,17 @@ Stripe's read limit is 100 per second live and 25 in test mode. A run makes well
 - [x] ✅ P-8b.1 Step 3: route `processing` branch; log line
 - [x] ✅ P-8b.1 Step 4: harness 9b/9d/9e per the Q-1 ruling; per-export comparison script output in Implementation Notes
 - [x] ✅ P-8b.1 Step 5: `staleClaim.qa.test.ts`; `routerPlacement.guard` still green
-- [ ] P-8b.2 Step 1: Stripe list methods + tests (paging, cap, `complete: false`)
-- [ ] P-8b.2 Step 2: repository reads (cron last good run, billing events by event id, open subscriptions)
-- [ ] P-8b.2 Step 3: `planReconcilePass` A, B, C + unit tests; append to `RECONCILE_PASSES`; counts in `bosCronJobs.ts`
-- [ ] P-8b.2 Step 4: sandbox demo (§10)
+- [x] ✅ P-8b.2 Step 1: Stripe list methods + tests (paging, cap, `complete: false`)
+- [x] ✅ P-8b.2 Step 2: repository reads (cron runs, billing events by event / invoice id, subscription rows) in `PlanReconcileReadRepository` (ruling 9; D-5); `reclaimFailedIfStillFailed` (ruling 2)
+- [x] ✅ P-8b.2 Step 3: `planReconcilePass` A, B, C + unit tests, source guard, D3.1 double-replay test; appended to `RECONCILE_PASSES`; counts in `bosCronJobs.ts`
+- [x] ✅ P-8b.2 Step 3b: TL decision 11, P-6a follow-up F-1: `replaceCustomer` clears the whole subscription mirror
+- [x] ✅ P-8b.2 Step 3c: SA API-version ruling (b), V-1 to V-5 (verified (version, type) map, pass gate and summary warn, endive `checkout.session.completed` capture, ratchet, requirement §9.5 row 9)
+- [x] ✅ P-8b.2 Step 4: sandbox demo, re-run 2026-10-28 after V-1 to V-5 (real Stripe test reads, in-memory DB ports). Points 1, 2, 3 and 5 shown; **point 4 (a real-data mismatch) could not be shown** without touching the forbidden customer or a Stripe write; see "API-version ruling built, and the Step 4 demo (P-8b.2)"
 - [ ] P-8b.3 Step 1: AM-4 read repo + route + tests (auth failure, invalid input, happy path)
 - [ ] P-8b.3 Step 2: plan reconcile route + audit event + tests
 - [ ] P-8b.3 Step 3: Jobs page block and dialog; guard amendment; render tests
 - [ ] P-8b.3 Step 4: AM-2 "Disagrees" marker and filter
+- (P-8b.3 is broken down further, with FU-P8b-6, in "Plan: P-8b.3" § P3.5)
 - [ ] Each PR: `npm run test:bos-entitlements` if any entitlements import is touched (the AM-2 change is); build and typecheck filtered to touched files
 
 ---
@@ -465,6 +468,347 @@ Low (informational): a legacy row with NULL `processed_at` never matches `.lt` a
 
 **Code Approved for QA: Yes**
 
+## Implementation Notes (P-8b.2)
+
+**Code complete 2026-10-28, uncommitted, on `feature/bos-plan-payments-p8b2`** (cut from P-8b.1 at `66189df1`; P-8b.1 is PR #555, on auto-merge). Option A: **no migration**, no new `process.env` read, no change to `planPaymentApply.ts` or `planSubscriptionMirror.ts`, no change to the webhook route.
+
+| File | Change |
+|---|---|
+| `lib/business-os/billing/planReconcilePass.ts` (new) | The pass, pure given its ports. Step A replay, Step C unassigned paid invoices, Step B Stripe vs records; window per ruling 8; one `settleClaim` helper; `runOnWonClaim` the only handler call |
+| `lib/business-os/billing/planReconcileDeps.ts` (new, `server-only`) | Production wiring, loaded lazily on the first run (importing it creates no client): the webhook's own `dispatchBusinessOsEvent`, `handlePlanBillingEvent`, `PLAN_HANDLER_EVENT_TYPES`, `STALE_CLAIM_AGE_MS`, `STRIPE_API_VERSION` |
+| `lib/business-os/billing/reconcilePasses.ts` | `RECONCILE_PASSES = [boostReconcilePass, planReconcilePass]` |
+| `lib/business-os/billing/planBillingHandler.ts` | Exports `PLAN_HANDLER_EVENT_TYPES` (all 7, ruling 3). The switch is unchanged |
+| `lib/repositories/ProcessedWebhookEventRepository.ts` | `reclaimFailedIfStillFailed` (ruling 2): one UPDATE, `{ count: 'exact' }`, `.eq(event_id).eq(status,'failed')`, won only on count 1; CALLERS line names the pass |
+| `lib/repositories/PlanReconcileReadRepository.ts` (new, read-only) | `listRecentReconcileRunsAllJobs`, `listPlanSubscriptionRowsAllAccounts`, `findRecordedPlanPaymentsAllAccounts` (ruling 9) |
+| `lib/stripe/StripeService.ts` | `listBusinessOsPlanEvents`, `listBusinessOsSubscriptionsByPrice`: 100 per page, 10 pages, `complete: false` at the cap, platform only |
+| `lib/cron/bosCronJobs.ts` | 13 plan counts; `partlyDoneWhen` adds `planIncomplete`, `planDeadlineHit`, `planReplayFailed`, `planWindowClipped` (ruling 10) and `planCheckIncomplete`; description names plans |
+| `lib/repositories/BusinessOsBillingAccountRepository.ts` | **F-1** (TL decision 11): `replaceCustomer` clears every subscription-scoped column of the 20261025 grant, the same set as `attachTestClockCustomer` (SA C-6); `founder_discount_applied_at` kept |
+
+**SA rulings honoured.**
+
+| Ruling | How |
+|---|---|
+| 2 (drain, no new RPC) | Lease = unique insert, `reclaimFailedIfStillFailed`, `reclaimStale`. The pass never calls `reclaimFailed`; the handler runs only in `runOnWonClaim(event, attempt.won)`; `complete` / `markFailed` only in `settleClaim`. Pinned by `planReconcilePass.guard.test.ts` (AST). CALLERS line updated |
+| 3 (replay Stripe's events) | All 7 types, from `PLAN_HANDLER_EVENT_TYPES` only (a guard pins the constant to the switch's case labels both ways, and the wiring's `eventTypes` to that constant); `api_version !== STRIPE_API_VERSION` skipped and counted (`planApiVersionSkipped`); oldest first (`created`, then id) |
+| 4 (option A) | No migration; Steps B and C never write (tests assert no claim call and no handler call) |
+| 8 (window) | Anchor = newest finished run whose plan counts show `planIncomplete`, `planDeadlineHit`, `passesFailed` (and `planReplayFailed`, D-3) all 0, minus 1 h; never more than 7 days (`planWindowClipped`); 3 days when no plan-pass run exists |
+| 10 (amber) | `partlyDoneWhen` for the four named counts (+ `planCheckIncomplete`) |
+| 12 (D3.1) | `planReconcilePass.d31.test.ts`: the REAL handler and mirror behind the pass; a failed `.deleted` replayed by two runs gives one end row and one plan change; a partial failure's retry sees the duplicate |
+| 13 (Step C scope) | Only dispatcher-`plan` events, counted against the 100 cap and the deadline; a dispatcher throw is counted and skipped |
+| 14 (Stripe limits) | Sequential calls, 10-page cap; `complete: false` produces no orphan and no not-listed finding |
+| 16 (allow-lists) | `planReconcilePass.d31.test.ts` and `PlanReconcileReadRepository.test.ts` registered, sorted, in both `BusinessOsBilling*Repository.test.ts` lists |
+| 17 (CI, EC-3) | Unit tests only; no new env read |
+| 18 / TL 11 (F-1) | Done, above |
+
+**Deviations (for SA).**
+
+- **D-2 (Stripe list shape).** Step B lists with Stripe's default status (every subscription not cancelled) instead of `status: 'all'`, so cancelled history never fills the 10-page cap. `incomplete` and `incomplete_expired` are never orphans (a checkout still settling).
+- **D-3 (window anchor).** (a) A `partial` run may anchor, not only `succeeded`: `partlyDoneWhen` turns any boost deferral, and any clipped window, into `partial`, so "succeeded only" would keep a clipped window clipped for ever. Whether the plan pass finished is read from its own counts. (b) `planReplayFailed` also blocks anchoring, so a replay that failed (claim left `failed`, or a dispatch / claim step that failed before any claim) is listed again until it succeeds or ages past 7 days (then `planWindowClipped` shows amber). An event seen `processing` and fresh sets `planIncomplete`, for the same reason.
+- **D-4 (counts).** The run record's `counts` CHECK allows 1,024 bytes, shared with boost's 23 counts. §4.2's list plus the rulings' would not fit, so the plan pass records 13: `planEventsSeen`, `planReplayed`, `planReplayFailed`, `planSkippedNotPlan` (includes the other-mode skips), `planApiVersionSkipped`, `planStaleReclaimed`, `planMismatch`, `planOrphan`, `planUnassigned`, `planIncomplete`, `planDeadlineHit`, `planWindowClipped`, `planCheckIncomplete` (Step B or C, or the run history, not read in full). Worst case with every count at 5 digits is 963 bytes, under 1,024 (test-pinned). About 60 bytes are left (SA-corrected figure): any further key on this job, or a third pass, needs a `counts` migration and SA.
+- **D-5 (where the reads live).** The cron-run read is in `PlanReconcileReadRepository`, not `BosCronRunRepository.lastSucceededStart`: that repository's guard allows only the recorder to name it. The money history check is there too, not on `BusinessOsBillingEventRepository` (ruling 9). It is the fourth reader of `business_os_billing_accounts` (guard list updated).
+- **D-6 (plan rows).** Read through the existing `businessOsAccountPlanRepository.findEntitlementInputsBatch` (chunks of 100). Registered in RC-15 (`ALLOWED` + `NO_STATE_WRITE_REFERRERS`), with a pin that it calls that one method only.
+- **D-7 (Step B, one finding per root difference).** The plan-row checks (`plan_tier_differs`, `plan_paid_through_differs`) are skipped when the mirror already differs from Stripe on the same fact, so a price swapped in the dashboard is one finding, not two. The period and the paid-through date are compared only while Stripe says `active` (not `past_due`: a failed renewal moves Stripe's period ahead by design) and the current period started over 24 hours ago (its paid invoice may still be on the way).
+- **D-8 (SR-3 guard).** The wiring calls `dispatchBusinessOsEvent`, so `routerPlacement.guard`'s "router called from the route only" list gains `planReconcileDeps.ts`, with the reason. Its billing-placement map gains the wiring's three repository imports. The pass itself imports no repository.
+- **D-9 (F-1 guard).** The "current_period_end written only by the paid apply" source test now admits two CLEARING writers (`replaceCustomer`, `attachTestClockCustomer`) and asserts each writes `null`.
+- **D-10.** §3 said "no change to `planBillingHandler.ts`"; ruling 3 requires the exported type set there, so that is the only change to it.
+- **Test harness changes.** `runRecord.adoption.test.ts`: its `StripeService` mock gains the two list methods (empty), so "nothing to do" stays a `succeeded` run. Connect harness: not touched; `--ci` 152 / 152, 111 / 111 snapshots, `.snap` unchanged in git.
+
+**Tests and gates (2026-10-28, run sequentially).**
+
+| Gate | Result |
+|---|---|
+| New: `planReconcilePass.test.ts`, `.guard.test.ts`, `.d31.test.ts`, `PlanReconcileReadRepository.test.ts`, `businessOsPlanReconcileReads.test.ts`, plus `ProcessedWebhookEventRepository.test.ts` | 6 suites, 125 tests, pass |
+| `lib/business-os/billing` + `lib/business-os/boost` | 67 suites, 4,545 tests, pass |
+| `lib/repositories`, `lib/cron`, `lib/stripe`, `app/api/stripe`, `app/api/cron`, `app/api/admin/business-os/credits` | 178 suites, 4,389 tests, 118 snapshots, pass (after the adoption-test mock and the RC-15 registration) |
+| `app/admin`, `lib/admin` (incl. EC-3 catalogue), `lib/server` | 242 suites, 7,580 tests, pass |
+| `npm run test:bos-entitlements` | 321 suites, 9,626 tests, pass |
+| Guards named in the brief | `routerPlacement.guard`, `oneDontRenewPath.guard`, `catalogueDrift.guard` (EC-3), both `BusinessOsBilling*Repository` allow-lists, RC-15: all pass |
+| `tsc --noEmit` (full project, 8 GB heap) | completed (no OOM); 1,864 pre-existing errors, **0 in touched files** |
+| ESLint on the touched code and new test files | 0 errors, 0 warnings |
+
+**Owed:** SA code review; QA; the §10 / §9 sandbox demo (Step 4) in test mode, by Dev or QA, after SA review.
+
+### SA code review: P-8b.2
+
+**Code Review by SA, 2026-10-28**
+**Status:** APPROVED WITH FIXES. Fixes 1 to 4 below are required before QA. They are small and local to `planReconcilePass.ts`, `PlanReconcileReadRepository.ts` / its wiring and `bosCronJobs.ts`, each with a unit test. SA re-checks the diff of the fixes only.
+
+Checked: the full uncommitted diff and the 8 untracked files on `feature/bos-plan-payments-p8b2`, against the P-8b.2 row and rulings 1 to 18. Re-ran the 9 new or touched suites (331 tests, pass). The Connect `.snap` and `app/api/stripe/webhook/route.ts` are unchanged in git. Schema claims checked against migrations `20261025` (billing accounts: `livemode`, `bought_tier`, `ended_at`) and `20261027` (billing events: `livemode`, `kind`, `stripe_event_id` UNIQUE, `stripe_invoice_id`).
+
+#### Verified
+
+| Check | Result |
+|---|---|
+| Handler only on a won claim | Yes. `WonClaim` is built only in `takeClaim`; `deps.handle` is called once, inside `runOnWonClaim(event, attempt.won)`; AST-pinned |
+| Settle only through `settleClaim` | Yes. `complete` and `markFailed` each appear once, inside `settleClaim`; AST-pinned |
+| `reclaimFailedIfStillFailed` | One UPDATE, `{ count: 'exact' }`, `.eq(event_id).eq(status,'failed')`, won only on `count === 1`; no `.select()`, no `.or()`. The unconditional `reclaimFailed` is absent from the port type and from both files (pinned) |
+| No orphan when a list is not complete | Yes. A page cap, a Stripe throw, or the deadline in the price loop all clear `listsComplete`, which gates both `orphan` and `subscription_not_listed`. The billing-row read errors at its 20,000 ceiling rather than returning a cut list |
+| Tenant isolation (SR-8) | Holds. No account id from input. The service-role reads are documented, mode-filtered, column-limited, and named `…AllAccounts`. Plan-row ids come from our own billing rows. The pass's only own writes are claim rows, with the same `metadata` shape as the route's |
+| PII / logging / TS | Findings carry the kind and Stripe or billing-row ids only. No `console`. Pino context comes first. There is no `any`; casts are confined to Supabase row typing |
+| Repository pattern | The pass imports no repository (pinned). The wiring reaches the database only through `lib/repositories/` |
+| F-1 | `replaceCustomer` writes exactly the `20261025` UPDATE grant minus `founder_discount_applied_at`, identical to `attachTestClockCustomer`. This is pinned against the migration text, not a hand list |
+| Connect | Unchanged. The `.snap` is untouched, there is no `Stripe-Account` header on either list, and the route is not edited |
+
+#### Rulings on the deviations
+
+- **D-2 / D-7: approved, all parts.**
+  - One finding per root difference for the plan-row checks.
+  - Period and paid-through are compared only while Stripe says `active` and the period is more than 24 hours old.
+  - Stripe's default status listing is used. An open row whose subscription Stripe no longer lists (for example, cancelled at Stripe) is still surfaced, as `subscription_not_listed`, and only from complete lists.
+  - `incomplete` and `incomplete_expired` are never orphans.
+- **D-3: approved, both parts.**
+  - (a) A `partial` run may anchor when its plan counts are clean. `passesFailed` still blocks.
+  - (b) `planReplayFailed` blocks the anchor, and a fresh in-flight claim sets `planIncomplete`.
+  - The principle behind (b) is extended by fixes 1 and 2. A deterministically failing event holds the window back for up to 7 days and then shows as `planWindowClipped`. That is acceptable, because it is amber the whole time.
+- **D-4: approved, with a corrected figure.** With the 36 keys of this job and every value at 5 digits, the jsonb text is **963 bytes**, so about 60 bytes are left, not about 100. Plan counts are bounded (events ≤ 1,000 per run). Any further key on this job, or a third pass, needs a `counts` migration and comes to SA.
+- **D-5: approved.** `BosCronRunRepository` stays the recorder's alone.
+- **D-6: approved.** It reuses `findEntitlementInputsBatch` in chunks of 100 (equal to `BOS_ENTITLEMENT_BATCH_LIMIT`), is registered in RC-15 `ALLOWED` and `NO_STATE_WRITE_REFERRERS`, and is pinned to that one method. It reads the override join it does not need; that is acceptable reuse.
+- **D-8: approved.** The wiring classifies through the same dispatcher, and it is not a second endpoint. The guard still pins the exact list.
+- **D-9: approved.** The test now asserts that both clearing writers write the literal `null` and that there are exactly two of them.
+- **D-10: approved.** Only the constant is exported. The switch is unchanged, and the set is pinned to the case labels in both directions.
+
+#### Code Review Comments (fixes required)
+
+1. **`planReconcilePass.ts` `stepA`: every lost claim must block the anchor. Priority: High.** Today only `lost: 'in_flight'` sets `incomplete`. `lost: 'raced'` covers two cases: an insert `23505`, and `reclaimFailedIfStillFailed` with count 0. In both, another actor holds the event **in flight**, and it may still fail. That actor can be:
+   - a live delivery whose retry later fails;
+   - the P-8b.3 "Reconcile plan payments now" run, which by design never writes `bos_cron_runs`, so its `planReplayFailed` never blocks anything;
+   - an overlapping dev `GET`.
+
+   If the cron run's own counts are clean, the window then moves past an event left `failed` that Stripe may no longer retry. **Fix:** set `counts.incomplete = 1` on every `lost` outcome. Test both race shapes.
+2. **`settleClaim` / `runOnWonClaim`: a claim that could not be settled must block the anchor. Priority: Medium.** If the handler returns but `complete()` fails, the row stays `processing` and the run counts `replayed` with clean counts. The window moves on, and that row is never relisted, never reclaimed by anyone, and shows as Stuck on AM-4 for ever. **Fix:**
+   - `settleClaim` returns whether the write landed.
+   - On a failed settle, set `incomplete = 1`. The next run then relists the event, reclaims it as stale after 15 minutes and re-runs the idempotent handler.
+   - Test the complete-fails and the markFailed-fails cases.
+3. **`planReconcileWindow` and the run read lookback: the 3-day "first night" window can skip days. Priority: Medium.** The pass asks for runs since `now − 7 days`, so "no plan-pass run" also means "the plan pass ran, but not within 7 days". That happens if the cron was down for more than a week, or if every run in the week was recorded `failed`. That case gets 3 days, **unclipped and green**, silently skipping days 3 to 7. **Fix:**
+   - Read the run history over Stripe's 30-day event retention (keep the 50-row limit). `first_run` applies only when no plan-pass run exists in that range.
+   - The anchor stays capped at 7 days (`windowClipped`).
+   - Test: a single clean plan run 10 days ago gives 7 days, clipped.
+4. **`bosCronJobs.ts` `partlyDoneWhen`: add `planApiVersionSkipped` (atLeast 1). Priority: Medium.** Events read through `events.list` carry the `api_version` they were rendered at when created, which is the account's version then, not the webhook endpoint's pinned one. If the platform account's default version is not `STRIPE_API_VERSION` (`2025-10-29.clover`), every event is skipped and the pass replays nothing while the run shows green. Making it amber is free (no counts bytes), and it extends ruling 10. Pin it in the existing ruling-10 test. **Also binding on Step 4 (sandbox demo):** record the test account's default API version, and show `planApiVersionSkipped = 0` on the replayed event. If the versions differ, stop and bring it to SA before P-8b.3.
+
+#### Optimisation suggestions (non-blocking)
+
+- A Step C read failure (`recordedPayments`) does not block the anchor, so those paid invoices are not re-checked. That is acceptable for a flag-only check. Note it in the pass header.
+- One missed `invoice.paid` (row `past_due`, Stripe `active`) can raise both `status_differs` and `period_differs`. The one-root rule covers only the plan-row checks. That is acceptable; the findings are flags.
+- Replayed events are audited by the handler with `source: 'stripe_webhook'`. When the handler freeze (D-10, §11 R-2) lifts, consider a `plan_reconcile` source. Follow-up only.
+
+**Code Approved for QA: Yes, once fixes 1 to 4 land** (SA re-checks the fix diff only; no full re-review).
+
+### Fixes after SA code review (P-8b.2)
+
+**Dev, 2026-10-28.** Fixes 1 to 4 applied in `feature/bos-plan-payments-p8b2`, uncommitted.
+
+| Fix | Change | Test |
+|---|---|---|
+| 1 (High) | `stepA`: EVERY `lost` claim sets `incomplete = 1` (insert `23505`, `reclaimFailedIfStillFailed` count 0, and `reclaimStale` not won) | The insert race now asserts `incomplete: 1`; new test for a lost conditional failed-reclaim (no handler, `replayFailed: 0`, `incomplete: 1`) |
+| 2 (Medium) | `settleClaim` returns whether the write landed; `runOnWonClaim` returns `{ handled, settled }`; an unsettled claim sets `incomplete = 1` | Two cases: `complete()` fails after the handler returned, `markFailed()` fails after it threw (row stays `processing`, one `bos_plan_reconcile_claim_not_settled`, `incomplete: 1`); a control asserts a settled replay stays `incomplete: 0` |
+| 3 (Medium) | Run history read over 30 days (`PLAN_RECONCILE_LIMITS.RUN_HISTORY_MS`), 50-row limit kept; the anchor stays capped at 7 days. `first_run` only when no plan-pass run is in those 30 days | One clean plan run 10 days ago → 7 days, clipped, `anchored`; the pass asks for runs since `now − 30 days` |
+| 4 (Medium) | `bosCronJobs.ts` `partlyDoneWhen` gains `planApiVersionSkipped` (atLeast 1) | Pinned in the ruling-10 registry test |
+| Note | Pass header records that a Step C read failure is amber (`checkIncomplete`) but does not hold the window back | — |
+
+Residual, for SA's information (not fixed, not asked): the run read selects `succeeded` and `partial` runs only. A `failed` run's counts are `{}`, so if every run in 30 days was recorded `failed`, the window falls back to the 3-day first-night window.
+
+**Gates after the fixes (sequential).**
+
+| Gate | Result |
+|---|---|
+| The three `planReconcilePass*` suites | 74 tests, pass |
+| `lib/business-os/billing`, `lib/business-os/boost`, `lib/repositories`, `lib/cron`, `lib/stripe`, `app/api/stripe`, `app/api/cron`, `lib/admin/environment` | 244 suites, 8,943 tests, 118 snapshots, pass |
+| Connect harness `--ci` | 152 / 152, 111 / 111 snapshots; `.snap` unchanged in git |
+| Billing allow-list guards (both `BusinessOsBilling*Repository.test.ts`) | pass |
+| `npm run test:bos-entitlements` | 321 suites, 9,626 tests, pass |
+| `tsc --noEmit` (full project, 8 GB heap) | completed (no OOM); 1,864 pre-existing errors, 0 in touched files |
+| ESLint on the fixed files | 0 errors, 0 warnings |
+
+**Step 4 sandbox demo: STOPPED at the API-version check (binding condition of SA fix 4).**
+
+- **What ran.** One read-only probe against the Stripe TEST account. The key came from the local test env file and was passed inline, never printed. The database env was pointed at an unreachable address (`127.0.0.1:9`), so no database call was possible. No Stripe write and no database write. The pass itself was **not** run: the versions differ, so the brief says stop.
+- **Account:** `acct_1UPKR4C7KDUGYIcA` (the standard test sandbox). It has **no webhook endpoints** registered (local demos use `stripe listen`).
+- **Events listed with the handler's 7 types** (`PLAN_HANDLER_EVENT_TYPES`, read from the handler source):
+  - Last 3 days: 87.
+  - Last 7 days: 87.
+  - Last 30 days: 163 (65 `customer.subscription.updated`, 43 `invoice.paid`, 28 `customer.subscription.deleted`, 22 `invoice.payment_failed`, 3 `invoice.payment_action_required`, 2 `checkout.session.completed`).
+  - **Every one has `api_version: 2026-09-30.endive`**, and `livemode: false`.
+- **The account's default API version is therefore `2026-09-30.endive`**: `events.list` renders each event at the version the account had when the event was created. `STRIPE_API_VERSION` is `2025-10-29.clover`.
+- **Consequence:** on this account the pass would skip all 163 events. `planApiVersionSkipped` would be 163, nothing would be replayed, and the run would now show amber (fix 4).
+- **For SA before P-8b.3:**
+  - Either move the handler's pinned version (and `StripeService` / `stripeClient`) to `2026-09-30.endive`,
+  - or accept a set of versions the handler was checked against (§9.5 row 9 already names `2025-09-30.clover` and `2026-09-30.endive` for the endpoint),
+  - or re-render the replayed event at the pinned version (`events.retrieve` does not do this).
+  - Production's default version is unknown to Dev.
+  - Dev made no workaround.
+
+### SA re-review: P-8b.2 fixes, and the API-version ruling
+
+**SA, 2026-10-28**
+**Status:** Fixes 1 to 4 APPROVED. The residual gap is ACCEPTED. The API-version question is ruled below as **option (b), per type**, and it is BLOCKING: the slice goes to QA and the Step 4 demo only after items V-1 to V-5 land.
+
+#### Fixes 1 to 4: approved
+
+Re-checked the fix diff only. Re-ran `planReconcilePass*` and `lib/cron`: 277 tests, pass.
+
+| Fix | Verdict |
+|---|---|
+| 1 | Correct. Every `lost` outcome sets `incomplete` (the `23505` insert race, a lost conditional failed-reclaim, a lost stale reclaim); `replayFailed` is not touched. Both race shapes are tested |
+| 2 | Correct. `settleClaim` returns whether the write landed. `runOnWonClaim` returns `{ handled, settled }`, and an unsettled claim sets `incomplete` whether the handler returned or threw. A control test checks that a settled replay stays clean. The guard's single-call pins still hold |
+| 3 | Correct. History is read over 30 days (`RUN_HISTORY_MS`) with the 50-row limit kept. The anchor stays capped at 7 days, and `first_run` applies only when no plan-pass run exists in those 30 days |
+| 4 | Correct. `planApiVersionSkipped` is in `partlyDoneWhen` and pinned |
+
+#### Residual gap (30 days of only `failed` runs falls back to 3 days): accepted, no fix
+
+- The loss is bounded. The window is never wider than 7 days, so the extra loss is events from days 3 to 7 back. It needs every run for 30 days to be recorded `failed`.
+- Each of those runs is **red** on the Jobs page, which is louder than the amber this slice adds. Thirty red days is an incident someone acts on.
+- Recovery exists: the P-8b.3 button, or a Stripe "Resend".
+- A `failed` run carries no counts, so it cannot be told apart from a boost-only run before this deploy.
+- Record it as a known limitation in the pass header (one sentence). Nothing else.
+
+#### API version ruling (BLOCKING): option (b), per (version, event type), tied to captured evidence
+
+**What is true, and how I checked it.** I had no web search in this session, so the Stripe changelog between `2025-10-29.clover` and `2026-09-30.endive` was **not** read. Stripe ships breaking changes only in its twice-yearly major releases, and clover to endive crosses at least one of them, so equal shapes cannot be assumed from the names. The deciding evidence is in the repo instead. `planStripeFields.c6.test.ts` checks every fixture in `fixtures/stripe/` against the handler's §3.7 list of fields it reads (`FIELDS_READ`), and that test passes today:
+
+| Event type | `2025-09-30.clover` (captured) | `2025-10-29.clover` (the SDK pin, hand-built) | `2026-09-30.endive` (captured, P-6a / P-7b.1) |
+|---|---|---|---|
+| `invoice.paid` | yes | yes | yes (several) |
+| `invoice.payment_failed` | — | yes | yes |
+| `invoice.payment_action_required` | — | (none) | yes |
+| `customer.subscription.updated` | — | yes | yes |
+| `customer.subscription.deleted` | yes | yes | yes |
+| `checkout.session.completed` | yes | yes | **no** |
+| `checkout.session.expired` | — | yes | **no** |
+
+**Webhook versus `events.list`.** These are two different renderings:
+- A webhook endpoint created with an API version receives events at that version. Without one, it receives them at the account default.
+- `events.list` returns each event as stored: rendered at the account's default version when the event was created, and stamped in `event.api_version`. The request's own `Stripe-Version` does not re-render it.
+- The repo bears this out. The sandbox has no endpoint, and both `stripe listen` and `events.list` gave `endive`. Production's test account endpoint on `2025-09-30.clover` delivered clover.
+- So a replay can be in a different shape from the live delivery of the same event. That is exactly why the gate stays, keyed on the event's own `api_version`.
+- The handler's own follow-up reads (subscription retrieve, invoice lines, invoice payments) go through the SDK at the pin, whatever the event's version. That is already how live endive deliveries are handled (§9.1.2 F-4).
+
+**Rejected:**
+- **(a), moving the pin.** It changes every outbound Stripe call platform-wide (Connect, boost, checkout, the Connect harness) and probably needs a `stripe` package upgrade, which is outside P-8b. It would not even help: events already created stay rendered at the version they were created with. If wanted, it is its own stream with SA review.
+- **A per-shape detector.** It would be a second parser of Stripe payloads that drifts from `FIELDS_READ`. The evidence-backed allow-list is simpler and cannot accept a shape nobody checked.
+- **An exact single string.** It is wrong today: production's endpoint already delivers `2025-09-30.clover`, not the pin.
+
+**Instructions for Dev (V-1 to V-5):**
+
+- **V-1.** In `planBillingHandler.ts`, beside `PLAN_HANDLER_EVENT_TYPES` (this amends D-10 to two exports), add a readonly map `PLAN_HANDLER_VERIFIED_EVENT_SHAPES`, keyed by API version, whose value is the set of event types verified at that version:
+  - `2025-10-29.clover`: all 7 (the pin). Hand-built fixtures cover 6 types. `invoice.payment_action_required` carries an invoice object, the same object as `invoice.payment_failed`, so it is verified by that fixture.
+  - `2025-09-30.clover`: all 7. This is the same major as the pin, and Stripe's monthly releases within a major are additive. It is also what production's endpoint delivers today.
+  - `2026-09-30.endive`: the 5 types captured above. Add `checkout.session.completed` only if V-3 captures it. Add `checkout.session.expired` only if a captured endive fixture exists.
+  - A header comment says that adding a version or type requires a captured fixture at that version in `fixtures/stripe/` and SA review.
+- **V-2.** In the pass, replace `event.api_version !== deps.apiVersion` with "the version is in the map **and** the type is in its set". Otherwise skip and count `apiVersionSkipped` (same key, no new bytes; relabel it "events at an unverified Stripe API version or shape").
+  - Emit **one** summary `warn` per run listing the distinct skipped `(api_version, type)` pairs and their counts (no ids, no PII). Do not log one line per event.
+  - The deps field `apiVersion` is replaced by the map. Update the guard and unit tests: a verified pair is replayed; an unverified version is skipped; a verified version with an unverified type (endive `checkout.session.expired`) is skipped.
+- **V-3.** Capture one sandbox endive `checkout.session.completed` event, read-only (2 exist in the last 30 days on `acct_1UPKR4C7KDUGYIcA`). Scrub it as C-6 did, add it to `fixtures/stripe/` and `CAPTURED_OBJECTS`, and make sure the C-6 field check passes. Only then put the type into the endive set. Optional: an endive `checkout.session.expired`, by creating and expiring one test-mode session on the sandbox. If skipped, that pair stays unverified (amber if it ever appears).
+- **V-4.** Add a ratchet test that, for every `(version, type)` in `PLAN_HANDLER_VERIFIED_EVENT_SHAPES`, at least one fixture of that type exists and passes the C-6 field check.
+  - For endive, the fixture must be **captured at endive**.
+  - For the two clover versions (one major), a fixture at either clover version counts, captured or hand-built.
+  - At clover only, `invoice.payment_action_required` may be met by an `invoice.payment_failed` fixture (the same Stripe object). The test names that mapping with its reason. At endive, no substitution is allowed.
+  - The allow-list then cannot grow without evidence.
+- **V-5.** Ask the BA to amend requirement §9.5 row 9. Besides the production **endpoint's** version, production's **account default** API version must also be in `PLAN_HANDLER_VERIFIED_EVENT_SHAPES`. Otherwise the nightly replay skips everything and shows amber.
+
+**What the Step 4 demo must show afterwards** (sandbox `acct_1UPKR4C7KDUGYIcA`, test mode):
+1. The `api_version` of every replayed event (`2026-09-30.endive`), and `planApiVersionSkipped` equal only to the events of unverified pairs, with the summary line naming them (expected: 0, or the endive `checkout.session.expired` count).
+2. An `invoice.paid` plan event whose claim was forced to stale `processing`, and one whose claim was deleted: each is replayed once, the plan row and money history are written once, and the claim is `completed`.
+3. A second run: `planReplayed = 0`, no new money-history row.
+4. A deliberate mismatch: exactly one `bos_plan_reconcile_finding`, `planMismatch = 1`.
+5. Boost counts unchanged, and the run record's outcome and counts as stored in `bos_cron_runs`.
+
+**Question for the user** (plain terms; a go-live item, **not** a merge blocker). With the gate, an unverified version can only cause skipped events and an amber run, never a wrong-shape replay. The question:
+
+> "In the Stripe dashboard of the account our live site uses, open **Developers** and tell us the **API version** shown for the account. Then open **Webhooks**, find the endpoint that points at our site, and tell us the API version shown on it."
+
+Production's test account delivered `2025-09-30.clover` when observed on 2026-10-06, which is in the verified set.
+
+**Optional follow-up FU-P8b-3** (not this slice): the live webhook could apply the same map (it does not check the version today). That is a route change, and it needs the Connect evidence rules, so it is a separate SA decision.
+
+**Code Approved for QA:** after V-1 to V-4 land and SA re-checks that diff only. Then the Step 4 demo runs.
+
+### API-version ruling built, and the Step 4 demo (P-8b.2)
+
+**Dev, 2026-10-28.** SA re-review items V-1 to V-5 are built in `feature/bos-plan-payments-p8b2`, uncommitted. The accepted failed-runs limitation is one sentence in the pass header.
+
+| Item | Change |
+|---|---|
+| V-1 | `planBillingHandler.ts` exports `PLAN_HANDLER_VERIFIED_EVENT_SHAPES` beside `PLAN_HANDLER_EVENT_TYPES` (D-10 is now two exports). `2025-10-29.clover` and `2025-09-30.clover` map to all 7 types; `2026-09-30.endive` maps to 6 (the 5 captured before plus `checkout.session.completed` from V-3). A header comment says that a new pair needs a captured fixture and SA review. `checkout.session.expired` at endive stays unverified (no capture) |
+| V-2 | The pass replays an event only when its own `(api_version, type)` is in the map; anything else adds to `apiVersionSkipped`. One `warn` per run, `bos_plan_reconcile_unverified_shapes`, lists `{ apiVersion, eventType, count }` with no ids. The deps field `apiVersion` is replaced by `verifiedShapes` (the wiring hands in the handler's map, and the guard pins it). The registry label now reads "events at an unverified Stripe API version or shape". Tests: a verified non-pin pair (endive `invoice.paid`) is replayed; an unverified version is skipped and never claimed; endive `checkout.session.expired` is skipped; the summary line is checked exactly |
+| V-3 | Read-only capture from `acct_1UPKR4C7KDUGYIcA`: `captured-p8b2-event-checkout-session-completed-AhLSvR.json` (`evt_1UPnZgC7KDUGYIcAy4AhLSvR`, endive). **It is a payment-mode session.** The sandbox's only other endive `checkout.session.completed` in Stripe's 30-day retention, the subscription-mode one, belongs to `cus_VQf9jX6fnfVlkK`, so it was not read further or saved. The checkout session object, and all 7 fields the handler reads, are the same in both modes (`subscription` is present, set to null). Scrubbed: customer email, name, address, tax ids, `customer_email`, `return_url`, and the `purchase_id` metadata (a fake UUID). The C-6 field check passed **before** the type was added to the endive set. The `checkout_session` kind was already in `CAPTURED_OBJECTS`, so that set is unchanged (comment added). **For SA:** if a payment-mode session is not acceptable evidence, remove the one endive line; the ratchet then needs nothing more |
+| V-4 | The ratchet lives in `planStripeFields.c6.test.ts`, beside the field check it reuses. Every pair in the map needs a passing event fixture of that type. Endive (and any non-clover) pairs need a capture at exactly that version. Either clover version counts for both clover versions. At clover only, `invoice.payment_action_required` may be met by `invoice.payment_failed`, because both carry the same invoice object; the test names this. Negative controls: endive `checkout.session.expired`, and an unknown version, have no evidence |
+| V-5 | Requirement §9.5 row 9: production's **account default** API version must also be in the verified set (per SA ruling, P-8b.2). Change History row added |
+
+**Gates after V-1 to V-5 (sequential).**
+
+| Gate | Result |
+|---|---|
+| `lib/business-os/billing`, `lib/business-os/boost`, `lib/repositories`, `lib/cron`, `lib/stripe`, `app/api/stripe`, `app/api/cron`, `lib/admin/environment`, `app/admin` | 437 suites, 14,873 tests, 118 snapshots, all pass. This includes `planReconcilePass*` (76 tests) and `planStripeFields.c6` (91, with the 20 ratchet pairs) |
+| Connect harness `--ci` | 152 / 152, 111 / 111 snapshots; the `.snap` is unchanged in git |
+| Billing allow-list guards | pass |
+| `npm run test:bos-entitlements` | 321 suites, 9,626 tests, all pass |
+| `tsc --noEmit` (full project, 8 GB heap) | completed with no OOM; 1,864 pre-existing errors, 0 in touched files |
+| ESLint, touched files | 0 errors, 0 warnings |
+
+**Step 4 sandbox demo (2026-10-28), what was real and what was faked.**
+
+- **REAL:**
+  - Stripe test-mode reads on `acct_1UPKR4C7KDUGYIcA` through the real `StripeService`: `listBusinessOsPlanEvents`, `listBusinessOsSubscriptionsByPrice`, the price catalog's `prices.list`, and the handler's own reads (invoice lines, subscription retrieve).
+  - The real `createPlanReconcilePass`, `planResolver`, `createPlanBillingHandler` with the real `applyPaidPlanInvoice`, `planPriceCatalog`, `getEntitlementConfig`, `PLAN_HANDLER_EVENT_TYPES` / `VERIFIED_EVENT_SHAPES`, the real cron registry, and the recorder's `extractCounts` / `isPartlyDone`.
+  - The test key was passed inline and never printed, with `MSYS_NO_PATHCONV=1`.
+- **FAKED (in memory):**
+  - Every DB-side port: the claim table, the two billing records, the money history with the apply function (unique on the invoice), the plan-row writes, the plan rows for Step B, the cron run history (one clean run as the anchor) and the Step C lookups.
+  - Also faked: the plan-change audit, the first-payment notifier, and the boost pass (fixed all-zero counts; the real boost pass reads and writes the production DB).
+  - The Supabase env pointed at `127.0.0.1:9`, so no database call was possible.
+  - **No database write and no Stripe write.**
+  - Anything of `cus_VQf9jX6fnfVlkK` was dropped unprocessed by a wrapper on the Stripe port (0 events and 3 subscriptions dropped).
+
+**SA's demo points.**
+
+1. **API versions.** The window held 13 plan-type events, all at `2026-09-30.endive`, all verified pairs. `planApiVersionSkipped = 0`, so no summary line was emitted. The 30-day set has no `checkout.session.expired`. The unverified-pair summary line is shown in the unit test.
+2. **Replays.**
+   - A, `evt_1UVAUSC7KDUGYIcAl7GFg5DT` (`invoice.paid`, endive), claim forced to stale `processing`: `reclaimStale`, then `complete`.
+   - B, `evt_1UVAU4C7KDUGYIcAUyPHpUn8` (`invoice.paid`, endive), claim deleted: `insert`, then `complete`.
+   - Each was replayed once. Each wrote one `invoice_paid` money-history row (`in_1UVAU8C7KDUGYIcAIEXykR1C`, `in_1UVAU1C7KDUGYIcAQhUicI6w`) and one plan-row write (`basic`). Both claims ended `completed`.
+   - Run 1 counts: `planEventsSeen 13, planReplayed 2, planStaleReclaimed 1`; all others 0.
+   - The handler's real apply path ran to `applied`, with no refusal and no error lines.
+3. **Second run.** `planReplayed 0`, no claim call, 0 new money-history rows, 0 plan writes.
+4. **Deliberate mismatch: NOT SHOWN on real data.** After dropping the forbidden customer, the sandbox has **0** non-cancelled plan subscriptions; the 3 it has all belong to `cus_VQf9jX6fnfVlkK`. Planting a mismatch would need that customer or a new Stripe subscription (a Stripe write), so per the brief it was not worked around. Step B ran on 0 subscriptions: `planMismatch 0, planOrphan 0, planCheckIncomplete 0`. The behaviour is covered by the unit tests (each finding kind, `planMismatch = 1`).
+5. **Boost counts and the run record.** Boost counts are identical to the boost pass's output in both runs. What would be stored in `bos_cron_runs` (not written): outcome `succeeded` in both runs, 36 keys, 820 bytes.
+   - Run 1: `planEventsSeen 13, planReplayed 2, planStaleReclaimed 1`, every other plan and boost count 0, `passesRun 2, passesFailed 0`.
+   - Run 2: the same with `planReplayed 0, planStaleReclaimed 0`.
+
+### SA check: V-1 to V-5 and the Step 4 demo (P-8b.2)
+
+**SA, 2026-10-28**
+**Status:** APPROVED. **Ready for QA**, with one QA condition (Q-C1) and two follow-ups recorded.
+
+**What I re-checked: the diff of V-1 to V-5 only.**
+
+| Item | Verdict |
+|---|---|
+| V-1 | Correct. `PLAN_HANDLER_VERIFIED_EVENT_SHAPES` sits beside the type set, and its header names the evidence rule. Both clover versions get all 7 types; endive gets the 6 captured ones; endive `checkout.session.expired` is left out |
+| V-2 | Correct. `isVerifiedShape` uses an own-property lookup (no prototype keys), and a missing `api_version` fails closed. The check runs before any claim or dispatch, so an unverified event is never claimed. There is one summary `warn` per run, with no ids; it is also emitted when the loop stops at the deadline or the batch cap. Unverified skips do not block the anchor, which is right: they are permanent, and the run shows amber |
+| V-3 | Accepted. See ruling A |
+| V-4 | Correct. The ratchet reuses the C-6 field check. A non-clover pair needs a capture at exactly that version. The one clover substitution is named with its reason. The negative controls bite |
+| V-5 | Done (requirement §9.5 row 9) |
+| Fixture privacy | The capture is scrubbed (email, name, address, phone, URLs, client secret; metadata ids replaced with fakes), and its `_fixture_source` names the payment mode |
+
+**Ruling A: accept the payment-mode `checkout.session.completed` capture as the endive evidence.**
+- The C-6 check proves that the paths the handler reads exist at endive, and `subscription` is present at the top level. A rename or move at endive would show up as an absent key, so the capture does verify the shape.
+- What it cannot show is a non-null subscription value. That is Stripe's expandable id, and the handler already handles a null or unknown link (no link, logged).
+- The stakes are low. A replayed `checkout.session.completed` only links the subscription and clears the checkout lock, and the lock also expires on its own. Money comes from `invoice.paid`, which has several endive captures.
+- **Follow-up FU-P8b-4:** replace it with a subscription-mode endive capture the next time a permitted sandbox account completes a plan checkout (at the latest, the P-8b.3 demo).
+
+**Ruling B: accept the unit-test coverage for demo point 4. No Stripe write for P-8b.2.**
+- Step B is read-only and flag-only. Its decisions are pure comparisons over port data, and each finding kind is unit-tested.
+- The real list call ran against the sandbox (0 subscriptions).
+- One real-shape gap remains: no test feeds a **real** Stripe subscription object through `listBusinessOsSubscriptionsByPrice`'s mapping into Step B. That gap closes without a Stripe write:
+  - **Q-C1 (QA condition before commit):** QA adds a unit test that sends a captured subscription fixture (for example `captured-p7b1-e1b-06-subscription-after-pay.json`, at the SDK pin `2025-10-29.clover`, the version `subscriptions.list` answers in) through a mocked `stripe.subscriptions.list` into the real mapping, and then into `createPlanReconcilePass` Step B.
+  - The test asserts: a matching billing row and plan row give no finding; a planted `bought_tier` difference gives exactly one `tier_differs` and `planMismatch = 1`; a planted `current_period_end` difference (period started more than 24 hours ago) gives one `period_differs`.
+- **The real-data mismatch moves to the P-8b.3 demo**, which needs a disagreeing subscription for the "Disagrees" marker anyway. When it comes, the user is asked once, in these words:
+
+> "For the next demo we need one test subscription in the Stripe **sandbox** `acct_1UPKR4C7KDUGYIcA` (test mode, no real money). We would: (1) sign in as one of our own Business OS test accounts (not the customer we have been told to leave alone), (2) buy the Basic plan through our normal checkout with Stripe's test card 4242 4242 4242 4242, which creates one test customer and one test subscription, (3) change that test account's plan tier on our admin Tiers page so it disagrees with Stripe, run the reconcile, and check that it reports exactly one disagreement, then (4) cancel the test subscription. Nothing touches production's Stripe account. May we?"
+
+**Gates:** I accept Dev's gates as reported: 437 suites and 14,873 tests, the Connect harness unchanged, the allow-list guards, `test:bos-entitlements` with 9,626 tests, `tsc` with 0 errors in touched files, and ESLint clean. The demo's 820-byte counts are within the D-4 budget.
+
+**Code Approved for QA: Yes.** QA adds Q-C1 and runs its own matrix. FU-P8b-4 and the real-data mismatch (in the P-8b.3 demo) are recorded, not blocking.
+
 ## QA Testing Report
 
 ### QA report: P-8b.1
@@ -499,6 +843,579 @@ Low (informational): a legacy row with NULL `processed_at` never matches `.lt` a
 
 **Final status:** ✅ All acceptance criteria pass, ready for commit (the QA test file is new and untracked; RM includes it).
 
+### QA report: P-8b.2
+
+**QA, 2026-10-28**
+**Test mode:** full
+**Strategy used:** A (Jest, in memory). Two new files, both untracked:
+- `lib/business-os/billing/__tests__/planReconcilePass.capturedSubscription.qa.test.ts` (7 tests): SA condition **Q-C1**. The captured `captured-p7b1-e1b-06-subscription-after-pay.json` (`2025-10-29.clover`, active, one item on `bos_plan_pro_monthly_usd`) goes through a mocked `stripe.subscriptions.list`, the REAL `StripeService.listBusinessOsSubscriptionsByPrice` mapping, and the REAL Step B of `createPlanReconcilePass`. The tier comes from the fixture's own lookup key through the real `planTierForLookupKey`.
+- `lib/business-os/billing/__tests__/planReconcilePass.qa.test.ts` (29 tests): claim races and claim errors, unsettled claims, window anchoring, unverified shapes, deadline and batch caps, incomplete lists, log keys.
+
+Neither file imports `BusinessOsBillingAccountRepository`, `BusinessOsBillingEventRepository` or `entitlements/` (checked by grep), so no allow-list registration was needed. Both allow-list guards were run anyway: they pass. No DB, no network, no Stripe call, and nothing from `cus_VQf9jX6fnfVlkK`.
+**Focus:** pipeline (billing), security, performance
+**Skipped:** e2e (no UI in P-8b.2); the real-data mismatch demo (SA ruling B moved it to P-8b.3)
+**Input source:** TL prompt + SA condition Q-C1
+
+| Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| **Q-C1** captured subscription, real mapping, real Step B: a matching billing row and plan row give no finding | ✅ | Pass | `subscriptions.list` called once with `{ price, limit: 100 }`; no claim call and no handler call |
+| Q-C1: a planted `bought_tier` difference gives exactly one `tier_differs`, `planMismatch = 1` | ✅ | Pass | the full log context is asserted: kind plus the billing-row and subscription ids, nothing else |
+| Q-C1: a planted `current_period_end` difference, period started over 24 h ago, gives exactly one `period_differs` | ✅ | Pass | control: the same difference under 24 h old gives no finding |
+| Q-C1 extras: the captured subscription with no billing row is one `orphan`; with `has_more` it stops at 10 pages, gives no orphan, and sets `checkIncomplete` | ✅ | Pass | |
+| Claim races: insert `23505`, a lost conditional failed-reclaim, and a lost STALE reclaim (lease renewed between the read and the update) each set `incomplete`, run no handler, and leave a run record that cannot anchor | ✅ | Pass | checked on the record as `runReconcilePasses` flattens it |
+| Claim errors (insert other than `23505`, `reclaimStale` error, `reclaimFailedIfStillFailed` error) | ✅ | Pass | no handler; `replayFailed = 1` (which blocks the anchor); exactly one `claim_failed` line with step, event id and type |
+| Unsettled claims: `complete()` fails | ✅ | Pass | counted `replayed` **and** `incomplete`; the row stays `processing`; a run 16 minutes later reclaims it as stale and completes it |
+| Window: a clean `partial` run anchors (boost deferral, clipped, unverified shapes and `checkIncomplete` do not block) | ✅ | Pass | D-3 (a) |
+| Window: a newer `planReplayFailed` or `planIncomplete` run is passed over and the older clean run anchors | ✅ | Pass | |
+| Window: 30-day history: only blocked plan runs 20 days back gives 7 days, clipped; only boost-era runs gives the 3-day first night | ✅ | Pass | fix 3 |
+| Window: the 7-day cap boundary (anchor at 7 d − 59 min is clipped, at 7 d − 61 min is not); an unparseable `started_at` never anchors; `'0'` stored as a string is not clean | ✅ | Pass | |
+| Unverified pairs: a missing `api_version`, `constructor` and `__proto__` as the version, and a verified version with an unverified type | ✅ | Pass | skipped and counted; never claimed or dispatched |
+| The summary line is still written when the loop stops at the deadline or at the batch cap; it carries no ids | ✅ | Pass | |
+| Deadline during Step A: Step B is not started (no Stripe list), `checkIncomplete` | ✅ | Pass | |
+| Deadline inside the price loop, and a price list that throws: no `orphan`, no `subscription_not_listed`, `checkIncomplete` | ✅ | Pass | SA ruling 14 |
+| Batch cap: completed non-invoice events do not count; completed `invoice.paid` (Step C checks) do count (ruling 13) | ✅ | Pass | see Performance 1 for the consequence over several nights |
+| Counts byte budget | ✅ | Pass | the Dev test (36 keys at 5 digits, 963 bytes) was re-run; the demo's 820 bytes is within budget |
+| F-1 column set | ✅ | Pass | re-run: `replaceCustomer` writes exactly the 20261025 UPDATE grant minus `founder_discount_applied_at`, equal to `attachTestClockCustomer`; both clear `current_period_end` to `null` |
+| No PII in logs | ✅ | Pass | one run that covers replay, replay failed, not settled, unverified shapes, every Step B kind, Step C and done. Every context key comes from a fixed set. No value holds `@`, `cus_` or the handler's error text (a thrown `jane@example.com … declined` is logged as `errorName: 'Error'` only) |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None.
+
+#### Performance Issues (should fix; SA to rule, not a commit blocker at today's volume)
+1. **The batch cap can latch the window open for good, and starve newer events.** — File: `lib/business-os/billing/planReconcilePass.ts` (`stepA`, the `handled >= BATCH` check) — Severity: Medium (not reachable at today's volume)
+   - **Why it happens.** Ruling 13 counts every dispatched event against the 100 cap, including the completed `invoice.paid` events that are only Step C checks. Reaching the cap sets `incomplete = 1`, so that run can never anchor the window.
+   - **Steps to reproduce.** One night is blocked for any reason, for example a failed replay or a lost race. The window then widens towards 7 days. At about 1,000 subscribers (about 33 `invoice.paid` a day, §5), 7 days hold about 230 completed `invoice.paid`, which is more than 100.
+   - **Expected.** The next clean night lets the window move forward again.
+   - **Actual.**
+     - Every night hits the cap, so every night is `incomplete`. The window never anchors again and stays 7 days, clipped, and amber for good.
+     - Only the oldest 100 events of the window, about days 7 to 4 back, are examined each night. A newly failed event is replayed only once it is about 4 to 7 days old, not the next night.
+     - Above about 100 dispatched events a day (about 3,000 subscribers), some events are never reached before they leave the window.
+     - The same `paid_invoice_unassigned` finding is also logged again every night, for up to 7 days.
+   - **Pinned by test.** The test "ruling 13 as built" pins one night of this: 100 completed `invoice.paid` events, then one `failed` event that is not replayed (`incomplete = 1`).
+   - **Possible fixes for SA.**
+     - Do not count Step C checks of completed claims against the replay cap.
+     - Or let a cap reached only by Step C checks leave `incomplete` at 0.
+     - Or replay pending events before doing the Step C checks.
+
+#### Edge Cases (nice to fix)
+1. **The event list is cut at 10 pages, and the cut drops the OLDEST events.** — File: `lib/stripe/StripeService.ts` (`listBusinessOsPlanEvents`) — Severity: Low
+   - Stripe lists events newest first, so a capped list keeps the newest 1,000 and drops the oldest.
+   - `incomplete = 1` holds the window, but every later run lists the same newest 1,000, so the oldest events are never reached until they age out.
+   - This needs more than 1,000 plan events in the window, about 4,000 or more subscribers over 7 days. It is the same class as Performance 1.
+2. **A `null` `bought_tier` hides a Stripe tier difference.** — File: `planReconcilePass.ts` (`tier_differs` requires `row.bought_tier !== null`) — Severity: Low
+   - A paying row with a `null` `bought_tier` gets no `tier_differs`.
+   - The plan-row check still compares the plan tier with Stripe, so a real disagreement still surfaces as `plan_tier_differs`.
+
+### Test Outputs / Logs
+
+| Gate (run sequentially, 2026-10-28) | Result |
+|---|---|
+| New QA files | Q-C1 7 / 7; edge cases 29 / 29. All `planReconcilePass*` suites: 5 suites, 112 tests, pass |
+| `lib/business-os/billing`, `lib/business-os/boost`, `lib/repositories`, `lib/cron`, `lib/stripe`, `app/api/stripe`, `app/api/cron` (`--ci`) | 242 suites, 8,871 tests, 118 snapshots, all pass |
+| `lib/admin`, `app/admin` (`--ci`) | 231 suites, 7,432 tests, all pass |
+| Connect harness `--ci` | 152 / 152 tests, 111 / 111 snapshots; the `.snap` is not modified in git (`git status` clean for it); no `-u` used |
+| Both `BusinessOsBilling*Repository.test.ts` allow-list guards | 2 suites, 198 tests, pass |
+| `npm run test:bos-entitlements` | 321 suites, 9,626 tests, pass. **Note:** the first run failed the FR-12 `tierLiteral.forbidden` guard on QA's own new files, which used tier names as literals. QA replaced them with neutral strings and the re-run passed. Code under test was not involved |
+| `tsc --noEmit` (full project, 8 GB heap) | completed with diagnostics printed (no OOM); 1,864 errors, all pre-existing (Dev's baseline); **0 in touched or new files** (a first run found 3 in QA's own file, fixed) |
+| ESLint, the two QA files | 0 errors, 0 warnings |
+
+### Final Status
+- [x] All acceptance criteria pass, ready for commit. Q-C1 is met. RM includes the two untracked QA files.
+- [ ] Issues found that Dev must address before commit: none. Performance 1 (Medium) goes to SA as a follow-up ruling and does not block at today's volume.
+
+### SA rulings on the P-8b.2 QA items
+
+**SA, 2026-10-28.** None of the three blocks this commit. Each is recorded as a follow-up with a trigger. P-8b.2 proceeds to the user's diff review and RM as it is.
+
+**Performance 1 (the cap latches the window): follow-up FU-P8b-5, not fixed now.** QA is right, and the root cause is my ruling 13, which put Step C checks on the replay budget.
+- **Why it does not block.**
+  - It needs more than 100 examined events in a window. Today's sandbox shows 13 in a night and 163 in 30 days, and production sells no plan in live mode yet.
+  - When it does happen, it is visible: `planIncomplete` turns the run amber every night.
+  - It can never cause a wrong write.
+  - The user is reviewing this diff now, and a restructure would reopen it.
+- **Trigger, binding.** Do FU-P8b-5 **before the first of**:
+  - live mode passing **300 paying plan subscriptions** (about 70 `invoice.paid` a week), or
+  - two nights in a row with `planIncomplete = 1` while `planReplayFailed = 0` and `planDeadlineHit = 0` (that is, the cap alone holding the window).
+
+  TL adds the volume trigger to the requirement's §9.5 go-live checklist as a watch item.
+- **Design for FU-P8b-5, so nobody re-decides it:**
+  1. **Two budgets.** Replays (claim null, `failed`, or stale `processing`): cap 100. Reaching it sets `incomplete` and stops new replays, as today. Step C checks (completed `invoice.paid`): a separate cap, for example 300. Reaching it sets `checkIncomplete` only, which does not block the anchor, and further checks are skipped while replays continue.
+  2. **Restructure the loop.** The cap check at the top of the loop goes. The deadline check stays first. After `findClaim`, the event goes to the budget for its kind.
+  3. **Order stays oldest first** (ruling 3) **within the replays.** Step C checks need no order.
+  4. **Step C repeats.** A `paid_invoice_unassigned` finding for the same event logs at most once per window day. Optional, as a log-volume nicety only.
+  5. **Tests.** QA's "ruling 13 as built" test flips: 100 completed `invoice.paid` plus one `failed` gives the failed one replayed and `incomplete = 0`. The check-cap overflow sets `checkIncomplete = 1` only.
+  6. **Also in FU-P8b-5: Edge case 1** (the 10-page list drops the oldest events). Read the window in day slices, oldest slice first: `created: { gte, lt }` per day, each slice still paged and capped. A capped slice sets `incomplete` and stops at that slice, so the oldest unread events are always the next run's first. Same trigger.
+
+**Edge case 1 (the event list keeps the newest 1,000): part of FU-P8b-5** (item 6 above). It needs more than 1,000 plan events in 7 days, well past the FU-P8b-5 trigger.
+
+**Edge case 2 (a paying row with `bought_tier` null gets no `tier_differs`): follow-up FU-P8b-6, Low.** A real tier disagreement still surfaces as `plan_tier_differs`, so nothing is hidden. The gap is a null mirror on a paying row while the plan row matches Stripe, which produces no finding.
+- **Fix when it is next touched** (P-8b.3, or with FU-P8b-5): a paying row whose period started more than 24 hours ago and whose `bought_tier` is null while Stripe's tier resolves gives `tier_differs`, and the plan-row tier check is then skipped (the one-root rule).
+- Inside 24 hours, a null is a checkout still settling and gives no finding.
+- Add one unit test for each case.
+
+### QA report: P-8b.3a
+
+**QA, 2026-10-28**
+**Test mode:** full
+**Strategy used:** A (unit: Step B through in-memory ports, the view builder, the URL parser) and B (route tests, the real admin gate, the real builder, mocked reads), plus jsdom render tests. No browser check: the demo is blocked on ruling B (P3-SA-13), and the render tests cover the chip, the option, the totals line and the plan drawer.
+**Focus:** api, ui, schema, security
+**Skipped:** the browser demo (P3-SA-13, blocked on ruling B). No production DB read or write, and no Stripe call.
+**Input source:** TL prompt (the P3-SA-* rulings and the edges listed in the brief)
+
+#### Test Coverage
+
+| Acceptance criterion / ruling | Tested? | Result | Notes |
+|---|---|---|---|
+| FU-P8b-6: a null `bought_tier` gives exactly one `tier_differs` only when paying, the start is known and it is at least 24 h old (P3-SA-2 item 6, P3-SA-10) | ✅ | Pass | Dev's 3 tests, plus QA: both-sides `past_due` gives nothing; ours `canceled` while Stripe is `active` gives only `status_differs` |
+| The 24 h boundary ±1 ms | ✅ | Pass | QA: `start + 24h − 1 ms` → `[]`; exactly 24 h → `['tier_differs']` (the `>=` is pinned); `+1 ms` → `['tier_differs']` |
+| An unknown start gives nothing | ✅ | Pass | Dev test |
+| A Stripe tier that does not resolve gives nothing | ✅ | Pass | QA: an unknown price, and two prices on two tiers (ambiguous) → `[]`, `mismatch = 0` |
+| No double finding alongside `plan_tier_differs` | ✅ | Pass | QA: a settled null mirror with the plan row on another tier, with no tier, or with no plan row → only `['tier_differs']`. Inside 24 h, the plan-row check still gives only `plan_tier_differs`; a set mirror tier that differs is still flagged inside 24 h (the old rule unchanged). The finding line carries no tier. Every pre-existing pass test is unchanged and green |
+| URL round trip | ✅ | Pass | Dev test, plus QA: with a window preset beside it (no repair); the redirected legacy link shape |
+| Unknown values | ✅ | Pass | QA: `Disagrees`, `DISAGREES`, a trailing space, `disagrees,active` → `''`; `toSubscriptionsFilter` and `SUBSCRIPTIONS_FILTER_SPEC` reject them; the route answers 400 for `''`, a repeated key and `DISAGREES` |
+| Combined with other filters and tabs | ✅ | Pass | QA: a business link with `tab=plans&status=disagrees` settles to no tab and no status over the repair passes; the exchange-rates tab drops it; Clear resets it and keeps the tab |
+| Counts and totals: empty list, all rows disagree | ✅ | Pass | QA: empty → `disagreeing 0`, `matching 0` with and without the filter; all disagree → `disagreeing = accounts = matching`, and the filter changes no row and no total; none disagree → an empty filtered list with whole totals; "No Stripe" rows only → 0; past the 200 cap → 200 rows, `matching` and `disagreeing` count all 203 |
+| The chip in the plan drawer (P3-SA-4) | ✅ | Pass | QA render: the chip shows on the disagreeing row only, with the same title |
+| A payload missing the new fields renders without a crash (D3a-1) | ✅ | Pass | QA render: the list shows its rows, no chip, no totals line, and the bare "Disagrees" option; the table alone renders a row with no `disagreements` key |
+| The tooltip never says "Stripe" | ✅ | Pass | Dev test on the copy, plus QA on every rendered `title` (each kind alone and all three) |
+| Empty words | ✅ | Pass | QA: no filter → `EMPTY_ALL`; a status → `EMPTY_FILTERED`; `disagrees` → `EMPTY_DISAGREES`; the totals line shows 0 rather than disappearing |
+| Route: 401, 403, and 400 for an invalid status, the 400 after the gate | ✅ | Pass | QA: 403 for a non-admin with a valid, an invalid or a repeated `status`; 401 (not 400) with no session and an invalid value; nothing is read before the gate in any case |
+| Route: no PII added | ✅ | Pass | QA: the response carries no owner email (planted in the name read), no admin email or id, and no `cus_`; every `disagreements` value is one of the three kinds; the row's keys are the old set plus `disagreements` (view test); no log line carries the email or a business name |
+| One rule for the panel and the list (P3-SA-4) | ✅ | Pass | Dev parity test (9 cases); `billingPanelView.test.ts` is untouched and green |
+| Entitlements, allow-lists, RC-15 | ✅ | Pass | No new file imports either billing repository, so no allow-list entry. The plan-row type is taken from `SubscriptionsInput['planRows'][number]` |
+
+#### Issues Found
+
+##### Bugs (must fix before commit)
+
+None.
+
+##### Performance Issues (should fix)
+
+None. `billingDisagreements` runs once per billing row, and `disagreeing` is one extra pass over at most the listed rows.
+
+##### Edge Cases (nice to fix)
+
+1. **A page open across the deploy that picks "Disagrees" gets the shared error.** The new client sends `status=disagrees`, and a server older than P-8b.3a rejects it with a 400. This is transient and recovers on reload, and D3a-1 already covers the reverse direction. Low. No action proposed.
+2. **The kinds are in the chip's `title` only.** A keyboard or touch user cannot read the tooltip. The same kinds are shown in words on the business drawer's billing panel (AM-1), so nothing is hidden. Low. This is for SA or the user to decide; it is not a commit blocker.
+
+#### Tests added by QA (42)
+
+| File | Tests |
+|---|---|
+| `lib/business-os/billing/__tests__/planReconcilePass.test.ts` (a new `describe` inside Step B, after Dev's FU-P8b-6 block; no existing test edited) | 13: the boundary ×3, not paying ×2, unresolved tier ×2, one root ×3, inside 24 h ×2, no tier in the log line |
+| `lib/admin/billing/__tests__/subscriptionsView.disagrees.qa.test.ts` (new) | 6 |
+| `app/admin/finance/__tests__/subscriptionsDisagrees.qa.render.test.tsx` (new) | 7 |
+| `app/admin/finance/__tests__/financeFilters.disagrees.qa.test.ts` (new) | 6 |
+| `app/api/admin/business-os/billing/subscriptions/__tests__/route.disagrees.qa.test.ts` (new) | 10 |
+
+#### Test Outputs / Logs (sequential, with the QA tests in place)
+
+| Gate | Result |
+|---|---|
+| `jest --ci lib/admin app/admin app/api/admin/business-os/billing` | 242 suites, 7,561 tests, pass |
+| `jest --ci lib/business-os/billing lib/repositories lib/cron` | 189 suites, 7,303 tests, pass |
+| `BusinessOsBillingAccountRepository.test.ts` + `BusinessOsBillingEventRepository.test.ts` | 2 suites, 198 tests, pass (no new importer) |
+| `npm run test:bos-entitlements` | 326 suites, 9,725 tests, pass |
+| Connect harness `connectPath.characterisation.test.ts --ci` | 152 / 152 tests, 111 / 111 snapshots; `app/api/stripe` clean against `HEAD` (`git status` and `git diff HEAD` empty) |
+| `tsc --noEmit` (full project, 8 GB heap) | Completed with no OOM (no heap or fatal line). 1,864 errors, the same as the baseline, and **0 in touched or new files**, the QA files included |
+| ESLint on the QA files | 0 problems |
+
+#### Final Status
+
+- [x] All acceptance criteria pass: ready for commit (after the SA code review)
+- [ ] Issues found: Dev must address before commit
+
+## Plan: P-8b.3 (Dev, 2026-10-28, for SA review before any code)
+
+**Branch:** `feature/bos-plan-payments-p8b3`, cut from P-8b.2 at `6312470e` (PR #559, on auto-merge), confirmed with `git branch --show-current`. **Not stacked:** the PR opens only after #559 has merged and the branch has been brought up to date with `main` (RM). No code written yet.
+
+**Scope title:** Webhook health and plan reconcile on the Jobs page. **Acceptance (§9):** `/admin/jobs-queues` shows Failed / Stuck / Oldest tiles and the list, oldest first, for the current mode; "Reconcile plan payments now" runs the plan pass and shows its counts in words, lost claims and failures included; the Subscriptions list marks and filters "Disagrees"; FU-P8b-6 is fixed with one unit test per case.
+
+**Out of scope (brief):** FU-P8b-1, FU-P8b-2, FU-P8b-5. No migration. No new `process.env` read. No change to the plan handler, the mirror, the apply, the webhook route, the Connect harness or the boost route.
+
+### P3.1 SA rulings that bear on P-8b.3
+
+| Ruling | What it says | How P-8b.3 honours it |
+|---|---|---|
+| 4 (Q-4) | "option A, no migration (SA-4). Step B never writes." | No migration. The AM-2 marker is built from STORED records (the panel's rule); Stripe-only findings stay `error` logs plus counts, and the button reports their counts only. B-1 default (flag only) needs nothing more |
+| 5 (Q-5) | "per-pass button, as proposed. The boost route and its guards stay untouched. The plan route calls `planReconcilePass.run` and never copies its logic." | A new route runs `runReconcilePasses([planReconcilePass], …)`, nothing else. The boost route, `ReconcileTopUpsDialog.tsx` and their pins (G-4 to G-11) are not edited |
+| 7 (Q-7) | "Show failure classes only. The dashboard link uses the row's own mode (the `/test/` path for test events)." | `failure_message` is read server-side, classified, and never sent or logged. The event link is built from the row's own `metadata.livemode`. See Q-P3-3 on the class set |
+| 10 | `partlyDoneWhen` for the plan counts, so a starved pass shows amber | Unchanged; the Billing reconcile row already shows the plan counts and amber from the registry. P-8b.3 adds no count (D-4 budget untouched) |
+| 15 | "`requireAdmin` is the first statement. The GET validates its query with strict Zod, and the POST takes an empty strict body. Both routes have tests for 401, 403 and invalid input. SR-8 holds: no account id is taken from any input." | Both routes, as stated; a source test pins the gate as the first statement |
+| 16 | Any new file importing `BusinessOsBillingAccountRepository` or `BusinessOsBillingEventRepository` is registered in both `ALLOWED` arrays; "the AM-2 entitlements import is registered per `business-os-entitlements`" | No planned file imports either repository (the plan route reaches them only through the lazy `planReconcileDeps`). Checked by grep before handover; any file that does is registered, sorted, and both guards run. AM-2 adds no symbol to any entitlements importer (P3.3 D3-6), so no registration changes; `npm run test:bos-entitlements` is run anyway |
+| 17 | "The new tests are unit tests only, with no new job and no new `process.env` read." | Unit, route and render tests in existing shards only |
+| SA fix 1 (P-8b.2 review) | The press "by design never writes `bos_cron_runs`, so its `planReplayFailed` never blocks anything" | The route never writes a run (source-pinned). Its lost claims and failures are made visible four ways (D3-4) |
+| SA ruling on Edge case 2 (FU-P8b-6) | "a paying row whose period started more than 24 hours ago and whose `bought_tier` is null while Stripe's tier resolves gives `tier_differs`, and the plan-row tier check is then skipped (the one-root rule). Inside 24 hours, a null is a checkout still settling and gives no finding. Add one unit test for each case." | D3-7 |
+| TL / B-1, B-2 defaults | Flag only; old failed events stay listed until someone acts | Step B unchanged (flag only). The AM-4 list has no age cut-off: a `failed` row stays until it completes |
+
+### P3.2 Code facts found while planning
+
+| # | Fact | Consequence |
+|---|---|---|
+| F3-1 | The claim row's `metadata` is `{ created, livemode }` only (`NewWebhookClaimRow`); the claim never writes `user_id` and records no `account` | §4.3's flow class (`plan`, `boost`, `connect`, `other`) **cannot be derived honestly** from `event_type` and `metadata`: `invoice.*` and `checkout.session.*` can be plan, boost or Connect. Q-P3-1 |
+| F3-2 | `processed_at` is rewritten by `reclaimFailed` and `reclaimStale` (the lease renewal, SA P-8b.1 check 2) | It is the **last attempt**, not "first seen". Stripe's creation time is `metadata.created`. Q-P3-2 |
+| F3-3 | A dispatcher deny and a plan-handler refusal both COMPLETE the claim (route comment: "retrying will not help"; §4.2 Step C note); `failed` is written only by `markFailed` after a throw, with `String(error.message).slice(0, 500)` | Q-7's `refused` class has no source in `failed` rows, and `timeout` can only come from message text (a killed function leaves `processing`, which is Stuck, not a failure class). Q-P3-3 |
+| F3-4 | `stripeDashboardUrl` (`lib/business-os/boost/boostAdminView.ts`) knows `payment`, `dispute`, `customer` only | Add an `event` kind (`^evt_…`, path `events`), same row-mode rule. One URL rule for the admin |
+| F3-5 | The Subscriptions list moved into Finance → Plans & subscriptions (Money MK-4): `app/admin/finance/components/PlansSubscriptions.tsx`, `SubscriptionsTable.tsx`, copy in `app/admin/finance/plansCopy.ts`; route `app/api/admin/business-os/billing/subscriptions/route.ts` (`status` query key, `z.enum(SUBSCRIPTION_STATUSES)`); `/admin/subscriptions` redirects there. The plan drawer (`buildPlanSubscriptions`) reuses `buildSubscriptions` | §6's "Subscriptions list view and page files (P-8a.1)" means these files. The page has ONE filter hook, the Finance URL's `status` key. Q-P3-5 |
+| F3-6 | The panel's disagreement rule is inline in `buildBillingPanel` (`lib/admin/billing/billingPanelView.ts`); `BillingDisagreement` is declared in `billingPanelTypes.ts`, which imports types from `subscriptionsTypes.ts` (a no-import file) | The rule moves to ONE exported function the list and the panel both call (D3-6) |
+| F3-7 | The boost route's shape (gate, strict empty body, `logAndFlush` write-ahead audit on a `system` entity, `runReconcilePasses` with `trigger: 'admin'`, counts-only answer, `maxDuration = 60`) and its test file (G, Z, A, R blocks) are the precedent | Copied in shape for the plan route; the pass is imported, never copied |
+| F3-8 | `JobsQueuesView.tsx` is pinned to exactly one fetch and one header sentence; `ReconcileTopUpsDialog` renders in the `RECONCILE_JOB_ID` branch | New client files carry their own requests; the view gains no fetch. The header sentence changes by one clause (a deliberate, named guard amendment) |
+| F3-9 | `BlockKpi` (`app/admin/components/layout/BlockKpi.tsx`) is the shared block-headline tile (KPI-first blocks; needs a leading / lagging indicator spec) | The webhook block's three tiles use it; the page's top `KpiStrip` is unchanged |
+| F3-10 | Step B's `tier_differs` requires `row.bought_tier !== null` (`planReconcilePass.ts` ≈ line 670); the plan-row tier check already skips when `tier_differs` is present | FU-P8b-6 is a local change in `stepB` (D3-7) |
+
+### P3.3 Design
+
+**D3-1. AM-4 read: `lib/repositories/AdminWebhookEventReadRepository.ts` (new, read-only, the D-1 pattern).**
+- Service role, documented: `processed_webhook_events` is a platform table with no owner the claim writes; the only caller is an admin route behind `requireAdmin`. Methods carry the `⟨unscoped-by-design⟩` marker. Never imported by the webhook or the pass; the writer repository is not touched.
+- `countUnfinishedAllEvents({ livemode, staleBeforeIso })` → `{ failed, stuck }`: two `select('event_id', { count: 'exact', head: true })` reads (`status = 'failed'`; `status = 'processing' AND processed_at < staleBefore`), each `.filter('metadata->>livemode', 'eq', String(livemode))`.
+- `listUnfinishedAllEvents({ livemode, staleBeforeIso, limit: 50 })`: two reads (failed; stale processing), `order('processed_at', { ascending: true }).limit(50)`, merged and cut to 50 in the repository. Column list fixed: `event_id, event_type, status, processed_at, failure_message, metadata`. No `.or()` (two plain reads instead), no write. Served by `idx_processed_webhook_events_unfinished`.
+- The cutoff is `now − STALE_CLAIM_AGE_MS`, imported from `ProcessedWebhookEventRepository.ts`: one figure for the webhook, the pass and this tile.
+
+**D3-2. The payload: `lib/admin/jobs/webhookEventsTypes.ts` (types only, no import; the client imports it with `import type`) and `lib/admin/jobs/webhookEventsView.ts` (`server-only`, pure).**
+- `{ generatedAt, mode, tiles: { failed, stuck, oldestAt }, rows, listed, matching }`. `matching` = failed + stuck, so "50 of N" is honest.
+- A row: `eventId`, `eventType`, `state` (`failed` | `stuck`), `createdAt` (from `metadata.created`, null when absent), `lastAttemptAt` (`processed_at`), `ageMinutes` (from `createdAt`, else `lastAttemptAt`), `failureClass`, `dashboardUrl` (row's own mode, F3-4).
+- `failureClass(state, message)` (Q-P3-3): `stuck` → `stuck`; a message matching a fixed timeout pattern → `timeout`; any other non-empty message → `handler_error`; empty or null → `unknown`. The message never leaves this function: not in the payload, not in a log line. A test feeds a message holding an email address and checks that neither the payload nor any log line contains it.
+- Tiles (KPI-first): **Failed** (red at 1 or more), **Stuck** (red at 1 or more), **Oldest unfinished** (age in words; neutral). The red rule repeats the row states and adds no threshold (the K-5 (i) precedent).
+
+**D3-3. `GET /api/admin/jobs-queues/webhook-events` (new; the `new-api-route` skill).** `requireAdmin` is the first statement. Strict empty query (`z.object({}).strict()`, 400 after the gate). The mode comes from `currentStripeMode()`, and an unreadable mode answers 409 with the existing `STRIPE_MODE_UNKNOWN` words (the Subscriptions precedent). A read error answers 500 with a fixed message (details in development only). Read-only, so no audit, as `GET /api/admin/jobs-queues`. Pino child with `correlationId`, logging counts and timings only. `Cache-Control: no-store`.
+
+**D3-4. `POST /api/admin/business-os/billing/reconcile` (new; ruling 5; the boost route's shape, F3-7).**
+- `requireAdmin` first → strict empty body → a write-ahead audit `BOS_BILLING_RECONCILE_TRIGGERED` through `logAndFlush`, on entity `system` with the run id (new key in `lib/audit/events.ts`, metadata entry beside the boost one, audience `'bos'` in `eventAudience.ts`) → `runReconcilePasses([planReconcilePass], { deadlineAt: now + RECONCILE_RUN_DEADLINE_MS, trigger: 'admin', … })` → counts only. `maxDuration = 60`.
+- **The press never writes `bos_cron_runs`** and never reads `CRON_SECRET`: no import of the recorder, `withCronRunRecord` or the cron route (source-pinned, as the boost route's R test).
+- **Its lost claims and failures are visible (SA fix 1 note), in four places:**
+  - (a) In the answer, in words. `planReconcileOutcome` names `planIncomplete` ("some events were left for the nightly run: another run held them, or a limit was reached") and `planReplayFailed` ("N events failed again") on their own lines, and never prints a clean "finished" sentence when either is above 0. A 200 whose pass failed, or which has no `planEventsSeen`, is a failure (the QA6b-M1 rule).
+  - (b) In the logs. The pass's own `bos_plan_reconcile_done` line already carries `trigger: 'admin'` and every count. The route adds one `warn`, `bos_plan_reconcile_admin_left_work`, with counts only, when `planIncomplete` or `planReplayFailed` is above 0.
+  - (c) On AM-4. A failed replay leaves its claim `failed` (`settleClaim`), and an unsettled one leaves it `processing`. Both appear in the webhook block, which re-reads after a press (Q-P3-4).
+  - (d) In recovery. The press records no run, so it can never move the nightly window: the next nightly relists everything the press left. That is why "never writes `bos_cron_runs`" is safe.
+- Concurrency: a press beside the nightly run, or a second press, loses claims rather than double-processing them (the lease). The loser counts `planIncomplete` (SA fix 1), and the words say so.
+
+**D3-5. Jobs page UI.**
+- `app/admin/components/jobs/WebhookEventsBlock.tsx` (new, client, read-only): one GET to the literal URL; three `BlockKpi` tiles; the table oldest first (event type, state chip, failure class in words, created, last attempt, age, the event id as a dashboard link with `rel="noopener noreferrer"`); the shared loading, error and empty states; a "50 of N" count line. A new `<section id="webhooks">` on the page, "Stripe webhook events", between Scheduled jobs and Queues.
+- `app/admin/components/jobs/ReconcilePlansDialog.tsx` (new): the `ReconcileTopUpsDialog` shape on the shared `AdminConfirmDialog`. One POST to the literal URL, body `'{}'`, the JSON header and `cache: 'no-store'`. It never renders server text, and its logger calls carry only status, passesFailed and err. It calls an `onFinished` prop after a run, so the webhook block re-reads.
+- `reconcileCopy.ts` gains `PLAN_RECONCILE_COPY`, `planReconcileOutcome` and `planReconcileSentences`, and still has no imports. The button is "Reconcile plan payments now". The description says the press checks Stripe for plan payment events of every business that the records do not show as handled, replays them as the webhook would, compares subscriptions, and is not recorded as a run.
+- `JobsQueuesView.tsx`:
+  - It renders `<ReconcilePlansDialog onFinished={…} />` beside the top-ups dialog, in the same `RECONCILE_JOB_ID` branch, and `<WebhookEventsBlock refreshKey={…} />`.
+  - The page's Refresh re-reads the block. A finished plan press bumps only the block's key: the jobs read is not repeated (the SQ-1 precedent).
+  - It still has one fetch of its own.
+  - The header sentence gains one clause, "…the Billing reconcile job has Reconcile top-ups now and Reconcile plan payments now buttons…".
+- **Source guard amendment, narrow and named (LF-4c style):**
+  - `WebhookEventsBlock.tsx` joins `FILES` (every read-only rule) and `CLIENT_FILES`, with a one-GET pin and no query built from data.
+  - `ReconcilePlansDialog.tsx` joins `CLIENT_FILES` with G-4 to G-7 and G-11 equivalents: one POST, the literal URL, the literal `'{}'` body, no account words, no server text, the import list, and the logger keys.
+  - The view pins each dialog to exactly one render, in the reconcile branch.
+  - `VIEW_HEADER_SENTENCE` is updated.
+  - Every other rule is unchanged, and the boost pins are untouched.
+
+**D3-6. AM-2 "Disagrees".**
+- **One rule.** `billingDisagreements(row, plan)` is exported from `lib/admin/billing/subscriptionsView.ts`, beside `subscriptionStatuses` ("one rule for both"). Its body is the panel's current logic moved as it is: paying only, `no_tier_on_plan`, `tier_differs`, `paid_through_differs`, 1 s. `buildBillingPanel` calls it, which preserves behaviour (the existing panel tests stay green unchanged), and `buildSubscriptions` calls it per billing row. A "No Stripe" row has no billing row, so it never disagrees, which is the panel's answer too.
+- **Types.** `BillingDisagreement` moves to `subscriptionsTypes.ts` (still no import), and `billingPanelTypes.ts` re-exports it, so no importer changes. `SubscriptionRow` gains `disagreements: BillingDisagreement[]`, and `SubscriptionsTotals` gains `disagreeing`.
+- **Marker.** The Status cell gains an amber `StatusChip` "Disagrees". Its `title` names the kinds in words from `plansCopy.ts`. The AM-1 panel is unchanged.
+- **Filter.** See Q-P3-5. The default extends the existing `status` key and select with one value, `disagrees`, so there is still one filter hook, and old links keep working. The route's Zod enum becomes `SUBSCRIPTION_FILTERS = [...SUBSCRIPTION_STATUSES, 'disagrees']`. The totals ignore the filter, as today.
+- **Entitlements.** No file gains or loses a symbol from `lib/business-os/entitlements/` (the moved logic uses `isPayingBillingRow` from billing), so `KNOWN_NON_GATE_IMPORTERS` does not change, and no tier literal is added (tests use neutral strings). `npm run test:bos-entitlements` runs before handover.
+- The plan drawer inherits the field through `buildPlanSubscriptions`, and its render is unchanged unless SA wants the chip there too.
+
+**D3-7. FU-P8b-6, in `planReconcilePass.ts` `stepB`.**
+```
+stripeTier !== null and:
+  bought_tier !== null and differs                                    → tier_differs (as today)
+  bought_tier === null and paying and period start known and ≥ 24 h  → tier_differs (new)
+  bought_tier === null otherwise (inside 24 h, or start unknown)     → nothing from this check
+```
+`paying` and the period are computed before the tier check (a reorder only). The plan-row tier check already skips when `tier_differs` is present, so a null mirror gives one finding, not two. Tests: (1) null `bought_tier`, period started 25 h ago, Stripe tier resolves, plan row matches Stripe → exactly one `tier_differs`, no `plan_tier_differs`, `mismatch = 1`; (2) the same at 23 h → no finding, `mismatch = 0`. No count added, and the guard's single-call pins are untouched.
+
+### P3.4 Files, by slice (regrouped after SA review P3-SA-1)
+
+**P-8b.3a: Records that disagree are marked** (branch `feature/bos-plan-payments-p8b3a`, from `main` `abe9fd64`, after #559 merged)
+
+| File | Action | Why |
+|---|---|---|
+| `lib/business-os/billing/planReconcilePass.ts` (+ `__tests__/planReconcilePass.test.ts`) | modify | FU-P8b-6 (D3-7, P3-SA-2 item 6, P3-SA-10); three tests |
+| `lib/admin/billing/subscriptionsTypes.ts` | modify | `BillingDisagreement`, `SUBSCRIPTION_FILTERS`, `isSubscriptionFilter`, `SubscriptionRow.disagreements`, `SubscriptionsTotals.disagreeing`, payload `status` widened (P3-SA-2 item 5) |
+| `lib/admin/billing/subscriptionsView.ts` | modify | `billingDisagreements` moved as is with `sameInstant` (P3-SA-4); the `disagrees` filter |
+| `lib/admin/billing/billingPanelView.ts`, `billingPanelTypes.ts` | modify | the panel calls the one rule; the type is re-exported |
+| `app/api/admin/business-os/billing/subscriptions/route.ts` | modify | `z.enum(SUBSCRIPTION_FILTERS)` |
+| `app/admin/finance/financeFilters.ts`, `FinanceView.tsx`, `components/PlansSubscriptions.tsx`, `components/SubscriptionsTable.tsx`, `plansCopy.ts` | modify | the URL parser, the filter type, the option, the totals line, the chip and its words |
+| tests: `subscriptionsView.test.ts`, the route test, `financeFilters` round trip, a finance render test | modify / create | P3-SA-2 item 5, P3-SA-4 |
+
+**P-8b.3b: Webhook health on the Jobs page** (own branch from `main` after 3a merges)
+
+| File | Action | Why |
+|---|---|---|
+| `lib/repositories/AdminWebhookEventReadRepository.ts` (+ test) | create | D3-1, P3-SA-5 (200 per state, no-mode counts); **not** in `lib/repositories/index.ts` |
+| `lib/admin/jobs/webhookEventsTypes.ts`, `webhookEventsView.ts` (+ test) | create | D3-2, P3-SA-2 items 2, 3 and 7, P3-SA-6 |
+| `lib/business-os/boost/boostAdminView.ts` (+ its test) | modify | the `event` kind (P3-SA-7) |
+| `app/api/admin/jobs-queues/webhook-events/route.ts` (+ test) | create | D3-3, P3-SA-3, P3-SA-6 |
+| `app/admin/components/jobs/WebhookEventsBlock.tsx`, `JobsQueuesView.tsx` | create / modify | D3-5 (block only; `refreshKey`; outside the jobs gate, P3-SA-7) |
+| `app/admin/__tests__/jobsQueues.source.guard.test.ts`, `jobsQueues.webhooks.render.test.tsx` | modify / create | P3-SA-9 (3b part) |
+
+**P-8b.3c: Reconcile plan payments now** (own branch from `main` after 3b merges)
+
+| File | Action | Why |
+|---|---|---|
+| `app/api/admin/business-os/billing/reconcile/route.ts` (+ test) | create | D3-4, P3-SA-8 |
+| `lib/audit/events.ts`, `lib/audit/eventAudience.ts` | modify | `BOS_BILLING_RECONCILE_TRIGGERED` |
+| `app/admin/components/jobs/ReconcilePlansDialog.tsx`, `reconcileCopy.ts`, `JobsQueuesView.tsx` | create / modify | dialog, words (P3-SA-2 item 8), `onFinished`, header sentence |
+| `app/admin/__tests__/jobsQueues.source.guard.test.ts`, `jobsQueues.reconcilePlans.render.test.tsx` | modify / create | P3-SA-9 (3c part), the copy-covers-`partlyDoneWhen` test |
+
+### P3.5 Tasks, by slice
+
+**3a**
+- [x] ✅ 3a-1: FU-P8b-6: a separate predicate (`paying` and a known start and `RENEWAL_SETTLE_MS`); three tests asserting the exact finding-kind list; existing pass tests unchanged
+- [x] ✅ 3a-2: AM-2: the rule moved as is; filters constant and guard; URL parser, route, view, select, totals line, chip; tests (URL round trip, unknown value, reset rule, route 400, view filter, chip title never says "Stripe"); existing panel tests unchanged
+- [x] ✅ 3a-3: gates: Connect harness `--ci` (unchanged), `test:bos-entitlements` (+ `KNOWN_NON_GATE_IMPORTERS` diff), both billing allow-lists, `lib/admin`, `app/admin`, `app/api/admin/business-os/billing`, `lib/business-os/billing`, `lib/repositories`; `tsc` filtered (no OOM); ESLint
+- [x] ✅ 3a-4: requirement §9.1 P-8b row note + Change History (the split, #559 merged, FU-P8b-6)
+
+**3b**
+- [ ] 3b-0: the R3-5 read-only check (unfinished rows with no mode), figure in the notes
+- [ ] 3b-1: repository, builder, GET route and tests (401, 403, 400, 409, 500, both modes, PII at two levels, created-seconds conversion, 200-per-state depth and "at least", classes)
+- [ ] 3b-2: the block, view wiring outside the jobs gate, guard amendment, render tests; Implementation Notes KPI report (P3-SA-7)
+
+**3c**
+- [ ] 3c-1: route, audit event, tests (G / Z / A / R shape, audit reject still runs, lost claim sentence, `left_work` warn on any `partlyDoneWhen` key, no run record or secret)
+- [ ] 3c-2: dialog, copy, `onFinished`, header sentence, guard amendment, render tests (`passesFailed > 0` and no `planEventsSeen` are failures)
+
+**Demo (P3-SA-13):** blocked on ruling B's user question; split by slice; it gates user acceptance only.
+
+### P3.6 Risks
+
+| # | Risk | Mitigation |
+|---|---|---|
+| R3-1 | The branch is cut from unmerged P-8b.2 | The PR opens after #559 merges and the branch is synced with `main`; never stacked |
+| R3-2 | `failure_message` can hold customer text (an email in a Stripe error) | It is selected only to classify, in a pure function; it is not in the payload or any log line; a test plants an email and checks both |
+| R3-3 | A press beside the nightly run | The claim lease serialises them; the loser counts `planIncomplete`, which holds the nightly window (fix 1); the words say so |
+| R3-4 | The press runs up to 45 s inside a 60 s function | The same budget as the boost route; the pass stops starting events 15 s before the deadline |
+| R3-5 | Rows written without `metadata.livemode` would drop out of a mode-filtered list | Checked read-only before building, with a count of unfinished rows that have no mode (no PII read). If there are any, Q-P3-7 |
+| R3-6 | The Finance `status` key gains a non-status value | Option A keeps one key and old links; Zod rejects anything else; `isSubscriptionStatus` is unchanged for the chip (the filter has its own guard) |
+| R3-7 | The jobs guard amendment widens what the page may do | Named, narrow, LF-4c style; boost pins untouched; the view keeps one fetch |
+| R3-8 | Stacked semantic conflicts with other open work on Finance files | Rebase on `main` before the PR; finance render tests in the gate |
+
+**Estimate:** about 1.2 dev-days (§9 said 1.0; the extra is FU-P8b-6 and the visibility work for the manual run).
+
+### P3.7 Questions for SA
+
+| # | Question | Dev's proposal |
+|---|---|---|
+| Q-P3-1 | The flow class (`plan` / `boost` / `connect` / `other`) cannot be derived from `event_type` and the claim's `metadata` (F3-1). Drop it, or derive it some other way? | **Drop the column** and show the event type. A guessed class would mislabel Connect money. Deriving it truly needs a Stripe call per row or a new claim field (a webhook-route change under the Connect evidence rules); neither belongs here |
+| Q-P3-2 | `processed_at` is the last attempt, not first seen (F3-2). Which time orders the list and drives the age? | Show both "Created at Stripe" (`metadata.created`) and "Last attempt". The age and the Oldest tile use `created`, falling back to `processed_at`. The read is ordered by `processed_at` (the index), and the at most 100 rows read are re-sorted by `created` in memory |
+| Q-P3-3 | Q-7 approved `handler_error`, `refused`, `timeout`, `unknown`, but `refused` cannot occur in a `failed` row (F3-3) | Classes: `handler_error`, `timeout` (message pattern), `unknown`, plus `stuck` for a stale `processing` row. Drop `refused` |
+| Q-P3-4 | After a plan press, re-read the webhook block (not the jobs), so a failed replay shows at once? | Yes: the block only. The jobs row does not change (no run recorded), as the SQ-1 precedent |
+| Q-P3-5 | The "Disagrees" filter: one more value on the existing `status` key and select, or a separate key and control? | **One more value** (`status=disagrees`): the page has one filter hook, old links keep working, and the totals stay filter-free. Option B, a `disagrees=1` key with a checkbox, needs Finance URL plumbing and a second control |
+| Q-P3-6 | FU-P8b-6 when Stripe's period start is unknown (null) | No finding (the strict reading of "period started more than 24 hours ago"); the plan-row tier check then runs as today |
+| Q-P3-7 | If R3-5 finds unfinished rows with no recorded mode | Show them under a sub-line count ("N events have no recorded mode"), never in either mode's list |
+| Q-P3-8 | Should the button's words include the Step B and C finding counts (mismatch, orphan, unassigned)? | Yes, counts only: "N disagreements with Stripe were logged for a person to check". Details stay in the `bos_plan_reconcile_finding` log lines (ruling 4, option A) |
+
+### SA review: Plan P-8b.3
+
+**Reviewed by SA, 2026-10-28**
+**Status:** APPROVED WITH CHANGES. Split into three PRs (ruling P3-SA-1). Dev regroups P3.4 and P3.5 by slice and folds in the rulings below before any code is written. No further SA pass is needed on the plan; the next SA pass is the 3a code review.
+
+Checked against: rulings 4, 5, 7, 10, 15, 16 and 17, SA fix 1, the FU-P8b-6 ruling, and the B-1 and B-2 defaults. Code read on `6312470e`: `planReconcilePass.ts` `stepB` (lines 579 to 712), `billingPanelView.ts` (the disagreement block and `sameInstant`), `subscriptionsView.ts` (`buildSubscriptions`, `buildPlanSubscriptions`), `subscriptionsTypes.ts`, `billingPanelTypes.ts`, the subscriptions route's Zod, `PlansSubscriptions.tsx`, `PlanDrawer.tsx`, `financeFilters.ts`, `plansCopy.ts`, `FinanceView.tsx`, the boost reconcile route, `JobsQueuesView.tsx`, `jobsQueues.source.guard.test.ts`, `BlockKpi.tsx`, `ProcessedWebhookEventRepository.ts` (metadata shape, `STALE_CLAIM_AGE_MS`), the `bosCronJobs.ts` plan counts and `partlyDoneWhen`, `lib/repositories/index.ts`, `isPayingBillingRow`, and `lib/audit/events.ts` / `eventAudience.ts`. F3-1 to F3-10 are confirmed. Two facts are added (P3-SA-6 and P3-SA-8).
+
+#### Rulings
+
+**P3-SA-1. Split into three PRs, in this order.** Each is cut from `main` after the previous one has merged (and the first after #559 has merged). None is stacked.
+
+| PR | Scope title | Contents | Est. |
+|---|---|---|---|
+| **P-8b.3a** | **Records that disagree are marked** | FU-P8b-6 (D3-7 and its tests); AM-2: the one `billingDisagreements` rule, the "Disagrees" chip, the `status=disagrees` filter value, `totals.disagreeing` | 0.4d |
+| **P-8b.3b** | **Webhook health on the Jobs page** | AM-4, read-only: `AdminWebhookEventReadRepository`, the types and view builder, `GET /api/admin/jobs-queues/webhook-events`, the `event` dashboard kind, `WebhookEventsBlock.tsx`, its `JobsQueuesView` wiring and its guard amendment | 0.45d |
+| **P-8b.3c** | **Reconcile plan payments now** | `POST /api/admin/business-os/billing/reconcile`, `BOS_BILLING_RECONCILE_TRIGGERED`, `ReconcilePlansDialog.tsx`, the copy, its wiring (`onFinished` → the block's re-read), the header sentence, and its guard amendment | 0.4d |
+
+- **Why three, not two.** 3b is read-only, and 3c is the only part that writes (claims, handler replays and audit). Splitting at that boundary puts the write path in its own small diff for review. 3c depends on 3b (Q-P3-4's re-read), so the order is fixed.
+- The current branch `feature/bos-plan-payments-p8b3` becomes 3a's branch, or RM renames it `…-p8b3a`. 3b and 3c each get their own branch from `main`.
+- §9's P-8b.3 row and its acceptance line are split the same way. Per the standing rule, TL also records the split in the requirement's main status.
+
+**P3-SA-2. Rulings on Q-P3-1 to Q-P3-8.**
+
+1. **Q-P3-1: drop the flow column and show the event type.** A guessed class would mislabel Connect money. This amends §4.3's AM-4 bullet. No Stripe call and no claim-row change in P-8b.
+2. **Q-P3-2: show "Created at Stripe" (`metadata.created`) and "Last attempt" (`processed_at`). Age is measured from created**, falling back to `processed_at` only when `created` is absent, and the row then says so ("created time not recorded"). Two binding details:
+   - `metadata.created` is Stripe's epoch **seconds**. Convert it once in the view builder (× 1000), and add a unit test with a known value.
+   - **Read deeper than you show.** The read is ordered by `processed_at`, which `reclaimFailed` and `reclaimStale` rewrite, so the 50 oldest by last attempt are not always the 50 oldest by creation. Read up to **200 per state**, sort in memory by created, and cut the list to 50. The Oldest tile is then exact whenever each state holds 200 rows or fewer. When either state's count is above what was read, the tile's value carries "at least" (the `BlockKpi` convention), and the count line says the order covers the first 200 read per state. Today's figure is 5 rows, so this is about honesty, not volume.
+3. **Q-P3-3: the classes are `handler_error`, `timeout`, `unknown` and `stuck`.** `refused` is dropped, which amends ruling 7 / Q-7: a refusal completes the claim (F3-3), so a `failed` row can never be one.
+   - The timeout pattern is one exported constant, with unit tests for a match, a non-match and the empty and null cases.
+   - Each class has words in the copy module. The browser receives the class key or its words and never the message.
+4. **Q-P3-4: only the webhook block re-reads after a press.** The jobs read is not repeated (SQ-1). The page's own Refresh re-reads both. This lands in 3c (the `onFinished` prop). 3b lays the block's `refreshKey` prop only.
+5. **Q-P3-5: add a `status=disagrees` filter value.** One constant, `SUBSCRIPTION_FILTERS = [...SUBSCRIPTION_STATUSES, 'disagrees'] as const`, goes in `subscriptionsTypes.ts` (still no import), with an `isSubscriptionFilter` guard beside it. `isSubscriptionStatus` stays as it is for the chip. **The plan's file list misses the URL parser.** The Finance page parses `status` in `app/admin/finance/financeFilters.ts` (`FINANCE_FILTER_SPEC.status = choiceFilter('status', SUBSCRIPTION_STATUSES, '')`), so without that change `?status=disagrees` would be dropped as invalid before it reaches the component. Every place below uses the one constant:
+   - `financeFilters.ts` `FINANCE_FILTER_SPEC.status`, plus the `filters.status` type down through `FinanceView.tsx` → `PlansSubscriptions` (`status` / `onStatus`).
+   - `plansCopy.ts` `SubscriptionsFilter`, `toSubscriptionsFilter` and `SUBSCRIPTIONS_FILTER_SPEC`.
+   - The subscriptions route's `z.enum(SUBSCRIPTION_FILTERS)` (still `.strict()`; any other value is a 400).
+   - `buildSubscriptions`'s `status` input and the payload's `status` field.
+   - The `<select>` gains one option, "Disagrees", after the statuses.
+
+   Tests: a `financeFilters` round trip (`?tab=plans&status=disagrees` → parse → serialise gives the same URL); an unknown value falls back to `''`; and the existing reset rule (`status` cleared off the plans tab) still holds for `disagrees`.
+6. **Q-P3-6: no finding when Stripe's period start is unknown.** Do **not** reuse the existing `settled` flag, because it treats a null start as settled. Write a separate predicate: start known **and** `nowMs − startMs ≥ PLAN_RECONCILE_LIMITS.RENEWAL_SETTLE_MS` (the same 24-hour constant, no new figure) **and** the existing `paying` (Stripe `active` and our status paying). Add a third unit test for the null-start case; it costs one test and pins this ruling. In tests (1) and (2), the fixture's mirror period end and the plan row's `tierExpiresAt` equal Stripe's period end, and the status and cancel flag match. Assert the exact list of finding kinds (`['tier_differs']` and `[]`), not only `mismatch`.
+7. **Q-P3-7: rows with no mode show as a count line only.** One more head-count read, `.is('metadata->>livemode', null)` across `failed` and stale `processing` (two reads, never `.or()`). The line is shown in either mode ("N unfinished events have no recorded mode and are not counted above"). Those rows are never in a tile or the list, and they have no link. Run the R3-5 read-only check before building 3b and record the figure in the notes; if it is 0, the line still exists and renders nothing at 0.
+8. **Q-P3-8: the button's words include the Step B and Step C counts.** Use "N plan subscriptions disagree with Stripe" (`planMismatch`), "N Stripe plan subscriptions have no billing record" (`planOrphan`) and "N paid plan invoices have no plan assigned" (`planUnassigned`), each followed by "logged for a person to check". **Also, every key in the plan pass's `partlyDoneWhen` set gets its own sentence when it is above 0**: `planIncomplete`, `planDeadlineHit`, `planReplayFailed`, `planWindowClipped`, `planApiVersionSkipped` and `planCheckIncomplete`. With those sentences, the press can never read cleaner than the nightly row would. `reconcileCopy.ts` keeps no imports, so a **test** (which may import both) pins that the copy's keys cover every plan `partlyDoneWhen` key. Wording: these findings are said to be "with Stripe". The list's "Disagrees" (ruling P3-SA-4) means our two records disagree with each other, and the two must not be worded alike.
+
+**P3-SA-3. Admin gates and Zod: approved as planned.** `requireAdmin` is the first statement in both routes (the admin-authz CI guard and a source test). The page is already under `app/admin/layout.tsx`'s `requireAdminPage`. There is no `profiles.role` read anywhere. The GET takes `z.object({}).strict()` over the query, and the POST takes the boost route's empty-body parse with a strict schema. Each route has tests for 401, 403 and 400, and the 400 comes after the gate. The GET's 409 is for an unknown mode, and its 500 has fixed words, with details in development only.
+
+**P3-SA-4. AM-2 (3a): approved, with these points.**
+- The rule moves **as it is**, together with its local `sameInstant` helper, into `subscriptionsView.ts`. Behaviour is preserved by the existing panel tests passing **unchanged**; if any one of them needs an edit, stop and report.
+- `PlanDrawer` renders `SubscriptionsTable`, so the chip shows in the plan drawer too. That is accepted: one table, one rule, and no drawer-specific work.
+- The chip's `title` says what the rule means: "Our billing record and the plan record disagree: …" followed by the kinds. It never says "Stripe", because the list shows stored records only (ruling 4, option A).
+- **KPI-first.** No new tile. `totals.disagreeing` is shown as one line in the existing totals `<dl>` ("Records that disagree: N"), and the option's label carries the count. Like every total, it ignores the filter.
+- **Entitlements.** No symbol from `lib/business-os/entitlements/` is added or removed in any file, and there is no tier literal (neutral test strings). Record the `KNOWN_NON_GATE_IMPORTERS` diff (expected empty) and the `npm run test:bos-entitlements` result in the notes. If the moved code ends up needing any entitlements symbol, walk the `business-os-entitlements` checklist before handover.
+
+**P3-SA-5. AM-4 read (3b): tenant isolation and the repository.**
+- The service-role, `⟨unscoped-by-design⟩` read is accepted. The table has no owner column, the claim carries no business data, and the only caller is behind `requireAdmin`. The file starts with `import 'server-only'` and has a header CALLERS line (the GET route only).
+- **Do not add it to `lib/repositories/index.ts`.** The admin and pass readers (`BusinessOsBillingAdminReadRepository`, `PlanReconcileReadRepository`) are not exported there either, and the index is imported widely.
+- The repository test pins: the fixed column list; `.filter('metadata->>livemode', 'eq', …)`; no `.or(`, `.update(`, `.insert(`, `.upsert(`, `.delete(` or `.rpc(`; no `user_id`; the stale cutoff taken from `STALE_CLAIM_AGE_MS` (imported, never a second 15-minute literal); and the per-state limit of 200 (ruling 2).
+- It imports neither billing repository, so neither `ALLOWED` array changes. Grep before handover, as planned.
+- Method naming (`…AllEvents`) is accepted. The marker is what reviewers grep for.
+
+**P3-SA-6. No PII (3b): approved, and made testable at two levels.** `failure_message` is selected only to be classified. It is not in the payload, not in a log line and not in an error detail. Plant an email address in a failed row's message, then:
+- In the view-builder test, check that `JSON.stringify(payload)` does not contain it.
+- In the route test, with a logger spy, check that the response body and every log call's arguments do not contain it. The development `details` on a 500 carry the read error's name only, never row content.
+
+**P3-SA-7. The Jobs block (3b): the admin layout standard and KPI-first.**
+- **The block must not be gated by the jobs read.** `JobsQueuesView` today renders its sections inside `{view && …}`. The webhook block has its own request, loading, error and empty states, so a failed jobs read must not hide webhook health. Place `<section id="webhooks" aria-labelledby="webhooks-title">` outside that gate (after it is fine), or gate each section separately. Dev picks the placement and notes it.
+- The block shows the mode chip (`MODE_BADGE`, the Subscriptions precedent) and shows the `STRIPE_MODE_UNKNOWN` words on a 409.
+- **KPI spec (LL-4: one definition constant each):**
+
+| KPI | Indicator | Tone |
+|---|---|---|
+| **Failed** | lagging | red at 1 or more |
+| **Stuck** (`processing` older than 15 min) | leading | red at 1 or more |
+| **Oldest unfinished** | leading | neutral; no threshold (K-5 (i)) |
+
+  Oldest unfinished is leading because Stripe keeps an event for 30 days. Past that age it can be neither resent nor replayed, and its definition says so.
+- **Report in the Implementation Notes:** the page (`/admin/jobs-queues#webhooks`), the three KPIs with their indicators, the breakdown (the list, oldest first, 50 shown of N), and the drawer: **none**, because each row links out to the Stripe event. A drawer is not required, since a row holds nothing a drawer could add without the raw message.
+- The `event` kind in `stripeDashboardUrl` matches `^evt_[A-Za-z0-9]+$` and is tested in both modes, with the `/test/` path for a test row. The link has `target="_blank"` and `rel="noopener noreferrer"`.
+
+**P3-SA-8. The plan reconcile route (3c): approved in the boost route's shape, with these pins.**
+- It imports `planReconcilePass` from its own module and calls `runReconcilePasses([planReconcilePass], { …, trigger: 'admin' })`. It never imports `RECONCILE_PASSES` and never copies pass logic (ruling 5).
+- **It never writes `bos_cron_runs` (SA fix 1).** Source pins: no import of `BosCronRunRepository`, `withCronRunRecord`, the cron route or the run recorder, and no `CRON_SECRET` string. Note that the pass **reads** the run history to anchor its window (ruling 8). That read is expected, and it is why a press can never move the window.
+- **Lost claims and failures stay visible:** D3-4 (a) to (d) are approved. Two changes to (a) and (b):
+  - The `bos_plan_reconcile_admin_left_work` warn fires when **any** plan `partlyDoneWhen` key is above 0, not only `planIncomplete` and `planReplayFailed`, and it carries counts only.
+  - In the client, a 200 with `passesFailed > 0`, or with no `planEventsSeen` key, renders as a failure (QA6b-M1), and the test covers both.
+- **Audit:** `BOS_BILLING_RECONCILE_TRIGGERED` is a write-ahead `logAndFlush` on a `system` entity with the run id. Its details are `{ run_id, correlationId }` only, its severity is `warning` (as boost), and its audience is `'bos'`, with a metadata entry beside the boost one. A bounded flush whose failure is logged and does not stop the run counts as non-blocking under the `new-api-route` skill (the WC-7 flush rule). A test makes the audit write reject and checks that the pass still runs and the answer is 200.
+- `maxDuration = 60` and `RECONCILE_RUN_DEADLINE_MS` are the same as boost.
+- **Concurrency (R3-3)** is accepted: a press beside the nightly run, or a double press, loses claims, the loser counts `planIncomplete`, and the words say so. One route test runs the pass with a lost claim and checks the sentence.
+
+**P3-SA-9. The Jobs source guard amendment: approved as narrow and named (LF-4c).**
+- In 3b, `WebhookEventsBlock.tsx` joins `FILES` and `CLIENT_FILES`, with exactly one GET to the literal URL and no query built from data.
+- In 3c, `ReconcilePlansDialog.tsx` joins `CLIENT_FILES`, with the G-4 to G-7 and G-11 equivalents.
+- `VIEW_HEADER_SENTENCE` changes in 3c only. The existing G-x assertion on the old header text (line 457) is updated in the same named amendment, and every boost pin stays byte-identical.
+- `JobsQueuesView` keeps exactly one fetch of its own.
+- The new files inherit the "no green class" and "no server import" rules automatically through `CLIENT_FILES`.
+
+**P3-SA-10. FU-P8b-6 (3a): approved as D3-7, with ruling P3-SA-2 item 6.**
+- The reorder (`paying` and `period` computed before the tier check) changes no other finding. Every existing `planReconcilePass` test passes unchanged, and if any needs an edit, stop and report.
+- Use the existing `paying` variable, not a new paying predicate.
+- No count is added, so the D-4 1,024-byte budget is unchanged.
+
+**P3-SA-11. CI time, env and allow-lists: pass.**
+- Unit, route and render tests only, in existing shards. There is no new job, no network and no new `process.env` read (EC-3; no catalogue change).
+- No migration.
+- The Connect harness `--ci` runs in 3a (the pass file changes, the webhook does not) and is expected to be byte-identical. 3b and 3c do not touch it.
+- `tsc` is filtered to touched files, with a check for an OOM crash.
+
+**P3-SA-12. B-1 and B-2: no design change.** Step B stays flag-only, and the press runs the same flag-only pass. Failed events stay listed with no age cut-off. The Oldest tile's "leading" definition (Stripe's 30 days) is the prompt for a person to act.
+
+**P3-SA-13. Demo (P3-6): it stays blocked on ruling B's user question,** and it is split by slice. 3a: a disagreeing test record marked "Disagrees" with exactly one kind. 3b: the block in test mode (expected empty) and in live mode (the 5 failed rows, read-only). 3c: the press and its words. None of the slices waits on the demo to reach code review. The demo gates the user's acceptance only.
+
+#### Approval
+
+[x] Plan P-8b.3 approved with changes. Dev regroups P3.4 and P3.5 into 3a, 3b and 3c, folds in P3-SA-1 to P3-SA-13, and starts 3a.
+
+## Implementation Notes (P-8b.3a)
+
+**Dev, 2026-10-28.** Code complete, uncommitted, on `feature/bos-plan-payments-p8b3a`. The branch was fast-forwarded to `main` `abe9fd64` (#559 merged) and renamed from `…-p8b3`. No migration, no new `process.env` read, and no change to the webhook route, the Connect harness, the plan handler, the mirror or the apply.
+
+| File | Change |
+|---|---|
+| `lib/business-os/billing/planReconcilePass.ts` | FU-P8b-6. `paying` and `period` are computed before the tier check (a reorder only). A separate predicate, `nullTierSettled`, requires `paying`, a known period start, and `nowMs − startMs ≥ RENEWAL_SETTLE_MS`. A null `bought_tier` with a Stripe tier that resolves gives `tier_differs`, and the existing skip then drops `plan_tier_differs` |
+| `lib/admin/billing/subscriptionsTypes.ts` | Holds `BillingDisagreement` (moved here), `SUBSCRIPTION_FILTERS`, `SubscriptionFilter` and `isSubscriptionFilter`. Adds `SubscriptionRow.disagreements` and `SubscriptionsTotals.disagreeing`, and widens the payload's `status` to `SubscriptionFilter \| null`. The file still has no import |
+| `lib/admin/billing/billingPanelTypes.ts` | Re-exports `BillingDisagreement` (type only), so no importer changes |
+| `lib/admin/billing/subscriptionsView.ts` | `billingDisagreements(row, plan)` is the panel's rule moved as it is, with `SAME_INSTANT_MS` and `sameInstant`. Each billing row carries its result, and a "No Stripe" row carries `[]`. `status = 'disagrees'` filters on it. `totals.disagreeing` ignores the filter |
+| `lib/admin/billing/billingPanelView.ts` | Calls `billingDisagreements`. The inline rule, `sameInstant` and the `isPayingBillingRow` import moved out |
+| `app/api/admin/business-os/billing/subscriptions/route.ts` | `z.enum(SUBSCRIPTION_FILTERS)`, still `.strict()`. The log line gains `disagreeing` (a count) |
+| `app/admin/finance/financeFilters.ts` | `FINANCE_FILTER_SPEC.status = choiceFilter('status', SUBSCRIPTION_FILTERS, '')`, and `FinanceFilters.status` becomes `'' \| SubscriptionFilter`. The type reaches `FinanceView.tsx`, whose source did not need to change |
+| `app/admin/finance/plansCopy.ts` | `SubscriptionsFilter`, `toSubscriptionsFilter` and `SUBSCRIPTIONS_FILTER_SPEC` now use `isSubscriptionFilter`. The new words are listed below |
+| `app/admin/finance/components/PlansSubscriptions.tsx` | Props are typed `SubscriptionFilter`. One `<option value="disagrees">` follows the statuses, and its label carries the count. One "Records that disagree" line is added to the existing totals `<dl>` (no tile). The filter has its own empty words |
+| `app/admin/finance/components/SubscriptionsTable.tsx` | An amber (`warn`) `StatusChip` "Disagrees" in the Status cell, inside a `span` whose `title` names the kinds. The shared chip has no `title` prop and is not edited |
+
+**SA rulings honoured.**
+
+| Ruling | How |
+|---|---|
+| P3-SA-1 | Only 3a is built: FU-P8b-6 and AM-2. Nothing from 3b or 3c |
+| P3-SA-2 item 5 | One `SUBSCRIPTION_FILTERS` constant, used by `financeFilters.ts`, `plansCopy.ts`, the route's Zod and `buildSubscriptions`. `isSubscriptionStatus` is unchanged for the chip. One new option follows the statuses. Tests: the URL round trip, an unknown value becoming `''`, and the reset rule off the plans tab |
+| P3-SA-2 item 6, P3-SA-10 | Uses the existing `paying`, a known start and `RENEWAL_SETTLE_MS`; `settled` is not reused. Three tests assert the exact lists of finding kinds (`['tier_differs']`, `[]`, `[]`). In each, the mirror's period end and the plan row's paid-through date equal Stripe's, and the status and cancel flag match. Every existing pass test is unchanged and passes. No count is added, so the D-4 byte budget is unchanged |
+| P3-SA-4 | The rule moved as it is, with `sameInstant`. **Every existing `billingPanelView.test.ts` test passes unchanged**; the file is not edited. A new parity test runs nine cases through both the list rule and `buildBillingPanel`. The chip also shows in the plan drawer, which uses the same table. The title never says "Stripe", tested over every kind and every new string. No new tile: one totals line and the count in the option, both ignoring the filter |
+| P3-SA-4 (entitlements) | No file adds or removes a symbol from `lib/business-os/entitlements/`: the import changes in `billingPanelView.ts` and `subscriptionsView.ts` touch only `payingSubscriptionStatuses` and local modules. The `KNOWN_NON_GATE_IMPORTERS` diff is **empty**. No tier literal: tests use the config's own tier order or the neutral `tier_a` |
+| P3-SA-11 | Unit and render tests in existing shards only. The Connect harness ran with `--ci` and is unchanged |
+
+**Deviations (for SA).**
+
+- **D3a-1 (the client tolerates a missing field).** `SubscriptionsTable` reads `row.disagreements?.length`. `PlansSubscriptions` shows the totals line, and the count in the option, only when `totals.disagreeing` is a number. A page left open across the deploy can receive a payload without these fields; it then shows no chip and no line instead of failing the whole table. The types still mark both fields required.
+- **D3a-2 (fixtures).** Two existing finance render test files gained the two new required fields so that `tsc` stays clean. In `financeDrawers.render.test.tsx`, these are `subRow` and the plan drawer's totals. In `financePage.render.test.tsx`, it is the Subscriptions payload. No assertion changed, and both files passed before this edit too, because of D3a-1.
+- **D3a-3 (RC-15).** The two new tests that need the plan-row type take it from `SubscriptionsInput['planRows'][number]`. They therefore name no plan repository, and the RC-15 `ALLOWED` list does not grow.
+
+**New tests.**
+- `planReconcilePass.test.ts`: 3 added, for FU-P8b-6.
+- `lib/admin/billing/__tests__/subscriptionsView.disagrees.test.ts` (22): the rule for each case, panel parity for each case, the marker, the filter, the count and the plan drawer.
+- `app/admin/finance/__tests__/financeFilters.disagrees.test.ts` (4).
+- `app/api/admin/business-os/billing/subscriptions/__tests__/route.disagrees.test.ts` (7): a 200 with the filter, three 400s, a 401 before any read, and a log line with counts only.
+- `app/admin/finance/__tests__/subscriptionsDisagrees.render.test.tsx` (5): the words never say Stripe, the chip and its title, the option with its count, the totals line inside the existing `<dl>`, and the request carrying `status=disagrees`.
+
+**Gates (2026-10-28, sequential).**
+
+| Gate | Result |
+|---|---|
+| `lib/admin`, `app/admin`, `app/api/admin/business-os/billing` (`--ci`) | 238 suites, 7,530 tests, pass |
+| `lib/business-os/billing`, `lib/business-os/boost`, `lib/repositories`, `lib/cron` (`--ci`) | 203 suites, 7,927 tests, pass. This includes the RC-15 imports guard and the `planReconcilePass*` suites (116 tests) |
+| Both `BusinessOsBilling*Repository.test.ts` allow-lists | 2 suites, 198 tests, pass. No new file imports either repository |
+| Connect harness `--ci` | 152 / 152 tests, 111 / 111 snapshots. `git status` is clean under `app/api/stripe` |
+| `npm run test:bos-entitlements` | 326 suites, 9,725 tests, pass |
+| `tsc --noEmit` (full project, 8 GB heap) | Completed with no OOM. 1,864 errors, all pre-existing (the P-8b.2 baseline), and **0 in touched or new files**. A first run found 4 in the two finance fixtures, fixed per D3a-2 |
+| ESLint, touched and new files | 0 errors. 1 pre-existing warning (`financePage.render.test.tsx` line 142, unused `k5Caption`), not on a touched line |
+
+**New user-facing words (G-5, for the user's approval).** All are in `app/admin/finance/plansCopy.ts`. The Finance admin page is English only.
+- Option and chip: "Disagrees". The option with its count: "Disagrees (N)".
+- Totals line: "Records that disagree".
+- Chip title: "Our billing record and the plan record disagree: {kinds}." The kinds are "the plan bought is not the plan on record", "the paid-through date is not the billed period end" and "the plan record has no plan", joined with "; ".
+- Empty list under the filter: "No subscriptions have records that disagree."
+
+**Demo (P3-SA-13):** still blocked on ruling B's user question.
+
+### SA code review: P-8b.3a
+
+**Code review by SA, 2026-10-28.**
+**Status:** Code Approved (APPROVED). No fix is required before QA or commit.
+
+Reviewed: `git diff` on `feature/bos-plan-payments-p8b3a` against `abe9fd64`, plus the four untracked test files. SA re-ran the touched and new suites (`financeFilters.disagrees`, `subscriptionsDisagrees.render`, `financeDrawers.render`, the subscriptions route tests, `lib/admin/billing/__tests__`, `planReconcilePass.test.ts`): 12 suites, 218 tests, all passing.
+
+**Rulings checked.**
+
+| Ruling | Verdict |
+|---|---|
+| P3-SA-1 | Pass. Only FU-P8b-6 and AM-2 are in the diff. Nothing from 3b or 3c, no migration, no webhook or Connect change |
+| P3-SA-2 item 5 | Pass. `SUBSCRIPTION_FILTERS = [...SUBSCRIPTION_STATUSES, 'disagrees'] as const` is declared once in `subscriptionsTypes.ts`, which still has no import. It is used by `financeFilters.ts` (`choiceFilter('status', SUBSCRIPTION_FILTERS, '')`, and `FinanceFilters.status` is `'' \| SubscriptionFilter`), by `plansCopy.ts` (`isSubscriptionFilter` in `toSubscriptionsFilter` and `SUBSCRIPTIONS_FILTER_SPEC`), by the route's `z.enum(SUBSCRIPTION_FILTERS)` (still `.strict()`), and by `buildSubscriptions`. `isSubscriptionStatus` is unchanged. The remaining `SUBSCRIPTION_STATUSES` readers (`PlanDrawer`'s status chips, `byStatus`, `subscriptionStatuses`) are correctly about statuses, not filters. One option follows the statuses. The round-trip, unknown-value and reset tests are present |
+| P3-SA-2 item 6, P3-SA-10 | Pass. `paying` and `period` are only moved above the tier check. `nullTierSettled` is a separate predicate (start known, `nowMs − startMs ≥ RENEWAL_SETTLE_MS`, existing `paying`), and `settled` is not reused. The existing "one finding per root difference" guard then drops `plan_tier_differs`, the same way it already does for a non-null tier mismatch. The three tests assert exact kind lists. The test-file diff is additions only. No count is added, so the D-4 budget is unchanged |
+| P3-SA-3 | Pass for this route. `requireAdmin` is still the first statement of `GET`, Zod is `.strict()`, and only the enum widened |
+| P3-SA-4 | Pass. `billingDisagreements` is the panel block verbatim (the `row !== null` check is now at the call site: `row === null ? [] : billingDisagreements(row, plan)`), and it moved with `SAME_INSTANT_MS` and `sameInstant`. `billingPanelView.test.ts` is byte-identical to `abe9fd64`, and it passes. The parity test runs both paths. The chip title says "Our billing record and the plan record disagree: …" and the copy never says "Stripe" (tested over every kind and combination). There is no tile: one `<dt>/<dd>` in the existing totals `<dl>`, and the count is in the option label. Both come from `totals.disagreeing`, which ignores the filter. `PlanDrawer` gets the chip through `SubscriptionsTable` and `buildPlanSubscriptions` → `buildSubscriptions`, as accepted |
+| P3-SA-11 | Pass. Tests are in existing shards. No new `process.env` read, job or network call. Per Dev's notes, the Connect harness output is unchanged and `tsc` gives 0 errors in touched files (no OOM) |
+
+**Deviations.**
+- **D3a-1: approved.** Tolerating a payload from a server older than this deploy is the right failure mode for a page left open across a deploy: no chip and no line, instead of a broken table. The types keep both fields required, so the server cannot omit them. The `?.` and `typeof … === 'number'` checks each carry a comment saying why.
+- **D3a-2: approved.** Adding the two new required fields to the fixtures (`disagreements: []`, `disagreeing: 0`) changes no assertion and is the minimum change that keeps `tsc` clean.
+- **D3a-3: approved.** Deriving the plan-row type from `SubscriptionsInput['planRows'][number]` keeps the RC-15 `ALLOWED` list from growing. The tests' `AdminBillingRow` type import is from `BusinessOsBillingAdminReadRepository`, which existing tests in the same folder already use, so it is not a new name for RC-15.
+
+**Other checks.**
+- **No PII.** A row gains only an enum array, and the totals gain a count. The log line adds `disagreeing` (a count).
+- **Entitlements.** The product files' `lib/business-os/entitlements/` imports are unchanged (`billingPanelView.ts` loses only the `payingSubscriptionStatuses` import, which is not in the entitlements module, and `subscriptionsView.ts` gains it). The new test files import `getEntitlementConfig`, and tests are exempt under the skill. No tier literal: tests use `tier_a` or the config order.
+- **Admin layout standard and tokens.** The change reuses `StatusChip tone="warn"`, `ADMIN_FIELD_CONTROL`, `AdminEmpty` and the existing totals `<dl>` classes (`text-xs text-slate-400` / `text-sm text-white`, as its sibling rows use). There is no green class and no new pattern.
+- **Logging.** No `console.*` appears in any touched file.
+
+**Optimisation suggestions (non-blocking).**
+1. The chip's explanation lives only in a `title` on a `span`, so keyboard and touch users cannot reach it. This matches how the table already uses `title`, so it is acceptable here. If the AM-2 demo shows admins miss the kinds, a follow-up could print them inline or in the business drawer.
+2. "the plan record has no plan" reads awkwardly. It is part of the G-5 words that the user approves, so it is flagged for that approval and does not block the code.
+
+**Code approved for QA: Yes.** The P3-SA-13 demo (a disagreeing test record with exactly one kind) still gates user acceptance and does not gate the commit.
+
 ## Commit Info
 
 _(RM populates.)_
@@ -512,3 +1429,16 @@ _(RM populates.)_
 | 2026-10-27 | Rulings folded in; P-8b.1 code complete (Dev) | §4.1 and §8 carry SA rulings 1, 2 and 6; §13 records TL decisions (B-1, B-2 defaults; F-1 into P-8b.2). P-8b.1 built: `reclaimStale`, the route's `processing` branch, harness 9b changed by one effect, 9d / 9e added, all other 108 exports byte-identical; snapshot md5 `edb47594…`. Implementation Notes (P-8b.1) |
 | 2026-10-27 | SA code review: P-8b.1 (SA) | Code Approved. Per-export checksums re-verified (108 identical, 9b changed, 9d / 9e added); lease, race and sanitise band checked; RM owes ruling 1e in the PR body |
 | 2026-10-27 | QA report: P-8b.1 (QA) | PASS. 21 new in-memory tests (boundary, 14:59/15:01, NULL, race, error, PII); all gates green; snapshot md5 unchanged |
+| 2026-10-28 | P-8b.2 code complete (Dev) | On `feature/bos-plan-payments-p8b2` (from P-8b.1, PR #555 opened 2026-10-28). `planReconcilePass` appended to `bos-billing-reconcile`: a drain on `processed_webhook_events` (insert / `reclaimFailedIfStillFailed` / `reclaimStale`, never `reclaimFailed`), all 7 handler types oldest first, API-version and mode skips, window anchored per ruling 8 (+ D-3); Steps B and C flag only; D3.1 double-replay test; F-1 `replaceCustomer` fix; 13 plan counts within the run record's 1,024-byte CHECK (D-4). No migration. Implementation Notes (P-8b.2) |
+| 2026-10-28 | SA code review: P-8b.2 (SA) | APPROVED WITH FIXES. Claim discipline, conditional reclaim, no-orphan-on-incomplete, tenant isolation, F-1 and the unchanged Connect path verified; D-2 to D-10 approved (D-4 headroom corrected to about 60 bytes). Fixes: (1) every lost claim sets `incomplete`; (2) an unsettled claim sets `incomplete`; (3) run read lookback 30 days so "first night" cannot skip days 3 to 7; (4) `planApiVersionSkipped` amber, with the Step 4 demo recording the account API version |
+| 2026-10-28 | SA fixes 1 to 4 applied; Step 4 demo stopped (Dev) | Every lost claim and every unsettled claim sets `planIncomplete`; run history read over 30 days; `planApiVersionSkipped` is amber. All gates green. Sandbox demo stopped at the API-version check: the test account renders every plan event at `2026-09-30.endive`, not `2025-10-29.clover`; back to SA |
+| 2026-10-28 | SA re-review: P-8b.2 fixes and API-version ruling (SA) | Fixes 1 to 4 approved; residual gap (30 days of failed runs falls back to 3 days) accepted as a known limitation. API version: option (b) per (version, type), `PLAN_HANDLER_VERIFIED_EVENT_SHAPES` beside the event types, each pair backed by a C-6 fixture (ratchet test); endive verified for 5 types, `checkout.session.completed` after a capture; pin move (a) rejected for P-8b. V-1 to V-5 before QA; demo evidence and the user's production API-version question recorded |
+| 2026-10-28 | API-version ruling (b) built; Step 4 demo run (Dev) | V-1 to V-5: verified (version, type) map, pass gate with one summary warn, endive `checkout.session.completed` captured (payment mode; flagged to SA), ratchet in the C-6 test, §9.5 row 9 amended. Demo on real Stripe test reads with in-memory DB ports: points 1, 2, 3 and 5 shown; point 4 not shown (the only live plan subscriptions belong to the customer that must not be touched). All gates green |
+| 2026-10-28 | SA check: V-1 to V-5 and Step 4 demo (SA) | APPROVED, ready for QA. Ruling A: the payment-mode endive `checkout.session.completed` capture is accepted (FU-P8b-4: replace with a subscription-mode capture). Ruling B: demo point 4 is covered by unit tests, no Stripe write; QA condition Q-C1 (a captured subscription fixture through the real list mapping into Step B); the real-data mismatch moves to the P-8b.3 demo, with the user question written out |
+| 2026-10-28 | QA report: P-8b.2 (QA) | PASS. Q-C1 met: 7 tests send the captured clover subscription through the real `listBusinessOsSubscriptionsByPrice` mapping into the real Step B. 29 edge-case tests: claim races and errors, unsettled claims, window anchoring, unverified shapes, deadline and batch caps, no PII. Bugs 0. Performance 1 (Medium, for SA): the batch cap can latch the window at 7 days and starve newer events at about 1,000 subscribers or more. Edge cases 2 (Low). All gates green, tsc 0 in touched files |
+| 2026-10-28 | SA rulings on P-8b.2 QA items (SA) | None blocks the commit. Performance 1 (cap latches the window) is FU-P8b-5, with a binding trigger (live mode passes 300 paying plan subscriptions, or two nights of `planIncomplete` with no replay failure or deadline) and a fixed design: separate replay and Step C budgets, day-sliced event listing (which also covers Edge case 1). Edge case 2 (null `bought_tier`) is FU-P8b-6, Low, fixed when next touched |
+| 2026-10-28 | P-8b.3a code complete (Dev) | P-8b.3 split per P3-SA-1; branch fast-forwarded to `main` `abe9fd64` (#559 merged) and renamed `…-p8b3a`. FU-P8b-6 (null mirror tier, three tests) and AM-2 "Disagrees" (one `billingDisagreements` rule moved unchanged, `SUBSCRIPTION_FILTERS`, chip, option with count, totals line). Panel tests unchanged; Connect harness unchanged; entitlements imports unchanged; tsc 0 in touched files. Implementation Notes (P-8b.3a) |
+| 2026-10-28 | SA code review: P-8b.3a (SA) | APPROVED. P3-SA-1, 2 (items 5 and 6), 3, 4, 10 and 11 verified; rule moved verbatim with `sameInstant`, panel test byte-identical; one `SUBSCRIPTION_FILTERS` incl. `financeFilters.ts`; no "Stripe" in the words; no tile; no PII; entitlements imports unchanged. D3a-1, D3a-2 and D3a-3 approved. Two non-blocking suggestions (title-only tooltip; G-5 wording of `no_tier_on_plan`). SA re-ran 12 suites / 218 tests: pass |
+| 2026-10-28 | QA report: P-8b.3a (QA) | PASS. 42 QA tests: FU-P8b-6 boundary ±1 ms, not paying, unresolved tier, one root; filter combinations, unknown values, empty / all-disagree / over-cap counts, plan-drawer chip, old payload, rendered titles never say Stripe; route 401 / 403 before 400 and no PII. Bugs 0; edge cases 2 (Low). All gates green, Connect harness unchanged, tsc 0 in touched files, no OOM |
+| 2026-10-28 | Plan: P-8b.3 (Dev) | On `feature/bos-plan-payments-p8b3` (from `6312470e`). AM-4 read repository + GET, plan reconcile POST (ruling 5) whose lost claims and failures show in its words, logs and AM-4 and never in `bos_cron_runs`, Jobs block and dialog with a named guard amendment, AM-2 "Disagrees" from one shared rule, FU-P8b-6. Facts F3-1 to F3-10; questions Q-P3-1 to Q-P3-8 for SA. No code yet |
+| 2026-10-28 | SA review: Plan P-8b.3 (SA) | APPROVED WITH CHANGES, rulings P3-SA-1 to P3-SA-13. Split into 3 PRs: 3a (FU-P8b-6 + AM-2 Disagrees), 3b (AM-4 read-only block), 3c (plan reconcile button). Q-P3-1 to Q-P3-8 ruled (flow column dropped; created + last attempt, 200-per-state read; classes handler_error/timeout/unknown/stuck; block-only re-read; status=disagrees incl. the missed `financeFilters.ts` parser; no finding on unknown start; no-mode count line; words for every partlyDoneWhen key). Block not gated by the jobs read; KPI indicators set; repo not in index; PII tested at builder and route |

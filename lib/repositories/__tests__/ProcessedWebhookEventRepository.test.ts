@@ -215,6 +215,51 @@ describe('ProcessedWebhookEventRepository', () => {
     });
   });
 
+  // P-8b.2 (SA ruling 2): the plan pass's conditional failed-reclaim.
+  describe('reclaimFailedIfStillFailed', () => {
+    it('sets processing with a count, filtered on event id and status failed only', async () => {
+      const { client, calls } = recordingClient({ data: null, error: null, count: 1 });
+      const result = await new ProcessedWebhookEventRepository(client).reclaimFailedIfStillFailed(EVENT_ID);
+
+      expect(calls).toEqual([
+        ['from', 'processed_webhook_events'],
+        [
+          'update',
+          { status: 'processing', failure_message: null, processed_at: expect.stringMatching(ISO) },
+          { count: 'exact' },
+        ],
+        ['eq', 'event_id', EVENT_ID],
+        ['eq', 'status', 'failed'],
+        ['await'],
+      ]);
+      expect(result).toEqual({ data: { won: true }, error: null });
+      expectNoOwnerFilter(calls);
+      expect(calls.map((c) => c[0])).not.toContain('select');
+      expect(calls.map((c) => c[0])).not.toContain('or');
+    });
+
+    it.each([[0], [2], [null], [undefined]])('count %p is not a win', async (count) => {
+      const { client } = recordingClient({ data: null, error: null, count: count as number | null | undefined });
+      expect(await new ProcessedWebhookEventRepository(client).reclaimFailedIfStillFailed(EVENT_ID)).toEqual({
+        data: { won: false },
+        error: null,
+      });
+    });
+
+    it('passes the error through, with no verdict', async () => {
+      const error = pgError();
+      const { client } = recordingClient({ data: null, error, count: 1 });
+      const result = await new ProcessedWebhookEventRepository(client).reclaimFailedIfStillFailed(EVENT_ID);
+      expect(result.error).toBe(error);
+      expect(result.data).toBeNull();
+    });
+
+    it('the webhook route never calls it: the plan pass is its only caller (SA ruling 2)', () => {
+      const route = fs.readFileSync(path.join(process.cwd(), 'app/api/stripe/webhook/route.ts'), 'utf8');
+      expect(route).not.toContain('reclaimFailedIfStillFailed');
+    });
+  });
+
   describe('complete', () => {
     it('sets completed with completed_at, filtered by event id only', async () => {
       const { client, calls } = recordingClient({ data: null, error: null });
@@ -302,7 +347,7 @@ describe('ProcessedWebhookEventRepository', () => {
       expect(source).toContain(
         "// Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)"
       );
-      for (const method of ['findClaim', 'insertClaim', 'reclaimStale', 'reclaimFailed', 'complete', 'markFailed']) {
+      for (const method of ['findClaim', 'insertClaim', 'reclaimStale', 'reclaimFailed', 'reclaimFailedIfStillFailed', 'complete', 'markFailed']) {
         const doc = new RegExp(`/\\*\\*[^/]*⟨unscoped-by-design⟩[\\s\\S]*?\\*/\\s*async ${method}\\(`);
         expect(source).toMatch(doc);
       }
