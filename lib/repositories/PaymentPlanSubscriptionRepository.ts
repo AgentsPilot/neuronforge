@@ -22,8 +22,9 @@
  * @module lib/repositories/PaymentPlanSubscriptionRepository
  */
 
-import type { PostgrestError } from '@supabase/supabase-js';
+import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { PLAN_STOPPED_STATUSES } from '@/lib/payments/planStatus';
 import type { CancelledBy } from '@/lib/business-os/cancellationReasons';
 import { createLogger } from '@/lib/logger';
 
@@ -135,7 +136,18 @@ export interface WebhookPlanSubscriptionResult<T> {
 }
 
 export class PaymentPlanSubscriptionRepository {
-  private supabase = supabaseServer;
+  private supabase: SupabaseClient;
+
+  /**
+   * Client injected, defaulting to the service-role one.
+   *
+   * Every other repository in this directory takes its client this way; this
+   * one held `supabaseServer` directly, which left no seam for a unit test and
+   * is what the `new-repository` checklist asks for.
+   */
+  constructor(supabaseClient: SupabaseClient = supabaseServer) {
+    this.supabase = supabaseClient;
+  }
 
   /**
    * Record the intent to charge, before Stripe is asked to.
@@ -204,6 +216,98 @@ export class PaymentPlanSubscriptionRepository {
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, id }, 'Could not attach Stripe references to the plan');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Is a payment plan still CHARGING this client?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The live-plan question. Its sibling `findAnyForBooking` asks a different
+   * one, and the two must never be merged behind a flag — see that method.
+   *
+   * `installment_count`, NEVER `periods_total`, which does not exist. One
+   * unknown name makes PostgREST reject the WHOLE select, so a typo here would
+   * report every cancelled booking as having no live plan: the silent-nothing
+   * failure this codebase has been bitten by before.
+   *
+   * `maybeSingle` is safe BECAUSE of the status filter: the partial unique
+   * index `idx_plan_subs_one_live_per_booking` allows at most one row per
+   * booking in exactly these statuses. Asking without the filter could match an
+   * old stopped plan alongside a live one, and `maybeSingle` would then throw —
+   * reporting "no plan" on precisely the booking that has two.
+   *
+   * The status list is derived from `PLAN_STOPPED_STATUSES` rather than
+   * retyped, so this cannot drift from what `cancelPlan` considers finished.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findLiveForBooking(
+    bookingId: string,
+    userId: string
+  ): Promise<PlanSubscriptionResult<Pick<
+    PlanSubscription,
+    'id' | 'status' | 'installment_count' | 'periods_paid' | 'next_charge_at'
+  > | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_plan_subscriptions')
+        .select('id, status, installment_count, periods_paid, next_charge_at')
+        .eq('user_id', userId)
+        .eq('booking_id', bookingId)
+        .not('status', 'in', `(${PLAN_STOPPED_STATUSES.join(',')})`)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: data ?? null, error: null };
+    } catch (error) {
+      logger.error(
+        { err: error, bookingId, userId },
+        'Could not check whether a payment plan is still charging'
+      );
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Is ANY plan row attached to this booking, live or finished?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A DIFFERENT QUESTION FROM `findLiveForBooking`, AND DELIBERATELY UNFILTERED.
+   *
+   * This one exists for the pre-delete check. `booking_id` is `ON DELETE
+   * RESTRICT`, and RESTRICT counts ANY row — finished ones included. Copying
+   * the live-only filter here would let a booking with a stopped plan through
+   * to a delete the database then rejects, and that refusal arrives at the very
+   * LAST step: after the invoices have been voided and deleted, the calendar
+   * event removed and the client emailed that their appointment is cancelled.
+   * Every one of those is unrecoverable, and the email is a lie the moment the
+   * delete fails.
+   *
+   * Two named methods rather than one with a `liveOnly` flag, because the
+   * caller that gets this wrong gets it wrong silently and expensively.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findAnyForBooking(
+    bookingId: string,
+    userId: string
+  ): Promise<PlanSubscriptionResult<Pick<PlanSubscription, 'id' | 'status'> | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_plan_subscriptions')
+        .select('id, status')
+        .eq('user_id', userId)
+        .eq('booking_id', bookingId)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: data ?? null, error: null };
+    } catch (error) {
+      logger.error(
+        { err: error, bookingId, userId },
+        'Could not check for a payment plan attached to a booking'
+      );
       return { data: null, error: error as Error };
     }
   }

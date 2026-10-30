@@ -720,6 +720,43 @@ export class SchedulingServiceRepository {
   }
 
   /**
+   * How this service is sold, and nothing else.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Narrow on purpose rather than reusing `findById`, which is `select('*')`
+   * with `.single()` and logs an error on a miss. Here "no such service" is a
+   * normal, quiet answer — the caller is deciding whether a cancellation also
+   * has to reach a quote — so a miss must not produce a logged error on every
+   * cancellation of a booking whose service has since been removed, and there
+   * is no reason to pull every column to read one.
+   *
+   * Scoped by `user_id`, which the call site this replaced did NOT do: it read
+   * `scheduling_services` by id alone (CLAUDE.md Rule 4). The id always comes
+   * off a booking already resolved for this owner, so the scope is a tightening
+   * with no behaviour to lose.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findSaleMode(
+    id: string,
+    userId: string
+  ): Promise<SchedulingRepositoryResult<{ sale_mode: string | null } | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_services')
+        .select('sale_mode')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: data ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, serviceId: id, userId }, 'Failed to read the service sale mode');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Ownership oracle: the service's id if `userId` owns it, else null.
    *
    * For service-role paths that were handed a service id by someone else (the
@@ -3273,6 +3310,42 @@ export class SchedulingBookingRepository {
   }
 
   // ==================== CALENDAR SYNC METHODS ====================
+
+  /**
+   * The two columns that say whether a booking is already called off.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * BOTH of them, because `status` alone can miss.
+   *
+   * `cancel()` writes `status` and `meeting_status` together — except on a
+   * booking whose outcome was already recorded, where it deliberately writes
+   * NEITHER and leaves the outcome standing. A package whose sessions were all
+   * held therefore keeps `status: 'confirmed'` after being called off, and a
+   * guard reading only that would run the whole cancellation cascade again on
+   * the next press, rewriting `outcome_at` and re-firing its side effects.
+   *
+   * The caller decides what counts as cancelled; this only fetches the facts.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findCancellationState(
+    id: string,
+    userId: string
+  ): Promise<SchedulingRepositoryResult<{ status: string | null; meeting_status: string | null } | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_bookings')
+        .select('status, meeting_status')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: data ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, bookingId: id, userId }, 'Failed to read the booking cancellation state');
+      return { data: null, error: error as Error };
+    }
+  }
 
   /**
    * Get bookings that need calendar sync (confirmed bookings without external_calendar_event_id)
