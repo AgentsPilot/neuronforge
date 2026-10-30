@@ -2,8 +2,19 @@
  * Disconnect Stripe Connect Account (Soft)
  * POST /api/payments/stripe-connect/disconnect
  *
- * Disables the connected account (sets charges_enabled and payouts_enabled to false)
- * but keeps the record so user can still delete it or reconnect later.
+ * Disables the connected account on OUR record (sets charges_enabled and
+ * payouts_enabled to false) but keeps the record so the owner can still remove
+ * it or reconnect later. Nothing is sent to Stripe: the account stays live
+ * there, which is why the deletion guard G-8 still counts it.
+ *
+ * Self-service exit SX-5 / D5, BQ-12 (user, 2026-10-30: block): refused while
+ * client payment plans are still running, because they keep collecting through
+ * this account. Read from the same local conditions as the deletion guard G-9
+ * (`connectExitGuard`, C1 only). A failed read refuses (503); nothing changes.
+ *
+ * No request body. The user is the session; our row is read and written by
+ * that user's id only. Service role (`supabaseServer`, rule 4, intentional):
+ * the Connect table is server-written.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -12,6 +23,8 @@ import { createLogger } from '@/lib/logger';
 import { StripeConnectRepository } from '@/lib/repositories/PaymentRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
+import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { checkConnectExit } from '@/lib/business-os/account-deletion/connectExitGuard';
 
 const logger = createLogger({ module: 'StripeConnectDisconnect' });
 const auditTrail = AuditTrailService.getInstance();
@@ -37,6 +50,11 @@ export async function POST(request: NextRequest) {
     // 2. Get user's Stripe Connect account
     const accountResult = await stripeConnectRepo.findByUserId(user.id);
 
+    if (accountResult.error) {
+      requestLogger.error({ err: accountResult.error }, 'Could not read the Stripe Connect account');
+      return NextResponse.json({ success: false, error: 'check_failed' }, { status: 503 });
+    }
+
     if (!accountResult.data) {
       return NextResponse.json(
         { success: false, error: 'No payment account found' },
@@ -47,7 +65,29 @@ export async function POST(request: NextRequest) {
     const account = accountResult.data;
     const stripeAccountId = account.stripe_account_id;
 
-    // 3. Mark as disconnected by disabling charges and payouts
+    // 3. BQ-12: not while client payment plans are still running.
+    const verdict = await checkConnectExit({ id: user.id, email: user.email ?? null }, 'disconnect');
+    if (verdict.kind !== 'clear') {
+      const code = verdict.kind === 'blocked' ? 'client_plans_running' : 'check_failed';
+      requestLogger.warn({ userId: user.id, code, reason: verdict.kind === 'unreadable' ? verdict.reason : undefined }, 'Stripe Connect disconnect refused');
+      auditTrail
+        .log({
+          action: AUDIT_EVENTS.STRIPE_CONNECT_DISCONNECT_REFUSED,
+          userId: user.id,
+          entityType: 'stripe_connect_account',
+          entityId: stripeAccountId,
+          details: { reason: code, blockers: verdict.kind === 'blocked' ? verdict.blockers : undefined },
+          severity: 'info',
+          request,
+        })
+        .catch((err) => requestLogger.error({ err }, 'Audit log failed'));
+      return NextResponse.json(
+        { success: false, error: code, ...(verdict.kind === 'blocked' ? { blockers: verdict.blockers } : {}) },
+        { status: verdict.kind === 'blocked' ? 409 : 503 }
+      );
+    }
+
+    // 4. Mark as disconnected by disabling charges and payouts
     // Reset details_submitted too so the UI recognizes this as a disconnected account
     // We keep the record so user can still delete or reconnect later
     const updateResult = await stripeConnectRepo.update(user.id, {
@@ -65,20 +105,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 4. Audit log (non-blocking)
-    auditTrail.log({
-      action: 'STRIPE_CONNECT_ACCOUNT_DISCONNECTED',
-      userId: user.id,
-      entityType: 'stripe_connect_account',
-      entityId: stripeAccountId,
-      details: {
-        account_type: account.stripe_account_type,
-        country: account.country,
-        action: 'soft_disconnect',
-      },
-      severity: 'info',
-      request,
-    }).catch(err => requestLogger.error({ err }, 'Audit log failed'));
+    // 5. Audit, recorded before the response (SA W-12: an access change on a payment account).
+    await auditTrail
+      .log({
+        action: AUDIT_EVENTS.STRIPE_CONNECT_ACCOUNT_DISCONNECTED,
+        userId: user.id,
+        entityType: 'stripe_connect_account',
+        entityId: stripeAccountId,
+        details: {
+          account_type: account.stripe_account_type,
+          country: account.country,
+          action: 'soft_disconnect',
+        },
+        severity: 'info',
+        request,
+      })
+      .catch((err) => requestLogger.error({ err }, 'Audit log failed'));
+    await auditTrail.flush().catch((err) => requestLogger.error({ err }, 'Audit flush failed'));
 
     requestLogger.info({ stripeAccountId }, 'Stripe Connect account disconnected (kept in Stripe)');
 

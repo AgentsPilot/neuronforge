@@ -1646,11 +1646,43 @@ export class StripeService {
   }
 
   /**
-   * Delete a connected account from Stripe
-   * Stripe recommends platform-initiated deletion via API
+   * Delete a connected account from Stripe (Express / Custom only; Stripe
+   * refuses a live Standard account, and a live account with a balance).
+   *
+   * Returns Stripe's own answer so the caller can require `deleted: true`
+   * before it removes our record (self-service exit SX-5, C-5). Throws Stripe's
+   * error unchanged; the caller classifies it by type and code, never message.
    */
-  async deleteConnectedAccount(accountId: string): Promise<void> {
-    await this.stripe.accounts.del(accountId);
+  async deleteConnectedAccount(accountId: string): Promise<{ id: string; deleted: boolean }> {
+    const answer = await this.stripe.accounts.del(accountId);
+    return { id: answer.id, deleted: answer.deleted === true };
+  }
+
+  /**
+   * What Stripe says a connected account is (SX-5): `standard` when the owner
+   * controls it (OAuth-linked; released by deauthorize), `platform` when we do
+   * (Express / Custom; released by delete), `deleted` when Stripe answers with
+   * a deleted object. Throws Stripe's error unchanged.
+   */
+  async retrieveConnectedAccountKind(accountId: string): Promise<'standard' | 'platform' | 'deleted'> {
+    const account = await this.stripe.accounts.retrieve(accountId);
+    // The SDK types `deleted` as never present on a retrieve; read it defensively anyway.
+    if ((account as { deleted?: unknown }).deleted === true) return 'deleted';
+    if (account.type === 'standard' || account.controller?.type === 'account') return 'standard';
+    return 'platform';
+  }
+
+  /**
+   * Revoke this platform's access to an OAuth-linked (Standard) account
+   * (SX-5, C-5). The account stays the owner's. Returns the account id Stripe
+   * echoes back; the caller treats only a matching id as confirmation.
+   */
+  async deauthorizeConnectedAccount(params: { clientId: string; accountId: string }): Promise<{ stripeUserId: string }> {
+    const answer = await this.stripe.oauth.deauthorize({
+      client_id: params.clientId,
+      stripe_user_id: params.accountId,
+    });
+    return { stripeUserId: answer.stripe_user_id };
   }
 
   /**
