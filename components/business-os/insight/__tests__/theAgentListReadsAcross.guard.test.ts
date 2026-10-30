@@ -46,26 +46,31 @@ describe('the ledger', () => {
     expect(card).toContain("minWidth: '680px'");
   });
 
-  it('keeps the agent name on screen while the times scroll under it', () => {
+  it('scrolls every column together, with nothing frozen', () => {
     /*
-     * The consequence of scrolling instead of squeezing, and the reason this is
-     * not cosmetic: a phone shows roughly half the table, so an owner reading
-     * the "next run" column has scrolled the names away — identical rows of
-     * times with nothing saying which agent owns each one, and the pause and
-     * remove buttons at the end of every one of them.
+     * ───────────────────────────────────────────────────────────────────────
+     * THIS ASSERTED THE OPPOSITE UNTIL 2026-10-30, AND THE CHANGE WAS ASKED FOR.
+     *
+     * The agent name was `position: sticky` so the times could scroll under it.
+     * Three faults came out of that and all three were phone-only:
+     *
+     *   sticky does not work on a `<td>` in a `border-collapse: collapse`
+     *   table — a WebKit limitation, so every browser on iOS;
+     *
+     *   a sticky cell paints its background over the cell BOX, so a long name
+     *   overflowed and rendered on top of the column beside it;
+     *
+     *   and the container was never narrower than the table, so nothing
+     *   scrolled under the frozen column anyway — one column visible, no way
+     *   to reach the rest.
+     *
+     * The owner's call: the whole list scrolls, all columns together. That is
+     * what every other table in the product does, and it removes all three
+     * faults instead of fixing them one at a time.
+     * ───────────────────────────────────────────────────────────────────────
      */
-    expect(card).toContain('const PINNED');
-    expect(card).toContain("position: 'sticky'");
-
-    /* A sticky cell with no fill lets the scrolling columns read straight
-       through its text. */
-    const pinned = card.slice(card.indexOf('const PINNED'), card.indexOf('function stateOf'));
-    expect(pinned).toContain('background:');
-
-    /* Applied to the header AND the body cell, or the two come apart as it
-       scrolls. */
-    expect(card).toContain('...(i === 0 ? PINNED : null)');
-    expect(card).toContain("padding: '9px 10px', ...PINNED");
+    expect(card).not.toMatch(/position: 'sticky'[\s\S]{0,120}insetInlineStart: 0,\s*\n\s*background/);
+    expect(card).not.toContain('...PINNED');
   });
 
   it('pins to the start edge, not the left one', () => {
@@ -168,14 +173,17 @@ describe('it scrolls on a phone', () => {
 
     expect(editor).toMatch(/position: 'sticky'/);
     expect(editor).toMatch(/insetInlineStart: 0/);
-    /* Capped to the visible width, or sticky only moves the overflow around. */
-    expect(editor).toMatch(/width: 'calc\(100vw/);
-    /* And `max-width: 100%` so a desktop, where the cap is wider than the card,
-       is left exactly as it was. */
     expect(editor).toMatch(/maxWidth: '100%'/);
+    /*
+     * And NOT by guessing the page chrome. `calc(100vw - 4rem)` assumed 64px
+     * either side; where the real chrome is wider the panel outgrew its parent
+     * and gave the DESKTOP a horizontal scrollbar the moment the editor opened.
+     * A number nobody can verify is not a fix.
+     */
+    expect(editor).not.toMatch(/width: 'calc\(100vw/);
   });
 
-  it('clips the pinned name instead of letting it cover the next column', () => {
+  it('clips a long name so it cannot widen the whole table', () => {
     /*
      * A sticky cell paints its background over the cell BOX. Text that
      * overflows the box is painted on top of whatever is scrolling underneath
@@ -183,10 +191,11 @@ describe('it scrolls on a phone', () => {
      * and the two read as one smeared line. Seen on a phone, invisible on a
      * desktop where the column is wide enough for any name.
      */
-    const nameCell = card.slice(card.indexOf('{agent.name}') - 900, card.indexOf('{agent.name}') + 60);
+    const nameCell = card.slice(card.indexOf('{agent.name}') - 1200, card.indexOf('{agent.name}') + 60);
 
     expect(nameCell).toMatch(/truncate/);
-    expect(nameCell).toMatch(/maxWidth: '45vw'/);
+    /* In `ch`, the font's own characters, not a guess about the screen. */
+    expect(nameCell).toMatch(/maxWidth: '22ch'/);
     /* And the whole name still reachable, since clipping hides information. */
     expect(nameCell).toMatch(/title=\{agent\.name\}/);
   });
