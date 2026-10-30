@@ -34,7 +34,7 @@ import {
   __setServiceClientForTests,
 } from '@/lib/security/onboardingVerdict';
 
-const log = { debug: () => {} };
+const log = { debug: () => {}, warn: () => {} };
 
 /** A Supabase stand-in that counts what it was asked and can be made slow. */
 function fakeSupabase(opts: {
@@ -42,6 +42,8 @@ function fakeSupabase(opts: {
   authError?: boolean;
   onboardingCompleted?: boolean | null;
   profileError?: boolean;
+  /** A row that EXISTS but whose column is null — distinct from no row. */
+  nullColumn?: boolean;
   /** Milliseconds the auth call takes, so concurrency can be exercised. */
   latency?: number;
 }) {
@@ -60,17 +62,20 @@ function fakeSupabase(opts: {
     from: () => ({
       select: () => ({
         eq: () => ({
-          single: async () => {
+          /* `maybeSingle`, matching the module. Under `single` a missing row
+             came back as an ERROR, so `onboardingCompleted: null` below was
+             modelling something PostgREST never actually returns. */
+          maybeSingle: async () => {
             calls.profile++;
-            return opts.profileError
-              ? { data: null, error: new Error('db down') }
-              : {
-                  data:
-                    opts.onboardingCompleted === null
-                      ? null
-                      : { onboarding_completed: opts.onboardingCompleted ?? true },
-                  error: null,
-                };
+            if (opts.profileError) return { data: null, error: new Error('db down') };
+            if (opts.nullColumn) return { data: { onboarding_completed: null }, error: null };
+            return {
+              data:
+                opts.onboardingCompleted === null
+                  ? null
+                  : { onboarding_completed: opts.onboardingCompleted ?? true },
+              error: null,
+            };
           },
         }),
       }),
@@ -100,11 +105,80 @@ describe('the answer itself', () => {
   });
 
   it('sends a user with no profile row to onboarding', async () => {
-    // The original rule: no profile means onboarding was never finished.
+    /*
+     * The original rule: no profile means onboarding was never finished.
+     *
+     * Worth pinning hard, because the `maybeSingle` change made this path a
+     * non-error. Get it wrong in the other direction and every user who has
+     * not yet onboarded — most of them — sails past onboarding instead.
+     */
     const { client } = fakeSupabase({ onboardingCompleted: null });
     __setServiceClientForTests(client as never);
 
     await expect(onboardingVerdict('tok', log)).resolves.toBe('onboard');
+  });
+
+  it('answers "unknown" when the PROFILE read fails, and does not redirect', async () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────
+     * THE OUTAGE TEST.
+     *
+     * This returned 'onboard' on a failed profile read. On 2026-10-29 one bad
+     * service-role credential therefore sent every request to
+     * `/onboarding-chat`, which sent the user back, which redirected again —
+     * a loop with no error anywhere, for about an hour and a half, and it
+     * read as an auth bug rather than a wrong environment variable.
+     *
+     * A read that failed is not an answer about onboarding. The only honest
+     * verdict is 'unknown', which the caller lets through.
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    const { client } = fakeSupabase({ profileError: true });
+    __setServiceClientForTests(client as never);
+
+    await expect(onboardingVerdict('tok', log)).resolves.toBe('unknown');
+  });
+
+  it('answers "unknown" for a COMPLETED user too, the people the outage actually hurt', async () => {
+    /*
+     * This takes the same branch as the test above, and deliberately so: when
+     * the read fails there is no row to tell the two users apart, which is the
+     * whole point. `onboardingCompleted: true` documents WHO was harmed —
+     * people who had finished onboarding long ago and were still bounced — not
+     * a second code path. The fixture cannot express one, because PostgREST
+     * cannot return both a row and an error.
+     */
+    const { client } = fakeSupabase({ onboardingCompleted: true, profileError: true });
+    __setServiceClientForTests(client as never);
+
+    await expect(onboardingVerdict('tok', log)).resolves.toBe('unknown');
+  });
+
+  it('treats a row whose onboarding_completed is null as not onboarded', async () => {
+    // Pins the truthiness check — the one place a schema default could flip a
+    // verdict without anything else in this file changing.
+    const { client } = fakeSupabase({ nullColumn: true });
+    __setServiceClientForTests(client as never);
+
+    await expect(onboardingVerdict('tok', log)).resolves.toBe('onboard');
+  });
+
+  it('warns when the profile read fails, at a level production keeps', async () => {
+    /*
+     * The edge logger's threshold is `info` outside development, so a `debug`
+     * line here would vanish in production — the onboarding gate off
+     * platform-wide and nothing in the logs to attribute it to. This assertion
+     * is the only thing standing between that and a silent repeat of
+     * 2026-10-29.
+     */
+    const warn = jest.fn();
+    const { client } = fakeSupabase({ profileError: true });
+    __setServiceClientForTests(client as never);
+
+    await onboardingVerdict('tok', { debug: () => {}, warn });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toHaveProperty('err');
   });
 
   it('answers "unknown" when auth fails, and does not redirect on it', async () => {
@@ -215,7 +289,9 @@ describe('a burst collapses into one lookup', () => {
       },
       from: () => ({
         select: () => ({
-          eq: () => ({ single: async () => ({ data: { onboarding_completed: true }, error: null }) }),
+          eq: () => ({
+            maybeSingle: async () => ({ data: { onboarding_completed: true }, error: null }),
+          }),
         }),
       }),
     };
@@ -231,16 +307,36 @@ describe('a burst collapses into one lookup', () => {
 describe('what is deliberately NOT remembered', () => {
   it('never caches a failed profile read', async () => {
     /*
-     * A transient error is not an answer. Remembering it would hold a fully
-     * onboarded user in the redirect for the whole TTL over one bad query.
+     * A transient error is not an answer. Remembering it would pin a whole
+     * session to 'unknown' for the TTL over one bad query — and, before the
+     * verdict was corrected, would have held a fully onboarded user in the
+     * redirect for that long instead.
      */
     const { client, calls } = fakeSupabase({ profileError: true });
     __setServiceClientForTests(client as never);
 
-    await expect(onboardingVerdict('tok', log)).resolves.toBe('onboard');
+    await expect(onboardingVerdict('tok', log)).resolves.toBe('unknown');
     await onboardingVerdict('tok', log);
 
     expect(calls.getUser).toBe(2);
+  });
+
+  it('DOES cache a user who has no profile row yet', async () => {
+    /*
+     * The counterpart to the test above, and the reason the two must be told
+     * apart. Under `single` this was an error and so was never remembered, so
+     * the users least likely to have a profile — most of them — paid both
+     * round trips on every single request. That is the cost this module
+     * exists to remove.
+     */
+    const { client, calls } = fakeSupabase({ onboardingCompleted: null });
+    __setServiceClientForTests(client as never);
+
+    await expect(onboardingVerdict('tok', log)).resolves.toBe('onboard');
+    await expect(onboardingVerdict('tok', log)).resolves.toBe('onboard');
+
+    expect(calls.getUser).toBe(1);
+    expect(calls.profile).toBe(1);
   });
 
   it('never caches an auth failure', async () => {

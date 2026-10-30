@@ -113,8 +113,35 @@ describe('the verdict module keeps its guarantees', () => {
     expect(verdict).toMatch(/hit\.expiresAt < Date\.now\(\)/);
   });
 
-  it('never caches a failed profile read', () => {
-    expect(verdict).toMatch(/if \(!profileError\) rememberOnboarding\(accessToken, false\)/);
+  it('answers "unknown" on a failed profile read, rather than redirecting', () => {
+    /*
+     * This used to assert `if (!profileError) rememberOnboarding(...)`, which
+     * kept a failed read out of the cache but still returned 'onboard'. Not
+     * caching a wrong answer is not the same as not giving one, and on
+     * 2026-10-29 that distinction was an hour and a half of production
+     * bouncing between `/onboarding-chat` and `/business-os`.
+     */
+    expect(verdict).toMatch(/if \(profileError\)[\s\S]{0,900}return 'unknown'/);
+  });
+
+  it('says so out loud when the profile read fails', () => {
+    /*
+     * The edge logger drops `debug` outside development, so a failed read that
+     * only logs at debug is invisible in production — the gate would be off
+     * platform-wide with nothing to attribute it to. `warn` is the lowest level
+     * that survives.
+     */
+    expect(verdict).toMatch(/log\.warn\(/);
+  });
+
+  it('tells a missing profile row apart from a failed read', () => {
+    /*
+     * `single` reports "no row" as a PGRST116 error, so under it every user
+     * who has not onboarded yet — most of them — is indistinguishable from
+     * the database being down. The verdicts for those two are opposites.
+     */
+    expect(verdict).toMatch(/\.maybeSingle\(\)/);
+    expect(verdict).not.toMatch(/\.single\(\)/);
   });
 
   it('reuses one Supabase client per instance', () => {
