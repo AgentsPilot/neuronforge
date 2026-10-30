@@ -51,6 +51,20 @@ Add to the `## SA Review Notes` section in the workplan MD:
 [ ] Workplan approved — proceed to implementation
 ```
 
+### Environment change plan review
+
+When the workplan has a `## Environment changes` section (written by DO), review it with the workplan, against the `env-change-protocol` skill. Check:
+
+1. **Tier** — each step is classified correctly; anything touching production or that cannot be undone is in the user-executes tier
+2. **One change per step**
+3. **Before-state** — each step snapshots it
+4. **Probe** — it fails when the change is wrong, targets the exact deployment or project changed, and needs no secret in hand
+5. **Order against the deploy** — each step says before merge, after merge before testing, or after deploy; additive schema the new code reads comes before merge
+6. **Rollback** — each step has an undo, or says "No known undo" explicitly so you can weigh it
+7. **Public-repo rule** — no IDs, key prefixes or secret locations in the tracked text; environments named by role
+
+Approving a plan with a production or irreversible step clears that step for the user to execute at its stated point. Record the verdict in the same `## SA Review Notes`.
+
 ---
 
 ## Phase 2: Code Review
