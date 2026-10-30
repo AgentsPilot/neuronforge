@@ -172,19 +172,25 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * blocks. Chained on 20261094, stamp 792d801e13101316, live since 2026-10-26.
  * Not in FUNCTION_REQUIRED_TABLES (SA O-3, MX1A-3): step B names both only as
  * VALUES literals and skips them while absent.
+ * 20261101 (account deletion lifecycle, DELETE stream): the self-link
+ * scheduling_meetings.replaces_meeting_id (20261097, scheduling, ON DELETE SET
+ * NULL) reviewed for G-18 (INBOUND_FOREIGN_KEYS, owner column user_id). 20261097
+ * landed outside this generator, so on prod G-18 refused every check, delete
+ * and anonymise (seen live 2026-10-30, the closurespike admin check). The same
+ * class as 20261092. Chained on 20261096, stamp b1203c526bc9ec91, live.
  */
-export const FUNCTION_MIGRATION = '20261096_operator_test_account_cleanup_export_requests';
+export const FUNCTION_MIGRATION = '20261101_operator_test_account_cleanup_meeting_replaces';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261094_operator_test_account_cleanup_account_closures';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261096_operator_test_account_cleanup_export_requests';
 /**
  * What this migration changes, for its header (comment lines, no semicolons or
  * apostrophes: the file must stay paste-safe). Rewritten with each new
  * FUNCTION_MIGRATION; the applied files keep their own.
  */
 export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
-  'Adds business_os_export_module_jobs and business_os_export_requests to step B, removed in the hard delete and in the anonymise',
-  'Reviews the link from the module jobs to their request for G-18',
-  'Nothing else in the plan changes. Same 8 argument signature as 20261094',
+  'Reviews the link scheduling_meetings.replaces_meeting_id to scheduling_meetings for G-18, added by 20261097 outside this script',
+  'Without it G-18 refuses every check, delete and anonymise',
+  'Nothing else in the plan changes. Same 8 argument signature as 20261096',
 ];
 /**
  * What running this migration's rollback means beyond restoring the previous
@@ -192,9 +198,9 @@ export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
  * each new FUNCTION_MIGRATION.
  */
 export const ROLLBACK_CONSEQUENCE: ReadonlyArray<string> = [
-  'The restored 20261094 function does not remove export history rows',
-  'While the tables of 20261095 exist, G-10 of the restored function refuses every check and delete on their links to the login',
-  'A full restore is this file, then the 20261095 rollback, then the PR revert',
+  'The restored 20261096 function does not know the link of 20261097',
+  'While that link exists, G-18 of the restored function refuses every check, delete and anonymise',
+  'Redeploy a build that pins the 20261096 stamp after running this file'
 ];
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
@@ -640,6 +646,8 @@ export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, strin
   ['scheduling_bookings', 'scheduling_bookings_service_id_fkey', 'user_id'],
   ['scheduling_meetings', 'scheduling_meetings_booking_id_fkey', 'user_id'],
   ['scheduling_meetings', 'scheduling_meetings_business_fk', 'user_id'],
+  // 20261101: the session a meeting replaced (20261097, ON DELETE SET NULL); a meeting of another account pointing at the target's blocks.
+  ['scheduling_meetings', 'scheduling_meetings_replaces_meeting_id_fkey', 'user_id'],
   ['scheduling_services', 'scheduling_services_business_fk', 'user_id'],
   ['shadow_failure_snapshots', 'shadow_failure_snapshots_agent_id_fkey', 'user_id'],
   ['shared_agent_imports', 'shared_agent_imports_created_agent_id_fkey', 'imported_by_user_id'],
