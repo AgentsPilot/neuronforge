@@ -62,6 +62,13 @@ export interface BusinessOsAccountPlan {
   updated_by_admin_id: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * D3.1 (20261098): how many after-plan free periods the account has had.
+   * PRESENT ONLY on rows read by `pagePlans({ withAfterPlanMoves: true })`
+   * (the Finance walk, MK5BFU-FU-2); every other read leaves it out, so the
+   * hot entitlement read is unchanged.
+   */
+  after_plan_moves?: number;
 }
 
 /** A row of `business_os_entitlement_overrides`. */
@@ -212,6 +219,8 @@ const ACCOUNT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
  * D3.1 / SX-2b: the two after-plan columns (migration 20261098). Selected ONLY
  * by the after-plan methods, never by `PLAN_COLUMNS`, so the hot entitlement
  * read does not change and a deploy before the migration breaks nothing else.
+ * The one other reader is `pagePlans` with its opt-in `withAfterPlanMoves`
+ * (the Finance walk, MK5BFU-FU-2), which takes the count only.
  */
 const AFTER_PLAN_MOVE_COLUMNS = 'after_plan_moves, after_plan_last_subscription_id';
 
@@ -446,17 +455,24 @@ export class BusinessOsAccountPlanRepository {
    *
    * Keyset rather than offset: the report walks every account, and an offset
    * walk silently skips or repeats rows when a row is inserted mid-walk.
+   *
+   * `withAfterPlanMoves` (MK5BFU-FU-2) also reads `after_plan_moves`, for the
+   * Finance page's MK-9 trial-to-paid, which leaves after-plan free periods
+   * out. Opt-in, so every other walker's select is unchanged. A count that is
+   * not a non-negative integer fails the page: an error, never 0.
    */
   async pagePlans(options: {
     afterUserId?: string | null;
     limit?: number;
+    withAfterPlanMoves?: boolean;
   } = {}): Promise<RepositoryResult<BusinessOsAccountPlan[]>> {
     const limit = Math.min(Math.max(options.limit ?? 500, 1), 1000);
+    const withMoves = options.withAfterPlanMoves === true;
 
     try {
       let query = this.supabase
         .from('business_os_account_plans')
-        .select(PLAN_COLUMNS)
+        .select(withMoves ? `${PLAN_COLUMNS}, after_plan_moves` : PLAN_COLUMNS)
         .order('user_id', { ascending: true })
         .limit(limit);
 
@@ -464,7 +480,16 @@ export class BusinessOsAccountPlanRepository {
 
       const { data, error } = await query;
       if (error) throw error;
-      return { data: (data ?? []) as unknown as BusinessOsAccountPlan[], error: null };
+      const rows = (data ?? []) as unknown as BusinessOsAccountPlan[];
+      if (withMoves) {
+        for (const row of rows) {
+          const moves: unknown = row.after_plan_moves;
+          if (typeof moves !== 'number' || !Number.isInteger(moves) || moves < 0) {
+            throw new Error('A plan row has no readable after-plan move count');
+          }
+        }
+      }
+      return { data: rows, error: null };
     } catch (error) {
       this.logger.error({ err: error }, 'Failed to page plan rows');
       return { data: null, error: error as Error };
