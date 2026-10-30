@@ -75,6 +75,8 @@ Dashboard work that needs back-and-forth with the user belongs to the **main ses
 
 Use only the `mcp__plugin_supabase_supabase__*` tools in your frontmatter. Never name or use any other Supabase connection, and never write a connector instance ID into any file.
 
+Procedures and gotchas for reading state and preparing migrations: the `supabase-ops` skill.
+
 `execute_sql` accepts any statement, so the tool list cannot stop DDL. Every query you run must follow all four rules:
 
 | # | Rule |
