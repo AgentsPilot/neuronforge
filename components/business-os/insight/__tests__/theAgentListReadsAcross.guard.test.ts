@@ -119,6 +119,70 @@ describe('one colour per state, and green belongs to running', () => {
   });
 });
 
+describe('it scrolls on a phone', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * STICKY CELLS AND `border-collapse: collapse` DO NOT WORK TOGETHER.
+   *
+   * It is a WebKit limitation, and on iOS every browser is WebKit — so this is
+   * not an edge case, it is the phone. With `collapse` the pinned agent name
+   * froze and the columns beside it would not scroll at all: "when does it next
+   * run", the fact this card exists to answer, was unreachable on the device an
+   * owner is most likely to be holding.
+   *
+   * `separate` with `border-spacing: 0` looks identical on a desktop and lets
+   * sticky work. The cost is that a `<tr>` border is no longer painted, which
+   * is why the dividers live on the cells — asserted below, because moving them
+   * back would silently remove every line between rows.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+
+  it('does not combine sticky cells with a collapsed border model', () => {
+    const hasSticky = card.includes("position: 'sticky'");
+    expect(hasSticky).toBe(true);
+    expect(card).not.toMatch(/borderCollapse:\s*'collapse'/);
+    expect(card).toMatch(/borderCollapse:\s*'separate'/);
+    /* Without this the cells would gain default spacing and the table would
+       look like a spreadsheet from 1998. */
+    expect(card).toMatch(/borderSpacing:\s*0/);
+  });
+
+  it('draws the row dividers on the cells, where separate paints them', () => {
+    /* A `<tr>` border is ignored under `separate`. Keeping the rule on the row
+       would compile, pass a type check, and leave the list with no lines. */
+    expect(card).not.toMatch(/<tr[^>]*\n?\s*style=\{\{[^}]*borderBottom/);
+    expect(card).toMatch(/const rowRule = open \? 'none'/);
+  });
+
+  it('keeps the schedule editor on screen while the table scrolls', () => {
+    /*
+     * The editor is a cell spanning all seven columns, so it is as wide as the
+     * TABLE — 680px — not as wide as the phone showing about 350 of them. Its
+     * questions started at the left edge and Save sat off the right, reachable
+     * only by noticing the table scrolls sideways and going to look.
+     *
+     * `flex-wrap` does not fix it: the panel wraps inside its cell, and the
+     * cell is the one that is too wide. It has to follow the VIEWPORT.
+     */
+    const editor = card.slice(card.indexOf('function ScheduleEditorRow'));
+
+    expect(editor).toMatch(/position: 'sticky'/);
+    expect(editor).toMatch(/insetInlineStart: 0/);
+    /* Capped to the visible width, or sticky only moves the overflow around. */
+    expect(editor).toMatch(/width: 'calc\(100vw/);
+    /* And `max-width: 100%` so a desktop, where the cap is wider than the card,
+       is left exactly as it was. */
+    expect(editor).toMatch(/maxWidth: '100%'/);
+  });
+
+  it('keeps the table wider than a phone, so there is something to scroll', () => {
+    /* Six genuine facts per agent. The answer to a narrow screen is scrolling,
+       not dropping the column that says when it runs next. */
+    expect(card).toMatch(/minWidth: '680px'/);
+    expect(card).toMatch(/overflowX: 'auto'/);
+  });
+});
+
 describe('both themes', () => {
   it('every token the card spends is defined in BOTH blocks', () => {
     /*

@@ -423,7 +423,31 @@ export function RunningAgentsCard() {
         ───────────────────────────────────────────────────────────────────────
       */}
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '680px' }}>
+        {/*
+          ──────────────────────────────────────────────────────────────────────
+          `separate`, NOT `collapse`, AND THE WHOLE TABLE DEPENDS ON IT.
+
+          `position: sticky` does not work on a `<th>` or `<td>` inside a table
+          with `border-collapse: collapse`. That is a WebKit limitation, and on
+          iOS every browser is WebKit — so on a phone the pinned agent name
+          froze and the columns beside it would not scroll at all. The one fact
+          an owner opens this card for, "when does it next run", was unreachable
+          on the device they are most likely to be holding.
+
+          `border-spacing: 0` keeps the cells touching, so nothing about the
+          layout changes on a desktop. What DOES change is where row borders can
+          live: a border on a `<tr>` is not painted under `separate`, so the
+          dividers moved onto the cells below.
+          ──────────────────────────────────────────────────────────────────────
+        */}
+        <table
+          style={{
+            width: '100%',
+            borderCollapse: 'separate',
+            borderSpacing: 0,
+            minWidth: '680px',
+          }}
+        >
           <thead>
             <tr>
               {[
@@ -469,19 +493,19 @@ export function RunningAgentsCard() {
               const working = busy[agent.agentId];
 
               const open = editing === agent.agentId;
+              /*
+                The divider, on the CELLS because a `<tr>` border is not painted
+                under `border-collapse: separate`. None while the editor is
+                open: the row and its editor read as one block, and a line
+                between them would cut the question off the agent it is about.
+              */
+              const rowRule = open ? 'none' : '1px solid var(--v2-border)';
 
               return (
                 <Fragment key={agent.agentId}>
-                <tr
-                  style={{
-                    /* The open row and its editor read as one block, so the
-                       line between them would cut the question off the agent
-                       it is about. */
-                    borderBottom: open ? 'none' : '1px solid var(--v2-border)',
-                  }}
-                >
+                <tr>
                   {/* Who */}
-                  <td style={{ padding: '9px 10px', ...PINNED }}>
+                  <td style={{ padding: '9px 10px', ...PINNED, borderBottom: rowRule }}>
                     <span className="flex items-center gap-2.5">
                       <span
                         style={{
@@ -549,7 +573,7 @@ export function RunningAgentsCard() {
 
                   {/* What it watches, or why it cannot run — the more useful of
                       the two, in the same place. */}
-                  <td className="text-[12.5px]" style={{ padding: '9px 10px', color: state === 'blocked' ? colour.fg : 'var(--v2-text-secondary)' }}>
+                  <td className="text-[12.5px]" style={{ padding: '9px 10px', borderBottom: rowRule, color: state === 'blocked' ? colour.fg : 'var(--v2-text-secondary)' }}>
                     {state === 'blocked' && agent.requires
                       ? t(`automation.requires.${agent.requires}`) || t('automation.requires.default')
                       : agent.watches}
@@ -572,7 +596,7 @@ export function RunningAgentsCard() {
                     nothing: see `schedule` on `InstalledAgent`.
                     ────────────────────────────────────────────────────────────
                   */}
-                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', color: 'var(--v2-text-secondary)' }}>
+                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule, color: 'var(--v2-text-secondary)' }}>
                     {agent.schedule ? (
                       <button
                         type="button"
@@ -624,7 +648,7 @@ export function RunningAgentsCard() {
 
                   {/* Last run. Said plainly when it has never run: an agent that
                       has never run looks identical to one that runs silently. */}
-                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', color: 'var(--v2-text-secondary)' }}>
+                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule, color: 'var(--v2-text-secondary)' }}>
                     {when(agent.lastRun) ?? (
                       <span style={{ color: 'var(--v2-text-muted)' }}>
                         {t('automation.never_run') || 'has not run yet'}
@@ -633,7 +657,7 @@ export function RunningAgentsCard() {
                   </td>
 
                   {/* Next run — green ONLY when something is genuinely coming. */}
-                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px' }}>
+                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule }}>
                     {state === 'running' && when(agent.nextRun) ? (
                       <span style={{ color: 'var(--v2-success)', fontWeight: 600 }}>
                         {when(agent.nextRun)}
@@ -648,7 +672,7 @@ export function RunningAgentsCard() {
                   </td>
 
                   {/* The owner's end of life, in the unit they chose it in. */}
-                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', color: 'var(--v2-text-secondary)' }}>
+                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule, color: 'var(--v2-text-secondary)' }}>
                     {agent.stopAfterDays
                       ? agent.stopAfterDays >= 60 && agent.stopAfterDays % 30 === 0
                         ? (t('automation.stop_after_months') || '{months} months').replace('{months}', String(agent.stopAfterDays / 30))
@@ -656,7 +680,7 @@ export function RunningAgentsCard() {
                       : '—'}
                   </td>
 
-                  <td style={{ padding: '9px 6px' }}>
+                  <td style={{ padding: '9px 6px', borderBottom: rowRule }}>
                     <span className="flex items-center gap-1 justify-end">
                       {working ? (
                         <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--v2-text-muted)' }} />
@@ -836,8 +860,8 @@ function ScheduleEditorRow({
       formatInterval(agent.stopAfter ?? draft.schedule);
 
   return (
-    <tr style={{ borderBottom: '1px solid var(--v2-border)' }}>
-      <td colSpan={7} style={{ padding: '2px 10px 14px' }}>
+    <tr>
+      <td colSpan={7} style={{ padding: '2px 10px 14px', borderBottom: '1px solid var(--v2-border)' }}>
         <div
           /*
             ────────────────────────────────────────────────────────────────────
@@ -853,15 +877,33 @@ function ScheduleEditorRow({
             a single agent — and because this sits INSIDE a table row, where
             every extra line pushes the rest of the list further down.
 
-            `flex-wrap` so a narrow screen folds rather than clips: the table
-            already scrolls sideways, and an editor that scrolled with it would
-            put Save off the edge.
+            ────────────────────────────────────────────────────────────────────
+            AND IT STAYS ON SCREEN WHEN THE TABLE SCROLLS SIDEWAYS.
+
+            `flex-wrap` alone did not do this, though the note here used to
+            claim it did: the panel wraps inside its CELL, and the cell is as
+            wide as the table — 680px. On a phone showing about 350 of them the
+            questions started at the left edge and Save sat off the right, so
+            the only way to save a schedule was to notice the table scrolls and
+            go looking for the button.
+
+            Sticky to the START edge, so it follows the viewport rather than the
+            table, and capped at roughly the visible width. On a desktop that
+            cap is wider than the card, `max-width: 100%` wins, and nothing
+            about the layout changes — which is how it should be, because the
+            desktop version is right.
             ────────────────────────────────────────────────────────────────────
           */
           className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-lg p-3.5"
           style={{
             background: 'color-mix(in srgb, var(--v2-primary) 5%, transparent)',
             border: '1px solid color-mix(in srgb, var(--v2-primary) 22%, transparent)',
+            position: 'sticky',
+            insetInlineStart: 0,
+            /* The card's own padding is the 4rem: anything at or under the
+               visible width works, and over it reintroduces the bug. */
+            width: 'calc(100vw - 4rem)',
+            maxWidth: '100%',
           }}
         >
           <IntervalPicker
