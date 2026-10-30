@@ -633,6 +633,35 @@ describe('Step B: Stripe vs our billing records (flag only, SA ruling 4)', () =>
     expect(h.table.calls).toEqual([]);
   });
 
+  // Follow-ups C-3: the cancel flag is compared with the value the mirror STORES
+  // (the flag OR a `cancel_at` within the period), never Stripe's raw flag.
+  describe('follow-ups C-3: the derived cancel flag', () => {
+    it('our row true, Stripe `cancel_at` alone at the period end (a mirrored dashboard cancellation) → no finding', async () => {
+      const h = stepB({ subs: [sub({ cancelAtPeriodEnd: false, cancelAt: periodEnd })], rows: [row({ cancel_at_period_end: true })] });
+      const counts = await h.run();
+      expect(kinds(h)).toEqual([]);
+      expect(counts.mismatch).toBe(0);
+    });
+
+    it('our row false (a pre-fix row), Stripe `cancel_at` alone at the period end → cancel_flag_differs', async () => {
+      const h = stepB({ subs: [sub({ cancelAtPeriodEnd: false, cancelAt: periodEnd })] });
+      await h.run();
+      expect(kinds(h)).toEqual(['cancel_flag_differs']);
+    });
+
+    it('a `cancel_at` AFTER the period end stores false: our row false → no finding', async () => {
+      const h = stepB({ subs: [sub({ cancelAtPeriodEnd: false, cancelAt: periodEnd + 10 * 86400 })] });
+      await h.run();
+      expect(kinds(h)).toEqual([]);
+    });
+
+    it('a hand-built fake with no `cancelAt` reads as no date', async () => {
+      const h = stepB({ subs: [sub({ cancelAtPeriodEnd: false })], rows: [row({ cancel_at_period_end: true })] });
+      await h.run();
+      expect(kinds(h)).toEqual(['cancel_flag_differs']);
+    });
+  });
+
   it('our open row whose subscription Stripe no longer lists (complete lists) → subscription_not_listed', async () => {
     const h = stepB({ subs: [] });
     await h.run();

@@ -274,7 +274,35 @@ describe('unchanged (C-2, C-3): no write, no audit; heals our row', () => {
   it('C-3: a `cancel_at` set WITHOUT the flag counts as cancelling (unchanged on cancel)', async () => {
     const h = harness({ fresh: fresh({ cancelAtPeriodEnd: false, cancelAt: PERIOD_END }) });
     expect(await run(h, 'cancel')).toEqual({ ok: true, outcome: 'unchanged', state: 'cancelling', date: PERIOD_END_ISO });
-    // Our row already says "not flagged", as Stripe does: nothing to heal.
+    expect(stripeCalls(h)).toEqual(['stripe:retrieve:sub_own']);
+  });
+
+  it('follow-ups C-3 (W-9): a pre-fix row (false) with a dashboard `cancel_at` = period end is HEALED to true on the press', async () => {
+    const h = harness({ fresh: fresh({ cancelAtPeriodEnd: false, cancelAt: PERIOD_END }) });
+    await run(h, 'cancel');
+    expect(h.mirrors).toEqual([
+      {
+        userId: USER,
+        livemode: false,
+        stripeSubscriptionId: 'sub_own',
+        status: 'active',
+        cancelAtPeriodEnd: true,
+        endedAtIso: null,
+        nowIso: NOW.toISOString(),
+      },
+    ]);
+  });
+
+  it('follow-ups C-3: a row already mirrored true from a dashboard `cancel_at` is NOT healed back to false', async () => {
+    const h = harness({ row: row({ cancelAtPeriodEnd: true }), fresh: fresh({ cancelAtPeriodEnd: false, cancelAt: PERIOD_END }) });
+    expect(await run(h, 'cancel')).toMatchObject({ ok: true, outcome: 'unchanged', state: 'cancelling' });
+    expect(h.mirrors).toEqual([]);
+  });
+
+  it('follow-ups C-3 (W-7): a `cancel_at` AFTER the period end: unchanged with the Stripe date, the row (false) is right, no heal', async () => {
+    const later = PERIOD_END + 86400 * 10;
+    const h = harness({ fresh: fresh({ cancelAtPeriodEnd: false, cancelAt: later }) });
+    expect(await run(h, 'cancel')).toEqual({ ok: true, outcome: 'unchanged', state: 'cancelling', date: new Date(later * 1000).toISOString() });
     expect(h.mirrors).toEqual([]);
   });
 

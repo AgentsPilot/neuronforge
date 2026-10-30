@@ -96,6 +96,7 @@ import { isPlanPriceRecognitionEnabled } from '@/lib/business-os/billing/planPri
 import { MANAGEABLE_STATUSES, PAYMENT_FAILED_STATUSES, planManageOffer, type PlanManageSwitches } from '@/lib/business-os/billing/planManageOffer';
 import type { PlanLeaveReasonCode } from '@/lib/business-os/billing/planLeaveReasons';
 import { BOS_USER_ID_METADATA_KEY } from '@/lib/business-os/billing/stripeMetadataKeys';
+import { hasCancelDate, isSetToEndThisPeriod, latestItemPeriodEnd } from '@/lib/business-os/billing/subscriptionCancelling';
 import { currentStripeMode, isLiveMode, type StripeMode } from '@/lib/business-os/billing/stripeMode';
 
 export type PlanManageAction = 'cancel' | 'reactivate';
@@ -283,16 +284,10 @@ function safeErr(err: unknown): Record<string, unknown> {
   };
 }
 
-/** C-3: cancelling is the flag OR a `cancel_at` date (X-2: the flag sets both; `cancel_at` alone is possible). */
-function isCancelling(facts: { cancelAtPeriodEnd: boolean; cancelAt?: number | null }): boolean {
-  return facts.cancelAtPeriodEnd || (typeof facts.cancelAt === 'number' && facts.cancelAt > 0);
-}
-
-/** The latest item period end, unix seconds (clover: the period is on the items). */
-function latestItemPeriodEnd(items: ReadonlyArray<{ currentPeriodEnd: number | null }>): number | null {
-  const ends = items.map((item) => item.currentPeriodEnd).filter((value): value is number => value !== null);
-  return ends.length > 0 ? Math.max(...ends) : null;
-}
+// C-3: "cancelling" on a FRESH read is the flag OR any `cancel_at` (X-2), and
+// `latestItemPeriodEnd` is the clover period: both now live in
+// `subscriptionCancelling.ts` (follow-ups C-3, SA W-3), beside the derived
+// stored flag the mirror writes. One home, no private copies.
 
 function defaultSwitches(): PlanManageSwitches {
   return { pricesEnabled: isPlanPriceRecognitionEnabled() };
@@ -405,7 +400,7 @@ export async function managePlanSubscription(input: PlanManageInput, deps: PlanM
   }
   if (action === 'cancel' && offer.kind === 'failing' && fresh.status === 'canceled' && fresh.endedAt !== null) {
     // P-7a.4: already ended at Stripe (a second tab, or Stripe's own dunning end); our row lags.
-    await mirror(repo, log, ownRow, { status: fresh.status, cancelAtPeriodEnd: fresh.cancelAtPeriodEnd, endedAt: fresh.endedAt }, now, 'heal');
+    await mirror(repo, log, ownRow, freshMirrorState(fresh), now, 'heal');
     log.info({ event: 'bos_billing_manage_unchanged', action, userId, subscriptionId, healed: true, state: 'ended', livemode }, 'Plan cancel: the subscription has already ended');
     return { ok: true, outcome: 'unchanged', state: 'ended', date: isoFromUnix(fresh.endedAt) };
   }
@@ -417,10 +412,13 @@ export async function managePlanSubscription(input: PlanManageInput, deps: PlanM
   const wantCancelling = action === 'cancel';
 
   // 7. Already what was asked: no write, no audit. C-2: heal our row if it disagrees.
-  if (isCancelling(fresh) === wantCancelling) {
-    const rowDisagrees = ownRow.cancelAtPeriodEnd !== fresh.cancelAtPeriodEnd || ownRow.subscriptionStatus !== fresh.status;
+  if (hasCancelDate(fresh) === wantCancelling) {
+    // C-3: compared with the DERIVED stored flag (what the webhook mirror writes),
+    // never the raw flag, so a press cannot undo a mirrored dashboard cancellation.
+    const freshState = freshMirrorState(fresh);
+    const rowDisagrees = ownRow.cancelAtPeriodEnd !== storedCancelFlag(freshState) || ownRow.subscriptionStatus !== fresh.status;
     if (rowDisagrees) {
-      await mirror(repo, log, ownRow, { status: fresh.status, cancelAtPeriodEnd: fresh.cancelAtPeriodEnd, endedAt: fresh.endedAt }, now, 'heal');
+      await mirror(repo, log, ownRow, freshState, now, 'heal');
     }
     log.info(
       { event: 'bos_billing_manage_unchanged', action, userId, subscriptionId, healed: rowDisagrees, livemode },
@@ -455,7 +453,7 @@ export async function managePlanSubscription(input: PlanManageInput, deps: PlanM
   }
 
   // Stripe's answer must be OUR subscription in the asked state; otherwise we cannot say what happened.
-  if (after.id !== subscriptionId || after.customerId !== ownRow.stripeCustomerId || after.livemode !== ownRow.livemode || isCancelling(after) !== wantCancelling) {
+  if (after.id !== subscriptionId || after.customerId !== ownRow.stripeCustomerId || after.livemode !== ownRow.livemode || hasCancelDate(after) !== wantCancelling) {
     const audit: PlanManageAuditFacts = { ...auditBase, outcome: 'unknown', endsOn: null, renewsOn: null };
     return refuse(
       'stripe_error',
@@ -465,7 +463,7 @@ export async function managePlanSubscription(input: PlanManageInput, deps: PlanM
   }
 
   // 10. Our row, from the write's own answer (C-2). Never fails the request.
-  await mirror(repo, log, ownRow, { status: after.status, cancelAtPeriodEnd: after.cancelAtPeriodEnd, endedAt: after.endedAt }, now, 'write');
+  await mirror(repo, log, ownRow, answerMirrorState(after), now, 'write');
 
   const endsOn = wantCancelling ? isoFromUnix(after.cancelAt ?? after.currentPeriodEnd) : null;
   const renewsOn = wantCancelling ? null : isoFromUnix(after.currentPeriodEnd);
@@ -542,7 +540,7 @@ async function cancelNow(c: CancelNowContext): Promise<PlanManageResult> {
   const sweep = await voidOpenInvoices(c, attemptId);
 
   // I-4. Our row, from Stripe's answer. Never fails the request.
-  await mirror(c.repo, log, ownRow, { status: after.status, cancelAtPeriodEnd: after.cancelAtPeriodEnd, endedAt: after.endedAt }, now, 'write');
+  await mirror(c.repo, log, ownRow, answerMirrorState(after), now, 'write');
 
   const endsOn = isoFromUnix(after.endedAt) ?? now.toISOString();
   const audit: PlanManageAuditFacts = {
@@ -614,6 +612,49 @@ async function voidOpenInvoices(c: CancelNowContext, attemptId: string): Promise
   return { voided, leftOpen };
 }
 
+/** What `mirror()` copies: Stripe's status and end, and the facts the stored flag is derived from. */
+interface MirrorState {
+  status: string;
+  cancelAtPeriodEnd: boolean;
+  cancelAt: number | null;
+  /** The latest item period end, unix seconds. */
+  periodEnd: number | null;
+  endedAt: number | null;
+}
+
+/** A fresh retrieve, as `mirror()` takes it. */
+function freshMirrorState(fresh: {
+  status: string;
+  cancelAtPeriodEnd: boolean;
+  cancelAt?: number | null;
+  endedAt: number | null;
+  items: ReadonlyArray<{ currentPeriodEnd: number | null }>;
+}): MirrorState {
+  return {
+    status: fresh.status,
+    cancelAtPeriodEnd: fresh.cancelAtPeriodEnd,
+    cancelAt: fresh.cancelAt ?? null,
+    periodEnd: latestItemPeriodEnd(fresh.items),
+    endedAt: fresh.endedAt,
+  };
+}
+
+/** A write's own answer (`currentPeriodEnd` is already the latest item end), as `mirror()` takes it. */
+function answerMirrorState(after: BusinessOsCancelFacts): MirrorState {
+  return {
+    status: after.status,
+    cancelAtPeriodEnd: after.cancelAtPeriodEnd,
+    cancelAt: after.cancelAt,
+    periodEnd: after.currentPeriodEnd,
+    endedAt: after.endedAt,
+  };
+}
+
+/** C-3: the value our `cancel_at_period_end` holds, the webhook mirror's own rule. */
+function storedCancelFlag(state: MirrorState): boolean {
+  return isSetToEndThisPeriod({ cancelAtPeriodEnd: state.cancelAtPeriodEnd, cancelAt: state.cancelAt, periodEnd: state.periodEnd });
+}
+
 /**
  * Copy Stripe's state onto our row with the webhook's own CAS method
  * (`mirrorSubscriptionState`, keyed on user, mode and subscription id). Never
@@ -624,7 +665,7 @@ async function mirror(
   repo: Pick<BusinessOsBillingAccountRepository, 'mirrorSubscriptionState'>,
   log: PlanManageLogger,
   row: BusinessOsBillingAccount & { stripeSubscriptionId: string },
-  state: { status: string; cancelAtPeriodEnd: boolean; endedAt: number | null },
+  state: MirrorState,
   now: Date,
   source: 'write' | 'heal'
 ): Promise<void> {
@@ -640,7 +681,7 @@ async function mirror(
       livemode: row.livemode,
       stripeSubscriptionId: row.stripeSubscriptionId,
       status,
-      cancelAtPeriodEnd: state.cancelAtPeriodEnd,
+      cancelAtPeriodEnd: storedCancelFlag(state),
       endedAtIso: isoFromUnix(state.endedAt),
       nowIso: now.toISOString(),
     });
