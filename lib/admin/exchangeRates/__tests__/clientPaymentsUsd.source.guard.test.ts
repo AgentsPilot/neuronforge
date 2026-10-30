@@ -271,7 +271,8 @@ const ZONES: Record<string, string> = {
   auditService: 'lib/services/AuditTrailService.ts',
   audit: 'lib/audit',
   dataExport: 'lib/business-os/data-export',
-  dataExportRoutes: 'app/api/business-os/data-exports',
+  // MX-3.1 (2026-10-30): re-pointed from the deleted ZIP routes to the module export request route.
+  dataExportRoutes: 'app/api/business-os/export-requests',
   bosApi: 'app/api/business-os',
   bizql: 'lib/business-os/bizql',
   briefing: 'lib/business-os/briefing',

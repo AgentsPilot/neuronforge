@@ -120,7 +120,7 @@ describe('DB-5: the sentences are the approved copy, word for word (SA C1; TL co
       'account-plugins': 'Plugins this account connected, and which of them are active.',
       activity: "This account's audit events, such as sign-ins and settings changes.",
       // Data export DE-10a (workplan §7.1; SA-9).
-      export: "This account's exports; admin downloads are recorded with your name and reason.",
+      export: "Exports of this account's data, sent to the owner by email.",
     });
   });
 });

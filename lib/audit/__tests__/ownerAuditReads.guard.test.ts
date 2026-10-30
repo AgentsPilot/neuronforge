@@ -46,11 +46,19 @@ const ALLOWED_FILES: Record<string, string> = {
  * Data export DE-9 (SA C-2): re-pointed from the retired JSON route
  * (app/api/user/data-export/route.ts) to the two zip routes that replaced it:
  * the start + "Last export" status route (POST and GET) and "Download again".
+ *
+ * MX-3.1 (2026-10-30): re-pointed from the deleted ZIP routes to the module
+ * export request route (it writes DATA_EXPORT_REQUESTED) and, as its own case
+ * below, its worker cron (SA MX-3.1 required change 2).
  */
-const DATA_EXPORT_ROUTES = [
-  'app/api/business-os/data-exports/route.ts',
-  'app/api/business-os/data-exports/[jobId]/parts/[partNo]/download/route.ts',
-];
+const DATA_EXPORT_ROUTES = ['app/api/business-os/export-requests/route.ts'];
+
+/**
+ * The module export worker cron (MX-3b). It writes no audit row itself (the
+ * worker does, and the module-wide rule below covers the worker), so its
+ * non-vacuity is that it runs the worker.
+ */
+const DATA_EXPORT_WORKER_CRON = 'app/api/cron/data-export-modules/route.ts';
 
 /**
  * Data export DE-2 (DE-1 SA S-1): the export's own module is held to the same
@@ -211,6 +219,14 @@ describe('owner reads of audit_trail (BD-26, W26-6)', () => {
     expect(entry!.source).toMatch(/AUDIT_EVENTS\.DATA_EXPORT_/);
   });
 
+  it('the module export worker cron reads no audit rows at all (MX-3.1)', () => {
+    const entry = files.find(({ file }) => file === DATA_EXPORT_WORKER_CRON);
+    expect(entry).toBeDefined();
+    expect(readsNoAuditRows(entry!.source)).toBe(true);
+    // Non-vacuity: it is the cron that runs the worker.
+    expect(entry!.source).toContain("from '@/lib/business-os/data-export/moduleExportWorker'");
+  });
+
   it('the retired JSON route stays retired (DE-9)', () => {
     expect(files.find(({ file }) => file === 'app/api/user/data-export/route.ts')).toBeUndefined();
   });
@@ -219,7 +235,7 @@ describe('owner reads of audit_trail (BD-26, W26-6)', () => {
     const moduleFiles = files.filter(({ file }) => file.startsWith(DATA_EXPORT_MODULE_DIR));
     // Non-vacuity, by name: the scan reaches the module's readers.
     expect(moduleFiles.map(({ file }) => file.slice(DATA_EXPORT_MODULE_DIR.length))).toEqual(
-      expect.arrayContaining(['sections.ts', 'payload.ts', 'classification.ts'])
+      expect.arrayContaining(['sections.ts', 'moduleExportWorker.ts', 'classification.ts'])
     );
     expect(moduleFiles.filter(({ source }) => !readsNoAuditRows(source)).map(({ file }) => file)).toEqual([]);
   });
@@ -250,7 +266,7 @@ describe('the guard itself (negative controls)', () => {
   it('fails the data export route if it names audit_trail again, even with both exclusions (OP-3)', () => {
     const both =
       "from('audit_trail').select('*').not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`).not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)";
-    for (const route of DATA_EXPORT_ROUTES) expect(violation(route, both)).not.toBeNull();
+    for (const route of [...DATA_EXPORT_ROUTES, DATA_EXPORT_WORKER_CRON]) expect(violation(route, both)).not.toBeNull();
   });
 
   it('flags a data export route that reads audit rows again (DE-1)', () => {

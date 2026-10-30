@@ -87,10 +87,8 @@ export interface JoinedCsvClassification {
  * The CSV columns of a section: the classification's include columns;
  * `account_identity` (not a table) its three.
  *
- * Restates zipExport.ts `sectionColumns` on purpose (SA MX2A-6): zipExport is
- * server-only and is deleted in MX-6, so this file does not import it. A
- * parity test (joinedCsv.test.ts, C-9) fails if either copy drifts. Remove
- * the duplicate when MX-6 deletes zipExport.
+ * It restated zipExport.ts `sectionColumns` (SA MX2A-6); export MX-3.1 deleted
+ * the ZIP builder with its parity test, so this is now the only copy.
  */
 export function classifiedColumnsOf(section: ExportSectionId): readonly string[] {
   if (section === 'account_identity') return ['id', 'email', 'created_at'];

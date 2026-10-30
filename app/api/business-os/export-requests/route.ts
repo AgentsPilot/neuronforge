@@ -6,7 +6,7 @@
 // XC-15, XC-19, XC-21).
 //
 // POST: the owner asks for an export of the modules they ticked.
-//   switch (404 while off, before anything) -> getUser (the ONLY account id)
+//   getUser (the ONLY account id; MX-3.1 removed the export switch)
 //   -> strict body `{ modules }` (MX-0 ids, every one switched on; a `userId`
 //   or any other key is a 400) -> throttle (the existing `create` rule) ->
 //   a usable login email (else 409, nothing written) -> the database start
@@ -32,7 +32,6 @@ import { createLogger } from '@/lib/logger';
 import { logAndFlush } from '@/lib/audit/boundedAuditFlush';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { RATE_LIMITS, rateLimit, tooManyRequests } from '@/lib/security/rateLimit';
-import { isModuleExportEnabled } from '@/lib/utils/featureFlags';
 import { requestedModulesSchema } from '@/lib/business-os/data-export/exportModuleSchema';
 import type { ExportModuleId } from '@/lib/business-os/data-export/exportModules';
 import { assembleExportHistory } from '@/lib/business-os/data-export/exportHistory';
@@ -61,8 +60,6 @@ const startBody = z.object({ modules: requestedModulesSchema() }).strict();
 function json(body: Record<string, unknown>, status: number): NextResponse {
   return NextResponse.json(body, { status, headers: { 'Cache-Control': NO_STORE } });
 }
-
-const notFound = () => json({ success: false, error: 'Not found' }, 404);
 
 function devDetails(error: unknown): unknown {
   if (process.env.NODE_ENV !== 'development') return undefined;
@@ -146,9 +143,6 @@ async function sendRequestedEmail(
  * owner's own status.
  */
 export async function GET(request: NextRequest) {
-  // C-1 / D-1: the switch is the first statement. Off = 404, nothing else runs.
-  if (!isModuleExportEnabled()) return notFound();
-
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
@@ -188,9 +182,6 @@ export async function GET(request: NextRequest) {
 
 /** POST: start an export of the ticked modules (workplan §4.1). */
 export async function POST(request: NextRequest) {
-  // C-1 / D-1: the switch is the first statement. Off = 404, nothing else runs.
-  if (!isModuleExportEnabled()) return notFound();
-
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 

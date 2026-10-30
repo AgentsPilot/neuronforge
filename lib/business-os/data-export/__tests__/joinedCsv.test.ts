@@ -12,7 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 
-// zipExport (C-9 parity only) logs through Pino; nothing else here does.
+// Nothing imported here should log; the mock keeps a stray Pino line out of the output.
 jest.mock('@/lib/logger', () => {
   const make = (): Record<string, unknown> => {
     const logger: Record<string, unknown> = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
@@ -27,7 +27,6 @@ import { ExportClassificationError } from '@/lib/business-os/data-export/classif
 import type { ExportSectionId } from '@/lib/business-os/data-export/classificationTypes';
 import { EXPORT_MODULES, type ExportModuleDefinition, type ExportModuleId } from '@/lib/business-os/data-export/exportModules';
 import { LOOKUP_TARGETS } from '@/lib/business-os/data-export/joinedCsvReferences';
-import { sectionColumns } from '@/lib/business-os/data-export/zipExport';
 import {
   CLASSIFIED,
   JOINED_CSV_FIXED_COLUMNS,
@@ -581,12 +580,6 @@ describe('C-8 fixed header keys never collide with a column', () => {
   it('negative control: a planted record_id column is reported', () => {
     const planted = (s: ExportSectionId): readonly string[] => (s === 'services' ? [...classifiedColumnsOf(s), 'record_id'] : classifiedColumnsOf(s));
     expect(fixedColumnCollisions(planted)).toEqual(['services.record_id']);
-  });
-});
-
-describe('C-9 classifiedColumnsOf has parity with the ZIP (zipExport.sectionColumns, until MX-6)', () => {
-  it.each(EXPORT_MODULES.flatMap((m) => m.sections.map((s) => [s])))('%s', (section) => {
-    expect(classifiedColumnsOf(section)).toEqual(sectionColumns(section));
   });
 });
 

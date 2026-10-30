@@ -1,8 +1,8 @@
 /**
  * The browser seam for the module export (export redesign MX-1b, workplan §8,
- * T-7; SA workplan review C-1). Only the route's own 404 means "off"; a server
- * error with our JSON body means "on, history unavailable"; a network error, a
- * timeout or a non-JSON page means "unknown" (the button keeps the ZIP).
+ * T-7; MX-3.1, workplan §7.3). There is no switch any more: a valid 200 is
+ * `ok`, and anything else (a 404, a server error, a non-JSON page, a network
+ * error or the timeout) is `error`, which the drawer shows with Try again.
  */
 
 const logged: unknown[][] = [];
@@ -14,7 +14,7 @@ jest.mock('@/lib/logger', () => {
 });
 
 import {
-  MODULE_EXPORT_PROBE_TIMEOUT_MS,
+  MODULE_EXPORT_HISTORY_TIMEOUT_MS,
   MODULE_EXPORT_URL,
   fetchModuleExportHistory,
   startModuleExport,
@@ -50,7 +50,7 @@ const HISTORY = {
   },
 };
 
-describe('fetchModuleExportHistory (C-1)', () => {
+describe('fetchModuleExportHistory (MX-3.1: ok or error)', () => {
   it('GETs the route, same-origin, no-store, with an abort signal', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, HISTORY));
     await fetchModuleExportHistory();
@@ -66,19 +66,16 @@ describe('fetchModuleExportHistory (C-1)', () => {
     expect(await fetchModuleExportHistory()).toEqual({ kind: 'ok', requests: HISTORY.data.requests });
   });
 
-  it("our own 404 (JSON, success false) → off", async () => {
+  it('any 404 (ours, a page, or JSON of another shape) → error; there is no "off" any more', async () => {
     fetchMock.mockResolvedValue(jsonResponse(404, { success: false, error: 'Not found' }));
-    expect(await fetchModuleExportHistory()).toEqual({ kind: 'off' });
-  });
-
-  it('a 404 page that is not ours (HTML, or JSON of another shape) → unknown, never off', async () => {
+    expect(await fetchModuleExportHistory()).toEqual({ kind: 'error' });
     fetchMock.mockResolvedValue(htmlResponse(404));
-    expect(await fetchModuleExportHistory()).toEqual({ kind: 'unknown' });
+    expect(await fetchModuleExportHistory()).toEqual({ kind: 'error' });
     fetchMock.mockResolvedValue(jsonResponse(404, { message: 'nope' }));
-    expect(await fetchModuleExportHistory()).toEqual({ kind: 'unknown' });
+    expect(await fetchModuleExportHistory()).toEqual({ kind: 'error' });
   });
 
-  it.each([401, 429, 500])('%p with our JSON body → error (the switch is on)', async (status) => {
+  it.each([401, 429, 500])('%p with our JSON body → error', async (status) => {
     fetchMock.mockResolvedValue(jsonResponse(status, { success: false, error: 'x' }));
     expect(await fetchModuleExportHistory()).toEqual({ kind: 'error' });
   });
@@ -88,17 +85,17 @@ describe('fetchModuleExportHistory (C-1)', () => {
     expect(await fetchModuleExportHistory()).toEqual({ kind: 'error' });
   });
 
-  it.each([502, 504])('a non-JSON platform page %p → unknown', async (status) => {
+  it.each([502, 504])('a non-JSON platform page %p → error', async (status) => {
     fetchMock.mockResolvedValue(htmlResponse(status));
-    expect(await fetchModuleExportHistory()).toEqual({ kind: 'unknown' });
+    expect(await fetchModuleExportHistory()).toEqual({ kind: 'error' });
   });
 
-  it('a network error → unknown, never a throw', async () => {
+  it('a network error → error, never a throw', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
-    expect(await fetchModuleExportHistory()).toEqual({ kind: 'unknown' });
+    expect(await fetchModuleExportHistory()).toEqual({ kind: 'error' });
   });
 
-  it('the 5 s timeout → unknown', async () => {
+  it('the 5 s timeout → error', async () => {
     jest.useFakeTimers();
     try {
       fetchMock.mockImplementation(
@@ -108,8 +105,8 @@ describe('fetchModuleExportHistory (C-1)', () => {
           })
       );
       const pending = fetchModuleExportHistory();
-      await jest.advanceTimersByTimeAsync(MODULE_EXPORT_PROBE_TIMEOUT_MS + 1);
-      expect(await pending).toEqual({ kind: 'unknown' });
+      await jest.advanceTimersByTimeAsync(MODULE_EXPORT_HISTORY_TIMEOUT_MS + 1);
+      expect(await pending).toEqual({ kind: 'error' });
     } finally {
       jest.useRealTimers();
     }
@@ -140,7 +137,8 @@ describe('startModuleExport', () => {
     [409, { success: false, code: 'export_daily_limit' }, { kind: 'refused', code: 'failed' }],
     [409, { success: false, code: 'export_daily_limit', retryAt: null }, { kind: 'refused', code: 'failed' }],
     [400, { success: false, code: 'invalid_input' }, { kind: 'refused', code: 'invalid' }],
-    [404, { success: false, error: 'Not found' }, { kind: 'refused', code: 'off' }],
+    // MX-3.1: no switch, so a 404 is a plain failure.
+    [404, { success: false, error: 'Not found' }, { kind: 'refused', code: 'failed' }],
     [401, { success: false }, { kind: 'refused', code: 'unauthorized' }],
     [429, { success: false }, { kind: 'refused', code: 'throttled' }],
     [500, { success: false }, { kind: 'refused', code: 'failed' }],

@@ -21,10 +21,6 @@ import type { ModuleExportHistoryVerdict, ModuleExportStartVerdict } from '@/lib
 const mockProbe = jest.fn<Promise<ModuleExportHistoryVerdict>, []>();
 const mockStartModule = jest.fn<Promise<ModuleExportStartVerdict>, [readonly string[]]>();
 jest.mock('@/lib/client/businessOsDataExport', () => ({
-  startDataExport: jest.fn(),
-  downloadDataExportAgain: jest.fn(),
-  fetchLastDataExport: jest.fn(async () => ({ kind: 'ok', lastExport: null })),
-  saveSignedDownload: jest.fn(() => true),
   fetchModuleExportHistory: () => mockProbe(),
   startModuleExport: (modules: readonly string[]) => mockStartModule(modules),
 }));

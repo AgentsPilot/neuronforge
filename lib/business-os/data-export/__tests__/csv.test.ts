@@ -3,7 +3,6 @@
  */
 import { CSV_BOM, CSV_EOL, cellText, csvHeaderLine, csvLine, csvPartText, neutralise, toCsv, toCsvText } from '@/lib/business-os/data-export/csv';
 import { PURGE_DESCRIPTORS } from '@/lib/business-os/purge/descriptors';
-import { FILE_INDEX_COLUMNS } from '@/lib/business-os/data-export/payload';
 
 const decode = (bytes: Uint8Array) => new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes);
 
@@ -124,8 +123,9 @@ describe('MX-2a ZIP byte identity (T-17, SA C-6)', () => {
     );
   });
 
-  it('every header key the ZIP writes is unchanged by neutralise, so csvHeaderLine is a no-op for the ZIP', () => {
-    const keys = new Set<string>(['id', 'email', 'created_at', ...FILE_INDEX_COLUMNS]);
+  it('every classified column key is unchanged by neutralise, so csvHeaderLine is a no-op on keys', () => {
+    // MX-3.1: the ZIP's files-index columns left with payload.ts.
+    const keys = new Set<string>(['id', 'email', 'created_at']);
     for (const d of PURGE_DESCRIPTORS) if (d.export.kind === 'include') for (const c of d.export.columns) keys.add(c);
     expect(keys.size).toBeGreaterThan(100);
     const changed = [...keys].filter((k) => neutralise(k) !== k);
