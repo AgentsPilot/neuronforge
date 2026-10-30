@@ -190,6 +190,41 @@ describe('customer.subscription.updated / .deleted: status-only mirror', () => {
   });
 });
 
+// ── Follow-ups C-3: the stored flag is the DERIVED "will not renew" (X-2) ────
+
+describe('follow-ups C-3: a dashboard `cancel_at` is mirrored as cancelling', () => {
+  const PERIOD_END = Math.floor(Date.parse('2026-11-26T10:00:00.000Z') / 1000);
+  const items = [{ id: 'si_1', priceId: 'price_one', currentPeriodStart: PERIOD_END - 86400 * 30, currentPeriodEnd: PERIOD_END }];
+  const mirroredLog = (h: ReturnType<typeof setup>) => h.logged('bos_billing_subscription_mirrored')[0]?.ctx;
+
+  it.each<[string, Record<string, unknown>, boolean, string | null]>([
+    ['flag false, `cancel_at` = the period end (dashboard "end of period")', { cancelAtPeriodEnd: false, cancelAt: PERIOD_END, items }, true, 'cancel_at'],
+    ['flag false, `cancel_at` before the period end (a custom date)', { cancelAtPeriodEnd: false, cancelAt: PERIOD_END - 86400 * 5, items }, true, 'cancel_at'],
+    ['flag false, `cancel_at` after the period end (renews once more)', { cancelAtPeriodEnd: false, cancelAt: PERIOD_END + 86400 * 5, items }, false, 'cancel_at_after_period'],
+    ['flag true (in-app, X-2: `cancel_at` = the period end)', { cancelAtPeriodEnd: true, cancelAt: PERIOD_END, items }, true, 'flag'],
+    ['neither', { cancelAtPeriodEnd: false, cancelAt: null, items }, false, null],
+  ])('%s → stored %s, logged with its cancelSource', async (_label, fresh, stored, source) => {
+    const h = setup(row(), fresh);
+    await mirrorPlanSubscription(event('customer-subscription-updated.json'), h.log, h.deps);
+    expect(h.deps.billingAccounts.mirrorSubscriptionState).toHaveBeenCalledWith(expect.objectContaining({ cancelAtPeriodEnd: stored }));
+    expect(h.state.row?.cancelAtPeriodEnd).toBe(stored);
+    // W-8: the log carries the STORED value and its source; ids only.
+    expect(mirroredLog(h)).toMatchObject({ cancelAtPeriodEnd: stored, cancelSource: source });
+  });
+
+  it('a later event reading the same dashboard cancellation keeps it (no flip-flop)', async () => {
+    const h = setup(row({ cancelAtPeriodEnd: true }), { cancelAtPeriodEnd: false, cancelAt: PERIOD_END, items });
+    await mirrorPlanSubscription(event('customer-subscription-updated.json'), h.log, h.deps);
+    expect(h.state.row?.cancelAtPeriodEnd).toBe(true);
+  });
+
+  it('the dashboard cancellation revoked (both cleared) mirrors false', async () => {
+    const h = setup(row({ cancelAtPeriodEnd: true }), { cancelAtPeriodEnd: false, cancelAt: null, items });
+    await mirrorPlanSubscription(event('customer-subscription-updated.json'), h.log, h.deps);
+    expect(h.state.row?.cancelAtPeriodEnd).toBe(false);
+  });
+});
+
 // ── P-6a.2: the ended history row and audit (workplan §5.5; SA C-4, C-10) ────
 
 describe('customer.subscription.deleted: one subscription_ended row and one audit (AC-F6.3)', () => {
