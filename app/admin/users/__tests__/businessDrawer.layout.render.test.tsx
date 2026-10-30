@@ -831,14 +831,14 @@ describe('T-30 (data export DE-10a; SA-9, W10-10): the Data export box above the
     // Nothing in the danger area is disabled or hidden by the box (BC-4 is informational only).
     expect(danger.querySelectorAll('[disabled], [hidden], [aria-disabled="true"]')).toHaveLength(0);
     expect(within(danger).getByText(DANGER_SENTENCE)).toBeTruthy();
-    // One status read for the open account.
-    expect(calls.filter((url) => url.endsWith('/data-exports'))).toEqual([`/api/admin/users/${DANA_ID}/data-exports`]);
+    // Export MX-3.1: the box is a placeholder until MX-5 and reads nothing.
+    expect(calls.filter((url) => url.includes('/data-exports'))).toEqual([]);
   });
 
   it('a non-Business OS login gets the box too (BC-5), above its danger area', async () => {
     const drawer = await openDrawer('Oren Levi', 'bos-panel-not-bos');
     const box = within(drawer).getByTestId('drawer-box-export');
     expect(box.nextElementSibling).toBe(within(drawer).getByTestId('danger-area'));
-    expect(within(box).getByTestId('data-export-empty').textContent).toBe('No exports yet.');
+    expect(within(box).getByTestId('data-export-placeholder').textContent).toBe("Admin export is coming back as 'Send export to owner'.");
   });
 });

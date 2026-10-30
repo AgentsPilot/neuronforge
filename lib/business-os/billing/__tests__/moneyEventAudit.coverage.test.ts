@@ -89,8 +89,10 @@ describe('AM-7: events not built yet are owned, and not registered unannounced',
   );
 
   it('every BOS_BILLING_* key is either an AM-7 event above or a known non-money event', () => {
-    // Not money events: the TEST MODE ONLY test clock (P-6a.1).
-    const NON_MONEY = ['BOS_BILLING_TEST_CLOCK_ATTACHED'];
+    // Not money events: the TEST MODE ONLY test clock (P-6a.1), and the admin's
+    // "Reconcile plan payments now" press (P-8b.3c), a system-entity row; the
+    // events it replays are audited by the plan handler, as the webhook's are.
+    const NON_MONEY = ['BOS_BILLING_TEST_CLOCK_ATTACHED', 'BOS_BILLING_RECONCILE_TRIGGERED'];
     const mapped = new Set<string>([...BUILT.map((row) => row.key), ...NON_MONEY]);
     expect(keys.filter((key) => key.startsWith('BOS_BILLING_') && !mapped.has(key))).toEqual([]);
   });

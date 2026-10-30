@@ -40,7 +40,6 @@ import { SettingsDrawer } from '@/components/business-os/settings/SettingsDrawer
 import { Checkbox } from '@/components/ui/checkbox';
 import { useBusinessTimezone, useOptionalLanguage } from '@/lib/business-os/LanguageContext';
 import { enabledModules, type ExportModuleLanguage } from '@/lib/business-os/data-export/exportModules';
-import type { ExportHistoryRequest } from '@/lib/client/businessOsDataExport';
 import { formatExportTime } from '@/components/business-os/data-export/formatExportTime';
 import { exportDrawerCopy, fillDrawerCopy, type ExportDrawerCopy } from '@/components/business-os/data-export/exportDrawerCopy';
 import { useExportDrawer, type ExportDrawerRefusal } from '@/components/business-os/data-export/useExportDrawer';
@@ -49,8 +48,6 @@ import { cn } from '@/lib/utils';
 export interface ExportDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The first history page from the switch probe; `null` when it could not be read. */
-  initialHistory: ExportHistoryRequest[] | null;
   /** The trigger: focus goes back to it on close. */
   returnFocusRef?: React.RefObject<HTMLElement | null>;
 }
@@ -83,8 +80,6 @@ function refusalText(refusal: ExportDrawerRefusal, copy: ExportDrawerCopy, forma
       return copy.network;
     case 'invalid':
       return copy.invalid;
-    case 'off':
-      return copy.off;
     case 'failed':
     default:
       return copy.failed;
@@ -119,7 +114,7 @@ function WithDate({ template, date }: { template: string; date: string }) {
   );
 }
 
-export function ExportDrawer({ open, onOpenChange, initialHistory, returnFocusRef }: ExportDrawerProps) {
+export function ExportDrawer({ open, onOpenChange, returnFocusRef }: ExportDrawerProps) {
   const languageContext = useOptionalLanguage();
   const language = (languageContext?.language ?? 'en') as ExportModuleLanguage;
   const isRTL = languageContext?.isRTL ?? false;
@@ -145,7 +140,7 @@ export function ExportDrawer({ open, onOpenChange, initialHistory, returnFocusRe
     [copy.startedToast]
   );
 
-  const drawer = useExportDrawer({ open, moduleIds, initialHistory, onStarted });
+  const drawer = useExportDrawer({ open, moduleIds, onStarted });
   const idBase = useId();
   const selectAllId = `${idBase}-all`;
   const historyTitleId = `${idBase}-history`;

@@ -125,6 +125,13 @@ export const AUDIT_EVENTS = {
   DATA_EXPORT_DOWNLOADED: 'DATA_EXPORT_DOWNLOADED',
   DATA_EXPORT_EXPIRED: 'DATA_EXPORT_EXPIRED',
   DATA_EXPORT_DOWNLOADED_BY_ADMIN: 'DATA_EXPORT_DOWNLOADED_BY_ADMIN',
+  // Module export MX-3b (BUSINESS_OS_EXPORT_MX3_WORKPLAN.md §9.1, D-18; SA-P5):
+  // the data export worker, one row per module job that ends. entityType 'user',
+  // entityId = the owner. details: request_id, job_id, module, origin, rows,
+  // parts, parts_accepted (+ failure_code, interrupted on FAILED). Never an
+  // address, a file name or any exported content (XC-13).
+  DATA_EXPORT_MODULE_SENT: 'DATA_EXPORT_MODULE_SENT',
+  DATA_EXPORT_MODULE_FAILED: 'DATA_EXPORT_MODULE_FAILED',
   DATA_DELETED: 'DATA_DELETED', // Right to erasure
   DATA_ANONYMIZED: 'DATA_ANONYMIZED', // PII anonymization
   // Business OS purge (Reset / Purge of one business's data). Distinct from
@@ -201,6 +208,28 @@ export const AUDIT_EVENTS = {
   // reason, subscription id, endedAt, days, priorMoves, cohort, livemode, event
   // id. Never an email, a name or the owner's leave reason code.
   BOS_PLAN_FREE_PERIOD_AFTER_CANCEL: 'BOS_PLAN_FREE_PERIOD_AFTER_CANCEL',
+  // Account deletion lifecycle D4a / SX-3 (SA S-9): the owner's "Plan
+  // cancelled" / "Your plan has ended" / "Plan kept" email, sent or not. Written
+  // by the cancel and reactivate routes only (planCancelEmailDeps.ts), after
+  // their own audit, through logAndFlush. Entity type
+  // 'business_os_billing_account', id = the account. Details: email (cancelled
+  // | ended_now | kept), outcome, reason class, provider, language and its
+  // source, subscription id, periodEnd, livemode, actor 'owner', correlationId.
+  // Never an address, a name, a plan name or the leave reason.
+  BOS_PLAN_CANCEL_EMAIL_SENT: 'BOS_PLAN_CANCEL_EMAIL_SENT',
+  BOS_PLAN_CANCEL_EMAIL_NOT_SENT: 'BOS_PLAN_CANCEL_EMAIL_NOT_SENT',
+  // Self-service exit D5 / SX-5 (SA W-12): the owner's Stripe Connect Remove
+  // connection and Disconnect, done or refused. Entity type
+  // 'stripe_connect_account', id = the Stripe account id when one was
+  // resolved. Details: account type, how it was released (deleted |
+  // deauthorized | already_gone), refusal reason and step, blocker codes and
+  // counts, Stripe's error type and code. Never Stripe's message and never
+  // anything about another business (a shared account is `shared: true` only).
+  // The first two were written before D5 but never registered.
+  STRIPE_CONNECT_ACCOUNT_DISCONNECTED: 'STRIPE_CONNECT_ACCOUNT_DISCONNECTED',
+  STRIPE_CONNECT_ACCOUNT_DELETED: 'STRIPE_CONNECT_ACCOUNT_DELETED',
+  STRIPE_CONNECT_DISCONNECT_REFUSED: 'STRIPE_CONNECT_DISCONNECT_REFUSED',
+  STRIPE_CONNECT_DELETE_REFUSED: 'STRIPE_CONNECT_DELETE_REFUSED',
   // Business OS AI activity (Layer 3): one entry per AI action or background
   // job, summarising its LLM calls. Written by the server only; a browser can
   // never write one (lib/audit/requestSchemas.ts) and owners never read one
@@ -307,6 +336,13 @@ export const AUDIT_EVENTS = {
   // user and actor), NEVER against a purchase, so it reaches no owner's audit.
   // Details: the run id and the correlation id; never an account or a payment.
   BOS_BOOST_RECONCILE_TRIGGERED: 'BOS_BOOST_RECONCILE_TRIGGERED',
+  // Plan payments P-8b.3c: an admin ran the PLAN reconcile pass now
+  // (POST /api/admin/business-os/billing/reconcile). One write-ahead row per
+  // press, flushed before the pass runs, as the boost one above: written
+  // against a system entity ('system', id = the run id the route generates,
+  // the admin as user and actor), never against an account or a subscription.
+  // Details: the run id and the correlation id only (SA P3-SA-8).
+  BOS_BILLING_RECONCILE_TRIGGERED: 'BOS_BILLING_RECONCILE_TRIGGERED',
   // Credits boost slice 6b: an admin set or ended ONE account's spending limit
   // for top-ups (FR-22), through the entitlements admin route (set_boost_cap /
   // end_boost_cap). Entity 'business_os_account_plan' (operator-only, BD-26),
@@ -996,6 +1032,19 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['GDPR', 'SOC2'],
     description: "An admin downloaded a customer's data export",
   },
+  // MX-3b (SA-P5): the data export worker. A module sent in full is an ordinary
+  // self-export (info); a failed, too-large or interrupted module is a warning,
+  // as DATA_EXPORT_FAILED.
+  [AUDIT_EVENTS.DATA_EXPORT_MODULE_SENT]: {
+    severity: 'info',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'One module of a data export was emailed to the owner in full (every part accepted by the mail provider)',
+  },
+  [AUDIT_EVENTS.DATA_EXPORT_MODULE_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['GDPR'],
+    description: 'One module of a data export failed, was too large, or was interrupted while sending; the owner was sent a notice',
+  },
   [AUDIT_EVENTS.DATA_DELETED]: {
     severity: 'critical',
     complianceFlags: ['GDPR', 'SOC2'],
@@ -1164,6 +1213,14 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin ran the Business OS credits boost reconcile pass now',
+  },
+  // Plan payments P-8b.3c: 'warning' + SOC2, as the boost one above. An admin
+  // made the platform replay plan payment events across every account,
+  // outside the schedule.
+  [AUDIT_EVENTS.BOS_BILLING_RECONCILE_TRIGGERED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin ran the Business OS plan payments reconcile pass now',
   },
   // ADMIN_BOS_CLEANUP slice 7d. 'warning': an admin made the platform process
   // (and possibly send) queued items across every account, outside the schedule.
@@ -1345,6 +1402,42 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: "A Business OS owner's cancelled paid plan ended and the account moved to the free plan for a free period (shorter on each repeat cancel)",
+  },
+  // D4a / SX-3 (SA S-9). Both 'info', as the invite pair: a skipped courtesy
+  // email is not an operator alert. A missing sender while the switch is on is
+  // the operator signal, and goes out as a Pino error with alert: true.
+  [AUDIT_EVENTS.BOS_PLAN_CANCEL_EMAIL_SENT]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner was emailed that their plan was cancelled, ended now, or kept',
+  },
+  [AUDIT_EVENTS.BOS_PLAN_CANCEL_EMAIL_NOT_SENT]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner was not emailed about their plan cancel or keep, or the send was not confirmed in time (reason class only)',
+  },
+  // D5 / SX-5 (SA W-12). The severities are the ones the routes pass: a
+  // removal is 'warning' as it always was; a disconnect and either refusal are
+  // the owner's ordinary outcome, 'info'.
+  [AUDIT_EVENTS.STRIPE_CONNECT_ACCOUNT_DISCONNECTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner soft-disconnected their Stripe Connect account (it stays live at Stripe)',
+  },
+  [AUDIT_EVENTS.STRIPE_CONNECT_ACCOUNT_DELETED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner removed their Stripe Connect account after Stripe confirmed it was deleted or our access revoked',
+  },
+  [AUDIT_EVENTS.STRIPE_CONNECT_DISCONNECT_REFUSED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Stripe Connect disconnect was refused (client payment plans running, or the check could not be read); nothing changed',
+  },
+  [AUDIT_EVENTS.STRIPE_CONNECT_DELETE_REFUSED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Stripe Connect removal was refused (client money in flight, Stripe refused, or it could not be checked); nothing changed',
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',

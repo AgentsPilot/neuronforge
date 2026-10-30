@@ -135,6 +135,21 @@ function migrationColumns(): string[] {
     .map((line) => line.split(' ')[0]);
 }
 
+/**
+ * Every column `service_role` may UPDATE: the 20261025 grant, plus the three
+ * plan-ends reminder columns 20261100 grants (D4b, SA DR-3, R-C).
+ */
+function grantedUpdateColumns(): string[] {
+  const columns: string[] = [];
+  for (const name of ['20261025_business_os_billing_accounts.sql', '20261100_business_os_plan_cancel_reminders.sql']) {
+    const migration = fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', name), 'utf8').replace(/\r\n/g, '\n');
+    const grant = migration.match(/GRANT UPDATE \(([^)]+)\) ON TABLE public\.business_os_billing_accounts TO service_role;/);
+    expect(grant).not.toBeNull();
+    columns.push(...(grant as RegExpMatchArray)[1].split(',').map((column) => column.trim()));
+  }
+  return columns;
+}
+
 beforeEach(() => {
   mockWarn.mockReset();
   mockError.mockReset();
@@ -393,6 +408,10 @@ describe('replaceCustomer (compare-and-set on the old customer id)', () => {
           failed_attempts: 0,
           action_required_invoice_url: null,
           ended_at: null,
+          // D4b (SA R-C): the reminder record goes with the subscription.
+          cancel_reminder_sent_for: null,
+          cancel_reminder_claimed_by: null,
+          cancel_reminder_claimed_at: null,
           updated_at: NOW_ISO,
         },
         { count: 'exact' },
@@ -407,13 +426,9 @@ describe('replaceCustomer (compare-and-set on the old customer id)', () => {
     expect(argsOf(queries[0], 'or')).toEqual([]);
   });
 
-  it('F-1: writes every UPDATE-granted column of 20261025 except the founder discount stamp, the same set as the test-clock attach', async () => {
-    const migration = fs
-      .readFileSync(path.join(ROOT, 'supabase', 'migrations', '20261025_business_os_billing_accounts.sql'), 'utf8')
-      .replace(/\r\n/g, '\n');
-    const grant = migration.match(/GRANT UPDATE \(([^)]+)\) ON TABLE public\.business_os_billing_accounts TO service_role;/);
-    expect(grant).not.toBeNull();
-    const granted = (grant as RegExpMatchArray)[1].split(',').map((column) => column.trim());
+  it('F-1: writes every UPDATE-granted column of 20261025 and 20261100 except the founder discount stamp, the same set as the test-clock attach', async () => {
+    // D4b (SA R-C): the 20261025 grant plus the reminder columns 20261100 grants.
+    const granted = grantedUpdateColumns();
 
     const replace = recordingClient(() => ({ data: null, error: null, count: 1 }));
     await new BusinessOsBillingAccountRepository(replace.client).replaceCustomer(INPUT);
@@ -498,6 +513,10 @@ describe('attachTestClockCustomer (TEST MODE ONLY, compare-and-set on the old cu
           failed_attempts: 0,
           action_required_invoice_url: null,
           ended_at: null,
+          // D4b (SA R-C): the reminder record goes with the subscription.
+          cancel_reminder_sent_for: null,
+          cancel_reminder_claimed_by: null,
+          cancel_reminder_claimed_at: null,
           updated_at: NOW_ISO,
         },
         { count: 'exact' },
@@ -512,13 +531,9 @@ describe('attachTestClockCustomer (TEST MODE ONLY, compare-and-set on the old cu
     expect(argsOf(queries[0], 'or')).toEqual([]);
   });
 
-  it('writes every UPDATE-granted column of 20261025 except the founder discount stamp, and resets all but the customer and updated_at (C-6)', async () => {
-    const migration = fs
-      .readFileSync(path.join(ROOT, 'supabase', 'migrations', '20261025_business_os_billing_accounts.sql'), 'utf8')
-      .replace(/\r\n/g, '\n');
-    const grant = migration.match(/GRANT UPDATE \(([^)]+)\) ON TABLE public\.business_os_billing_accounts TO service_role;/);
-    expect(grant).not.toBeNull();
-    const granted = (grant as RegExpMatchArray)[1].split(',').map((column) => column.trim());
+  it('writes every UPDATE-granted column of 20261025 and 20261100 except the founder discount stamp, and resets all but the customer and updated_at (C-6, R-C)', async () => {
+    // D4b (SA R-C): the 20261025 grant plus the reminder columns 20261100 grants.
+    const granted = grantedUpdateColumns();
 
     const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
     await new BusinessOsBillingAccountRepository(client).attachTestClockCustomer(INPUT);
@@ -820,10 +835,15 @@ describe('source guards', () => {
     expect(BILLING_ACCOUNT_COLUMNS.split(', ')).toEqual(migrationColumns());
   });
 
-  it('scope (P-2a SA Q-9, P-3a §3.5, P-3b.2 §3.5, P-6a.1 C-6, P-6a.2 C-2): one insert, eight compare-and-set updates, no delete, no upsert, no rpc, no spread into a payload', () => {
+  it('scope (P-2a SA Q-9, P-3a §3.5, P-3b.2 §3.5, P-6a.1 C-6, P-6a.2 C-2, D4b S-3 / R-D): one insert, eleven compare-and-set updates, one rpc (the D4b claim), no delete, no upsert, no spread into a payload', () => {
     expect(code.match(/\.insert\(/g)).toHaveLength(1);
-    expect(code.match(/\.update\(/g)).toHaveLength(8);
-    expect(code).not.toMatch(/\.(delete|upsert|rpc)\(/);
+    // D4b: + completeCancelReminder, releaseCancelReminder, markCancelReminderCovered.
+    expect(code.match(/\.update\(/g)).toHaveLength(11);
+    expect(code).not.toMatch(/\.(delete|upsert)\(/);
+    // D4b (S-3): the only rpc is the reminder claim, and only claimCancelReminders makes it.
+    expect(code.match(/\.rpc\(/g)).toHaveLength(1);
+    expect(code).toContain('.rpc(CLAIM_CANCEL_REMINDERS_RPC, {');
+    expect(code).toContain("export const CLAIM_CANCEL_REMINDERS_RPC = 'claim_bos_plan_cancel_reminders';");
     expect(code).not.toMatch(/\.update\(\{\s*\.\.\./);
     // UPDATE + .or() + .select() fails 42703 in production (2026-09-29): the
     // two compare-and-set methods must never select.
@@ -838,6 +858,10 @@ describe('source guards', () => {
       // P-6a.2 (SA C-2): read (through findByUser), decide, compare-and-set.
       'writeRenewalFailure',
       'clearRenewalFailure',
+      // D4b (S-3 c, R-D): the reminder record's three compare-and-set writes.
+      'completeCancelReminder',
+      'releaseCancelReminder',
+      'markCancelReminderCovered',
     ]) {
       const start = lf.indexOf(`async ${method}(`);
       const end = lf.indexOf('\n  }\n', start);
@@ -854,13 +878,16 @@ describe('source guards', () => {
   });
 
   it('the read and every update scope by user_id and livemode; the two Stripe-id lookups by livemode; the other from() is the three-field insert', () => {
-    expect(code.match(/\.from\(/g)).toHaveLength(12);
+    // D4b: + the three reminder writes (the claim is an rpc, not a from()).
+    expect(code.match(/\.from\(/g)).toHaveLength(15);
     expect(code.match(/\.maybeSingle\(\)/g)).toHaveLength(3);
-    // findByUser and the eight updates.
-    expect(code.match(/\.eq\('user_id', userId\)/g)).toHaveLength(9);
-    // The same nine, plus the two documented lookups by a UNIQUE Stripe id (§3.3).
-    expect(code.match(/\.eq\('livemode', livemode\)/g)).toHaveLength(11);
-    expect(code.match(/\.eq\('stripe_subscription_id', stripeSubscriptionId\)/g)).toHaveLength(4);
+    // findByUser and the eleven updates (D4b's complete and release scope by the ROW's user_id and
+    // livemode, with the row id and the runner: tenant-isolation-guard Step 6).
+    expect(code.match(/\.eq\('user_id', userId\)/g)).toHaveLength(12);
+    // The same twelve, plus the two documented lookups by a UNIQUE Stripe id (§3.3).
+    expect(code.match(/\.eq\('livemode', livemode\)/g)).toHaveLength(14);
+    // + D4b's markCancelReminderCovered (R-D).
+    expect(code.match(/\.eq\('stripe_subscription_id', stripeSubscriptionId\)/g)).toHaveLength(5);
     expect(code.match(/\.eq\('stripe_customer_id', stripeCustomerId\)/g)).toHaveLength(2);
     expect(code).toContain('.insert({ user_id: userId, livemode, stripe_customer_id: stripeCustomerId })');
   });
@@ -889,6 +916,9 @@ describe('source guards', () => {
       // D2 / SX-1 QA (2026-10-27): the gap tests over the same two routes fake
       // the repository module by name, as route.test.ts below. Test file only.
       'app/api/business-os/billing/plan/cancel/__tests__/route.d2.qa.test.ts',
+      // D4a / SX-3 (2026-10-28): the plan cancel / keep email tests over the same
+      // two routes fake the repository module by name, as route.test.ts. Test file only.
+      'app/api/business-os/billing/plan/cancel/__tests__/route.d4a.test.ts',
       // Plan payments P-7a.4 QA (2026-10-27): the two-tab / cured-row / void-failure
       // gap tests fake the repository module by name (stateful). Test file only.
       'app/api/business-os/billing/plan/cancel/__tests__/route.p7a4.qa.test.ts',
@@ -959,6 +989,14 @@ describe('source guards', () => {
       // (findByStripeSubscription, findByStripeCustomer, linkCheckoutSession,
       // releaseCheckoutLock, mirrorSubscriptionState).
       'lib/business-os/billing/planBillingHandler.ts',
+      // Account deletion lifecycle D4b (SX-3 part 2; SA R-D): after a "Plan cancelled" email
+      // inside the reminder window, the email wiring marks the SESSION user's reminder as
+      // covered (markCancelReminderCovered, user-scoped). DELETE-owned file.
+      'lib/business-os/billing/planCancelEmailDeps.ts',
+      // Account deletion lifecycle D4b (SA S-3, R-A): the plan-ends reminder cron's wiring claims,
+      // completes and releases its rows (claimCancelReminders, completeCancelReminder,
+      // releaseCancelReminder; ⟨unscoped-by-design⟩). DELETE-owned file.
+      'lib/business-os/billing/planCancelReminderPassDeps.ts',
       // Plan payments P-3a: the checkout reads the billing row and records the
       // lock (findByUser, acquireCheckoutLock; replaceCustomer via the customer
       // function).
@@ -1008,6 +1046,8 @@ describe('source guards', () => {
       // Plan payments P-3b.1: imports the subscription status TYPE only, for
       // the apply function's input. Not a caller of this repository.
       'lib/repositories/BusinessOsBillingEventRepository.ts',
+      // Account deletion lifecycle D4b: the unit tests of the four reminder methods. Test file only.
+      'lib/repositories/__tests__/BusinessOsBillingAccountRepository.d4b.test.ts',
       'lib/repositories/__tests__/BusinessOsBillingAccountRepository.test.ts',
       // Not a caller: the money history repository's caller guard names this
       // test file's path (the two guards list each other).
@@ -1463,13 +1503,38 @@ describe('current_period_end is written only by the paid apply path (SA C-1 ruli
       .filter((name) => name.endsWith('.sql'))
       .filter((name) => /UPDATE\s+public\.business_os_billing_accounts/i.test(fs.readFileSync(path.join(dir, name), 'utf8')))
       .sort();
-    expect(updaters).toEqual(['20261027_business_os_billing_events.sql', '20261028_business_os_first_payment_stamp.sql']);
-    for (const name of updaters) {
+    // D4b (SA DR-4): 20261100's reminder claim joins, add-only, checked below.
+    expect(updaters).toEqual([
+      '20261027_business_os_billing_events.sql',
+      '20261028_business_os_first_payment_stamp.sql',
+      '20261100_business_os_plan_cancel_reminders.sql',
+    ]);
+    for (const name of updaters.filter((file) => !file.startsWith('20261100'))) {
       const sql = lf(fs.readFileSync(path.join(dir, name), 'utf8'));
       const at = sql.search(/UPDATE\s+public\.business_os_billing_accounts/i);
       const fnStart = sql.lastIndexOf('FUNCTION', at);
       expect(fnStart).toBeGreaterThan(0);
       expect(sql.slice(fnStart, fnStart + 80)).toContain('business_os_apply_plan_payment');
     }
+  });
+
+  // D4b (SA DR-4): 20261100's ONE update of the billing table is inside the reminder claim
+  // function, and its SET names only the two claim columns, so it can never move
+  // current_period_end or any billing state.
+  it('in SQL, 20261100 updates the billing table only inside claim_bos_plan_cancel_reminders, and sets only the two claim columns', () => {
+    const sql = lf(fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', '20261100_business_os_plan_cancel_reminders.sql'), 'utf8'));
+    const updates = [...sql.matchAll(/UPDATE\s+public\.business_os_billing_accounts/gi)];
+    expect(updates).toHaveLength(1);
+    const at = updates[0].index ?? -1;
+    const fnStart = sql.lastIndexOf('FUNCTION', at);
+    expect(fnStart).toBeGreaterThan(0);
+    expect(sql.slice(fnStart, fnStart + 80)).toContain('public.claim_bos_plan_cancel_reminders(');
+    // The body closes after the update: the update is inside the function.
+    expect(sql.indexOf('$claim$;', at)).toBeGreaterThan(at);
+    expect(sql.lastIndexOf('AS $claim$', at)).toBeGreaterThan(fnStart);
+    const statement = sql.slice(at, sql.indexOf(';', at));
+    const set = statement.slice(statement.indexOf(' SET '), statement.indexOf(' WHERE '));
+    const columns = [...set.matchAll(/(\w+)\s*=/g)].map((m) => m[1]);
+    expect(columns).toEqual(['cancel_reminder_claimed_by', 'cancel_reminder_claimed_at']);
   });
 });

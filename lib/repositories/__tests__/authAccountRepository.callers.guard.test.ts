@@ -72,13 +72,26 @@ const ALLOWED = new Set(
     'lib/business-os/purge/AdminDeletionCommit.ts',
     'lib/business-os/purge/__tests__/AdminDeletionCommit.test.ts',
     'app/api/admin/users/[id]/deletion/commit/__tests__/route.test.ts',
-    // Data export DE-10a (workplan §5.2): the admin prepare reads ONE account's
-    // id, email and joined date (`findUserIdentity`) for an id taken from the
-    // admin-gated route path, to build the export of that account (the email
-    // goes into the zip's account section only, never a log or audit row). Its
-    // test replaces the instance.
-    'app/api/admin/users/[id]/data-exports/route.ts',
-    'app/api/admin/users/[id]/data-exports/__tests__/route.test.ts',
+    // Account deletion lifecycle D4a / SX-3 (SA S-7): the plan cancel emails
+    // read the SESSION user's own live address (`findUserIdentity`, keyed on
+    // the id from `getUser()`, never request data) to send them the cancel /
+    // keep email. The address goes to the transport only, never a log or audit
+    // row. The routes' email test replaces the instance.
+    // D4b (SX-3 part 2): the same file wires the plan-ends reminder cron, which
+    // reads the address of the CLAIMED billing row's own account (its `user_id`,
+    // from `claim_bos_plan_cancel_reminders`, never input) to send that owner
+    // their reminder. Same rule: transport only, never a log or audit row.
+    'lib/business-os/billing/planCancelEmailDeps.ts',
+    'app/api/business-os/billing/plan/cancel/__tests__/route.d4a.test.ts',
+    // The billing router-placement guard lists planCancelEmailDeps.ts's repository
+    // imports by name (its allow-list); it imports nothing.
+    'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
+    // Data export MX-3b: the module export worker's production wiring reads ONE
+    // account's login email with `findUserIdentity`, keyed on the claimed job's
+    // own user_id (never request data), to send that owner their export emails.
+    // The address goes to the transport only (recipient redacted in logs, C-3),
+    // never a log or audit row. The worker test replaces the deps.
+    'lib/business-os/data-export/moduleExportWorkerDeps.ts',
   ].map((file) => file.split('/').join(sep))
 );
 

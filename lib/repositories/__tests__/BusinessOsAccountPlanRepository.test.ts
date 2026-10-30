@@ -319,6 +319,43 @@ describe('pagePlans', () => {
     expect(calls.limit).toBe(1000);
     expect(calls.gt).toEqual([]);
   });
+
+  // MK5BFU-FU-2: the Finance walk opts in to the after-plan move count; nobody else's select changes.
+  it('without withAfterPlanMoves the select is the plan columns only (no after-plan column)', async () => {
+    const { client, calls } = mockSupabase({ data: [PLAN_ROW], error: null });
+
+    const { data } = await new BusinessOsAccountPlanRepository(client).pagePlans({ limit: 10 });
+
+    expect(calls.select).not.toMatch(/after_plan/);
+    expect(data?.[0]).not.toHaveProperty('after_plan_moves');
+  });
+
+  it('withAfterPlanMoves adds after_plan_moves (and not the subscription id) and returns it on each row', async () => {
+    const { client, calls } = mockSupabase({ data: [{ ...PLAN_ROW, after_plan_moves: 2 }], error: null });
+
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).pagePlans({ limit: 10, withAfterPlanMoves: true });
+
+    expect(error).toBeNull();
+    expect(calls.select).toMatch(/, after_plan_moves$/);
+    expect(calls.select).not.toMatch(/after_plan_last_subscription_id/);
+    expect(calls.order).toEqual(['user_id', { ascending: true }]);
+    expect(data?.[0].after_plan_moves).toBe(2);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['null', null],
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['a string', '1'],
+  ])('withAfterPlanMoves: a %s count fails the page (an error, never 0)', async (_label, moves) => {
+    const { client } = mockSupabase({ data: [{ ...PLAN_ROW, after_plan_moves: 0 }, { ...PLAN_ROW, after_plan_moves: moves }], error: null });
+
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).pagePlans({ withAfterPlanMoves: true });
+
+    expect(data).toBeNull();
+    expect(error?.message).toBe('A plan row has no readable after-plan move count');
+  });
 });
 
 describe('findRecentOnboardedPlans (QA B-1)', () => {

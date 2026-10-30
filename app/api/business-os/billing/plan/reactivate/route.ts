@@ -18,6 +18,11 @@
  * Same switch, session-only account, non-gate status and audit rules as the
  * cancel route (`../cancel/route.ts`): BOS_BILLING_SUBSCRIPTION_REACTIVATED
  * once per request that reached the Stripe write, flushed before the response.
+ *
+ * Email (account deletion lifecycle D4a / SX-3; SA S-6, S-11): on
+ * `reactivated` only, after the audit flush, the owner gets "Your plan
+ * continues", under the same switch, deadline and audit pair as the cancel
+ * route's email. `unchanged`, refusals and a lost answer send nothing.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -29,6 +34,7 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import { PLAN_MANAGE_REFUSALS, managePlanSubscription, type PlanManageAuditFacts } from '@/lib/business-os/billing/planSubscriptionManage';
 import { isPlanPriceRecognitionEnabled } from '@/lib/business-os/billing/planPricesFlag';
+import { notifyPlanCancelEmail } from '@/lib/business-os/billing/planCancelEmailDeps';
 import { createLogger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -123,6 +129,19 @@ export async function POST(request: NextRequest) {
       throw new Error('unexpected_manage_outcome');
     }
     await audit(result.audit);
+    // D4a / SX-3 (S-6, S-11): only on a real change, after the action's audit.
+    // Never throws; the answer below does not depend on it.
+    await notifyPlanCancelEmail(
+      {
+        event: 'kept',
+        userId: user.id,
+        date: result.renewsOn,
+        subscriptionId: result.audit.subscriptionId,
+        livemode: result.audit.livemode,
+        correlationId,
+      },
+      { accountId, userId: user.id, request, logger: requestLogger }
+    );
     return NextResponse.json({ success: true, data: { outcome: 'reactivated', renewsOn: result.renewsOn } });
   } catch (error) {
     requestLogger.error({ err: error }, 'Plan reactivate failed');

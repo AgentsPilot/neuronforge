@@ -280,3 +280,35 @@ export function trialEndOf(row: BusinessOsAccountPlan, config: EntitlementConfig
   const withoutTier: BusinessOsAccountPlan = { ...row, tier: null, tier_expires_at: null };
   return deriveLifecycle(fromPlanRow(withoutTier), lifecycleInputs(config), now).trial?.endsAt ?? null;
 }
+
+/**
+ * MK5BFU-FU-2 (user decision 2026-10-30): the account has had at least one
+ * after-plan free period (D3.1, 20261098). Such an owner already paid a plan,
+ * so a later free period in the trial cohort is not a trial for MK-9. The
+ * count is never reset, so the account stays out for good.
+ *
+ * A row read without the column (any walk but Finance's, and fixtures from
+ * before this change) has no field and counts as 0, today's behaviour. The
+ * Finance walk always reads it, and the repository refuses a row without a
+ * readable count, so production never lands here without it.
+ */
+export function isAfterPlanRow(row: Pick<BusinessOsAccountPlan, 'after_plan_moves'>): boolean {
+  return (row.after_plan_moves ?? 0) > 0;
+}
+
+/**
+ * MK-9's trial list (S5B-FR-12 with MK5BFU-FU-2): the trial rows that are not
+ * an after-plan free period, each with its end. The ONE list the first-payment
+ * ask (`trialAccountsToAsk`) and the count (`trialsToPaid`) are both built
+ * from, so the ask stays a superset of what the count reads by construction.
+ * The caller has already left the platform accounts out.
+ */
+export function trialsForTrialToPaid(
+  rows: readonly BusinessOsAccountPlan[],
+  config: EntitlementConfig,
+  now: Date
+): Array<{ accountId: string; endsAt: string | null }> {
+  return rows
+    .filter((row) => isTrialRow(row) && !isAfterPlanRow(row))
+    .map((row) => ({ accountId: row.user_id, endsAt: trialEndOf(row, config, now) }));
+}

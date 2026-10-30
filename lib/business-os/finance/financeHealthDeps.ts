@@ -128,7 +128,9 @@ export function financeHealthDeps(): Omit<
 > {
   return {
     plans: {
-      pagePlans: (options) => businessOsAccountPlanRepository.pagePlans(options),
+      // MK5BFU-FU-2: the Finance walk alone also reads `after_plan_moves`, so MK-9 can leave
+      // after-plan free periods out of trial-to-paid. Every other walker's select is unchanged.
+      pagePlans: (options) => businessOsAccountPlanRepository.pagePlans({ ...options, withAfterPlanMoves: true }),
     },
     findPlanForAccount: findPlanWithoutOverrides,
     ledger: {
@@ -189,7 +191,8 @@ export function financeHealthDeps(): Omit<
     },
     // Money MK-5b: the first plan payments (current billing mode, decided in lib/admin/billing) and the sources.
     converted: {
-      firstPlanPayments: (accountIds) => listCurrentModeFirstPlanPayments(accountIds),
+      // MK5B-FU-1: one query object (this month by range, plus ids), one mode, one rule.
+      firstPlanPayments: (query) => listCurrentModeFirstPlanPayments(query),
       signupSources: (accountIds) => businessOsAccountLineageRepository.findSignupSourcesForAccountsForAdmin(accountIds),
     },
   };

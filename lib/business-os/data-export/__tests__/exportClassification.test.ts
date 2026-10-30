@@ -1713,8 +1713,6 @@ function currencyConversionHits(source: string): string[] {
  * still applies to them (negative control below). SA reviews this list.
  */
 const LOWER_CASE_EXEMPT: Readonly<Record<string, string>> = {
-  'fileName.ts': 'the business-name slug of the zip file name is lower case by rule (requirement §0.4.1 E)',
-  'zipEntries.ts': 'duplicate entry names in one zip folder are compared case-insensitively (Windows and macOS file systems)',
   'columnLabels.ts': 'CI rule L-5 compares CSV header labels case-insensitively (MX-2b SA MX2B-5); labels only, never a cell value',
 };
 const LOWER_CASE_HIT = String(/\.toLowerCase\s*\(/);
@@ -1731,14 +1729,15 @@ describe('DE-5 M-5 no conversion, no FX, no currency rewriting in the export (SA
       .filter((e) => e.isFile() && /\.tsx?$/.test(e.name))
       .map((e) => path.join(DATA_EXPORT_DIR, e.name)),
     path.join(REPO, 'lib', 'repositories', 'BusinessDataExportRepository.ts'),
-    // DE-9: the JSON route (app/api/user/data-export) is retired; the zip routes replace it.
-    path.join(REPO, 'app', 'api', 'business-os', 'data-exports', 'route.ts'),
-    path.join(REPO, 'app', 'api', 'business-os', 'data-exports', '[jobId]', 'parts', '[partNo]', 'download', 'route.ts'),
+    // DE-9: the JSON route (app/api/user/data-export) is retired. MX-3.1 (2026-10-30):
+    // re-pointed from the deleted ZIP routes to the module export request route and its worker cron.
+    path.join(REPO, 'app', 'api', 'business-os', 'export-requests', 'route.ts'),
+    path.join(REPO, 'app', 'api', 'cron', 'data-export-modules', 'route.ts'),
   ];
 
   it('scanned the export source (non-vacuous, by name), and none of it converts or rewrites a currency', () => {
     expect(scanned.map((f) => path.basename(f))).toEqual(
-      expect.arrayContaining(['sections.ts', 'payload.ts', 'classification.ts', 'BusinessDataExportRepository.ts', 'route.ts'])
+      expect.arrayContaining(['sections.ts', 'joinedCsv.ts', 'classification.ts', 'BusinessDataExportRepository.ts', 'route.ts'])
     );
     const offenders = scanned.flatMap((f) => exportSourceHits(f, fs.readFileSync(f, 'utf-8')).map((h) => `${path.basename(f)}: ${h}`));
     expect(offenders).toEqual([]);
@@ -1746,8 +1745,8 @@ describe('DE-5 M-5 no conversion, no FX, no currency rewriting in the export (SA
 
   it('DE-8b negative control: the lower-case exemption covers only its listed files and only .toLowerCase(', () => {
     const planted = ['const a = name.toLowerCase();', 'const b = code.toUpperCase();', ''].join('\n');
-    expect(exportSourceHits('lib/business-os/data-export/fileName.ts', planted)).toEqual([String(/\.toUpperCase\s*\(/)]);
-    expect(exportSourceHits('lib/business-os/data-export/zipExport.ts', planted)).toEqual([String(/\.toUpperCase\s*\(/), LOWER_CASE_HIT]);
+    expect(exportSourceHits('lib/business-os/data-export/columnLabels.ts', planted)).toEqual([String(/\.toUpperCase\s*\(/)]);
+    expect(exportSourceHits('lib/business-os/data-export/moduleExportWorker.ts', planted)).toEqual([String(/\.toUpperCase\s*\(/), LOWER_CASE_HIT]);
     for (const file of Object.keys(LOWER_CASE_EXEMPT)) expect(scanned.map((f) => path.basename(f))).toContain(file);
   });
 

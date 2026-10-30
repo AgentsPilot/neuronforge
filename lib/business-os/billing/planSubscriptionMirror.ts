@@ -16,7 +16,14 @@
  *                + alert, nothing written
  *   4  write     `subscription_status`, `cancel_at_period_end`, `ended_at`
  *                (Stripe's, else NULL), compare-and-set on the row still
- *                holding this subscription. Never `current_period_end`, the
+ *                holding this subscription. `cancel_at_period_end` is the
+ *                DERIVED "will not renew" value (follow-ups C-3, X-2):
+ *                `isSetToEndThisPeriod`, the flag OR a `cancel_at` at or before
+ *                the latest item period end, so a dashboard cancellation that
+ *                sets `cancel_at` alone is mirrored too. The column now also
+ *                holds an early `cancel_at`; access still runs to our
+ *                paid-through date (SA-P8). The log names the `cancelSource`.
+ *                Never `current_period_end`, the
  *                tier or the plan row: only a paid invoice moves those
  *
  *   5  ended     P-6a.2 (workplan §5.5; SA C-4): on `customer.subscription.deleted`
@@ -57,6 +64,7 @@ import type { BusinessOsBillingEventRepository } from '@/lib/repositories/Busine
 import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import type { RecordPlanChangeInput } from '@/lib/business-os/entitlements/recordPlanChange';
 import { BOS_USER_ID_METADATA_KEY } from '@/lib/business-os/billing/stripeMetadataKeys';
+import { cancelSourceOf, isSetToEndThisPeriod, latestItemPeriodEnd } from '@/lib/business-os/billing/subscriptionCancelling';
 import type { AfterPlanMovePort } from '@/lib/business-os/billing/afterPlanMove';
 
 export interface PlanSubscriptionMirrorDeps {
@@ -117,13 +125,19 @@ export async function mirrorPlanSubscription(event: Stripe.Event, log: Logger, d
   const status = SUBSCRIPTION_STATUSES.find((known) => known === fresh.status);
   if (!status) throw new Error('unknown_subscription_status');
   const endedAtIso = fresh.endedAt ? new Date(fresh.endedAt * 1000).toISOString() : null;
+  // C-3: the stored flag is the derived "will not renew", from the same fresh read.
+  // No item list (never from the real retrieve) reads as an unknown period.
+  const periodEnd = Array.isArray(fresh.items) ? latestItemPeriodEnd(fresh.items) : null;
+  const cancelFacts = { cancelAtPeriodEnd: fresh.cancelAtPeriodEnd, cancelAt: fresh.cancelAt ?? null, periodEnd };
+  const cancelAtPeriodEnd = isSetToEndThisPeriod(cancelFacts);
+  const cancelSource = cancelSourceOf(cancelFacts);
 
   const mirrored = await deps.billingAccounts.mirrorSubscriptionState({
     userId: account.accountId,
     livemode: account.livemode,
     stripeSubscriptionId: subscriptionId,
     status,
-    cancelAtPeriodEnd: fresh.cancelAtPeriodEnd,
+    cancelAtPeriodEnd,
     endedAtIso,
     nowIso: deps.now().toISOString(),
   });
@@ -134,7 +148,8 @@ export async function mirrorPlanSubscription(event: Stripe.Event, log: Logger, d
       event: mirrored.data.mirrored ? 'bos_billing_subscription_mirrored' : 'bos_billing_subscription_mirror_skipped',
       accountId: account.accountId,
       status,
-      cancelAtPeriodEnd: fresh.cancelAtPeriodEnd,
+      cancelAtPeriodEnd,
+      cancelSource,
       ended: endedAtIso !== null,
       ...ids,
     },

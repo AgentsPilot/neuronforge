@@ -89,8 +89,6 @@ const logCalls = (jest.requireMock('@/lib/logger') as { __calls: unknown[][] }).
 import { GET, POST, REQUESTED_EMAIL_TIMEOUT_MS } from '../route';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 
-const SWITCH = 'BUSINESS_OS_MODULE_EXPORT_ENABLED';
-
 function post(body: unknown, raw = false): NextRequest {
   return new NextRequest('http://localhost/api/business-os/export-requests', {
     method: 'POST',
@@ -105,7 +103,6 @@ const started = { data: { outcome: 'started', requestId: REQUEST }, error: null 
 beforeEach(() => {
   jest.clearAllMocks();
   logCalls.length = 0;
-  process.env[SWITCH] = 'true';
   mockGetUser.mockResolvedValue(USER);
   mockRateLimit.mockResolvedValue({ allowed: true, hits: 1, degraded: false });
   mockStartForOwner.mockResolvedValue(started);
@@ -119,30 +116,7 @@ beforeEach(() => {
   mockListJobs.mockResolvedValue({ data: [], error: null });
 });
 
-afterAll(() => {
-  delete process.env[SWITCH];
-});
-
 const allLogText = () => JSON.stringify(logCalls);
-
-describe('switch off (AC: 404, nothing runs)', () => {
-  it.each([undefined, '', 'false', '1', 'TRUE'])('switch %p: POST and GET answer 404 and touch nothing', async (value) => {
-    if (value === undefined) delete process.env[SWITCH];
-    else process.env[SWITCH] = value;
-    const responses = [await POST(post({ modules: ['clients'] })), await GET(get())];
-    for (const response of responses) {
-      expect(response.status).toBe(404);
-      expect(await response.json()).toEqual({ success: false, error: 'Not found' });
-    }
-    expect(mockGetUser).not.toHaveBeenCalled();
-    expect(mockRateLimit).not.toHaveBeenCalled();
-    expect(requestRepoCtor).not.toHaveBeenCalled();
-    expect(mockStartForOwner).not.toHaveBeenCalled();
-    expect(mockListRecent).not.toHaveBeenCalled();
-    expect(mockSendEmail).not.toHaveBeenCalled();
-    expect(mockLogAndFlush).not.toHaveBeenCalled();
-  });
-});
 
 describe('POST', () => {
   it('401 without a session, nothing else runs', async () => {
@@ -408,11 +382,13 @@ describe('source rules', () => {
     expect(source).not.toMatch(/console\./);
   });
 
-  it('checks the switch as the first statement of both handlers (C-1)', () => {
+  it('reads no flag and has no 404 of its own: the export switch is gone (MX-3.1)', () => {
+    expect(source).not.toMatch(/featureFlags|notFound|, 404\)/);
     for (const handler of ['GET', 'POST']) {
       const body = source.split(`export async function ${handler}(request: NextRequest) {`)[1];
+      expect(body).toBeDefined();
       const firstStatement = body.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('//'));
-      expect(firstStatement).toBe('if (!isModuleExportEnabled()) return notFound();');
+      expect(firstStatement).toBe("const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();");
     }
   });
 });

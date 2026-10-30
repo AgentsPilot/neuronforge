@@ -259,9 +259,8 @@ import * as testAccountCleanupCheck from '../test-account-cleanup/check/route';
 import * as testAccountCleanupDelete from '../test-account-cleanup/delete/route';
 // Credits boost slice 4b.2 (2026-10-09): run the boost reconcile pass now (gated from birth).
 import * as boostReconcile from '../business-os/credits/boost/reconcile/route';
-// Data export DE-10a (2026-10-17): status, prepare, audited download (gated from birth, W10-1).
-import * as userDataExports from '../users/[id]/data-exports/route';
-import * as userDataExportDownload from '../users/[id]/data-exports/[jobId]/parts/[partNo]/download/route';
+// Plan payments P-8b.3c (2026-10-29): run the plan reconcile pass now (gated from birth).
+import * as planReconcile from '../business-os/billing/reconcile/route';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
@@ -467,33 +466,13 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   // Stripe and the route answers 200, never 401/403.
   { name: 'POST /api/admin/business-os/credits/boost/reconcile', call: () => boostReconcile.POST(req('/api/admin/business-os/credits/boost/reconcile', 'POST', {})) },
 
-  // ── Data export DE-10a (2026-10-17) ─────────────────────────────────────
-  // An admin's view of one account's exports, the admin prepare (it builds
-  // and stores a zip of the account's data) and the AUDITED download (it
-  // writes a critical row, then mints a link). Gated from birth (W10-1):
-  // nothing (the job list, the identity read, the start function, a storage
-  // call, an audit row) may happen before the gate. The admin cases reach
-  // their handlers: the status list answers 200 from the empty fake client,
-  // the prepare answers 500 (the fake client has no auth admin API, so the
-  // identity read fails), and the download answers 410 (no ready job).
-  { name: 'GET /api/admin/users/[id]/data-exports', call: () => userDataExports.GET(req(`/api/admin/users/${TARGET_USER}/data-exports`, 'GET'), { params: { id: TARGET_USER } }) },
-  {
-    name: 'POST /api/admin/users/[id]/data-exports',
-    call: () =>
-      userDataExports.POST(req(`/api/admin/users/${TARGET_USER}/data-exports`, 'POST', { reason: 'gate test reason' }), {
-        params: { id: TARGET_USER },
-      }),
-  },
-  {
-    name: 'POST /api/admin/users/[id]/data-exports/[jobId]/parts/[partNo]/download',
-    call: () =>
-      userDataExportDownload.POST(
-        req(`/api/admin/users/${TARGET_USER}/data-exports/00000000-0000-4000-8000-000000000000/parts/1/download`, 'POST', {
-          reason: 'gate test reason',
-        }),
-        { params: { id: TARGET_USER, jobId: '00000000-0000-4000-8000-000000000000', partNo: '1' } }
-      ),
-  },
+  // ── Plan payments P-8b.3c (2026-10-29) ──────────────────────────────────
+  // Runs the plan reconcile pass now: it may replay plan payment events across
+  // every account. Nothing (the run history read, a claim, a Stripe read, the
+  // write-ahead audit row) may happen before the gate. The admin case reaches
+  // the handler and answers 200, never 401/403.
+  { name: 'POST /api/admin/business-os/billing/reconcile', call: () => planReconcile.POST(req('/api/admin/business-os/billing/reconcile', 'POST', {})) },
+
 ];
 
 beforeEach(() => {
@@ -535,10 +514,15 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  = 65
     //  + 3  `users/[id]/data-exports#GET`, `#POST` and
     //       `users/[id]/data-exports/[jobId]/parts/[partNo]/download#POST` (data export DE-10a), gated from birth
-    //  = 68, which is every admin handler now on the canonical gate EXCEPT the
+    //  = 68
+    //  + 1  `business-os/billing/reconcile#POST` (plan payments P-8b.3c), gated from birth
+    //  = 69
+    //  - 3  deleted with their routes (export MX-3.1, 2026-10-30): the admin
+    //       data-exports GET, POST and the download POST (BQ-E6.1-1)
+    //  = 66, which is every admin handler now on the canonical gate EXCEPT the
     // 3 category-A system-config routes (covered by their own suites) and the 6
     // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
-    expect(CASES).toHaveLength(68);
+    expect(CASES).toHaveLength(66);
   });
 
   describe.each(CASES)('$name', ({ call }) => {

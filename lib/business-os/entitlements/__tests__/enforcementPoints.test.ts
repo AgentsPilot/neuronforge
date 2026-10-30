@@ -608,6 +608,17 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['getEntitlementConfig', 'recordPlanChange'],
       why: 'Account deletion lifecycle D3.1 / SX-2b (workplan §6.2, §6.3; SA S-9): the production wiring of the after-plan move. It hands the use case `getEntitlementConfig` (the configured cohorts and lifecycle) and `recordPlanChange` (audit + flush + cache invalidation after the move was written), as planBillingHandler.ts does for the payment apply. It refuses nothing by plan or capability and calls no `check()` / `decide()`, so it is not a gate.',
     },
+    // ── Account deletion lifecycle D4a / SX-3, 2026-10-28 — the plan cancel emails ──
+    {
+      file: 'lib/business-os/billing/planCancelEmail.ts',
+      symbols: ['PlanEndingView'],
+      why: 'Account deletion lifecycle D4a / SX-3 (workplan §3.2; SA S-16): the plan cancel / ended-now email composer borrows the `PlanEndingView` TYPE for its view port, so the email states the same "after that" rule as the Cancel drawer (C-9). It sends a courtesy email after a cancel or keep by the owner; it refuses nothing, grants nothing and calls no `check()` / `decide()`. If it ever imports a value from the module, it is being asked to gate and this suite says so.',
+    },
+    {
+      file: 'lib/business-os/billing/planCancelEmailDeps.ts',
+      symbols: ['readPlanEndingView'],
+      why: 'Account deletion lifecycle D4a / SX-3 (workplan §3.2; SA S-16): the production wiring of the plan cancel emails. `readPlanEndingView` is the display-only view the drawer uses of what the account has once the paid period ends, read for the "after that" paragraph of the email, on the account the route already resolved through the seam (`resolveAccountId(user.id)`). D4b (SX-3 part 2): the same view is read for the plan-ends reminder email, on the claimed billing row\'s account (its `user_id`, never input). It refuses nothing by plan or capability and calls no `check()` / `decide()`, so it is not a gate.',
+    },
     // ── Plan payments P-3b.2, 2026-10-07 — the webhook plan handler ─────────
     {
       file: 'lib/business-os/billing/planBillingHandler.ts',

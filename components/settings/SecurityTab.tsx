@@ -423,13 +423,13 @@ export default function SecurityTab() {
         </div>
 
         <div className="space-y-3">
-          {/* Data export DE-9 (BC-1): the one shared "Download my data" control,
-              the same zip as every other surface. It owns its own status line
-              and notice, so the banners below carry no export message. */}
+          {/* Data export (MX-3.1): the one shared "Export data" entry. It opens the
+              export drawer and owns its own messages, so the banners below carry
+              no export message. */}
           <div className="p-4 rounded-xl bg-gradient-to-br from-gray-50 to-white border border-gray-200/50 space-y-3">
             <div>
-              <h4 className="font-semibold text-sm text-gray-900">Download my data</h4>
-              <p className="text-xs text-gray-600">Download all your data</p>
+              <h4 className="font-semibold text-sm text-gray-900">Export data</h4>
+              <p className="text-xs text-gray-600">Choose what to export. Each part arrives by email.</p>
             </div>
             <DownloadMyDataButton variant="button" />
           </div>

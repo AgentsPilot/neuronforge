@@ -1166,7 +1166,7 @@ Reviewed in the worktree `neuronforge-p7a`, branch `feature/bos-plan-payments-p7
 
 - P-7a.3: BQ-5 Founding Partner sentence (deviation 5, binding before the price switch goes on in production); deviation 6 for TL to keep or drop (TL 2026-10-26: dropped, see §2.1).
 - P-7a.4: immediate vs period end decided on the **fresh** status (deviation 4 note), plus C-11.
-- Webhook follow-up: mirror `cancel_at` as cancelling (C-3 / X-2), together with AM-7 "who cancelled" (TQ-9).
+- Webhook follow-up: mirror `cancel_at` as cancelling (C-3 / X-2), together with AM-7 "who cancelled" (TQ-9). **C-3 fixed 2026-10-30** by the [follow-ups C-3 slice](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_FOLLOWUPS_C3_WORKPLAN.md); AM-7 stays open as FU-C3-1.
 - C-12 for RM: the base `10761291` is behind `origin/main`. Sync from `main` before the PR, never stack, and re-run the C-12 suites after the merge-in.
 
 #### Code Approved for QA: Yes (with F-1 applied)
@@ -1681,7 +1681,7 @@ Not run by SA: `tsc` (Dev reports 0 errors in the touched files, no OOM) and `np
 2. `planPurchaseView.test.ts`: moving `past_due` to "port answer is on manage" is correct. `planPurchaseView.ts` is unchanged against `main`, and its gate (`manage.cancel || manage.reactivate`) always meant "beside Cancel". P-7a.3's pin recorded the absence of a Cancel; it was not a deliberate cost guard. Cost: the port (`EntitlementService.getFreeAccessAfterPaidTier`) reads the snapshot cache that the my-plan route's `getSnapshot` has just filled, so normally no extra DB read. A failure is caught, logged and leaves the field out. Value: `endsAt` is the cohort's fixed end, and it is returned only when that end is later than the tier end + margin. A founding owner who ends the plan now lands on live free access, so the sentence is true.
 3. No conflict markers in tracked merge files. The only hits are in `archive/CLAUDE_BACKUP_1406.md`, which has the same markers on `origin/main` and is not part of this merge.
 
-**Optimisation Suggestions (Low, non-blocking):** FU-P7a4-5. `failing` has no period-end check, so an `unpaid` row long past `tierExpiresAt` could name a cohort end that is already past. Guard `endsAt > now` in the view or the port.
+**Optimisation Suggestions (Low, non-blocking):** FU-P7a4-5. `failing` has no period-end check, so an `unpaid` row long past `tierExpiresAt` could name a cohort end that is already past. Guard `endsAt > now` in the view or the port. **Fixed 2026-10-30** in the view (strict `> now`) by the [follow-ups C-3 slice](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_FOLLOWUPS_C3_WORKPLAN.md).
 
 ### Code Approved for QA: Yes
 

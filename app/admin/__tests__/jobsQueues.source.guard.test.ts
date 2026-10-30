@@ -65,6 +65,27 @@
  * logger, `./reconcileCopy` and react, and the trigger and dialog-class checks
  * become "exactly one shared dialog, exactly one opener, no UI primitive".
  * G-4, G-5, G-6, G-8, G-9, G-11 and every other rule are unchanged.
+ *
+ * Amended by plan payments P-8b.3b (AM-4, SA P3-SA-9, the 3b part), narrowly:
+ * the new read-only `WebhookEventsBlock.tsx` joins FILES (every read-only
+ * rule) and CLIENT_FILES (client-only, C-21 imports, no green), with one GET
+ * to the literal URL and no query built from data; its words live in
+ * `webhookEventsCopy.ts`, which imports nothing. The view renders the block
+ * exactly once, after the jobs read's `{view && …}` gate (P3-SA-7), and still
+ * makes exactly one fetch of its own. `VIEW_HEADER_SENTENCE` and every boost
+ * pin (G-4 to G-11) are unchanged; the header sentence changes in 3c.
+ *
+ * Amended by plan payments P-8b.3c (SA P3-SA-9, the 3c part; D3-5), narrowly:
+ * the new `ReconcilePlansDialog.tsx` joins CLIENT_FILES and carries the G-4 to
+ * G-7 and G-11 equivalents (one POST to the literal plan reconcile URL, the
+ * literal body '{}', the JSON header and cache no-store; no account words, no
+ * server text, the import list and the logger keys). Its words live in
+ * `reconcileCopy.ts` (still no imports; G-8 unchanged). The view renders it
+ * exactly once, in the reconcile branch right after the top-ups dialog, and
+ * its `onFinished` bumps the webhook block's key only. `VIEW_HEADER_SENTENCE`
+ * now names both buttons, and the one G-9 self-test line that quoted the old
+ * header text is updated with it. Every other boost pin (G-4 to G-8, G-9's
+ * render pin, G-11) is byte-identical, and the view still has one fetch.
  */
 
 import * as fs from 'fs';
@@ -79,13 +100,17 @@ const RETRY_DIALOG = 'app/admin/components/jobs/RetryQueueItemDialog.tsx';
 const FORMAT = 'app/admin/components/jobs/jobsFormat.ts';
 const RECONCILE_DIALOG = 'app/admin/components/jobs/ReconcileTopUpsDialog.tsx';
 const RECONCILE_COPY = 'app/admin/components/jobs/reconcileCopy.ts';
-/** The read-only files: every original rule applies (W7D-2; the panel since slice 7a). */
-const FILES = [PAGE, VIEW, PANEL];
+const PLANS_DIALOG = 'app/admin/components/jobs/ReconcilePlansDialog.tsx';
+const WEBHOOK_BLOCK = 'app/admin/components/jobs/WebhookEventsBlock.tsx';
+const WEBHOOK_COPY = 'app/admin/components/jobs/webhookEventsCopy.ts';
+/** The read-only files: every original rule applies (W7D-2; the panel since slice 7a; the webhook block since P-8b.3b). */
+const FILES = [PAGE, VIEW, PANEL, WEBHOOK_BLOCK];
 /** Every client file on the page: client-only, C-21 imports, no console, no "OK". */
-const CLIENT_FILES = [PAGE, VIEW, DIALOG, PANEL, CANCEL_DIALOG, RETRY_DIALOG, RECONCILE_DIALOG];
+const CLIENT_FILES = [PAGE, VIEW, DIALOG, PANEL, CANCEL_DIALOG, RETRY_DIALOG, RECONCILE_DIALOG, WEBHOOK_BLOCK, PLANS_DIALOG];
 // LF-4c (G-3, deliberate): now also names the reconcile button.
+// P-8b.3c (P3-SA-9, deliberate): now names both reconcile buttons.
 const VIEW_HEADER_SENTENCE =
-  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; the Billing reconcile job has a Reconcile top-ups now button; everything else here is read-only.";
+  "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; the Billing reconcile job has Reconcile top-ups now and Reconcile plan payments now buttons; everything else here is read-only.";
 const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
 
 function codeOf(source: string): string {
@@ -454,6 +479,181 @@ describe('Admin Layout follow-ups LF-4c: Reconcile top-ups now, and nothing more
   it('G-9: the self-test: the allowance is a decision, not a regex accident', () => {
     expect('<ReconcileTopUpsDialog />').not.toMatch(/\b(Retry|Requeue|Cancel|Drain)\b/);
     expect('<ReconcileTopUpsDialog />').not.toMatch(/method:/);
-    expect(VIEW_HEADER_SENTENCE).toContain('the Billing reconcile job has a Reconcile top-ups now button; everything else here is read-only.');
+    // P-8b.3c (P3-SA-9): the header now names both buttons (was "has a Reconcile top-ups now button").
+    expect(VIEW_HEADER_SENTENCE).toContain(
+      'the Billing reconcile job has Reconcile top-ups now and Reconcile plan payments now buttons; everything else here is read-only.'
+    );
+  });
+});
+
+describe('plan payments P-8b.3b: the webhook events block is read-only (SA P3-SA-9, P3-SA-7)', () => {
+  const WEBHOOK_URL_LITERAL = "'/api/admin/jobs-queues/webhook-events'";
+
+  it('WebhookEventsBlock.tsx makes exactly one request: a GET, with one fetch, to the literal URL, cache no-store', () => {
+    const code = codeOf(read(WEBHOOK_BLOCK));
+    const fetches = [...code.matchAll(/fetch\(\s*([^,)]*)/g)].map((m) => m[1].trim());
+    expect(fetches).toEqual([WEBHOOK_URL_LITERAL]);
+    expect(code).toContain("fetch('/api/admin/jobs-queues/webhook-events', { cache: 'no-store' })");
+    // No method key at all (the default, a GET), no body, no header.
+    expect(code).not.toMatch(/\bmethod\s*:/);
+    expect(code).not.toMatch(/\bbody\s*:/);
+    expect(code).not.toMatch(/\bheaders\s*:/);
+  });
+
+  it('WebhookEventsBlock.tsx builds no query from data', () => {
+    const code = codeOf(read(WEBHOOK_BLOCK));
+    expect(code).not.toMatch(/URLSearchParams|encodeURIComponent/);
+    expect(code).not.toMatch(/fetch\(\s*`/);
+    expect(code).not.toMatch(/webhook-events\?/);
+  });
+
+  it('WebhookEventsBlock.tsx names no account and never reads a failure message', () => {
+    const code = codeOf(read(WEBHOOK_BLOCK));
+    expect(code).not.toMatch(/\b(userId|accountId|ownerUserId|user_id)\b/);
+    expect(code).not.toMatch(/failure_?message/i);
+    expect(code).not.toMatch(/\.(details)\b/);
+  });
+
+  it('WebhookEventsBlock.tsx: every logger call carries status or err only', () => {
+    const code = codeOf(read(WEBHOOK_BLOCK));
+    const calls = [...code.matchAll(/logger\.(\w+)\(([^;]*)\);/g)];
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls).toHaveLength((code.match(/logger\./g) ?? []).length);
+    for (const [, , args] of calls) expect(args).toMatch(/^\s*\{\s*(status: result\.status|err)\s*\}\s*,\s*'[^']*'\s*$/);
+  });
+
+  it('webhookEventsCopy.ts: no imports at all, no console, no green, never "OK", no action word', () => {
+    const code = codeOf(read(WEBHOOK_COPY));
+    expect(code).not.toMatch(/\bimport\b/);
+    expect(code).not.toMatch(/\brequire\(/);
+    expect(code).not.toMatch(/console\./);
+    expect(code).not.toMatch(GREEN_CLASS);
+    expect(code).not.toMatch(/\bOK\b/);
+    expect(code).not.toMatch(/\b(Retry|Requeue|Cancel|Drain)\b/);
+  });
+
+  it('the view renders the block exactly once, after the jobs read gate, so a failed jobs read never hides it', () => {
+    const code = codeOf(read(VIEW));
+    expect(code.match(/<WebhookEventsBlock\b/g)).toHaveLength(1);
+    expect(code).toMatch(
+      /<\/section>\s*<\/div>\s*\)\}\s*(?:\{\s*\}\s*)?<WebhookEventsBlock refreshKey=\{webhookRefreshKey\} \/>\s*<\/div>\s*\);\s*\}\s*$/
+    );
+    expect(code).toContain("import { WebhookEventsBlock } from './WebhookEventsBlock';");
+  });
+
+  it('the view still has exactly one fetch of its own, and its header sentence is unchanged in 3b', () => {
+    const code = codeOf(read(VIEW));
+    expect(code.match(/fetch\(/g)).toHaveLength(1);
+    expect(code).toContain(VIEW_HEADER_SENTENCE);
+    expect(code).not.toMatch(/webhook-events/);
+  });
+});
+
+describe('plan payments P-8b.3c: Reconcile plan payments now, and nothing more (SA P3-SA-9, P3-SA-8)', () => {
+  const PLANS_URL_LITERAL = "'/api/admin/business-os/billing/reconcile'";
+  const ACCOUNT_WORDS = /\b(userId|accountId|ownerUserId|user_id)\b/;
+
+  /** Every import specifier, type-only ones included. */
+  function allImports(code: string): string[] {
+    return [...code.matchAll(/import\s+[^'"]*?from\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+  }
+
+  it('G-4p: ReconcilePlansDialog.tsx makes exactly one POST, with one fetch, to the literal plan reconcile URL', () => {
+    const code = codeOf(read(PLANS_DIALOG));
+    expect(code.match(/method:\s*['"](POST|PUT|PATCH|DELETE|GET)['"]/g)).toEqual(["method: 'POST'"]);
+    const fetches = [...code.matchAll(/fetch\(\s*([^,)]*)/g)].map((m) => m[1].trim());
+    expect(fetches).toEqual([PLANS_URL_LITERAL]);
+  });
+
+  it("G-5p: the body is the literal '{}', with the JSON header and cache no-store; nothing is built from data", () => {
+    const code = codeOf(read(PLANS_DIALOG));
+    expect(code.match(/\bbody\s*:/g)).toHaveLength(1);
+    expect(code).toContain("body: '{}',");
+    expect(code).not.toMatch(/JSON\.stringify\(/);
+    expect(code.match(/\bheaders\s*:/g)).toHaveLength(1);
+    expect(code).toContain("headers: { 'Content-Type': 'application/json' },");
+    expect(code).toContain("cache: 'no-store',");
+  });
+
+  it('G-6p: ReconcilePlansDialog.tsx names no account; no Retry, Requeue, Cancel or Drain; never "OK"; no console', () => {
+    const code = codeOf(read(PLANS_DIALOG));
+    expect(code).not.toMatch(ACCOUNT_WORDS);
+    expect(code).not.toMatch(/\b(Retry|Requeue|Cancel|Drain)\b/);
+    expect(code).not.toMatch(/\bOK\b/);
+    expect(code).not.toMatch(/console\./);
+  });
+
+  it('G-6p: ReconcilePlansDialog.tsx never renders server text: no error, details or message field is read from a response', () => {
+    const code = codeOf(read(PLANS_DIALOG));
+    expect(code).not.toMatch(/\.(error|details|message)\b(?!\s*\()/);
+    expect(code).not.toMatch(/['"](error|details|message)['"]/);
+  });
+
+  it('G-7p: the dialog imports only the shared confirmation dialog, the client logger, ./reconcileCopy and react', () => {
+    const code = codeOf(read(PLANS_DIALOG));
+    expect(allImports(code).sort()).toEqual(
+      ['@/app/admin/components/layout/AdminConfirmDialog', '@/lib/logger/client', './reconcileCopy', 'react'].sort()
+    );
+  });
+
+  it('G-7p: exactly one shared dialog and one opener; no UI primitive, trigger, content or palette of its own', () => {
+    const code = codeOf(read(PLANS_DIALOG));
+    expect(code.match(/<AdminConfirmDialog\b/g)).toHaveLength(1);
+    const element = code.slice(code.indexOf('<AdminConfirmDialog'), code.indexOf('</AdminConfirmDialog>'));
+    expect(element.match(/\btestId="plan-reconcile-dialog"/g)).toHaveLength(1);
+    expect(code.match(/data-testid="plan-reconcile"/g)).toHaveLength(1);
+    expect(code).not.toMatch(/@\/components\/ui\//);
+    expect(code).not.toMatch(/<Dialog(Trigger|Content)\b/);
+    expect(code).not.toMatch(/\bDARK_DIALOG\b/);
+    expect(code).not.toMatch(/!bg-/);
+  });
+
+  it('G-11p: every logger call in the dialog passes one object literal with keys status, passesFailed and/or err only; no body reaches it', () => {
+    const code = codeOf(read(PLANS_DIALOG));
+    const calls = [...code.matchAll(/logger\.(\w+)\(([^;]*)\);/g)];
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls).toHaveLength((code.match(/logger\./g) ?? []).length);
+    const ALLOWED = new Set(['status', 'passesFailed', 'err']);
+    for (const [, , args] of calls) {
+      const literal = args.match(/^\s*\{([^{}]*)\}\s*,\s*'[^']*'\s*$/);
+      expect({ args, isObjectLiteralThenMessage: literal !== null }).toEqual({ args, isObjectLiteralThenMessage: true });
+      const keys = literal![1]
+        .split(',')
+        .map((part) => part.split(':')[0].trim())
+        .filter((key) => key.length > 0);
+      expect(keys.length).toBeGreaterThan(0);
+      for (const key of keys) expect({ args, key, allowed: ALLOWED.has(key) }).toEqual({ args, key, allowed: true });
+      expect(args).not.toMatch(/\bbody\b/);
+    }
+  });
+
+  it('the view renders the plan dialog exactly once, in JobRow, right after the top-ups dialog in the reconcile branch', () => {
+    const code = codeOf(read(VIEW));
+    expect(code.match(/<ReconcilePlansDialog\b/g)).toHaveLength(1);
+    const jobRow = code.slice(code.indexOf('function JobRow('), code.indexOf('function QueueCard('));
+    expect(jobRow).toMatch(
+      /\{job\.id === RECONCILE_JOB_ID && \(\s*<div[^>]*>\s*<ReconcileTopUpsDialog \/>\s*<div[^>]*>\s*<ReconcilePlansDialog onFinished=\{onPlansReconciled\} \/>\s*<\/div>\s*<\/div>\s*\)\}/
+    );
+    expect(code).toContain("import { ReconcilePlansDialog } from './ReconcilePlansDialog';");
+  });
+
+  it("Q-P3-4: a finished press bumps the webhook block's key only; the jobs are not read again", () => {
+    const code = codeOf(read(VIEW));
+    expect(code).toContain('const bumpWebhooks = useCallback(() => setWebhookRefreshKey((key) => key + 1), []);');
+    expect(code.match(/onPlansReconciled=\{bumpWebhooks\}/g)).toHaveLength(1);
+    expect(code.match(/\bbumpWebhooks\b/g)).toHaveLength(2);
+  });
+
+  it('the view still has exactly one fetch of its own, and names the plan reconcile route nowhere', () => {
+    const code = codeOf(read(VIEW));
+    expect(code.match(/fetch\(/g)).toHaveLength(1);
+    expect(code).toContain(VIEW_HEADER_SENTENCE);
+    expect(code).not.toMatch(/billing\/reconcile/);
+  });
+
+  it('the self-test: the allowance is a decision, not a regex accident', () => {
+    expect('<ReconcilePlansDialog onFinished={onPlansReconciled} />').not.toMatch(/\b(Retry|Requeue|Cancel|Drain)\b/);
+    expect(VIEW_HEADER_SENTENCE.match(/\bDrain\b/g)).toHaveLength(1);
+    expect(VIEW_HEADER_SENTENCE).not.toMatch(/\b(Retry|Cancel|Requeue)\b/);
   });
 });

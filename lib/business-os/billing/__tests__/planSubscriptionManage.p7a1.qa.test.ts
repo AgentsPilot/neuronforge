@@ -104,12 +104,14 @@ describe('QA focus 3: stale-row heal', () => {
 describe('QA focus 4: `cancel_at` alone (dashboard-style)', () => {
   const EARLIER = PERIOD_END - 86400 * 3;
 
-  it('cancel → unchanged, the date is Stripe\'s `cancel_at` (not the period end), no heal, no write', async () => {
+  it('cancel → unchanged, the date is Stripe\'s `cancel_at` (not the period end), no Stripe write; our row healed to the derived true (follow-ups C-3)', async () => {
     const w = world({ flag: false, cancelAt: EARLIER });
     const r = await w.run('cancel');
     expect(r).toEqual({ ok: true, outcome: 'unchanged', state: 'cancelling', date: iso(EARLIER) });
     expect(writes(w.calls)).toBe(0);
-    expect(w.mirrors).toHaveLength(0);
+    // Follow-ups C-3: an early `cancel_at` will not renew, so the stored flag is true.
+    expect(w.mirrors).toHaveLength(1);
+    expect(w.mirrors[0]).toMatchObject({ cancelAtPeriodEnd: true });
   });
 
   it('reactivate (the route, the row says renewing) → one write of false, Stripe cleared', async () => {

@@ -11,8 +11,12 @@
  * repositories, their tests and this guard. MX-1b added the owner route
  * (`app/api/business-os/export-requests/route.ts`, session user only) and its
  * test, to the two class rules only (it names no table and no SQL function).
- * MX-3 adds the worker, MX-4 the receipt facts and MX-5 the admin route, each
- * in its own diff here.
+ * MX-3b added the data export worker's production wiring
+ * (`lib/business-os/data-export/moduleExportWorkerDeps.ts`, service role, every
+ * effect keyed on the claimed row's user_id), to the two class rules only. The
+ * worker itself (`moduleExportWorker.ts`) and its tests take the store as an
+ * injected port and name neither class. MX-4 adds the receipt facts and MX-5
+ * the admin route, each in its own diff here.
  *
  * Naming the class is not the only way in. A file could call one of the three
  * SQL functions by name, or query a table with `.from(...)`. So those strings
@@ -46,6 +50,8 @@ const OWNER_ROUTE = 'app/api/business-os/export-requests/route.ts';
 const OWNER_ROUTE_TEST = 'app/api/business-os/export-requests/__tests__/route.test.ts';
 /** QA 2026-10-27 (MX-1b): the route + browser-seam round-trip test. It mocks the two repositories, as route.test.ts does. Class rules only. */
 const OWNER_ROUTE_QA_TEST = 'app/api/business-os/export-requests/__tests__/route.qa.test.ts';
+/** MX-3b: the data export worker's production wiring (cron `/api/cron/data-export-modules`). Class rules only. */
+const WORKER_DEPS = 'lib/business-os/data-export/moduleExportWorkerDeps.ts';
 
 /** The SQL files of 20261095 that name every function. */
 const SQL_FILES = [MIGRATION, ROLLBACK, MIGRATION_TEST, PRECHECK, CHECKER];
@@ -61,12 +67,12 @@ const RULES: ReadonlyArray<Rule> = [
   {
     name: 'BusinessOsExportRequestRepository',
     pattern: /\bBusinessOsExportRequestRepository\b/,
-    allowed: [REQUEST_REPOSITORY, REQUEST_TEST, SELF, OWNER_ROUTE, OWNER_ROUTE_TEST, OWNER_ROUTE_QA_TEST],
+    allowed: [REQUEST_REPOSITORY, REQUEST_TEST, SELF, OWNER_ROUTE, OWNER_ROUTE_TEST, OWNER_ROUTE_QA_TEST, WORKER_DEPS],
   },
   {
     name: 'BusinessOsExportModuleJobRepository',
     pattern: /\bBusinessOsExportModuleJobRepository\b/,
-    allowed: [JOB_REPOSITORY, JOB_TEST, SELF, OWNER_ROUTE, OWNER_ROUTE_TEST, OWNER_ROUTE_QA_TEST],
+    allowed: [JOB_REPOSITORY, JOB_TEST, SELF, OWNER_ROUTE, OWNER_ROUTE_TEST, OWNER_ROUTE_QA_TEST, WORKER_DEPS],
   },
   {
     name: 'the start function name',

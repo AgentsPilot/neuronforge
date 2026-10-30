@@ -52,7 +52,7 @@ const SCREEN_FILES = [
 
 /** Data export DE-10a: the Data export box, its reason dialog and its copy. */
 function DATA_EXPORT_FILES(): string[] {
-  return [`${ROOT}/components/DataExportBlock.tsx`, `${ROOT}/components/DataExportReasonDialog.tsx`, `${ROOT}/dataExportCopy.ts`];
+  return [`${ROOT}/components/DataExportBlock.tsx`, `${ROOT}/dataExportCopy.ts`];
 }
 
 /**
@@ -534,8 +534,6 @@ describe('the dialogs use the shared admin class (Admin Layout Standard L-4a; D-
     `${ROOT}/components/CreditFormDialog.tsx`,
     `${ROOT}/components/DeleteBusinessDialog.tsx`,
     `${ROOT}/components/BoostCapDialog.tsx`,
-    // Data export DE-10a
-    `${ROOT}/components/DataExportReasonDialog.tsx`,
     // BoostReconcileDialog.tsx moved to app/admin/components/jobs/ReconcileTopUpsDialog.tsx
     // in Admin Layout LF-4c; the Jobs source guard carries these checks for it (SA-W7).
   ];
@@ -625,38 +623,15 @@ describe('the screen logs through the client logger, never the server one (follo
   });
 });
 
-describe('the Data export box (data export DE-10a; SA-10, W10-5, W10-10)', () => {
+describe('the Data export box (data export DE-10a; export MX-3.1 placeholder, BQ-E6.1-1)', () => {
   const block = () => codeOf(read(`${ROOT}/components/DataExportBlock.tsx`));
 
-  it('calls exactly three URLs: the status read, the prepare and the audited download; nothing else', () => {
+  it('MX-3.1: the placeholder makes no request and reads nothing from the browser seam', () => {
     const code = block();
-    expect(code.match(/fetch\(/g)).toHaveLength(2);
-    expect(code).toContain('const baseUrl = `/api/admin/users/${encodeURIComponent(accountId)}/data-exports`;');
-    expect(code).toContain("fetch(baseUrl, { cache: 'no-store' })");
-    expect(code).toContain('postReason(baseUrl, reason, controller.signal)');
-    expect(code).toContain('postReason(`${baseUrl}/${encodeURIComponent(jobId)}/parts/1/download`, reason)');
-    // The owner's routes and helpers are not this box's (BQ-SA-2).
-    expect(code).not.toMatch(/api\/business-os\/data-exports|startDataExport|downloadDataExportAgain/);
-  });
-
-  it('follows a link only after the https check, through the one navigation seam; never logs or stores it', () => {
-    const code = block();
-    expect(code).toContain("import { browserNavigation, isSafeDownloadUrl } from '@/lib/client/businessOsDataExport';");
-    const check = code.indexOf('if (!isSafeDownloadUrl(url))');
-    const assign = code.indexOf('browserNavigation.assign(url)');
-    expect(check).toBeGreaterThan(0);
-    expect(assign).toBeGreaterThan(check);
-    expect(code.match(/browserNavigation\.assign\(/g)).toHaveLength(1);
-    expect(code).not.toMatch(/window\.location|localStorage|sessionStorage|document\.cookie/);
-    expect(code).not.toMatch(/logger\.\w+\([^)]*\burl\b/);
-    expect(code).not.toMatch(/useState<[^>]*downloadUrl/);
-  });
-
-  it('one request at a time: an in-flight ref guards both POSTs; the prepare has a client timeout cleared in finally', () => {
-    const code = block();
-    expect(code.match(/if \(inFlight\.current\) return;/g)?.length).toBeGreaterThanOrEqual(3);
-    expect(code).toContain('setTimeout(() => controller.abort(), PREPARE_TIMEOUT_MS)');
-    expect(code).toContain('clearTimeout(timer);');
+    expect(code).not.toMatch(/fetch\(/);
+    expect(code).not.toContain('@/lib/client/businessOsDataExport');
+    expect(code).not.toMatch(/data-exports/);
+    expect(code).toContain('{DATA_EXPORT_COPY.placeholder}');
   });
 
   it('the box never touches the danger area: no danger-area id, no cleanup panel, no delete dialog', () => {

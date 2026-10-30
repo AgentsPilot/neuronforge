@@ -14,10 +14,14 @@
  *      and has no fetch to an export path (the ZIP routes or, from MX-1b, the
  *      module export route), no `export_success` / `export_error` key and no
  *      `downloadUserDataExport`.
- *   4. Outside app/api/, only lib/client/businessOsDataExport.ts names
- *      `/api/business-os/data-exports` or, from MX-1b (SA C-5),
- *      `/api/business-os/export-requests` (one client seam).
- *   5. EXPORT_LIMITS has no JSON_BODY_MAX_BYTES (C-11 done).
+ *   4. Outside app/api/, no file names `/api/business-os/data-exports` (the
+ *      ZIP route, deleted in MX-3.1) or `/api/business-os/export-requests`,
+ *      except lib/client/businessOsDataExport.ts for the module route (one
+ *      client seam). From MX-3.1 the seam itself no longer names the ZIP
+ *      route (SA MX-3.1 required change 4).
+ *   5. EXPORT_LIMITS has no JSON_BODY_MAX_BYTES (C-11 done) and, from MX-3.1,
+ *      none of the ZIP's ceilings (SA Q-3).
+ *   6. The ZIP routes and the ZIP sweep cron do not exist (MX-3.1, SA Q-8).
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
@@ -31,6 +35,20 @@ const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 const RETIRED_ROUTE_FILE = 'app/api/user/data-export/route.ts';
 const RETIRED_HELPER_FILE = 'lib/client/downloadUserDataExport.ts';
 const CLIENT_SEAM = 'lib/client/businessOsDataExport.ts';
+/** MX-3.1 (SA Q-8): the ZIP routes and the ZIP sweep cron, deleted. */
+const RETIRED_ZIP_DIRS = ['app/api/business-os/data-exports', 'app/api/admin/users/[id]/data-exports', 'app/api/cron/data-export'];
+/** MX-3.1 (SA Q-3): the ZIP's ceilings, removed from EXPORT_LIMITS with the builder. */
+const RETIRED_ZIP_LIMITS = [
+  'FILE_BYTES_CEILING',
+  'FILE_COUNT_CEILING',
+  'ZIP_BYTES_CEILING',
+  'BUILD_MS_CEILING',
+  'NEAR_CEILING_RATIO',
+  'FILE_WALK_MAX_MS',
+  'FILE_WALK_MAX_CALLS',
+  'FILE_DOWNLOAD_CONCURRENCY',
+  'FILE_ROWS_MAX',
+];
 const ENTRY_FILES = [
   'app/business-os/settings/page.tsx',
   'components/business-os/purge/DangerZonePanel.tsx',
@@ -86,10 +104,17 @@ export function entryFileProblems({ source }: Source): string[] {
   return problems;
 }
 
-/** Check 4: the ZIP routes and, from MX-1b (SA C-5), the module export route. */
+/**
+ * Check 4: the ZIP route and, from MX-1b (SA C-5), the module export route.
+ * MX-3.1: the seam may name the module route only; nobody outside app/api/
+ * may name the deleted ZIP route.
+ */
 export function namesZipRouteOutsideSeam({ file, source }: Source): boolean {
-  if (file === CLIENT_SEAM || file.startsWith('app/api/')) return false;
-  return /\/api\/business-os\/(data-exports|export-requests)\b/.test(codeOf(source));
+  if (file.startsWith('app/api/')) return false;
+  const code = codeOf(source);
+  if (/\/api\/business-os\/data-exports(?![\w-])/.test(code)) return true;
+  if (file === CLIENT_SEAM) return false;
+  return /\/api\/business-os\/export-requests(?![\w-])/.test(code);
 }
 
 const files: Source[] = SCAN_DIRS.filter((dir) => existsSync(join(ROOT, dir)))
@@ -117,17 +142,25 @@ describe('one "Download my data" control (DE-9)', () => {
     expect(entryFileProblems(entry!)).toEqual([]);
   });
 
-  it('4. outside app/api/, only the client seam names the export routes (ZIP and module export)', () => {
+  it('4. outside app/api/, only the client seam names the module export route, and nobody names the ZIP route', () => {
     expect(files.filter(namesZipRouteOutsideSeam).map((f) => f.file)).toEqual([]);
-    // Non-vacuity: the seam itself does name them, the ZIP routes and the module export route.
+    // Non-vacuity, inverted in MX-3.1 (SA required change 4): the seam names the
+    // module export route and no longer names the deleted ZIP route.
     const seam = codeOf(files.find((f) => f.file === CLIENT_SEAM)!.source);
-    expect(seam).toMatch(/\/api\/business-os\/data-exports/);
+    expect(seam).not.toMatch(/\/api\/business-os\/data-exports/);
     expect(seam).toMatch(/\/api\/business-os\/export-requests/);
   });
 
-  it('5. EXPORT_LIMITS has no JSON body cap (C-11)', () => {
+  it('5. EXPORT_LIMITS has no JSON body cap (C-11) and none of the ZIP ceilings (MX-3.1, SA Q-3)', () => {
     expect(EXPORT_LIMITS).not.toHaveProperty('JSON_BODY_MAX_BYTES');
+    for (const key of RETIRED_ZIP_LIMITS) expect(EXPORT_LIMITS).not.toHaveProperty(key);
     expect(EXPORT_LIMITS).toHaveProperty('ROW_CEILING');
+  });
+
+  it('6. the ZIP routes and the ZIP sweep cron do not exist (MX-3.1, SA Q-8)', () => {
+    for (const dir of RETIRED_ZIP_DIRS) expect({ dir, exists: existsSync(join(ROOT, dir)) }).toEqual({ dir, exists: false });
+    // Non-vacuity: the check looks where the module export lives.
+    expect(existsSync(join(ROOT, 'app/api/business-os/export-requests/route.ts'))).toBe(true);
   });
 });
 
@@ -166,11 +199,11 @@ describe('the guards themselves (negative controls)', () => {
     expect(entryFileProblems({ file: 'e.tsx', source: `${clean}await downloadUserDataExport();` })).toContain('uses the retired helper');
   });
 
-  it('4 flags a second client naming the zip routes; app/api and the seam are allowed', () => {
+  it('4 flags anyone naming the deleted ZIP route, the seam included (MX-3.1); app/api and comments are not code', () => {
     const planted = "await fetch('/api/business-os/data-exports', { method: 'POST' });";
     expect(namesZipRouteOutsideSeam({ file: 'components/other/Exporter.tsx', source: planted })).toBe(true);
     expect(namesZipRouteOutsideSeam({ file: 'hooks/useExport.ts', source: crlf(`x\n${planted}\n`) })).toBe(true);
-    expect(namesZipRouteOutsideSeam({ file: CLIENT_SEAM, source: planted })).toBe(false);
+    expect(namesZipRouteOutsideSeam({ file: CLIENT_SEAM, source: planted })).toBe(true);
     expect(namesZipRouteOutsideSeam({ file: 'app/api/business-os/data-exports/route.ts', source: planted })).toBe(false);
     expect(namesZipRouteOutsideSeam({ file: 'components/other/Doc.tsx', source: '// calls /api/business-os/data-exports' })).toBe(false);
   });

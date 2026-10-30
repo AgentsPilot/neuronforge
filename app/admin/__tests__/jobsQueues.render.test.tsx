@@ -6,10 +6,16 @@
  * The "Scheduled jobs & queues" page (admin reorganisation slice 5, part C):
  * renders what the route sends; read-only apart from one Drain now per queue
  * (slice 7d) and one Reconcile top-ups now in the Billing reconcile row
- * (Admin Layout follow-ups LF-4c); "Due now" and
+ * (Admin Layout follow-ups LF-4c), beside one Reconcile plan payments now
+ * (plan payments P-8b.3c); "Due now" and
  * "Scheduled for later" are separate; green only on Healthy / Clear, with a
  * text label; the "not installed" sentence; no forbidden field names.
  */
+
+// P-8b.3b (AM-4): the view now also renders the webhook events block, which owns its
+// own GET. This file's fetch mock answers the jobs route only, so the block is stubbed
+// here; its behaviour is tested in jobsQueues.webhooks.render.test.tsx.
+jest.mock('@/app/admin/components/jobs/WebhookEventsBlock', () => ({ WebhookEventsBlock: () => null }));
 
 import React from 'react';
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
@@ -110,15 +116,19 @@ describe('the Scheduled jobs & queues page', () => {
   // Amended deliberately by Admin Layout follow-ups LF-4c (BD-6, SA-C3): plus
   // exactly one "Reconcile top-ups now (all accounts)", in the Billing
   // reconcile job's row and in no other row.
-  it('the only buttons are Refresh, one Drain now and one View items per queue, and one Reconcile top-ups now in the Billing reconcile row', async () => {
+  // Amended deliberately by plan payments P-8b.3c (D3-5, P3-SA-9): plus exactly
+  // one "Reconcile plan payments now", after it, in the same row only.
+  it('the only buttons are Refresh, one Drain now and one View items per queue, and one Reconcile top-ups now and one Reconcile plan payments now in the Billing reconcile row', async () => {
     mockRoute();
     render(<AdminJobsQueuesPage />);
     await screen.findByTestId('job-calendar-sync');
     const buttons = screen.getAllByRole('button');
-    expect(buttons).toHaveLength(1 + 5 + 5 + 1);
+    expect(buttons).toHaveLength(1 + 5 + 5 + 1 + 1);
     const reconciles = buttons.filter((b) => b.textContent === 'Reconcile top-ups now (all accounts)');
     expect(reconciles).toHaveLength(1);
-    expect(within(screen.getByTestId('job-bos-billing-reconcile')).getAllByRole('button')).toEqual(reconciles);
+    const planReconciles = buttons.filter((b) => b.textContent === 'Reconcile plan payments now');
+    expect(planReconciles).toHaveLength(1);
+    expect(within(screen.getByTestId('job-bos-billing-reconcile')).getAllByRole('button')).toEqual([...reconciles, ...planReconciles]);
     for (const job of BOS_CRON_JOBS) {
       if (job.id === 'bos-billing-reconcile') continue;
       expect(within(screen.getByTestId(`job-${job.id}`)).queryAllByRole('button')).toHaveLength(0);

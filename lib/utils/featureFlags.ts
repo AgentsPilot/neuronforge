@@ -367,26 +367,3 @@ export function isEarlySessionOutcomeEnabled(): boolean {
   );
   return parseBooleanFlag(flag);
 }
-
-/**
- * Module export's switch (export redesign MX-1b, XC-15): may an owner use the
- * per-module export drawer and its request route?
- *
- * **SERVER-ONLY. Default off.** On only for the exact string `true`: unset,
- * blank, `1`, `TRUE` and anything else are off (the `isAccountSelfDeleteEnabled`
- * precedent). No `NEXT_PUBLIC_` prefix: the browser learns the state only from
- * `GET /api/business-os/export-requests`, whose own 404 means "off" (SA
- * MX1B-1, C-1). Off: POST and GET answer 404 and "Download my data" builds the
- * ZIP as before.
- *
- * ⚠️ Do NOT switch it on in Preview before MX-4: Preview and Production share
- * one database, and the deletion receipt reads only the old export table until
- * MX-4 (SA MX1A-16). The MX-3 worker runs regardless of this switch.
- *
- * Rollback is unsetting it and redeploying. No data changes with it.
- *
- * @returns {boolean} True only when `BUSINESS_OS_MODULE_EXPORT_ENABLED` is exactly `true`
- */
-export function isModuleExportEnabled(): boolean {
-  return process.env.BUSINESS_OS_MODULE_EXPORT_ENABLED === 'true';
-}

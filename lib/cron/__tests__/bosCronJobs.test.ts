@@ -73,7 +73,7 @@ describe('FR-R9: the registry is vercel.json', () => {
    */
   const NOT_A_BOS_CRON = ['/api/run-scheduled-agents'];
 
-  it('has exactly the 21 scheduled jobs, with the same schedules, byte for byte', () => {
+  it('has exactly the 22 scheduled jobs, with the same schedules, byte for byte', () => {
     const fromVercel = vercel.crons
       .filter((c) => !NOT_A_BOS_CRON.includes(c.path))
       .map((c) => `${c.path} ${c.schedule}`)
@@ -88,16 +88,24 @@ describe('FR-R9: the registry is vercel.json', () => {
       expect(BOS_CRON_JOBS.map((j) => j.path)).not.toContain(p);
     }
     // 17th: bos-billing-reconcile (credits boost slice 4b.2, 2026-10-09).
-    // 18th: data-export (data export DE-8b, 2026-10-17).
+    // data-export (data export DE-8b, 2026-10-17) was removed by export MX-3.1 (2026-10-30).
     // 19th: finance-snapshot (finance slice 8.2, 2026-10-17).
     /*
-     * 21 since 2026-10-30: `inbox-enquiries` was retired when the mailbox
-     * channel moved onto the platform scheduler. It was a Business OS cron for
-     * an agent, which meant the management layer reaching UP into the execution
-     * layer to run one — the only such import in `lib/business-os`. The
-     * scheduler owns every agent now, whichever doorway made it.
+     * 22, the sum of three changes that landed together:
+     *
+     *   +  data-export-modules       (module export MX-3b, 2026-10-29)
+     *   +  bos-plan-cancel-reminders (account deletion D4b, SA R-A, 2026-10-30)
+     *   −  inbox-enquiries           retired 2026-10-30
+     *
+     * The retirement is the one worth restating, because this merge could have
+     * undone it: the channel's own cron meant `lib/business-os` importing
+     * `@/lib/pilot` to run an agent itself — the management layer reaching UP
+     * into the execution layer, and the only such import in the data layer.
+     *
+     * SA C-6: a literal on purpose. A slice landing beside another that also
+     * adds a job must conflict on this line and set the new total by hand.
      */
-    expect(BOS_CRON_JOBS).toHaveLength(21);
+    expect(BOS_CRON_JOBS).toHaveLength(22);
   });
 
   it('ids are unique, match their path, and satisfy the database job rule', () => {

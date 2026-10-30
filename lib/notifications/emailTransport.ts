@@ -204,6 +204,44 @@ export interface SendEmailBase {
   redactInLogs?: string[];
   /** Optional file attachments */
   attachments?: EmailAttachment[];
+  /**
+   * The provider idempotency key for this send (module export MX-3a, S-10;
+   * BUSINESS_OS_EXPORT_MX3_WORKPLAN.md §6 T-1, T-2).
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * HONOURED BY RESEND ONLY, sent as its `Idempotency-Key` header. Resend takes
+   * 1 to 256 characters and answers a repeated key with the first send's result
+   * for its key window (24 h per its documentation; callers must not depend on
+   * more than one hour, SA Q-6). Build it from a durable id, never from content:
+   * `export:{job}:{n}`, `export-notice:{job}`; other scopes use their own prefix.
+   *
+   * A KEYED SEND NEVER FALLS BACK after a Resend attempt. SMTP and Gmail cannot
+   * honour the key, so a Resend timeout followed by an SMTP send is exactly the
+   * duplicate the key exists to prevent. A keyed failure returns at once with
+   * `provider: 'resend'` and the provider's status, `retry-after` and error name.
+   *
+   * With Resend NOT configured: refused in production (`VERCEL_ENV` is
+   * `production`, error `idempotency_unsupported`, SA Q-7); elsewhere the send
+   * goes to SMTP / Gmail as an un-keyed send would, with one warn line.
+   *
+   * A key outside 1..256 characters is refused before any transport
+   * (`invalid_idempotency_key`), never silently dropped. Without a key, every
+   * path is exactly as before.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  idempotencyKey?: string;
+  /**
+   * Abort the Resend request after this many milliseconds (MX-3a, SA C-8 / Q-4).
+   *
+   * An abort CANCELS the upload instead of abandoning it, so an in-run re-send
+   * with the same key does not collide with a request still running in the
+   * same function. The result is `sent: false`, `providerErrorCode: 'timeout'`,
+   * which means "outcome unknown": the caller may re-send with the same key.
+   * Keyed: no fallback, as for any keyed failure. Un-keyed: the abort is a
+   * Resend failure like any other and the chain goes on to SMTP / Gmail.
+   * Applies to Resend only; SMTP and Gmail keep their own timeouts.
+   */
+  timeoutMs?: number;
 }
 
 export type SendEmailParams = SendEmailBase & EmailKind;
@@ -240,6 +278,70 @@ export interface SendEmailResult {
    * row as skipped instead.
    */
   blocked?: MarketingBlockReason | 'multi_recipient' | 'invalid_recipient';
+  /**
+   * Resend's HTTP status on a failed KEYED send (MX-3a, §6 T-3). Absent on
+   * every un-keyed result, so existing callers see exactly what they saw.
+   */
+  providerStatus?: number;
+  /** Resend's `retry-after` in whole seconds on a failed keyed send; absent or unparseable → undefined. */
+  retryAfterSeconds?: number;
+  /**
+   * Resend's error `name` on a failed keyed send (codes only, never text), for
+   * example `concurrent_idempotent_requests` or `invalid_idempotent_request`;
+   * `timeout` when `timeoutMs` aborted the request.
+   */
+  providerErrorCode?: string;
+}
+
+/** Resend's documented key length (1..256 characters). */
+export const IDEMPOTENCY_KEY_MAX_LENGTH = 256;
+
+/** The longest `timeoutMs` a caller may ask for: the longest function a cron gets. */
+export const SEND_TIMEOUT_MS_MAX = 300_000;
+
+/** A provider error name is logged and returned only when it has the shape of a code. */
+const PROVIDER_ERROR_CODE_SHAPE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * A failed Resend call, carrying what a keyed caller needs to decide its next
+ * step. The message is the text this transport always threw, so un-keyed
+ * callers and their logs are unchanged (§6 T-4).
+ */
+class ResendSendError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | undefined,
+    readonly retryAfterSeconds: number | undefined,
+    readonly providerErrorCode: string | undefined
+  ) {
+    super(message);
+    this.name = 'ResendSendError';
+  }
+}
+
+/** `retry-after` as whole seconds; an HTTP date, a fraction or garbage reads as undefined. */
+function retryAfterSecondsOf(res: Response): number | undefined {
+  const headers = (res as { headers?: { get?: (name: string) => string | null } }).headers;
+  if (!headers || typeof headers.get !== 'function') return undefined;
+  const raw = headers.get('retry-after')?.trim();
+  if (!raw || !/^[0-9]{1,6}$/.test(raw)) return undefined;
+  return Number(raw);
+}
+
+/** Resend's error body is `{ name, message, statusCode }`; only a code-shaped `name` is kept. */
+function providerErrorCodeOf(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    const name = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>).name : undefined;
+    return typeof name === 'string' && PROVIDER_ERROR_CODE_SHAPE.test(name) ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Only Vercel's production deployment refuses a keyed send without Resend (SA Q-7). */
+function isProductionDeployment(): boolean {
+  return process.env.VERCEL_ENV === 'production';
 }
 
 /**
@@ -474,8 +576,9 @@ async function sendViaResend(p: SendEmailParams): Promise<string | undefined> {
   if (p.attachments && p.attachments.length > 0) {
     body.attachments = p.attachments.map(att => {
       const content = Buffer.isBuffer(att.content) ? att.content.toString('base64') : att.content;
+      // F-7 (MX-3a): never the filename. An export's file name can carry a
+      // module and a date, and other callers' names can carry a client's.
       logger.info({
-        filename: att.filename,
         contentType: att.contentType,
         contentLength: content.length,
         isBase64: typeof content === 'string' && content.length > 0
@@ -488,33 +591,60 @@ async function sendViaResend(p: SendEmailParams): Promise<string | undefined> {
     });
   }
 
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const errorText = errorTextForLog(p, await res.text());
-    logger.error({ status: res.status, error: errorText }, 'Resend API error');
-    throw new Error(`Resend API error (${res.status}): ${errorText}`);
-  }
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+    'Content-Type': 'application/json',
+  };
+  // S-10: added only for a keyed send, so an un-keyed request is byte-identical to before.
+  if (p.idempotencyKey !== undefined) headers['Idempotency-Key'] = p.idempotencyKey;
 
-  /*
-   * `{ id }`, and it is the whole point of reading this response.
-   *
-   * A body that cannot be parsed is not a failed send — the mail has gone. It
-   * costs the tracking for that one message and nothing else, so it degrades
-   * to undefined rather than throwing.
-   */
+  // SA C-8: `signal` is added only when a timeout was asked for, for the same reason.
+  const controller = p.timeoutMs !== undefined ? new AbortController() : undefined;
+  const timer = controller ? setTimeout(() => controller.abort(), p.timeoutMs) : undefined;
+  const init: RequestInit = { method: 'POST', headers, body: JSON.stringify(body) };
+  if (controller) init.signal = controller.signal;
+
   try {
-    const payload = (await res.json()) as { id?: string };
-    return typeof payload?.id === 'string' ? payload.id : undefined;
-  } catch {
-    logger.warn('Resend accepted the send but its response could not be read; delivery will not be tracked');
-    return undefined;
+    let res: Response;
+    try {
+      res = await fetch('https://api.resend.com/emails', init);
+    } catch (err) {
+      if (controller?.signal.aborted) {
+        logger.warn({ timeoutMs: p.timeoutMs }, 'Resend request aborted after its timeout; outcome unknown');
+        throw new ResendSendError(`Resend request timed out after ${p.timeoutMs} ms`, undefined, undefined, 'timeout');
+      }
+      throw err;
+    }
+    if (!res.ok) {
+      const raw = await res.text();
+      const errorText = errorTextForLog(p, raw);
+      logger.error({ status: res.status, error: errorText }, 'Resend API error');
+      throw new ResendSendError(
+        `Resend API error (${res.status}): ${errorText}`,
+        res.status,
+        retryAfterSecondsOf(res),
+        providerErrorCodeOf(raw)
+      );
+    }
+
+    /*
+     * `{ id }`, and it is the whole point of reading this response.
+     *
+     * A body that cannot be parsed is not a failed send — the mail has gone. It
+     * costs the tracking for that one message and nothing else, so it degrades
+     * to undefined rather than throwing. (A timeout that fires while this body
+     * is read lands here too: the send was accepted, and a keyed caller can
+     * re-send the same key to read the id back.)
+     */
+    try {
+      const payload = (await res.json()) as { id?: string };
+      return typeof payload?.id === 'string' ? payload.id : undefined;
+    } catch {
+      logger.warn('Resend accepted the send but its response could not be read; delivery will not be tracked');
+      return undefined;
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -573,8 +703,8 @@ async function sendViaSMTP(p: SendEmailParams): Promise<nodemailer.SentMessageIn
   if (p.attachments && p.attachments.length > 0) {
     logger.info({
       attachmentCount: p.attachments.length,
+      // F-7 (MX-3a): never the filename.
       attachments: p.attachments.map(a => ({
-        filename: a.filename,
         contentType: a.contentType,
         size: Buffer.isBuffer(a.content) ? a.content.length : (typeof a.content === 'string' ? a.content.length : 0)
       }))
@@ -621,8 +751,8 @@ async function sendViaGmail(p: SendEmailParams): Promise<void> {
   if (p.attachments && p.attachments.length > 0) {
     logger.info({
       attachmentCount: p.attachments.length,
+      // F-7 (MX-3a): never the filename.
       attachments: p.attachments.map(a => ({
-        filename: a.filename,
         contentType: a.contentType,
         size: Buffer.isBuffer(a.content) ? a.content.length : (typeof a.content === 'string' ? a.content.length : 0)
       }))
@@ -752,6 +882,31 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
     return { sent: false, provider: 'none', blocked: 'invalid_recipient' };
   }
 
+  // S-10 (MX-3a, §6 T-1): a key is checked before any gate or transport. A bad
+  // key is refused, never dropped: a keyed caller sent without its key would
+  // lose the duplicate protection it asked for, silently.
+  const isKeyed = p.idempotencyKey !== undefined;
+  if (
+    isKeyed &&
+    (typeof p.idempotencyKey !== 'string' || p.idempotencyKey.length < 1 || p.idempotencyKey.length > IDEMPOTENCY_KEY_MAX_LENGTH)
+  ) {
+    logger.warn({ keyLength: typeof p.idempotencyKey === 'string' ? p.idempotencyKey.length : null }, 'Refused a send with an invalid idempotency key');
+    return { sent: false, provider: 'none', error: 'invalid_idempotency_key' };
+  }
+  if (
+    p.timeoutMs !== undefined &&
+    !(Number.isInteger(p.timeoutMs) && p.timeoutMs >= 1 && p.timeoutMs <= SEND_TIMEOUT_MS_MAX)
+  ) {
+    logger.warn({ timeoutMs: p.timeoutMs }, 'Refused a send with an invalid timeout');
+    return { sent: false, provider: 'none', error: 'invalid_timeout_ms' };
+  }
+  // SA Q-7: production always has Resend, so a keyed send without it is a
+  // misconfiguration, and falling back would send without duplicate protection.
+  if (isKeyed && !resendConfigured() && isProductionDeployment()) {
+    logger.warn({ idempotencyKey: p.idempotencyKey }, 'Refused a keyed send: Resend is not configured in production (idempotency_unsupported)');
+    return { sent: false, provider: 'none', error: 'idempotency_unsupported' };
+  }
+
   const errors: string[] = [];
 
   /*
@@ -852,14 +1007,17 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
     subject: p.subject?.substring(0, 50),
     hasAttachments: !!(p.attachments && p.attachments.length > 0),
     attachmentCount: p.attachments?.length || 0,
+    // F-7 (MX-3a): never the filename.
     attachmentDetails: p.attachments?.map(a => ({
-      filename: a.filename,
       contentType: a.contentType,
       size: Buffer.isBuffer(a.content) ? a.content.length : (typeof a.content === 'string' ? a.content.length : 0)
     })),
     resendConfigured: resendConfigured(),
     smtpConfigured: smtpConfigured(),
     gmailConfigured: gmailConfigured(),
+    // §6 T-6: the key holds only ids, which is how an operator matches a
+    // Resend event to its job. Absent (not undefined) when un-keyed.
+    ...(isKeyed ? { idempotencyKey: p.idempotencyKey } : {}),
   }, 'Attempting to send email');
 
   /*
@@ -881,10 +1039,38 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
     } catch (err: any) {
       const message = errorTextForLog(p, String(err?.message ?? err));
       errors.push(`resend: ${message}`);
+      if (isKeyed) {
+        // D-17: a keyed send stops here. SMTP and Gmail cannot honour the key.
+        const failure = err instanceof ResendSendError ? err : undefined;
+        logger.warn(
+          {
+            err: message,
+            idempotencyKey: p.idempotencyKey,
+            providerStatus: failure?.status,
+            retryAfterSeconds: failure?.retryAfterSeconds,
+            providerErrorCode: failure?.providerErrorCode,
+          },
+          'Resend keyed send failed — no fallback for a keyed send'
+        );
+        return {
+          sent: false,
+          provider: 'resend',
+          error: errors.join('; '),
+          ...(failure?.status !== undefined ? { providerStatus: failure.status } : {}),
+          ...(failure?.retryAfterSeconds !== undefined ? { retryAfterSeconds: failure.retryAfterSeconds } : {}),
+          ...(failure?.providerErrorCode !== undefined ? { providerErrorCode: failure.providerErrorCode } : {}),
+        };
+      }
       logger.warn({ err: message }, 'Resend send failed — trying next transport');
     }
   } else if (process.env.RESEND_API_KEY) {
     logger.warn('RESEND_API_KEY is set but is not a valid Resend key (must start with "re_") — skipping Resend');
+  }
+
+  // SA Q-7, outside production: a keyed send without Resend still goes out,
+  // without its duplicate protection, and says so once.
+  if (isKeyed && !resendConfigured()) {
+    logger.warn({ idempotencyKey: p.idempotencyKey }, 'Keyed send without Resend: the key cannot be honoured (idempotency_unsupported)');
   }
 
   // 2. SMTP (universal - works with any email provider)

@@ -61,18 +61,14 @@ describe('S-5: every account-card chevron mirrors in RTL', () => {
 
   it('the "Download my data" row, which owns its own chevron since DE-9, mirrors it', () => {
     expect(code).toMatch(/<DownloadMyDataButton variant="row" \/>/);
-    // Export redesign MX-1b: the button is now a switch, and the row is drawn by
-    // whichever control it renders: the ZIP control (switch off) or the module
-    // export entry (switch on). Both must mirror the chevron.
-    for (const file of [
-      'components/business-os/data-export/ZipDownloadControl.tsx',
-      'components/business-os/data-export/ModuleExportEntry.tsx',
-    ]) {
+    // Export MX-3.1: the button always renders the module export entry, which
+    // draws the row and must mirror the chevron (the ZIP control is gone).
+    for (const file of ['components/business-os/data-export/ModuleExportEntry.tsx']) {
       const control = stripComments(read(file));
       expect(control).toMatch(/<ChevronRight[\s\S]*?(?<![!\w])isRTL && 'scale-x-\[-1\]'[\s\S]*?\/>/);
     }
     expect(stripComments(read('components/business-os/data-export/DownloadMyDataButton.tsx'))).toMatch(
-      /<ZipDownloadControl[\s\S]*?<ModuleExportEntry|<ModuleExportEntry[\s\S]*?<ZipDownloadControl/
+      /<ModuleExportEntry/
     );
   });
 

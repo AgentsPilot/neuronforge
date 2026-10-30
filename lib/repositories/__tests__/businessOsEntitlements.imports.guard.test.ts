@@ -210,6 +210,10 @@ const ALLOWED = new Set(
     // Their tests name it to type fixtures and to fake the wiring's read.
     'lib/business-os/finance/__tests__/planGroups.test.ts',
     'lib/business-os/finance/__tests__/financeHealth.test.ts',
+    // MK5B-FU-1 (2026-10-27): the first-payment equivalence and scale test. It names the
+    // repository only in the PATH of an `import type` (the plan row type of its fixtures);
+    // it imports no value, mocks nothing and calls nothing. Declared, not hidden (see header).
+    'lib/business-os/finance/__tests__/firstPaymentEquivalence.test.ts',
     // ── Plan payments P-8a.1, 2026-10-18 — the admin Subscriptions page (P8A-R1) ─
     // READ ONLY. The wiring calls `pagePlans` (walked by Finance's own
     // `walkPlans`) and nothing else; the SUBSCRIPTIONS_WIRING test below pins
@@ -537,6 +541,14 @@ describe('RC-15 — entitlement repository referrers', () => {
       'findEntitlementInputs',
       'updatePlan',
     ]);
+  });
+
+  it('MK5BFU-FU-2: the finance wiring walks plans with the after-plan move count (still a read, same method)', () => {
+    const source = readFileSync(join(ROOT, ...FINANCE_WIRING.split('/')), 'utf8');
+    const asks = /businessOsAccountPlanRepository\s*\.\s*pagePlans\s*\(\s*\{\s*\.\.\.options\s*,\s*withAfterPlanMoves\s*:\s*true\s*\}\s*\)/;
+    expect(source).toMatch(asks);
+    // Planted negative control: the plain pass-through would be seen.
+    expect('businessOsAccountPlanRepository.pagePlans(options)').not.toMatch(asks);
   });
 
   it('Plan payments P-8a.1 (P8A-R1): the Subscriptions wiring calls pagePlans on the plan repository and NOTHING else', () => {

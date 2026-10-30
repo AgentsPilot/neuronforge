@@ -238,13 +238,13 @@ export default function SecurityTabV2() {
       <div className="space-y-3">
         <h3 className="text-base font-semibold text-[var(--v2-text-primary)]">Account Management</h3>
 
-        {/* Data export DE-9 (BC-1): the one shared "Download my data" control,
-            the same zip as every other surface. It owns its own status line
-            and notice, so the banners below carry no export message. */}
+        {/* Data export (MX-3.1): the one shared "Export data" entry. It opens the
+            export drawer and owns its own messages, so the banners below carry
+            no export message. */}
         <div className="p-3 bg-[var(--v2-bg)] border border-gray-200 dark:border-gray-700 space-y-3" style={{ borderRadius: 'var(--v2-radius-card)' }}>
           <div>
-            <h4 className="font-semibold text-sm text-[var(--v2-text-primary)]">Download my data</h4>
-            <p className="text-xs text-[var(--v2-text-secondary)]">Download all your data</p>
+            <h4 className="font-semibold text-sm text-[var(--v2-text-primary)]">Export data</h4>
+            <p className="text-xs text-[var(--v2-text-secondary)]">Choose what to export. Each part arrives by email.</p>
           </div>
           <DownloadMyDataButton variant="button" />
         </div>

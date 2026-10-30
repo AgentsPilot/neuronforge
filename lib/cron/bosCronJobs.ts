@@ -46,9 +46,18 @@ export type BosCronJobId =
   | 'bos-billing-reconcile'
   | 'booking-money-reconcile'
   | 'abandoned-bookings'
-  | 'data-export'
+  | 'data-export-modules'
   | 'payment-reminders'
-  | 'finance-snapshot';
+  | 'finance-snapshot'
+  /*
+   * `inbox-enquiries` is deliberately ABSENT, and this is the merge that could
+   * have put it back. It was retired on 2026-10-30 when the mailbox channel
+   * moved onto the platform scheduler: its own cron meant `lib/business-os`
+   * importing `@/lib/pilot` to run an agent itself — the management layer
+   * reaching up into the execution layer, and the only such import in the whole
+   * data layer. Deleting the cron deleted the import.
+   */
+  | 'bos-plan-cancel-reminders';
 
 export type BosQueueId =
   | 'payment_reminders'
@@ -685,43 +694,44 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
   },
   {
     /*
-     * Data export DE-8b (requirement §0.4.1 A, C): the daily sweep of the
-     * "Download my data" zips. Reaps runs killed mid-build, deletes zips after
-     * their 3 days, removes orphan objects, and watches how close each
-     * account's stored files are to the Phase 1 ceiling. NOT a queue drain:
-     * every step is idempotent. Counts only.
+     * The data export worker (module export MX-3b, BUSINESS_OS_EXPORT_MX3_WORKPLAN.md
+     * D-1, §9.2): a queue drain on the claim pattern of migration 20261095.
+     * Reaps first, then claims module jobs one at a time and emails each
+     * module as CSV parts to the owner's login email, or its one failure
+     * notice. `maxDuration` 300 s against a 420 s lease (XC-8). Every 5
+     * minutes, so it also runs at :50 beside the account deletion lifecycle
+     * job, on one shared Resend team limit: its own sends are 600 ms apart.
      *
-     * Near/over-ceiling accounts are a FINDING (the
-     * `data_export_accounts_near_ceiling` warn), shown as numbers that do not
-     * colour the job. "Partly done" = a step could not finish, or a due zip
-     * could not be removed.
+     * No admin queue view yet (`drainsQueue: null`, SA Q-8). While the export
+     * switch is off nothing is queued, so a run reaps and claims nothing.
+     * "Partly done" = a module was cut off after a part had gone (interrupted),
+     * or a send was stopped by the time budget.
      */
-    id: 'data-export',
-    path: '/api/cron/data-export',
-    schedule: '25 5 * * *',
-    ...DAILY,
-    ...MAX_60,
-    label: 'Data export sweep',
-    description: 'Deletes data export zips after 3 days, cleans up after failed runs and watches account size against the export limit',
-    scheduleWords: 'Daily at 05:25 UTC',
-    // QA4b-B1: the deploy day (merge 2026-10-17, set by RM).
-    addedOn: '2026-10-17',
+    id: 'data-export-modules',
+    path: '/api/cron/data-export-modules',
+    schedule: '*/5 * * * *',
+    ...EVERY_5,
+    timeLimitSeconds: 300,
+    timeLimitSource: 'maxDuration',
+    label: 'Data export worker',
+    description: 'Emails each module of a data export to the owner as CSV parts, and a notice when a module fails',
+    scheduleWords: 'Every 5 minutes',
     drainsQueue: null,
     counts: [
-      { key: 'staleReaped', path: ['data', 'staleReaped'], label: 'stuck exports marked failed' },
-      { key: 'expired', path: ['data', 'expired'], label: 'exports deleted after 3 days' },
-      { key: 'expireFailed', path: ['data', 'expireFailed'], label: 'due exports not deleted (retried tomorrow)' },
-      { key: 'orphansRemoved', path: ['data', 'orphansRemoved'], label: 'leftover zips removed' },
-      { key: 'orphansKept', path: ['data', 'orphansKept'], label: 'zips kept' },
-      { key: 'orphansUnexpected', path: ['data', 'orphansUnexpected'], label: 'unexpected objects left alone' },
-      { key: 'accountsWatched', path: ['data', 'accountsWatched'], label: 'accounts with files checked' },
-      { key: 'accountsNearCeiling', path: ['data', 'accountsNearCeiling'], label: 'accounts at 60% or more of the file limit' },
-      { key: 'accountsOverCeiling', path: ['data', 'accountsOverCeiling'], label: 'accounts over the file limit' },
-      { key: 'incompleteSteps', path: ['data', 'incompleteSteps'], label: 'steps that could not finish' },
+      { key: 'reaped', path: ['data', 'reaped'], label: 'recovered from a dead run' },
+      { key: 'claimed', path: ['data', 'claimed'], label: 'picked up' },
+      { key: 'modulesSent', path: ['data', 'modulesSent'], label: 'modules sent in full' },
+      { key: 'partsSent', path: ['data', 'partsSent'], label: 'emails with a file sent' },
+      { key: 'modulesFailed', path: ['data', 'modulesFailed'], label: 'modules failed' },
+      { key: 'modulesInterrupted', path: ['data', 'modulesInterrupted'], label: 'modules interrupted' },
+      { key: 'retried', path: ['data', 'retried'], label: 'modules put back for a retry' },
+      { key: 'noticesSent', path: ['data', 'noticesSent'], label: 'failure notices sent' },
+      { key: 'noticesFailed', path: ['data', 'noticesFailed'], label: 'failure notices not sent' },
+      { key: 'budgetStops', path: ['data', 'budgetStops'], label: 'stopped by the time budget' },
     ],
     partlyDoneWhen: [
-      { kind: 'atLeast', key: 'incompleteSteps', value: 1 },
-      { kind: 'atLeast', key: 'expireFailed', value: 1 },
+      { kind: 'atLeast', key: 'modulesInterrupted', value: 1 },
+      { kind: 'atLeast', key: 'budgetStops', value: 1 },
     ],
   },
   {
@@ -788,6 +798,50 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     partlyDoneWhen: [
       { kind: 'atLeast', key: 'familiesSkipped', value: 1 },
       { kind: 'atLeast', key: 'lateRun', value: 1 },
+    ],
+  },
+  {
+    /*
+     * Account deletion lifecycle D4b / SX-3 part 2 (workplan
+     * BUSINESS_OS_D4_PLAN_CANCEL_EMAILS_WORKPLAN.md D4b addendum R-A): the
+     * "Your plan ends on {date}" reminder, about 3 days before a cancelled plan
+     * ends. Its own job rather than a pass of the billing reconcile, whose
+     * counts already fill the run record's 1,024-byte CHECK. It claims its
+     * rows itself (FOR UPDATE SKIP LOCKED on the billing table's reminder
+     * columns), so `drainsQueue` stays null: it drains none of the five
+     * queues listed below. Counts are unprefixed and few; a test pins the
+     * worst case under 1,024 bytes (PLAN_CANCEL_REMINDER_COUNT_KEYS, pinned
+     * both ways). `skipped` = 1 while BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED
+     * is off, which does not make a run partly done.
+     */
+    id: 'bos-plan-cancel-reminders',
+    path: '/api/cron/bos-plan-cancel-reminders',
+    schedule: '53 5 * * *',
+    ...DAILY,
+    ...MAX_60,
+    label: 'Plan-ends reminders',
+    description: 'Emails an owner whose cancelled plan ends within 3 days, once per period end, after checking with Stripe that it is still set to end',
+    scheduleWords: 'Daily at 05:53 UTC',
+    // QA4b-B1: the deploy day. RM: set to the real merge day if it is later.
+    addedOn: '2026-10-30',
+    drainsQueue: null,
+    counts: [
+      { key: 'examined', path: ['data', 'examined'], label: 'cancelled plans examined' },
+      { key: 'sent', path: ['data', 'sent'], label: 'reminders sent' },
+      { key: 'notSent', path: ['data', 'notSent'], label: 'reminders not confirmed sent (refused, failed or timed out)' },
+      { key: 'notCancelling', path: ['data', 'notCancelling'], label: 'plans no longer set to end' },
+      { key: 'periodMismatch', path: ['data', 'periodMismatch'], label: 'plans whose end date differs at Stripe' },
+      { key: 'mismatch', path: ['data', 'mismatch'], label: 'billing records that disagree with Stripe' },
+      { key: 'covered', path: ['data', 'covered'], label: 'already covered by the cancel email' },
+      { key: 'deferred', path: ['data', 'deferred'], label: 'left for the next run' },
+      { key: 'deadlineHit', path: ['data', 'deadlineHit'], label: 'stopped at the time limit (1 = yes)' },
+      { key: 'skipped', path: ['data', 'skipped'], label: 'switched off (1 = yes)' },
+    ],
+    partlyDoneWhen: [
+      { kind: 'atLeast', key: 'deferred', value: 1 },
+      { kind: 'atLeast', key: 'deadlineHit', value: 1 },
+      { kind: 'atLeast', key: 'mismatch', value: 1 },
+      { kind: 'atLeast', key: 'notSent', value: 1 },
     ],
   },
 ];

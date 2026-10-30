@@ -1173,8 +1173,8 @@ stripeTier !== null and:
 - [ ] 3b-2: the block, view wiring outside the jobs gate, guard amendment, render tests; Implementation Notes KPI report (P3-SA-7)
 
 **3c**
-- [ ] 3c-1: route, audit event, tests (G / Z / A / R shape, audit reject still runs, lost claim sentence, `left_work` warn on any `partlyDoneWhen` key, no run record or secret)
-- [ ] 3c-2: dialog, copy, `onFinished`, header sentence, guard amendment, render tests (`passesFailed > 0` and no `planEventsSeen` are failures)
+- [x] ✅ 3c-1: route, audit event, tests (G / Z / A / R shape, audit reject still runs, lost claim sentence, `left_work` warn on any `partlyDoneWhen` key, no run record or secret)
+- [x] ✅ 3c-2: dialog, copy, `onFinished`, header sentence, guard amendment, render tests (`passesFailed > 0` and no `planEventsSeen` are failures)
 
 **Demo (P3-SA-13):** blocked on ruling B's user question; split by slice; it gates user acceptance only.
 
@@ -1416,6 +1416,525 @@ Reviewed: `git diff` on `feature/bos-plan-payments-p8b3a` against `abe9fd64`, pl
 
 **Code approved for QA: Yes.** The P3-SA-13 demo (a disagreeing test record with exactly one kind) still gates user acceptance and does not gate the commit.
 
+## Implementation Notes (P-8b.3b)
+
+> Folded in by the TL from the 3b worktree notes on 2026-10-28, after fast-forwarding to `main` `c015e95d` (P-8b.3a #560 merged). Dev notes, SA code review (APPROVED), QA report (PASS) and the post-review fixes, as written.
+
+
+Untracked scratch file. Branch `feature/bos-plan-payments-p8b3b` from `main` `abe9fd64`. Code complete, uncommitted. No migration, no new env var read, no change under `app/api/stripe`, and `lib/repositories/index.ts` is unchanged.
+
+### 3b-0: R3-5 read-only check (2026-10-28)
+
+Read-only head counts on `processed_webhook_events`, with the stale cutoff at now minus 15 minutes. No row content was read.
+
+| | failed | stale processing |
+|---|---|---|
+| no recorded mode (`metadata->>livemode` IS NULL) | **0** | **0** |
+| livemode = true | 0 | 0 |
+| livemode = false | **5** | 0 |
+
+- The Q-P3-7 line exists and shows nothing at 0.
+- **For the P3-SA-13 demo:** the 5 failed rows are **test-mode** rows, not live ones. The block in test mode should show 5 failed events, and the block in live mode should be empty. The SA ruling expected the reverse.
+- `.is('metadata->>livemode', null)` and `.filter('metadata->>livemode','eq','true'|'false')` both ran against the live PostgREST without an error.
+
+### Files
+
+| File | Action |
+|---|---|
+| `lib/repositories/AdminWebhookEventReadRepository.ts` | new. `server-only`, service role, header CALLERS line (the GET route only), not in `index.ts`. Three `⟨unscoped-by-design⟩` methods: `countUnfinishedAllEvents`, `countUnfinishedNoModeAllEvents` and `listUnfinishedAllEvents`. Each makes two plain reads, never `.or()`. The cutoff comes from `STALE_CLAIM_AGE_MS`, and the limit is 200 per state |
+| `lib/admin/jobs/webhookEventsTypes.ts` | new. Types only, no import |
+| `lib/admin/jobs/webhookEventsView.ts` | new. `server-only` and pure. Holds `classifyWebhookFailure`, `WEBHOOK_TIMEOUT_PATTERN`, `stripeCreatedMs` (seconds × 1000), `buildWebhookEventsView` and `WEBHOOK_EVENTS_SHOWN_LIMIT = 50` |
+| `lib/business-os/boost/boostAdminView.ts` | `event` kind: `^evt_[A-Za-z0-9]{1,250}$`, path `events`, same row-mode rule |
+| `app/api/admin/jobs-queues/webhook-events/route.ts` | new GET |
+| `app/admin/components/jobs/WebhookEventsBlock.tsx` | new client block |
+| `app/admin/components/jobs/webhookEventsCopy.ts` | new. Words only, no import |
+| `app/admin/components/jobs/JobsQueuesView.tsx` | renders the block after the `{view && …}` gate. Adds a `webhookRefreshKey` that the page's Refresh bumps. Still makes one fetch, and the header sentence is unchanged |
+| `app/admin/__tests__/jobsQueues.source.guard.test.ts` | the 3b part of the guard amendment (see below) |
+| 7 existing Jobs render tests | one `jest.mock` stub of the block each (D3b-1) |
+
+### SA rulings honoured
+
+| Ruling | How |
+|---|---|
+| P3-SA-2 Q-P3-1 | No flow column. The table shows the event type. A row carries no flow field (the key list is pinned in a test) |
+| P3-SA-2 Q-P3-2 | "Created at Stripe" comes from `metadata.created`, converted × 1000 once in the builder and tested with a known value (1761652800 s → 2025-10-28T12:00:00Z). "Last attempt" is `processed_at`. The age counts from created, or from the last attempt when created is absent; such a row says "Created time not recorded". The repository reads up to 200 per state. The builder sorts by created in memory and shows 50. Above 200 in either state, the Oldest tile says "At least …" and the count line adds "The order covers the first 200 read for each state." |
+| P3-SA-2 Q-P3-3 | Classes are `handler_error`, `timeout`, `unknown` and `stuck`. The single exported constant `WEBHOOK_TIMEOUT_PATTERN` is tested for matches, non-matches, empty and null. Each class has words in the copy |
+| P3-SA-2 Q-P3-7 | No-mode rows appear only as a count line. They are counted with two plain `.is('metadata->>livemode', null)` head reads, never `.or()`, and never appear in a tile or the list |
+| P3-SA-3 | `requireAdmin` is the first statement of `GET` (a source test pins it). The query is `z.object({}).strict()`. Tests cover 401 and 403 before any read, a query from a non-admin or signed-out caller still getting 401/403 (never 400), and 400 for four query shapes after the gate. A 409 returns `STRIPE_MODE_UNKNOWN`, and a 500 returns fixed words |
+| P3-SA-5 | The repository test pins the column list, the mode filter, `.is(…, null)` for no-mode, no `.or(`, no insert, update, upsert, delete or rpc, no `user_id`, the cutoff from `STALE_CLAIM_AGE_MS` (and no 15-minute literal), a limit of 200, `server-only` first, the CALLERS line, the marker on each method, absence from `index.ts`, and no billing repository import |
+| P3-SA-6 | An email is planted in `failure_message`. The builder test checks that `JSON.stringify(payload)` does not contain it. The route test checks the response body and every captured log call, and pins the "served" log line's keys to counts, mode and duration. A 500's development `details` is `{ errName }` only, and is absent outside development |
+| P3-SA-7 | The block sits outside `{view && …}`; a render test fails the jobs read and checks that the block still shows. It has the mode chip (`MODE_BADGE`, shared with Finance) and the `STRIPE_MODE_UNKNOWN` words on a 409. Tiles: Failed is lagging, Stuck is leading, Oldest unfinished is leading, and its definition names Stripe's 30 days. The `event` link matches `^evt_` and is tested in both modes, with `target="_blank"` and `rel="noopener noreferrer"` |
+| P3-SA-9 (3b part) | `WebhookEventsBlock.tsx` joins `FILES` and `CLIENT_FILES`. A new block pins one GET to the literal URL with `cache: 'no-store'`, no method, body or header, and no query built from data. The block names no account and never reads a failure message. Its logger keys are status or err. `webhookEventsCopy.ts` has no import, no green, never says "OK" and has no action word. The view renders the block exactly once, after the gate, and still makes exactly one fetch. `VIEW_HEADER_SENTENCE` and every boost pin (G-4 to G-11) are byte-identical; the diff touches only the header comment, the `FILES` and `CLIENT_FILES` constants, and one appended describe block |
+| P3-SA-11 | No migration and no new env read: the mode comes from the existing `currentStripeMode()`. Unit, route and render tests only, in existing folders. The Connect harness is not touched |
+
+### KPI-first report (P3-SA-7)
+
+- **Page:** `/admin/jobs-queues#webhooks`, the section "Stripe webhook events", placed **after** Queues (outside the jobs gate; Dev's placement choice).
+- **KPIs** (the shared `BlockKpi` on the `KpiStrip` grid):
+
+| KPI | Indicator | Tone |
+|---|---|---|
+| Failed | lagging | "Needs action" danger chip at 1 or more |
+| Stuck (processing older than 15 min) | leading | "Needs action" danger chip at 1 or more |
+| Oldest unfinished | leading | neutral, no threshold. Its definition names Stripe's 30-day retention, and it says "At least" when the read was partial |
+
+- **Breakdown:** the list, oldest first by Stripe's creation time, with "Showing 50 of N" in the count line.
+- **Drawer:** none. Each row links out to the event in Stripe.
+
+### Deviations (for SA)
+
+- **D3b-1. Existing Jobs render tests stub the block.** All 7 existing `jobsQueues.*.render.test.tsx` files mock `fetch` with the jobs payload for every URL, or for the jobs URL only. With the block mounted, the block received a jobs payload or an unexpected URL: 93 tests failed, from fetch counts, `calls[0]` order and a render crash. Each file gains one `jest.mock('@/app/admin/components/jobs/WebhookEventsBlock', () => ({ WebhookEventsBlock: () => null }))` with a 3-line comment. No assertion changed. The block's behaviour is tested in the new `jobsQueues.webhooks.render.test.tsx`, which renders the whole page. This touches `jobsQueues.reconcile.render.test.tsx` (the boost render test) by a stub only; its assertions are byte-identical.
+- **D3b-2. The `event` id pattern is `^evt_[A-Za-z0-9]{1,250}$`, not `^evt_[A-Za-z0-9]+$`.** It is bounded like the three existing kinds, so it is strictly narrower than the ruling's pattern.
+- **D3b-3. Placement after Queues, not "between Scheduled jobs and Queues" (D3-5).** P3-SA-7 allowed placing it after the gate. Placing it between the two would have split the gated `aria-busy` wrapper in two.
+- **D3b-4. A separate `webhookRefreshKey`.** The view's existing `refreshKey` bumps after every jobs load, including the first, so reusing it would read the block twice on mount and again after every drain. The new key is bumped by the page's Refresh only. 3c can bump the same key from `onFinished`.
+- **D3b-5. The 409 words mention subscriptions.** `STRIPE_MODE_UNKNOWN` reads "…so no subscription figures are shown." It is reused verbatim as ruled. On the Jobs page it says "subscription", so it is flagged for the user's G-5 wording decision. Changing it would also change Finance.
+- **D3b-6. The repository wraps PostgREST errors** in an `Error` (`webhook_event_read_failed`, with the original as `cause`). A PostgREST error is not `instanceof Error`, and the result type is `Error | null`. So in development the 500 details for a read failure show `errName: 'Error'`.
+- **D3b-7. Logs follow `{ err }`.** The route logs read and throw failures as `{ err }` (CLAUDE.md). A driver error never carries row content, and the planted-email test covers the body and every log call on the 200 path.
+
+### New user-facing words (G-5, for the user's approval)
+
+All are in `app/admin/components/jobs/webhookEventsCopy.ts`, except the mode chip, which reuses Finance's `MODE_BADGE` ("Stripe test mode" / "Stripe live mode"), and the 409, which reuses `STRIPE_MODE_UNKNOWN`. The route's own error words are listed too.
+
+- Section title: "Stripe webhook events"
+- Intro: "Events Stripe sent to our webhook that failed or are stuck, in the current Stripe mode. Read-only: each event links to its page in Stripe."
+- Tile labels: "Failed", "Stuck", "Oldest unfinished"
+- Tile definitions:
+  - Failed: "Webhook events in the current Stripe mode whose last attempt failed and that nothing has completed since. Red at 1 or more."
+  - Stuck: "Webhook events in the current Stripe mode still marked as processing more than 15 minutes after their last attempt started, so that attempt has died. Red at 1 or more."
+  - Oldest unfinished: "How long ago Stripe created the oldest failed or stuck event. Stripe keeps an event for 30 days; after that it can no longer be resent or replayed."
+- Tile chip: "Needs action". Oldest with nothing unfinished: "None". Partial read: "At least {age}"
+- State chips: "Failed", "Stuck"
+- Failure classes:
+  - "Our handler raised an error"
+  - "Timed out"
+  - "No reason recorded"
+  - "Still processing after 15 minutes"
+- Columns: "Event type", "State", "What went wrong", "Created at Stripe", "Last attempt", "Age", "Event"
+- Row without a creation time: "Created time not recorded"
+- Empty list: "No failed or stuck webhook events in Stripe test mode." (or "…live mode.")
+- Count line:
+  - "Showing {n} of {N} unfinished events, oldest first." (or "event" for 1)
+  - When the read was partial, it adds: "The order covers the first 200 read for each state."
+- No-mode line: "{N} unfinished events have no recorded mode and are not counted above." (singular: "1 unfinished event has no recorded mode and is not counted above.")
+- Link accessible name: "Open {evt_…} in Stripe (opens in a new tab)"
+- Loading and error states, from the shared helpers:
+  - "Reading the webhook events…"
+  - "Could not read the webhook events. Try again in a moment."
+- Route errors:
+  - 400: "This endpoint takes no parameters"
+  - 500: "Could not read the webhook events. Try again."
+
+### New tests
+
+| File | Tests |
+|---|---|
+| `lib/repositories/__tests__/AdminWebhookEventReadRepository.test.ts` | 17 |
+| `lib/admin/jobs/__tests__/webhookEventsView.test.ts` | 32 (classes, seconds conversion, sort, 50 of N, "at least", no-mode, links, PII) |
+| `app/api/admin/jobs-queues/webhook-events/__tests__/route.test.ts` | 17 |
+| `app/admin/__tests__/jobsQueues.webhooks.render.test.tsx` | 14 |
+| `lib/business-os/boost/__tests__/boostAdminView.test.ts` | +2 assertions for the event link in both modes, +6 rejected-id cases |
+| `jobsQueues.source.guard.test.ts` | +7 tests (the 3b block); the existing it.each tables also run over the block |
+
+**Demo (P3-SA-13):** still blocked on ruling B's user question. Its expected figures are corrected by the R3-5 note above.
+
+### Gates (2026-10-28, sequential, `--ci`)
+
+| Gate | Result |
+|---|---|
+| `lib/admin` + `app/admin` | 233 suites, 7,491 tests, pass |
+| `app/api/admin` + `lib/repositories` + `lib/business-os/boost` | 221 suites, 6,248 tests, pass. This includes both `BusinessOsBilling*Repository` allow-list suites and the admin-authz guard. No new file imports either billing repository |
+| `npm run test:bos-entitlements` | 327 suites, 9,742 tests, pass. No entitlements import was added |
+| `tsc --noEmit` (full project, 8 GB heap) | Completed with no OOM: 2,748 diagnostic lines printed. 1,864 errors, the same as the P-8b.2 / 3a baseline, and **0 in touched or new files** |
+| ESLint on the 21 touched and new files | 0 errors, 0 warnings |
+| Connect harness | not run: nothing under `app/api/stripe` changed (P3-SA-11) |
+
+Flake seen once: `jobsQueues.items.render.test.tsx` U-4 failed once while the 8 Jobs suites ran in parallel (117 s). It passed 25/25 alone and in the full `app/admin` run.
+
+### SA code review: P-8b.3b
+
+**Code review by SA, 2026-10-28.**
+**Status:** Code Approved (APPROVED). No fix is required before QA or commit. Three non-blocking suggestions follow.
+
+Reviewed: `git diff` on `feature/bos-plan-payments-p8b3b` against `abe9fd64`, plus every untracked file. Rulings were read from the 3a worktree's workplan, "SA review: Plan P-8b.3". SA re-ran the new and touched suites (the source guard, `jobsQueues.webhooks.render`, `jobsQueues.reconcile.render`, the route tests, `webhookEventsView`, `AdminWebhookEventReadRepository` and `boostAdminView`): 7 suites, 205 tests, all passing.
+
+**Rulings checked.**
+
+| Ruling | Verdict |
+|---|---|
+| P3-SA-1 | Pass. Only AM-4 is in the diff. There is no reconcile route, dialog, audit event or header-sentence change (all 3c), no migration, and nothing under `app/api/stripe` |
+| P3-SA-2 item 1 (Q-P3-1) | Pass. There is no flow field. `eventType` is shown |
+| P3-SA-2 item 2 (Q-P3-2) | Pass. `stripeCreatedMs` converts seconds × 1000 once and is tested with a known value. Age is measured from created, or from `processed_at` when created is absent, and the row then says "Created time not recorded". The read is 200 per state, sorted in memory and cut to 50. `oldestAtLeast` is set when either state's count is above its read length. The tile says "At least", and the count line adds the partial-order sentence |
+| P3-SA-2 item 3 (Q-P3-3) | Pass. The four classes are present and `refused` is gone. `WEBHOOK_TIMEOUT_PATTERN` is one exported constant, tested for match, non-match, empty and null. Only the class reaches the payload, and each class has words |
+| P3-SA-2 item 4 (Q-P3-4) | Pass for 3b. The block takes a `refreshKey` prop, and 3c can bump it |
+| P3-SA-2 item 7 (Q-P3-7) | Pass. Two plain `.is('metadata->>livemode', null)` head counts. The result is shown only as a count line, in either mode, and renders nothing at 0. It never appears in a tile or the list. The R3-5 figure is recorded (0 rows with no mode) |
+| P3-SA-3 | Pass. `requireAdmin` is the first statement (a source test pins it). The query uses `z.object({}).strict()`, and the 400 comes after the gate (tests cover 401 and 403 with a query). The 409 uses the `STRIPE_MODE_UNKNOWN` words. The 500 has fixed words, and its details are `{ errName }` in development only. Every response is `no-store` |
+| P3-SA-5 | Pass. The file is `server-only`, uses the service role (documented), and has a CALLERS line. Every method has the `⟨unscoped-by-design⟩` marker. It is not in `index.ts`. It has a fixed column list, uses `.filter('metadata->>livemode','eq',…)`, has no `.or(` and no write or rpc, never names `user_id`, takes the cutoff from `STALE_CLAIM_AGE_MS`, and limits each state to 200. It imports no billing repository. **Tenant isolation:** the table has no owner column, no id comes from the caller, and the route is read-only behind `requireAdmin`. The `tenant-isolation-guard` concern (cross-tenant writes and caller-supplied ids) therefore does not arise |
+| P3-SA-6 | Pass. `failure_message` is read only inside `classifyWebhookFailure`. The builder builds its output from an allow-list of fields, and the raw `metadata` is not passed through. Tests cover the planted email at both levels: the builder's `JSON.stringify`, and the route's body plus every log call. The served log line's keys are pinned to the mode, counts and duration. The client block never names a failure message (guard test) |
+| P3-SA-7 | Pass. `<section id="webhooks" aria-labelledby="webhooks-title">` sits outside `{view && …}`, and a render test fails the jobs read and checks that the block still shows. It has the `MODE_BADGE` chip and the 409 words. The three KPIs use `BlockKpi` on `KpiStrip`, with the indicators as ruled: Failed is lagging and red at 1 or more, Stuck is leading and red at 1 or more, and Oldest is leading and neutral, with its definition naming the 30 days. There is one definition constant per KPI. The breakdown is the list, oldest first, "Showing N of M". There is no drawer. The `event` link has `target="_blank"` and `rel="noopener noreferrer"` and is tested in both modes |
+| P3-SA-9 (3b part) | Pass. `WEBHOOK_BLOCK` joins `FILES` and `CLIENT_FILES`. One GET goes to the literal URL with `cache: 'no-store'`, with no method, body or headers and no query built from data. The copy has no imports. The view renders the block once, after the gate, and still has exactly one `fetch(`. The guard diff is limited to the header comment, the two constants and one appended `describe`. `VIEW_HEADER_SENTENCE` and the G-4 to G-11 boost pins are byte-identical |
+| P3-SA-11 | Pass. No migration, no new `process.env` read, and no new job, workflow or Jest config. The new suites sit in existing folders, and the new route test runs under the existing `app/api/admin` tree. Added CI time is a few seconds of Jest, which runs in parallel with `next build` and stays inside the critical path. `tsc` reports 0 errors in touched files, with no OOM (Dev's gate) |
+
+**Deviations.**
+- **D3b-1: approved.** The seven existing render suites mock `fetch` for the jobs payload only. Stubbing the block is the minimum change that keeps them testing what they tested. All seven diffs are 5 added lines and 0 removed (verified with `--numstat`). The block itself is tested end to end on the real page in `jobsQueues.webhooks.render.test.tsx`, including the case where the jobs read fails.
+- **D3b-2: approved.** `^evt_[A-Za-z0-9]{1,250}$` is strictly narrower than the ruling's pattern and matches the bound on the three existing kinds. The six rejected-id cases (empty suffix, wrong prefix, path traversal, query, newline) are good.
+- **D3b-3: approved.** P3-SA-7 allowed "after the gate". Splitting the gated `aria-busy` wrapper to place the block between Scheduled jobs and Queues would have been the worse change.
+- **D3b-4: approved.** Reusing `refreshKey` would re-read the webhook events on mount and after every drain or item action. The separate key keeps Q-P3-4's rule exact: only the page Refresh, and in 3c the press, re-read the block.
+- **D3b-5: approved for code; the wording goes to the user.** Reusing the constant verbatim is correct, so the 409 text cannot drift between pages. "…so no subscription figures are shown" is slightly off on the Jobs page. Option for the user under G-5: make the shared constant mode-neutral (for example "…so no Stripe figures are shown"), which changes Finance by the same words. Either choice is fine. It is a wording decision, not a code one.
+- **D3b-6: approved.** A PostgREST error is a plain object, so wrapping it keeps `RepositoryResult`'s `Error` type honest, and it keeps the original as `cause`. The only effect is that development `errName` reads `Error` for a driver failure, which is acceptable.
+- **D3b-7: approved.** `{ err }` is the CLAUDE.md standard. These reads take no caller value and select by constant filters, so a PostgREST error message carries no row content. The planted-email log check covers the 200 path, which is the only path where row content exists in memory.
+
+**Demo correction (P3-SA-13), accepted.** The R3-5 figures show the 5 failed rows are **test-mode**. The 3b demo expectation is therefore corrected: **test mode shows 5 failed events (read-only), and live mode is empty.** TL: fold this correction into P3-SA-13 when merging the notes. The demo still waits on ruling B's user question, and it gates user acceptance only, not the commit.
+
+**Other checks.**
+- **No `.or()`** in any new or touched file (grep).
+- **Logging.** No `console.*` in any touched or new file. The route uses `createLogger` with a `correlationId` child. The client block uses `clientLogger` with `{ status }` or `{ err }` only (guard-pinned).
+- **Entitlements.** No new file imports from `lib/business-os/entitlements/`, so the skill's checklist is not triggered.
+- **Admin layout standard.** It uses only shared primitives (`BlockKpi`, `KpiStrip`, `StatusChip`, `AdminEmpty` / `AdminError` / `AdminLoading`, `readAdminResponse`, the `adminTable` classes and `ADMIN_COUNT_LINE`). Red appears only through the `danger` tone, there is no green class, and the error state keeps the previous figures on screen (the SA Q-11 rule). Every state chip in the list is `danger`, which is correct because every listed row is unfinished.
+- **Cross-module import.** The block takes `MODE_BADGE` from `app/admin/finance/plansCopy.ts` at runtime. That module's imports are client-safe (`useAdminFilters`, a type, and the import-free `subscriptionsTypes`), and the `CLIENT_FILES` C-21 rule passes. It is accepted as the ruled precedent (one chip wording across pages).
+
+**Optimisation suggestions (non-blocking).**
+1. `WebhookEventsBlock.load` has no stale-response guard. If the mount read and a quick Refresh overlap, the older response can land last. The jobs view uses the same pattern, the data is read-only, and the next Refresh corrects it. A request-sequence ref could be added in 3c, when the press makes overlapping reads likelier.
+2. The three reads (counts, list, no-mode) do not happen at one instant. A row that arrives between them can raise a count above the list's length while staying under 200, and `oldestAtLeast` then shows "At least" when the value is exact. That is the safe direction, so no change is needed. A comment beside `oldestAtLeast` saying so would help the next reader.
+3. `WEBHOOK_TIMEOUT_PATTERN` needs a word boundary after "timeout", so a message that starts with a class name such as `TimeoutError…` classifies as `handler_error`. The webhook stores `error.message`, not the name, so this does not arise today. Revisit only if `markFailed` ever starts storing the name.
+
+**Code approved for QA: Yes.** The G-5 words (including D3b-5) still need the user's approval, and the P3-SA-13 demo (corrected above) gates user acceptance, not the commit.
+
+### QA report: P-8b.3b
+
+**QA, 2026-10-28**
+**Test mode:** full
+**Strategy used:** A and B, plus render tests.
+- A (unit): the builder, and an EVALUATING in-memory fake of the repository's PostgREST chain.
+- B (route): the real `requireAdmin`, the real builder and a mocked repository.
+- Render tests of the whole Jobs page. The manual browser check (Option D) was not run in this pass; source and render guards cover it.
+
+**Focus:** api, ui, schema, security
+**Skipped:** the manual browser check, and the P3-SA-13 demo (blocked on ruling B's user question). No DB writes and no Stripe calls.
+**Input source:** the TL prompt and SA rulings P3-SA-1 to P3-SA-13
+
+**Verdict: PASS.** Bugs 0. Edge cases 4, all Low. No fix is needed before commit.
+
+#### Test coverage
+
+| Area (ruling) | Result | Notes |
+|---|---|---|
+| Classes (Q-P3-3): handler_error, timeout, and unknown on null, undefined, empty and whitespace | Pass | 7 more timeout wordings and 6 more non-matches. The pattern is not global or sticky, so it keeps no state between calls |
+| Stuck at 15 min ±1 ms (P3-SA-5) | Pass | Run against an in-memory table. Exactly 15 min is NOT stuck; 15 min + 1 ms is; 15 min − 1 ms is not. The no-mode stuck count gives the same result. A null `processed_at` is never stuck, and `completed` rows are never read |
+| `metadata.created` (Q-P3-2) | Pass | A string, missing, negative, zero, Infinity, null or boolean value gives createdAt null, and the age counts from the last attempt. Fractional seconds are kept to the ms. A future time gives age 0. The created time wins over both a newer and an older last attempt. Rows with mixed bases sort together, and a row with no time goes last |
+| 200 against 201 per state (Q-P3-2) | Pass | Repository: 200 rows read out of 200, and 200 read out of 201 (the newest by last attempt is the one dropped). The limit is per state: 201 + 201 → 200 + 200. Builder: "at least" appears only above 200, in either state. Render: no "At least" at 200. At 201, the tile, its accessible name and the partial sentence all show it |
+| 50 shown of N | Pass | 50 of 50 and 50 of 51. The cut spans both states. The singular reads "1 of 1 unfinished event", and large counts read "1,234" |
+| No-mode rows (Q-P3-7) at 0, 1 and above 1 | Pass | Null metadata, a missing key and an explicit null each count once, in neither mode. They never appear in a tile, `matching` or the list. With only no-mode rows, the block shows the empty list and the line |
+| Test vs live | Pass | Each mode reads only its own rows. `rk_` keys resolve a mode |
+| Unknown mode → 409 | Pass | The key unset, empty, `pk_live_`, `sk_x` or `whsec_` gives a 409 with `STRIPE_MODE_UNKNOWN` and no read. In development the details are `{ code }` only. The key appears in no body and no log call |
+| Event link per mode, bad ids rejected | Pass | These ids get no link, and the row renders the id as text: `evt_`, one with a space, `../`, `EVT_`, `-`, `javascript:`, a 251-character id, and an empty id. A 250-character id is accepted. A livemode that is not a boolean gets no link |
+| Isolation (P3-SA-7) | Pass | Dev's test: a failed jobs read still shows the block. **New:** a 500, a 409 or a network error on the block still shows `#jobs` and `#queues`. When both fail, each shows its own error |
+| Refresh (Q-P3-4, D3b-4) | Pass | The block reads exactly once on mount, checked after the jobs read has fully settled. Each Refresh adds exactly one read (giving 2, then 3). The jobs "Try again" re-reads the jobs only. A failed Refresh keeps the last figures beside the error |
+| Route order (P3-SA-3) | Pass | 401 and 403 win over an unknown mode and over a query. A throwing admin check fails closed, and a throwing `getUser` gives 401. The 400 (`?x`, `?=`, `?livemode=true`, a repeated key) comes before the 409, with no details outside development. `{ data: null, error: null }` from any read gives a 500 |
+| 500 carries the name only (P3-SA-6) | Pass | A builder throw on a corrupt row gives a 500 whose details are only `{ errName: 'RangeError' }` |
+| No PII (P3-SA-6) | Pass | An email and a `cus_…` id were planted in `failure_message` in every class. Neither appears in the payload, the 200 body, or any log call on the 200 or 500 path. The read-failure log context holds only the keys `err` and `read` |
+| Accessibility | Pass | The section is a region named "Stripe webhook events". Each tile's accessible name includes its value. The headers carry `scope="col"`. Every link has `target="_blank"`, `rel="noopener noreferrer"` and the name "Open evt_… in Stripe (opens in a new tab)" |
+
+#### Issues found
+
+##### Bugs (must fix before commit)
+None.
+
+##### Performance issues
+None. Each request makes six reads, each a head count or limited to 200 rows. The existing unfinished index serves them.
+
+##### Edge cases (all Low, for SA to rule)
+1. **The count and the list are separate reads, so a race can produce wrong words.** File: `lib/admin/jobs/webhookEventsView.ts`. `oldestAtLeast` is `count > list.length`. The two reads run in a `Promise.all`, a window of milliseconds.
+   - A row turns `failed` between the head count and the list read, giving 3 counted and 2 listed (well under 200). The tile then says "At least …", and the count line adds "The order covers the first 200 read for each state", though nothing was cut.
+   - The reverse race, a row completing between the reads, gives "Showing 2 of 1".
+   - Reproduced in the builder. Suggested fix: `oldestAtLeast = list.length >= readPerState && count > list.length`, and `matching = max(counts, listed)`.
+2. **One out-of-range `metadata.created` blanks the whole block.** Files: `webhookEventsView.ts`, `stripeCreatedMs` and `toRow`. A value above about 8.64e12 s makes `new Date(ms).toISOString()` throw `RangeError`. The route catches it, so the answer is a 500 with fixed words and `errName` only (pinned in a QA test). A value stored in ms by mistake renders as the year 57794 with age 0. Neither can happen today, because the webhook writes `event.created` from Stripe. A per-row range guard that treats the time as not recorded would stop one bad row hiding all the others.
+3. **The timeout pattern misses some common wordings.** `TimeoutError`, `UND_ERR_CONNECT_TIMEOUT`, `UND_ERR_HEADERS_TIMEOUT` and "timeouts" are classed "Our handler raised an error". The causes are the `\b` after "out" and the `_` before "TIMEOUT". This affects the words only, never a figure.
+4. **A row with neither a creation time nor a last attempt shows "None" on the Oldest tile while Failed is 1 or more.** This cannot happen today, because the claim always sets `processed_at`. Informational.
+
+**Also noted (no QA action):**
+- D3b-5: the 409 words still say "subscription figures" on the Jobs page. This is for the user's G-5 decision.
+- Dev's R3-5 figures (the 5 failed rows are in **test** mode) reverse P3-SA-13's expected demo. TL should carry this into the demo script.
+
+#### Tests added (QA): 4 files, 109 tests, all passing
+
+| File | Tests |
+|---|---|
+| `lib/repositories/__tests__/AdminWebhookEventReadRepository.qa.test.ts` | 14. An evaluating fake (eq, lt, the `metadata->>livemode` filter, is null, order, limit, head count). Covers: the ±1 ms boundary, a null `processed_at`, completed rows, test vs live, no-mode at 0, 1 and 7 rows, 200 vs 201 per state, and the fixed columns |
+| `lib/admin/jobs/__tests__/webhookEventsView.qa.test.ts` | 56. Covers: created edge values through the builder, flooring, created over last attempt, the mixed-basis sort, the classes, the 50 / 51 cut, cross-state ordering, stuck at 200 / 201, no-mode never in a tile, bad ids, the 250-character limit, a livemode that is not a boolean, and an email plus a `cus_` id |
+| `app/api/admin/jobs-queues/webhook-events/__tests__/route.qa.test.ts` | 21. Covers: the gate winning over the 409 and the 400, a throwing admin check and `getUser`, the 400 before the 409, five 409 keys, the 409's development details, `rk_` keys, PII on the 200 and 500 paths with the log context keys, `{data:null,error:null}`, and a builder throw giving `errName` only |
+| `app/admin/__tests__/jobsQueues.webhooks.qa.render.test.tsx` | 18. Covers: isolation both ways, one read on mount after the jobs settle, one read per Refresh, the jobs Try again not re-reading the block, a failed refresh keeping the figures, the 200 / 201 words, the singular and thousands counts, the no-mode-only state, the region, the tile names, the header scope, the links, a bad-id row as text, and the event-type dash |
+
+- No new file imports `BusinessOsBillingAccountRepository` or `BusinessOsBillingEventRepository` (grep finds none), so neither allow-list changes.
+- `jest -u` was not run.
+- No product file was edited.
+
+#### Gates (2026-10-28, sequential, `--ci`)
+
+| Gate | Result |
+|---|---|
+| `lib/admin` + `app/admin` | 235 suites, 7,565 tests, pass (Dev's 233 / 7,491 plus 2 / 74) |
+| `app/api/admin` + `lib/repositories` + `lib/business-os/boost` | 223 suites, 6,283 tests, pass (Dev's 221 / 6,248 plus 2 / 35). Includes both `BusinessOsBilling*Repository` allow-list suites and the admin-authz guard |
+| `npm run test:bos-entitlements` | 328 suites, 9,756 tests, pass |
+| `tsc --noEmit` (full project, 8 GB heap) | Completed with no OOM: 2,748 lines and no heap or FATAL text. 1,864 errors, the same as the baseline. **0** are in touched, new or QA files |
+| ESLint, the 4 QA files | 0 errors, 0 warnings |
+
+#### Final status
+- [x] Every acceptance criterion tested passes. Ready for commit once SA approves. The P3-SA-13 demo still gates the user's acceptance only.
+- [ ] Issues Dev must address before commit: none. Edge cases 1 to 4 are Low and go to SA.
+
+### Fixes after SA/QA (P-8b.3b)
+
+Dev, 2026-10-28. Applied after SA approved and QA passed, as the coordinator directed. Not committed.
+
+| # | Fix | Files |
+|---|---|---|
+| 1 | **The 409 words on the Jobs page (user's G-5 change).** New `WEBHOOK_EVENTS_MODE_UNKNOWN` = "The server’s Stripe key mode could not be read, so no webhook events are shown." It lives in `lib/admin/jobs/webhookEventsTypes.ts` (no imports), so the route can import it and the copy file keeps its no-imports rule. The webhook-events route and its four test files (Dev's and QA's route and render tests) use it. `STRIPE_MODE_UNKNOWN` and every Finance or billing use of it are unchanged; no file under `lib/admin/billing`, `app/admin/finance` or `app/api/admin/business-os` is in the diff. A route test pins both sentences and that the 409 is not Finance's | `webhookEventsTypes.ts`, `route.ts`, `route.test.ts`, `route.qa.test.ts`, `jobsQueues.webhooks.render.test.tsx`, `jobsQueues.webhooks.qa.render.test.tsx` |
+| 2 | **QA Low 1, the race.** A state counts as cut only when `list.length >= readPerState && count > list.length`. `matching = max(failed + stuck counts, rows read)`. That is the total read before the 50-row cut, so it is never below `listed` either (FX-1 below). Tests cover QA's reproductions: 3 counted / 2 listed is not "at least", nor is the same race in the stuck state; 1 counted / 2 listed gives matching 2, never "2 of 1". Also tested: 201 over a 200-row read is still "at least", 199 over 200 is not, and matching is not below the rows read when the read is past the 50 shown. One of Dev's own fixtures, 250 counted over 1 read row, was itself the race; it now reads 200 rows | `webhookEventsView.ts`, `webhookEventsView.test.ts` |
+| 3 | **QA Low 2, an out-of-range `metadata.created`.** `stripeCreatedMs` returns null above the end of the year 9999 (`MAX_CREATED_MS`), so the row shows "Created time not recorded", its age falls back to the last attempt, and the block never 500s. Builder tests cover 1e13 s (where `toISOString` would throw), a value stored in ms (year 57794) and the first second of 10000; the last second of 9999 is still shown, and the other rows are untouched. A route test sends 1e13 and gets a 200, with that row's created time null and the other row intact. QA's route test "a corrupt row makes the builder throw → 500 RangeError" pinned the old behaviour. It now provokes the throw with a malformed list (`failed: null`) and still checks the 500 carries `errName` only (now `TypeError`) and no PII | `webhookEventsView.ts`, `webhookEventsView.test.ts`, `route.test.ts`, `route.qa.test.ts` |
+
+**Accepted as they are (user/SA):**
+- **QA Low 3:** the timeout pattern misses `TimeoutError`, `UND_ERR_*_TIMEOUT` and "timeouts". It affects the words only.
+- **QA Low 4:** a row with neither a creation time nor a last attempt shows "None" on the Oldest tile. This cannot happen today.
+
+**FX-1 (for SA):** the brief said `matching = max(count, listed)`. I used `max(count, rows read)`. Rows read is never below `listed`, so this satisfies the brief. It also avoids a "Showing 50 of 49" when a race leaves more rows read than counted.
+
+**Gates after the fixes (2026-10-28, sequential, `--ci`):**
+
+| Gate | Result |
+|---|---|
+| `lib/admin` + `app/admin` | 235 suites, 7,574 tests, pass |
+| `app/api/admin` + `lib/repositories` + `lib/business-os/boost` | 223 suites, 6,284 tests, pass |
+| `npm run test:bos-entitlements` | 328 suites, 9,756 tests, pass |
+| ESLint, the 8 changed files | 0 errors, 0 warnings |
+| `tsc --noEmit` (full project, 8 GB heap) | Completed with no OOM: 2,748 lines, no heap or FATAL text. 1,864 errors, the baseline, and **0** in touched, new or QA files |
+
+---
+
+## Implementation Notes (P-8b.3c)
+
+**Dev, 2026-10-29.** Branch `feature/bos-plan-payments-p8b3c` (from `main` `e49db10c`, with #560 and #564 merged). Nothing committed. Tasks 3c-1 and 3c-2 are done.
+
+### Files
+
+| File | Action | What |
+|---|---|---|
+| `app/api/admin/business-os/billing/reconcile/route.ts` | create | `POST`, the boost route's shape: `requireAdmin` first, strict empty body, write-ahead `logAndFlush` audit, `runReconcilePasses([planReconcilePass], { …, trigger: 'admin' })`, counts only, `maxDuration = 60`, `RECONCILE_RUN_DEADLINE_MS`. The `bos_plan_reconcile_admin_left_work` warn uses keys read from the registry's `partlyDoneWhen` (`findBosCronJob`, a pure module), so the warn and the nightly amber cannot drift |
+| `app/api/admin/business-os/billing/reconcile/__tests__/route.test.ts` | create | G / Z / A / R, 36 tests |
+| `lib/audit/events.ts`, `lib/audit/eventAudience.ts` | modify | `BOS_BILLING_RECONCILE_TRIGGERED`: key, metadata (`warning`, SOC2) beside the boost entry, audience `'bos'` |
+| `lib/audit/__tests__/eventAudience.test.ts` | modify | split pin 63 → 64 Business OS, 224 → 225 total, with a dated `+1` line |
+| `lib/business-os/billing/__tests__/moneyEventAudit.coverage.test.ts` | modify | the new key goes in `NON_MONEY` (an admin press on a system entity; the replays are audited by the handler) |
+| `app/admin/components/jobs/ReconcilePlansDialog.tsx` | create | the `ReconcileTopUpsDialog` shape on `AdminConfirmDialog`; `onFinished` prop |
+| `app/admin/components/jobs/reconcileCopy.ts` | modify | `PLAN_RECONCILE_COPY`, `PLAN_LEFT_WORK_SENTENCES`, `PLAN_FINDING_SENTENCES`, `planReconcileOutcome`, `planReconcileSentences`. Still no imports. Boost exports are byte-identical |
+| `app/admin/components/jobs/JobsQueuesView.tsx` | modify | the plan dialog after the top-ups dialog in the `RECONCILE_JOB_ID` branch; `bumpWebhooks` (bumps `webhookRefreshKey` only); the header sentence. Still one fetch |
+| `app/admin/components/jobs/WebhookEventsBlock.tsx` | modify | the request-sequence ref (SA's 3b suggestion) |
+| `app/admin/__tests__/jobsQueues.source.guard.test.ts` | modify | the 3c amendment (below) |
+| `app/admin/__tests__/jobsQueues.reconcilePlans.render.test.tsx` | create | PR, PRF, PRC and WSEQ, 26 tests |
+| `app/admin/__tests__/jobsQueues.render.test.tsx`, `jobsQueues.layout.render.test.tsx`, `jobsQueues.retry.render.test.tsx` | modify | each names the header sentence or the row's button set. Each is amended in place, with a dated comment (see Deviations 1) |
+| `app/api/admin/__tests__/adminGate.writes.test.ts` | modify | the new route is gated from birth: one case, count 68 → 69 (see Deviations 2) |
+
+### SA rulings honoured
+
+| Ruling | How |
+|---|---|
+| Ruling 5, P3-SA-8 | The route imports `planReconcilePass` from `planReconcileDeps` and runs only that pass. It never imports `RECONCILE_PASSES` or the boost pass (source-pinned). In the test, the cron pass list is mocked with a decoy, and the decoy is never called |
+| P3-SA-8, no run record | No `BosCronRunRepository`, `withCronRunRecord`, `cronRunRecorder`, `bos_cron_runs`, `/api/cron/` or `CRON_SECRET` in the code (source test). The only `process.env` read is `NODE_ENV`, for the development details |
+| P3-SA-8, left work | One warn when **any** of the six plan `partlyDoneWhen` keys is above 0, with `event`, `runId` and the keys above 0 only. There is one test per key, a test that the key set equals the registry's six, and a test that findings alone do not warn |
+| P3-SA-8, lost claim | The route test builds the **real** `createPlanReconcilePass` over fake ports whose insert loses the race (23505). The answer has `planIncomplete: 1` and the warn fires. `planReconcileOutcome` of the answer gives the lost-claim sentence and no "finished" line |
+| P3-SA-8, audit | `logAndFlush` before the pass, on `system` with id = the run id. The admin is user and actor, severity is `warning`, and the details are exactly `{ run_id, correlationId }`. Audit-reject test: the route runs through the **real** `logAndFlush`, and the audit sink's `log` rejects. The pass still runs and the answer is 200 |
+| P3-SA-8, QA6b-M1 | The client treats a 200 as a failure when `passesFailed > 0`, when `planEventsSeen` is missing, or when there are no counts. All three, plus 500 and network, are tested in the page render and directly on `planReconcileOutcome` |
+| P3-SA-3 | `requireAdmin` is the first statement (source test G-6). Tests cover 401, 403, a throwing admin check, a throwing auth lookup, and an invalid body that still gets 401 or 403 when signed out or not an admin. Eleven bad bodies give 400 after the gate (`isAdmin` was called) |
+| P3-SA-2 item 4 (Q-P3-4) | `onFinished` → `bumpWebhooks` → `setWebhookRefreshKey` only. The render test checks that the jobs GET stays at 1 and the block GET goes to 2. A source pin checks that `bumpWebhooks` appears exactly twice and does not call `load`. `onFinished` fires after any press that **reached** the route, the failure answers included, because a pass that failed part-way may have left claims. A network failure does not fire it |
+| P3-SA-2 item 8 (Q-P3-8) | Each of the six plan `partlyDoneWhen` keys has a sentence, and `PRC` pins `Object.keys(PLAN_LEFT_WORK_SENTENCES)` equal to the registry's plan keys. With any of them above 0, the first line is "did not finish everything", never "finished". The three findings each end "logged for a person to check". A test bans "Disagrees", "our records" and "each other" in them |
+| P3-SA-9 | `ReconcilePlansDialog.tsx` joins `CLIENT_FILES` (client-only, C-21 imports, no green). It has G-4p (one POST to the literal URL), G-5p (literal `'{}'`, JSON header, no-store), G-6p ×2 (no account words or action words, no server text), G-7p ×2 (the import list; one shared dialog and one opener) and G-11p (logger keys `status`, `passesFailed`, `err`). The view pins the dialog to one render, right after `<ReconcileTopUpsDialog />` in the reconcile branch. `VIEW_HEADER_SENTENCE` changed, and the one G-9 self-test line that quoted the old text was updated with it. G-4 to G-8, G-9's render pin and G-11 are byte-identical. The view still has one `fetch(` |
+| P3-SA-11 | No migration and no new env read. No new job, workflow or Jest config: the new suites sit in existing folders. The Connect harness was not touched or run |
+| Billing allow-lists, entitlements | No touched file imports either billing repository or anything from `lib/business-os/entitlements/` (grep), so no allow-list changes |
+
+**SA's 3b suggestion (request sequence).** `WebhookEventsBlock.load` takes `seq = ++latestRead.current`. Only the newest read may set the data, the error or the loading flag. Three tests: an older success landing after a newer one is ignored; an older failure landing after a newer success shows no error; and a control, where a later failure with no overlap still shows its error. A mutation check (guard forced true) fails the first two.
+
+### Deviations (for SA)
+
+1. **Three more render tests pinned the old header or the row's buttons:** `jobsQueues.layout.render` (PURPOSE), `jobsQueues.retry.render` (U-12) and `jobsQueues.render` (the button census). P3-SA-9 names only the source guard's line. Each is updated in the same named amendment, with a dated comment. The census now expects `1 + 5 + 5 + 1 + 1` buttons, and the row's buttons as `[top-ups, plan]`.
+2. **`adminGate.writes.test.ts` gains the route** (68 → 69), as the boost route was gated from birth. This was not in the file table. The admin case runs the real lazy plan wiring with no Stripe key and answers 200.
+3. **`moneyEventAudit.coverage.test.ts`** lists the new `BOS_BILLING_*` key as non-money. Without that, its "every BOS_BILLING_* key is mapped" pin fails. This was not in the file table.
+4. **`PLAN_LEFT_WORK_KEYS` is a module constant, not exported.** Next.js allows a route file to export only its handlers and config. The route test reads the registry itself.
+
+### New user-facing words (for the user's approval)
+
+| Where | Words |
+|---|---|
+| Button and dialog title | Reconcile plan payments now |
+| Dialog description | This checks Stripe for plan payment events of every business that our records do not show as handled, and replays them the way the webhook would. It also compares plan subscriptions with Stripe and logs any difference for a person to check; it changes nothing to match. A press is not recorded as a run of the Billing reconcile job: its last run and counts stay as they are. |
+| Confirm / busy | Run now · Running… (as boost) |
+| Failure line | The plan reconcile could not finish. Nothing is lost: the nightly run will try again. |
+| First line, clean | Plan reconcile finished: N plan events listed from Stripe, N replayed. (singular "1 plan event") |
+| First line, work left | Plan reconcile did not finish everything: N plan events listed from Stripe, N replayed. |
+| `planIncomplete` | Some plan events were left for the nightly run: another run held them, or a limit was reached. |
+| `planDeadlineHit` | It stopped at its time limit; the nightly run picks up the rest. |
+| `planReplayFailed` | N plan events failed when replayed; the nightly run will try again. (Post-review fix 2; was "failed again") |
+| `planWindowClipped` | Only the last 7 days of Stripe events were checked. |
+| `planApiVersionSkipped` | N plan events were skipped because Stripe used a version we have not checked. |
+| `planCheckIncomplete` | Not every plan subscription could be compared with Stripe; the nightly run will try again. |
+| `planMismatch` | N plan subscriptions disagree with Stripe: logged for a person to check. |
+| `planOrphan` | N Stripe plan subscriptions have no billing record: logged for a person to check. |
+| `planUnassigned` | N paid plan invoices have no plan assigned: logged for a person to check. |
+| Page header (changed clause) | …the Billing reconcile job has Reconcile top-ups now and Reconcile plan payments now buttons; everything else here is read-only. |
+| Route 400 / 500 (not shown by the dialog) | This action takes no input · The plan reconcile stopped with an error. Some events may already have been replayed. |
+
+Each count sentence has a singular form for N = 1 (for example "1 plan subscription disagrees with Stripe…").
+
+### Gates (2026-10-29)
+
+| Gate | Result |
+|---|---|
+| Jest: `app/admin`, `app/api/admin`, `lib/admin`, `lib/audit`, `lib/business-os/billing`, `lib/repositories` | 528 suites, 17,669 tests, pass |
+| `npm run test:bos-entitlements` | 329 suites, 9,819 tests, pass |
+| `tsc --noEmit` (full project, 8 GB heap) | Completed with no OOM: 2,805 lines, no heap or FATAL text. 1,920 errors repo-wide, and **0** in the 16 touched or new files |
+| ESLint, the 16 touched or new files | 0 errors. 1 warning, already there before this work (`lib/audit/events.ts` line 1874, an unused `_`) |
+| Connect harness | Not run: nothing under `app/api/stripe` changed (P3-SA-11) |
+
+### SA code review: P-8b.3c
+
+**Code Review by SA, 2026-10-29**
+**Status:** Code Approved (APPROVED). No fix is required before QA or commit. Three non-blocking suggestions follow.
+
+Read: the full `git diff` on `feature/bos-plan-payments-p8b3c` (from `e49db10c`), the new route and its test, `ReconcilePlansDialog.tsx`, the new render test, and, for comparison, the boost route, `ReconcileTopUpsDialog.tsx`, `reconcilePassRunner.ts`, `planReconcileDeps.ts` and the `bos-billing-reconcile` entry in `lib/cron/bosCronJobs.ts`. SA re-ran `npx jest app/admin/__tests__/jobsQueues app/api/admin/business-os/billing app/api/admin/__tests__/adminGate.writes lib/audit lib/business-os/billing/__tests__/moneyEventAudit.coverage`: 35 suites, 990 tests, pass.
+
+#### Verified
+
+| Check | Result |
+|---|---|
+| P3-SA-3: gate and Zod | Pass. `requireAdmin(requestLogger)` is the first statement after the correlation id and the child logger (route.ts:73), as in the boost route. No `profiles.role`. The body is read only after the gate, with `z.object({}).strict()` over an empty-or-`{}` body. The 400 comes after the gate, with details in development only. Tests G-1 to G-6 and Z cover 401, 403, a throwing check, and an invalid body that still gets 401 or 403 |
+| P3-SA-8: plan pass only | Pass. `runReconcilePasses([planReconcilePass], { deadlineAt: started + RECONCILE_RUN_DEADLINE_MS, now, log, trigger: 'admin' })`. `planReconcilePass` comes from `planReconcileDeps`. There is no `RECONCILE_PASSES`, no boost pass and no copied pass logic. The test mocks the cron pass list with a decoy that is never called |
+| P3-SA-8: no run record, no secret | Pass. There is no import of `BosCronRunRepository`, `withCronRunRecord`, the recorder or the cron route, and no `CRON_SECRET`. The only `process.env` read is `NODE_ENV`. Source-pinned. There is no direct Supabase access in the route (CLAUDE.md rule 1) |
+| P3-SA-8: audit | Pass. One write-ahead `logAndFlush` runs before the pass, with `entityType: 'system'`, `entityId` = the run id, the admin as user and actor, and `severity: 'warning'`. The details are exactly `{ run_id, correlationId }`. The bounded flush never rejects, and the audit-reject test goes through the **real** `logAndFlush`: the pass still runs and the answer is 200 (non-blocking under WC-7). The key, the metadata (beside the boost entry, `warning`, SOC2) and audience `'bos'` are added. The split pin is 64 / 77 / 84, total 225 |
+| P3-SA-8: left-work warn | Pass. One `bos_plan_reconcile_admin_left_work` warn fires when any of the six plan `partlyDoneWhen` keys is above 0. It carries `event`, `runId` and only the keys above 0. There is one test per key, a set-equality test, and a findings-alone test (no warn) |
+| P3-SA-8: lost claim (R3-3) | Pass. The route test builds the real `createPlanReconcilePass` over fake ports whose insert loses (23505). The result is `planIncomplete: 1`, the warn fires, and the words give the lost-claim sentence with no "finished" line |
+| `maxDuration` and deadline | Pass. 60 s and `RECONCILE_RUN_DEADLINE_MS`, as boost |
+| Logging, PII, secrets | Pass. Pino `createLogger` + `child({ correlationId, route })`, with errors as `{ err }`. The logs carry the admin's UUID, the run id and counts only (the boost route's set). No touched file has a `console.*` call. The client logger keys are `status`, `passesFailed` and `err` only (G-11p) |
+| QA6b-M1 in the client | Pass. `planReconcileOutcome` returns null (the failure line) on `passesFailed > 0`, on no counts, and on a missing `planEventsSeen`. The dialog only accepts `response.ok && success === true`. Tested in the render (PRF) and directly |
+| Q-P3-4: `onFinished` | Pass. `bumpWebhooks = useCallback(() => setWebhookRefreshKey(k => k + 1), [])` touches only the block's key and never calls `load`. The render test shows that the jobs GET stays at 1 and the block GET goes to 2. It fires on any answer that reached the route (failures included) and not on a network failure. That is correct: a pass that failed part-way may have left claims `failed` or `processing` |
+| JobsQueuesView: one fetch | Pass. It still has exactly one `fetch(` and never names the plan route (source-pinned) |
+| P3-SA-2 item 8: words | Pass. Each plan `partlyDoneWhen` key has one sentence. PRC pins the keys equal to the registry's, and every copy key is a real plan counter. Any left work turns the first line into "did not finish everything". The three findings use "with Stripe", "no billing record" and "no plan assigned", as the ruling worded them, and each ends "logged for a person to check". A test bans "Disagrees", "our records" and "each other" in them, so they cannot be read as the Finance list's "Disagrees" chip. `reconcileCopy.ts` still has no imports |
+| P3-SA-9: guard amendment; boost pins | Pass. `ReconcilePlansDialog.tsx` joins `CLIENT_FILES` with G-4p, G-5p, G-6p ×2, G-7p ×2 and G-11p, plus the one-render pin and the `bumpWebhooks` pin. The only pre-existing assertion that changed is the LF-4c self-test line that quoted the header (the line P3-SA-9 named). `ReconcileTopUpsDialog.tsx` is untouched, and the `reconcileCopy.ts` diff adds lines only. The boost pins and boost exports are byte-identical |
+| 3b suggestion: request sequence | Pass. A `latestRead` ref means only the newest read sets the data, the error or the loading flag (the `finally` included). Three WSEQ tests, with a no-overlap control |
+| P3-SA-11 | Pass. Tests sit in existing folders. There is no new job, no new env read and no migration, and the Connect harness is untouched. Dev reports tsc 0 errors in the 16 touched files, with no OOM |
+| Entitlements | No touched file imports from `lib/business-os/entitlements/`, so no checklist walk is needed |
+
+#### Rulings on the deviations
+
+1. **Three more render tests amended in place: approved.** `jobsQueues.layout.render` (PURPOSE), `jobsQueues.retry.render` (U-12) and the `jobsQueues.render` button census pin exactly the two things this slice was approved to change: the header clause and the row's button set. Each change is the minimum, with a dated comment naming P3-SA-9, in the LF-4c style. P3-SA-9 named only the source guard because those were the pins SA had read. Its intent, a narrow and named amendment of the header and the row, covers these three.
+2. **`adminGate.writes.test.ts` gains the route (68 → 69): approved, and required.** Every new admin write handler is gated from birth (the boost precedent). The count comment is updated with its own `+ 1` line.
+3. **`moneyEventAudit.coverage` `NON_MONEY` gains `BOS_BILLING_RECONCILE_TRIGGERED`: approved.** The row is an admin action on a system entity and moves no money. Each replayed event is audited by the plan handler, which the AM-7 map already covers. Classing the press as a money event would be wrong.
+4. **`PLAN_LEFT_WORK_KEYS` as a private route constant read from `findBosCronJob`: approved.** A route file may export only its handlers and config, and `bosCronJobs.ts` has no imports, so the read is safe in a route. Reading the registry is better than a second list, because the warn and the nightly amber cannot drift. The private constant is still covered: the route test drives each of the six keys through `POST` and asserts the warn, and a set-equality test pins the six. If the job id were ever renamed, `findBosCronJob` would return undefined and the set would be empty. Those per-key tests would then fail, so the `?? []` fallback cannot go silent.
+
+#### Code Review Comments
+
+None blocking.
+
+#### Optimisation suggestions (non-blocking)
+
+1. `route.ts` (the left-work loop): the job's `partlyDoneWhen` also has `passesFailed`, which has no `plan` prefix. So a press whose pass threw answers 200 with `passesFailed: 1` and no `bos_plan_reconcile_admin_left_work` warn. This is already visible (the runner's own `error` line, and the client's failure line), so it is not a defect. If the warn is meant to be the one grep for "a press left work", add `passesFailed > 0` to it in a later touch.
+2. `reconcileCopy.ts` `planWindowClipped`: "the last 7 days" restates `PLAN_RECONCILE_LIMITS.MAX_WINDOW_MS`. The file has no imports by design, so a one-line test that pins the figure against the constant (the JREC-T1 pattern) would stop it drifting.
+3. `ReconcilePlansDialog.tsx`: a 400, 401 or 403 answer also calls `onFinished`, which is a harmless extra read of the block. It could be narrowed, but that is not worth the extra branch today.
+
+#### Code Approved for QA: Yes
+
+### QA report: P-8b.3c
+
+**QA, 2026-10-29**
+**Test mode:** full
+**Strategy used:** A (unit: the words and `planReconcileOutcome`), B (route integration over a recording Supabase stub and the real production pass wiring, with Stripe stubbed), and render tests of the dialog and the webhook block (jsdom). The source-level Jest guards stand in for option D, because Playwright is not installed. No live browser check was run.
+**Focus:** api, ui, security
+**Skipped:** the live browser press (there is no E2E tool, and a press on a real account would replay real events) and the Connect harness (nothing under `app/api/stripe` changed, P3-SA-11)
+**Input source:** the TL brief
+
+#### Test coverage
+
+| Area | Result | Notes |
+|---|---|---|
+| Words: singular and plural | Pass | The first line was tested at N = 0, 1 and 250. Every count sentence was tested at N = 1, 2 and 37. The singular appears only at 1 |
+| Words: each sentence only above 0 | Pass | All 9 keys (6 for left work, 3 for findings) are absent at 0 and present at 1 and at 5. `planSkippedNotPlan` and `planStaleReclaimed` never add a line |
+| Words: never "finished" with work left | Pass | All 64 combinations of the six left-work keys were tested, with every finding raised in each. The 63 combinations with some work left never contain the word "finished" anywhere. The empty combination does. Lines come in a fixed order and none repeats |
+| Words: no clash with "Disagrees" | Pass | Every plan string was checked: the copy, the left-work sentences, the findings at N = 0, 1 and 2, and a run with everything raised. None contains "Disagrees", "records disagree", "each other" or "our two records". Every "disagree" reads "with Stripe" |
+| Words: "the last 7 days" | Pass | Pinned to `PLAN_RECONCILE_LIMITS.MAX_WINDOW_MS` (SA suggestion 2 is now covered by a test) |
+| Client: failure answers | Pass | Fifteen answers give the fixed failure line, keep the dialog open, show no notice and render no server text. The 200 answers: `passesFailed` 1, no counts, a non-numeric `planEventsSeen`, `data` null, `success` false, `success` as the string "true", a non-JSON body and a JSON array. The 4xx answers: 400, 401, 403 and a 404 in HTML. The 5xx answers: 500, a 502 in HTML and a 504 that carries a success body. In each case `onFinished` is called once and the logger never carries server text |
+| Client: network error | Pass | The failure line shows, `onFinished` is never called, and the one log line has the key `err` only. A network error followed by a press that reaches the route calls `onFinished` once, for the second press |
+| Dialog: double press while busy | Pass | Two form submits and one click in the same tick send one POST and call `onFinished` once |
+| Dialog: closing while running | Pass | Close is disabled. Escape and an outside press are refused, and `aria-busy` is true. The answer still lands and closes the dialog, and the notice shows the left-work lines. After the answer, Escape closes it again |
+| Dialog: once per press | Pass | A failure and then a success give two calls. Unmounting during a press throws nothing and logs no React error. Every POST carries the literal body `'{}'` |
+| Route: gate order | Pass | Six bodies were sent signed out (401) and as a non-admin (403): 1 MB, an array, null, a string, non-JSON and extra keys. In each case `request.text` is never called, and nothing is audited, run or read |
+| Route: odd bodies after the gate | Pass | Each of these gets a 400 with exactly `{ success, error, code }`, and no body text reaches a log: 1 MB, `__proto__`, `constructor`, a nested object, `[{}]`, `{}{}`, `true` and `{"":0}`. These are accepted as empty: `{}` with whitespace around it, whitespace only, and a BOM before `{}` (the UTF-8 decode strips the BOM). In development a 400's details are a Zod message, never the body |
+| Route: audit hangs or throws | Pass | With the real `logAndFlush` and a flush that never settles, the answer is 200 after about 2.0 s, inside `AUDIT_FLUSH_TIMEOUT_MS` + 1.5 s. The pass ran and a warning was logged. With `log()` throwing synchronously, the answer is 200 and the pass ran |
+| Route: the runner throws | Pass | In production and in test, the answer is a 500 with exactly `{ success: false, error: <fixed words>, code: 'reconcile_failed' }`. In development the details carry the message. A thrown string is handled the same way. One error line is logged |
+| Route: no PII, secret or raw Stripe text | Pass | The pass threw with an email, a `sk_live_` string and "No such customer: cus_…" in its message. The answer was a 200 with `passesFailed` 1, and neither the answer nor any log line contains that text. The runner logs the error class name only. The admin's email appears nowhere |
+| Route: odd counts | Pass | Fractions, strings, NaN, Infinity and malformed keys are dropped by the runner. The answer keeps the safe integers only, and a dropped left-work key raises no warn |
+| Route: no `bos_cron_runs` write | Pass | Tested at runtime, not only in source. The real `planReconcilePass` ran over the real lazy wiring, with a recording Supabase stub, Stripe stubbed, and one `invoice.paid` event claimed and replayed. `bos_cron_runs` was only ever selected from. The only table written was `processed_webhook_events`, and no cron rpc was called |
+| Webhook block: sequence guard | Pass | Three overlapping reads were resolved in all 6 orders, under 3 scenarios (18 tests): all succeed; the two older ones fail (one 500, one network error) and the newest succeeds; the two older ones succeed and the newest fails. The newest read always decides the figures and the error. The block stays busy until the newest read answers. A mutation that disables the guard fails all 18 |
+| Regression: boost | Pass | `ReconcileTopUpsDialog.tsx` and the boost route have no diff. The `reconcileCopy.ts` diff only adds lines, and the boost button and its words are byte-identical to HEAD. The boost route, dialog and render suites pass within the gate |
+
+#### Issues found
+
+##### Bugs (must fix before commit)
+
+None.
+
+##### Performance issues
+
+None.
+
+##### Edge cases (all Low, for SA or the user to rule)
+
+1. **A non-numeric count reads as 0.** In `reconcileCopy.ts:118`, `n()` maps any count that is not a number to 0. So a string `planIncomplete: "1"` would read "finished", and in `reconcileCopy.ts:109` a missing or non-numeric `passesFailed` is not treated as a failure. This cannot happen through the route, because the runner drops every count that is not a safe integer (test QC). The current behaviour is pinned by test QO. Accept, or fail closed in a later touch.
+2. **"failed again" is not always true.** `reconcileCopy.ts:88` reads "N plan events failed again". An event the webhook never received, which fails on its first replay, has not failed before. Suggested wording, for the user (G-5): "N plan events failed when replayed; the nightly run will try again."
+3. **Button labels do not match.** `reconcileCopy.ts:66` labels the plan button "Reconcile plan payments now". The top-ups button beside it in the same row reads "Reconcile top-ups now (all accounts)", although both run across every business. The plan dialog's description does say "every business". This is a wording choice for the user.
+4. **The body has no size cap and whitespace is accepted.** At `route.ts:85`, a whitespace-only body of any size is accepted as `{}`, and a 1 MB JSON body is parsed before its 400. The route is admin-only, the platform caps request bodies, and the boost route behaves the same way. Accept.
+5. **The correlation id is not checked.** At `route.ts:72`, `x-correlation-id` goes into the audit row's details and into the logs with no length or format check. The route is admin-only and the boost route does the same. Accept, or bound it in a shared helper later.
+
+SA suggestions 1 (the warn ignores `passesFailed`) and 3 (`onFinished` on a 4xx) are still open as SA filed them. QA confirmed both behaviours in tests: QP for the first, and the `QD` 400/401/403 cases for the second.
+
+#### Tests added (QA): 2 files, 97 tests, all passing
+
+| File | Tests | Covers |
+|---|---|---|
+| `app/admin/__tests__/jobsQueues.reconcilePlans.qa.test.tsx` | 70 | QW (the words), QO (odd answers), QD (the dialog on its own, with an `onFinished` spy) and QS (three overlapping block reads, every order) |
+| `app/api/admin/business-os/billing/reconcile/__tests__/route.qa.test.ts` | 27 | QG (gate order with odd and huge bodies), QZ (bodies), QA (audit hangs or throws), QE (runner throws), QP (no PII, secret or raw Stripe text), QC (odd counts) and QR (the real wiring never writes `bos_cron_runs`) |
+
+#### Gates (2026-10-29, `--ci`)
+
+| Gate | Result |
+|---|---|
+| Jest: `app/admin`, `app/api/admin`, `lib/admin`, `lib/audit`, `lib/business-os/billing`, `lib/repositories` | 530 suites and 17,766 tests pass: Dev's 528 / 17,669, plus the 2 QA suites. The 2 QA suites hold 97 tests, so this count is also 97 above Dev's |
+| `npm run test:bos-entitlements` | 329 suites, 9,819 tests, pass |
+| `tsc --noEmit` (full project, 8 GB heap) | Completed, with no heap or FATAL text. 1,920 errors repo-wide, the same as Dev reported. **0** errors in the touched files and the 2 QA files |
+| ESLint, the 2 QA files | 0 errors, 0 warnings |
+
+#### Final status
+
+- [x] All acceptance criteria pass: ready for commit. No High or Medium issue is open, and edge cases 2 and 3 are wording points for the user's G-5 approval.
+- [ ] Issues found: Dev must address before commit
+
+### Post-review fixes (P-8b.3c, Dev, 2026-10-29)
+
+| # | Source | Fix |
+|---|---|---|
+| 1 | QA edge 1 | `planReconcileOutcome` fails closed. It returns the failure line unless `passesFailed` is present and exactly 0, `planEventsSeen` is present, and every `plan…` count that is present is a whole number, 0 or more (`Number.isSafeInteger`, ≥ 0). An array as the answer or as the counts is also a failure. QA's QO block: the two "documented" tests (a non-numeric left-work count read as 0; `passesFailed` missing or non-numeric not a failure) are replaced. Their inputs move into the `→ null` table, which gains 12 rows: `passesFailed` missing, `'1'`, `'0'`, `-1` and `0.5`; left-work counts `'1'`, `null`, `-1` and `0.5`; a finding count `'2'`; `planEventsSeen` `-3`; `planReplayed` `'1'`. A control test checks that whole-number counts with `passesFailed: 0` still read "finished". The other QO rows are unchanged |
+| 2 | QA edge 2 | `planReplayFailed` now reads "N plan events failed when replayed; the nightly run will try again." For 1 it reads "1 plan event failed when replayed; …". Pins updated: QA's N = 1, 2 and 37 test and its two-line notice, and the render test's PRC words test |
+| 3 | SA suggestion 1 | The `bos_plan_reconcile_admin_left_work` warn also fires when `passesFailed > 0`. It adds `passesFailed` to the counts and stays one warn with counts only. New route test: a pass that throws gives exactly one warn with keys `event`, `passesFailed` (1) and `runId`, and no error text |
+
+Unchanged, as accepted: the button label, the body cap, the correlation id and `onFinished` on a 4xx.
+
+**Gates:**
+
+| Gate | Result |
+|---|---|
+| Jest `app/admin/__tests__/jobsQueues*`, `app/api/admin/business-os/billing`, `lib/audit` | 35 suites, 733 tests, pass |
+| `tsc --noEmit` (8 GB heap) | Completed, with no heap or FATAL text. 1,920 errors repo-wide (unchanged), **0** in the 5 touched files |
+| ESLint, the 5 touched files | 0 errors, 0 warnings |
+
+---
+
+**Sync with `main` (TL, 2026-10-29).** Fast-forwarded to `main` `32effb8d` (#566, D4a, which added `BOS_PLAN_CANCEL_EMAIL_SENT` / `_NOT_SENT`). The audit count pin in `lib/audit/__tests__/eventAudience.test.ts` now reads 66 Business OS and 227 total (not 64 / 225), with both comment lines kept. Gates re-run on the synced tree: jest on app/admin, app/api/admin, lib/admin, lib/audit, lib/business-os/billing, lib/repositories 533 suites / 17,905 tests pass; `test:bos-entitlements` 329 / 9,823 pass.
+
 ## Commit Info
 
 _(RM populates.)_
@@ -1442,3 +1961,6 @@ _(RM populates.)_
 | 2026-10-28 | QA report: P-8b.3a (QA) | PASS. 42 QA tests: FU-P8b-6 boundary ±1 ms, not paying, unresolved tier, one root; filter combinations, unknown values, empty / all-disagree / over-cap counts, plan-drawer chip, old payload, rendered titles never say Stripe; route 401 / 403 before 400 and no PII. Bugs 0; edge cases 2 (Low). All gates green, Connect harness unchanged, tsc 0 in touched files, no OOM |
 | 2026-10-28 | Plan: P-8b.3 (Dev) | On `feature/bos-plan-payments-p8b3` (from `6312470e`). AM-4 read repository + GET, plan reconcile POST (ruling 5) whose lost claims and failures show in its words, logs and AM-4 and never in `bos_cron_runs`, Jobs block and dialog with a named guard amendment, AM-2 "Disagrees" from one shared rule, FU-P8b-6. Facts F3-1 to F3-10; questions Q-P3-1 to Q-P3-8 for SA. No code yet |
 | 2026-10-28 | SA review: Plan P-8b.3 (SA) | APPROVED WITH CHANGES, rulings P3-SA-1 to P3-SA-13. Split into 3 PRs: 3a (FU-P8b-6 + AM-2 Disagrees), 3b (AM-4 read-only block), 3c (plan reconcile button). Q-P3-1 to Q-P3-8 ruled (flow column dropped; created + last attempt, 200-per-state read; classes handler_error/timeout/unknown/stuck; block-only re-read; status=disagrees incl. the missed `financeFilters.ts` parser; no finding on unknown start; no-mode count line; words for every partlyDoneWhen key). Block not gated by the jobs read; KPI indicators set; repo not in index; PII tested at builder and route |
+| 2026-10-28 | P-8b.3b SA approved, QA pass, fixes applied (TL) | Notes folded in as "Implementation Notes (P-8b.3b)". SA APPROVED (D3b-1..7); QA PASS (109 tests, Lows 1-2 fixed, 3-4 accepted); FX-1 accepted by TL; G-5 wording approved by the user with a Jobs-only 409 ending ("…so no webhook events are shown"). Demo correction: the 5 failed rows are test mode, live is empty (P3-SA-13). Awaiting the user's diff review |
+| 2026-10-29 | SA code review: P-8b.3c (SA) | APPROVED. P3-SA-2 items 4 and 8, P3-SA-3, P3-SA-8, P3-SA-9, P3-SA-11, D3-4 and the 3b request-sequence suggestion verified. Gate first; strict empty body; write-ahead `logAndFlush` with `{ run_id, correlationId }` only, reject-tested; plan pass only, no `bos_cron_runs`, no secret; left-work warn on all six keys; QA6b-M1 client failure; `onFinished` bumps the webhook key only; view still one fetch; boost pins byte-identical; findings wording kept apart from "Disagrees". Deviations 1 to 4 approved. Three non-blocking suggestions. SA re-ran 35 suites / 990 tests: pass |
+| 2026-10-29 | QA report: P-8b.3c (QA) | PASS. 97 QA tests in 2 files. Words: plural at 0, 1 and many; all 64 left-work combinations (63 never say "finished"); no "Disagrees" clash; the 7 days pinned to `MAX_WINDOW_MS`. Client: 15 failure answers, network, double press, close while busy, `onFinished` once per press. Route: 401/403 before 400 with huge bodies, a hanging audit bounded at about 2 s, a runner throw giving a 500 with fixed words, no PII, secret or Stripe text, and `bos_cron_runs` only read by the real wiring. Webhook block: 3 overlapping reads in all 6 orders. Bugs 0; Lows 5 (2 wording points for the user). Gates green: 530 / 17,766; entitlements 329 / 9,819; tsc 0 in touched files, no OOM |

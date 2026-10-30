@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { STRIPE_REMOVE_BUTTON_KEY, refusalLines, removeMessageKey, stripeExitLabel } from '@/components/payments/stripeConnectExitCopy';
 import { Sparkles, CreditCard, Loader2, CheckCircle2, AlertCircle, Clock, ExternalLink, Trash2 } from 'lucide-react';
 
 const logger = createLogger({ module: 'StripeConnectStatus' });
@@ -35,6 +36,8 @@ export function StripeConnectStatus({ detailed = false, onStatusChange }: Props)
   const [refreshing, setRefreshing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // D5 / SX-5: why a Remove was refused, in the owner's words (replaces the raw `alert`).
+  const [deleteRefusal, setDeleteRefusal] = useState<string[] | null>(null);
 
   useEffect(() => {
     fetchStripeAccount();
@@ -175,6 +178,7 @@ export function StripeConnectStatus({ detailed = false, onStatusChange }: Props)
 
   const handleDeleteAccount = async () => {
     setDeleting(true);
+    setDeleteRefusal(null);
     try {
       const response = await fetch('/api/payments/stripe-connect/delete', {
         method: 'DELETE',
@@ -186,12 +190,12 @@ export function StripeConnectStatus({ detailed = false, onStatusChange }: Props)
         setShowDeleteConfirm(false);
         onStatusChange?.();
       } else {
-        logger.error({ error: result.error }, 'Failed to delete Stripe account');
-        alert(result.error || 'Failed to disconnect account. Please try again.');
+        logger.warn({ error: result.error }, 'Stripe removal refused');
+        setDeleteRefusal(refusalLines(t, result));
       }
     } catch (error) {
-      logger.error({ err: error }, 'Failed to delete Stripe account');
-      alert('Something went wrong. Please try again.');
+      logger.error({ err: error }, 'Failed to remove Stripe account');
+      setDeleteRefusal(refusalLines(t, null));
     } finally {
       setDeleting(false);
     }
@@ -411,8 +415,11 @@ export function StripeConnectStatus({ detailed = false, onStatusChange }: Props)
                 {t('payments.stripe.manage_button')}
               </button>
               <button
-                onClick={() => setShowDeleteConfirm(true)}
-                aria-label={t('payments.stripe.disconnect_button')}
+                onClick={() => {
+                  setDeleteRefusal(null);
+                  setShowDeleteConfirm(true);
+                }}
+                aria-label={stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
                 className="flex items-center justify-center w-8 h-8 border border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-red-600 hover:border-red-300 dark:hover:border-red-800 transition-colors"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
@@ -491,18 +498,22 @@ export function StripeConnectStatus({ detailed = false, onStatusChange }: Props)
         <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
           <DialogHeader>
             <DialogTitle className="text-xl text-red-600 dark:text-red-400">
-              {t('payments.stripe.disconnect_title')}
+              {stripeExitLabel(t, 'config.stripe.remove_title')}
             </DialogTitle>
             <DialogDescription>
-              {t('payments.stripe.disconnect_desc')}
+              {stripeExitLabel(t, removeMessageKey(account?.stripe_account_type))}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-            <p className="text-sm text-red-800 dark:text-red-200">
-              {t('payments.stripe.disconnect_warning')}
-            </p>
-          </div>
+          {deleteRefusal && (
+            <div role="alert" className="mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+              {deleteRefusal.map((line) => (
+                <p key={line} className="text-sm text-amber-900 dark:text-amber-100">
+                  {line}
+                </p>
+              ))}
+            </div>
+          )}
 
           <DialogFooter className="mt-6 gap-2">
             <Button
@@ -513,12 +524,15 @@ export function StripeConnectStatus({ detailed = false, onStatusChange }: Props)
               {t('common.cancel')}
             </Button>
             <Button
-              variant="destructive"
+              variant="default"
+              // F-3: `destructive` is not a Button variant (it rendered unstyled); the red is ConfigurationDialog's.
+              // `!` because `cn` does not merge classes, so the default variant's background would compete.
+              className="!text-white !bg-red-500 hover:!bg-red-600"
               onClick={handleDeleteAccount}
               disabled={deleting}
             >
               {deleting ? <Loader2 className="w-4 h-4 animate-spin me-2" /> : <Trash2 className="w-4 h-4 me-2" />}
-              {t('payments.stripe.disconnect_button')}
+              {stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
             </Button>
           </DialogFooter>
         </DialogContent>

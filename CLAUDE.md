@@ -41,6 +41,7 @@ Users describe what they want (e.g. *"Summarize my last 10 Gmail emails and save
 | Quality Assurance | QA | User or TL |
 | Release Manager | RM | User or TL |
 | Troubleshooter | TS | User or TL |
+| DevOps | DO | User or TL |
 
 **Standard flow:**
 User → TL → BA → SA (requirement review) → Dev (workplan) → SA (workplan review) → Dev (implement)
@@ -355,6 +356,7 @@ All project documentation lives under `/docs/`.
 | Duplicate API calls / StrictMode double-mount | Use `lib/utils/request-deduplication.ts` |
 | TypeScript errors ignored by `next.config.js` | **Fix them anyway** |
 | Background job / cron that drains a table | Use the `durable-queue-drain` skill — naive select-then-process double-sends |
+| Any environment or settings change (env var, cron, domain, migration apply, auth setting, repo setting, third-party key/webhook/sender setting, MCP/permission/hook) | Use the `env-change-protocol` skill — verify the exact value deployed, with a probe that can fail |
 
 ---
 

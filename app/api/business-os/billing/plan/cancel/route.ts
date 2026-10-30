@@ -42,6 +42,14 @@
  * Refusals and `unchanged` are logged, never audited. Two
  * tabs pressing at the same instant can both reach the write and write two
  * entries (SA note); the write itself is idempotent.
+ *
+ * Email (account deletion lifecycle D4a / SX-3; SA S-6, S-11; user U-2): on
+ * `cancelled` only, after the audit flush, the owner gets "Plan cancelled", or
+ * "Your plan has ended" for the P-7a.4 immediate end. Behind
+ * `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` (off by default). Awaited under its
+ * own 4 s deadline, audited as BOS_PLAN_CANCEL_EMAIL_SENT / _NOT_SENT, and it
+ * never changes the response. Refusals, `unchanged` and a lost answer send
+ * nothing. Sent from here, never from the engine, which D6 also calls.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -54,6 +62,7 @@ import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import { PLAN_MANAGE_REFUSALS, managePlanSubscription, type PlanManageAuditFacts } from '@/lib/business-os/billing/planSubscriptionManage';
 import { isPlanPriceRecognitionEnabled } from '@/lib/business-os/billing/planPricesFlag';
 import { PLAN_LEAVE_REASON_CODES } from '@/lib/business-os/billing/planLeaveReasons';
+import { notifyPlanCancelEmail } from '@/lib/business-os/billing/planCancelEmailDeps';
 import { createLogger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -156,6 +165,21 @@ export async function POST(request: NextRequest) {
       throw new Error('unexpected_manage_outcome');
     }
     await audit(result.audit);
+    // D4a / SX-3 (S-6, S-11, U-2): only on a real change, after the action's
+    // audit, awaited under its own 4 s deadline. Never throws; the answer below
+    // does not depend on it. Off unless BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED.
+    await notifyPlanCancelEmail(
+      {
+        event: result.mode === 'immediate' ? 'ended_now' : 'cancelled',
+        userId: user.id,
+        date: result.endsOn,
+        invoicesLeftOpen: result.audit.invoicesLeftOpen,
+        subscriptionId: result.audit.subscriptionId,
+        livemode: result.audit.livemode,
+        correlationId,
+      },
+      { accountId, userId: user.id, request, logger: requestLogger }
+    );
     return NextResponse.json({
       success: true,
       data: { outcome: 'cancelled', endsOn: result.endsOn, ...(result.mode === 'immediate' ? { mode: 'immediate' } : {}) },

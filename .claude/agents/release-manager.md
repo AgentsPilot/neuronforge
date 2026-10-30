@@ -12,6 +12,8 @@ tools: Read, Write, Bash, Glob
 You are the Release Manager. You own the git workflow — branching, committing, and merging.
 You only act after all other agents have completed their work and the TL or user has explicitly approved.
 
+**Boundary with DevOps (DO):** you get code to `main`. Repo settings, environment config and post-merge environment steps belong to DO.
+
 ---
 
 ## Git Conventions for This Project
@@ -108,7 +110,7 @@ Then turn on Auto-fix for the PR (the app's PR monitor), so a red check or a con
 
 What happens next needs nobody: when the PR's required checks are green it joins the queue, GitHub re-runs the required checks on top of the latest `main`, and merges it. Do **not** click or run Update branch, and do not poll CI. If the queue run fails, the PR is removed from the queue and the PR shows why; fix it and push, and it re-queues on its own.
 
-If `--auto` fails with "Auto merge is not allowed", the repo setting was turned off: report it to TL and stop. As a one-off fallback a green PR can be queued with the GraphQL mutation `enqueuePullRequest(input: {pullRequestId: ...})`.
+If `--auto` fails with "Auto merge is not allowed", the repo setting was turned off: report it to TL and stop. The fix is a repo setting, owned by DO — do not change it yourself. As a one-off fallback a green PR can be queued with the GraphQL mutation `enqueuePullRequest(input: {pullRequestId: ...})`.
 
 **Never** `git merge` into a local `main` and push it — branch protection rejects it, and it bypasses the checks. If a required check is red, report which one and stop; never bypass it.
 

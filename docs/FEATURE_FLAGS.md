@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: 2026-10-27
-> **Version**: 1.15.0
+> **Last Updated**: 2026-10-30
+> **Version**: 1.17.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,9 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-10-30 | 1.17.0 | Dev | Removed the module export switch (export redesign MX-3.1, user decision 2026-10-27): its env-table row and its detail section are gone, and so are its reader, its route 404 and its admin environment entry. The per-module export is live for every owner; the variable is removed from Vercel after deploy. The 1.15.0 row below is kept as history |
+| 2026-10-29 | 1.16.1 | Dev | `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` (account deletion lifecycle D4b / SX-3 part 2) now also gates the daily 3-day "Your plan ends on {date}" reminder cron `/api/cron/bos-plan-cancel-reminders`. No new variable. Needs migration 20261100 before it can send |
+| 2026-10-28 | 1.16.0 | Dev | Added `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` (account deletion lifecycle D4a / SX-3): the plan cancel / keep emails. Server-only, **default off** (`true` or `1` turn it on, case-insensitive). While off the cancel and reactivate routes send and audit nothing extra. On without `RESEND_FROM_EMAIL`: nothing is sent, `BOS_PLAN_CANCEL_EMAIL_NOT_SENT` (`sender_not_configured`) is audited and an `error` with `alert: true` is logged. Reader `isPlanCancelEmailsEnabled()`. |
 | 2026-10-27 | 1.15.0 | Dev | Added `BUSINESS_OS_MODULE_EXPORT_ENABLED` (export redesign MX-1b): the per-module export's switch. Server-only, **default off**, on only for the exact string `true`. While off `POST`/`GET /api/business-os/export-requests` answer 404 and "Download my data" builds the ZIP as before. Reader `isModuleExportEnabled()`. **Never on in Preview before MX-4.** |
 | 2026-10-27 | 1.14.0 | Dev | Added "Adding an environment variable" and step 5 of "Adding a New Feature Flag" (admin environment view EC-3): every new environment variable gets an entry in `lib/admin/environment/catalogue.ts` in the same PR, which the catalogue drift guard enforces in the Jest gate. |
 | 2026-10-21 | 1.13.0 | Dev | Added `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` (data export DE-10b.2): the customer self-delete's off switch. Server-only, **default off**, on only for the exact string `true`. While off the Danger Zone is unchanged (`GET /api/business-os/account/deletion-check` answers `{ enabled: false }`) and `POST /api/business-os/account/delete` answers 404. Reader `isAccountSelfDeleteEnabled()`. |
@@ -67,9 +70,9 @@ Feature flag functions are defined in:
 | **Business OS: Credits boost checkout** | `BUSINESS_OS_CREDITS_BOOST_ENABLED` (+ optional `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS`) | **Server only** | `false` (unset = off) | `POST /api/business-os/credits/boost/checkout` |
 | **Business OS: plan price recognition** | `BUSINESS_OS_PLAN_PRICES_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/stripe/webhook` (plan price catalog in the Business OS router) |
 | **Business OS: plan checkout** | `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/business-os/billing/plan/checkout` (refuses unless the price switch is also on) |
+| **Business OS: plan cancel emails** | `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/business-os/billing/plan/cancel`, `POST /api/business-os/billing/plan/reactivate` (the email after the action; needs `RESEND_FROM_EMAIL`) |
 | **Business OS: test harness credit tools (TEST ONLY)** | `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/admin/business-os/test/take-credits` ("Test credits" tab on `/test-business-os`) |
 | **Business OS: upgrade modal demo page (TEST ONLY)** | `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED` | **Server only** | `false` (unset = off) | `/business-os/upgrade-modal-demo` (linked from the "Upgrade modal" tab on `/test-business-os`) |
-| **Business OS: module export** | `BUSINESS_OS_MODULE_EXPORT_ENABLED` | **Server only** | `false` (unset = off; only the exact string `true` is on) | `POST`/`GET /api/business-os/export-requests`; "Download my data" opens the export drawer when on |
 
 ---
 
@@ -399,6 +402,28 @@ BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED=true
 
 ---
 
+### Business OS: plan cancel emails — `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED`
+
+Account deletion lifecycle D4a / SX-3 ([workplan](/docs/workplans/BUSINESS_OS_D4_PLAN_CANCEL_EMAILS_WORKPLAN.md)). **Default: off. Server-only.** Reader:
+`isPlanCancelEmailsEnabled()` in `lib/business-os/billing/planCancelEmailsFlag.ts`, read on every request (`parseBooleanFlag`, default off).
+
+| State | What happens |
+|---|---|
+| Off (default) | The cancel and reactivate routes answer exactly as before. No email is looked up, composed, sent or audited |
+| On, `RESEND_FROM_EMAIL` set | After an owner's own cancel the owner gets "Your plan is cancelled" (or "Your plan has ended" when a cancel during a failed payment ended it at once); after Keep my plan, "Your plan continues". Audited `BOS_PLAN_CANCEL_EMAIL_SENT` / `_NOT_SENT`. The route waits at most 4 s for it and its answer never depends on it |
+| On, `RESEND_FROM_EMAIL` unset | Nothing is sent. `BOS_PLAN_CANCEL_EMAIL_NOT_SENT` with reason `sender_not_configured` is audited, and an `error` with `alert: true` is logged |
+
+No email for a refusal, an `unchanged` answer, a lost Stripe answer, or a change made in the Stripe dashboard. Turn it on only after the sending domain is verified in Resend and `RESEND_FROM_EMAIL` is set in that environment. Rollback: unset it and redeploy.
+
+**D4b (SX-3 part 2): the same switch gates the 3-day reminder.** While on, the daily cron `/api/cron/bos-plan-cancel-reminders` (05:53 UTC) emails "Your plan ends on {date}" once per period end to an owner whose plan is set to end within 3 days, after checking with Stripe that it still is. This includes a plan set to end from the Stripe dashboard. An account with a deletion request gets none, and a cancel made inside the last 3 days gets the cancel email only. While off the cron records `skipped: 1` and claims nothing. It needs migration 20261100 applied first; before that the cron logs an error and sends nothing.
+
+```bash
+# Vercel, once Resend is confirmed for the environment
+BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED=true
+```
+
+---
+
 ### Business OS: upgrade modal demo page — `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED`
 
 Upgrade modal UM-2 ([workplan](/docs/workplans/BUSINESS_OS_UPGRADE_MODAL_UM2_WORKPLAN.md) §7, SA X-1). **TEST ONLY. Default: off. Server-only.** Reader:
@@ -419,25 +444,6 @@ Remove it with the demo, at the latest when UM-F2 wires a real caller.
 ```bash
 # .env.local — on only for the end-of-stream upgrade modal run
 BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED=false
-```
-
----
-
-### Business OS: module export — `BUSINESS_OS_MODULE_EXPORT_ENABLED`
-
-Export redesign MX-1b ([workplan](/docs/workplans/BUSINESS_OS_EXPORT_MX1B_WORKPLAN.md)). **Default: off. Server-only.** Reader:
-`isModuleExportEnabled()` in `lib/utils/featureFlags.ts`, read on every request. On **only** for the exact string `true`.
-
-| State | What happens |
-|---|---|
-| Off (default) | `POST` and `GET /api/business-os/export-requests` answer **404** before reading the session. "Download my data" (Settings, Danger Zone, `/settings`, `/v2/settings`) builds the ZIP exactly as before. The button learns the state from the GET's own 404 |
-| On | "Download my data" opens the export drawer: the owner ticks modules, the request is queued (2 per rolling 24 h, one at a time, held by the database) and an "Export requested" email is sent. The module emails come from the MX-3 worker |
-
-⚠️ **Never switch it on in Preview before MX-4.** Preview and Production share one database, and the deletion receipt reads only the old export table until MX-4. Rollback: unset it and redeploy; no data changes with it.
-
-```bash
-# Local only until MX-4
-BUSINESS_OS_MODULE_EXPORT_ENABLED=true
 ```
 
 ---

@@ -2743,6 +2743,9 @@ describe('Money MK-5 C-1: Paying % leaves platform accounts out of the numerator
 });
 
 // ── Money MK-5b (§5.1 F-K5b, SA-10): Converted this month through the builder ──
+/** MK5B-FU-1: the converted dep's one argument (SA-WP-M5F M5F-5). */
+type FirstPaymentQuery = Parameters<NonNullable<FinanceHealthDeps['converted']>['firstPlanPayments']>[0];
+
 describe('Money MK-5b: converted (F-K5b) through the builder', () => {
   // NOW is 2026-11-09: "this month" is November 2026 in UTC, whatever the window.
   const NOV = { from: '2026-11-01T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' };
@@ -2762,7 +2765,7 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
         ]) as never
     );
     const converted = {
-      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [readonly string[]]>(() => ok(first)),
+      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [FirstPaymentQuery]>(() => ok(first)),
       signupSources: jest.fn<Result<Array<{ account_id: string; source: 'admin_invite' | 'account_invite' | 'organic'; stamped_at: string | null }>>, [string[]]>(
         () => ok(sources)
       ),
@@ -2777,7 +2780,7 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
     expect(result.counts).not.toHaveProperty('converted');
   });
 
-  it('all businesses: asks for exactly the non-platform plan-row ids; counts the paying accounts that first paid this month', async () => {
+  it('all businesses: asks for this UTC month (MK5B-FU-1) plus the trials MK-9 looks up; counts the paying accounts that first paid this month', async () => {
     const deps = convertedDeps([
       { accountId: B, paidAt: '2026-11-03T10:00:00.000Z' },
       // C first paid last month: not converted this month (G-3: once only).
@@ -2786,7 +2789,8 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
     const { result } = await run(deps as never);
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(deps.converted.firstPlanPayments).toHaveBeenCalledTimes(1);
-    expect([...(deps.converted.firstPlanPayments.mock.calls[0][0] as string[])].sort()).toEqual([A, B, C].sort());
+    // MK5B-FU-1 (SA-WP-M5F): no plan row here is a trial, so no id is asked; this month comes by range.
+    expect(deps.converted.firstPlanPayments).toHaveBeenCalledWith({ accountIds: [], firstPaymentIn: NOV });
     expect(result.payload.converted).toEqual({
       scope: 'all',
       status: 'ok',
@@ -2812,7 +2816,7 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
     // Names and sources for the shown rows only.
     expect(deps.converted.signupSources).toHaveBeenCalledWith([B]);
     expect(result.counts.converted).toEqual({
-      scope: 'all', status: 'ok', asked: 3, found: 2, converted: 1, stopped: 0, shown: 1, namesFound: 0, sourcesFound: 1, stampDiffers: 0,
+      scope: 'all', status: 'ok', asked: 0, inMonthAsked: true, found: 2, converted: 1, stopped: 0, shown: 1, namesFound: 0, sourcesFound: 1, stampDiffers: 0,
     });
   });
 
@@ -2894,7 +2898,9 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
     const yes = picked([{ accountId: B, paidAt: '2026-11-03T00:00:00.000Z' }], true);
     const r1 = await run(yes as never, B);
     if (r1.result.kind !== 'ok') throw new Error('expected ok');
-    expect(yes.converted.firstPlanPayments).toHaveBeenCalledWith([B]);
+    // MK5B-FU-1 (M5F-C5): exactly the picked id, and never this month's cross-account range read.
+    expect(yes.converted.firstPlanPayments).toHaveBeenCalledWith({ accountIds: [B], firstPaymentIn: null });
+    expect(yes.converted.firstPlanPayments.mock.calls.every(([q]) => q.firstPaymentIn === null)).toBe(true);
     expect(yes.converted.signupSources).not.toHaveBeenCalled();
     expect(r1.result.payload.converted).toEqual({ scope: 'one', status: 'ok', month: NOV, state: 'converted', firstPaymentAt: '2026-11-03T00:00:00.000Z' });
 
@@ -2919,6 +2925,25 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
     const { result } = await run(deps as never, null, logger(), NOW, lastWeek);
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.payload.converted).toEqual(expect.objectContaining({ month: NOV, converted: 1 }));
+  });
+
+  it('MK5B-FU-1: no plan rows means no first-payment read, and the figure is a real 0 of 0', async () => {
+    const deps = convertedDeps([]);
+    deps.plans.pagePlans.mockImplementation(() => ok([plan(PLATFORM)]) as never);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(deps.converted.firstPlanPayments).not.toHaveBeenCalled();
+    expect(result.payload.converted).toEqual(expect.objectContaining({ status: 'ok', converted: 0, stopped: 0 }));
+    expect(result.counts.converted).toEqual(expect.objectContaining({ asked: 0, inMonthAsked: false, found: 0 }));
+  });
+
+  it('MK5B-FU-1: the counts on the log carry no id and no date', async () => {
+    const deps = convertedDeps([{ accountId: B, paidAt: '2026-11-03T10:00:00.000Z' }]);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const text = JSON.stringify(result.counts.converted);
+    expect(text).not.toContain(B);
+    expect(text).not.toContain('2026-11');
   });
 
   it('the production wiring supplies the converted reads by name', () => {
@@ -2950,7 +2975,7 @@ describe('Money MK-9: payingBreakdown through the builder', () => {
     );
     if (firstPayments === 'absent') return { deps, converted: undefined };
     const converted = {
-      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [readonly string[]]>(() =>
+      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [FirstPaymentQuery]>(() =>
         firstPayments === 'fail' ? ({ data: null, error: new Error('boom') } as never) : ok(firstPayments)
       ),
       signupSources: jest.fn(() => ok([])),
@@ -2963,6 +2988,12 @@ describe('Money MK-9: payingBreakdown through the builder', () => {
     const { result } = await run(deps as never);
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(converted?.firstPlanPayments).toHaveBeenCalledTimes(1);
+    // MK5B-FU-1: the trials asked are those that ended in the window (C), never one still running past it (D)
+    // or a platform account; this month's first payments come by range in the same call.
+    expect(converted?.firstPlanPayments).toHaveBeenCalledWith({
+      accountIds: [C],
+      firstPaymentIn: { from: '2026-11-01T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' },
+    });
     expect(result.payload.payingBreakdown).toEqual({
       comped: { total: 1, assignedNoSubscription: 1, endedOrNotPaying: 0 },
       trials: { status: 'ok', endedInWindow: 1, stillRunning: 1, paid: 1, paidBeforeEnd: 1, rate: null, minimumForRate: 10 },
@@ -3025,6 +3056,86 @@ describe('Money MK-9: payingBreakdown through the builder', () => {
     expect(breakdown?.comped).not.toBeNull();
     expect(breakdown?.comped?.total).toBeGreaterThan(0);
     expect(breakdown?.comped?.assignedNoSubscription).toBe(breakdown?.comped?.total);
+  });
+
+  // ── MK5BFU-FU-2 (user decision 2026-10-30): an after-plan free period is not a trial ──
+  describe('MK5BFU-FU-2: after-plan free periods are out of the trial base', () => {
+    const E = '55555555-5555-4555-8555-555555555555';
+    const F = '66666666-6666-4666-8666-666666666666';
+    const MONTH = { from: '2026-11-01T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' };
+    /** C: a real trial that ended in the window. E: an after-plan period that ended in it. F: one still running. */
+    function mixedDeps(moves: { E: number; F: number }, firstPayments: Array<{ accountId: string; paidAt: string }>) {
+      const { deps, converted } = breakdownDeps(firstPayments);
+      deps.plans.pagePlans.mockImplementation(
+        () =>
+          ok([
+            plan(B, { tier: TIER, cohort: null, after_plan_moves: 0 }),
+            { ...trialPlan(C, '2026-11-03T00:00:00.000Z'), after_plan_moves: 0 },
+            { ...trialPlan(E, '2026-11-04T00:00:00.000Z'), after_plan_moves: moves.E },
+            { ...trialPlan(F, '2026-11-20T00:00:00.000Z'), after_plan_moves: moves.F },
+          ]) as never
+      );
+      return { deps, converted: converted as NonNullable<typeof converted> };
+    }
+    // E first paid long before its free period: under the old rule it counted as paid AND paid before the end.
+    const PAYMENTS = [
+      { accountId: C, paidAt: '2026-11-02T00:00:00.000Z' },
+      { accountId: E, paidAt: '2026-08-01T00:00:00.000Z' },
+      { accountId: F, paidAt: '2026-07-01T00:00:00.000Z' },
+    ];
+
+    it('an after-plan row is excluded: neither ended, running, paid nor asked', async () => {
+      const { deps, converted } = mixedDeps({ E: 1, F: 2 }, PAYMENTS);
+      const { result } = await run(deps as never);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      expect(result.payload.payingBreakdown?.trials).toEqual({
+        status: 'ok', endedInWindow: 1, stillRunning: 0, paid: 1, paidBeforeEnd: 1, rate: null, minimumForRate: 10,
+      });
+      expect(converted.firstPlanPayments).toHaveBeenCalledWith({ accountIds: [C], firstPaymentIn: MONTH });
+    });
+
+    it('control: the same rows with no after-plan move count every trial (the old figures)', async () => {
+      const { deps, converted } = mixedDeps({ E: 0, F: 0 }, PAYMENTS);
+      const { result } = await run(deps as never);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      expect(result.payload.payingBreakdown?.trials).toEqual({
+        status: 'ok', endedInWindow: 2, stillRunning: 1, paid: 2, paidBeforeEnd: 2, rate: null, minimumForRate: 10,
+      });
+      expect(converted.firstPlanPayments).toHaveBeenCalledWith({ accountIds: [C, E], firstPaymentIn: MONTH });
+    });
+
+    it('a real trial is still counted when every other trial is an after-plan period', async () => {
+      const { deps } = mixedDeps({ E: 3, F: 1 }, [{ accountId: C, paidAt: '2026-11-05T00:00:00.000Z' }]);
+      const { result } = await run(deps as never);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      // C paid after its trial ended: paid, not before the end.
+      expect(result.payload.payingBreakdown?.trials).toEqual(
+        expect.objectContaining({ endedInWindow: 1, stillRunning: 0, paid: 1, paidBeforeEnd: 0 })
+      );
+    });
+
+    it('a mixed set: only the after-plan rows leave; the ask is still a superset of the ids the count reads', async () => {
+      const { deps, converted } = mixedDeps({ E: 1, F: 0 }, PAYMENTS);
+      const { result } = await run(deps as never);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      const trials = result.payload.payingBreakdown?.trials;
+      expect(trials).toEqual(expect.objectContaining({ endedInWindow: 1, stillRunning: 1, paid: 1, paidBeforeEnd: 1 }));
+      const asked = new Set(converted.firstPlanPayments.mock.calls[0][0].accountIds);
+      // The ids the count looks a first payment up for: the real trials that ended in the window and by now.
+      for (const counted of [C]) expect(asked.has(counted)).toBe(true);
+      expect(asked.has(E)).toBe(false);
+      // F is still running: never asked, as before (outside the window's ended set).
+      expect(asked.has(F)).toBe(false);
+    });
+
+    it('Converted this month is not affected by the after-plan count', async () => {
+      const thisMonth = [{ accountId: B, paidAt: '2026-11-03T10:00:00.000Z' }, ...PAYMENTS];
+      const withMoves = await run(mixedDeps({ E: 1, F: 1 }, thisMonth).deps as never);
+      const without = await run(mixedDeps({ E: 0, F: 0 }, thisMonth).deps as never);
+      if (withMoves.result.kind !== 'ok' || without.result.kind !== 'ok') throw new Error('expected ok');
+      expect(withMoves.result.payload.converted).toEqual(without.result.payload.converted);
+      expect(withMoves.result.payload.converted).toEqual(expect.objectContaining({ status: 'ok', converted: 1 }));
+    });
   });
 
   it('a business picked: no breakdown key (one account is not a rate)', async () => {

@@ -1811,6 +1811,22 @@ export const en = {
     'config.stripe.disconnected': 'Disconnected',
     'config.stripe.disconnected_desc': 'Your Stripe account is disconnected. Reconnect to resume accepting payments, or delete the account to start fresh.',
     'config.stripe.reconnect': 'Reconnect',
+    // Self-service exit D5 / SX-5: Business Setup → Payments, removing or disconnecting Stripe (add-only, S-7).
+    // remove_connection is the U-1 label ("Delete Account" → "Remove connection"); revert in components/payments/stripeConnectExitCopy.ts.
+    'config.stripe.remove_connection': 'Remove connection',
+    'config.stripe.remove_title': 'Remove Stripe from your business?',
+    'config.stripe.remove_message_express': 'This closes the Stripe account we set up for you and removes it from your business. You will no longer be able to open its Stripe dashboard. Your past payments stay in your records here. This cannot be undone.',
+    'config.stripe.remove_message_standard': 'This removes our access to your Stripe account. Your Stripe account stays open and stays yours. Your past payments stay in your records here.',
+    'config.stripe.refused.client_plans_running': '{n} client payment plans are still running through Stripe. End them first in Orders, or from each client\'s record, then try again.',
+    'config.stripe.refused.client_plans_running_uncounted': 'Client payment plans are still running through Stripe. End them first in Orders, or from each client\'s record, then try again.',
+    'config.stripe.refused.client_payments_pending': '{n} client payments or refunds are still being processed. Wait for them to finish, then try again.',
+    'config.stripe.refused.client_payments_pending_uncounted': 'Client payments or refunds are still being processed. Wait for them to finish, then try again.',
+    'config.stripe.refused.stripe_refused': 'Stripe did not let us remove this account yet, usually because it still holds money for you (a balance or a payout on its way). Nothing was changed. Try again once Stripe has paid it out.',
+    'config.stripe.refused.stripe_unreachable': 'We could not reach Stripe right now. Nothing was changed. Please try again in a few minutes.',
+    'config.stripe.refused.check_failed': 'We could not check this right now. Nothing was changed. Please try again.',
+    'config.stripe.refused.not_available': 'We need to finish something on our side before this can be done. Nothing was changed. Contact us at {support}.',
+    'config.stripe.refused.generic': 'This could not be completed. Nothing was changed. Please try again.',
+    'config.stripe.refused.record_not_removed': 'Stripe has released the account, but we could not finish removing it here. Contact us at {support}.',
     'config.payments.settings_title': 'Payment Settings',
     'config.payments.settings_desc': 'Payment options are configured per service. Edit a service to set its price and payment plan options.',
 
@@ -4646,6 +4662,8 @@ export const en = {
     // Plan payments P-7a.3 (PF-14, C-10): the owner cancels in-app now (P-7a.1), so the blocker points there.
     'settings.account_delete.blocker.plan_running': 'Your plan is still running. Cancel it in Settings → Plan. You can delete your account once it has ended.',
     'settings.account_delete.blocker.stripe_connected': 'Your Stripe account is still connected for client payments. Disconnect it in Settings → Payments.',
+    // D5 / SX-5 (P-8): G-8 names the button that clears it. The stripe_connected key above is no longer read (left in place, S-7).
+    'settings.account_delete.blocker.stripe_linked': 'Your Stripe account is still linked for client payments. Remove it in Business Setup → Payments → Remove connection. Disconnect on its own does not remove it.',
     'settings.account_delete.blocker.client_plans_running': '{n} client payment plans are still running. End them first.',
     'settings.account_delete.blocker.client_payments_pending': '{n} client payments or refunds are still pending. Wait for them to finish.',
     'settings.account_delete.blocker.client_plans_running_uncounted': 'Client payment plans are still running. End them first.',

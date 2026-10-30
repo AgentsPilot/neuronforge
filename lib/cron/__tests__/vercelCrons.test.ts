@@ -1,10 +1,12 @@
 /**
  * The production cron schedule (admin reorganisation slice 5, part A).
  *
- * `vercel.json` schedules the Business OS jobs listed below (21 as of
+ * `vercel.json` schedules the Business OS jobs listed below (22 as of
  * 2026-10-30) plus ONE execution-layer route, `/api/run-scheduled-agents`.
  *
- * It was 22. `inbox-enquiries` was retired on 2026-10-30: the mailbox channel
+ * 22, not the 23 main counted: two jobs were added there
+ * (`data-export-modules`, `bos-plan-cancel-reminders`) and `inbox-enquiries`
+ * was retired here on 2026-10-30, because the mailbox channel
  * is an agent, and it now runs on the platform scheduler like every other one.
  * Its own cron meant `lib/business-os` importing `@/lib/pilot` to run an agent
  * itself — the management layer reaching up into the execution layer, and the
@@ -118,12 +120,12 @@ const BOS_CRONS: CronEntry[] = [
    */
   { path: '/api/cron/booking-money-reconcile', schedule: '*/15 * * * *' },
   /*
-   * The 19th: the data export daily sweep (DE-8b, 2026-10-17), shipped in the
-   * same PR as the zip writer (SA DE-8a Q-6). 05:25 is between the settlement
-   * gap check (05:17) and the billing reconcile (05:41); no hourly or daily
-   * job runs at :25.
+   * The data export worker (module export MX-3b, 2026-10-29). It sat directly
+   * after the data export sweep, which export MX-3.1 removed. Every 5
+   * minutes: a queue drain with a 300 s maxDuration under a 420 s lease. It also runs at :50, beside the account
+   * deletion lifecycle job, on one shared Resend team limit.
    */
-  { path: '/api/cron/data-export', schedule: '25 5 * * *' },
+  { path: '/api/cron/data-export-modules', schedule: '*/5 * * * *' },
   // The 20th: finance slice 8.2 (§11M.7): 00:07 UTC, a free minute (CF-6), appended last.
   { path: '/api/cron/finance-snapshot', schedule: '7 0 * * *' },
   /*
@@ -164,6 +166,13 @@ const BOS_CRONS: CronEntry[] = [
    * defaults to off, so a pass reports zeros until it is set deliberately.
    */
   { path: '/api/run-scheduled-agents', schedule: '*/5 * * * *' },
+  /*
+   * Account deletion lifecycle D4b / SX-3 part 2 (SA R-A): the plan-ends
+   * reminder, about 3 days before a cancelled plan ends. 05:53 is a free
+   * minute, divisible by neither 5 nor 15, and 12 minutes after the billing
+   * reconcile at 05:41, so two Stripe sweeps never overlap. Appended last.
+   */
+  { path: '/api/cron/bos-plan-cancel-reminders', schedule: '53 5 * * *' },
 ];
 
 /*
@@ -179,8 +188,8 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 21 Business OS jobs plus the agent scheduler, unchanged and in order', () => {
-    expect(crons).toHaveLength(22);
+  it('schedules exactly the 22 Business OS jobs plus the agent scheduler, unchanged and in order', () => {
+    expect(crons).toHaveLength(23);
     expect(crons).toEqual(BOS_CRONS);
   });
 

@@ -216,7 +216,7 @@ describe('submitting', () => {
     await act(async () => {
       fireEvent.click(button());
     });
-    expect(await screen.findByTestId('delete-account-blockers')).toHaveTextContent('Your Stripe account is still connected');
+    expect(await screen.findByTestId('delete-account-blockers')).toHaveTextContent('Your Stripe account is still linked for client payments. Remove it in Business Setup');
     expect(screen.getByRole('alert')).toHaveTextContent('Your files were removed but your account was kept');
     expect(screen.queryByLabelText(en['settings.account_delete.statement_label'])).toBeNull();
   });

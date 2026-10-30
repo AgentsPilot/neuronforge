@@ -1823,3 +1823,22 @@ describe('slice 8.3 source guards (the History view, wiring and read repository)
     expect(importsOf(codeOf(HIST_DEPS)).sort()).toEqual(['./financeHealth', './financeHealthDeps', '@/lib/repositories/BusinessOsFinanceSnapshotReadRepository'].sort());
   });
 });
+
+// MK5BFU-FU-2 (user decision 2026-10-30): MK-9 leaves after-plan free periods out, which needs the
+// count on every walked row. Only the Finance wiring asks for it; the other walkers' selects stay as they were.
+describe('MK5BFU-FU-2: the Finance walk reads the after-plan move count', () => {
+  // The wiring's own call (`pagePlans({ ...options, withAfterPlanMoves: true })`) is pinned in the RC-15
+  // file, the one test file allowed to name the plan repository.
+
+  it('the builder and the snapshot job never ask for it themselves (the wiring decides)', () => {
+    for (const file of ['lib/business-os/finance/financeHealth.ts', 'lib/business-os/finance/financeSnapshotJob.ts']) {
+      expect({ file, asks: /withAfterPlanMoves/.test(codeOf(file)) }).toEqual({ file, asks: false });
+    }
+  });
+
+  it('both MK-9 trial lists (the ask and the count) come from trialsForTrialToPaid, never a hand-written isTrialRow filter', () => {
+    const code = codeOf('lib/business-os/finance/financeHealth.ts');
+    expect(code.match(/trialsForTrialToPaid\(/g)?.length).toBe(2);
+    expect(code).not.toMatch(/\bisTrialRow\b/);
+  });
+});

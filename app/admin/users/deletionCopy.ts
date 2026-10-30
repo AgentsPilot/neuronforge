@@ -251,7 +251,9 @@ export const DELETION_COMMIT_REFUSAL_COPY: Record<DeletionCommitCodeView, string
   subscription_live:
     'This business has a live plan subscription. Nothing was deleted. The owner cancels it in Settings → Plan, or cancel it in the Stripe dashboard; deletion is possible once it has ended.',
   subscription_unreadable: 'Whether this business has a live plan subscription could not be checked. Nothing was deleted. Try again.',
-  stripe_connected: 'A Stripe account is connected to this business. Nothing was deleted. Disconnect it first.',
+  // D5 / SX-5: Disconnect does not clear G-8; only the owner's Remove connection (Stripe-confirmed) does.
+  stripe_connected:
+    'A Stripe account is linked to this business. Nothing was deleted. The owner removes it in Business Setup → Payments → Remove connection; Disconnect alone does not clear it.',
   stripe_unreadable: 'Whether Stripe is connected could not be checked. Nothing was deleted. Try again.',
   local_blocking: 'A billing or money check blocks this deletion. Nothing was deleted. Reopen the preview to see which.',
   local_unreadable: 'A billing or money check could not be read. Nothing was deleted. Try again.',

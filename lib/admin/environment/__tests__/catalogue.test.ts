@@ -29,6 +29,7 @@ import { ENVIRONMENT_CATALOGUE, ENVIRONMENT_GROUPS, type EnvCatalogueEntry, type
 import * as featureFlags from '@/lib/utils/featureFlags';
 import { isPlanCheckoutEnabled } from '@/lib/business-os/billing/planCheckoutFlag';
 import { isPlanPriceRecognitionEnabled } from '@/lib/business-os/billing/planPricesFlag';
+import { isPlanCancelEmailsEnabled } from '@/lib/business-os/billing/planCancelEmailsFlag';
 import { isTestCreditToolsEnabled } from '@/lib/business-os/credits/testCreditToolsFlag';
 import { isUpgradeModalDemoEnabled } from '@/lib/business-os/upgradeModalDemoFlag';
 import { isCreditHistoryRouteEnabled } from '@/lib/business-os/credits/creditHistoryFlag';
@@ -54,7 +55,7 @@ const READERS: Record<string, Array<() => boolean>> = {
   AGENT_SCHEDULER_ENABLED: [featureFlags.isAgentSchedulerEnabled],
   BUSINESS_OS_CREDITS_BOOST_ENABLED: [featureFlags.isBusinessOsCreditsBoostEnabled],
   BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED: [featureFlags.isAccountSelfDeleteEnabled],
-  BUSINESS_OS_MODULE_EXPORT_ENABLED: [featureFlags.isModuleExportEnabled],
+  BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED: [isPlanCancelEmailsEnabled],
   NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME: [featureFlags.isEarlySessionOutcomeEnabled],
   BUSINESS_OS_PLAN_CHECKOUT_ENABLED: [isPlanCheckoutEnabled],
   BUSINESS_OS_PLAN_PRICES_ENABLED: [isPlanPriceRecognitionEnabled],

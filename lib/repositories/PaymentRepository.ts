@@ -2260,6 +2260,28 @@ export class StripeConnectRepository {
       .maybeSingle<{ user_id: string }>();
     return { data, error };
   }
+
+  /**
+   * ⟨unscoped-by-design, count only⟩ How many OTHER businesses' Express rows
+   * name this Stripe account (self-service exit SX-5 / D5, W-10).
+   *
+   * Releasing an account at Stripe cuts it off for every business that names
+   * it, so the delete must know whether anyone else does. Only a number leaves
+   * this method: no owner id, no row. Kept apart from
+   * `findOwnerIdByStripeAccountId`, whose single caller is the webhook resolver
+   * (tenant-isolation guard, CF-5 PR 5).
+   */
+  async countOtherUsersNamingStripeAccount(
+    stripeAccountId: string,
+    excludeUserId: string
+  ): Promise<{ data: number | null; error: PostgrestError | null }> {
+    const { count, error } = await this.supabase
+      .from('stripe_connect_accounts')
+      .select('id', { count: 'exact', head: true })
+      .eq('stripe_account_id', stripeAccountId)
+      .neq('user_id', excludeUserId);
+    return { data: error ? null : count ?? 0, error };
+  }
 }
 
 /** supabase-js's own result for `findOwnerIdByStripeAccountId`, error object kept. */
