@@ -39,7 +39,7 @@ jest.mock('@/lib/repositories/AgentRepository', () => ({
 
 jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
   businessProfileRepository: {
-    getByUserId: jest.fn().mockResolvedValue({ data: { language: 'en' }, error: null }),
+    findByUserId: jest.fn().mockResolvedValue({ data: { language: 'en' }, error: null }),
   },
 }));
 

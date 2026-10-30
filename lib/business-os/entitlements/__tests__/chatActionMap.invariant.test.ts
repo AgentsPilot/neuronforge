@@ -81,8 +81,14 @@ describe('the mapping is total', () => {
      * nudge, which is NOT `send`) and `invoices.remind` (the overdue chase,
      * which is NOT `send`) — and `abandoned_bookings` arrived as an entity,
      * bringing its own find, aggregate and remind.
+     *
+     * 110 from 2026-10-30: `contacts.capture_enquiry`. The mailbox agents filed
+     * an enquiry through `crm.capture_enquiry` — a door on the CRM plugin — and
+     * that plugin is retired, so the capability moved onto the Business OS one
+     * where every other agent action lives. Same work, same writes; what
+     * changed is which plugin the plan calls.
      */
-    expect(pluginActions).toHaveLength(109);
+    expect(pluginActions).toHaveLength(110);
     expect(pluginActions.filter((action) => !derived.includes(action))).toEqual([]);
     expect(derived.filter((action) => !pluginActions.includes(action))).toEqual([]);
   });
