@@ -543,6 +543,14 @@ describe('RC-15 — entitlement repository referrers', () => {
     ]);
   });
 
+  it('MK5BFU-FU-2: the finance wiring walks plans with the after-plan move count (still a read, same method)', () => {
+    const source = readFileSync(join(ROOT, ...FINANCE_WIRING.split('/')), 'utf8');
+    const asks = /businessOsAccountPlanRepository\s*\.\s*pagePlans\s*\(\s*\{\s*\.\.\.options\s*,\s*withAfterPlanMoves\s*:\s*true\s*\}\s*\)/;
+    expect(source).toMatch(asks);
+    // Planted negative control: the plain pass-through would be seen.
+    expect('businessOsAccountPlanRepository.pagePlans(options)').not.toMatch(asks);
+  });
+
   it('Plan payments P-8a.1 (P8A-R1): the Subscriptions wiring calls pagePlans on the plan repository and NOTHING else', () => {
     const source = readFileSync(join(ROOT, ...SUBSCRIPTIONS_WIRING.split('/')), 'utf8');
     const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
