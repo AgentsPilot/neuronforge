@@ -570,6 +570,7 @@ inbound_review AS (
     ('scheduling_bookings', 'scheduling_bookings_service_id_fkey', 'user_id'),
     ('scheduling_meetings', 'scheduling_meetings_booking_id_fkey', 'user_id'),
     ('scheduling_meetings', 'scheduling_meetings_business_fk', 'user_id'),
+    ('scheduling_meetings', 'scheduling_meetings_replaces_meeting_id_fkey', 'user_id'),
     ('scheduling_services', 'scheduling_services_business_fk', 'user_id'),
     ('shadow_failure_snapshots', 'shadow_failure_snapshots_agent_id_fkey', 'user_id'),
     ('shared_agent_imports', 'shared_agent_imports_created_agent_id_fkey', 'imported_by_user_id'),
