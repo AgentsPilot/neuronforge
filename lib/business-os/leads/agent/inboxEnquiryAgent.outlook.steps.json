@@ -99,7 +99,7 @@
               "reply_to": {
                 "type": "string",
                 "source": "plugin",
-                "description": "Reply-To header — usually the person who filled in the form"
+                "description": "Reply-To header \u2014 usually the person who filled in the form"
               },
               "cc": {
                 "type": "string",
@@ -153,46 +153,62 @@
         {
           "step_id": "step3",
           "type": "action",
-          "description": "File the enquiry email in the CRM using the platform's capture_enquiry mechanism. Pass the raw email body, subject, and the enquiry_template so the CRM can deterministically parse the sender's name, email and message. This uses the same path as the website contact form, so the platform's unanswered-enquiry follow-up can see it.",
-          "plugin": "crm",
+          "description": "File the enquiry through the business-os plugin \u2014 the channel between the execution layer and this business's data, which carries tenant scoping on connection.user_id. Was the crm plugin, which reached the same records by a second door. Both open onto the same captureEnquiryFromEmail, so the parsing, the activity and the stored first message are unchanged, and the unanswered-enquiry chase still sees it. Pass the raw body, subject and the enquiry_template so the sender's name, email and message are read deterministically rather than guessed.",
+          "plugin": "business-os",
           "output_variable": "filing_result",
           "output_schema": {
             "type": "object",
             "source": "plugin",
             "properties": {
-              "contact_id": {
-                "type": "string",
-                "source": "plugin"
-              },
-              "is_new_contact": {
+              "applied": {
                 "type": "boolean",
                 "source": "plugin"
               },
-              "filed": {
-                "type": "boolean",
-                "source": "plugin"
-              },
-              "reason": {
+              "summary": {
                 "type": "string",
                 "source": "plugin"
+              },
+              "row": {
+                "type": "object",
+                "source": "plugin",
+                "properties": {
+                  "filed": {
+                    "type": "boolean",
+                    "source": "plugin"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "source": "plugin"
+                  },
+                  "contact_id": {
+                    "type": "string",
+                    "source": "plugin"
+                  },
+                  "is_new_contact": {
+                    "type": "boolean",
+                    "source": "plugin"
+                  }
+                }
               }
             }
           },
           "id": "step3",
           "params": {
-            "source": "website_form",
-            "raw_body": "{{current_email.body}}",
-            "raw_html": "{{current_email.html}}",
-            "subject": "{{current_email.subject}}",
-            "template": "{{input.enquiry_template}}",
-            "reply_to": "{{current_email.reply_to}}",
-            "cc": "{{current_email.cc}}",
-            "from": "{{current_email.from}}",
-            "to": "{{current_email.to}}",
-            "via": "outlook"
+            "data": {
+              "source": "website_form",
+              "raw_body": "{{current_email.body}}",
+              "raw_html": "{{current_email.html}}",
+              "subject": "{{current_email.subject}}",
+              "template": "{{input.enquiry_template}}",
+              "reply_to": "{{current_email.reply_to}}",
+              "cc": "{{current_email.cc}}",
+              "from": "{{current_email.from}}",
+              "to": "{{current_email.to}}",
+              "via": "outlook"
+            }
           },
           "name": "File the enquiry email in the CRM using the platform's capture_enquiry mechanism. Pass the raw email body, subject, and the enquiry_template so the CRM can deterministically parse the sender's name, email and message. This uses the same path as the website contact form, so the platform's unanswered-enquiry follow-up can see it.",
-          "action": "capture_enquiry"
+          "action": "capture_enquiry_contacts"
         },
         {
           "step_id": "step4",
@@ -200,7 +216,7 @@
           "description": "Conditional: node_3",
           "condition": {
             "conditionType": "simple",
-            "field": "filing_result.filed",
+            "field": "filing_result.row.filed",
             "operator": "equals",
             "value": true
           },
@@ -243,7 +259,8 @@
           "name": "Conditional: node_3"
         }
       ],
-      "itemVariable": "current_email"
+      "itemVariable": "current_email",
+      "continueOnError": true
     },
     "gather": {
       "operation": "collect"

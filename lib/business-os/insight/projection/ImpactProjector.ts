@@ -55,7 +55,20 @@ export interface ImpactProjection {
   /** What happens if they let the system handle it */
   letMeHandleIt: {
     summary: string;
-    details: string;
+    /**
+     * The second line, where there is an honest one.
+     *
+     * Optional because sometimes there is not. The overdue-invoice projection
+     * had "and anything 7+ days late from now on — you do nothing", and both
+     * halves were false: the button makes no ongoing arrangement, and the 7 was
+     * borrowed from the detector's NOTICE threshold rather than from anything
+     * that chases. Removing it left this field required and unfilled, which is
+     * how the scoped type check found it.
+     *
+     * A projection with one true line beats one with a true line and an invented
+     * second, so the type admits the shorter form rather than inviting filler.
+     */
+    details?: string;
     summaryLine?: ProjectionLine;
     detailsLine?: ProjectionLine;
     projectedOutcome: {
@@ -262,12 +275,31 @@ export class ImpactProjector {
           key: 'insight.cash_ar_overdue.handle_it',
           params: { count: invoiceCount },
         },
-        details: `And anything ${insight.process_parameters?.days_threshold || 7}+ days late from now on — you do nothing`,
-        detailsLine: {
-          text: `And anything ${insight.process_parameters?.days_threshold || 7}+ days late from now on — you do nothing`,
-          key: 'insight.cash_ar_overdue.handle_it_detail',
-          params: { days: Number(insight.process_parameters?.days_threshold) || 7 },
-        },
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * NO SECOND LINE, BECAUSE THE ONE THAT WAS HERE WAS FALSE TWICE.
+         *
+         * It read "and anything 7+ days late from now on — you do nothing", and
+         * neither half held.
+         *
+         * The button makes no ongoing arrangement. It queues a one-off chase
+         * for these invoices and THEN offers to automate — so "from now on"
+         * described a decision the owner had not been asked for yet.
+         *
+         * And the number was borrowed from the wrong question. That 7 is
+         * `days_threshold`, which is `const daysThreshold = 7` hardcoded in
+         * `CashArOverdueDetector` as the cutoff for NOTICING an invoice. The
+         * thing that would actually chase is the overdue schedule, which fires
+         * only on its exact milestone days and never after the last one. So the
+         * sentence named the precise boundary past which nothing is covered —
+         * which is how four invoices reached 13 to 31 days overdue with the
+         * chaser switched on the whole time.
+         *
+         * The summary above is true on its own: these get chased today. A
+         * promise about everything after today belongs on the offer that
+         * actually makes one.
+         * ─────────────────────────────────────────────────────────────────────
+         */
         projectedOutcome: {
           cashRecovered: expectedRecovery,
           timeSaved: manualTimeMinutes,

@@ -1,0 +1,113 @@
+[
+  {
+    "step_id": "step1",
+    "id": "step1",
+    "type": "action",
+    "name": "Find enquiries that went quiet",
+    "description": "People who got in touch, never booked anything, and have been waiting more than a week. `stage` is deliberately NOT filtered on: pipeline stage keys are per-business, and 'lead' is not a value every board has. THE UPPER BOUND IS THE OWNER'S, not mine: `{{input.stop_after_days}}` arrives as a negative offset from `agent_config`, chosen on the install dialog. It was a number written into this file, which meant every business on the platform gave up at the same moment regardless of what they sell.",
+    "plugin": "business-os",
+    "action": "find_contacts",
+    "params": {
+      "filters": [
+        {
+          "field": "has_bookings",
+          "op": "eq",
+          "value": false
+        },
+        {
+          "field": "email",
+          "op": "is_not_null"
+        },
+        {
+          "field": "created_at",
+          "op": "lt",
+          "value": {
+            "$date": "today",
+            "offset": {
+              "days": -7
+            }
+          }
+        },
+        {
+          "field": "created_at",
+          "op": "gte",
+          "value": {
+            "$date": "today",
+            "offset": {
+              "days": "{{input.stop_after_days}}"
+            }
+          }
+        }
+      ],
+      "order_by": [
+        {
+          "field": "created_at",
+          "dir": "asc"
+        }
+      ],
+      "limit": 15
+    },
+    "output_variable": "quiet_enquiries",
+    "output_schema": {
+      "type": "object"
+    }
+  },
+  {
+    "step_id": "step2",
+    "id": "step2",
+    "type": "scatter_gather",
+    "name": "Write to each one personally",
+    "description": "One message per person, written for them. The whole reason this agent needs an AI step: unlike an invoice, there is no existing document to send, and a single canned paragraph sent to fifteen people is the mailshot this product exists to avoid. ONE PERSON'S REFUSAL MUST NOT STOP THE REST. In production a failing scatter item re-throws and aborts the whole run unless `continueOnError` is set, and per-person refusals are ordinary here: somebody unsubscribed since the last run, an address that bounces, a transport error. Worst of all, the find is ordered OLDEST FIRST, so the one person who cannot be written to would sit at the top of the list and block everybody behind them on every run, for good. The gather phase already separates the failures from the sends, so the run reports honestly instead of stopping.",
+    "scatter": {
+      "input": "{{quiet_enquiries.rows}}",
+      "itemVariable": "current_contact",
+      "steps": [
+        {
+          "step_id": "step3",
+          "id": "step3",
+          "type": "ai_processing",
+          "name": "Write the opening line",
+          "description": "Writes ONE sentence — the template's `personalLine`. Everything else in the email, including the booking link, the subject, the greeting and the language, belongs to `booking-invite`, which is the same template the enquiry chaser has always used.",
+          "prompt": "Write ONE short opening sentence for a follow-up email, on behalf of a small business owner, to a person who contacted them and never booked anything.\n\nThe person:\n  name: {{current_contact.first_name}} {{current_contact.last_name}}\n  how they found us: {{current_contact.source}}\n  what they said when they enquired: {{current_contact.notes}}\n\nRULES, all of them absolute:\n1. Write in the SAME LANGUAGE as the person's own words above. Never translate or transliterate their name.\n2. ONE sentence. It sits at the top of an email that already has a greeting, a booking button and a sign-off — you are writing none of those.\n3. Never write a link, a URL, a price, a date or a service name. The email supplies the booking link itself; a link in your sentence would be a second, wrong one.\n4. Never invent a fact. If you know nothing about what they wanted, write a warm sentence that says you would like to help.\n5. Do not apologise for the delay and do not say how long it has been. 'Sorry it took us nine days' is worse than the silence.\n6. If the name above is not really a person's — web forms and mailbox scans leave placeholders like 'Website', 'Contact', 'Info', or an address — do not use it at all.\n\nReturn JSON with exactly one field: opening.",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "opening": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "opening"
+            ]
+          },
+          "output_variable": "written_opening"
+        },
+        {
+          "step_id": "step4",
+          "id": "step4",
+          "type": "action",
+          "name": "Send the booking invite",
+          "description": "The SAME email the enquiry chaser sends. `invite_contacts` delegates to `sendBookingLink`, which resolves the booking URL, picks the service, applies branding, writes in the client's language, and refuses outright when the business has no booking page. The only thing this plan contributes is the opening line. SOFT OPT-IN IS CLAIMED HERE, and it is a claim about THIS message rather than a way round consent. Somebody who ticked the box is reached on their consent; somebody who UNSUBSCRIBED is never reached at all, whatever this says. It only covers the third case — a person who was never asked — and only because the address came from a sale or from negotiating one, the message is about the same kind of work they came for, and a refusal was offered then and sits in every message since. The gate verifies the relationship itself; this plan asserts only the half the gate cannot see. They wrote in asking about the work, which is negotiating a sale, and this answers that enquiry.",
+          "plugin": "business-os",
+          "action": "invite_contacts",
+          "params": {
+            "target_id": "{{current_contact.id}}",
+            "data": {
+              "opening": "{{written_opening.opening}}",
+              "soft_opt_in": true
+            }
+          },
+          "output_variable": "send_result",
+          "output_schema": {
+            "type": "object"
+          }
+        }
+      ],
+      "continueOnError": true
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "follow_up_results"
+  }
+]

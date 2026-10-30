@@ -94,8 +94,30 @@ export class ConvAbandonedBookingsDetector extends BaseDetector {
      */
     claimType: 'instance',
 
-    pairedProcessId: undefined,
-    eligibleForAutomation: false,
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * AUTOMATABLE NOW, AND IT WAS NOT BEFORE.
+     *
+     * This read `undefined` / `false`, on sound reasoning: the only action
+     * anyone could have offered was an email to somebody who had just decided
+     * not to pay, and the card's real finding is the CONCENTRATION — several
+     * on one service is a broken page or a price nobody will meet, which no
+     * automation can fix.
+     *
+     * Both halves still hold, and the second is why this card keeps existing
+     * rather than being replaced by the agent. What changed is that there is
+     * now a bounded, owner-controlled thing to offer: `recover_abandoned_
+     * checkouts` writes ONCE more, only to attempts the twice-hourly sweep has
+     * already finished with, only while the attempt is still `abandoned`, and
+     * only inside a window the owner chooses on the install dialog. It stops
+     * the moment they book, because `convertAttempt` moves the row.
+     *
+     * So the division is: the agent does the asking, and the card still
+     * carries the judgement the owner alone can make.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    pairedProcessId: 'send_followup_nudge',
+    eligibleForAutomation: true,
     cooldownHours: 168, // a week: this is a trend, not an incident
   };
 

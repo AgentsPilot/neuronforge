@@ -17,12 +17,40 @@ jest.mock('@/lib/consent/marketingGate', () => ({
   marketingGate: { check: (...args: unknown[]) => gateCheck(...(args as [])) },
 }));
 
+/*
+ * The business behind the footer.
+ *
+ * Every marketing send now carries an unsubscribe link and a postal address,
+ * appended by the transport, and a send whose footer cannot be built is
+ * REFUSED. So a marketing test needs a business with a name and an address —
+ * which is the behaviour under test, not scaffolding: `declines when there is
+ * nothing to build a footer from` below is the other half.
+ */
+const profile = jest.fn(async () => ({
+  data: { company_name: 'Dana Fitness', language: 'en' },
+}));
+const consentSettings = jest.fn(async () => ({
+  data: { postal_address: '1 High St, London' },
+}));
+
+jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
+  businessProfileRepository: { findByUserId: (...a: unknown[]) => profile(...(a as [])) },
+}));
+
+jest.mock('@/lib/repositories/MarketingConsentRepository', () => ({
+  marketingConsentRepository: { settings: (...a: unknown[]) => consentSettings(...(a as [])) },
+}));
+
 import { sendEmail, htmlToText } from '../emailTransport';
 
 const HTML =
   '<!DOCTYPE html><html><head><style>.x{color:red}</style></head>' +
   '<body><h1>Calibration passed</h1><p>Vendor: Wolt &amp; Expedia</p>' +
   '<br><div>All set</div></body></html>';
+
+/* Unsubscribe links are signed with the same secret as every other public
+   link, so a marketing send cannot be built without one. */
+process.env.BOOKING_TOKEN_SECRET = process.env.BOOKING_TOKEN_SECRET || 'test-token-secret';
 
 const ENV = { ...process.env };
 
@@ -153,6 +181,44 @@ describe('sendEmail — the marketing consent gate', () => {
     // asserting on the total would be measuring Supabase, not the gate.
     const resendCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes('resend'));
     expect(resendCalls).toHaveLength(1);
+
+    const body = JSON.parse(resendCalls[0][1].body);
+
+    /*
+     * The three obligations, on the wire. Asserted on the SENT payload rather
+     * than on the helpers, because the failure worth catching is a marketing
+     * email that left without them — not a helper that could have added them.
+     */
+    expect(body.headers['List-Unsubscribe']).toContain('/api/unsubscribe?token=');
+    /* One-click, because this URL is the endpoint that implements it. */
+    expect(body.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+    expect(body.html).toContain('/api/unsubscribe?token=');
+    expect(body.html).toContain('1 High St, London');
+    expect(body.html).toContain('Dana Fitness');
+    /* Inside the document, not trailing after `</body>`, which some clients drop. */
+    expect(body.html.trim().endsWith('</html>')).toBe(true);
+  });
+
+  it('declines when there is nothing to build a footer from', async () => {
+    /*
+     * The gate says yes — consent is on record — and the send is still refused,
+     * because a marketing email with no address and no way off is the one
+     * message that cannot be taken back. Every other missing value in this
+     * transport degrades; this one stops.
+     */
+    process.env.RESEND_API_KEY = 're_test_key';
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue({ ok: true, status: 200, text: async () => '' });
+    (global as any).fetch = fetchMock;
+    gateCheck.mockResolvedValue({ allowed: true });
+    consentSettings.mockResolvedValueOnce({ data: { postal_address: '   ' } });
+
+    const result = await sendEmail(MARKETING);
+
+    expect(result.sent).toBe(false);
+    expect(result.blocked).toBe('no_unsubscribe');
+    expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes('resend'))).toHaveLength(0);
   });
 
   it('never asks the gate about a transactional send', async () => {

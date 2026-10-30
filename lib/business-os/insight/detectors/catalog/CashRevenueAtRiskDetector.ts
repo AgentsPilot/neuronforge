@@ -119,7 +119,7 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
     const [invoicesResult, instalmentsResult, proposalsResult] = await Promise.all([
       this.supabase
         .from('payment_invoices')
-        .select('id, amount, refunded_amount, currency, contact_id')
+        .select('id, amount, refunded_amount, currency, contact_id, due_date')
         .eq('user_id', userId)
         .in('status', [...ISSUED_INVOICE_STATUSES])
         // Raised long enough ago to be a concern rather than a recent bill.
@@ -170,13 +170,39 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
      */
     const invoiceIds: string[] = [];
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE FINDING COUNTS EVERYTHING OUTSTANDING. THE ACTION CHASES ONLY WHAT IS
+     * ACTUALLY LATE.
+     *
+     * This detector ages by `created_at` — how long ago the bill was RAISED —
+     * and that is right for the finding: "what have I billed or quoted that has
+     * not arrived" is a question about the issue date.
+     *
+     * It was wrong for the ACTION. An invoice raised ten days ago on thirty-day
+     * terms is outstanding and is not late, and every id here was handed to the
+     * chase. Five real invoices went out that way, by up to NINETEEN days past
+     * nothing — INV-00022, 23 and 24 were chased on 22 October against a due
+     * date of 4 November.
+     *
+     * So the due date decides what may be chased, and `created_at` keeps
+     * deciding what is counted. `sendInvoiceChase` refuses a not-yet-due
+     * invoice as well; this stops the owner being OFFERED the button in the
+     * first place, which is the honest half.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const todayKey = new Date().toISOString().slice(0, 10);
+
     let invoiceOwed = 0;
     for (const row of invoicesResult.data ?? []) {
       const outstanding = toNumber(row.amount) - toNumber(row.refunded_amount);
       if (outstanding <= 0) continue;
       invoiceOwed += outstanding;
       entityIds.push(String(row.id));
-      invoiceIds.push(String(row.id));
+
+      const dueKey = row.due_date ? String(row.due_date).slice(0, 10) : null;
+      if (dueKey && dueKey < todayKey) invoiceIds.push(String(row.id));
+
       if (row.contact_id) contacts.add(String(row.contact_id));
     }
 

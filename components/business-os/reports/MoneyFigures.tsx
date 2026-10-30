@@ -54,6 +54,16 @@ export interface MoneyFiguresProps {
   pendingInstallments: number;
   writtenOff: number;
   writtenOffCount: number;
+  /**
+   * The two halves of the write-off, named rather than summed into one count.
+   *
+   * `planPeriods` are cancelled plan periods carrying NO invoice of their own.
+   * They are the only part of this figure the orders list cannot show, because
+   * that list reads invoices — so a combined count left the two pages looking
+   * like they should match when they never could.
+   */
+  writtenOffInvoices: number;
+  writtenOffPlanPeriods: number;
   /** The page's currency-correct formatter. Never the language default. */
   money: (amount: number) => string;
   onOpenOrders: () => void;
@@ -71,6 +81,8 @@ export function MoneyFigures({
   pendingInstallments,
   writtenOff,
   writtenOffCount,
+  writtenOffInvoices,
+  writtenOffPlanPeriods,
   money,
   onOpenOrders,
 }: MoneyFiguresProps) {
@@ -162,7 +174,26 @@ export function MoneyFigures({
         amountColor={writtenOff > 0 ? REPORTS_COLORS.LOST : undefined}
         label={t('reports.written_off')}
         amount={money(writtenOff)}
-        under={`${writtenOffCount} ${t('reports.cancelled_count')} · ${t('reports.all_time')}`}
+        under={(() => {
+          /*
+           * Each half only when it has something in it. A business with no
+           * payment plans should read "5 invoices", not "5 invoices · 0 plan
+           * payments", and one whose whole write-off is plan periods should not
+           * be shown a zero invoice count to interpret.
+           */
+          const parts: string[] = [];
+          if (writtenOffInvoices > 0) {
+            parts.push(`${writtenOffInvoices} ${t('reports.lost_invoices')}`);
+          }
+          if (writtenOffPlanPeriods > 0) {
+            parts.push(`${writtenOffPlanPeriods} ${t('reports.lost_periods')}`);
+          }
+          if (parts.length === 0) {
+            parts.push(`${writtenOffCount} ${t('reports.cancelled_count')}`);
+          }
+          parts.push(t('reports.all_time'));
+          return parts.join(' · ');
+        })()}
       />
     </div>
   );

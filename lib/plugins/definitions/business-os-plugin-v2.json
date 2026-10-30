@@ -835,6 +835,178 @@
         ]
       }
     },
+    "capture_enquiry_contacts": {
+      "description": "file an enquiry that arrived by email — contact in the user's own business records",
+      "usage_context": "file an enquiry that arrived by email. This CHANGES the user's real business data. Applies to exactly ONE contact; there is no bulk form.",
+      "idempotent": false,
+      "domain": "business",
+      "capability": "capture_enquiry",
+      "input_entity": "contacts",
+      "output_entity": "contacts",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "phone",
+        "stage",
+        "tags",
+        "source",
+        "referrer_domain",
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "notes",
+        "created_at"
+      ],
+      "required_params": [
+        "data"
+      ],
+      "optional_params": [],
+      "side_effect": "write",
+      "must_support": [
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The contact after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "file an enquiry that arrived by email",
+        "sample_output": {
+          "applied": true,
+          "summary": "file an enquiry that arrived by email",
+          "row": {
+            "first_name": "<first_name>",
+            "last_name": "<last_name>",
+            "email": "<email>",
+            "phone": "<phone>",
+            "stage": "<stage>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "description": "Parameters for file an enquiry that arrived by email. Handed to a reviewed handler; these are not columns of any row."
+          }
+        },
+        "required": [
+          "data"
+        ]
+      }
+    },
+    "invite_contacts": {
+      "description": "send a booking invite — contact in the user's own business records",
+      "usage_context": "send a booking invite. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Can be applied to many contacts at once, up to 50.",
+      "idempotent": false,
+      "domain": "business",
+      "capability": "invite",
+      "input_entity": "contacts",
+      "output_entity": "contacts",
+      "input_cardinality": "collection",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "phone",
+        "stage",
+        "tags",
+        "source",
+        "referrer_domain",
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "notes",
+        "created_at"
+      ],
+      "required_params": [
+        "target_id"
+      ],
+      "optional_params": [
+        "data"
+      ],
+      "side_effect": "send",
+      "must_support": [
+        "user_scoped",
+        "confirmation"
+      ],
+      "rules": {
+        "limits": {
+          "max_fanout": {
+            "condition": "targets > 50",
+            "action": "block",
+            "message": "Refusing to send a booking invite more than 50 contacts in one run. Narrow it down."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The contact after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "send a booking invite",
+        "sample_output": {
+          "applied": true,
+          "summary": "send a booking invite",
+          "row": {
+            "first_name": "<first_name>",
+            "last_name": "<last_name>",
+            "email": "<email>",
+            "phone": "<phone>",
+            "stage": "<stage>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "The id of the contact to act on. Must come from a find_contacts result — never invented."
+          }
+        },
+        "required": [
+          "target_id"
+        ]
+      }
+    },
     "send_contacts": {
       "description": "send an email — contact in the user's own business records",
       "usage_context": "send an email. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Can be applied to many contacts at once, up to 100.",
@@ -920,6 +1092,20 @@
           "target_id": {
             "type": "string",
             "description": "The id of the contact to act on. Must come from a find_contacts result — never invented."
+          },
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: first_name, last_name, email, phone, stage, tags, notes. Required: subject, body.",
+            "properties": {
+              "subject": {
+                "type": "string",
+                "description": "subject — a parameter of \"send an email\", not a column of any row."
+              },
+              "body": {
+                "type": "string",
+                "description": "body — a parameter of \"send an email\", not a column of any row."
+              }
+            }
           }
         },
         "required": [
@@ -996,7 +1182,7 @@
                 },
                 "status": {
                   "type": "string",
-                  "description": "status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded · business terms: {\"$semantic\":\"unpaid\"}"
+                  "description": "status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded, partially_refunded · business terms: {\"$semantic\":\"unpaid\"}"
                 },
                 "due_date": {
                   "type": "string",
@@ -1069,7 +1255,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded, partially_refunded · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
             "items": {
               "type": "object",
               "properties": {
@@ -1339,7 +1525,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded, partially_refunded · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
             "items": {
               "type": "object",
               "properties": {
@@ -1749,6 +1935,89 @@
         ]
       }
     },
+    "remind_invoices": {
+      "description": "chase an unpaid invoice — invoice in the user's own business records",
+      "usage_context": "chase an unpaid invoice. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Applies to exactly ONE invoice; there is no bulk form.",
+      "idempotent": false,
+      "domain": "business",
+      "capability": "remind",
+      "input_entity": "invoices",
+      "output_entity": "invoices",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "invoice_number",
+        "contact_id",
+        "amount",
+        "currency",
+        "status",
+        "due_date",
+        "sent_at",
+        "paid_at",
+        "client_name",
+        "client_email",
+        "notes",
+        "created_at",
+        "service_id",
+        "booking_id"
+      ],
+      "required_params": [
+        "target_id"
+      ],
+      "optional_params": [
+        "data"
+      ],
+      "side_effect": "send",
+      "must_support": [
+        "user_scoped",
+        "confirmation"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The invoice after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "chase an unpaid invoice",
+        "sample_output": {
+          "applied": true,
+          "summary": "chase an unpaid invoice",
+          "row": {
+            "invoice_number": "<invoice_number>",
+            "amount": 0,
+            "status": "<status>",
+            "due_date": "<due_date>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "The id of the invoice to act on. Must come from a find_invoices result — never invented."
+          }
+        },
+        "required": [
+          "target_id"
+        ]
+      }
+    },
     "send_invoices": {
       "description": "send invoice — invoice in the user's own business records",
       "usage_context": "send invoice. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Can be applied to many invoices at once, up to 100.",
@@ -1841,6 +2110,488 @@
         ]
       }
     },
+    "find_abandoned_bookings": {
+      "description": "Find abandoned checkouts in the user's own business records",
+      "usage_context": "Read the business's own abandoned checkouts. This is the user's private data — no external service is involved and nothing needs connecting. Use it to answer questions about their business, or to select rows for a later action.",
+      "idempotent": true,
+      "domain": "business",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "abandoned_bookings",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "service_id",
+        "start_time",
+        "status",
+        "recovery_email_sent_at",
+        "created_at"
+      ],
+      "required_params": [],
+      "optional_params": [
+        "filters",
+        "limit",
+        "order_by"
+      ],
+      "must_support": [
+        "field_filtering",
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "description": "The matching abandoned checkouts.",
+            "x-guaranteed": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "ID · (uuid)"
+                },
+                "first_name": {
+                  "type": "string",
+                  "description": "first name · (string)"
+                },
+                "last_name": {
+                  "type": "string",
+                  "description": "last name · (string)"
+                },
+                "email": {
+                  "type": "string",
+                  "description": "email · (string)"
+                },
+                "service_id": {
+                  "type": "string",
+                  "description": "service · (uuid)"
+                },
+                "start_time": {
+                  "type": "string",
+                  "description": "the time they chose · (datetime)"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "status · (enum) · one of: started, abandoned, converted"
+                },
+                "recovery_email_sent_at": {
+                  "type": "string",
+                  "description": "recovery email sent · (datetime)"
+                },
+                "created_at": {
+                  "type": "string",
+                  "description": "when they tried · (datetime)"
+                }
+              }
+            }
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many rows were returned.",
+            "x-guaranteed": true
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the limit was reached and more rows exist.",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Found abandoned checkouts",
+        "sample_output": {
+          "rows": [
+            {
+              "first_name": "<first_name>",
+              "email": "<email>",
+              "start_time": "<start_time>",
+              "status": "<status>"
+            }
+          ],
+          "count": 1,
+          "truncated": false
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filters": {
+            "type": "array",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | first_name — first name · (string) | last_name — last name · (string) | email — email · (string) | service_id — service · (uuid) | start_time — the time they chose · (datetime) | status — status · (enum) · one of: started, abandoned, converted | recovery_email_sent_at — recovery email sent · (datetime) | created_at — when they tried · (datetime)",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "first_name",
+                    "last_name",
+                    "email",
+                    "service_id",
+                    "start_time",
+                    "status",
+                    "recovery_email_sent_at",
+                    "created_at"
+                  ]
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "eq",
+                    "neq",
+                    "gt",
+                    "gte",
+                    "lt",
+                    "lte",
+                    "in",
+                    "not_in",
+                    "contains",
+                    "starts_with",
+                    "is_null",
+                    "is_not_null"
+                  ]
+                },
+                "value": {
+                  "description": "A literal, an array of literals, {\"$semantic\":\"term\"} for a business term, or {\"$date\":\"today|tomorrow|start_of_week|…\"} for a relative date. Omit entirely for is_null / is_not_null."
+                }
+              },
+              "required": [
+                "field",
+                "op"
+              ]
+            }
+          },
+          "order_by": {
+            "type": "array",
+            "description": "Sort order.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "first_name",
+                    "last_name",
+                    "email",
+                    "service_id",
+                    "start_time",
+                    "status",
+                    "recovery_email_sent_at",
+                    "created_at"
+                  ]
+                },
+                "dir": {
+                  "type": "string",
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
+                }
+              },
+              "required": [
+                "field"
+              ]
+            }
+          },
+          "limit": {
+            "type": "number",
+            "description": "How many to return. Capped at 200.",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50
+          }
+        },
+        "required": []
+      }
+    },
+    "aggregate_abandoned_bookings": {
+      "description": "Aggregate abandoned checkouts — totals, counts and averages, optionally grouped",
+      "usage_context": "Answer a QUANTITATIVE question about the business's own abandoned checkouts — \"how much\", \"how many\", \"what is the average\", and the same broken down by a field. Prefer this over fetching rows and adding them up: the arithmetic runs against the data rather than in the workflow, and the result reports whether it was complete. This reads private data and changes nothing.",
+      "idempotent": true,
+      "domain": "business",
+      "capability": "aggregate",
+      "input_entity": null,
+      "output_entity": "abandoned_bookings",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [],
+      "required_params": [
+        "fn"
+      ],
+      "optional_params": [
+        "field",
+        "group_by",
+        "filters",
+        "distinct"
+      ],
+      "must_support": [
+        "field_filtering",
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The aggregate over everything matched. Null when nothing matched.",
+            "x-guaranteed": true
+          },
+          "groups": {
+            "type": "array",
+            "description": "Present when group_by was supplied: one entry per distinct value.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "approximate": {
+            "type": "boolean",
+            "description": "True when the aggregate ran over a capped scan and may be incomplete. MUST be surfaced rather than presenting the number as a final total.",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Aggregated abandoned checkouts",
+        "sample_output": {
+          "value": 0,
+          "groups": [
+            {
+              "key": "<group>",
+              "value": 0
+            }
+          ],
+          "approximate": false
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "fn": {
+            "type": "string",
+            "description": "Which aggregate to compute.",
+            "enum": [
+              "count",
+              "sum",
+              "avg",
+              "min",
+              "max"
+            ]
+          },
+          "field": {
+            "type": "string",
+            "description": "The field to aggregate. Required for sum, avg, min and max; ignored by count.",
+            "enum": []
+          },
+          "group_by": {
+            "type": "string",
+            "description": "Break the result down, one entry per distinct value. Three forms: a field on this record; a RELATION NAME on its own ('service', 'contact') to group by what the related thing is CALLED rather than by its id; or a date field with a bucket ('created_at:month') to group a trend by calendar period.",
+            "enum": [
+              "id",
+              "first_name",
+              "last_name",
+              "email",
+              "service_id",
+              "start_time",
+              "status",
+              "recovery_email_sent_at",
+              "created_at",
+              "booking",
+              "service",
+              "start_time:day",
+              "start_time:week",
+              "start_time:month",
+              "start_time:year",
+              "recovery_email_sent_at:day",
+              "recovery_email_sent_at:week",
+              "recovery_email_sent_at:month",
+              "recovery_email_sent_at:year",
+              "created_at:day",
+              "created_at:week",
+              "created_at:month",
+              "created_at:year"
+            ]
+          },
+          "distinct": {
+            "type": "boolean",
+            "description": "Count how many DIFFERENT values the field has rather than how many rows. Only meaningful for count."
+          },
+          "over": {
+            "type": "string",
+            "description": "Aggregate the records on the far side of a relation, one group per record HERE — 'services' with over='transactions' ranks every service by revenue, including the ones that earned nothing. Use this for \"which X is doing least\": grouping the other way round omits any record with no related rows, so the lowest group returned is the lowest NON-ZERO one. Filters apply to the related records.",
+            "enum": []
+          },
+          "having": {
+            "type": "object",
+            "description": "Keep only the groups whose aggregate passes this test — \"clients who spent over 5000\". Applied after the aggregate, so it needs group_by to mean anything.",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte",
+                  "eq",
+                  "neq"
+                ]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "value"
+            ]
+          },
+          "filters": {
+            "type": "array",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | first_name — first name · (string) | last_name — last name · (string) | email — email · (string) | service_id — service · (uuid) | start_time — the time they chose · (datetime) | status — status · (enum) · one of: started, abandoned, converted | recovery_email_sent_at — recovery email sent · (datetime) | created_at — when they tried · (datetime)",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "first_name",
+                    "last_name",
+                    "email",
+                    "service_id",
+                    "start_time",
+                    "status",
+                    "recovery_email_sent_at",
+                    "created_at"
+                  ]
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "eq",
+                    "neq",
+                    "gt",
+                    "gte",
+                    "lt",
+                    "lte",
+                    "in",
+                    "not_in",
+                    "contains",
+                    "starts_with",
+                    "is_null",
+                    "is_not_null"
+                  ]
+                },
+                "value": {
+                  "description": "A literal, an array of literals, {\"$semantic\":\"term\"} for a business term, or {\"$date\":\"today|tomorrow|start_of_week|…\"} for a relative date. Omit entirely for is_null / is_not_null."
+                }
+              },
+              "required": [
+                "field",
+                "op"
+              ]
+            }
+          }
+        },
+        "required": [
+          "fn"
+        ]
+      }
+    },
+    "remind_abandoned_bookings": {
+      "description": "write to someone who did not finish booking — abandoned checkout in the user's own business records",
+      "usage_context": "write to someone who did not finish booking. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Applies to exactly ONE abandoned checkout; there is no bulk form.",
+      "idempotent": false,
+      "domain": "business",
+      "capability": "remind",
+      "input_entity": "abandoned_bookings",
+      "output_entity": "abandoned_bookings",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "service_id",
+        "start_time",
+        "status",
+        "recovery_email_sent_at",
+        "created_at"
+      ],
+      "required_params": [
+        "target_id"
+      ],
+      "optional_params": [
+        "data"
+      ],
+      "side_effect": "send",
+      "must_support": [
+        "user_scoped",
+        "confirmation"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The abandoned checkout after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "write to someone who did not finish booking",
+        "sample_output": {
+          "applied": true,
+          "summary": "write to someone who did not finish booking",
+          "row": {
+            "first_name": "<first_name>",
+            "email": "<email>",
+            "start_time": "<start_time>",
+            "status": "<status>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "The id of the abandoned checkout to act on. Must come from a find_abandoned_bookings result — never invented."
+          }
+        },
+        "required": [
+          "target_id"
+        ]
+      }
+    },
     "find_proposals": {
       "description": "Find quotes in the user's own business records",
       "usage_context": "Read the business's own quotes. This is the user's private data — no external service is involved and nothing needs connecting. Use it to answer questions about their business, or to select rows for a later action.",
@@ -1924,7 +2675,7 @@
                 },
                 "status": {
                   "type": "string",
-                  "description": "status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"}"
+                  "description": "status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded, stopped · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"}"
                 },
                 "document_id": {
                   "type": "string",
@@ -1993,7 +2744,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | description — description · (string) | contact_id — contact · (uuid) | service_id — service · (uuid) | booking_id — booking · (uuid) | total — quote value · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"} | document_id — document · (uuid) | payment_shape — how it is paid · (json) | valid_until — valid until · (date) | decline_reason — reason for declining · (enum) · one of: too_expensive, timing, scope, chose_other, other | sent_at — sent at · (datetime) | viewed_at — opened at · (datetime) | decided_at — answered at · (datetime) | created_at — created at · (datetime) | is_current_version — is the current version | has_open_payments — has payments still to collect | was_sent — was sent to the client",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | description — description · (string) | contact_id — contact · (uuid) | service_id — service · (uuid) | booking_id — booking · (uuid) | total — quote value · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded, stopped · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"} | document_id — document · (uuid) | payment_shape — how it is paid · (json) | valid_until — valid until · (date) | decline_reason — reason for declining · (enum) · one of: too_expensive, timing, scope, chose_other, other | sent_at — sent at · (datetime) | viewed_at — opened at · (datetime) | decided_at — answered at · (datetime) | created_at — created at · (datetime) | is_current_version — is the current version | has_open_payments — has payments still to collect | was_sent — was sent to the client",
             "items": {
               "type": "object",
               "properties": {
@@ -2214,6 +2965,7 @@
               "decided_at",
               "created_at",
               "supersedes",
+              "package_booking",
               "contact",
               "service",
               "booking",
@@ -2278,7 +3030,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | description — description · (string) | contact_id — contact · (uuid) | service_id — service · (uuid) | booking_id — booking · (uuid) | total — quote value · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"} | document_id — document · (uuid) | payment_shape — how it is paid · (json) | valid_until — valid until · (date) | decline_reason — reason for declining · (enum) · one of: too_expensive, timing, scope, chose_other, other | sent_at — sent at · (datetime) | viewed_at — opened at · (datetime) | decided_at — answered at · (datetime) | created_at — created at · (datetime) | is_current_version — is the current version | has_open_payments — has payments still to collect | was_sent — was sent to the client",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | description — description · (string) | contact_id — contact · (uuid) | service_id — service · (uuid) | booking_id — booking · (uuid) | total — quote value · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded, stopped · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"} | document_id — document · (uuid) | payment_shape — how it is paid · (json) | valid_until — valid until · (date) | decline_reason — reason for declining · (enum) · one of: too_expensive, timing, scope, chose_other, other | sent_at — sent at · (datetime) | viewed_at — opened at · (datetime) | decided_at — answered at · (datetime) | created_at — created at · (datetime) | is_current_version — is the current version | has_open_payments — has payments still to collect | was_sent — was sent to the client",
             "items": {
               "type": "object",
               "properties": {
@@ -2491,11 +3243,9 @@
         "created_at"
       ],
       "required_params": [
-        "target_id"
-      ],
-      "optional_params": [
         "data"
       ],
+      "optional_params": [],
       "side_effect": "send",
       "must_support": [
         "user_scoped",
@@ -2536,10 +3286,6 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "target_id": {
-            "type": "string",
-            "description": "The id of the quote to act on. Must come from a find_proposals result — never invented."
-          },
           "data": {
             "type": "object",
             "description": "Values to write. Writable fields: title, description, contact_id, service_id, booking_id, total, currency, payment_shape, valid_until. Required: contact_id, title, total.",
@@ -2584,7 +3330,7 @@
           }
         },
         "required": [
-          "target_id"
+          "data"
         ]
       }
     },
@@ -2652,6 +3398,91 @@
         "sample_output": {
           "applied": true,
           "summary": "send a quote",
+          "row": {
+            "title": "<title>",
+            "total": 0,
+            "status": "<status>",
+            "valid_until": "<valid_until>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "The id of the quote to act on. Must come from a find_proposals result — never invented."
+          }
+        },
+        "required": [
+          "target_id"
+        ]
+      }
+    },
+    "remind_proposals": {
+      "description": "nudge a quote — quote in the user's own business records",
+      "usage_context": "nudge a quote. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Applies to exactly ONE quote; there is no bulk form.",
+      "idempotent": false,
+      "domain": "business",
+      "capability": "remind",
+      "input_entity": "proposals",
+      "output_entity": "proposals",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "title",
+        "description",
+        "contact_id",
+        "service_id",
+        "booking_id",
+        "total",
+        "currency",
+        "status",
+        "document_id",
+        "payment_shape",
+        "valid_until",
+        "decline_reason",
+        "sent_at",
+        "viewed_at",
+        "decided_at",
+        "created_at"
+      ],
+      "required_params": [
+        "target_id"
+      ],
+      "optional_params": [
+        "data"
+      ],
+      "side_effect": "send",
+      "must_support": [
+        "user_scoped",
+        "confirmation"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The quote after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "nudge a quote",
+        "sample_output": {
+          "applied": true,
+          "summary": "nudge a quote",
           "row": {
             "title": "<title>",
             "total": 0,
@@ -3544,6 +4375,7 @@
               "invoice_id",
               "created_at",
               "payment_plan",
+              "parent_booking",
               "contact",
               "invoice",
               "service",
@@ -4229,7 +5061,7 @@
           },
           "data": {
             "type": "object",
-            "description": "Values to write. Writable fields: contact_id, service_id, start_time, end_time, status, notes. Required: start_time, end_time.",
+            "description": "Values to write. Writable fields: contact_id, service_id, start_time, end_time, status, notes. Required: start_time.",
             "properties": {
               "start_time": {
                 "type": "string",
@@ -6795,6 +7627,16 @@
           "target_id": {
             "type": "string",
             "description": "The id of the plan subscription to act on. Must come from a find_plan_subscriptions result — never invented."
+          },
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: none.",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "description": "reason — a parameter of \"stop the remaining payments on a plan\", not a column of any row."
+              }
+            }
           }
         },
         "required": [
@@ -7996,6 +8838,10 @@
               "amount": {
                 "type": "number",
                 "description": "amount · (money)"
+              },
+              "reason": {
+                "type": "string",
+                "description": "reason — a parameter of \"refund a payment\", not a column of any row."
               }
             }
           }
@@ -9324,6 +10170,10 @@
                 "type": "string",
                 "description": "title · (string)"
               },
+              "description": {
+                "type": "string",
+                "description": "description — a parameter of \"create a page\", not a column of any row."
+              },
               "page_type": {
                 "type": "string",
                 "description": "type · (enum) · one of: landing, homepage"
@@ -9331,6 +10181,14 @@
               "slug": {
                 "type": "string",
                 "description": "address · (string)"
+              },
+              "template_id": {
+                "type": "string",
+                "description": "template_id — a parameter of \"create a page\", not a column of any row."
+              },
+              "website_language": {
+                "type": "string",
+                "description": "website_language — a parameter of \"create a page\", not a column of any row."
               }
             }
           }
@@ -11435,11 +12293,9 @@
         "vertical"
       ],
       "required_params": [
-        "target_id"
-      ],
-      "optional_params": [
         "data"
       ],
+      "optional_params": [],
       "side_effect": "read",
       "must_support": [
         "user_scoped"
@@ -11477,13 +12333,63 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "target_id": {
-            "type": "string",
-            "description": "The id of the business profile to act on. Must come from a find_business_profile result — never invented."
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: none.",
+            "properties": {
+              "period": {
+                "type": "string",
+                "description": "period — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              },
+              "from": {
+                "type": "string",
+                "description": "from — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              },
+              "to": {
+                "type": "string",
+                "description": "to — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              },
+              "format": {
+                "type": "string",
+                "description": "format — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              },
+              "include_payments": {
+                "type": "string",
+                "description": "include_payments — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              },
+              "include_refunds": {
+                "type": "string",
+                "description": "include_refunds — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              },
+              "include_invoices": {
+                "type": "string",
+                "description": "include_invoices — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              },
+              "include_fees": {
+                "type": "string",
+                "description": "include_fees — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              },
+              "include_tax": {
+                "type": "string",
+                "description": "include_tax — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              },
+              "include_references": {
+                "type": "string",
+                "description": "include_references — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              },
+              "include_rows": {
+                "type": "string",
+                "description": "include_rows — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              },
+              "include_file": {
+                "type": "string",
+                "description": "include_file — a parameter of \"export the ledger for a period (for the accountant)\", not a column of any row."
+              }
+            }
           }
         },
         "required": [
-          "target_id"
+          "data"
         ]
       }
     },
@@ -11503,11 +12409,9 @@
         "vertical"
       ],
       "required_params": [
-        "target_id"
-      ],
-      "optional_params": [
         "data"
       ],
+      "optional_params": [],
       "side_effect": "update",
       "must_support": [
         "user_scoped",
@@ -11546,13 +12450,27 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "target_id": {
-            "type": "string",
-            "description": "The id of the business profile to act on. Must come from a find_business_profile result — never invented."
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: none. Required: day, start, end.",
+            "properties": {
+              "day": {
+                "type": "string",
+                "description": "day — a parameter of \"set the working hours for one weekday\", not a column of any row."
+              },
+              "start": {
+                "type": "string",
+                "description": "start — a parameter of \"set the working hours for one weekday\", not a column of any row."
+              },
+              "end": {
+                "type": "string",
+                "description": "end — a parameter of \"set the working hours for one weekday\", not a column of any row."
+              }
+            }
           }
         },
         "required": [
-          "target_id"
+          "data"
         ]
       }
     },
@@ -11572,11 +12490,9 @@
         "vertical"
       ],
       "required_params": [
-        "target_id"
-      ],
-      "optional_params": [
         "data"
       ],
+      "optional_params": [],
       "side_effect": "update",
       "must_support": [
         "user_scoped",
@@ -11615,13 +12531,19 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "target_id": {
-            "type": "string",
-            "description": "The id of the business profile to act on. Must come from a find_business_profile result — never invented."
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: none. Required: day.",
+            "properties": {
+              "day": {
+                "type": "string",
+                "description": "day — a parameter of \"stop working on a day (close it entirely)\", not a column of any row."
+              }
+            }
           }
         },
         "required": [
-          "target_id"
+          "data"
         ]
       }
     },
@@ -11641,11 +12563,9 @@
         "vertical"
       ],
       "required_params": [
-        "target_id"
-      ],
-      "optional_params": [
         "data"
       ],
+      "optional_params": [],
       "side_effect": "read",
       "must_support": [
         "user_scoped"
@@ -11683,13 +12603,23 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "target_id": {
-            "type": "string",
-            "description": "The id of the business profile to act on. Must come from a find_business_profile result — never invented."
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: none. Required: date.",
+            "properties": {
+              "date": {
+                "type": "string",
+                "description": "date — a parameter of \"how many hours or slots are still open / free / available on a given day\", not a column of any row."
+              },
+              "service": {
+                "type": "string",
+                "description": "service — a parameter of \"how many hours or slots are still open / free / available on a given day\", not a column of any row."
+              }
+            }
           }
         },
         "required": [
-          "target_id"
+          "data"
         ]
       }
     },
@@ -12115,6 +13045,16 @@
           "target_id": {
             "type": "string",
             "description": "The id of the section to act on. Must come from a find_sections result — never invented."
+          },
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: none. Required: field.",
+            "properties": {
+              "field": {
+                "type": "string",
+                "description": "field — a parameter of \"rewrite part of a section with AI\", not a column of any row."
+              }
+            }
           }
         },
         "required": [
@@ -12140,11 +13080,9 @@
         "enabled"
       ],
       "required_params": [
-        "target_id"
-      ],
-      "optional_params": [
         "data"
       ],
+      "optional_params": [],
       "side_effect": "create",
       "must_support": [
         "user_scoped",
@@ -12184,10 +13122,6 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "target_id": {
-            "type": "string",
-            "description": "The id of the section to act on. Must come from a find_sections result — never invented."
-          },
           "data": {
             "type": "object",
             "description": "Values to write. Writable fields: none. Required: page_id, block_type.",
@@ -12199,12 +13133,20 @@
               "block_type": {
                 "type": "string",
                 "description": "section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer, features, pricing"
+              },
+              "heading": {
+                "type": "string",
+                "description": "heading — a parameter of \"add a section to a page\", not a column of any row."
+              },
+              "text": {
+                "type": "string",
+                "description": "text — a parameter of \"add a section to a page\", not a column of any row."
               }
             }
           }
         },
         "required": [
-          "target_id"
+          "data"
         ]
       }
     },
@@ -12345,6 +13287,16 @@
           "target_id": {
             "type": "string",
             "description": "The id of the section to act on. Must come from a find_sections result — never invented."
+          },
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: none. Required: direction.",
+            "properties": {
+              "direction": {
+                "type": "string",
+                "description": "direction — a parameter of \"move a section up or down\", not a column of any row."
+              }
+            }
           }
         },
         "required": [
@@ -12417,6 +13369,20 @@
           "target_id": {
             "type": "string",
             "description": "The id of the section to act on. Must come from a find_sections result — never invented."
+          },
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: none.",
+            "properties": {
+              "heading": {
+                "type": "string",
+                "description": "heading — a parameter of \"change a section's wording\", not a column of any row."
+              },
+              "text": {
+                "type": "string",
+                "description": "text — a parameter of \"change a section's wording\", not a column of any row."
+              }
+            }
           }
         },
         "required": [
@@ -13897,11 +14863,9 @@
         "last_sync_error"
       ],
       "required_params": [
-        "target_id"
-      ],
-      "optional_params": [
         "data"
       ],
+      "optional_params": [],
       "side_effect": "update",
       "must_support": [
         "user_scoped"
@@ -13941,13 +14905,13 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "target_id": {
-            "type": "string",
-            "description": "The id of the connected account to act on. Must come from a find_channel_connections result — never invented."
+          "data": {
+            "type": "object",
+            "description": "Parameters for refresh the numbers from connected accounts. Handed to a reviewed handler; these are not columns of any row."
           }
         },
         "required": [
-          "target_id"
+          "data"
         ]
       }
     },
@@ -13968,9 +14932,7 @@
         "to_email",
         "status",
         "sent_at",
-        "opened_at",
-        "open_count",
-        "click_count"
+        "delivered_at"
       ],
       "required_params": [],
       "optional_params": [
@@ -14016,17 +14978,9 @@
                   "type": "string",
                   "description": "sent · (datetime)"
                 },
-                "opened_at": {
+                "delivered_at": {
                   "type": "string",
-                  "description": "opened · (datetime)"
-                },
-                "open_count": {
-                  "type": "number",
-                  "description": "opens · (number)"
-                },
-                "click_count": {
-                  "type": "number",
-                  "description": "clicks · (number)"
+                  "description": "delivered · (datetime)"
                 }
               }
             }
@@ -14063,7 +15017,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | subject — subject · (string) | to_email — sent to · (string) | status — status · (string) | sent_at — sent · (datetime) | opened_at — opened · (datetime) | open_count — opens · (number) | click_count — clicks · (number)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | subject — subject · (string) | to_email — sent to · (string) | status — status · (string) | sent_at — sent · (datetime) | delivered_at — delivered · (datetime)",
             "items": {
               "type": "object",
               "properties": {
@@ -14076,9 +15030,7 @@
                     "to_email",
                     "status",
                     "sent_at",
-                    "opened_at",
-                    "open_count",
-                    "click_count"
+                    "delivered_at"
                   ]
                 },
                 "op": {
@@ -14123,9 +15075,7 @@
                     "to_email",
                     "status",
                     "sent_at",
-                    "opened_at",
-                    "open_count",
-                    "click_count"
+                    "delivered_at"
                   ]
                 },
                 "dir": {
@@ -14239,10 +15189,7 @@
           "field": {
             "type": "string",
             "description": "The field to aggregate. Required for sum, avg, min and max; ignored by count.",
-            "enum": [
-              "open_count",
-              "click_count"
-            ]
+            "enum": []
           },
           "group_by": {
             "type": "string",
@@ -14254,18 +15201,17 @@
               "to_email",
               "status",
               "sent_at",
-              "opened_at",
-              "open_count",
-              "click_count",
+              "delivered_at",
+              "booking",
               "contact",
               "sent_at:day",
               "sent_at:week",
               "sent_at:month",
               "sent_at:year",
-              "opened_at:day",
-              "opened_at:week",
-              "opened_at:month",
-              "opened_at:year"
+              "delivered_at:day",
+              "delivered_at:week",
+              "delivered_at:month",
+              "delivered_at:year"
             ]
           },
           "distinct": {
@@ -14303,7 +15249,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | subject — subject · (string) | to_email — sent to · (string) | status — status · (string) | sent_at — sent · (datetime) | opened_at — opened · (datetime) | open_count — opens · (number) | click_count — clicks · (number)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | subject — subject · (string) | to_email — sent to · (string) | status — status · (string) | sent_at — sent · (datetime) | delivered_at — delivered · (datetime)",
             "items": {
               "type": "object",
               "properties": {
@@ -14316,9 +15262,7 @@
                     "to_email",
                     "status",
                     "sent_at",
-                    "opened_at",
-                    "open_count",
-                    "click_count"
+                    "delivered_at"
                   ]
                 },
                 "op": {

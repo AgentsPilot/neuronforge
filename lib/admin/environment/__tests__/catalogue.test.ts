@@ -52,6 +52,7 @@ const READERS: Record<string, Array<() => boolean>> = {
   NEXT_PUBLIC_ENABLE_BUSINESS_DELETE: [featureFlags.isBusinessDeleteSurfaceVisible, isBusinessDeleteSurfaceEnabled],
   NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY: [featureFlags.isBusinessOsCreditHistoryEnabled, isCreditHistoryRouteEnabled],
   ADMIN_BUSINESS_DELETE_ENABLED: [featureFlags.isAdminBusinessDeleteEnabled],
+  AGENT_SCHEDULER_ENABLED: [featureFlags.isAgentSchedulerEnabled],
   BUSINESS_OS_CREDITS_BOOST_ENABLED: [featureFlags.isBusinessOsCreditsBoostEnabled],
   BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED: [featureFlags.isAccountSelfDeleteEnabled],
   BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED: [isPlanCancelEmailsEnabled],

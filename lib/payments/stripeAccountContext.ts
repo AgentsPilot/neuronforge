@@ -165,7 +165,19 @@ export type CollectionBlockReason =
   /** Details submitted; Stripe has not (yet) enabled charges. */
   | 'verification_pending'
   /** Charges were explicitly turned off — disconnected here, or disabled by Stripe. */
-  | 'disconnected';
+  | 'disconnected'
+  /**
+   * The OWNER chose to stop taking cards. `paused_at` is set.
+   *
+   * Distinct from `disconnected`, which cannot tell an owner's decision apart
+   * from Stripe switching the account off, because both land on the same
+   * `charges_enabled = false`. A surface that wants to offer "resume taking
+   * cards" needs to know which of the two it is looking at, and only this
+   * reason answers that.
+   *
+   * Not an error state: the platform bills by invoice while it holds.
+   */
+  | 'paused_by_owner';
 
 export type CollectionCapability =
   | { canCollect: true; accountId: string }
@@ -177,6 +189,16 @@ export interface ConnectAccountReadiness {
   charges_enabled?: boolean | null;
   payouts_enabled?: boolean | null;
   details_submitted?: boolean | null;
+  /**
+   * When the OWNER chose to stop taking cards. Null means cards are on.
+   *
+   * Deliberately NOT one of the three flags above. Those are Stripe's status,
+   * rewritten from Stripe on every settings-dialog open by `refresh-status`;
+   * this is a decision, and nothing but an owner's action may change it. The
+   * two were the same field until 20261103, which is why Disconnect undid
+   * itself: Stripe had never heard of it and kept answering "enabled".
+   */
+  paused_at?: string | null;
 }
 
 /**
@@ -203,6 +225,27 @@ export function decideCollectionCapability(
 
   if (!accountId || isPlaceholderAccount(accountId)) {
     return { canCollect: false, reason: 'no_account', accountId: null };
+  }
+
+  /*
+   * THE OWNER'S DECISION OUTRANKS STRIPE SAYING YES.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Checked BEFORE `charges_enabled`, and that order is the fix. Stripe is
+   * never told about a pause, so it goes on reporting the account as able to
+   * charge; reading its answer first would let a live Stripe account override
+   * an owner who has explicitly stopped taking cards.
+   *
+   * Refusing here does not stop the business. Every caller of this function
+   * already treats "cannot collect" as "bill by invoice instead":
+   * `shouldTakePayment` returns false, the booking saves as `confirmed` rather
+   * than pending payment, and `createBookingInvoice` raises a local invoice
+   * with no hosted payment URL. That path was built and working before this
+   * column existed — all that was missing was a way to reach it on purpose.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (row?.paused_at) {
+    return { canCollect: false, reason: 'paused_by_owner', accountId };
   }
 
   if (row?.charges_enabled === true) {
@@ -239,13 +282,62 @@ export function decideCollectionCapability(
  * Treating a stale copy as authority is how a business ends up believing it can
  * charge when Stripe has already said otherwise.
  */
+/**
+ * Has the OWNER switched card payments off?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A deliberately NARROW question, separate from `resolvePaymentCollectionCapability`
+ * above, and the narrowness is the point.
+ *
+ * The full gate also decides whether an account EXISTS and is onboarded, and it
+ * reads only `stripe_connect_accounts`. Several public charge routes resolve
+ * their account id differently — `plugin_connections` first, with an
+ * access-token fallback that calls Stripe — so asking them to adopt the full
+ * gate would refuse every owner who linked Stripe by OAuth and currently gets
+ * paid. That is a working path, and this change must not break it.
+ *
+ * So this asks one thing: did the owner say stop. Nothing about accounts,
+ * nothing about onboarding. It can be dropped into a route that has its own
+ * account resolution without disturbing it.
+ *
+ * A FAILED READ ANSWERS FALSE, loudly.
+ *
+ * The opposite of the full gate, and on purpose. There, a yes moves money, so
+ * not knowing must refuse. Here the check is ADDITIVE to routes that had no
+ * check at all, and a pause is a business preference rather than a safety
+ * control — so letting a database blip stop every card payment would introduce
+ * an outage this code is not entitled to cause. The error is logged at `error`
+ * so it is visible rather than silent.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function isCardCollectionPaused(
+  db: SupabaseClient,
+  userId: string
+): Promise<boolean> {
+  const { data, error } = await db
+    .from('stripe_connect_accounts')
+    .select('paused_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    logger.error(
+      { err: error, userId },
+      'Could not read whether card payments are paused — allowing the charge rather than causing an outage'
+    );
+    return false;
+  }
+
+  return Boolean(data?.paused_at);
+}
+
 export async function resolvePaymentCollectionCapability(
   db: SupabaseClient,
   userId: string
 ): Promise<CollectionCapability> {
   const { data, error } = await db
     .from('stripe_connect_accounts')
-    .select('stripe_account_id, charges_enabled, payouts_enabled, details_submitted')
+    .select('stripe_account_id, charges_enabled, payouts_enabled, details_submitted, paused_at')
     .eq('user_id', userId)
     .maybeSingle();
 

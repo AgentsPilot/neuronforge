@@ -45,18 +45,42 @@ function tablesInMigration(): string[] {
  * one line in a registry; a false negative is the bug this file is here to
  * prevent, so the bias runs that way on purpose.
  */
+/**
+ * Every table the migration history leaves in place carrying a `user_id`.
+ *
+ * Replayed in FILE ORDER, tracking creates and drops, because a table that was
+ * created and later dropped does not exist and cannot be classified — and a
+ * guard that demands a classification for it can never be satisfied except by
+ * lying about a table that is gone.
+ *
+ * That gap was found on 2026-10-29 by `scheduled_agent_runs`: created by
+ * 20261100 for a scheduler queue built in the wrong layer, dropped by 20261102
+ * once the work moved onto `agent_executions` where it belonged. Before this,
+ * the scanner saw only the CREATE and reported the table unclassified for ever.
+ *
+ * Ordered, not merely filtered, so a drop-then-recreate is read correctly: the
+ * last statement about a table wins, which is what the database does too.
+ */
 function tablesWithUserIdInMigrations(): Set<string> {
   const found = new Set<string>();
 
-  for (const file of readdirSync(MIGRATIONS_DIR).filter(f => f.endsWith('.sql'))) {
-    const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
-    const pattern = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?["`]?([a-z_]+)["`]?\s*\(/gi;
+  const CREATED = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?["`]?([a-z_]+)["`]?\s*\(/gi;
+  const DROPPED = /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:public\.)?["`]?([a-z_]+)["`]?/gi;
 
-    for (const match of sql.matchAll(pattern)) {
+  /* Sorted: `readdirSync` gives no ordering guarantee, and these filenames are
+     date-prefixed precisely so their order is their history. */
+  for (const file of readdirSync(MIGRATIONS_DIR).filter(f => f.endsWith('.sql')).sort()) {
+    const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+
+    for (const match of sql.matchAll(CREATED)) {
       const table = match[1].toLowerCase();
       const body = sql.slice(match.index ?? 0, (match.index ?? 0) + 4000);
       const statement = body.slice(0, body.indexOf(');') + 2 || body.length);
       if (/\buser_id\b/i.test(statement)) found.add(table);
+    }
+
+    for (const match of sql.matchAll(DROPPED)) {
+      found.delete(match[1].toLowerCase());
     }
   }
 

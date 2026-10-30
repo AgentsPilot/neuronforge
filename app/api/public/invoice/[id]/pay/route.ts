@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { platformOrigin } from '@/lib/utils/origins';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { isCardCollectionPaused } from '@/lib/payments/stripeAccountContext';
 import Stripe from 'stripe';
 import { isSettledInvoice } from '@/lib/payments/invoiceSettlement';
 
@@ -72,7 +73,33 @@ export async function GET(
       );
     }
 
-    // 3. If we have a Stripe hosted invoice URL, redirect to it
+    /*
+     * 3. Not to Stripe if the owner has switched card payments off.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This redirect ran before any check, so an invoice raised while Stripe was
+     * connected stayed payable by card for ever: the hosted URL is stored on the
+     * row and Stripe is never told about a pause, so the page it points at goes
+     * on accepting money.
+     *
+     * Only invoices raised BEFORE the pause carry such a URL — one raised after
+     * it has none, because `createBookingInvoice` skips Stripe when the
+     * processor is unavailable. So this is the narrow "already sent" case, and
+     * the honest answer is to show the client the invoice itself rather than a
+     * card page the business no longer wants.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const cardsPaused = await isCardCollectionPaused(supabaseServer, invoice.user_id);
+
+    if (invoice.stripe_hosted_invoice_url && cardsPaused) {
+      requestLogger.info(
+        { invoiceId, ownerId: invoice.user_id },
+        'Not redirecting to Stripe: the owner paused card payments'
+      );
+      return NextResponse.redirect(`${baseUrl}/invoice/${invoiceId}`);
+    }
+
+    // 3b. Otherwise the stored Stripe hosted invoice URL is still the fastest path.
     if (invoice.stripe_hosted_invoice_url) {
       requestLogger.info({
         invoiceId,

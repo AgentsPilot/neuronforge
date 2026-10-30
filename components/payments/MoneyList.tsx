@@ -135,6 +135,8 @@ interface MoneyListProps {
    * the user is already in.
    */
   onOpenContact?: (contactId: string, bookingId: string | null) => void;
+  /** Open the CRM drawer on this booking, expanded. See MoneyRow. */
+  onOpenBooking?: (contactId: string, bookingId: string) => void;
   /** Scroll to and mark a row, for deep links out of the CRM drawer. */
   highlightId?: string | null;
   /** Bumped by the caller to force a refetch after creating an invoice. */
@@ -175,6 +177,7 @@ export function MoneyList({
   searchQuery = '',
   today,
   onOpenContact,
+  onOpenBooking,
   highlightId,
   refreshKey,
   onReady,
@@ -983,10 +986,12 @@ export function MoneyList({
             )}
           </div>
 
-          <div className="hidden grid-cols-[1.25rem_minmax(0,1.6fr)_minmax(0,1.1fr)_8.5rem_1.25rem] items-center gap-3 border-b border-[var(--v2-border)] bg-[var(--v2-bg)] px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--v2-text-muted)] sm:grid">
+          <div className="hidden grid-cols-[1.25rem_minmax(0,1.5fr)_minmax(0,0.85fr)_14rem_6rem] items-center gap-3 border-b border-[var(--v2-border)] bg-[var(--v2-bg)] px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--v2-text-muted)] sm:grid">
             <span aria-hidden="true" />
             <span>{t('payments.col.client_order') || 'Client and order'}</span>
-            <span>{t('payments.col.cashflow') || 'Cashflow'}</span>
+            {/* Centred over its bar. The bar fills the column, so a header
+                hugging one end read as belonging to the column beside it. */}
+            <span className="text-center">{t('payments.col.cashflow') || 'Cashflow'}</span>
             <span className="text-end">{t('payments.col.amount') || 'Amount'}</span>
             <span aria-hidden="true" />
           </div>
@@ -1015,6 +1020,7 @@ export function MoneyList({
                   selected={selected.has(item.key)}
                   selectable={selectMode}
                   onOpenContact={onOpenContact}
+                  onOpenBooking={onOpenBooking}
                 />
               </div>
             ))

@@ -16,6 +16,16 @@ import {
   timeZoneLabel,
 } from '@/lib/i18n/public-pages';
 
+/**
+ * How far ahead the panel asks which days are open.
+ *
+ * Thirty, because that is `advance_booking_days`' own default and so the whole
+ * bookable range for most services. A business configured to take bookings
+ * further out keeps the old behaviour beyond day thirty — those days stay
+ * offered rather than greyed, which is the safe direction to be wrong in.
+ */
+const OPEN_DAYS_AHEAD = 30;
+
 interface RescheduleConfig {
   bookingId: string;
   serviceId: string;
@@ -26,6 +36,15 @@ interface RescheduleConfig {
     advanceBookingDays: number;
     minNoticeHours: number;
   };
+  /**
+   * The days ahead that actually hold free hours, `YYYY-MM-DD`.
+   *
+   * Absent when the route was not asked (it does no diary work unprompted), so
+   * every read of it has to tolerate `undefined` and fall back to offering the
+   * day — a calendar that greys out everything because an answer failed to
+   * arrive is worse than one that lets the client find out on the day.
+   */
+  openDates?: string[];
 }
 
 interface TimeSlot {
@@ -192,8 +211,19 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
           if (bookingData.booking.startTime) setBookingStartTime(bookingData.booking.startTime);
         }
 
+        /*
+         * `days` asks which of the next thirty hold free hours, so the grid
+         * below can grey out the rest — the behaviour the purchase flow has
+         * always had, where `conversion/[userCode]/availability` takes the
+         * same window. Asked once here rather than per month: thirty days is
+         * the whole bookable range for a default service, and a second request
+         * every time the client pages the calendar buys nothing.
+         */
+        const query = new URLSearchParams({ days: String(OPEN_DAYS_AHEAD) });
+        if (meetingId) query.set('meeting_id', meetingId);
+
         const response = await fetch(
-          `/api/book/manage/${token}/reschedule${meetingId ? `?meeting_id=${encodeURIComponent(meetingId)}` : ''}`
+          `/api/book/manage/${token}/reschedule?${query.toString()}`
         );
         const data = await response.json();
 
@@ -326,7 +356,35 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
 
     const maxDate = new Date();
     maxDate.setDate(maxDate.getDate() + config.serviceConfig.advanceBookingDays);
-    return date <= maxDate;
+    if (date > maxDate) return false;
+
+    /*
+     * ── AND THE BUSINESS HAS TO ACTUALLY BE OPEN ───────────────────────────
+     *
+     * Until now this returned true for every day inside the advance window,
+     * so a client could pick a Saturday the owner has never worked and be
+     * shown an empty diary with nothing to explain it. The purchase flow has
+     * never had that problem, because it asks for a window of days and greys
+     * out the ones holding nothing.
+     *
+     * `openDates` is that same answer, worked out by the same pipeline. Two
+     * deliberate limits on how far it is trusted:
+     *
+     * Absent — the route was not asked, or the ask failed — means offer the
+     * day. A calendar that greys out everything because a request did not
+     * land is worse than one that lets the client find out on the day.
+     *
+     * Beyond the window we asked about there is no answer either way, so the
+     * advance rule above is left to decide alone. That only arises for a
+     * business booking further out than thirty days.
+     */
+    if (config.openDates) {
+      const horizon = new Date(today);
+      horizon.setDate(horizon.getDate() + OPEN_DAYS_AHEAD - 1);
+      if (date <= horizon && !config.openDates.includes(dateKeyOf(date))) return false;
+    }
+
+    return true;
   };
 
   /**
@@ -375,8 +433,26 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
     const maxDate = new Date();
     maxDate.setDate(maxDate.getDate() + config.serviceConfig.advanceBookingDays);
     maxDate.setHours(23, 59, 59, 999);
+    if (day > maxDate) return false;
 
-    return day <= maxDate;
+    /*
+     * The closed-day rule too, on the same terms as the grid.
+     *
+     * This function deliberately re-asks the grid's questions of a whole date
+     * rather than calling it, because the grid reads its month from
+     * `currentMonth` and the strip crosses month boundaries. That duplication
+     * is the hazard the header above warns about: a rule added to one and not
+     * the other makes the strip offer a day the grid has greyed out, which is
+     * worse than neither doing it.
+     */
+    if (config.openDates) {
+      const horizon = new Date(today);
+      horizon.setDate(horizon.getDate() + OPEN_DAYS_AHEAD - 1);
+      horizon.setHours(23, 59, 59, 999);
+      if (day <= horizon && !config.openDates.includes(dateKeyOf(day))) return false;
+    }
+
+    return true;
   };
 
   /**

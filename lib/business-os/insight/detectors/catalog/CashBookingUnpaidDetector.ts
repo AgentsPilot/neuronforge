@@ -175,10 +175,29 @@ export class CashBookingUnpaidDetector extends BaseDetector {
      */
     const { data: invoiceRows } = await this.supabase
       .from('payment_invoices')
-      .select('id, booking_id, status')
+      .select('id, booking_id, status, due_date')
       .eq('user_id', userId)
       .in('booking_id', unpaid.map(row => row.id))
-      .in('status', ['sent', 'pending', 'overdue']);
+      .in('status', ['sent', 'pending', 'overdue'])
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * ONLY WHAT IS ACTUALLY LATE MAY BE CHASED.
+       *
+       * These are bookings in the FUTURE that have not been paid for, so the
+       * invoice against one is routinely not due yet: a session next week
+       * billed on thirty-day terms is outstanding and nobody is late.
+       *
+       * Every matching invoice used to travel as `affectedEntityIds`, which is
+       * what the chase acts on. The same fault in `CashRevenueAtRiskDetector`
+       * put five real chases out ahead of their due date, by up to nineteen
+       * days.
+       *
+       * The FINDING is unchanged and still counts every unpaid booking — the
+       * money is owed, it is simply not late — and `affectedCount` below comes
+       * from the bookings rather than from this list.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      .lt('due_date', new Date().toISOString().slice(0, 10));
 
     const invoiceIds = (invoiceRows ?? []).map(row => String(row.id));
 

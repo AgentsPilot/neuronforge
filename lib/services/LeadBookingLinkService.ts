@@ -40,6 +40,9 @@ import { journeyGaps, describeJourneyGaps } from '@/lib/business-os/journeyReadi
 import { isQuoted } from '@/lib/business-os/clientJourney';
 import { activitySentence } from '@/lib/business-os/activityText';
 import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
+/* The stage TYPES that mean the relationship has an ending. Keys are invented
+   per business; only the type carries the meaning. */
+import { TERMINAL_STAGE_TYPES } from '@/lib/crm/StageTypeUtils';
 
 const logger = createLogger({ service: 'LeadBookingLinkService' });
 
@@ -77,6 +80,19 @@ export interface SendBookingLinkOptions {
    * one-line change at the caller if that is ever the decision.
    */
   trigger: 'owner' | 'automated';
+
+  /**
+   * This invitation is about the same kind of work the person came for.
+   *
+   * Passed to the gate as the caller's half of soft opt-in, for somebody who
+   * never answered the consent question. It does not reach anyone who refused,
+   * and the gate verifies the sale or enquiry behind the address itself.
+   *
+   * The AGENT decides this, in its committed plan, because the claim is about
+   * what the message is — and a plan is the one place an owner-facing legal
+   * assertion can be read back months later.
+   */
+  softOptIn?: boolean;
   /**
    * One sentence to open with, acknowledging what this person actually wrote.
    *
@@ -118,13 +134,49 @@ export async function sendBookingLink(
    */
   const { data: contact } = await supabaseServer
     .from('crm_contacts')
-    .select('id, first_name, last_name, email')
+    .select('id, first_name, last_name, email, stage')
     .eq('id', contactId)
     .eq('user_id', userId)
     .maybeSingle();
 
   if (!contact) return { ok: false, reason: 'not_found' };
   if (!contact.email) return { ok: false, reason: 'no_contact_email' };
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A PERSON THE OWNER HAS FILED AS FINISHED IS NOT INVITED BACK BY A MACHINE.
+   *
+   * `past_client`, `lost` and `archived` are the stage TYPES that mean the
+   * relationship has an ending. Both detectors behind these agents exclude them
+   * for exactly that reason — `ConvNoNextStepDetector` says it outright: "a
+   * past client or a lost lead has no next step BY DESIGN; reporting them would
+   * make the card a list of everyone the business has ever finished with."
+   *
+   * The AGENTS could not honour it. Their find reads bookings and has no way to
+   * ask about the stage: the stage KEY is invented per business (`completed`,
+   * `finished`, `alumni`) and only `crm_pipeline_stages.stage_type` carries the
+   * meaning, which the query grammar cannot reach from a contact. So a client
+   * moved to "completed" with no appointment ahead still matched, and the one
+   * thing the owner did to say "we are done here" was ignored.
+   *
+   * AUTOMATED SENDS ONLY. A person pressing Send in the CRM on a past client is
+   * making a decision, and refusing it would be the platform overruling them.
+   * This refuses the queue and the agents, which decided nothing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (options.trigger === 'automated' && contact.stage) {
+    const { data: stage } = await supabaseServer
+      .from('crm_pipeline_stages')
+      .select('stage_type')
+      .eq('user_id', userId)
+      .eq('stage_key', contact.stage)
+      .maybeSingle();
+
+    if (stage?.stage_type && TERMINAL_STAGE_TYPES.includes(stage.stage_type as never)) {
+      log.info({ stage: contact.stage, type: stage.stage_type }, 'Not inviting: the owner has filed this one as finished');
+      return { ok: false, reason: 'relationship_ended' };
+    }
+  }
 
   /*
    * The service, if one was named — also scoped.
@@ -214,7 +266,12 @@ export async function sendBookingLink(
 
   const result = await sendEmail({
     ...(options.trigger === 'automated'
-      ? { kind: 'marketing' as const, ownerUserId: userId, contactId }
+      ? {
+          kind: 'marketing' as const,
+          ownerUserId: userId,
+          contactId,
+          softOptIn: options.softOptIn === true,
+        }
       : { kind: 'transactional' as const, ownerUserId: userId }),
     to: [contact.email],
     subject,

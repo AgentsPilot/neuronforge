@@ -137,3 +137,53 @@ export function processorFees(rows: RevenueRow[]): {
 export function trueNetRevenue(rows: RevenueRow[], refundsIssued = 0): number {
   return cents(grossRevenue(rows) - refundsIssued - processorFees(rows).total);
 }
+
+/**
+ * Invoices that were paid WITHOUT a transaction row recording it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY BOTH SOURCES, AND WHY NEITHER ALONE
+ *
+ * Money arrives two ways. A card payment writes a `payment_transactions` row
+ * carrying the invoice it settled. A bank transfer or cash the owner recorded
+ * by hand marks the INVOICE paid and writes no transaction at all.
+ *
+ * Count transactions only and every hand-recorded payment disappears. Count
+ * invoices only and every card payment is missing its fees and refunds. Count
+ * both without this filter and a card-paid invoice is counted twice — once as
+ * the transaction, once as the invoice it settled.
+ *
+ * So: all transactions, plus the invoices no transaction claims.
+ *
+ * Net, not gross, on the same reasoning as the rest of this module — an invoice
+ * paid by transfer and later refunded is money that came in and went back out,
+ * and only the difference was ever revenue.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ITS RELATIONSHIP TO THE STATS ROUTE, STATED PLAINLY
+ *
+ * `app/api/business-os/stats/route.ts` computes the same figure in two halves —
+ * `paymentTransactionsRevenue30d + invoiceRevenue30d` — because it needs each
+ * half separately for other fields. Those halves are NOT replaced by this: a
+ * swap would move numbers already on an owner's dashboard to save a few lines.
+ *
+ * So this is a second expression of one rule, and that is exactly the shape
+ * that drifts. `collectedAgreesWithTheStatsRoute` in the tests holds the two
+ * together over the cases that distinguish them — a card payment counted once,
+ * a hand-recorded payment counted at all, a refund netted off — so the weekly
+ * note and the reports page cannot come to disagree about what a business
+ * earned without something going red.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function collectedNotDoubleCounted(
+  invoices: (RevenueRow & { id?: string | null })[],
+  transactions: (RevenueRow & { invoice_id?: string | null })[]
+): number {
+  const settled = new Set(
+    (transactions || []).map(t => t.invoice_id).filter((id): id is string => Boolean(id))
+  );
+
+  const unsettled = (invoices || []).filter(inv => !inv.id || !settled.has(inv.id));
+
+  return cents(netRevenue(transactions || []) + netRevenue(unsettled));
+}

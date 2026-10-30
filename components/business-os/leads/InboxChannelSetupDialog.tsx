@@ -32,6 +32,16 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+
+import {
+  INBOX_CADENCE_DEFAULT,
+  INBOX_CADENCE_INTERVAL,
+  INBOX_CADENCE_RANGE,
+  INBOX_STOP_AFTER_DEFAULT,
+  INBOX_STOP_AFTER_RANGE,
+} from '@/lib/business-os/leads/inboxProviders';
+import { parseInterval, type ScheduleInterval } from '@/lib/business-os/schedule/interval';
+import { IntervalPicker } from '@/components/business-os/schedule/IntervalPicker';
 import { Loader2, Mail, Check, AlertTriangle, X } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { PluginIcon } from '@/components/PluginIcon';
@@ -126,6 +136,22 @@ export function InboxChannelSetupDialog({
   /** Where the list is. Five at a time — see `PAGE_SIZE`. */
   const [page, setPage] = useState(0);
   const [derived, setDerived] = useState<Derived | null>(null);
+  /*
+   * The owner's two choices, opening on what the channel was doing anyway.
+   *
+   * Intervals rather than a named cadence and a day count: one control asks
+   * both questions now, and the same control asks them on the adopt dialog. The
+   * named cadence could only say minutes or an hour, so "twice a day" was
+   * unaskable here — and the request still carries `cadence` for the server's
+   * older path, derived from this on submit.
+   */
+  const [schedule, setSchedule] = useState<ScheduleInterval>(
+    INBOX_CADENCE_INTERVAL[INBOX_CADENCE_DEFAULT]
+  );
+  const [stopAfter, setStopAfter] = useState<ScheduleInterval>({
+    every: INBOX_STOP_AFTER_DEFAULT,
+    unit: 'days',
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -157,6 +183,27 @@ export function InboxChannelSetupDialog({
     fieldEmail: t('leads.inbox.field_email') || 'Email',
     fieldPhone: t('leads.inbox.field_phone') || 'Phone',
     whatHappens: t('leads.inbox.what_happens') || 'From now on, every enquiry becomes a lead',
+    /* The two questions every agent asks its owner before it runs. */
+    howOften: t('leads.inbox.how_often') || 'How often should we check?',
+    howFarBack: t('leads.inbox.how_far_back') || 'How far back should we keep looking?',
+    howFarBackHint:
+      t('leads.inbox.how_far_back_hint') ||
+      'An unread message older than this is not a new enquiry, so we leave it alone.',
+    days: (n: number) => (t('leads.inbox.n_days') || '{n} days').replace('{n}', String(n)),
+    /* The word before the number. Two different ones, because "Every 30 days"
+       and "After 30 days" are different sentences and the second question is
+       the second one. */
+    every: t('automation.every') || 'Every',
+    lookBack: t('automation.look_back') || 'Up to',
+    /*
+     * The unit, agreeing with its number.
+     *
+     * Singular and plural are separate keys rather than a count glued to a
+     * word: "1 דקות" is as wrong as "1 minutes", and Hebrew does not form the
+     * plural by adding a letter to the end of the singular.
+     */
+    unit: (unit: 'minutes' | 'hours' | 'days', count: number) =>
+      t(`automation.unit.${unit}${count === 1 ? '_one' : ''}`) || unit,
     whatHappensHint:
       t('leads.inbox.what_happens_hint') ||
       'We file the person who wrote in as a contact, and about fifteen minutes later they get your booking link — unless you have replied yourself by then.',
@@ -231,6 +278,48 @@ export function InboxChannelSetupDialog({
     setProvider(status?.connectable.length === 1 ? status.connectable[0] : null);
   }, [open, status]);
 
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * STEP FOUR OPENS ON WHAT THIS MAILBOX IS ACTUALLY SET TO.
+   *
+   * Both answers were `useState` seeded from constants, so the wizard always
+   * showed fifteen minutes and thirty days whatever the channel was running on.
+   *
+   * That is not merely a stale display. Re-running setup on a mailbox that
+   * already has a channel takes the UPDATE path in `enableInboxChannel`, so an
+   * owner who opened the wizard to fix their template, or to re-point it at a
+   * different sender, and pressed "Start now" silently reset a cadence they had
+   * deliberately changed in the agents list. Reported after exactly that: a
+   * channel set to run daily, and a wizard still offering fifteen minutes.
+   *
+   * Keyed on the PROVIDER rather than on `open`, because which mailbox this is
+   * about is not known until step one is answered — and the answer differs per
+   * mailbox: a business may run Gmail hourly and Outlook daily.
+   *
+   * Falls back to the defaults for a mailbox with no channel yet, and for one
+   * installed before the question was asked. Absent has always meant "the
+   * default", and the default is what the floor was choosing silently.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    if (!open) return;
+
+    const existing = provider
+      ? live?.channels.find(channel => channel.provider === provider)
+      : undefined;
+
+    setSchedule(
+      parseInterval(existing?.schedule) ?? INBOX_CADENCE_INTERVAL[INBOX_CADENCE_DEFAULT]
+    );
+    setStopAfter(
+      parseInterval(existing?.stopAfter) ?? {
+        every: INBOX_STOP_AFTER_DEFAULT,
+        unit: 'days',
+      }
+    );
+  }, [open, provider, live]);
+
   const refreshStatus = useCallback(async (): Promise<InboxChannelStatus | null> => {
     const res = await fetch('/api/business-os/leads/inbox/status', { cache: 'no-store' });
     const body = await res.json().catch(() => null);
@@ -240,6 +329,33 @@ export function InboxChannelSetupDialog({
     onStatusChanged?.(next);
     return next;
   }, [onStatusChanged]);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * RE-READ THE CHANNEL WHENEVER THE WIZARD OPENS.
+   *
+   * `status` is a prop, fetched by the host when the page loaded. An owner who
+   * changes a cadence in the agents list and then opens this wizard without
+   * reloading would be shown the value from before their change — and, because
+   * re-running setup UPDATES rather than creates, pressing "Start now" would
+   * write that stale value back over the one they had just chosen.
+   *
+   * So the dialog asks rather than trusting what it was handed. One GET on
+   * open, against a route that already exists for exactly this and is already
+   * called after a mailbox is connected.
+   *
+   * Deliberately not awaited: the reads below fall back to `status` until the
+   * answer arrives, so the dialog opens instantly and corrects itself a moment
+   * later rather than showing a spinner over a screen that is usually right.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    if (!open) return;
+    void refreshStatus();
+    /* `refreshStatus` is stable per `onStatusChanged`; re-running this on every
+       render would be a GET per keystroke. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   /**
    * Fetch the recent mail for the picker.
@@ -388,6 +504,8 @@ export function InboxChannelSetupDialog({
           rule: derived.rule,
           watching: derived.watching,
           template: derived.template,
+          schedule,
+          stopAfter,
         }),
       });
       const body = await res.json();
@@ -399,7 +517,7 @@ export function InboxChannelSetupDialog({
     } finally {
       setBusy(false);
     }
-  }, [provider, derived, onEnabled, onOpenChange]);
+  }, [provider, derived, schedule, stopAfter, onEnabled, onOpenChange]);
 
   if (!open) return null;
 
@@ -814,6 +932,52 @@ export function InboxChannelSetupDialog({
                 </p>
               )}
 
+              {/*
+                THE TWO QUESTIONS EVERY AGENT ASKS ITS OWNER.
+                ──────────────────────────────────────────────────────────────
+                An agent adopted from an insight asks how often it should run
+                and when it should give up. This channel asked neither: its
+                cadence was a constant in the setup module, and its window was
+                the date this wizard happened to run on — a fixed point, so it
+                widened every day until `max_results` quietly cut off the oldest
+                mail.
+
+                Asked here, on the screen that already says what will happen,
+                rather than on a settings page nobody opens. Both open on what
+                the channel was doing anyway, so an owner who reads neither gets
+                today's behaviour.
+              */}
+              {/*
+                One control per question, the same one the adopt dialog uses.
+
+                It was chips, and chips could not carry the request: covering
+                minutes to a week is about ten rungs, which is two crowded rows
+                in Hebrew and still cannot say "every four hours" until somebody
+                adds that rung. A number and a unit covers the span in two taps.
+              */}
+              <div className="mt-5 flex flex-col gap-4">
+                <IntervalPicker
+                  id="inbox-cadence"
+                  label={copy.howOften}
+                  lead={copy.every}
+                  value={schedule}
+                  range={INBOX_CADENCE_RANGE}
+                  onChange={setSchedule}
+                  unitLabel={copy.unit}
+                />
+
+                <IntervalPicker
+                  id="inbox-stop-after"
+                  label={copy.howFarBack}
+                  lead={copy.lookBack}
+                  value={stopAfter}
+                  range={INBOX_STOP_AFTER_RANGE}
+                  onChange={setStopAfter}
+                  unitLabel={copy.unit}
+                  hint={copy.howFarBackHint}
+                />
+              </div>
+
               {repliesOff && (
                 <div
                   className="flex items-center gap-3 mt-4 px-3 py-2.5"
@@ -884,7 +1048,7 @@ export function InboxChannelSetupDialog({
                 type="button"
                 onClick={() => void derive()}
                 disabled={busy || !chosen}
-                className="px-4 py-2 text-sm font-medium text-white disabled:opacity-50 flex items-center gap-2"
+                className="px-4 py-2 text-sm font-medium text-white disabled:opacity-50 flex items-center gap-2 ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
                 style={{ background: 'var(--v2-primary)', borderRadius: 'var(--v2-radius-button)' }}
               >
                 {busy && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -897,7 +1061,15 @@ export function InboxChannelSetupDialog({
                 type="button"
                 onClick={() => setStep(4)}
                 disabled={busy}
-                className="px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                /*
+                  `ap-primary-lift`, the same class the dashboard's Needs-you
+                  buttons carry. It exists for dark mode: white on an owner's
+                  brand fill can measure under 3:1, which the eye reads as a
+                  blurry button rather than a low-contrast one, so the class
+                  deepens the fill 22% and swaps the glow for a flat shadow.
+                  Plain `var(--v2-primary)` here was that bug.
+                */
+                className="px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
                 style={{ background: 'var(--v2-primary)', borderRadius: 'var(--v2-radius-button)' }}
               >
                 {copy.next}
@@ -909,7 +1081,7 @@ export function InboxChannelSetupDialog({
                 type="button"
                 onClick={() => void enable()}
                 disabled={busy}
-                className="px-4 py-2 text-sm font-medium text-white disabled:opacity-50 flex items-center gap-2"
+                className="px-4 py-2 text-sm font-medium text-white disabled:opacity-50 flex items-center gap-2 ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
                 style={{ background: 'var(--v2-primary)', borderRadius: 'var(--v2-radius-button)' }}
               >
                 {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}

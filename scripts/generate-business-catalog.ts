@@ -41,6 +41,19 @@ const TABLES = [
    */
   'business_intake_forms',
 
+  /*
+   * Checkouts nobody finished.
+   *
+   * Introspected so the `abandoned_bookings` entity can be declared: the
+   * catalog refuses an entity whose table was never read, and it refuses it at
+   * IMPORT, so the declaration has to come second.
+   *
+   * It is deliberately NOT one of the scheduling tables below. An attempt is
+   * not a booking — no hour is held and no money is owed — and anything that
+   * counted them together would report work the business has not got.
+   */
+  'abandoned_bookings',
+
   // Core CRM / scheduling / money
   'crm_contacts',
   'crm_tasks',

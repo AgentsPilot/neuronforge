@@ -30,9 +30,21 @@ function mockSupabase(tables: Record<string, Row[]>) {
   };
 }
 
-function invoices(n: number, days: number, amount = 500): Row[] {
+/*
+ * `dueDays` is part of the fixture now, and it was absent.
+ *
+ * The finding ages invoices by `created_at` — "what have I billed that has not
+ * arrived" is a question about the issue date — but the CHASE may only touch
+ * what is actually late. An invoice raised thirty days ago on forty-five-day
+ * terms is outstanding and is not overdue.
+ *
+ * Defaults to ten days past due, so the existing cases still describe money
+ * that is genuinely late. `dueDays: -14` makes one that is not.
+ */
+function invoices(n: number, days: number, amount = 500, dueDays = 10): Row[] {
   return Array.from({ length: n }, (_, i) => ({
     id: `inv-${days}-${i}`, created_at: ago(days),
+    due_date: ago(dueDays).slice(0, 10),
     amount, refunded_amount: 0, currency: 'USD', contact_id: `c${i}`,
   }));
 }
@@ -76,6 +88,34 @@ describe('CashRevenueAtRiskDetector', () => {
     // is one call.
     expect(result!.affectedCount).toBe(3);
     expect(result!.affectedEntityIds).toHaveLength(3);
+  });
+
+  it('counts money not yet due, and does NOT offer to chase it', async () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE SPLIT THIS DETECTOR HAS TO MAKE, AND DID NOT.
+     *
+     * Three invoices raised thirty days ago on forty-five-day terms. They are
+     * outstanding — that is this card's subject, and the total must include
+     * them — and not one of them is late.
+     *
+     * Every id used to travel as `affectedEntityIds`, which is what the chase
+     * acts on. Five real invoices were chased that way, by up to nineteen days
+     * before they were owed: INV-00022, 23 and 24 chased on 22 October against
+     * a due date of 4 November.
+     *
+     * So the finding keeps counting by issue date and the action is narrowed to
+     * what the due date says is late.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const d = detector(mockSupabase({ payment_invoices: invoices(3, 30, 500, -15) }));
+    const result = await d.evaluate('user-1');
+
+    expect(result).not.toBeNull();
+    /* Counted: it is money that has not arrived. */
+    expect(result!.estimatedImpactUsd).toBe(1500);
+    /* Not chaseable: nobody owes it yet. */
+    expect(result!.affectedEntityIds).toHaveLength(0);
   });
 
   it('counts only the aged ones when a business has both', async () => {

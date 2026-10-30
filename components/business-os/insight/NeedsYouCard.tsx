@@ -886,8 +886,25 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                   <button
                     type="button"
                     onClick={() => act(leadGap!, lead.item as GapItemView)}
-                    className="text-[13px] font-semibold px-4 py-2 rounded-lg text-white"
-                    style={{ background: 'var(--v2-primary)' }}
+                    /*
+                     * ─────────────────────────────────────────────────────────
+                     * THE SAME BUTTON AS EVERY ROW IN THE LIST BELOW.
+                     *
+                     * The lead row was built first and kept its own metrics —
+                     * 13px text in `px-4 py-2`, no lift, no hover, no press —
+                     * while the rows underneath are `text-xs` in `px-3 py-1.5`
+                     * with `ap-primary-lift`, a brightness hover and a scale on
+                     * press. One card, two buttons, and the bigger flatter one
+                     * sat directly above the smaller lively ones.
+                     *
+                     * `ap-primary-lift` is a class rather than an inline
+                     * shadow for the reason `globals.css` records: the shadow
+                     * is a colour-mix of the primary and cannot be expressed
+                     * inline without losing its dark-mode form.
+                     * ─────────────────────────────────────────────────────────
+                     */
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
+                    style={{ background: 'var(--v2-primary)', color: '#fff' }}
                   >
                     {asking
                       ? (leadAction === 'cancel_booking'
@@ -900,7 +917,8 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                     <button
                       type="button"
                       onClick={() => setRow(leadKey, { kind: 'idle' })}
-                      className="text-[13px] font-semibold px-3 py-2 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                      /* Sized to the button it sits beside, like the list's. */
+                      className="px-2.5 py-1.5 text-xs font-semibold rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
                     >
                       {t('common.cancel') || 'Cancel'}
                     </button>
@@ -911,7 +929,11 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
             <button
               type="button"
               onClick={() => openContact(lead.item.contactId)}
-              className="text-[13px] font-semibold px-4 py-2 rounded-lg"
+              /* Sized to the row button it stands beside. It kept the lead
+                 row's original `text-[13px] px-4 py-2`, so once the primary
+                 next to it became the list's button this one was visibly
+                 taller than the thing it is paired with. */
+              className="inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors hover:border-[var(--v2-text-muted)]"
               style={{
                 background: 'transparent',
                 color: 'var(--v2-text-secondary)',

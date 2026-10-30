@@ -24,7 +24,7 @@ import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCale
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
-import { activitySentence, activityMoment, activityRecord } from '@/lib/business-os/activityText';
+import { activitySentence, activityMoment } from '@/lib/business-os/activityText';
 
 const logger = createLogger({ module: 'API', service: 'BookingReschedule' });
 
@@ -62,6 +62,86 @@ async function clientMoveCount(userId: string, bookingId: string): Promise<numbe
   }
 
   return count ?? 0;
+}
+
+/**
+ * How many times the CLIENT has moved ONE SESSION of a package.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS CANNOT USE THE COUNT ABOVE
+ *
+ * `clientMoveCount` reads `crm_activities`, and a session move writes none: the
+ * session branch of the POST answers and returns before the activity write the
+ * booking path ends with. So every package session was unlimited — the limit
+ * read zero however many times the client had moved it, and the invoice chase
+ * the rule exists to protect never arrived, because the session never did.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AND WHY THE MEETINGS TABLE CAN ANSWER IT
+ *
+ * A move leaves its own record. `move_meeting` marks the old row `moved` and
+ * stamps `moved_by` with the actor the caller named, and the portal names
+ * `'client'` — so the attempts at one session, with the client's own among
+ * them, are already on the table. No activity row, and nothing to migrate.
+ *
+ * Scoped to the SESSION rather than the purchase, which is the difference from
+ * the booking rule: a package sold as three appointments gives each of them its
+ * own allowance, instead of two moves shared across all three and a final
+ * session frozen because the earlier two were rearranged.
+ *
+ * Counts only `'client'`. An owner moving a session on the client's behalf is
+ * the business choosing to, which is the same asymmetry the booking rule keeps
+ * — and rows moved before `moved_by` was written stay uncounted rather than
+ * being charged to a client retroactively.
+ *
+ * Fails OPEN, like the count above and for the same reason: a client who cannot
+ * reschedule and cannot tell why becomes a phone call for the owner.
+ */
+async function clientSessionMoveCount(
+  userId: string,
+  bookingId: string,
+  sessionNumber: number
+): Promise<number> {
+  const { count, error } = await supabaseServer
+    .from('scheduling_meetings')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('booking_id', bookingId)
+    .eq('session_number', sessionNumber)
+    .eq('meeting_status', 'moved')
+    .eq('moved_by', 'client');
+
+  if (error) {
+    logger.warn(
+      { err: error, bookingId, sessionNumber },
+      'Could not count session moves; allowing the move'
+    );
+    return 0;
+  }
+
+  return count ?? 0;
+}
+
+/**
+ * The move count that applies to what is being moved.
+ *
+ * A session is counted on its own; a booking keeps the rule it always had.
+ * Both are held to the same `CLIENT_RESCHEDULE_LIMIT`, and both the GET that
+ * states the rule and the POST that enforces it ask through here, so the page
+ * can never lead with one answer and the write refuse on another.
+ */
+async function movesUsed(
+  userId: string,
+  bookingId: string,
+  session: Record<string, unknown> | null
+): Promise<number> {
+  const sessionNumber = session?.session_number;
+
+  if (typeof sessionNumber === 'number') {
+    return clientSessionMoveCount(userId, bookingId, sessionNumber);
+  }
+
+  return clientMoveCount(userId, bookingId);
 }
 
 
@@ -326,7 +406,7 @@ export async function GET(
      * slots and then rejects the chosen one is the rudest possible way to state
      * a rule. Same count, same limit, read here so the page can lead with it.
      */
-    const usedMoves = await clientMoveCount(booking.user_id, bookingId);
+    const usedMoves = await movesUsed(booking.user_id, bookingId, session);
 
     if (usedMoves >= CLIENT_RESCHEDULE_LIMIT) {
       return NextResponse.json(
@@ -334,7 +414,7 @@ export async function GET(
           success: false,
           code: 'reschedule_limit',
           limit: CLIENT_RESCHEDULE_LIMIT,
-          error: `This booking has already been moved ${CLIENT_RESCHEDULE_LIMIT} times`,
+          error: `This appointment has already been moved ${CLIENT_RESCHEDULE_LIMIT} times`,
         },
         { status: 400 }
       );
@@ -349,6 +429,23 @@ export async function GET(
     const requestedDateRaw = new URL(request.url).searchParams.get('date');
     const requestedDate =
       requestedDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(requestedDateRaw) ? requestedDateRaw : null;
+
+    /**
+     * How many days ahead to say which are OPEN, if asked.
+     *
+     * The purchase flow has always been able to grey out a day the business
+     * does not work — `conversion/[userCode]/availability` takes a `days`
+     * window and loops it, so by the time its calendar paints it knows which
+     * days hold anything. The portal asked one date at a time, so its calendar
+     * had nothing to grey out WITH: every day inside the advance window looked
+     * open, and a client picking a Saturday got an empty diary and no reason.
+     *
+     * Same question, asked the same way. Capped because this is a public,
+     * token-authenticated endpoint and the loop below is bounded work.
+     */
+    const openDaysRaw = new URL(request.url).searchParams.get('days');
+    const openDays =
+      openDaysRaw && /^\d{1,3}$/.test(openDaysRaw) ? Math.min(Number(openDaysRaw), 30) : null;
 
     /**
      * What this client could move to on one day.
@@ -410,6 +507,102 @@ export async function GET(
         slots: generateTimeSlots(date, dayWindows, duration, existingBookings, externalEvents, timezone),
         reason: null,
       };
+    };
+
+    /**
+     * WHICH OF THE NEXT `days` DAYS HOLD ANYTHING AT ALL.
+     *
+     * The same four facts `slotsForDate` uses, in the same order, through the
+     * same `generateTimeSlots` — so a day this calls open is a day that one
+     * will offer hours for, and the calendar can never grey out a day that had
+     * times or offer one that did not.
+     *
+     * The difference is only WHEN they are fetched. Calling `slotsForDate` in a
+     * loop would repeat five round-trips per day — about a hundred and fifty
+     * for a month — to re-read facts that do not change between days. So the
+     * owner's profile, hours, time off, diary and external calendar are read
+     * ONCE across the whole window, and each day is then decided in memory.
+     *
+     * `generateTimeSlots` is given the whole window's busy list rather than
+     * that day's: it only ever generates within the day's own windows, and an
+     * appointment three weeks away cannot overlap them. Filtering per day would
+     * be a second place for the rule to drift.
+     */
+    const openDatesForRange = async (days: number): Promise<string[]> => {
+      const { data: profile } = await businessProfileRepository.findByUserId(booking.user_id);
+
+      const rawAvailability = profile?.scheduling_availability;
+      if (!rawAvailability) return [];
+
+      const availability =
+        typeof rawAvailability === 'string' ? JSON.parse(rawAvailability) : rawAvailability;
+
+      const duration = service?.duration_minutes;
+      /* A service sold rather than booked has no hours to grey in or out. */
+      if (!duration || duration <= 0) return [];
+
+      const { data: ownerPrefs } = await supabaseServer
+        .from('user_preferences')
+        .select('timezone')
+        .eq('user_id', booking.user_id)
+        .maybeSingle();
+      const timezone = safeTimezone(ownerPrefs?.timezone);
+
+      /*
+       * Today where the BUSINESS is, not where the server is. `en-CA` renders
+       * `YYYY-MM-DD`, which is the key every helper here already speaks.
+       */
+      const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
+      const keyAt = (offset: number) => {
+        const at = new Date(`${todayKey}T12:00:00.000Z`);
+        at.setUTCDate(at.getUTCDate() + offset);
+        return at.toISOString().slice(0, 10);
+      };
+
+      const lastKey = keyAt(days - 1);
+
+      const { data: timeOff } = await schedulingTimeOffRepository.list(booking.user_id, {
+        from: todayKey,
+        to: lastKey,
+      });
+
+      const windowStart = `${todayKey}T00:00:00.000Z`;
+      const windowEnd = `${lastKey}T23:59:59.999Z`;
+
+      const existingBookings = await busyMeetings(
+        supabaseServer,
+        booking.user_id,
+        windowStart,
+        windowEnd
+      );
+      const { data: busySlots } = await externalCalendarEventRepository.getBusySlots(
+        booking.user_id,
+        windowStart,
+        windowEnd
+      );
+      const externalEvents = (busySlots || []).map(slot => ({
+        start_time: slot.start,
+        end_time: slot.end,
+      }));
+
+      const open: string[] = [];
+      for (let offset = 0; offset < days; offset++) {
+        const date = keyAt(offset);
+        const dayWindows = windowsForDate(availability, date, timeOff ?? []);
+        if (dayWindows.length === 0) continue;
+
+        const slots = generateTimeSlots(
+          date,
+          dayWindows,
+          duration,
+          existingBookings,
+          externalEvents,
+          timezone
+        );
+        if (slots.length > 0) open.push(date);
+      }
+
+      return open;
     };
 
     /*
@@ -489,6 +682,11 @@ export async function GET(
        * for nothing.
        */
       slots: requestedDate ? await slotsForDate(requestedDate) : undefined,
+      /*
+       * Which of the days ahead are worth offering — only when asked, for the
+       * same reason the diary above is. The panel asks once, as it loads.
+       */
+      openDates: openDays ? await openDatesForRange(openDays) : undefined,
       /* The session's own time where the page is open on one. */
       currentStartTime: session ? session.start_time : booking.start_time,
       meetingId: session ? session.id : null,
@@ -718,7 +916,7 @@ export async function POST(
      * worst case here is one extra move.
      * ─────────────────────────────────────────────────────────────────────────
      */
-    const movesSoFar = await clientMoveCount(bookingData.user_id, bookingId);
+    const movesSoFar = await movesUsed(bookingData.user_id, bookingId, session);
 
     if (movesSoFar >= CLIENT_RESCHEDULE_LIMIT) {
       requestLogger.info({ bookingId, movesSoFar }, 'Client reschedule limit reached');
@@ -727,7 +925,7 @@ export async function POST(
           success: false,
           code: 'reschedule_limit',
           limit: CLIENT_RESCHEDULE_LIMIT,
-          error: `This booking has already been moved ${CLIENT_RESCHEDULE_LIMIT} times`,
+          error: `This appointment has already been moved ${CLIENT_RESCHEDULE_LIMIT} times`,
         },
         { status: 400 }
       );

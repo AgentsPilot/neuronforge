@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { configTabsForShape, shapeFromServices } from '@/lib/business-os/businessShape';
-import { X, Settings, Clock, CreditCard, Loader2, Check, AlertTriangle, ClipboardList, Sparkles, Building2, FileText } from 'lucide-react';
+import { X, Settings, Clock, CreditCard, Loader2, Check, AlertTriangle, ClipboardList, Sparkles, Building2, FileText, Link2 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SchedulingServicesList } from '@/components/scheduling/SchedulingServicesList';
 import { AvailabilityEditor, DEFAULT_AVAILABILITY, parseAvailability, type WeeklyAvailability } from '@/components/scheduling/AvailabilityEditor';
@@ -16,7 +16,6 @@ import { InvoiceSettingsSection } from '@/components/business-os/settings/Invoic
 import { TabFooter, TabFooterSlot, TabFooterSlotProvider } from '@/components/business-os/settings/TabFooter';
 import { StripeConnectWizard } from '@/components/payments/StripeConnectWizard';
 import { StripeEmbeddedOnboarding } from '@/components/payments/StripeEmbeddedOnboarding';
-import { STRIPE_REMOVE_BUTTON_KEY, refusalLines, removeMessageKey, stripeExitLabel } from '@/components/payments/stripeConnectExitCopy';
 import { createLogger } from '@/lib/logger';
 import type { SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import {
@@ -66,6 +65,12 @@ interface ConfigurationDialogProps {
    * when the dialog eventually closes.
    */
   onServiceEdited?: (serviceId: string) => void;
+}
+
+/** One reason cards cannot be switched off yet, as the server reports it. */
+interface ExitBlockerView {
+  code: string;
+  count: number;
 }
 
 export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit, visibleTabs, servicePrefill, availabilityDaysToAdd, onServiceCreated, onCloseWithUnpublished, onServicePublished, onServiceEdited }: ConfigurationDialogProps) {
@@ -178,11 +183,40 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     stripe_email?: string | null;
     country?: string | null;
     business_type?: string | null;
+    /* The three facts a support request actually turns on: can it charge, can
+       it pay out, and did the owner switch cards off themselves. Carried so the
+       details card reports what the row says rather than what the UI inferred. */
+    charges_enabled?: boolean | null;
+    payouts_enabled?: boolean | null;
+    paused_at?: string | null;
+    /** standard / express / custom. They behave differently and fail differently. */
     stripe_account_type?: string | null;
+    /** Did onboarding ever finish. Separates "never set up" from "Stripe turned it off". */
+    details_submitted?: boolean | null;
+    /** When we last heard from Stripe. A stale row explains a confusing screen. */
+    updated_at?: string | null;
+    /**
+     * Does this business ALSO hold an OAuth connection?
+     *
+     * The documented drift: an account id lives in `stripe_connect_accounts`
+     * and in `plugin_connections.profile_data`, routes read them in different
+     * orders, and a business holding both can be charged on one account and
+     * refunded against the other. Nothing surfaced it, so a support request
+     * about a failing refund looked like a Stripe problem.
+     */
+    has_oauth_connection?: boolean;
   } | null>(null);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
-  // D5 / SX-5: why a Remove or Disconnect was refused, in the owner's words (never the route's raw text).
-  const [stripeExitError, setStripeExitError] = useState<string[] | null>(null);
+  /*
+   * Why cards could not be switched off, straight from the server.
+   *
+   * `null` means nothing is blocking. A non-empty array opens the dialog below;
+   * an EMPTY array means the check itself failed, which is a different message
+   * — "we could not look" is not "you are clear".
+   */
+  const [exitBlockers, setExitBlockers] = useState<ExitBlockerView[] | null>(null);
+  /** Momentary "Copied" on the support card. Resets itself after two seconds. */
+  const [supportCopied, setSupportCopied] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Set initial tab when dialog opens
@@ -390,7 +424,22 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
       // Consider connected if charges enabled OR (details submitted and not explicitly disconnected)
       const stripeOnboardingComplete = hasStripeAccountData && chargesEnabled === true;
       // Only disconnected if charges_enabled is false AND details not submitted (genuine disconnect, not pending)
-      const stripeAccountDisconnected = hasStripeAccountData && chargesEnabled === false && !detailsSubmitted;
+      /*
+       * The OWNER's decision, not Stripe's status.
+       *
+       * This inferred "disconnected" from `chargesEnabled === false &&
+       * !detailsSubmitted` — two flags STRIPE also writes, which
+       * `refresh-status` rewrites from Stripe every time this dialog opens.
+       * Stripe is never told about a disconnect, so it kept answering
+       * "enabled" and the account silently reconnected.
+       *
+       * `paused_at` is written only by `disconnect` and cleared only by the
+       * onboarding callback, so it survives a refresh. The old inference stays
+       * as the fallback for rows that predate the column.
+       */
+      const pausedAt = stripeData.data?.paused_at ?? null;
+      const stripeAccountDisconnected = hasStripeAccountData
+        && (Boolean(pausedAt) || (chargesEnabled === false && !detailsSubmitted));
       const stripeAccountPending = hasStripeAccountData && !stripeOnboardingComplete && !stripeAccountDisconnected;
 
       // Check plugin_connections for OAuth connection
@@ -405,7 +454,13 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
           stripe_email: stripeData.data.stripe_email,
           country: stripeData.data.country,
           business_type: stripeData.data.business_type,
+          charges_enabled: stripeData.data.charges_enabled,
+          payouts_enabled: stripeData.data.payouts_enabled,
+          paused_at: stripeData.data.paused_at ?? null,
           stripe_account_type: stripeData.data.stripe_account_type,
+          details_submitted: stripeData.data.details_submitted,
+          updated_at: stripeData.data.updated_at,
+          has_oauth_connection: Boolean(hasPluginConnection),
         });
       } else {
         setStripeAccountData(null);
@@ -491,18 +546,92 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     checkStripeConnection(true); // Refresh from Stripe API in case partial progress was made
   };
 
+  /*
+   * ONE PRESS, ONE ANSWER.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This opened the confirmation straight away, so an owner with running plans
+   * read a confident explanation of what disconnecting would do, pressed it,
+   * and only then learned the server refuses. Two actions to find out one fact,
+   * and the first was a promise the product could not keep.
+   *
+   * The check runs first now. Either the owner sees what is outstanding, with
+   * no disconnect button to press, or they see a confirmation that is true.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /*
+   * What is stopping a disconnect, asked when the dialog opens.
+   *
+   * `null` while checking and when nothing is blocking — the button reads
+   * `checkingExit` for the first and `exitBlockers` for the second, so "still
+   * looking" and "clear" never look the same.
+   */
+  const [checkingExit, setCheckingExit] = useState(false);
+
+  useEffect(() => {
+    /*
+     * BOTH EXITS ASK THE SAME QUESTION.
+     *
+     * Disconnect and Remove connection answer to one rule server-side
+     * (`checkConnectExitBlockers`), so they must answer to one here too. The
+     * delete route was already refusing a blocked removal with a 409 that the
+     * dialog only logged — the owner pressed it, the dialog closed, and nothing
+     * said why. The two cannot be open at once, so one piece of state serves
+     * both.
+     */
+    if (!showDisconnectConfirm && !showDeleteConfirm) return;
+
+    let cancelled = false;
+    setCheckingExit(true);
+    setExitBlockers(null);
+
+    fetch('/api/payments/stripe-connect/disconnect')
+      .then(r => r.json())
+      .then(result => {
+        if (cancelled) return;
+        // An empty array is "we could not look", which the dialog words
+        // differently from "these are in the way".
+        if (!result.canDisconnect) setExitBlockers(result.blockers ?? []);
+      })
+      .catch(err => {
+        /*
+         * The check is a courtesy, not the control: the POST applies the same
+         * rule and refuses on its own. A network blip leaves the button live
+         * rather than stranding the owner behind a failed fetch.
+         */
+        logger.error({ err }, 'Disconnect pre-check failed; leaving the action enabled');
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingExit(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [showDisconnectConfirm, showDeleteConfirm]);
+
   const handleDisconnectStripe = () => {
+    /*
+     * Opens the dialog; the DIALOG does the checking.
+     *
+     * Checking out here meant the owner pressed a button and waited with no
+     * surface to wait on, then got one of two different dialogs depending on
+     * the answer. One dialog that explains itself is less to understand: it
+     * opens, says it is looking, and then either offers the action or shows
+     * what is in the way with the action disabled.
+     */
+    setExitBlockers(null);
     setShowDisconnectConfirm(true);
   };
 
   const handleDeleteStripe = () => {
+    // Clear any verdict left by a previous open, so the dialog cannot show a
+    // stale answer while the fresh one is still in flight.
+    setExitBlockers(null);
     setShowDeleteConfirm(true);
   };
 
   // Disconnect: Just removes from our database, keeps Stripe account
   const confirmDisconnectStripe = async () => {
     setShowDisconnectConfirm(false);
-    setStripeExitError(null);
     try {
       setStripeLoading(true);
 
@@ -519,13 +648,19 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
         setStripeDisconnected(true);
         // Keep stripeAccountData so we can still delete or reconnect
         logger.info('Stripe account disconnected from app');
+      } else if (result.error === 'exit_blocked' || result.error === 'check_failed') {
+        /*
+         * Refused, and the owner is told why in the platform's own dialog
+         * rather than left with a button that did nothing. `check_failed`
+         * carries no blockers, which is how the dialog tells the two apart.
+         */
+        setExitBlockers(result.blockers ?? []);
+        logger.info({ error: result.error, blockers: result.blockers }, 'Stripe disconnect refused');
       } else {
-        logger.warn({ error: result.error }, 'Stripe disconnect refused');
-        setStripeExitError(refusalLines(t, result));
+        logger.error({ error: result.error }, 'Failed to disconnect Stripe');
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to disconnect Stripe');
-      setStripeExitError(refusalLines(t, null));
     } finally {
       setStripeLoading(false);
     }
@@ -534,7 +669,6 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
   // Delete: Permanently deletes from Stripe AND our database
   const confirmDeleteStripe = async () => {
     setShowDeleteConfirm(false);
-    setStripeExitError(null);
     try {
       setStripeLoading(true);
 
@@ -549,16 +683,12 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
         setStripeConnected(false);
         setStripeOnboardingPending(false);
         setStripeAccountData(null);
-        setStripeDisconnected(false);
-        logger.info('Stripe account removed');
+        logger.info('Stripe account permanently deleted');
       } else {
-        // D5 / SX-5: a refusal keeps the account as it was; say why.
-        logger.warn({ error: result.error }, 'Stripe removal refused');
-        setStripeExitError(refusalLines(t, result));
+        logger.error({ error: result.error }, 'Failed to delete Stripe account');
       }
     } catch (error) {
-      logger.error({ err: error }, 'Failed to remove Stripe account');
-      setStripeExitError(refusalLines(t, null));
+      logger.error({ err: error }, 'Failed to delete Stripe account');
     } finally {
       setStripeLoading(false);
     }
@@ -638,6 +768,20 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
 
   // Get the edited service name for the confirmation dialog
   const editedService = editedServiceId ? services.find(s => s.id === editedServiceId) : null;
+  /*
+   * What the support card says about cards, in one place.
+   *
+   * Three states, not two: an owner who paused is in a different situation from
+   * one Stripe has disabled, and that difference is usually the whole content of
+   * the support request. Derived once so the line shown and the line copied
+   * cannot drift apart.
+   */
+  const stripeCardsLabel = stripeAccountData?.paused_at
+    ? t('config.stripe.support_paused')
+    : stripeAccountData?.charges_enabled
+      ? t('config.stripe.support_on')
+      : t('config.stripe.support_off');
+
   const editedServiceName = editedService?.service_name || t('config.service') || 'service';
 
   return (
@@ -1085,7 +1229,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                                 onClick={handleDeleteStripe}
                                 className="text-sm text-[var(--v2-text-muted)] hover:text-red-500 transition-colors"
                               >
-                                {stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
+                                {t('config.stripe.delete_account') || 'Delete Account'}
                               </button>
                             </div>
                           ) : stripeOnboardingPending ? (
@@ -1126,7 +1270,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-500 border border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 transition-colors"
                                 style={{ borderRadius: 'var(--v2-radius-button)' }}
                               >
-                                {stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
+                                {t('config.stripe.delete_account') || 'Delete Account'}
                               </button>
                             </div>
                           ) : stripeDisconnected ? (
@@ -1160,7 +1304,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-500 border border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 transition-colors"
                                 style={{ borderRadius: 'var(--v2-radius-button)' }}
                               >
-                                {stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
+                                {t('config.stripe.delete_account') || 'Delete Account'}
                               </button>
                             </div>
                           ) : (
@@ -1184,7 +1328,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-500 border border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 transition-colors"
                                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                                 >
-                                  {stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
+                                  {t('config.stripe.delete_account') || 'Delete Account'}
                                 </button>
                               )}
                             </div>
@@ -1193,16 +1337,177 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                       </div>
                     </div>
 
-                    {stripeExitError && (
+                    {/*
+                      CONNECTION DETAILS, FOR WHEN IT IS NOT WORKING.
+                      ───────────────────────────────────────────────────────
+                      An owner whose payments have stopped has no way to tell us
+                      WHICH connection is broken: the account id lives in a table
+                      they cannot see, and "Stripe isn't working" is the whole of
+                      what support receives. This is the four facts that actually
+                      identify the problem, in one copyable block.
+
+                      NOTHING SENSITIVE. The account id, the email on the Stripe
+                      account, the country, and three booleans. No keys, no card
+                      data, no bank details — a support request is forwarded and
+                      pasted, so it must stay safe to paste.
+
+                      Shown whenever an account exists, including a paused one:
+                      paused is exactly the state somebody writes in about.
+                    */}
+                    {stripeAccountData && (
                       <div
-                        role="alert"
-                        className="border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 p-4 text-sm text-[var(--v2-text-primary)]"
+                        className="bg-[var(--v2-bg)] border border-[var(--v2-border)] p-6"
                         style={{ borderRadius: 'var(--v2-radius-card)' }}
                         dir={isRTL ? 'rtl' : 'ltr'}
                       >
-                        {stripeExitError.map((line) => (
-                          <p key={line}>{line}</p>
-                        ))}
+                        {/*
+                          The wrapping was the 65ch cap, not the button.
+                          ───────────────────────────────────────────────────
+                          `max-w-prose` is about 65 characters, and Hebrew
+                          characters are narrower than the `0` that unit is
+                          measured from — so inside a column the Copy button had
+                          already narrowed, a sentence that fits on two lines
+                          broke into four. The cap is gone; the button stays
+                          beside the heading where it was, shrink-proof, and the
+                          text now uses whatever width is left.
+                        */}
+                        {/* Headed like its siblings in this tab: the same icon
+                            circle, the same `h3` at `text-base`, the same muted
+                            paragraph. It read as a lesser thing with its own
+                            smaller heading, which is not what it is. */}
+                        <div className="flex items-start gap-4 mb-3">
+                          <div
+                            className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                            style={{ backgroundColor: `${CONFIG_COLOR}20` }}
+                          >
+                            {/* The connection itself, not a help desk. The card
+                                is this account's identity: its id, its type, and
+                                whether it can charge. `LifeBuoy` said "support",
+                                which is where the details go, not what they are. */}
+                            <Link2 className="w-5 h-5" style={{ color: CONFIG_COLOR }} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className="text-base font-semibold text-[var(--v2-text-primary)] mb-2">
+                              {t('config.stripe.support_title')}
+                            </h3>
+                            <p className="text-sm text-[var(--v2-text-muted)]">
+                              {t('config.stripe.support_help')}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const lines = [
+                                `${t('config.stripe.support_account')}: ${stripeAccountData.stripe_account_id}`,
+                                stripeAccountData.stripe_email ? `Email: ${stripeAccountData.stripe_email}` : null,
+                                stripeAccountData.country ? `Country: ${stripeAccountData.country}` : null,
+                                `${t('config.stripe.support_cards')}: ${stripeCardsLabel}`,
+                                `${t('config.stripe.support_payouts')}: ${stripeAccountData.payouts_enabled ? t('config.stripe.support_on') : t('config.stripe.support_off')}`,
+                                stripeAccountData.stripe_account_type ? `${t('config.stripe.support_type')}: ${stripeAccountData.stripe_account_type}` : null,
+                                stripeAccountData.details_submitted === false ? t('config.stripe.support_setup') : null,
+                                stripeAccountData.updated_at ? `${t('config.stripe.support_checked')}: ${String(stripeAccountData.updated_at).slice(0, 16).replace('T', ' ')}` : null,
+                                // The finding goes in the copied text too, or it
+                                // never reaches the person who needs it.
+                                stripeAccountData.has_oauth_connection ? t('config.stripe.support_two_links') : null,
+                              ].filter(Boolean);
+                              navigator.clipboard?.writeText(lines.join('\n'));
+                              setSupportCopied(true);
+                              window.setTimeout(() => setSupportCopied(false), 2000);
+                            }}
+                            className="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-surface)] transition-all"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          >
+                            {supportCopied ? t('config.stripe.support_copied') : t('config.stripe.support_copy')}
+                          </button>
+                        </div>
+
+                        {/* `ms-14` clears the icon gutter (w-10 + gap-4), so
+                            the details line up under the heading rather than
+                            starting back at the card edge. Logical margin, so
+                            it holds in both directions. */}
+                        <dl className="ms-14 flex flex-col gap-1.5 text-xs">
+                          <div className="flex items-baseline gap-2">
+                            <dt className="text-[var(--v2-text-muted)] min-w-[7rem]">
+                              {t('config.stripe.support_account')}
+                            </dt>
+                            {/* `bdi` and `ltr`: an id like acct_1SM… is Latin text
+                                inside a Hebrew panel, and bidi would otherwise
+                                reorder it into something uncopyable. */}
+                            <dd className="font-mono text-[var(--v2-text-primary)] break-all">
+                              <bdi dir="ltr">{stripeAccountData.stripe_account_id}</bdi>
+                            </dd>
+                          </div>
+                          {stripeAccountData.stripe_email && (
+                            <div className="flex items-baseline gap-2">
+                              <dt className="text-[var(--v2-text-muted)] min-w-[7rem]">Email</dt>
+                              <dd className="text-[var(--v2-text-primary)] break-all">
+                                <bdi dir="ltr">{stripeAccountData.stripe_email}</bdi>
+                              </dd>
+                            </div>
+                          )}
+                          <div className="flex items-baseline gap-2">
+                            <dt className="text-[var(--v2-text-muted)] min-w-[7rem]">
+                              {t('config.stripe.support_cards')}
+                            </dt>
+                            <dd className="text-[var(--v2-text-primary)]">{stripeCardsLabel}</dd>
+                          </div>
+                          <div className="flex items-baseline gap-2">
+                            <dt className="text-[var(--v2-text-muted)] min-w-[7rem]">
+                              {t('config.stripe.support_payouts')}
+                            </dt>
+                            <dd className="text-[var(--v2-text-primary)]">
+                              {stripeAccountData.payouts_enabled
+                                ? t('config.stripe.support_on')
+                                : t('config.stripe.support_off')}
+                            </dd>
+                          </div>
+                          {stripeAccountData.stripe_account_type && (
+                            <div className="flex items-baseline gap-2">
+                              <dt className="text-[var(--v2-text-muted)] min-w-[7rem]">
+                                {t('config.stripe.support_type')}
+                              </dt>
+                              <dd className="text-[var(--v2-text-primary)]">
+                                <bdi dir="ltr">{stripeAccountData.stripe_account_type}</bdi>
+                              </dd>
+                            </div>
+                          )}
+                          {/* Only when it explains something. A finished account
+                              does not need a line saying setup is finished. */}
+                          {stripeAccountData.details_submitted === false && (
+                            <div className="flex items-baseline gap-2">
+                              <dt className="text-[var(--v2-text-muted)] min-w-[7rem]" />
+                              <dd className="text-amber-600 dark:text-amber-400">
+                                {t('config.stripe.support_setup')}
+                              </dd>
+                            </div>
+                          )}
+                          {stripeAccountData.updated_at && (
+                            <div className="flex items-baseline gap-2">
+                              <dt className="text-[var(--v2-text-muted)] min-w-[7rem]">
+                                {t('config.stripe.support_checked')}
+                              </dt>
+                              <dd className="text-[var(--v2-text-muted)] tabular-nums">
+                                <bdi dir="ltr">{String(stripeAccountData.updated_at).slice(0, 16).replace('T', ' ')}</bdi>
+                              </dd>
+                            </div>
+                          )}
+                        </dl>
+
+                        {/*
+                          LINKED TWICE. The one line here that is a finding
+                          rather than a fact: payments and refunds can land on
+                          different accounts, and nothing else in the product
+                          says so. Amber, because it is worth reading before
+                          anyone writes to support about a failing refund.
+                        */}
+                        {stripeAccountData.has_oauth_connection && (
+                          <p
+                            className="ms-14 mt-3 px-3 py-2 text-xs leading-relaxed"
+                            style={{ borderRadius: '10px', background: 'rgba(217,119,6,0.08)', color: '#8A5B12' }}
+                          >
+                            {t('config.stripe.support_two_links')}
+                          </p>
+                        )}
                       </div>
                     )}
 
@@ -1281,12 +1586,65 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                   <CreditCard className="w-5 h-5 text-amber-500" />
                 </div>
                 <div className="flex-1">
+                  {/* The heading follows the state. "Disconnect Stripe?" is a
+                      question, and a blocked screen is not asking one: it is
+                      telling the owner the answer is no, and why. */}
                   <h3 className="text-base font-semibold text-[var(--v2-text-primary)] mb-1">
-                    {t('config.stripe.disconnect_title') || 'Disconnect Stripe?'}
+                    {exitBlockers && exitBlockers.length > 0
+                      ? t('config.stripe.blocked_title')
+                      : t('config.stripe.disconnect_title') || 'Disconnect Stripe?'}
                   </h3>
-                  <p className="text-sm text-[var(--v2-text-muted)]">
-                    {t('config.stripe.disconnect_message') || 'You will no longer be able to accept payments until you reconnect. Your Stripe account will remain active and can be reconnected later.'}
-                  </p>
+                  {/*
+                    THE DIALOG ANSWERS ITS OWN QUESTION.
+                    ─────────────────────────────────────────────────────────
+                    Three states, and each needs different words:
+
+                      checking   we are asking. The action waits.
+                      blocked    these are in the way; the action is disabled
+                                 and the owner is told what to do first.
+                      clear      what disconnecting will actually do.
+
+                    "We could not look" is an empty blockers array, which is NOT
+                    the same as "nothing is blocking" — it gets its own line and
+                    leaves the action enabled, because the POST applies the same
+                    rule and will refuse on its own if it has to.
+                  */}
+                  {checkingExit ? (
+                    <p className="text-sm text-[var(--v2-text-muted)]">
+                      {t('common.loading') || '…'}
+                    </p>
+                  ) : exitBlockers && exitBlockers.length > 0 ? (
+                    <>
+                      <p className="text-sm text-[var(--v2-text-muted)]">
+                        {t('config.stripe.blocked_intro')}
+                      </p>
+                      <ul className="mt-3 flex flex-col gap-1.5">
+                        {exitBlockers.map(blocker => (
+                          <li
+                            key={blocker.code}
+                            className="flex items-center gap-2 text-sm text-[var(--v2-text-primary)]"
+                          >
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                            <bdi>
+                              {t(
+                                blocker.code === 'client_plans_running'
+                                  ? 'config.stripe.blocked_plans'
+                                  : 'config.stripe.blocked_invoices'
+                              ).replace('{n}', String(blocker.count))}
+                            </bdi>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : exitBlockers && exitBlockers.length === 0 ? (
+                    <p className="text-sm text-[var(--v2-text-muted)]">
+                      {t('config.stripe.blocked_check_failed')}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-[var(--v2-text-muted)]">
+                      {t('config.stripe.disconnect_message')}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-3 mt-6 justify-end">
@@ -1297,9 +1655,12 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                 >
                   {t('common.cancel') || 'Cancel'}
                 </button>
+                {/* Disabled while we are still asking, and whenever something
+                    is in the way. Never offered as a press that will fail. */}
                 <button
                   onClick={confirmDisconnectStripe}
-                  className="px-4 py-2 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 transition-all"
+                  disabled={checkingExit || Boolean(exitBlockers && exitBlockers.length > 0)}
+                  className="px-4 py-2 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-amber-500"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   {t('config.stripe.disconnect') || 'Disconnect'}
@@ -1339,12 +1700,51 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                   <AlertTriangle className="w-5 h-5 text-red-500" />
                 </div>
                 <div className="flex-1">
+                  {/* Same three states as the disconnect dialog, and for the
+                      stronger reason: after a removal the account is gone from
+                      us, so a plan still charging on it becomes money arriving
+                      with nothing on our side to reconcile it against. */}
                   <h3 className="text-base font-semibold text-[var(--v2-text-primary)] mb-1">
-                    {stripeExitLabel(t, 'config.stripe.remove_title')}
+                    {exitBlockers && exitBlockers.length > 0
+                      ? t('config.stripe.blocked_title')
+                      : t('config.stripe.delete_title') || 'Delete Stripe Account?'}
                   </h3>
-                  <p className="text-sm text-[var(--v2-text-muted)]">
-                    {stripeExitLabel(t, removeMessageKey(stripeAccountData?.stripe_account_type))}
-                  </p>
+                  {checkingExit ? (
+                    <p className="text-sm text-[var(--v2-text-muted)]">
+                      {t('common.loading') || '…'}
+                    </p>
+                  ) : exitBlockers && exitBlockers.length > 0 ? (
+                    <>
+                      <p className="text-sm text-[var(--v2-text-muted)]">
+                        {t('config.stripe.blocked_intro')}
+                      </p>
+                      <ul className="mt-3 flex flex-col gap-1.5">
+                        {exitBlockers.map(blocker => (
+                          <li
+                            key={blocker.code}
+                            className="flex items-center gap-2 text-sm text-[var(--v2-text-primary)]"
+                          >
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                            <bdi>
+                              {t(
+                                blocker.code === 'client_plans_running'
+                                  ? 'config.stripe.blocked_plans'
+                                  : 'config.stripe.blocked_invoices'
+                              ).replace('{n}', String(blocker.count))}
+                            </bdi>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : exitBlockers && exitBlockers.length === 0 ? (
+                    <p className="text-sm text-[var(--v2-text-muted)]">
+                      {t('config.stripe.blocked_check_failed')}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-[var(--v2-text-muted)]">
+                      {t('config.stripe.delete_message') || 'This will permanently delete your Stripe account. All payment history and settings will be lost. This action cannot be undone.'}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-3 mt-6 justify-end">
@@ -1357,10 +1757,11 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                 </button>
                 <button
                   onClick={confirmDeleteStripe}
-                  className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-all"
+                  disabled={checkingExit || Boolean(exitBlockers && exitBlockers.length > 0)}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-500"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
-                  {stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
+                  {t('config.stripe.delete_account') || 'Delete Account'}
                 </button>
               </div>
             </div>

@@ -2,7 +2,7 @@ import * as React from 'react'
 import { cn } from '@/lib/utils'
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'default' | 'outline' | 'secondary' | 'ghost' | 'link'
+  variant?: 'default' | 'outline' | 'secondary' | 'ghost' | 'link' | 'destructive'
   size?: 'default' | 'sm' | 'lg' | 'icon'
 }
 
@@ -15,7 +15,13 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       outline: 'border border-[var(--v2-border,var(--border))] bg-transparent text-[var(--v2-text-primary,inherit)] hover:bg-[var(--v2-surface,var(--accent))]',
       secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
       ghost: 'hover:bg-[var(--v2-surface,var(--accent))] text-[var(--v2-text-primary,inherit)]',
-      link: 'text-primary underline-offset-4 hover:underline'
+      link: 'text-primary underline-offset-4 hover:underline',
+      /*
+       * For an action that destroys something. Written with explicit reds
+       * rather than `bg-destructive`: this theme defines no `--destructive`
+       * token, so the shadcn class would have rendered an unstyled button.
+       */
+      destructive: 'bg-red-600 text-white hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-500'
     }
     
     const sizeClasses = {

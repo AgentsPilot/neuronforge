@@ -187,6 +187,49 @@ export class CRMActivityRepository {
   }
 
   /**
+   * Has anything of this kind happened to one entity lately?
+   *
+   * The read behind a repeat-send gate. `list` cannot answer it: it filters by
+   * contact, and a contact may hold two quotes — so a nudge about one would
+   * silence the other. The question is always about the ENTITY, which is what
+   * `source_entity_id` holds, inside a window, which is what `activity_date`
+   * dates.
+   *
+   * Returns `data: []` for "nothing recent" and an `error` for "could not
+   * tell". Callers must keep those apart and refuse on the second: an
+   * unreadable history is when a duplicate is most likely, not permission to
+   * send one.
+   */
+  async findRecentForEntity(
+    userId: string,
+    sourceEntityId: string,
+    activityType: string,
+    since: string
+  ): Promise<CRMActivityRepositoryResult<CRMActivity[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('crm_activities')
+        .select('id, activity_type, activity_date, source_entity_id')
+        .eq('user_id', userId)
+        .eq('source_entity_id', sourceEntityId)
+        .eq('activity_type', activityType)
+        .gte('activity_date', since)
+        .order('activity_date', { ascending: false })
+        .limit(5);
+
+      if (error) throw error;
+
+      return { data: (data || []) as CRMActivity[], error: null };
+    } catch (error) {
+      logger.error(
+        { err: error, userId, sourceEntityId, activityType },
+        'Failed to read recent activity for entity'
+      );
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Get recent activities across all contacts
    */
   async getRecent(

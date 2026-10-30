@@ -116,7 +116,68 @@ const pricing: HealthMeasure = {
   sample: 0,
 };
 
+/**
+ * Cancellations rising. The one measure where the number going UP is bad news.
+ *
+ * This file's subject used to be "never invent a zero". It is also now the only
+ * place that can catch the hazard `HealthRows.tsx` wrote down for itself:
+ * "every measure here is higher-is-better, so up is always good. If a
+ * lower-is-better measure is ever added, this assumption breaks and the colours
+ * silently invert." Nothing would have failed. The owner would simply have been
+ * congratulated, in green, for cancellations tripling.
+ */
+const cancellationsUp: HealthMeasure = {
+  category: 'cancellations',
+  rate: 19,
+  previousRate: 4,
+  change: 15,
+  measureKey: 'health.measure.appointments_called_off',
+  unavailable: null,
+  sample: 21,
+};
+
+/** And falling, which IS good news however the arrow points. */
+const cancellationsDown: HealthMeasure = {
+  category: 'cancellations',
+  rate: 4,
+  previousRate: 19,
+  change: -15,
+  measureKey: 'health.measure.appointments_called_off',
+  unavailable: null,
+  sample: 21,
+};
+
 describe('HealthRows', () => {
+  it('paints a RISING cancellation rate as bad news, not good', () => {
+    render(<HealthRows categories={[cancellationsUp]} />);
+
+    const change = screen.getByText(/15/);
+    const tone = change.closest('span')!.className;
+
+    /* The number rose, so the arrow points up — a down arrow beside "+15
+       points" would be its own lie. Only the COLOUR carries the meaning. */
+    expect(tone).toMatch(/rose-/);
+    expect(tone).not.toMatch(/emerald-/);
+  });
+
+  it('paints a FALLING cancellation rate as good news', () => {
+    render(<HealthRows categories={[cancellationsDown]} />);
+
+    const tone = screen.getByText(/15/).closest('span')!.className;
+    expect(tone).toMatch(/emerald-/);
+    expect(tone).not.toMatch(/rose-/);
+  });
+
+  it('still paints a FALLING higher-is-better measure as bad', () => {
+    /* The control: the direction change must not have inverted everything
+       else. Retention fell 12 points here, which is bad news and always was. */
+    render(<HealthRows categories={[measuredZero]} />);
+
+    const tone = screen.getByText(/12/).closest('span')!.className;
+    expect(tone).toMatch(/rose-/);
+    expect(tone).not.toMatch(/emerald-/);
+  });
+
   it('shows a measured zero as 0%, because none is an answer', () => {
     render(<HealthRows categories={[measuredZero]} />);
 
@@ -165,12 +226,14 @@ describe('HealthRows', () => {
     expect(screen.queryByText(/pts/)).not.toBeInTheDocument();
   });
 
-  it('keeps all six rows with no summary at all, and stays silent in them', () => {
+  it('keeps every row with no summary at all, and stays silent in them', () => {
     render(<HealthRows categories={null} />);
 
     // The six questions are visible before there are answers, so an owner can
     // see what the page will report rather than an apparently unbuilt band.
-    expect(screen.getAllByText('—')).toHaveLength(6);
+    /* One per DISPLAY_ORDER entry. Grew to 7 when `cancellations` was
+       added; the count is the point, not the number. */
+    expect(screen.getAllByText('—')).toHaveLength(7);
     // Nothing was attempted, so there is no shortfall to explain.
     expect(screen.queryByText(new RegExp(NOT_ENOUGH))).not.toBeInTheDocument();
     expect(screen.getByText(translations.en['health.measure.invoices_paid_on_time'])).toBeInTheDocument();
@@ -178,13 +241,13 @@ describe('HealthRows', () => {
     expect(screen.getByText(translations.en['health.measure.calendar_filled'])).toBeInTheDocument();
   });
 
-  it('always draws six rows, filling only the ones it has', () => {
+  it('always draws every row, filling only the ones it has', () => {
     render(<HealthRows categories={[measured, measuredZero]} />);
 
     expect(screen.getByText('82.4%')).toBeInTheDocument();
     expect(screen.getByText('0%')).toBeInTheDocument();
     // The other four are present and empty.
-    expect(screen.getAllByText('—')).toHaveLength(4);
+    expect(screen.getAllByText('—')).toHaveLength(5);
   });
 
   it('never shows pricing, which nothing can ever measure', () => {

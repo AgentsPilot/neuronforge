@@ -145,3 +145,136 @@ describe('the panel and the row that reach it', () => {
     expect(rows).toContain('!meeting.meetingId || meeting.canModify');
   });
 });
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AND IT HAS TO NAME THE *RIGHT* BOOKING
+ *
+ * The note at the top of this file is still true — the token names a booking,
+ * not a meeting. What it did not cover is WHICH booking, because when it was
+ * written the portal read one container and there was only ever one answer.
+ *
+ * It now reads several (`.in('booking_id', containerIds)`), so a consultation
+ * can hand over more than one package. The token was still minted from the
+ * PAGE's container, so any session living in a sold container was handed a
+ * token naming booking A beside a `meetingId` belonging to booking B — and
+ * `sessionOf`, whose entire job is to refuse exactly that pairing, refused it.
+ *
+ * The client saw "could not reschedule, please try again" on every attempt, on
+ * a refusal no retry could ever clear. The security property is unchanged and
+ * was never the thing at fault; the caller was simply naming the wrong booking.
+ */
+describe('the token names the session\'s own container', () => {
+  const manage = code('app/api/book/manage/[token]/route.ts');
+
+  /* The block that builds a SESSION row — the one `.in(...)` feeds. */
+  const sessionRows = manage.slice(manage.indexOf("in('booking_id', containerIds)"));
+  const built = sessionRows.slice(0, sessionRows.indexOf('isCurrent: false'));
+
+  it('mints it from the row\'s own booking, not the page\'s container', () => {
+    expect(built).toContain('generateBookingToken(String(row.booking_id)');
+  });
+
+  it('never mints a session token from the page\'s container', () => {
+    /* The regression in one line: `containerId` is the booking whose link the
+       client opened, which is not necessarily the one holding this session. */
+    expect(built).not.toContain('generateBookingToken(containerId');
+  });
+
+  it('still sends the session beside it, so the route can check the pair', () => {
+    expect(built).toContain('meetingId: row.id');
+  });
+});
+
+describe('a refusal says which refusal it is', () => {
+  /* Every `success: false` the panel cannot name falls through
+     `rescheduleErrorText` to "please try again" — advice that is wrong for
+     every one of them. The booking-mismatch 404 carried no `code` at all. */
+  it('the not-mine 404 carries a code', () => {
+    const notMine = route.slice(route.indexOf('if (notMine)'));
+    expect(notMine.slice(0, notMine.indexOf('}'))).toContain("code: 'not_found'");
+  });
+
+  it('and does so on both the read and the write path', () => {
+    expect(route.match(/if \(notMine\)/g)?.length).toBe(2);
+    expect(route.match(/code: 'not_found'/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AND THE MOVE LIMIT REACHES A SESSION AT ALL
+ *
+ * `CLIENT_RESCHEDULE_LIMIT` is counted from `crm_activities`, and the session
+ * branch of the POST answers and returns BEFORE the activity write the booking
+ * path ends with. So the count read zero however many times a client had moved
+ * a package session, and the limit — the thing standing between a client and
+ * pushing an appointment until the invoice is never chased — did nothing at
+ * all for packages.
+ *
+ * The meetings table already held the answer: a move marks the old row `moved`
+ * and stamps `moved_by`, and the portal names `'client'`. So this is counted
+ * there, per session, with no new column and nothing to migrate.
+ */
+describe('a client cannot move one session forever', () => {
+  const count = route.slice(route.indexOf('async function clientSessionMoveCount'));
+  const body = count.slice(0, count.indexOf('\n}'));
+
+  it('counts the attempts on the meetings table, not the timeline', () => {
+    expect(body).toContain("from('scheduling_meetings')");
+    expect(body).toContain("eq('meeting_status', 'moved')");
+  });
+
+  it('counts THIS session, not the whole purchase', () => {
+    /* The difference from the booking rule: three appointments sold together
+       get an allowance each, not two shared and a frozen third. */
+    expect(body).toContain("eq('booking_id', bookingId)");
+    expect(body).toContain("eq('session_number', sessionNumber)");
+  });
+
+  it('counts the CLIENT only — the owner may move it as often as they like', () => {
+    expect(body).toContain("eq('moved_by', 'client')");
+  });
+
+  it('is scoped to the owner — CLAUDE.md rule 4', () => {
+    expect(body).toContain(".eq('user_id', userId)");
+  });
+
+  it('fails open, like the booking count it sits beside', () => {
+    expect(body).toContain('return 0;');
+  });
+
+  it('both the page that states the rule and the write that enforces it ask once', () => {
+    /* Two call sites, one answer. A GET that leads with "you have moves left"
+       and a POST that then refuses is the rudest shape this can take. */
+    expect(route.match(/await movesUsed\(/g)?.length).toBe(2);
+    expect(route).toMatch(/const usedMoves = await movesUsed\(/);
+    expect(route).toMatch(/const movesSoFar = await movesUsed\(/);
+  });
+
+  it('and a booking with no session keeps the rule it always had', () => {
+    const picker = route.slice(route.indexOf('async function movesUsed'));
+    expect(picker.slice(0, picker.indexOf('\n}'))).toContain('return clientMoveCount(userId, bookingId);');
+  });
+});
+
+describe('what the client is told when the limit is reached', () => {
+  const copy = read('lib/i18n/public-pages.ts');
+
+  it('calls it an appointment, which a session also is', () => {
+    /* "This booking has already been moved" is wrong for a package session —
+       a session is not a booking, and no client would call it one. */
+    expect(copy).toContain('This appointment has already been moved {limit} times');
+    expect(copy).not.toContain('This booking has already been moved {limit} times');
+  });
+
+  it('says it in all three languages', () => {
+    expect(copy).toContain('Esta cita ya se ha movido {limit} veces');
+    expect(copy).toContain('כבר העברת את הפגישה הזאת {limit} פעמים');
+  });
+
+  it('and the number comes from the server, not a guess', () => {
+    const panel = code('components/public/ReschedulePanel.tsx');
+    expect(panel).toContain("t('rescheduleLimit', { limit: String(data.limit");
+  });
+});

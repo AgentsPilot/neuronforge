@@ -1,0 +1,141 @@
+[
+  {
+    "step_id": "step1",
+    "id": "step1",
+    "type": "action",
+    "name": "Find clients with nothing in the diary",
+    "description": "Somebody who has been in and has no next appointment. Four tests draw it, and the last pair is the boundary with `win_back_quiet_clients`: this agent takes people seen WITHIN six months, that one takes people quiet for longer. Without the line both would write to the same person on different schedules saying different things. `confirmed` only on the forward hop, because a cancelled booking in the diary is not a next appointment: it is the reason there isn't one, and treating it as cover is how somebody who called off last week never hears from the business again. RECENCY IS `start_time` OR `created_at`, and the OR is not belt-and-braces. A booking for a non-scheduled service — a course, a package, anything that is not an hour in the diary — carries NO `start_time` at all. On the live account that raised this, a client whose only booking was a dated-less course was invisible to the hour test and dropped off the list entirely: not recent enough for this agent, and `win_back` would not take him either, so nobody would ever write to him. The same trap the win-back find already carries two hops for. THE UPPER BOUND IS THE OWNER'S, not mine: `{{input.stop_after_days}}` arrives as a negative offset from `agent_config`, chosen on the install dialog. It was a number written into this file, which meant every business on the platform gave up at the same moment regardless of what they sell.",
+    "plugin": "business-os",
+    "action": "find_contacts",
+    "params": {
+      "filters": [
+        {
+          "field": "has_bookings",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "email",
+          "op": "is_not_null"
+        },
+        {
+          "relation": "bookings",
+          "quantifier": "none",
+          "where": [
+            {
+              "field": "start_time",
+              "op": "gte",
+              "value": {
+                "$date": "today"
+              }
+            },
+            {
+              "field": "status",
+              "op": "eq",
+              "value": "confirmed"
+            }
+          ]
+        },
+        {
+          "relation": "bookings",
+          "quantifier": "any",
+          "where": [
+            {
+              "or": [
+                {
+                  "field": "start_time",
+                  "op": "gte",
+                  "value": {
+                    "$date": "today",
+                    "offset": {
+                      "days": "{{input.stop_after_days}}"
+                    }
+                  }
+                },
+                {
+                  "field": "created_at",
+                  "op": "gte",
+                  "value": {
+                    "$date": "today",
+                    "offset": {
+                      "days": "{{input.stop_after_days}}"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "order_by": [
+        {
+          "field": "created_at",
+          "dir": "asc"
+        }
+      ],
+      "limit": 15
+    },
+    "output_variable": "quiet_clients",
+    "output_schema": {
+      "type": "object"
+    }
+  },
+  {
+    "step_id": "step2",
+    "id": "step2",
+    "type": "scatter_gather",
+    "name": "Ask each one about the next time",
+    "description": "One message per person. The whole reason this agent is separate from the enquiry chaser and the win-back: all three end at the same booking invite, and the sentence at the top of it is a different sentence for somebody who has never been in, somebody who was here last month, and somebody who has not been seen since spring. ONE PERSON'S REFUSAL MUST NOT STOP THE REST. In production a failing scatter item re-throws and aborts the whole run unless `continueOnError` is set, and per-person refusals are ordinary here: somebody unsubscribed since the last run, an address that bounces, a transport error. Worst of all, the find is ordered OLDEST FIRST, so the one person who cannot be written to would sit at the top of the list and block everybody behind them on every run, for good. The gather phase already separates the failures from the sends, so the run reports honestly instead of stopping.",
+    "scatter": {
+      "input": "{{quiet_clients.rows}}",
+      "itemVariable": "current_contact",
+      "steps": [
+        {
+          "step_id": "step3",
+          "id": "step3",
+          "type": "ai_processing",
+          "name": "Write the opening line",
+          "description": "ONE sentence into the template's `personalLine` slot. The booking link, subject, greeting, language and sign-off all belong to `booking-invite`, the same template the enquiry chaser has used since it shipped.",
+          "prompt": "Write ONE short opening sentence for an email from a small business owner to an EXISTING CLIENT who has been in recently but has nothing booked next.\n\nThe person:\n  name: {{current_contact.first_name}} {{current_contact.last_name}}\n  how they first came to us: {{current_contact.source}}\n  what we know about them: {{current_contact.notes}}\n\nRULES, all of them absolute:\n1. Write in the SAME LANGUAGE as the person's own words above. Never translate or transliterate their name.\n2. ONE sentence. It sits at the top of an email that already has a greeting, a booking button and a sign-off — you are writing none of those.\n3. Never write a link, a URL, a price, a date, a discount or a service name. The email supplies the booking link itself, and an offer you invented is one the owner never agreed to.\n4. Never invent a fact about what they had done, when they last came, or how it went. You do not know, and a client can tell.\n5. They are a CURRENT client, not a stranger and not someone who left. Do not introduce the business, and do not say you have missed them or noticed they are gone — they were here recently. Write the sentence a receptionist says on the way out: warm, ordinary, about the next time.\n6. If the name above is not really a person's — web forms and mailbox scans leave placeholders like 'Website', 'Contact', 'Info', or an address — do not use it at all.\n\nReturn JSON with exactly one field: opening.",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "opening": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "opening"
+            ]
+          },
+          "output_variable": "written_opening"
+        },
+        {
+          "step_id": "step4",
+          "id": "step4",
+          "type": "action",
+          "name": "Send the booking invite",
+          "description": "`invite_contacts` delegates to `sendBookingLink` with `trigger: 'automated'`, which sends it as MARKETING — so `marketingGate` checks this recipient's own consent at the transport and refuses without it, and the footer carries the unsubscribe link and the postal address. SOFT OPT-IN IS CLAIMED HERE, and it is a claim about THIS message rather than a way round consent. Somebody who ticked the box is reached on their consent; somebody who UNSUBSCRIBED is never reached at all, whatever this says. It only covers the third case — a person who was never asked — and only because the address came from a sale or from negotiating one, the message is about the same kind of work they came for, and a refusal was offered then and sits in every message since. The gate verifies the relationship itself; this plan asserts only the half the gate cannot see. Clearest of the three: they booked, which is the sale, and this asks about the next appointment.",
+          "plugin": "business-os",
+          "action": "invite_contacts",
+          "params": {
+            "target_id": "{{current_contact.id}}",
+            "data": {
+              "opening": "{{written_opening.opening}}",
+              "soft_opt_in": true
+            }
+          },
+          "output_variable": "send_result",
+          "output_schema": {
+            "type": "object"
+          }
+        }
+      ],
+      "continueOnError": true
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "rebook_results"
+  }
+]

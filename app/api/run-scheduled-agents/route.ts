@@ -1,329 +1,157 @@
-// /app/api/run-scheduled-agents/route.ts
-// Centralized scheduler that runs every 5 minutes via Vercel Cron
-// FIXED VERSION: Prevents race conditions and multiple executions
+/**
+ * The platform scheduler: run the agents whose schedule has come round.
+ *
+ * Every five minutes. One pass recovers runs whose function was killed
+ * mid-execution, turns due agents into queued runs, and executes what is
+ * queued.
+ *
+ * ---------------------------------------------------------------------------
+ * ONE SCHEDULER FOR EVERY AGENT, WHICHEVER DOORWAY MADE IT
+ *
+ *     AgentsPilot EXECUTION LAYER   ← this route and lib/execution
+ *            ▲                ▲
+ *            │                │       two doorways, one agent
+ *     INSIGHT SYSTEM     PROMPT FLOW
+ *            │
+ *     BUSINESS OS                     the data and management layer
+ *
+ * It selects on the scheduling contract — `mode='scheduled'`,
+ * `schedule_enabled`, `status='active'`, `next_run` passed — and not on a tag,
+ * so an agent written from a prompt and one the insight system recommended
+ * travel the same road. `mode='on_demand'` agents are excluded by the query.
+ *
+ * Business OS keeps its own bounded chasers on their own crons
+ * (`payment-reminders`, `insight-actions`, `lead-response`, …). This does not
+ * touch them: they are the data layer's jobs, they are limited by design, and
+ * an agent reaches Business OS data only through the `business-os` plugin.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT CHANGED IN THIS ROUTE
+ *
+ * It used to read every scheduled agent on the platform with no limit, fan out
+ * with an unbounded `Promise.allSettled`, advance `next_run` BEFORE the work,
+ * and then dispatch through QStash to `/api/cron/process-queue` — which runs
+ * `runAgentWithContext` or `runAgentKit`. Both are prompt-driven and neither
+ * reads `pilot_steps`, so a compiled plan could not run that way at all: for an
+ * agent with no prompt it died on `null.trim()` before doing anything.
+ *
+ * Now it delegates to `lib/execution/scheduledAgentRunner`, which claims each
+ * tick with a compare-and-swap, queues it as a `pending` scheduled row of
+ * `agent_executions`, claims that row with `FOR UPDATE SKIP LOCKED`, and
+ * executes the plan through `WorkflowPilot` — the one thing in the codebase
+ * that reads `pilot_steps`, and the same executor /api/run-agent has used
+ * thousands of times.
+ *
+ * ---------------------------------------------------------------------------
+ * IT STAYS SWITCHED OFF UNTIL SAID OTHERWISE
+ *
+ * `AGENT_SCHEDULER_ENABLED` is server-only and defaults to off, so this lands
+ * recovering nothing, queueing nothing and running nothing, and answers with
+ * zero counts. See the flag's own comment for what must be true first.
+ *
+ * @see lib/execution/scheduledAgentRunner.ts
+ * @see supabase/migrations/20261101_agent_executions_claim.sql
+ */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { addManualExecution } from '@/lib/queues/qstashQueue';
-import parser from 'cron-parser';
-import { auditLog } from '@/lib/services/AuditTrailService';
-import { AUDIT_EVENTS } from '@/lib/audit/events';
 
-// Required exports for Vercel function detection
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'Cron', service: 'ScheduledAgents' });
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+/**
+ * Must stay BELOW the runner's 90-second lease, or the reaper reclaims a run
+ * that is still executing and the agent runs twice. The platform's hard kill at
+ * this boundary is what makes a stale claim provably dead rather than guessed
+ * at, so these two numbers move together or not at all.
+ *
+ * Was 30, which was shorter than `/api/cron/process-queue`'s 60 on the far side
+ * of its own dispatch.
+ */
+export const maxDuration = 60;
 
 /**
- * Calculate next run time for an agent
+ * Is this Vercel Cron, and not the open internet?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Replaces a check that failed OPEN. It compared the header against
+ * `Bearer ${process.env.CRON_SECRET}` with no test that the secret existed, so
+ * on an environment missing it the expected value was the literal string
+ * "Bearer undefined" — which anyone could send. It also logged the header it
+ * rejected, putting a credential into the log line.
+ *
+ * The same shape every Business OS cron uses, and fails closed for the same
+ * reason: a scheduler that runs for strangers is worse than one that does not
+ * run.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
-function calculateNextRun(cronExpression: string, timezone: string = 'UTC'): Date {
-  try {
-    const interval = parser.parseExpression(cronExpression, {
-      tz: timezone,
-      currentDate: new Date(),
-    });
-    return interval.next().toDate();
-  } catch (error) {
-    console.error('Error calculating next run:', error);
-    // Fallback: 1 hour from now
-    return new Date(Date.now() + 60 * 60 * 1000);
+function verifyCronSecret(request: NextRequest): boolean {
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (process.env.NODE_ENV === 'development') {
+    return true;
   }
+
+  if (!cronSecret) {
+    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
+    return false;
+  }
+
+  return request.headers.get('authorization') === `Bearer ${cronSecret}`;
 }
 
-/**
- * Main scheduler function
- * Called every 5 minutes by Vercel Cron
- * FIXED: Uses atomic operations to prevent race conditions
- */
 export async function GET(request: NextRequest) {
-  const startTime = Date.now();
-  
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
+  if (!verifyCronSecret(request)) {
+    /* The header itself is never logged: it is a credential. */
+    requestLogger.warn('Rejected an unauthenticated scheduler request');
+    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const startedAt = Date.now();
+
   try {
-    console.log('Scheduler called at:', new Date().toISOString());
-    console.log('Starting scheduled agent scan...');
-    
-    // Create server-side Supabase client
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
-    );
-    
-    // Verify this is called by Vercel Cron (security check)
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      console.warn('Unauthorized cron request - Auth header:', authHeader);
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    /*
+     * Imported lazily, inside the handler, on purpose.
+     *
+     * The runner reaches `@/lib/pilot`, whose import chain ends at
+     * `lib/supabaseAdmin` and throws "Missing Supabase environment variables"
+     * AT IMPORT TIME unless `SUPABASE_URL` is set — a different variable from
+     * `NEXT_PUBLIC_SUPABASE_URL`. A top-level import therefore takes down the
+     * whole route, and a build, before any code runs. That cost a deployment on
+     * 2026-10-25; `/api/cron/inbox-enquiries` carries the same note.
+     */
+    const { runScheduledAgents } = await import('@/lib/execution/scheduledAgentRunner');
 
-    // 1. Fetch all active scheduled agents from Supabase
-    const { data: agents, error: agentsError } = await supabase
-      .from('agents')
-      .select('id, agent_name, user_id, schedule_cron, timezone, last_run, next_run, status, mode, schedule_enabled')
-      .eq('mode', 'scheduled')
-      .eq('status', 'active')
-      .eq('schedule_enabled', true)
-      .not('schedule_cron', 'is', null);
+    const result = await runScheduledAgents();
 
-    if (agentsError) {
-      console.error('Failed to fetch scheduled agents:', agentsError);
-      return NextResponse.json(
-        { error: 'Failed to fetch agents', details: agentsError.message },
-        { status: 500 }
-      );
-    }
+    /*
+     * Logged at info even when nothing happened: a scheduler that silently
+     * stops running agents looks exactly like one with nothing due. The counts
+     * are what separate the two, and a switched-off pass reports zeros with no
+     * error rather than a failure.
+     *
+     * Agent names are deliberately absent — an agent's name is owner text.
+     */
+    requestLogger.info({ ...result, durationMs: Date.now() - startedAt }, 'Scheduler pass complete');
 
-    if (!agents || agents.length === 0) {
-      console.log('No scheduled agents found');
-      return NextResponse.json({
-        success: true,
-        message: 'No scheduled agents to process',
-        processed: 0,
-        duration: Date.now() - startTime,
-      });
-    }
-
-    console.log(`Found ${agents.length} scheduled agents, processing...`);
-
-    // 2. Process each agent with atomic operations to prevent race conditions
-    const results = await Promise.allSettled(
-      agents.map(async (agent) => {
-        try {
-          const now = new Date();
-          
-          // STEP 1: Check if agent is actually due (with current time)
-          const nextRunDate = agent.next_run ? new Date(agent.next_run) : null;
-          
-          if (!nextRunDate || now < nextRunDate) {
-            return {
-              agentId: agent.id,
-              agentName: agent.agent_name,
-              skipped: true,
-              reason: `Not due yet. Next run: ${nextRunDate?.toISOString()}`,
-              success: false,
-            };
-          }
-
-          console.log(`Agent ${agent.agent_name} (${agent.id}) is due to run. Next run was: ${nextRunDate.toISOString()}`);
-
-          // STEP 2: Check for existing pending/running executions
-          const { data: pendingExecutions } = await supabase
-            .from('agent_executions')
-            .select('id, status, created_at')
-            .eq('agent_id', agent.id)
-            .in('status', ['pending', 'queued', 'running'])
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (pendingExecutions && pendingExecutions.length > 0) {
-            console.log(`Skipping agent ${agent.id} - already has pending execution:`, pendingExecutions[0]);
-            return {
-              agentId: agent.id,
-              agentName: agent.agent_name,
-              skipped: true,
-              reason: `Already has ${pendingExecutions[0].status} execution from ${pendingExecutions[0].created_at}`,
-              success: false,
-            };
-          }
-
-          // STEP 3: ATOMIC OPERATION - Update next_run FIRST with WHERE condition
-          // This prevents race conditions by ensuring only one scheduler instance can claim this agent
-          const nextRun = calculateNextRun(agent.schedule_cron, agent.timezone || 'UTC');
-          const currentTime = new Date().toISOString();
-          
-          console.log(`Attempting to claim agent ${agent.id} for execution. Setting next run to: ${nextRun.toISOString()}`);
-          
-          const { data: updateResult, error: updateError } = await supabase
-            .from('agents')
-            .update({ 
-              next_run: nextRun.toISOString(),
-              last_run: currentTime,
-              updated_at: currentTime
-            })
-            .eq('id', agent.id)
-            .eq('next_run', agent.next_run) // CRITICAL: Only update if next_run hasn't changed (prevents race condition)
-            .select('id, next_run');
-
-          // If update failed or returned no rows, another scheduler instance got it
-          if (updateError || !updateResult || updateResult.length === 0) {
-            console.log(`Agent ${agent.id} already claimed by another scheduler instance or next_run changed`);
-            return {
-              agentId: agent.id,
-              agentName: agent.agent_name,
-              skipped: true,
-              reason: 'Already claimed by another scheduler instance',
-              success: false,
-            };
-          }
-
-          console.log(`Successfully claimed agent ${agent.id}. New next_run: ${updateResult[0].next_run}`);
-
-          // STEP 4: Create execution record
-          const { data: execution, error: executionError } = await supabase
-            .from('agent_executions')
-            .insert({
-              agent_id: agent.id,
-              user_id: agent.user_id,
-              execution_type: 'scheduled',
-              scheduled_at: currentTime,
-              status: 'pending',
-              cron_expression: agent.schedule_cron,
-              progress: 0,
-            })
-            .select('id')
-            .single();
-
-          if (executionError || !execution) {
-            console.error(`Failed to create execution record for agent ${agent.id}:`, executionError);
-            
-            // ROLLBACK: Revert the next_run update if execution creation failed
-            await supabase
-              .from('agents')
-              .update({ 
-                next_run: agent.next_run,
-                last_run: agent.last_run,
-                updated_at: agent.updated_at
-              })
-              .eq('id', agent.id);
-            
-            throw new Error(`Failed to create execution record: ${executionError?.message}`);
-          }
-
-          console.log(`Created execution record ${execution.id} for agent ${agent.id}`);
-
-          // STEP 5: Queue the job for execution
-          const { jobId } = await addManualExecution(
-            agent.id,           // agentId
-            agent.user_id,      // userId
-            execution.id,       // executionId
-            {},                 // inputVariables (empty for scheduled runs)
-            undefined           // overrideUserPrompt
-          );
-
-          console.log(`Successfully queued agent ${agent.agent_name} (${agent.id})`, {
-            executionId: execution.id,
-            jobId,
-            nextRun: nextRun.toISOString(),
-            previousNextRun: agent.next_run,
-          });
-
-          // AUDIT TRAIL: Log scheduled agent execution
-          try {
-            await auditLog({
-              action: AUDIT_EVENTS.AGENT_RUN_STARTED,
-              entityType: 'agent',
-              entityId: agent.id,
-              userId: agent.user_id,
-              resourceName: agent.agent_name,
-              details: {
-                execution_id: execution.id,
-                job_id: jobId,
-                execution_type: 'scheduled',
-                cron_expression: agent.schedule_cron,
-                timezone: agent.timezone || 'UTC',
-                scheduled_at: currentTime,
-                next_run: nextRun.toISOString(),
-                previous_next_run: agent.next_run,
-                trigger_type: 'cron'
-              },
-              severity: 'info',
-              complianceFlags: ['SOC2']
-            });
-            console.log('✅ Audit trail logged for scheduled execution');
-          } catch (auditError) {
-            console.error('⚠️ Audit logging failed (non-critical):', auditError);
-          }
-
-          return {
-            agentId: agent.id,
-            agentName: agent.agent_name,
-            executionId: execution.id,
-            jobId,
-            nextRun: nextRun.toISOString(),
-            previousNextRun: agent.next_run,
-            success: true,
-          };
-
-        } catch (error) {
-          console.error(`Failed to process agent ${agent.id}:`, error);
-          return {
-            agentId: agent.id,
-            agentName: agent.agent_name,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            success: false,
-          };
-        }
-      })
-    );
-
-    // 3. Analyze results
-    const successful = results.filter(r => r.status === 'fulfilled' && r.value.success);
-    const failed = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success && !r.value.skipped));
-    const skipped = results.filter(r => r.status === 'fulfilled' && r.value.skipped);
-
-    const duration = Date.now() - startTime;
-
-    console.log(`Scheduler completed in ${duration}ms:`, {
-      totalAgents: agents.length,
-      successful: successful.length,
-      failed: failed.length,
-      skipped: skipped.length,
-    });
-
-    // Log successful executions
-    if (successful.length > 0) {
-      console.log('Successfully queued agents:', successful.map(r => ({
-        agentName: r.value.agentName,
-        executionId: r.value.executionId,
-        nextRun: r.value.nextRun
-      })));
-    }
-
-    // Log skipped agents (for debugging)
-    if (skipped.length > 0) {
-      console.log('Skipped agents:', skipped.map(r => ({
-        agentName: r.value.agentName,
-        reason: r.value.reason
-      })));
-    }
-
-    // 4. Return comprehensive summary
-    return NextResponse.json({
-      success: true,
-      summary: {
-        totalAgents: agents.length,
-        successful: successful.length,
-        failed: failed.length,
-        skipped: skipped.length,
-        duration,
-        timestamp: new Date().toISOString(),
-      },
-      details: {
-        successful: successful.map(r => r.value),
-        failed: failed.map(r => r.status === 'fulfilled' ? r.value : { 
-          error: r.status === 'rejected' ? r.reason?.message || 'Promise rejected' : 'Unknown error' 
-        }),
-        skipped: skipped.map(r => r.value)
-      }
-    });
-
+    return NextResponse.json({ success: true, ...result });
   } catch (error) {
-    const duration = Date.now() - startTime;
-    console.error('Scheduler failed with error:', error);
-    
+    requestLogger.error({ err: error }, 'Scheduler pass failed');
     return NextResponse.json(
       {
         success: false,
-        error: 'Scheduler failed',
-        message: error instanceof Error ? error.message : 'Unknown error',
-        duration,
-        timestamp: new Date().toISOString(),
+        error: 'Scheduler pass failed',
+        details:
+          process.env.NODE_ENV === 'development'
+            ? error instanceof Error
+              ? error.message
+              : String(error)
+            : undefined,
       },
       { status: 500 }
     );

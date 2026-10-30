@@ -201,7 +201,10 @@ export const publicMessages: Catalogue = {
      * numbers behind it; the sentence is written here.
      */
     rescheduleTooLate: 'This booking can only be changed more than {hours} hours before it starts.',
-    rescheduleLimit: 'This booking has already been moved {limit} times. Please get in touch to change it again.',
+    /* "Appointment", not "booking": the same sentence now answers a package
+       session, which is not a booking and which a client would never call one.
+       The Hebrew has always said "this meeting" and needed no change. */
+    rescheduleLimit: 'This appointment has already been moved {limit} times. Please get in touch to change it again.',
     cancelTooLate: 'This booking can only be cancelled more than {hours} hours before it starts.',
     cancelAskBusiness: 'To cancel now, please get in touch:',
     invalidLink: 'This link has expired. Ask the business for a new one.',
@@ -500,7 +503,7 @@ export const publicMessages: Catalogue = {
     cannotReschedule: 'No se puede reprogramar',
     movedBadge: 'Hora cambiada',
     rescheduleTooLate: 'Esta reserva solo se puede cambiar con más de {hours} horas de antelación.',
-    rescheduleLimit: 'Esta reserva ya se ha movido {limit} veces. Ponte en contacto para volver a cambiarla.',
+    rescheduleLimit: 'Esta cita ya se ha movido {limit} veces. Ponte en contacto para volver a cambiarla.',
     cancelTooLate: 'Esta reserva solo se puede cancelar con más de {hours} horas de antelación.',
     cancelAskBusiness: 'Para cancelar ahora, ponte en contacto:',
     invalidLink: 'Este enlace ha caducado. Pide uno nuevo al negocio.',

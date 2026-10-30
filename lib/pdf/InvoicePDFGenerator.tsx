@@ -459,7 +459,23 @@ function getStatusColor(status: string): string {
  */
 interface SmartTextProps {
   children: React.ReactNode;
-  style?: object;
+  /*
+   * Exactly what `<Text>` accepts, taken FROM `<Text>`.
+   *
+   * `object` satisfied neither `Style` nor `Style[]`, so call sites passing a
+   * real stylesheet entry failed here rather than where they were written.
+   * Taken from `RTLText`, not from `Text`. `RTLText` comes from the third-party
+   * `react-pdf-rtl`, which bundles its OWN copy of the react-pdf `Style` type.
+   * The two copies are structurally alike and nominally distinct, so the
+   * narrower of them is the one both branches here accept. Importing `Style`
+   * from `@react-pdf/types` instead resolves the app's copy and fails.
+   *
+   * One error remains in this file at line ~1199, where `renderToBuffer`
+   * rejects `<InvoiceDocument>` for the same duplicated-types reason. It
+   * predates this change and needs the dependency de-duplicated, not an
+   * annotation.
+   */
+  style?: React.ComponentProps<typeof RTLText>['style'];
   isRTL: boolean;
 }
 
