@@ -60,6 +60,7 @@
 
 import { PLAN_CANCEL_REMINDER_WINDOW_SECONDS, type PlanCancelEmailInput, type PlanCancelEmailOutcome } from './planCancelEmail';
 import { BOS_USER_ID_METADATA_KEY } from './stripeMetadataKeys';
+import { isSetToEndThisPeriod, latestItemPeriodEnd } from './subscriptionCancelling';
 
 export const PLAN_CANCEL_REMINDER_POLICY = {
   /** How far ahead the claim looks (BQ-36), shared with the cancel email's covered mark (R-D). */
@@ -173,9 +174,18 @@ export function emptyPlanCancelReminderCounts(): PlanCancelReminderCounts {
   return Object.fromEntries(PLAN_CANCEL_REMINDER_COUNT_KEYS.map((key) => [key, 0])) as PlanCancelReminderCounts;
 }
 
-/** C-3: cancelling is the flag OR a `cancel_at` date (the dashboard may set `cancel_at` alone). */
+/**
+ * C-3: the ONE rule for "set to end", plan payments' `isSetToEndThisPeriod`
+ * (PR #571), the same one that fills our `cancel_at_period_end`. The flag, or
+ * a dashboard `cancel_at` on or before the period end. A `cancel_at` AFTER it
+ * means the plan renews once more, so "ends on" would be untrue: not cancelling.
+ */
 function isCancelling(facts: PlanCancelReminderSubscriptionFacts): boolean {
-  return facts.cancelAtPeriodEnd || (typeof facts.cancelAt === 'number' && facts.cancelAt > 0);
+  return isSetToEndThisPeriod({
+    cancelAtPeriodEnd: facts.cancelAtPeriodEnd,
+    cancelAt: facts.cancelAt,
+    periodEnd: latestItemPeriodEnd(facts.items),
+  });
 }
 
 /** S-14: Stripe's end, unix seconds: `cancel_at`, else the ONE item's period end. `null` when it cannot be told. */

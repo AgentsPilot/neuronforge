@@ -273,6 +273,9 @@ describe('the choke point: Stripe fresh (S-14, C-4, S-5)', () => {
     ['the subscription has ended', { endedAt: 1_800_000_000, status: 'canceled' }, 'notCancelling'],
     ['the status is past_due', { status: 'past_due' }, 'notCancelling'],
     ['Stripe ends it on another date', { cancelAt: 1_900_000_000 }, 'periodMismatch'],
+    // C-3 (PR #571, isSetToEndThisPeriod): a dashboard `cancel_at` AFTER the period end renews once more.
+    ['cancel_at alone, after the period end (renews once more)', { cancelAtPeriodEnd: false, cancelAt: 1_900_000_000 }, 'notCancelling'],
+    ['cancel_at alone, before the period end (an early dashboard date)', { cancelAtPeriodEnd: false, cancelAt: 1_000_000_000 }, 'periodMismatch'],
     ['two items', { items: [{ currentPeriodEnd: 1 }, { currentPeriodEnd: 2 }] }, 'periodMismatch'],
   ] as Array<[string, Partial<PlanCancelReminderSubscriptionFacts>, string]>)('%s → released, not sent, not recorded, counted %s', async (_label, fresh, counter) => {
     const { w, deps } = world([tableRow(1)], {}, { sub_row1: fresh });
