@@ -122,6 +122,12 @@
  * superset), or of exactly the picked id. Same rule, same result shape, so
  * `convertedThisMonth` and `trialsToPaid` are unchanged.
  *
+ * MK5BFU-FU-2 (user decision 2026-10-30): MK-9's trials are
+ * `trialsForTrialToPaid`, which leaves out an after-plan free period
+ * (`after_plan_moves > 0`: the owner already paid a plan). The ask and the
+ * count use that one list. The production walk reads the count through
+ * `pagePlans({ withAfterPlanMoves: true })`, set in `financeHealthDeps.ts`.
+ *
  * READ-ONLY: no write, no LLM call, no audit entry. Logs read failures only,
  * with the read's name: never a figure, a name or an account id.
  *
@@ -179,7 +185,7 @@ import {
   type FinanceRuleSet,
 } from './financeRules';
 import { isEmptySpan, k1Spans, type FinanceSpan, type ResolvedFinanceWindow } from './financeWindow';
-import { classifyAccounts, isTrialRow, tierLabelForGroup, trialEndOf, type ClassifyInput } from './planGroups';
+import { classifyAccounts, tierLabelForGroup, trialsForTrialToPaid, type ClassifyInput } from './planGroups';
 import { compedSplit, trialsToPaid } from './payingBreakdown';
 import { FINANCE_TRIAL_TO_PAID } from './financeRules';
 import { CONVERTED_SHOWN_LIMIT, convertedThisMonth, currentUtcMonth } from './convertedThisMonth';
@@ -901,8 +907,9 @@ export async function buildFinanceHealth(
         : accountId !== null
           ? { accountIds, firstPaymentIn: null }
           : {
+              // MK5BFU-FU-2: the SAME list MK-9 counts (after-plan free periods out), so the ask stays a superset.
               accountIds: trialAccountsToAsk(
-                (planRows ?? []).filter(isTrialRow).map((row) => ({ accountId: row.user_id, endsAt: trialEndOf(row, deps.config, now) })),
+                trialsForTrialToPaid(planRows ?? [], deps.config, now),
                 { start: window.start, end: window.end }
               ),
               firstPaymentIn: month,
@@ -1542,9 +1549,8 @@ export async function buildFinanceHealth(
   // first payments Converted this month already counted (SA-Q-MK9-1, option 1).
   let payingBreakdown: FinancePayingBreakdown | undefined;
   if (accountId === null) {
-    const trials = planRows
-      ? planRows.filter(isTrialRow).map((row) => ({ accountId: row.user_id, endsAt: trialEndOf(row, deps.config, now) }))
-      : null;
+    // MK5BFU-FU-2: an after-plan free period (an owner who already paid) is not a trial here.
+    const trials = planRows ? trialsForTrialToPaid(planRows, deps.config, now) : null;
     payingBreakdown = {
       comped: classified
         ? compedSplit({ groupByAccount: classified.groupByAccount, statusRows: payingResult.data, isPaying: isPayingBillingRow })
