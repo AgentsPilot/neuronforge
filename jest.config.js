@@ -63,7 +63,15 @@ const config = {
   // __mocks__/ trigger "duplicate manual mock found" warnings.
   modulePathIgnorePatterns: ['<rootDir>/.claude/'],
   // Setup files — set Supabase env stubs before module loading (harmless if already set)
-  setupFiles: ['<rootDir>/tests/plugins/jest-setup.ts'],
+  //
+  // The no-network guard goes in the SHARED config, not jest.gate.config.js, so
+  // `npm test` and the gate cannot disagree about whether a test may reach the
+  // network — the same reason the gate spreads this file rather than copying it.
+  // Integration tests are exempted by path inside the guard, not here.
+  setupFiles: [
+    '<rootDir>/tests/plugins/jest-setup.ts',
+    '<rootDir>/tests/jest-no-network.ts',
+  ],
   setupFilesAfterEnv: [],
   // Transform files
   transform: {

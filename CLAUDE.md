@@ -298,6 +298,14 @@ All LLM calls go through `getProviderFactory()` (`@/lib/ai/providerFactory`) —
 
 **Before any code is committed:** QA agent must confirm at minimum the happy path and one failure path are tested.
 
+### No test may reach the network
+
+`tests/jest-no-network.ts` (a `setupFiles` entry, so it covers `npm test` and the gate alike) refuses any non-loopback connection a test attempts. Reaching a live endpoint is integration work and belongs in `tests/plugins/integration-tests/`, which is exempt and runs only where credentials are set.
+
+A unit test that needs a reply must mock its seam — for Supabase, `jest.mock('@/lib/supabaseServer', …)`. If a test only passes because the call fails, it is testing error handling by accident.
+
+> ⚠️ **`ALLOW_TEST_NETWORK=1` is for diagnosing a live service by hand, never for CI.** Setting it in a workflow makes a red test green and silently restores the flake it was added to kill: unit tests making real calls to a hostname that does not resolve cost two PRs a red gate, because one lost DNS packet stalls ~5 s and Jest's per-test budget is 5 s, so an unrelated test times out.
+
 ### The Business OS chat golden set
 
 Jest cannot test the chat's hardest half: the planner is one LLM call, so its
