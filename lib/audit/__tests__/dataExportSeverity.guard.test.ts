@@ -7,6 +7,9 @@
  * high-impact act and is critical. The names are registered in DE-8a; the
  * emitters arrive in DE-8b, DE-9 and DE-10a, and must not pass a severity of
  * their own.
+ *
+ * MX-3b (SA-P5) adds the data export worker's two events, MODULE_SENT (info)
+ * and MODULE_FAILED (warning): eight in all.
  */
 
 import { AUDIT_EVENTS, EVENT_METADATA } from '../events';
@@ -19,6 +22,9 @@ const EXPECTED = [
   ['DATA_EXPORT_DOWNLOADED', 'info', ['GDPR']],
   ['DATA_EXPORT_EXPIRED', 'info', ['GDPR']],
   ['DATA_EXPORT_DOWNLOADED_BY_ADMIN', 'critical', ['GDPR', 'SOC2']],
+  // MX-3b (SA-P5): the data export worker's per-module outcome.
+  ['DATA_EXPORT_MODULE_SENT', 'info', ['GDPR', 'SOC2']],
+  ['DATA_EXPORT_MODULE_FAILED', 'warning', ['GDPR']],
 ] as const;
 
 describe('data export audit events (SA Q-9)', () => {
@@ -30,12 +36,12 @@ describe('data export audit events (SA Q-9)', () => {
     expect(AUDIT_EVENT_AUDIENCE[event]).toBe('shared');
   });
 
-  it('only the admin download is critical among the six', () => {
+  it('only the admin download is critical among the eight', () => {
     const critical = EXPECTED.filter(([name]) => EVENT_METADATA[AUDIT_EVENTS[name as keyof typeof AUDIT_EVENTS]]?.severity === 'critical');
     expect(critical.map(([name]) => name)).toEqual(['DATA_EXPORT_DOWNLOADED_BY_ADMIN']);
   });
 
-  it('there are exactly six DATA_EXPORT_ events', () => {
+  it('there are exactly eight DATA_EXPORT_ events', () => {
     expect(Object.keys(AUDIT_EVENTS).filter((key) => key.startsWith('DATA_EXPORT_')).sort()).toEqual(EXPECTED.map(([name]) => name).sort());
   });
 });

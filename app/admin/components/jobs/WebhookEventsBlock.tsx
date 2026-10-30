@@ -13,14 +13,19 @@
  * It has its own loading, error and empty states, and the view renders it
  * OUTSIDE the jobs read's `{view && …}` gate, so a failed jobs read never
  * hides webhook health (P3-SA-7). `refreshKey` is bumped by the page's
- * Refresh; P-8b.3c will also bump it after a plan reconcile press (Q-P3-4).
+ * Refresh and, since P-8b.3c, after a plan reconcile press (Q-P3-4).
+ *
+ * P-8b.3c (SA suggestion, 3b review): reads can overlap (a press and a
+ * Refresh), so each read takes a sequence number and only the newest one may
+ * set the figures, the error or the loading state. An older answer that lands
+ * after a newer one is ignored.
  *
  * KPI-first: three block KPIs on the KpiStrip grid (Failed, lagging; Stuck,
  * leading; Oldest unfinished, leading), then the list as the breakdown,
  * oldest first. No drawer: each row links out to the event in Stripe.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { clientLogger } from '@/lib/logger/client';
 import { AdminEmpty, AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
@@ -122,8 +127,12 @@ export function WebhookEventsBlock({ refreshKey }: { refreshKey: number }) {
   const [data, setData] = useState<WebhookEventsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The newest read's number: an older answer that lands later is ignored.
+  const latestRead = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = ++latestRead.current;
+    const isLatest = () => seq === latestRead.current;
     setLoading(true);
     setError(null);
     try {
@@ -132,6 +141,7 @@ export function WebhookEventsBlock({ refreshKey }: { refreshKey: number }) {
       try {
         response = await fetch('/api/admin/jobs-queues/webhook-events', { cache: 'no-store' });
       } catch (err) {
+        if (!isLatest()) return;
         logger.error({ err }, 'Could not reach the webhook events route');
         setError(ADMIN_NETWORK_ERROR);
         return;
@@ -141,6 +151,7 @@ export function WebhookEventsBlock({ refreshKey }: { refreshKey: number }) {
         what: WEBHOOK_EVENTS_WHAT,
         sessionEndedCopy: true,
       });
+      if (!isLatest()) return;
       if (!result.ok) {
         logger.error({ status: result.status }, 'Failed to load the webhook events');
         // On failure the previous figures stay on screen (the jobs view's SA Q-11 rule).
@@ -149,7 +160,7 @@ export function WebhookEventsBlock({ refreshKey }: { refreshKey: number }) {
       }
       setData(result.data);
     } finally {
-      setLoading(false);
+      if (isLatest()) setLoading(false);
     }
   }, []);
 

@@ -516,8 +516,9 @@ describe('U-11 / U-12', () => {
     await screen.findByTestId('queue-lead_responses');
     // Amended deliberately by Admin Layout follow-ups LF-4c (G-3): the sentence
     // also names the reconcile button; the 7c retry clause is unchanged.
+    // Amended deliberately by plan payments P-8b.3c (P3-SA-9): both reconcile buttons.
     expect(document.body.textContent).toContain(
-      "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; the Billing reconcile job has a Reconcile top-ups now button; everything else here is read-only."
+      "Each queue has a Drain now button; a waiting, failed or orphaned item can be cancelled, and a recently failed item can be retried, from its queue's list; the Billing reconcile job has Reconcile top-ups now and Reconcile plan payments now buttons; everything else here is read-only."
     );
     expect(screen.queryByRole('button', { name: 'Retry item' })).toBeNull();
   });

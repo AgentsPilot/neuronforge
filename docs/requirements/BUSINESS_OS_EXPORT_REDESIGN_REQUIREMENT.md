@@ -1,6 +1,6 @@
 # Requirement: Business OS — Export Redesign (per-module export, delivered by email)
 
-> **Last Updated**: 2026-10-28
+> **Last Updated**: 2026-10-29
 
 **Created by:** BA
 **Date:** 2026-10-25
@@ -668,3 +668,4 @@ If EXPORT finds it must edit a file that this table says it does not, it records
 | 2026-10-28 | BQ-31 answered (user; recorded by EXPORT Dev, E3 / MX-2b) | User: "headers, record types and fixed labels only, not the owner's values." §9 BQ-31 ticked with the answer. §4.3 Language row aligned: headers, record types and fixed labels are translated; the owner's values never are, and a lookup shows the referenced record's stored text. Which cell values count as "fixed labels" (platform status words, platform-seeded stage names) goes back to the user as MX2B-Q1 / MX2B-Q2 in the MX-2b workplan |
 | 2026-10-28 | BQ-28, BQ-42 and BQ-43 answered (user; recorded by EXPORT Dev, E6 / MX-3) | User: "BQ-28: max 10 emails per module. BQ-42: 7 MB per email. BQ-43: one 'interrupted, please export again' email." §9 ticked with the answers. §4.3 Byte budget row now states 7 MB only (10 MB alternative declined); Maximum row cites the answer; new Interrupted row. §8 X-2 (4 emails of at most 7 MB) and X-6 (no part re-sent) aligned. Unblocks the E6 (MX-3) workplan, [BUSINESS_OS_EXPORT_MX3_WORKPLAN.md](/docs/workplans/BUSINESS_OS_EXPORT_MX3_WORKPLAN.md) |
 | 2026-10-28 | MX-3a: "not available" copy and the too-large decision (EXPORT Dev, E6a, BA duty delegated) | §4.3 gains the "Not available" row: a module switched off or unknown at claim time fails closed and its failed email says "This part is not available for export right now." instead of "Please try again" (SA ruling Q-1 / SA-P4, en final, he / es drafts). §9 gains BQ-44, answered by the user on 2026-10-28: "Too-large does not count toward the daily limit for now; revisit later." No migration; `too_large` and `over_ceiling` are recorded as their own codes so a later change loses nothing |
+| 2026-10-29 | E6b (MX-3b) code complete (EXPORT Dev) | The data export worker is built on `feature/bos-export-mx3b-worker`: each module is emailed as CSV parts (7 MB, at most 10, "email n of X"), a failed / interrupted / too-large / not-available module gets its one notice, and `DATA_EXPORT_MODULE_SENT` / `_FAILED` are recorded (§7 AC MX-3). No rule in this requirement changed. A late run no longer claims anything after 90 s (SA C-1), so a waiting module never loses an attempt without being built. Waits for SA code review, QA (the 100,000-row local measurement and the C-10 gate) and the user's diff review |
