@@ -940,6 +940,11 @@ export class BusinessOsBillingAccountRepository {
    * `cancel_at_period_end` and `ended_at`, compare-and-set on the row still
    * holding this subscription. Never `current_period_end`: only a paid
    * invoice moves that. `mirrored: false` means the row no longer holds it.
+   *
+   * Follow-ups C-3: callers pass the DERIVED "will not renew" value as
+   * `cancelAtPeriodEnd` (`isSetToEndThisPeriod`: Stripe's flag OR a
+   * `cancel_at` at or before the period end). The column name under-describes
+   * it: it also holds an early `cancel_at` set in the Stripe dashboard.
    */
   async mirrorSubscriptionState(input: {
     userId: string;

@@ -69,6 +69,7 @@ import { createPlanCheckoutPriceResolver, type PlanCheckoutPriceResolver } from 
 import { planPriceCatalog, planTierForLookupKey, type PlanPriceCatalog } from '@/lib/business-os/billing/planPriceCatalog';
 import { isPlanPriceRecognitionEnabled } from '@/lib/business-os/billing/planPricesFlag';
 import { currentStripeMode, isLiveMode, type StripeMode } from '@/lib/business-os/billing/stripeMode';
+import { hasCancelDate } from '@/lib/business-os/billing/subscriptionCancelling';
 
 // ── Constants (SA Q-1) ──────────────────────────────────────────────────────
 
@@ -237,7 +238,7 @@ export type PlanUpgradeRowFacts = Pick<BusinessOsBillingAccount, 'stripeCustomer
 
 export type PlanUpgradeSubscriptionFacts = Pick<
   SubscriptionRead,
-  'id' | 'customerId' | 'livemode' | 'status' | 'cancelAtPeriodEnd' | 'pendingUpdate' | 'items' | 'latestInvoiceId'
+  'id' | 'customerId' | 'livemode' | 'status' | 'cancelAtPeriodEnd' | 'cancelAt' | 'pendingUpdate' | 'items' | 'latestInvoiceId'
 >;
 
 function tierIndex(tier: string | null): number {
@@ -249,7 +250,10 @@ function tierIndex(tier: string | null): number {
  *
  *   subscription, customer or mode differ from our row → billing_record_mismatch (alert)
  *   status not `active`                                 → subscription_not_active
- *   `cancel_at_period_end`                              → subscription_cancelling
+ *   `cancel_at_period_end`, or any `cancel_at` date     → subscription_cancelling
+ *     (follow-ups C-3, SA Q-5: the dashboard may set `cancel_at` alone; an
+ *     upgrade bills a proration NOW, so any end date refuses. Log reason
+ *     `stripe_cancel_at` when only the date is set)
  *   a pending update                                    → `pending` (the caller decides: Q-2 resume or upgrade_pending)
  *   not exactly one item                                → billing_record_mismatch (alert)
  *   the item's price not in the catalog                 → billing_record_mismatch (alert)
@@ -288,6 +292,7 @@ export function planUpgradeEligibility(
     return refuse('subscription_not_active', 'stripe_status', { subscriptionStatus: subscription.status });
   }
   if (subscription.cancelAtPeriodEnd) return refuse('subscription_cancelling', 'stripe_cancel_at_period_end');
+  if (hasCancelDate(subscription)) return refuse('subscription_cancelling', 'stripe_cancel_at');
 
   if (subscription.pendingUpdate !== null) {
     const pendingTiers = [...new Set(subscription.pendingUpdate.priceIds.map((id) => tierOfPrice(id)))];

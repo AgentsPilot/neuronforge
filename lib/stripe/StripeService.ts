@@ -96,6 +96,12 @@ export interface BusinessOsReconcileSubscriptionFacts {
   customerId: string | null;
   livemode: boolean;
   cancelAtPeriodEnd: boolean;
+  /**
+   * Follow-ups C-3 (SA W-2): Stripe's `cancel_at`, unix seconds, or null.
+   * Required here (only this service builds it), so the mapping cannot be
+   * forgotten; Step B derives the stored flag from it.
+   */
+  cancelAt: number | null;
   endedAt: number | null;
   /** The embedded items (first page only; a plan subscription has one item). */
   items: BusinessOsSubscriptionItemFacts[];
@@ -603,6 +609,7 @@ export class StripeService {
           customerId: typeof customer === 'string' ? customer : customer?.id ?? null,
           livemode: subscription.livemode,
           cancelAtPeriodEnd: subscription.cancel_at_period_end,
+          cancelAt: unixOrNull(subscription.cancel_at),
           endedAt: subscription.ended_at ?? null,
           items: (subscription.items?.data ?? []).map(subscriptionItemFacts),
         });

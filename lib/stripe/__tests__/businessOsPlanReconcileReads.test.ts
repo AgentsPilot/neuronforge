@@ -94,12 +94,25 @@ describe('listBusinessOsSubscriptionsByPrice', () => {
           customerId: 'cus_1',
           livemode: false,
           cancelAtPeriodEnd: true,
+          cancelAt: null,
           endedAt: null,
           items: [{ id: 'si_1', priceId: 'price_a', currentPeriodStart: 100, currentPeriodEnd: 200 }],
         },
       ],
       complete: true,
     });
+  });
+
+  it('follow-ups C-3 (SA W-2): maps `cancel_at` through unixOrNull (a number kept; null and 0 read as null)', async () => {
+    for (const [raw, expected] of [
+      [200, 200],
+      [null, null],
+      [0, null],
+    ] as const) {
+      mockSubscriptionsList.mockResolvedValueOnce({ data: [{ ...subscription('sub_c'), cancel_at: raw }], has_more: false });
+      const result = await service().listBusinessOsSubscriptionsByPrice('price_a');
+      expect(result.items[0].cancelAt).toBe(expected);
+    }
   });
 
   it('pages with the cursor and stops at the cap with complete: false', async () => {

@@ -135,7 +135,14 @@ describe('planReconcilePass: claim discipline (SA ruling 2)', () => {
 
   it('imports no repository, no database client and no Stripe client of its own (pure given its ports)', () => {
     const imports = pass.statements.filter(ts.isImportDeclaration).map((d) => (d.moduleSpecifier as ts.StringLiteral).text);
-    expect(imports.sort()).toEqual(['@/lib/business-os/billing/reconcilePassRunner', 'stripe']);
+    // Follow-ups C-3 (SA W-1): `subscriptionCancelling` is the one home of the
+    // stored cancel flag rule, and is itself import-free (its own test pins
+    // that), so "pure given its ports" still holds.
+    expect(imports.sort()).toEqual([
+      '@/lib/business-os/billing/reconcilePassRunner',
+      '@/lib/business-os/billing/subscriptionCancelling',
+      'stripe',
+    ]);
     // `stripe` is a type-only import.
     const stripeImport = pass.statements.filter(ts.isImportDeclaration).find((d) => (d.moduleSpecifier as ts.StringLiteral).text === 'stripe');
     expect(stripeImport?.importClause?.isTypeOnly).toBe(true);

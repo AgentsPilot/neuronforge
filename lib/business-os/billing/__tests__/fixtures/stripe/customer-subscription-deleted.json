@@ -16,6 +16,7 @@
       "id": "sub_probe_1",
       "object": "subscription",
       "billing_cycle_anchor": 1790000000,
+      "cancel_at": null,
       "cancel_at_period_end": false,
       "pending_update": null,
       "latest_invoice": null,

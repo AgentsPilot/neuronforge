@@ -65,7 +65,19 @@ describe('planUpgradeEligibility', () => {
   });
 
   it('subscription_cancelling', () => {
-    expect(check(sub({ cancelAtPeriodEnd: true }))).toMatchObject({ kind: 'refused', code: 'subscription_cancelling' });
+    expect(check(sub({ cancelAtPeriodEnd: true }))).toMatchObject({ kind: 'refused', code: 'subscription_cancelling', reason: 'stripe_cancel_at_period_end' });
+  });
+
+  it.each([
+    ['at the period end (dashboard "end of period")', PERIOD_START + 2_592_000],
+    ['after the period end (any end date refuses, SA Q-5)', PERIOD_START + 2_592_000 * 3],
+  ])('follow-ups C-3: flag false, `cancel_at` %s → subscription_cancelling, reason stripe_cancel_at', (_label, cancelAt) => {
+    expect(check(sub({ cancelAtPeriodEnd: false, cancelAt }))).toMatchObject({ kind: 'refused', code: 'subscription_cancelling', reason: 'stripe_cancel_at' });
+  });
+
+  it('follow-ups C-3: `cancel_at` null or 0 is no date (eligible as before)', () => {
+    expect(check(sub({ cancelAt: null })).kind).toBe('eligible');
+    expect(check(sub({ cancelAt: 0 })).kind).toBe('eligible');
   });
 
   it('a pending update: `pending`, with its expiry, the tier it would set and the invoice it waits on', () => {

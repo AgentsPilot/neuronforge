@@ -40,7 +40,9 @@
  * for a flag-only check (SA P-8b.2 review, non-blocking note).
  *
  * STEP B, Stripe vs our records (AM-5). Every non-cancelled subscription on a
- * plan price is compared with our billing record (status, the cancel flag, the
+ * plan price is compared with our billing record (status, the cancel flag as
+ * the mirror derives it (follow-ups C-3: the flag OR a `cancel_at` within the
+ * period, `subscriptionCancelling.ts`), the
  * end, the tier bought, the period end) and, for a paying row, with the plan
  * row (tier, paid-through date). A plan-price subscription no billing row
  * holds is an orphan. FLAG ONLY (SA ruling 4; business question B-1): Step B
@@ -55,7 +57,8 @@
  * Stripe id; the pass itself writes only claim rows, which hold no business
  * data.
  *
- * Pure given its ports: no I/O of its own, no database or Stripe import. The
+ * Pure given its ports: no I/O of its own, no database or Stripe import (the
+ * one other import, `subscriptionCancelling.ts`, is itself import-free). The
  * production wiring is `planReconcileDeps.ts`.
  *
  * @module lib/business-os/billing/planReconcilePass
@@ -64,6 +67,7 @@
 import type Stripe from 'stripe';
 
 import type { ReconcileLogger, ReconcilePass, ReconcilePassContext, ReconcilePassCounts } from '@/lib/business-os/billing/reconcilePassRunner';
+import { isSetToEndThisPeriod, latestItemPeriodEnd } from '@/lib/business-os/billing/subscriptionCancelling';
 
 // ── Ports ────────────────────────────────────────────────────────────────────
 
@@ -101,6 +105,8 @@ export interface PlanReconcileSubscription {
   status: string;
   livemode: boolean;
   cancelAtPeriodEnd: boolean;
+  /** Follow-ups C-3: Stripe's `cancel_at`, unix seconds. Optional so hand-built fakes stay valid; absent reads as null. */
+  cancelAt?: number | null;
   endedAt: number | null;
   items: PlanReconcileSubscriptionItem[];
 }
@@ -664,7 +670,14 @@ export function createPlanReconcilePass(deps: PlanReconcileDeps): ReconcilePass 
       }
       const found: PlanReconcileFindingKind[] = [];
       if (row.subscription_status !== subscription.status) found.push('status_differs');
-      if (row.cancel_at_period_end !== subscription.cancelAtPeriodEnd) found.push('cancel_flag_differs');
+      // C-3: against the DERIVED flag the mirror stores (the flag OR a `cancel_at`
+      // within the period), so a mirrored dashboard cancellation is no finding.
+      const storedFlag = isSetToEndThisPeriod({
+        cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+        cancelAt: subscription.cancelAt ?? null,
+        periodEnd: latestItemPeriodEnd(subscription.items),
+      });
+      if (row.cancel_at_period_end !== storedFlag) found.push('cancel_flag_differs');
       if (subscription.endedAt !== null) found.push('ended_differs');
       const stripeTier = tierOf(subscription);
 
