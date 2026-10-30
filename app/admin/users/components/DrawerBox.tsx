@@ -52,7 +52,7 @@ export const DRAWER_PURPOSE = {
   'account-plugins': 'Plugins this account connected, and which of them are active.',
   activity: "This account's audit events, such as sign-ins and settings changes.",
   // Data export DE-10a (workplan §7.1, shortened to the DB-3 12-word rule): the sixth section, above the danger area.
-  export: "This account's exports; admin downloads are recorded with your name and reason.",
+  export: "Exports of this account's data, sent to the owner by email.",
 } as const;
 
 export type DrawerPurposeKey = keyof typeof DRAWER_PURPOSE;

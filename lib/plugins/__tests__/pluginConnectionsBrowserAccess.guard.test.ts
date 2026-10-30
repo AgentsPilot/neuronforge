@@ -173,7 +173,9 @@ describe('plugin_connections browser access guard (DE-0a A-5)', () => {
     // The server export writes its DATA_EXPORT_* entries itself (§0.1.2 C3).
     for (const file of [
       'components/business-os/data-export/DownloadMyDataButton.tsx',
-      'components/business-os/data-export/useDownloadMyData.ts',
+      // MX-3.1 (2026-10-30): re-pointed from the deleted ZIP hook to the drawer files that drive the export.
+      'components/business-os/data-export/useExportDrawer.ts',
+      'components/business-os/data-export/ModuleExportEntry.tsx',
       'lib/client/businessOsDataExport.ts',
     ]) {
       const code = withoutComments(read(file));

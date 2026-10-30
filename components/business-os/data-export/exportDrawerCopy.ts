@@ -1,17 +1,15 @@
 /**
- * The words of the export drawer and of its entry button on the switch-on path
- * (export redesign MX-1b, workplan §10, §11; SA MX1B-3), in en / he / es.
+ * The words of the export drawer and of its entry button (export redesign
+ * MX-1b, workplan §10, §11; SA MX1B-3; MX-3.1), in en / he / es.
  *
  * Kept here rather than in the translation bundles (SA MX1B-3, the DE-9 C-10
  * precedent): the drawer opens from `/settings` and `/v2/settings`, which have
  * no LanguageProvider, so it needs its own copy with `en` as the default. The
- * ZIP control's words stay in `downloadMyDataCopy.ts`, unchanged ("Download my
- * data" while the switch is off). The Record type makes a missing language or
- * key a compile error.
+ * Record type makes a missing language or key a compile error.
  *
- * - `entryLabel` "Export data" is the label once the switch is on (BQ-E5-2,
- *   user 2026-10-27). While the switch is off the button keeps "Download my
- *   data" from `downloadMyDataCopy.ts`.
+ * - `entryLabel` "Export data" is the only label of the export entry from
+ *   MX-3.1 (BQ-E5-2, user 2026-10-27; SA Q-1: `downloadMyDataCopy.ts`, the
+ *   old ZIP words, is deleted).
  * - `filesNotIncluded` is final: BQ-35 answered (files are not exported).
  * - `startedToast` is the user's wording (BQ-E5-3, 2026-10-27).
  * - Status words say "Sent", never "Delivered" (XC-9: bounces are not tracked).
@@ -51,7 +49,6 @@ export interface ExportDrawerCopy {
   network: string;
   failed: string;
   invalid: string;
-  off: string;
   historyTitle: string;
   historyEmpty: string;
   historyUnavailable: string;
@@ -89,7 +86,6 @@ export const EXPORT_DRAWER_COPY: Readonly<Record<ExportDrawerLocale, ExportDrawe
     network: 'We could not reach the server. Check your connection and try again.',
     failed: 'The export could not be started. Please try again.',
     invalid: 'One of the chosen parts is no longer available. Please reopen this window and try again.',
-    off: 'Export is not available right now. Please try again later.',
     historyTitle: 'Your exports',
     historyEmpty: 'You have not exported anything yet.',
     historyUnavailable: 'Your export history could not be loaded.',
@@ -121,7 +117,6 @@ export const EXPORT_DRAWER_COPY: Readonly<Record<ExportDrawerLocale, ExportDrawe
     network: 'לא הצלחנו להגיע לשרת. בדקו את החיבור ונסו שוב.',
     failed: 'לא הצלחנו להתחיל את הייצוא. נסו שוב.',
     invalid: 'אחד החלקים שבחרתם כבר אינו זמין. פתחו את החלון מחדש ונסו שוב.',
-    off: 'הייצוא אינו זמין כרגע. נסו שוב מאוחר יותר.',
     historyTitle: 'הייצואים שלך',
     historyEmpty: 'עדיין לא ייצאת דבר.',
     historyUnavailable: 'לא הצלחנו לטעון את היסטוריית הייצוא.',
@@ -154,7 +149,6 @@ export const EXPORT_DRAWER_COPY: Readonly<Record<ExportDrawerLocale, ExportDrawe
     network: 'No pudimos conectar con el servidor. Revisa tu conexión y vuelve a intentarlo.',
     failed: 'No se pudo iniciar la exportación. Vuelve a intentarlo.',
     invalid: 'Una de las partes elegidas ya no está disponible. Vuelve a abrir esta ventana e inténtalo de nuevo.',
-    off: 'La exportación no está disponible ahora. Vuelve a intentarlo más tarde.',
     historyTitle: 'Tus exportaciones',
     historyEmpty: 'Todavía no has exportado nada.',
     historyUnavailable: 'No se pudo cargar tu historial de exportaciones.',

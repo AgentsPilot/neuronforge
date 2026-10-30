@@ -33,7 +33,7 @@ describe('exportDrawerCopy', () => {
     );
   });
 
-  it("the confirmation is the user's wording (BQ-E5-3) and the switch-on label is Export data (BQ-E5-2)", () => {
+  it("the confirmation is the user's wording (BQ-E5-3) and the entry label is Export data (BQ-E5-2)", () => {
     expect(EXPORT_DRAWER_COPY.en.startedToast).toBe('Export started. The exported files will be sent to {email} once ready.');
     expect(EXPORT_DRAWER_COPY.en.entryLabel).toBe('Export data');
   });

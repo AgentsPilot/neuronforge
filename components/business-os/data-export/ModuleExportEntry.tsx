@@ -1,45 +1,32 @@
 'use client';
 
 /**
- * The "Export data" entry when the module export is switched on (export
- * redesign MX-1b, workplan §9; BQ-E5-2). The same two looks as the ZIP control
- * (`row`: a settings row with a chevron, mirrored in RTL; `button`: a bordered
- * button), opening the export drawer.
+ * The "Export data" entry (export redesign MX-1b, workplan §9; BQ-E5-2;
+ * MX-3.1, workplan §7.2). Two looks (`row`: a settings row with a chevron,
+ * mirrored in RTL; `button`: a bordered button), opening the export drawer.
  *
- * ⚠️ SA C-9 (MX-4 must-do): this entry renders NO ZIP status line. Once the
- * switch is on, an owner who still has a ready ZIP loses the only "Download
- * again" link to it, which breaks XC-15 ("ready ZIPs stay downloadable until
- * they expire"). MX-1b cannot reach that state (the switch is off and never on
- * in Preview). MX-4 must keep the ZIP status line here until the last ZIP
- * expires.
+ * MX-3.1: the only export entry. There is no switch and no ZIP any more, so
+ * the drawer reads its own history when it opens.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { ChevronRight, Download } from 'lucide-react';
 import { useOptionalLanguage } from '@/lib/business-os/LanguageContext';
 import { cn } from '@/lib/utils';
-import type { ExportHistoryRequest } from '@/lib/client/businessOsDataExport';
 import { ExportDrawer } from '@/components/business-os/data-export/ExportDrawer';
 import { exportDrawerCopy } from '@/components/business-os/data-export/exportDrawerCopy';
 
 export interface ModuleExportEntryProps {
   variant: 'row' | 'button';
   className?: string;
-  initialHistory: ExportHistoryRequest[] | null;
-  /** Open the drawer on mount: a click on the ZIP control turned out to need it. */
-  isInitiallyOpen?: boolean;
 }
 
-export function ModuleExportEntry({ variant, className = '', initialHistory, isInitiallyOpen = false }: ModuleExportEntryProps) {
+export function ModuleExportEntry({ variant, className = '' }: ModuleExportEntryProps) {
   const languageContext = useOptionalLanguage();
   const isRTL = languageContext?.isRTL ?? false;
   const copy = exportDrawerCopy(languageContext?.language);
-  const [isOpen, setIsOpen] = useState(isInitiallyOpen);
+  const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  // The request can arrive one render after the switch turned on (the click that waited on the probe).
-  useEffect(() => {
-    if (isInitiallyOpen) setIsOpen(true);
-  }, [isInitiallyOpen]);
 
   const trigger =
     variant === 'row' ? (
@@ -71,10 +58,10 @@ export function ModuleExportEntry({ variant, className = '', initialHistory, isI
     );
 
   return (
-    <div className={`${variant === 'row' ? '' : 'space-y-2'} ${className}`.trim()} data-download-my-data={variant} data-module-export="on">
+    <div className={`${variant === 'row' ? '' : 'space-y-2'} ${className}`.trim()} data-download-my-data={variant}>
       {trigger}
       {/* Inside this tree on purpose: a nested Radix layer when the entry sits in a dialog (SR-9). */}
-      <ExportDrawer open={isOpen} onOpenChange={setIsOpen} initialHistory={initialHistory} returnFocusRef={triggerRef} />
+      <ExportDrawer open={isOpen} onOpenChange={setIsOpen} returnFocusRef={triggerRef} />
     </div>
   );
 }

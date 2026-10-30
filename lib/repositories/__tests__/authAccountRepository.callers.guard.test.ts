@@ -72,13 +72,6 @@ const ALLOWED = new Set(
     'lib/business-os/purge/AdminDeletionCommit.ts',
     'lib/business-os/purge/__tests__/AdminDeletionCommit.test.ts',
     'app/api/admin/users/[id]/deletion/commit/__tests__/route.test.ts',
-    // Data export DE-10a (workplan §5.2): the admin prepare reads ONE account's
-    // id, email and joined date (`findUserIdentity`) for an id taken from the
-    // admin-gated route path, to build the export of that account (the email
-    // goes into the zip's account section only, never a log or audit row). Its
-    // test replaces the instance.
-    'app/api/admin/users/[id]/data-exports/route.ts',
-    'app/api/admin/users/[id]/data-exports/__tests__/route.test.ts',
     // Account deletion lifecycle D4a / SX-3 (SA S-7): the plan cancel emails
     // read the SESSION user's own live address (`findUserIdentity`, keyed on
     // the id from `getUser()`, never request data) to send them the cancel /
