@@ -8,6 +8,11 @@ Add these environment variables in your Vercel project settings:
 
 **Navigate to:** Vercel Dashboard → Your Project → Settings → Environment Variables
 
+> ⚠️ **Never paste a real key value into this file.** It lives in a public
+> repository. The Supabase anon and service-role keys that sat in the block below
+> were public from this file's first commit until 2026-10-30 and must be treated as
+> compromised. Read every value from Vercel → Settings → Environment Variables.
+
 ```env
 # Production URLs
 NEXTAUTH_URL=https://neuronforge-kohl.vercel.app
@@ -15,8 +20,8 @@ NEXT_PUBLIC_APP_URL=https://neuronforge-kohl.vercel.app
 
 # Supabase (copy from .env.local)
 NEXT_PUBLIC_SUPABASE_URL=https://jgccgkyhpwirgknnceoh.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnY2Nna3locHdpcmdrbm5jZW9oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNjY3OTMsImV4cCI6MjA2Nzc0Mjc5M30.h6VfcNOsEusgykZ9nR8mUStMrmbePp4ThFLlZHpqtWo
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnY2Nna3locHdpcmdrbm5jZW9oIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MjE2Njc5MywiZXhwIjoyMDY3NzQyNzkzfQ.NkUzCksSNNDy0UNr3jD-JYPAHUfEBKXc4wM6zqGEr2s
+NEXT_PUBLIC_SUPABASE_ANON_KEY=[your-key]
+SUPABASE_SERVICE_ROLE_KEY=[your-key]
 SUPABASE_URL=https://jgccgkyhpwirgknnceoh.supabase.co
 
 # OpenAI
