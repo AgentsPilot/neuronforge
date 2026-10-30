@@ -827,6 +827,121 @@ export class PaymentPlanRepository {
   }
 
   /**
+   * Stop chasing the quote stages nobody will ever collect, for one booking.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * DISTINCT FROM `cancelInstallments`, which scopes by plan + contact and
+   * answers with a count. This one scopes by BOOKING and returns the ROWS,
+   * because the caller has to bring the plan's stored totals into line with
+   * what it just closed and cannot do that from a number.
+   *
+   * `subscription_id IS NULL` is the whole safety of it. Those rows are a
+   * quote's milestones, which only ever become money if somebody invoices them.
+   * A subscription's projected periods are real money still arriving on a live
+   * plan, are not this function's business, and are left exactly as they are.
+   *
+   * EVERYTHING NOT SETTLED, not just `pending`. A stage that had been BILLED —
+   * an invoice raised, nobody paid — stayed open on a cancelled booking while
+   * this matched only `pending`, leaving the stage disagreeing with its own
+   * voided invoice: "billed" on a booking that is off. `paid` is never
+   * rewritten; it records money that arrived. Same rule as `cancelQuoteStages`
+   * and `stopBookingPlan`, so the three ways of calling work off leave the same
+   * state behind.
+   *
+   * THE REASON TRAVELS. One namespace with every other cancellation surface
+   * (`20260930_installment_cancel_reason`), which is what lets one report union
+   * them without a translation layer.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async cancelOpenStagesForBooking(
+    bookingId: string,
+    userId: string,
+    cancellation: {
+      reason?: string | null;
+      note?: string | null;
+      by?: string | null;
+    } = {}
+  ): Promise<
+    PaymentPlanRepositoryResult<
+      Array<{ id: string; amount: number | null; payment_plan_id: string | null }>
+    >
+  > {
+    try {
+      const now = new Date().toISOString();
+      const { data, error } = await this.supabase
+        .from('payment_plan_installments')
+        .update({
+          status: 'cancelled',
+          cancel_reason: cancellation.reason ?? null,
+          cancel_note: cancellation.note ?? null,
+          cancelled_by: cancellation.by ?? 'owner',
+          cancelled_at: now,
+          // The retry scheduler reads this; a cancelled period must not be retried.
+          next_retry_at: null,
+          updated_at: now,
+        })
+        .eq('user_id', userId)
+        .eq('booking_id', bookingId)
+        .not('status', 'in', '(paid,cancelled)')
+        .is('subscription_id', null)
+        /* `amount` and `payment_plan_id` so the plan can be brought into line
+           by the caller. The id alone was enough only while nothing did. */
+        .select('id, amount, payment_plan_id');
+
+      if (error) throw error;
+      return {
+        data: (data ?? []) as Array<{
+          id: string;
+          amount: number | null;
+          payment_plan_id: string | null;
+        }>,
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, bookingId, userId }, 'Failed to close the unbilled stages for a booking');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Stamp a booking's FIRST plan period with the invoice raised for it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * BY BOOKING, and that is the correctness of it. The plan row is the
+   * SERVICE's and is shared by every booking of it, so scoping on
+   * `payment_plan_id` + `installment_number` alone would stamp period 1 of
+   * every other client's booking on the same service with this client's
+   * invoice — and then none of them would ever be billed.
+   *
+   * An unstamped period is eligible for the reminder sweep the moment it is
+   * written, so every line between writing the schedule and stamping it is a
+   * window in which the client could be invoiced twice. The caller stamps
+   * before its Stripe round trip to leave the narrowest one available.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async stampFirstPeriodInvoice(
+    planId: string,
+    bookingId: string,
+    userId: string,
+    invoiceId: string
+  ): Promise<PaymentPlanRepositoryResult<null>> {
+    try {
+      const { error } = await this.supabase
+        .from('payment_plan_installments')
+        .update({ invoice_id: invoiceId, updated_at: new Date().toISOString() })
+        .eq('payment_plan_id', planId)
+        .eq('booking_id', bookingId)
+        .eq('installment_number', 1)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+      return { data: null, error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Cancel all pending installments for a plan application
    */
   async cancelInstallments(

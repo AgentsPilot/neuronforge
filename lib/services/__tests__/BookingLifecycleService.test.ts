@@ -33,6 +33,38 @@ const mockFindSettled = jest.fn();
 
 const mockFindChildren = jest.fn();
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE MOCKS BELOW ARE WHAT MAKES THIS SUITE OFFLINE.
+ *
+ * `cancelBooking` and `deleteBooking` used to query `proposals`,
+ * `payment_plan_subscriptions`, `payment_plan_installments`,
+ * `scheduling_services` and `scheduling_bookings` through a module-scope
+ * `supabaseServer` — past every collaborator a test could stub. This file was
+ * fully mocked and still made 202 real HTTP calls per run to a host that does
+ * not resolve, each one swallowed by a `catch` that logs. The suite passed, and
+ * nothing in it showed that it had left the machine. A lost DNS query cost a
+ * ~5 s resolver retry, which is Jest's per-test budget, so an unrelated test in
+ * another file failed on a timeout; that turned two PRs red.
+ *
+ * Those reads and writes now go through repositories, so every one of them has
+ * a seam here.
+ *
+ * A mock below must carry a key for EVERY method the paths these tests exercise
+ * actually call, because a missing key is not a missing call — it is a
+ * TypeError inside a `try` whose catch only logs, which looks exactly like a
+ * passing test and asserts nothing. The `SchedulingRepository` factory is
+ * deliberately partial (it omits `delete`, `update`, `create`, `checkOverlap`
+ * and the whole of `schedulingServiceRepository.findById`): those belong to
+ * paths no test here reaches, and the delete tests all refuse before `delete`.
+ * Extending these tests past that point means extending the factory first.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const mockFindById = jest.fn();
+const mockFindCancellationState = jest.fn();
+const mockLinkPaymentPlan = jest.fn();
+const mockFindSaleMode = jest.fn();
+
 jest.mock('@/lib/repositories/SchedulingRepository', () => ({
   schedulingBookingRepository: {
     cancel: (...args: unknown[]) => mockCancel(...args),
@@ -42,6 +74,67 @@ jest.mock('@/lib/repositories/SchedulingRepository', () => ({
      * and that is what "no children" means.
      */
     findChildren: (...args: unknown[]) => mockFindChildren(...args),
+    /* Is the package already off? Both columns, because `status` alone misses
+       a booking whose outcome was already recorded. */
+    findCancellationState: (...args: unknown[]) => mockFindCancellationState(...args),
+    linkPaymentPlan: (...args: unknown[]) => mockLinkPaymentPlan(...args),
+    /* `deleteBooking` reads the row before destroying anything. */
+    findById: (...args: unknown[]) => mockFindById(...args),
+  },
+  schedulingServiceRepository: {
+    /* `sale_mode`: whether cancelling the booking must also reach a quote. */
+    findSaleMode: (...args: unknown[]) => mockFindSaleMode(...args),
+  },
+}));
+
+const mockFindAcceptedQuotes = jest.fn();
+const mockStopAcceptedQuotes = jest.fn();
+const mockFindPackageQuotes = jest.fn();
+const mockWithdrawOpenQuotes = jest.fn();
+
+jest.mock('@/lib/repositories/ProposalRepository', () => ({
+  OPEN_PROPOSAL_STATUSES: ['draft', 'sent', 'viewed'],
+  proposalRepository: {
+    findAcceptedForBooking: (...args: unknown[]) => mockFindAcceptedQuotes(...args),
+    stopAccepted: (...args: unknown[]) => mockStopAcceptedQuotes(...args),
+    findPackageQuotesForBooking: (...args: unknown[]) => mockFindPackageQuotes(...args),
+    withdrawOpenForBooking: (...args: unknown[]) => mockWithdrawOpenQuotes(...args),
+  },
+}));
+
+const mockFindLivePlan = jest.fn();
+const mockFindAnyPlan = jest.fn();
+
+jest.mock('@/lib/repositories/PaymentPlanSubscriptionRepository', () => ({
+  paymentPlanSubscriptionRepository: {
+    /* Two deliberately different questions — see the repository. `cancelBooking`
+       asks "is it still charging"; `deleteBooking` asks "is ANY row attached",
+       because that is what ON DELETE RESTRICT counts. */
+    findLiveForBooking: (...args: unknown[]) => mockFindLivePlan(...args),
+    findAnyForBooking: (...args: unknown[]) => mockFindAnyPlan(...args),
+  },
+}));
+
+const mockCancelStages = jest.fn();
+const mockStampFirstPeriod = jest.fn();
+
+/*
+ * Bringing the plan's stored totals into line with the stages just closed.
+ *
+ * Reached by dynamic `import()` only when stages actually close — which, until
+ * these repositories had seams, never happened in a test, because the stage
+ * close itself failed first. It takes a Supabase client as a parameter (three
+ * callers each pass their own), so it stays a live query until mocked here.
+ */
+const mockLowerPlans = jest.fn();
+jest.mock('@/lib/payments/planFollowsItsStages', () => ({
+  lowerPlansForCancelledStages: (...args: unknown[]) => mockLowerPlans(...args),
+}));
+
+jest.mock('@/lib/repositories/PaymentPlanRepository', () => ({
+  paymentPlanRepository: {
+    cancelOpenStagesForBooking: (...args: unknown[]) => mockCancelStages(...args),
+    stampFirstPeriodInvoice: (...args: unknown[]) => mockStampFirstPeriod(...args),
   },
 }));
 
@@ -94,7 +187,11 @@ jest.mock('@/lib/services/AuditTrailService', () => ({
   },
 }));
 
-import { cancelBooking } from '@/lib/services/BookingLifecycleService';
+import {
+  cancelBooking,
+  deleteBooking,
+  BookingHasPlanError,
+} from '@/lib/services/BookingLifecycleService';
 
 const USER_ID = '11111111-1111-1111-1111-111111111111';
 const BOOKING_ID = '22222222-2222-2222-2222-222222222222';
@@ -128,6 +225,28 @@ beforeEach(() => {
   mockUpdateInvoice.mockResolvedValue({ data: null, error: null });
   mockVoidInvoice.mockResolvedValue({ data: { voidedAtProcessor: true }, error: null });
   mockFindSettled.mockResolvedValue({ data: [], error: null });
+
+  /*
+   * The repository defaults: "an ordinary booking with no quote and no plan".
+   *
+   * Every one returns the real `{ data, error }` shape, because the subject
+   * destructures it. The tests that care about a quote or a plan override the
+   * one mock they are about, so a default that drifted would be visible rather
+   * than silently making half the file pass for the wrong reason.
+   */
+  mockFindSaleMode.mockResolvedValue({ data: { sale_mode: 'direct' }, error: null });
+  mockFindCancellationState.mockResolvedValue({ data: null, error: null });
+  mockLinkPaymentPlan.mockResolvedValue({ data: null, error: null });
+  mockFindAcceptedQuotes.mockResolvedValue({ data: [], error: null });
+  mockStopAcceptedQuotes.mockResolvedValue({ data: [], error: null });
+  mockFindPackageQuotes.mockResolvedValue({ data: [], error: null });
+  mockWithdrawOpenQuotes.mockResolvedValue({ data: [], error: null });
+  mockFindLivePlan.mockResolvedValue({ data: null, error: null });
+  mockFindAnyPlan.mockResolvedValue({ data: null, error: null });
+  mockCancelStages.mockResolvedValue({ data: [], error: null });
+  mockStampFirstPeriod.mockResolvedValue({ data: null, error: null });
+  mockLowerPlans.mockResolvedValue(undefined);
+  mockFindById.mockResolvedValue({ data: booking({ status: 'confirmed' }), error: null });
 });
 
 describe('cancelBooking', () => {
@@ -750,5 +869,286 @@ describe('cancelBooking on a package', () => {
     const [, , reason, codes] = mockCancel.mock.calls[0];
     expect(reason).toBe('Client moved away');
     expect(codes).toMatchObject({ code: 'client_not_paying' });
+  });
+});
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE PATHS THAT WERE UNREACHABLE FROM A TEST.
+ *
+ * Everything below exercises a read or write that used to go straight to
+ * `supabaseServer`. None of it could be driven before: the call left the
+ * machine, failed, and landed in a `catch` that logs — so the only assertions
+ * this file made about these outcomes were the all-zero, all-false defaults of
+ * the swallowed failure. The 202 real HTTP calls bought no coverage whatever.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('a booking with a payment plan still charging', () => {
+  it('reports the plan live and what is left to collect, without stopping it', async () => {
+    /*
+     * READ ONLY, on purpose. The platform does not end somebody's payment
+     * arrangement because an appointment was called off — `cancelPlan` is
+     * reached from the refund dialog and the Money page and stays the owner's
+     * to press.
+     */
+    mockFindLivePlan.mockResolvedValue({
+      data: {
+        id: 'plan-1',
+        status: 'active',
+        installment_count: 11,
+        periods_paid: 4,
+        next_charge_at: '2026-11-01T00:00:00Z',
+      },
+      error: null,
+    });
+
+    const result = await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.data!.planLive).toBe(true);
+    expect(result.data!.periodsRemaining).toBe(7);
+  });
+
+  it('treats unknown counts as unknown, never as nothing left to charge', async () => {
+    /*
+     * `Number(null)` is 0, so reading these without the null check reported
+     * "0 periods remaining" for a plan whose counts could not be read — which
+     * says "nothing left to charge" about a plan that is still charging. Not
+     * knowing how many are left is not evidence that none are.
+     */
+    mockFindLivePlan.mockResolvedValue({
+      data: { id: 'plan-1', status: 'active', installment_count: null, periods_paid: null },
+      error: null,
+    });
+
+    const result = await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.data!.planLive).toBe(true);
+    expect(result.data!.periodsRemaining).toBeNull();
+  });
+
+  it('never reports a negative remainder', async () => {
+    // More paid than the plan says it has periods: bad data, but "-2 left to
+    // pay" is not an answer anyone can act on.
+    mockFindLivePlan.mockResolvedValue({
+      data: { id: 'plan-1', status: 'active', installment_count: 3, periods_paid: 5 },
+      error: null,
+    });
+
+    const result = await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.data!.periodsRemaining).toBe(0);
+  });
+
+  it('cancels the booking anyway when the plan cannot be read', async () => {
+    // Its own statement and its own failure: an unreadable plan must not cost
+    // the cancellation the owner asked for.
+    mockFindLivePlan.mockResolvedValue({ data: null, error: new Error('plan unreadable') });
+
+    const result = await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.error).toBeNull();
+    expect(result.data!.planLive).toBe(false);
+    expect(mockCancel).toHaveBeenCalled();
+  });
+});
+
+describe('the quote stages of a cancelled booking', () => {
+  it('closes them and carries the reason, the note and the owner', async () => {
+    /*
+     * THE REASON TRAVELS. A plan stopped this way used to record nothing
+     * countable, while the same plan stopped from Manage Payment recorded a
+     * code, a note and an owner — so one report could not union them.
+     */
+    mockCancelStages.mockResolvedValue({
+      data: [
+        { id: 'stage-1', amount: 400, payment_plan_id: 'plan-1' },
+        { id: 'stage-2', amount: 400, payment_plan_id: 'plan-1' },
+      ],
+      error: null,
+    });
+
+    const result = await cancelBooking({
+      bookingId: BOOKING_ID,
+      userId: USER_ID,
+      cancelReason: 'client_not_paying',
+      cancelNote: 'they stopped replying',
+      cancelledBy: 'owner',
+    });
+
+    expect(result.data!.stagesClosed).toBe(2);
+    expect(mockCancelStages).toHaveBeenCalledWith(BOOKING_ID, USER_ID, {
+      reason: 'client_not_paying',
+      note: 'they stopped replying',
+      by: 'owner',
+    });
+  });
+});
+
+describe('the quotes behind a cancelled booking', () => {
+  it('withdraws the open ones when the service is sold by quote', async () => {
+    /* The default fixture names no service, so the read is skipped — see the
+       nullable-`service_id` test below. This one is about a booking that has
+       one. */
+    mockCancel.mockResolvedValue({ data: booking({ service_id: 'service-1' }), error: null });
+    mockFindSaleMode.mockResolvedValue({ data: { sale_mode: 'proposal' }, error: null });
+    mockWithdrawOpenQuotes.mockResolvedValue({ data: ['quote-1', 'quote-2'], error: null });
+
+    await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(mockWithdrawOpenQuotes).toHaveBeenCalledWith(BOOKING_ID, USER_ID);
+  });
+
+  it('leaves them alone when the service is not sold by quote', async () => {
+    // On a directly booked service there is no quote to withdraw, and asking
+    // would be a write nobody asked for.
+    mockCancel.mockResolvedValue({ data: booking({ service_id: 'service-1' }), error: null });
+    mockFindSaleMode.mockResolvedValue({ data: { sale_mode: 'direct' }, error: null });
+
+    await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(mockFindSaleMode).toHaveBeenCalledWith('service-1', USER_ID);
+    expect(mockWithdrawOpenQuotes).not.toHaveBeenCalled();
+  });
+
+  it('does not ask about the service when the booking arrives without one', async () => {
+    /*
+     * The column is `uuid NOT NULL` and typed `string`, so this is not a
+     * nullable-column case — it is the ABSENT case, which is what every
+     * fixture in this file is and what the baseline probe actually caught:
+     * `scheduling_services?select=sale_mode&id=eq.undefined`. The read this
+     * replaced passed the value straight into `.eq('id', …)`, and that is a
+     * PostgREST error rather than an empty result — swallowed by the enclosing
+     * catch, so it read as "not a quoted service" rather than as a failed
+     * query.
+     *
+     * Cast, because the type correctly forbids what the fixture is doing; the
+     * point of the test is that the guard holds when the type is wrong about
+     * reality.
+     */
+    const withoutService = booking();
+    delete (withoutService as { service_id?: string }).service_id;
+    mockCancel.mockResolvedValue({ data: withoutService, error: null });
+
+    const result = await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.error).toBeNull();
+    expect(mockFindSaleMode).not.toHaveBeenCalled();
+  });
+
+  it('stops an accepted quote, which withdrawal cannot touch', async () => {
+    /*
+     * An accepted quote is deliberately not withdrawable — money was created
+     * against it. Without this it sat reading `accepted` over stages that had
+     * just been closed: indistinguishable from a job that finished and was paid
+     * in full.
+     */
+    mockCancelStages.mockResolvedValue({
+      data: [{ id: 'stage-1', amount: 400, payment_plan_id: 'plan-1' }],
+      error: null,
+    });
+    mockFindAcceptedQuotes.mockResolvedValue({
+      data: [{ id: 'quote-1', package_booking_id: null }],
+      error: null,
+    });
+    mockStopAcceptedQuotes.mockResolvedValue({
+      data: [{ id: 'quote-1', package_booking_id: null }],
+      error: null,
+    });
+
+    await cancelBooking({
+      bookingId: BOOKING_ID,
+      userId: USER_ID,
+      cancelReason: 'client_not_paying',
+    });
+
+    expect(mockFindAcceptedQuotes).toHaveBeenCalledWith(BOOKING_ID, USER_ID);
+    expect(mockStopAcceptedQuotes).toHaveBeenCalledWith(['quote-1'], USER_ID, {
+      reason: 'client_not_paying',
+      note: undefined,
+    });
+  });
+});
+
+describe('cancelling the package a quote sold', () => {
+  it('does not run the cascade again on a package already called off', async () => {
+    /*
+     * BOTH columns decide this. `cancel()` writes `status` and `meeting_status`
+     * together EXCEPT on a booking whose outcome was already recorded, where it
+     * writes neither — so a package whose sessions were all held keeps
+     * `status: 'confirmed'` after being called off. A guard reading only
+     * `status` would rewrite its `outcome_at` and re-fire its side effects.
+     */
+    mockFindPackageQuotes.mockResolvedValue({
+      data: [{ id: 'quote-1', package_booking_id: 'package-1' }],
+      error: null,
+    });
+    mockFindCancellationState.mockResolvedValue({
+      data: { status: 'confirmed', meeting_status: 'cancelled' },
+      error: null,
+    });
+
+    await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(mockFindCancellationState).toHaveBeenCalledWith('package-1', USER_ID);
+    // The package itself is never re-cancelled; only the booking asked for.
+    expect(mockCancel.mock.calls.map(call => call[0])).toEqual([BOOKING_ID]);
+  });
+});
+
+describe('deleting a booking with a payment plan attached', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ANY plan row refuses the delete, live or finished, because that is what
+   * `ON DELETE RESTRICT` enforces — and the refusal has to arrive HERE.
+   *
+   * The database would refuse it too, but at the very LAST step: by then the
+   * invoices are voided and deleted, the calendar event is gone and the client
+   * has been emailed that their appointment is cancelled, for a booking that
+   * then survives. Every one of those is unrecoverable, and the email is a lie
+   * the moment the delete fails.
+   *
+   * None of this had a test. The read was a direct `supabaseServer` call, so
+   * the guard could not be driven from one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('refuses, and says the plan is still live', async () => {
+    mockFindAnyPlan.mockResolvedValue({
+      data: { id: 'plan-1', status: 'active' },
+      error: null,
+    });
+
+    const result = await deleteBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(BookingHasPlanError);
+    expect((result.error as InstanceType<typeof BookingHasPlanError>).planLive).toBe(true);
+    // By booking and owner. That it applies NO status filter is asserted on the
+    // repository, where the query lives.
+    expect(mockFindAnyPlan).toHaveBeenCalledWith(BOOKING_ID, USER_ID);
+  });
+
+  it('refuses for a STOPPED plan too, the case a live-only filter would miss', async () => {
+    mockFindAnyPlan.mockResolvedValue({
+      data: { id: 'plan-1', status: 'cancelled' },
+      error: null,
+    });
+
+    const result = await deleteBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.error).toBeInstanceOf(BookingHasPlanError);
+    // Refused, but the owner is told it is finished rather than still charging.
+    expect((result.error as InstanceType<typeof BookingHasPlanError>).planLive).toBe(false);
+  });
+
+  it('refuses rather than guessing when the plan cannot be read', async () => {
+    // Proceeding would hit RESTRICT at the last step, after the invoices, the
+    // calendar and the email are already gone.
+    mockFindAnyPlan.mockResolvedValue({ data: null, error: new Error('plan unreadable') });
+
+    const result = await deleteBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(result.error).not.toBeInstanceOf(BookingHasPlanError);
   });
 });
