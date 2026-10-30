@@ -27,6 +27,14 @@ import type { SchedulingService } from '@/lib/repositories/SchedulingRepository'
 const createPlan = jest.fn();
 const findByServiceId = jest.fn();
 const createInstallmentsForBooking = jest.fn();
+/*
+ * The two bookkeeping writes that used to be raw `supabaseServer` updates.
+ * They are repository calls now, so they are asserted as calls rather than as
+ * captured UPDATE payloads and filters. What each one must guarantee is
+ * unchanged, and is spelled out at the assertions below.
+ */
+const stampFirstPeriodInvoice = jest.fn();
+const linkPaymentPlan = jest.fn();
 const createInvoice = jest.fn();
 const getNextInvoiceNumber = jest.fn();
 const stripeCreateInvoice = jest.fn();
@@ -36,6 +44,13 @@ jest.mock('@/lib/repositories/PaymentPlanRepository', () => ({
     create: (...args: unknown[]) => createPlan(...args),
     findByServiceId: (...args: unknown[]) => findByServiceId(...args),
     createInstallmentsForBooking: (...args: unknown[]) => createInstallmentsForBooking(...args),
+    stampFirstPeriodInvoice: (...args: unknown[]) => stampFirstPeriodInvoice(...args),
+  },
+}));
+
+jest.mock('@/lib/repositories/SchedulingRepository', () => ({
+  schedulingBookingRepository: {
+    linkPaymentPlan: (...args: unknown[]) => linkPaymentPlan(...args),
   },
 }));
 
@@ -141,6 +156,8 @@ const bookingData = {
 beforeEach(() => {
   jest.clearAllMocks();
   updates.length = 0;
+  stampFirstPeriodInvoice.mockResolvedValue({ data: null, error: null });
+  linkPaymentPlan.mockResolvedValue({ data: null, error: null });
 
   getNextInvoiceNumber.mockResolvedValue({ data: 'INV-00099', error: null });
   // No service-level plan row by default: a service saved before
@@ -240,8 +257,13 @@ describe('createBookingInvoice on an instalment service', () => {
   it('claims period 1 against the invoice, so the due-date sweep cannot bill it twice', async () => {
     await createBookingInvoice('owner-1', 'booking-1', planService, bookingData, log);
 
-    const stamp = updates.find(u => u.table === 'payment_plan_installments');
-    expect(stamp?.payload).toMatchObject({ invoice_id: 'inv-1' });
+    /* The invoice the client will actually pay on, against period 1. */
+    expect(stampFirstPeriodInvoice).toHaveBeenCalledWith(
+      expect.any(String),
+      'booking-1',
+      'owner-1',
+      'inv-1'
+    );
   });
 
   it('scopes that claim to THIS booking — the plan row belongs to the service', async () => {
@@ -259,21 +281,25 @@ describe('createBookingInvoice on an instalment service', () => {
      * `billStage` would then never bill any of them, because its claim requires
      * `invoice_id IS NULL`.
      */
-    const stamp = updates.find(u => u.table === 'payment_plan_installments');
-    expect(stamp?.filters).toContainEqual(['booking_id', 'booking-1']);
-    expect(stamp?.filters).toContainEqual(['user_id', 'owner-1']);
-    expect(stamp?.filters).toContainEqual(['installment_number', 1]);
+    /*
+     * The scope is now the repository method's signature: it takes the plan,
+     * the BOOKING and the owner, and pins `installment_number` to 1 itself.
+     * That those four filters actually reach the query is asserted directly in
+     * `PaymentPlanRepository.bookingWrites.test.ts`; what this test
+     * still owns is that the call is made for THIS booking and THIS owner.
+     */
+    expect(stampFirstPeriodInvoice).toHaveBeenCalledWith(
+      'service-plan',
+      'booking-1',
+      'owner-1',
+      'inv-1'
+    );
   });
 
   it('links the booking to its plan, which is what stops the drawer guessing', async () => {
     await createBookingInvoice('owner-1', 'booking-1', planService, bookingData, log);
 
-    expect(updates).toContainEqual(
-      expect.objectContaining({
-        table: 'scheduling_bookings',
-        payload: expect.objectContaining({ payment_plan_id: 'plan-1' }),
-      })
-    );
+    expect(linkPaymentPlan).toHaveBeenCalledWith('booking-1', 'owner-1', 'plan-1');
   });
 
   it('raises NO invoice at all when the schedule cannot be written', async () => {

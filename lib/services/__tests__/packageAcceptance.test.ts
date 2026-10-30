@@ -80,6 +80,31 @@ jest.mock('@/lib/repositories/CRMContactRepository', () => ({
   },
 }));
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE REMINDER SERVICE, WHICH THIS SUITE WAS REACHING FOR REAL.
+ *
+ * `raiseInvoice` schedules the chase through a deliberately dynamic
+ * `await import()` — the reminder service reaches a PDF renderer Jest cannot
+ * transform, so a static import would make the module unloadable here. That
+ * same dynamic import meant it was never mocked: the real service, holding a
+ * client bound to `supabaseServer` at module load, read `business_profiles`
+ * twice per invoice raised. Twelve real HTTP calls to a host that does not
+ * resolve, every one discarded by the `.catch()` below.
+ *
+ * `scheduleInvoiceReminders` MUST return a promise. The subject destructures
+ * the named export and chains `.catch()` on the result; a mock without this key
+ * throws a TypeError inside the enclosing `try`, which returns a null invoice
+ * id and quietly breaks the money assertions in this file.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const mockScheduleReminders = jest.fn().mockResolvedValue(undefined);
+jest.mock('@/lib/services/PaymentReminderService', () => ({
+  paymentReminderService: {
+    scheduleInvoiceReminders: (...args: unknown[]) => mockScheduleReminders(...args),
+  },
+}));
+
 import { applyAcceptance } from '../ProposalAcceptanceService';
 import type { Proposal } from '@/lib/repositories/ProposalRepository';
 
@@ -125,6 +150,9 @@ beforeEach(() => {
   mockCreatePlan.mockResolvedValue({ data: { id: 'plan-1' }, error: null });
   mockCreateInstallments.mockResolvedValue({ data: [{ id: 'stage-1', installment_number: 1 }], error: null });
   mockUpdateInstallment.mockResolvedValue({ data: null, error: null });
+  /* Set here as well as at the factory: a reminder mock that does not return a
+     promise breaks the money path, not just the reminder assertions. */
+  mockScheduleReminders.mockResolvedValue(undefined);
   bookingsSucceed();
 });
 
@@ -354,6 +382,33 @@ describe('the money is untouched by any of this', () => {
 
     expect(mockCreateInvoice).toHaveBeenCalledTimes(1);
     expect(mockCreatePlan).not.toHaveBeenCalled();
+  });
+
+  it('asks for the invoice to be chased, for this client and this invoice', async () => {
+    await applyAcceptance(quote());
+
+    expect(mockScheduleReminders).toHaveBeenCalledTimes(1);
+    expect(mockScheduleReminders).toHaveBeenCalledWith(
+      'user-1',
+      'inv-1',
+      'contact-1',
+      expect.any(String)
+    );
+  });
+
+  it('still accepts the quote when the chase cannot be scheduled', async () => {
+    /*
+     * Non-blocking by construction: the acceptance is already committed and the
+     * client already owes the deposit, so a reminder that could not be
+     * scheduled must not undo any of it. This is the assertion the suite was
+     * missing while it made the call for real and threw the answer away.
+     */
+    mockScheduleReminders.mockRejectedValue(new Error('reminder queue down'));
+
+    await applyAcceptance(quote());
+
+    expect(mockCreateInvoice).toHaveBeenCalledTimes(1);
+    expect(createdRows()).toHaveLength(1);
   });
 
   it('bills a per-session package through its stages, not through the meetings', async () => {

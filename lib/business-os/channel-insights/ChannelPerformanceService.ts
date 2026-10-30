@@ -15,7 +15,6 @@ import {
 } from '@/lib/repositories/ChannelMetricsRepository';
 import type { ChannelPlatform } from '@/lib/repositories/ChannelConnectionRepository';
 import { resolveChannel, CHANNEL_ORDER, type Channel } from './channelFromReferrer';
-/* `supabaseServer` is already imported further down — this module had it. */
 import { INBOX_CHANNEL_TAG } from '@/lib/business-os/leads/inboxProviders';
 import {
   resolveVisits,
@@ -28,6 +27,7 @@ import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository'
 import { WebsiteAnalyticsRepository } from '@/lib/repositories/WebsiteAnalyticsRepository';
 import { channelConnectionRepository } from '@/lib/repositories/ChannelConnectionRepository';
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
+import { agentRepository, AgentRepository } from '@/lib/repositories/AgentRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 // So a visitor arriving from the business's own booking page is counted as
 // direct rather than as a referral from a stranger's website.
@@ -183,7 +183,16 @@ export class ChannelPerformanceService {
     private readonly siteAnalytics = new WebsiteAnalyticsRepository(supabaseServer),
     private readonly pages = new WebsitePageRepository(supabaseServer),
     private readonly connections = channelConnectionRepository,
-    private readonly links = smartLinkRepository
+    private readonly links = smartLinkRepository,
+    /*
+     * The mailbox channel is an AGENT, found by tag, so it needs the agents
+     * repository rather than arriving with the other connections. Injected like
+     * every other collaborator: this query used to go straight to
+     * `supabaseServer`, past all six of them, so a test could stub everything
+     * the constructor asked for and still make a real HTTP call — 22 of them
+     * across this service's suite, asserted on by nothing.
+     */
+    private readonly agents: AgentRepository = agentRepository
   ) {}
 
   /**
@@ -199,14 +208,13 @@ export class ChannelPerformanceService {
    */
   private async hasInboxChannel(userId: string): Promise<boolean> {
     try {
-      const { count, error } = await supabaseServer
-        .from('agents')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .contains('tags', [INBOX_CHANNEL_TAG])
-        .is('deleted_at', null);
+      const { data, error } = await this.agents.existsWithTag(userId, INBOX_CHANNEL_TAG);
+      /* Not knowing is not evidence of absence — but one row fewer is the right
+         way to be wrong here, so an unreadable answer still reads as `false`.
+         The repository keeps the two apart; this is where they are collapsed,
+         deliberately and in one place. */
       if (error) return false;
-      return (count ?? 0) > 0;
+      return data ?? false;
     } catch {
       return false;
     }

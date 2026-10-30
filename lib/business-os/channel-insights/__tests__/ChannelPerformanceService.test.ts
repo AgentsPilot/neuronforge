@@ -12,6 +12,7 @@ function contact(id: string, over: Partial<AttributedContact> = {}): AttributedC
     utm_source: null,
     utm_medium: null,
     utm_campaign: null,
+    source_metadata: null,
     ...over,
   };
 }
@@ -112,6 +113,25 @@ function stubConnections(connections: any[] = []) {
   return { findEnabledByUser: jest.fn().mockResolvedValue({ data: connections, error: null }) } as any;
 }
 
+/**
+ * The mailbox channel, which is an agent found by tag rather than a row in
+ * `plugin_connections`.
+ *
+ * Supplied explicitly for the same reason as the visit-side stubs above, and
+ * with more cause: this query used to bypass the constructor entirely and go
+ * straight to `supabaseServer`, so all 22 tests in this file made a real HTTP
+ * call to a host that does not resolve. Every one of them landed in a
+ * `catch { return false }`, so the suite agreed on "no mailbox channel" by
+ * accident and asserted nothing about it either way.
+ */
+function stubAgents(hasInbox = false, error: Error | null = null) {
+  return {
+    existsWithTag: jest
+      .fn()
+      .mockResolvedValue(error ? { data: null, error } : { data: hasInbox, error: null }),
+  } as any;
+}
+
 /** Build the service with every collaborator stubbed. */
 function makeService(
   repo: any,
@@ -121,6 +141,7 @@ function makeService(
     pages?: any;
     connections?: any;
     links?: any;
+    agents?: any;
   } = {}
 ) {
   return new ChannelPerformanceService(
@@ -129,7 +150,8 @@ function makeService(
     opts.site ?? stubSiteAnalytics(),
     opts.pages ?? stubPages(),
     opts.connections ?? stubConnections(),
-    opts.links ?? stubLinks()
+    opts.links ?? stubLinks(),
+    opts.agents ?? stubAgents()
   );
 }
 
@@ -461,5 +483,93 @@ describe('[smoke] ChannelPerformanceService — billed vs collected', () => {
     const result = await service.getPerformance('user-1', SINCE);
 
     expect(result.untracked.billed).toBe(400);
+  });
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE MAILBOX CHANNEL. None of this was covered before.
+   *
+   * The query behind it went straight to `supabaseServer`, so there was nothing
+   * a test could stub and no way to drive it to `true`. The whole suite ran it
+   * against a dead host and silently agreed on `false`, which is why a channel
+   * that produces real leads had no test asserting it ever appears.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  describe('the mailbox channel', () => {
+    it('gets a row the moment the agent exists, before any lead has come in', async () => {
+      // An owner who switches it on and looks straight at this card must see
+      // the channel. No row at all reads as "it didn't work".
+      const service = makeService(stubRepo([]), { agents: stubAgents(true) });
+
+      const result = await service.getPerformance('user-1', SINCE);
+      const inbox = result.rows.find(r => r.channel === 'inbox');
+
+      expect(inbox).toBeDefined();
+      expect(inbox!.leads).toBe(0);
+      /* Connected, but the platform cannot report reach and never will — so it
+         must not sit on the "waiting for the first numbers" hourglass. */
+      expect(inbox!.reachUnavailable).toBe(true);
+      expect(inbox!.awaitingData).toBe(false);
+      expect(inbox!.reach).toBeNull();
+    });
+
+    it('is asked about by tag, for the user whose card this is', async () => {
+      const agents = stubAgents(true);
+      const service = makeService(stubRepo([]), { agents });
+
+      await service.getPerformance('user-7', SINCE);
+
+      expect(agents.existsWithTag).toHaveBeenCalledWith('user-7', 'inbox-enquiries');
+    });
+
+    it('has no row when the business has no mailbox channel', async () => {
+      const service = makeService(stubRepo([]), { agents: stubAgents(false) });
+
+      const result = await service.getPerformance('user-1', SINCE);
+
+      expect(result.rows.find(r => r.channel === 'inbox')).toBeUndefined();
+    });
+
+    it('costs the rest of the card nothing when it cannot be read', async () => {
+      /*
+       * The never-throws contract: a card that cannot answer this shows one row
+       * fewer, it does not fail. The repository reports the failure rather than
+       * returning `false`, so this asserts the service's handling of a real
+       * error — not a `false` that could have meant either thing.
+       */
+      const service = makeService(
+        stubRepo([contact('a', { referrer_domain: 'instagram.com' })], {
+          revenueByContact: new Map([['a', 300]]),
+        }),
+        { agents: stubAgents(false, new Error('agents table unreadable')) }
+      );
+
+      const result = await service.getPerformance('user-1', SINCE);
+
+      expect(result.rows.find(r => r.channel === 'inbox')).toBeUndefined();
+      expect(result.rows.find(r => r.channel === 'instagram')!.revenue).toBe(300);
+      expect(result.totals.leads).toBe(1);
+    });
+
+    it('counts its leads as known rather than inferred', async () => {
+      /*
+       * Its leads arrive as an email the business's own website sent, so there
+       * is no referrer to resolve — they are marked on `source_metadata.via`
+       * when the lead is filed. That is the most certain attribution on the
+       * card, so the row must not be captioned as an estimate.
+       */
+      const service = makeService(
+        stubRepo([
+          contact('a', { source_metadata: { via: 'inbox_channel' } }),
+        ]),
+        { agents: stubAgents(true) }
+      );
+
+      const result = await service.getPerformance('user-1', SINCE);
+      const inbox = result.rows.find(r => r.channel === 'inbox')!;
+
+      expect(inbox.leads).toBe(1);
+      expect(inbox.inferred).toBe(false);
+    });
   });
 });
