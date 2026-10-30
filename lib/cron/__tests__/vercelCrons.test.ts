@@ -127,6 +127,13 @@ const BOS_CRONS: CronEntry[] = [
    * under `/api/cron/`.
    */
   { path: '/api/cron/inbox-enquiries', schedule: '*/5 * * * *' },
+  /*
+   * Account deletion lifecycle D4b / SX-3 part 2 (SA R-A): the plan-ends
+   * reminder, about 3 days before a cancelled plan ends. 05:53 is a free
+   * minute, divisible by neither 5 nor 15, and 12 minutes after the billing
+   * reconcile at 05:41, so two Stripe sweeps never overlap. Appended last.
+   */
+  { path: '/api/cron/bos-plan-cancel-reminders', schedule: '53 5 * * *' },
 ];
 
 const RETIRED_AGENTSPILOT = [
@@ -138,8 +145,8 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 22 Business OS jobs, unchanged and in order', () => {
-    expect(crons).toHaveLength(22);
+  it('schedules exactly the 23 Business OS jobs, unchanged and in order', () => {
+    expect(crons).toHaveLength(23);
     expect(crons).toEqual(BOS_CRONS);
   });
 

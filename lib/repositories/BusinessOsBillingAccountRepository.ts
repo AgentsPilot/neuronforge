@@ -34,6 +34,17 @@
 // clock they are two different clocks (C-1). `current_period_end` is written
 // only by the paid apply function (and CLEARED, to null, by the test-mode
 // attach and, since P-8b.2 / F-1, by `replaceCustomer`); a source test keeps it so.
+// D4b (account deletion lifecycle SX-3 part 2; workplan
+// BUSINESS_OS_D4_PLAN_CANCEL_EMAILS_WORKPLAN.md §3.4, §3.5 and the D4b addendum;
+// SA S-3, DR-3, DR-13, R-C, R-D): the plan-ends reminder record, three columns
+// added by 20261100. The cron's `claimCancelReminders` (the one RPC here,
+// `claim_bos_plan_cancel_reminders`), `completeCancelReminder` and
+// `releaseCancelReminder` are ⟨unscoped-by-design⟩: cross-account by row, as
+// `PluginConnectionRepository`'s cron methods, and the two writes are a CAS on
+// the row id + the runner + that row's `user_id` + `livemode`. The cancel
+// email's `markCancelReminderCovered` is user-scoped. None writes `updated_at`
+// (the bookkeeping is not a billing change, DR-13). Both customer swaps clear
+// the three columns with the rest of the subscription (R-C).
 //
 // ── THE TWO LOOKUPS BY A STRIPE ID (documented exception to CLAUDE.md rule 4) ─
 // The webhook does not know the account yet: finding it is the point (SR-8).
@@ -62,7 +73,9 @@
 // `lib/business-os/billing/planCheckout.ts` (P-3a), the P-3b.2 webhook use
 // cases (`planPaymentApply.ts`, `planCheckoutSessionEvents.ts`,
 // `planSubscriptionMirror.ts`, wired by `planBillingHandler.ts`), the
-// P-6a.1 test clock (`planTestClock.ts`), and the
+// P-6a.1 test clock (`planTestClock.ts`), the D4b plan-ends reminder
+// (`planCancelReminderPassDeps.ts`, and `planCancelEmailDeps.ts` for the
+// covered mark), and the
 // admin deletion reads under `lib/business-os/purge/`. A source
 // guard in `lib/repositories/__tests__/BusinessOsBillingAccountRepository.test.ts`
 // holds the exact list of files allowed to name this repository.
@@ -627,6 +640,10 @@ export class BusinessOsBillingAccountRepository {
             failed_attempts: 0,
             action_required_invoice_url: null,
             ended_at: null,
+            // D4b (SA R-C): the plan-ends reminder record is subscription-scoped, so it goes with the subscription.
+            cancel_reminder_sent_for: null,
+            cancel_reminder_claimed_by: null,
+            cancel_reminder_claimed_at: null,
             updated_at: nowIso,
           },
           { count: 'exact' }
@@ -711,6 +728,10 @@ export class BusinessOsBillingAccountRepository {
             failed_attempts: 0,
             action_required_invoice_url: null,
             ended_at: null,
+            // D4b (SA R-C): the plan-ends reminder record is subscription-scoped, so it goes with the subscription.
+            cancel_reminder_sent_for: null,
+            cancel_reminder_claimed_by: null,
+            cancel_reminder_claimed_at: null,
             updated_at: nowIso,
           },
           { count: 'exact' }
@@ -1150,6 +1171,205 @@ export class BusinessOsBillingAccountRepository {
       return { data: null, error: asError(err) };
     }
   }
+
+  // ── D4b: the plan-ends reminder record (workplan §3.4, §3.5; SA S-3, DR-3, R-D) ──
+
+  /**
+   * ⟨unscoped-by-design⟩ The reminder cron's claim (durable-queue-drain; the
+   * `PluginConnectionRepository` precedent for cron methods that act across
+   * accounts by row). A cron has no session, so no `user_id` filter: the RPC
+   * leases up to `batch` rows in ONE mode whose plan is set to end within
+   * `windowSeconds`, that have no reminder for that period end, no live lease
+   * and no open account closure (DR-2), FOR UPDATE SKIP LOCKED, so two
+   * overlapping runs never lease the same row. A lease older than
+   * `leaseSeconds` is dead (S-3 a). Every id the caller then acts on comes from
+   * the returned row, never from input (tenant-isolation-guard Step 6).
+   *
+   * An unreadable row makes the whole answer an error, never a guessed row;
+   * the rows stay leased until the lease expires.
+   */
+  async claimCancelReminders(input: {
+    runnerId: string;
+    livemode: boolean;
+    windowSeconds: number;
+    leaseSeconds: number;
+    batch: number;
+  }): Promise<RepositoryResult<CancelReminderClaim[]>> {
+    const { runnerId, livemode, windowSeconds, leaseSeconds, batch } = input;
+    if (
+      typeof runnerId !== 'string' ||
+      !UUID_PATTERN.test(runnerId) ||
+      typeof livemode !== 'boolean' ||
+      !isBoundedInteger(windowSeconds, 1, 864_000) ||
+      !isBoundedInteger(leaseSeconds, 1, 3_600) ||
+      !isBoundedInteger(batch, 1, 100)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const methodLogger = this.logger.child({ method: 'claimCancelReminders', runnerId, livemode });
+
+    try {
+      const { data, error } = await this.supabase.rpc(CLAIM_CANCEL_REMINDERS_RPC, {
+        p_runner: runnerId,
+        p_livemode: livemode,
+        p_window_seconds: windowSeconds,
+        p_lease_seconds: leaseSeconds,
+        p_batch: batch,
+      });
+      if (error) throw asError(error);
+      if (data === null || data === undefined) return { data: [], error: null };
+      if (!Array.isArray(data)) throw new BillingAccountRepositoryError('unreadable_claim');
+      const rows = data.map((row) => mapReminderClaim(row as Record<string, unknown>));
+      if (rows.length > batch || rows.some((row) => row.livemode !== livemode)) {
+        throw new BillingAccountRepositoryError('unexpected_claim');
+      }
+      return { data: rows, error: null };
+    } catch (err) {
+      // SA code review F-4: an unreadable claimed row fails the whole batch, so an operator must look.
+      methodLogger.error({ err, alert: true }, 'Failed to claim Business OS plan-ends reminders');
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ The reminder for this period end went out (or its
+   * outcome is unknown, S-3 b / DR-5: at most once): record the period end and
+   * drop the lease. A compare-and-set on the row id + THIS runner + the row's
+   * own `user_id` and `livemode`, so a lost lease writes nothing
+   * (`completed: false`). `{ count: 'exact' }`, no `.select()`, no `.or()`.
+   */
+  async completeCancelReminder(input: {
+    id: string;
+    userId: string;
+    livemode: boolean;
+    runnerId: string;
+    periodEnd: string;
+  }): Promise<RepositoryResult<{ completed: boolean }>> {
+    const { id, userId, livemode, runnerId, periodEnd } = input;
+    if (
+      typeof id !== 'string' ||
+      !UUID_PATTERN.test(id) ||
+      typeof userId !== 'string' ||
+      !UUID_PATTERN.test(userId) ||
+      typeof livemode !== 'boolean' ||
+      typeof runnerId !== 'string' ||
+      !UUID_PATTERN.test(runnerId) ||
+      !isFilterSafeIso(periodEnd)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const methodLogger = this.logger.child({ method: 'completeCancelReminder', billingAccountId: id, userId, livemode });
+
+    try {
+      const { error, count } = await this.supabase
+        .from(BOS_BILLING_ACCOUNTS_TABLE)
+        .update(
+          { cancel_reminder_sent_for: periodEnd, cancel_reminder_claimed_by: null, cancel_reminder_claimed_at: null },
+          { count: 'exact' }
+        )
+        .eq('id', id)
+        .eq('user_id', userId)
+        .eq('livemode', livemode)
+        .eq('cancel_reminder_claimed_by', runnerId);
+      if (error) throw asError(error);
+      if (count !== 0 && count !== 1) throw new BillingAccountRepositoryError('unexpected_update_count');
+      return { data: { completed: count === 1 }, error: null };
+    } catch (err) {
+      methodLogger.error({ err }, 'Failed to record the Business OS plan-ends reminder');
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ The reminder did not go (not sent, not cancelling any
+   * more, a mismatch, or the run ran out of time): drop the lease only, so a
+   * later run may take the row again while it is still inside the window. The
+   * same compare-and-set as `completeCancelReminder`. `{ count: 'exact' }`, no
+   * `.select()`, no `.or()`.
+   */
+  async releaseCancelReminder(input: {
+    id: string;
+    userId: string;
+    livemode: boolean;
+    runnerId: string;
+  }): Promise<RepositoryResult<{ released: boolean }>> {
+    const { id, userId, livemode, runnerId } = input;
+    if (
+      typeof id !== 'string' ||
+      !UUID_PATTERN.test(id) ||
+      typeof userId !== 'string' ||
+      !UUID_PATTERN.test(userId) ||
+      typeof livemode !== 'boolean' ||
+      typeof runnerId !== 'string' ||
+      !UUID_PATTERN.test(runnerId)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const methodLogger = this.logger.child({ method: 'releaseCancelReminder', billingAccountId: id, userId, livemode });
+
+    try {
+      const { error, count } = await this.supabase
+        .from(BOS_BILLING_ACCOUNTS_TABLE)
+        .update({ cancel_reminder_claimed_by: null, cancel_reminder_claimed_at: null }, { count: 'exact' })
+        .eq('id', id)
+        .eq('user_id', userId)
+        .eq('livemode', livemode)
+        .eq('cancel_reminder_claimed_by', runnerId);
+      if (error) throw asError(error);
+      if (count !== 0 && count !== 1) throw new BillingAccountRepositoryError('unexpected_update_count');
+      return { data: { released: count === 1 }, error: null };
+    } catch (err) {
+      methodLogger.error({ err }, 'Failed to release the Business OS plan-ends reminder lease');
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * SA R-D (user U-3): the owner cancelled inside the last 3 days and the
+   * "Plan cancelled" email (outcome sent or unknown) already gave the date, so
+   * no reminder follows. User-scoped (the SESSION user from the cancel route):
+   * a compare-and-set on `user_id` + `livemode` + the subscription + this
+   * period end + still set to end. `marked: false` means the row moved on
+   * (another subscription or period, or no longer cancelling). It records the
+   * period end only and leaves any lease alone. `{ count: 'exact' }`, no
+   * `.select()`, no `.or()`.
+   */
+  async markCancelReminderCovered(input: {
+    userId: string;
+    livemode: boolean;
+    stripeSubscriptionId: string;
+    periodEnd: string;
+  }): Promise<RepositoryResult<{ marked: boolean }>> {
+    const { userId, livemode, stripeSubscriptionId, periodEnd } = input;
+    if (
+      typeof userId !== 'string' ||
+      !UUID_PATTERN.test(userId) ||
+      typeof livemode !== 'boolean' ||
+      typeof stripeSubscriptionId !== 'string' ||
+      !SUBSCRIPTION_ID_PATTERN.test(stripeSubscriptionId) ||
+      !isFilterSafeIso(periodEnd)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const methodLogger = this.logger.child({ method: 'markCancelReminderCovered', userId, livemode, stripeSubscriptionId });
+
+    try {
+      const { error, count } = await this.supabase
+        .from(BOS_BILLING_ACCOUNTS_TABLE)
+        .update({ cancel_reminder_sent_for: periodEnd }, { count: 'exact' })
+        .eq('user_id', userId)
+        .eq('livemode', livemode)
+        .eq('stripe_subscription_id', stripeSubscriptionId)
+        .eq('current_period_end', periodEnd)
+        .eq('cancel_at_period_end', true);
+      if (error) throw asError(error);
+      if (count !== 0 && count !== 1) throw new BillingAccountRepositoryError('unexpected_update_count');
+      return { data: { marked: count === 1 }, error: null };
+    } catch (err) {
+      methodLogger.error({ err }, 'Failed to mark the Business OS plan-ends reminder as covered');
+      return { data: null, error: asError(err) };
+    }
+  }
 }
 
 /** What the renewal-failure writes take. Every value is server-derived (our row, Stripe's invoice). */
@@ -1165,6 +1385,48 @@ export interface RenewalFailureInput {
   failedAtIso: string;
   hostedInvoiceUrl: string | null;
   nowIso: string;
+}
+
+/** D4b: the one RPC this repository calls (migration 20261100). */
+export const CLAIM_CANCEL_REMINDERS_RPC = 'claim_bos_plan_cancel_reminders';
+
+/** One leased reminder row, as the claim returns it. Every id the reminder acts on comes from here. */
+export interface CancelReminderClaim {
+  id: string;
+  /** The row's `user_id`: the account (not null: the claim leaves detached rows out). */
+  userId: string;
+  livemode: boolean;
+  stripeSubscriptionId: string;
+  stripeCustomerId: string;
+  /** Canonical ISO (`toISOString()`), so it can be compared and written back by compare-and-set. */
+  currentPeriodEnd: string;
+  /** The period end a reminder was last recorded for, canonical ISO, or `null`. */
+  cancelReminderSentFor: string | null;
+}
+
+function isBoundedInteger(value: unknown, min: number, max: number): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
+}
+
+/** Postgres prints `+00:00`; the compare-and-set writes and compares the canonical ISO form. */
+function canonicalTimestamp(value: unknown): string {
+  return new Date(timestamp(value)).toISOString();
+}
+
+function mapReminderClaim(raw: Record<string, unknown>): CancelReminderClaim {
+  const stripeSubscriptionId = text(raw.reminder_subscription_id);
+  if (!SUBSCRIPTION_ID_PATTERN.test(stripeSubscriptionId)) throw new BillingAccountRepositoryError('unreadable_subscription_id');
+  const stripeCustomerId = text(raw.reminder_customer_id);
+  if (!CUSTOMER_ID_PATTERN.test(stripeCustomerId)) throw new BillingAccountRepositoryError('unreadable_customer_id');
+  return {
+    id: uuid(raw.reminder_row_id),
+    userId: uuid(raw.reminder_user_id),
+    livemode: bool(raw.reminder_livemode),
+    stripeSubscriptionId,
+    stripeCustomerId,
+    currentPeriodEnd: canonicalTimestamp(raw.reminder_period_end),
+    cancelReminderSentFor: raw.reminder_sent_for === null ? null : canonicalTimestamp(raw.reminder_sent_for),
+  };
 }
 
 // Singleton on the service-role client (see the header for why).

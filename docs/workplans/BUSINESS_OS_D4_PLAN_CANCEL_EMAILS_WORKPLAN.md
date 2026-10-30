@@ -1,13 +1,13 @@
 # Workplan: D4 / SX-3 — Plan cancel emails (cancelled, kept, 3-day reminder), switch off
 
-> **Last Updated**: 2026-10-28
+> **Last Updated**: 2026-10-29
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_ACCOUNT_DELETION_LIFECYCLE_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_ACCOUNT_DELETION_LIFECYCLE_REQUIREMENT.md) §5, §6.2 row SX-3, §7, §10 carried rulings (C-1, C-9, C-11, SA-9, SA-15); parent [BUSINESS_OS_SELF_SERVICE_EXIT_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_SELF_SERVICE_EXIT_REQUIREMENT.md) §6, §17
 **Plan:** [BUSINESS_OS_ACCOUNT_DELETION_PLAN.md](/docs/workplans/BUSINESS_OS_ACCOUNT_DELETION_PLAN.md) §1 row SX-3
-**Branch:** `feature/plan-cancel-emails-d4` (worktree `neuronforge-d4`, from `origin/main` `415f726e`)
+**Branch:** D4a `feature/plan-cancel-emails-d4` (worktree `neuronforge-d4`, from `origin/main` `415f726e`; merged as PR #566). D4b `feature/plan-cancel-reminder-d4b` (same worktree, from `origin/main` `32effb8d`)
 **Date:** 2026-10-28
-**Status:** D4a Code Complete (2026-10-28, awaiting SA code review); D4b not started
+**Status:** D4a merged (PR #566). D4b Code Complete (2026-10-29, awaiting SA code review; migration 20261100 not applied)
 
 ## Overview
 
@@ -222,7 +222,7 @@ The subject carries a date only, never an address or a name (the transport logs 
 
 ## 6. Migration
 
-**Needed: yes**, one. The number is **20261099**, the next free on `origin/main` `415f726e` (highest 98). It is **not reserved yet**. TL reserves it in `SELF_SERVICE_EXIT_COORDINATION.md` before T-5. Just before writing the file, re-run `git fetch && ls supabase/migrations` on fresh `origin/main` (97 was taken from main without a reservation). The file is written only after SA approves.
+**Needed: yes**, one: **20261100** (`supabase/migrations/20261100_business_os_plan_cancel_reminders.sql`), reserved for D4b. 20261099 went to `20261099_business_os_first_plan_payments_view.sql` on main; 20261100 was re-checked free on fresh `origin/main` just before the file was written. (This section first proposed 20261099; the text below is the original sketch, corrected where DR-3 overturned it.)
 
 Sketch (one transaction, pre-guard and post-condition, `lock_timeout`, as 20261098):
 
@@ -230,10 +230,19 @@ Sketch (one transaction, pre-guard and post-condition, `lock_timeout`, as 202610
 - A partial index on `(current_period_end) WHERE cancel_at_period_end AND ended_at IS NULL`.
 - `claim_bos_plan_cancel_reminders(p_runner uuid, p_livemode boolean, p_window_seconds int, p_lease_seconds int, p_batch int)`: `UPDATE … SET claimed_by, claimed_at = now() WHERE id IN (SELECT … WHERE livemode = p_livemode AND cancel_at_period_end AND ended_at IS NULL AND subscription_status IN ('active','trialing') AND user_id IS NOT NULL AND stripe_subscription_id IS NOT NULL AND current_period_end > now() AND current_period_end <= now() + window AND cancel_reminder_sent_for IS DISTINCT FROM current_period_end AND (claimed_at IS NULL OR claimed_at < now() - lease) ORDER BY current_period_end LIMIT p_batch FOR UPDATE SKIP LOCKED) RETURNING id, user_id, stripe_subscription_id, stripe_customer_id, current_period_end, livemode`. `SECURITY DEFINER`, `SET search_path = public`, `REVOKE ALL … FROM PUBLIC, anon, authenticated`, `GRANT EXECUTE … TO service_role`.
 - Complete and release are plain repository updates (§3.5), or two small functions if SA prefers (S-3).
-- No FK, no RLS or policy change (the table stays server-write-only), no grant change on the table.
+- No FK, no RLS or policy change (the table stays server-write-only). **One grant change (DR-3):** `GRANT UPDATE (cancel_reminder_sent_for, cancel_reminder_claimed_by, cancel_reminder_claimed_at) ON TABLE public.business_os_billing_accounts TO service_role`, and nothing else. The table has column-level UPDATE grants (20261025), so without it the repository writes are refused with 42501.
 - **No cleanup regeneration** (to be confirmed by SA, S-2). The test-account cleanup removes the billing row whole. The anonymise mode keeps the billing row, but the new columns hold only timestamps and a runner uuid (no personal data). No purge descriptor change, because the table is already classified.
 - SQL editor hazards: no word "into" in any string or comment. LF line endings in the pasted body (the CRLF md5 mismatch of 96).
-- Manual prod gate: apply before the merge deploy. Code that runs first is safe: the pass's claim RPC is missing, so the pass logs an error and counts it, and the routes do not use the migration.
+- Manual prod gate: apply **before** the merge deploy, and this order is **required** (QA B-1). The D4b code writes the three columns on every customer swap (`replaceCustomer`, `attachTestClockCustomer`, R-C), whatever the switch says. Without the columns PostgREST refuses the whole update (PGRST204), so plan checkout for an owner whose Stripe customer is gone, and the admin test-clock attach, would fail.
+
+**Apply runbook for 20261100 (SA code review F-2).** Run each script in the Supabase SQL editor, in this order:
+
+1. **Pre-check:** `scripts/precheck-plan-cancel-reminders.sql` (read-only). Every row must say `ok`. Any `FAIL` stops the apply: paste the output back to TL and apply nothing.
+2. **Apply** `supabase/migrations/20261100_business_os_plan_cancel_reminders.sql` **BEFORE the D4b merge deploy**. It is one transaction; a failed pre-guard or post-condition applies nothing.
+3. **Checker:** `scripts/check-plan-cancel-reminders-migration.sql` (read-only). Rows 1–11 must say `ok` (row 12 is information only). Any `FAIL`: roll back in the same sitting with step 4, and paste the output back to TL.
+4. **Rollback**, only when needed: `supabase/SQL Scripts/20261100_business_os_plan_cancel_reminders_rollback.sql`. Run it only **after the D4b code is reverted and deployed**. The switch being off is **not** enough (QA B-1: the customer swaps write the three columns whatever the switch says). It refuses while a reminder run holds a lease younger than 10 minutes.
+
+All four files are LF and `.gitattributes` keeps them LF on every checkout (F-1). After 20261100 the historical 20261025 checker's "21 columns" no longer holds (DR-13).
 
 ---
 
@@ -244,9 +253,9 @@ Sketch (one transaction, pre-guard and post-condition, `lock_timeout`, as 202610
 - [x] **T-2** ✅ (D4a) Template `plan-cancel.ts`: three variants (cancelled / ended_now / kept) × en/he/es, RTL, escaping. The reminder variant is D4b's. Hebrew and Spanish drafts for G-5.
 - [x] **T-3** ✅ (D4a) Composer `planCancelEmail.ts` + deps. Recipient, language, timezone, view, deadline, fails closed. Audit entry builder.
 - [x] **T-4** ✅ (D4a) Routes: cancel (`cancelled` / `ended_now`) and reactivate (`kept`), after the audit flush, only on a real change, switch-gated. Headers updated.
-- [ ] **T-5** Migration 20261099 + rollback + pre-check + checker (after SA approval and T-0).
-- [ ] **T-6** Repository: `claimCancelReminders`, `completeCancelReminder`, `releaseCancelReminder` (`⟨unscoped-by-design⟩`).
-- [ ] **T-7** `planCancelReminderPass` + append to `RECONCILE_PASSES` + counters in `bosCronJobs.ts` + cron route header.
+- [x] **T-5** ✅ (D4b) Migration **20261100** (20261099 was taken on main by the first-plan-payments view) + rollback + pre-check + checker + migration text test.
+- [x] **T-6** ✅ (D4b) Repository: `claimCancelReminders`, `completeCancelReminder`, `releaseCancelReminder` (`⟨unscoped-by-design⟩`), `markCancelReminderCovered` (user-scoped, R-D); R-C clears on both customer swaps; tests.
+- [x] **T-7** ✅ (D4b, under R-A) `planCancelReminderPass` + deps on its OWN cron route `/api/cron/bos-plan-cancel-reminders` (not `RECONCILE_PASSES`), `vercel.json` `"53 5 * * *"`, one `bosCronJobs.ts` entry, the reminder template variant, R-D wiring.
 - [x] **T-8** ✅ (D4a) Audit pair `BOS_PLAN_CANCEL_EMAIL_SENT` / `_NOT_SENT` at DELETE's anchor (events + audience + descriptions, S-9).
 - [x] **T-9** ✅ (D4a) Entitlements registrations (2 `KNOWN_NON_GATE_IMPORTERS` entries, S-16); `npm run test:bos-entitlements` 326 suites / 9,729 tests green.
 - [x] **T-10** ✅ (D4a) R-3: unchanged per S-13 (met by P-7a.3). P-7a note (C-1) added to the plan-payments requirement §9.1 P-7a row + Change History.
@@ -258,6 +267,74 @@ Sketch (one transaction, pre-guard and post-condition, `lock_timeout`, as 202610
 - **Guard allow-lists touched (add-only, test files):** `authAccountRepository.callers.guard.test.ts` (R-4) now lists `planCancelEmailDeps.ts` (reads the SESSION user's own address) and `route.d4a.test.ts`; `BusinessOsBillingAccountRepository.test.ts` › "only the listed files name the repository" lists `route.d4a.test.ts` (it fakes the repository module, as the other cancel route tests do). PLAN PAYMENTS sign-off on the second one. No repository code changed.
 - **Switch shape:** the reader is pure (`parseBooleanFlag`, as `planPricesFlag.ts`), so the catalogue's reader-parity test holds; the "also refuses when `RESEND_FROM_EMAIL` is unset" rule lives in the composer (`sender_not_configured`, audited, `error` + `alert: true`).
 - **Copy:** the "after that" sentences, the no-refund line and the Keep button reuse the drawer's own he/es/en strings verbatim (pinned to the dictionaries by the template test, DR-11). The `loses` list is not in the email.
+
+**D4b build notes (2026-10-29, Dev)** on `feature/plan-cancel-reminder-d4b` from `origin/main` `32effb8d` (D4a #566 and EXPORT's MX-3a #565 merged). Nothing committed, pushed or applied.
+
+- **Migration number: 20261100.** Main took 20261099 for `20261099_business_os_first_plan_payments_view.sql`. Re-checked free on fresh `origin/main` just before writing. Wherever §6, DR-3 or DR-4 say 20261099 for D4b, read 20261100.
+- **T-5 files:**
+  - `supabase/migrations/20261100_business_os_plan_cancel_reminders.sql`;
+  - `supabase/SQL Scripts/20261100_business_os_plan_cancel_reminders_rollback.sql`;
+  - `scripts/precheck-plan-cancel-reminders.sql`;
+  - `scripts/check-plan-cancel-reminders-migration.sql`;
+  - `supabase/migrations/__tests__/business-os-plan-cancel-reminders.migration.test.ts`.
+- **What the migration does:**
+  - One transaction with `lock_timeout`. A pre-guard refuses unless the table still has its 21 columns and nothing D4b adds exists yet. A post-condition counts 24 columns (DR-13), checks the types, the pair CHECK, the index, the definer function, its grants and the column grants, and that browser roles hold nothing.
+  - Three nullable columns, plus the pair CHECK.
+  - A partial index on `current_period_end WHERE cancel_at_period_end AND ended_at IS NULL`.
+  - `claim_bos_plan_cancel_reminders(p_runner, p_livemode, p_window_seconds, p_lease_seconds, p_batch)`. It is plpgsql, `SECURITY DEFINER` and `SET search_path = public`. It validates its inputs (batch 1 to 100, window up to 10 days, lease up to 1 h). It locks with FOR UPDATE SKIP LOCKED. The lease reclaim is folded in (S-3 a). DR-2's `NOT EXISTS` on `business_os_account_closures` uses the statuses `('requesting','pending','grace','locked')`. It returns `reminder_*` columns.
+  - The function is revoked from PUBLIC, anon and authenticated (schema-qualified, after the CREATE) and granted EXECUTE to service_role.
+  - DR-3: `GRANT UPDATE` on the 3 columns to service_role and nothing else.
+  - No `updated_at` anywhere.
+- **Rollback, scripts and editor safety:**
+  - The rollback locks the table and refuses while a lease younger than 10 minutes exists.
+  - The word that breaks the SQL editor appears in none of the 4 files, and all 4 are LF. The text test pins both.
+  - `migrationNumberUnique` and `security-definer-surface` are green.
+  - Note (DR-13): the historical 20261025 checker's "21 columns" (B2) no longer holds after 20261100. The new checker says so in its header.
+- **T-6 (repository, add-only apart from R-C):**
+  - `claimCancelReminders`: the one `.rpc(` in the file. It maps each row strictly to canonical ISO and refuses a row in the other mode or more rows than the batch.
+  - `completeCancelReminder` and `releaseCancelReminder` are ⟨unscoped-by-design⟩: a CAS on `id` + `cancel_reminder_claimed_by` + `user_id` + `livemode`, with `{ count: 'exact' }` and no `.select()` or `.or()`.
+  - `markCancelReminderCovered` is user-scoped: a CAS on `user_id` + `livemode` + `stripe_subscription_id` + `current_period_end` + `cancel_at_period_end = true`.
+  - R-C: `replaceCustomer` and `attachTestClockCustomer` also NULL the 3 columns.
+  - Unit tests: `BusinessOsBillingAccountRepository.d4b.test.ts`.
+- **T-6, edits to the PLAN PAYMENTS test (sign-off owed):**
+  - The pinned-set tests now read the 20261025 grant **plus** the 20261100 grant (`grantedUpdateColumns()`), and both explicit swap payloads gain the 3 keys.
+  - The source-guard counts move: updates 8→11, `.from(` 12→15, `user_id` 9→12, `livemode` 11→14, `stripe_subscription_id` 4→5. "No rpc" becomes exactly one rpc, the claim. The 3 new writes join the no-select loop.
+  - DR-4: the SQL-updaters list adds 20261100, and a new test pins that its one UPDATE sits inside `claim_bos_plan_cancel_reminders` and that its SET names only `cancel_reminder_claimed_by` and `cancel_reminder_claimed_at`.
+  - "Only the listed files name the repository" adds `planCancelEmailDeps.ts`, `planCancelReminderPassDeps.ts` and the d4b test, sorted.
+- **T-7 (R-A: its own cron):**
+  - `app/api/cron/bos-plan-cancel-reminders/route.ts` is the reconcile shell: fail-closed `CRON_SECRET`, `runtime = 'nodejs'`, `maxDuration = 60`, a 45 s deadline and `withCronRunRecord`.
+  - The run is `lib/business-os/billing/planCancelReminderPass.ts`, pure over ports. Its wiring is `planCancelReminderPassDeps.ts`.
+  - Policy: window 3 d, lease 90 s, batch 25, no row started with less than 8 s left. A test pins `LEASE_SECONDS > maxDuration`.
+  - Only the current key mode is claimed. S-14: Stripe's `cancel_at ?? the one item's period end` must equal our row's end. C-4: the id, customer, mode and `bos_user_id` must match. S-5: no heal.
+  - DR-5: `sent` or `unknown` completes the row; `not_sent` releases it.
+  - R-B: it never throws, and a failed claim is counted and logged with `alert: true`.
+  - Counts: `examined, sent, notSent, notCancelling, periodMismatch, mismatch, covered, deferred, deadlineHit, skipped`. A test pins the registry keys to the pass keys both ways, and the worst-case counts JSON under 1,024 bytes.
+  - Registrations:
+    - `vercel.json`: one appended entry, `"53 5 * * *"`;
+    - `bosCronJobs.ts`: one appended entry, `drainsQueue: null`, `addedOn: '2026-10-29'` (RM: set it to the real merge day);
+    - the job count is 22→23 in both cron tests, with no ordinal comments;
+    - `reconcilePasses.ts`, the reconcile route and its counts are untouched.
+- **Reminder email:**
+  - The template has a `reminder` variant in en/he/es. Its subject is "Your plan ends on {date}" and its lead "Your plan ends on {date}." The "after that" paragraph and "data kept" line are the cancelled email's, from the view. Then: "Want to keep it? Choose "{button}" before {date}.", where `{button}` is filled with the Keep button's own label. There is no "as you asked" and no "Changed your mind?" (DR-9). The he/es wording goes to the user for G-5.
+  - The composer gained `actor` (default `owner`) and `idempotencyKey`. The pass sends `plan-cancel-reminder:{billingRowId}:{periodEnd}`, which is ids and a date (82 chars) and under the transport's 1..256 limit. `emailTransport.ts` is untouched.
+  - Audit: the D4a SENT/NOT_SENT pair, `email: 'reminder'`, `actor: 'system'`, written non-blocking with `.catch`, plus one bounded flush at the end of the run (`flushPlanCancelReminderAudit`).
+- **R-D wiring:**
+  - `notifyPlanCancelEmail` calls `coverReminderAfterCancelEmail` after the send. It marks only for `cancelled` with an outcome of `sent` or `unknown` and an end at most 3 days ahead. That window is the same constant the claim uses (`PLAN_CANCEL_REMINDER_WINDOW_SECONDS`).
+  - A failed mark is a `warn` and never changes the response.
+  - Tests: in the window → marked; outside → not; `not_sent` / `skipped` → not.
+- **Where the reminder's email wiring lives:** `planCancelEmailDeps.ts` (`buildPlanCancelReminderEmailDeps`), sharing D4a's lookups. That means:
+  - no new `KNOWN_NON_GATE_IMPORTERS` entry (its `readPlanEndingView` `why` text was extended);
+  - no new auth-callers entry (its comment was extended);
+  - one routerPlacement entry change: `planCancelEmailDeps.ts` gains `BILLING_ACCOUNTS`, and `planCancelReminderPassDeps.ts: [BILLING_ACCOUNTS]` is new. The D4a literals were hoisted into `AUTH_ACCOUNTS`, `BUSINESS_PROFILES` and `USER_PREFERENCES` (PLAN PAYMENTS nit).
+  - The view's account is the claimed row's `user_id`. That column is the account, and the repository maps it to `accountId`. The seam is the identity today.
+- **Shared doc:** `docs/FEATURE_FLAGS.md` gains a paragraph saying the switch now also gates the reminder cron, plus a Change History row. The admin catalogue is unchanged (no new variable).
+- **D4a test touched:** `planCancelEmail.qa.test.ts`'s "only these import the email path" list adds the two D4b files. The engine still imports none.
+- **Verification:**
+  - Touched and requested suites: 400 / 14,081 green.
+  - `npm run test:bos-entitlements`: 331 / 9,881 green.
+  - `npm run lint:hooks`: clean.
+  - `tsc --noEmit` (8 GB heap): ran to completion with no OOM. 1,920 diagnostics, 0 in any touched file.
+  - Full `npx jest`: 1,875 suites passed, 25 failed, 8 skipped, out of 1,908. Tests: 48,151 passed, 146 failed, 65 skipped. The 25 failing suites (V6, pilot, orchestration, CRM contact-drawer guards, onboarding, throttling and similar) name no file this slice touches.
 
 ---
 
@@ -415,7 +492,7 @@ The he/es wording of all four emails comes to the user with the diff (G-5), as f
 |---|---|
 | **R-A** (counts cap) | **Option (b): its own cron job.** It replaces S-4 and DR-12's prefixed counters. Measured: `bos_cron_runs.counts` has `CHECK octet_length(counts::text) <= 1024` (20261011 L345), and `bos-billing-reconcile` already sits at about 963 bytes worst case. **(c) is rejected:** the 2 short keys that would fit (about 18 bytes each with a 6-letter prefix) cannot show why a reminder did not go, and they leave R-B and the S-4 starvation in place. **(a) is rejected:** widening the CHECK on a shared platform table from a DELETE migration changes every job's contract, and needs its own SA review. **(b):** route `/api/cron/bos-plan-cancel-reminders`, a copy of `bos-billing-reconcile`'s shell (fail-closed `CRON_SECRET`, `runtime = 'nodejs'`, `maxDuration = 60`, a 45 s deadline, `withCronRunRecord`). One `bosCronJobs.ts` entry with `drainsQueue: null`. One **append-only** `vercel.json` entry, `"53 5 * * *"` (05:53 UTC: a free minute, not divisible by 5, 12 minutes after reconcile so two Stripe sweeps never overlap; U-1's "early morning UTC" still holds, and TL tells the user about the minute). Coordination row for `vercel.json` (shared with EXPORT). Batch back to 25. Unprefixed counts `examined, sent, notSent, notCancelling, periodMismatch, mismatch, covered, deferred, deadlineHit, skipped`: worst case with 5-digit values is about 170 bytes, pinned by a test that asserts the job's worst-case counts JSON is under 1,024 bytes. No change to `reconcilePasses.ts`, the reconcile route or its counts. No added CI time (pure Jest) |
 | **R-B** (window coupling) | Mostly moot under R-A: the reminder no longer writes `passesFailed` on the reconcile run record. The rule still holds for its own route: the reminder run never throws. Every port call is guarded per row, and a failed claim RPC is counted and logged with `alert: true`. A defect throw is caught by the route, which marks the run `failed` |
-| **R-C** (`replaceCustomer` / `attachTestClockCustomer`) | **Yes, the three columns are subscription-scoped.** `cancel_reminder_sent_for` describes one subscription's period end, and a lease is only meaningful for the subscription it was claimed for. Both methods clear all three (`NULL`, which satisfies the pair CHECK). Update the pinned-set test against the migration text and the attach payload. A runner whose lease is cleared this way then completes nothing (0 rows, by `claimed_by`), and the new subscription is not cancelling, so this is harmless. The DR-3 grant covers these writes. Every write is a CAS with `{ count: 'exact' }`, never UPDATE + `.or()` + `.select()`. Every file that names the repository, tests and type-only imports included, is added **sorted** to **both** allow-lists (`BusinessOsBillingAccountRepository.test.ts` and `BusinessOsBillingEventRepository.test.ts`). PLAN PAYMENTS signs off |
+| **R-C** (`replaceCustomer` / `attachTestClockCustomer`) | **Yes, the three columns are subscription-scoped.** `cancel_reminder_sent_for` describes one subscription's period end, and a lease is only meaningful for the subscription it was claimed for. Both methods clear all three (`NULL`, which satisfies the pair CHECK). Update the pinned-set test against the migration text and the attach payload. A runner whose lease is cleared this way then completes nothing (0 rows, by `claimed_by`), and the new subscription is not cancelling, so this is harmless. The DR-3 grant covers these writes. Every write is a CAS with `{ count: 'exact' }`, never UPDATE + `.or()` + `.select()`. Each file (tests and type-only imports included) is added, sorted, to the caller guard of the repository it names. For D4b that is `BusinessOsBillingAccountRepository.test.ts` only: no new file names the event repository, so `BusinessOsBillingEventRepository.test.ts` is unchanged (amended at the D4b code review; PLAN PAYMENTS agreed). PLAN PAYMENTS signs off |
 | **R-D** (U-3 implementation) | In D4b, the composer's deps (not the route) call a new **user-scoped** repository method, `markCancelReminderCovered({ userId, livemode, stripeSubscriptionId, periodEnd })`. It does `SET cancel_reminder_sent_for = periodEnd`, as a CAS on `user_id` + `livemode` + `stripe_subscription_id` + `current_period_end = periodEnd` + `cancel_at_period_end`, with `{ count: 'exact' }`. It is called only after a `cancelled` email whose outcome is `sent` or `unknown` (S-3 b's at-most-once rule) **and** whose end is ≤ 3 days from now. If the cancel email was `not_sent`, the reminder still goes. A failed mark is logged and never fails the response. The reminder counts such rows as `covered`, only when the claim sees them (in practice the claim skips them, because `sent_for` already equals the period end). Tests: a cancel inside the window → marked → no reminder; outside the window → not marked; not sent → not marked |
 
 D4b estimate after R-A to R-D: about 1.5 d (new route shell + `vercel.json` + job entry + U-3 mark), still under the 2.5 d cap.
@@ -456,6 +533,67 @@ D4b estimate after R-A to R-D: about 1.5 d (new route shell + `vercel.json` + jo
 4. **DR-14: TL does it before commit.** This branch already edits the plan's §1 SX-3 row, and the edit is stale: it still says "number reserved by TL" (20261099 is reserved) and "≈ 2.1 d", with no S-1 split. Replace it with two rows, D4a (≈ 1.1 d, no migration, switch off) and D4b (20261099, ≈ 1.5 d after R-A to R-D, manual prod gate), and add a Change History line. Doc-only; does not block QA.
 
 **Code Approved for QA: Yes, once F-1 is applied.** DR-14 and the PLAN PAYMENTS sign-off are needed before commit.
+
+### SA Code Review — D4b
+
+**Code Review by SA — 2026-10-29** (uncommitted diff on `feature/plan-cancel-reminder-d4b` over `origin/main` `32effb8d`; migration **20261100**. Every "20261099" in the D4b rulings reads 20261100)
+**Status:** ⚠️ Code approved with changes. F-1 and F-2 are required before commit. Neither needs another SA pass if built as written. QA may start now.
+
+| Check | Result |
+|---|---|
+| Migration: one transaction, `lock_timeout` 5 s, pre-guard, post-condition, LF, no "the SQL-editor word" | ✅ `BEGIN` … `COMMIT`, pre-guard (21 columns, nothing D4b-owned exists, closures table exists, no browser CREATE on `public`), 10-step post-condition. 0 CR bytes and 0 hits in all 4 files (SA counted bytes). See F-1 for what happens after commit |
+| DR-2 | ✅ `NOT EXISTS` on `business_os_account_closures` with exactly the 4 open statuses of the 20261093 CHECK (`kept` is the only other) |
+| DR-3 | ✅ One grant: `UPDATE` on the 3 columns to `service_role`. Post-condition 8 and checker row 10 verify it, and that `user_id` / `livemode` stay non-updatable |
+| DR-13 | ✅ No `updated_at` in the migration or in the 4 new repository writes. Table has no trigger (20261025 L74). Post-condition and checker count 24 |
+| Claim function | ✅ plpgsql, `SECURITY DEFINER`, `SET search_path = public`, `VOLATILE`, inputs validated (batch 1–100, window ≤ 10 d, lease ≤ 1 h), schema-qualified `REVOKE ALL … FROM PUBLIC, anon, authenticated` after the CREATE, `GRANT EXECUTE` to `service_role`. `FOR UPDATE SKIP LOCKED` in the inner select, `ORDER BY current_period_end, id`. `RETURNS TABLE` names are `reminder_*`, so no OUT-parameter / column ambiguity |
+| Claim predicate vs §6 + S-12 | ✅ Matches §6 line for line, plus `livemode = p_livemode` (S-12), the lease folded in (S-3 a) and DR-2. See "past_due" below |
+| Rollback | ✅ Reviewed. One transaction, `lock_timeout`, refuses unless all 3 columns exist, takes `ACCESS EXCLUSIVE` **before** the lease check (so no claim slips between check and drop), refuses on a lease younger than 10 min, drops function → index → CHECK → columns (the column grant goes with them). Header states the one cost (re-apply can re-remind inside the last 3 days) and the order (code reverted or switch off first) |
+| Pre-check / checker | ✅ Both read-only `WITH … SELECT`. Pre-check proves the 21-column shape the pre-guard expects. Checker row 8 reads `pg_get_functiondef` for SKIP LOCKED and DR-2; row 12 is information only. Its header records DR-13's note about the 20261025 checker |
+| Repository CAS writes | ✅ `completeCancelReminder` / `releaseCancelReminder`: `id` + `user_id` + `livemode` + `cancel_reminder_claimed_by` (S-3 c). `markCancelReminderCovered`: `user_id` + `livemode` + `stripe_subscription_id` + `current_period_end` + `cancel_at_period_end = true` (R-D). All `{ count: 'exact' }`, count other than 0/1 is an error, no `.select()`, no `.or()`. R-C: both swaps null the 3 columns. The claim maps rows to canonical ISO and refuses other-mode or oversize answers. PLAN PAYMENTS signed off on these hunks |
+| S-14 / C-4 | ✅ `stripeEndOf`: exactly one item, else `null` → `periodMismatch`; `cancelAt ?? items[0].currentPeriodEnd` (item-level on clover) must equal our row's end to the second. C-4 is the engine's own four checks, `!claim \|\| claim === row.userId` as `planSubscriptionManage.ts` L394, and the mode must match the key too |
+| DR-5 | ✅ `sent` / `unknown` → complete; `not_sent` → release; `skipped` mid-run → release + `deferred`. Pinned in the pass test |
+| Lease > maxDuration | ✅ Pinned: the test reads `maxDuration` from the route source, asserts 90 > 60 and 45 s < 60 s |
+| R-B | ✅ Switch, key mode, Stripe factory, claim, every port and the logger are guarded; a row that throws is released and counted. Route catches a defect throw (500, run `failed`) |
+| Deadline | ✅ No row started with < 8 s left; un-started rows released, `deadlineHit = 1`. The Stripe read is cut at the deadline. Worst case after the cut: 4 s email + 2 writes + bounded audit flush, inside 60 s |
+| Counts ≤ 1,024 bytes | ✅ Worst-case JSON pinned under 1,024; registry keys pinned to `PLAN_CANCEL_REMINDER_COUNT_KEYS` both ways |
+| Tenant isolation (`tenant-isolation-guard`) | ✅ The pass takes no id from input. Row id, user id, mode, subscription and customer all come from the claimed row; Stripe is cross-checked against it before any send; the composer's recipient, language, zone and view are keyed on that row's `user_id`; audit entity = that account. The two cron writes are CAS'd on the row's own `user_id` + `livemode` + runner. The one user-facing write (R-D) is keyed on the session `user.id` |
+| Idempotency key | ✅ `plan-cancel-reminder:{billingRowId}:{periodEnd}` (ids + an ISO date, 82 chars, inside 1..256). `emailTransport.ts` unchanged. Note: a keyed send is refused in production without Resend (`idempotency_unsupported`) → `not_sent` → released and retried; consistent with the switch staying off until Resend is confirmed |
+| Cron route + registry | ✅ Fail-closed `CRON_SECRET`, `runtime = 'nodejs'`, `maxDuration = 60`, 45 s deadline, `withCronRunRecord('bos-plan-cancel-reminders', …)`, counts-only response. `vercel.json` appended `"53 5 * * *"` (minute unique on the hour). `bosCronJobs.ts` one entry, `drainsQueue: null`; both cron tests say "23" literally, no ordinals (C-6) |
+| R-D U-3 mark | ✅ Only `event === 'cancelled'` (so never `ended_now`), only `sent` / `unknown`, only for an end > now and ≤ `PLAN_CANCEL_REMINDER_WINDOW_SECONDS` (the claim's own constant). Never throws; a failure is a `warn`; the response is unchanged. The engine mirrors `cancel_at_period_end` onto our row synchronously (`planSubscriptionManage.ts` L468) before the route sends, so the CAS normally matches |
+| Standards | ✅ 0 `console.*` in all new and touched source files. Pino, `correlationId` on the route logger. Logs and audit carry ids, mode, reason, outcome and dates only: no address, name or plan name. Rules 1–6 hold (all DB access in the repository; `user_id` on every non-cron write; the cron writes are documented ⟨unscoped-by-design⟩) |
+| Tests SA ran | ✅ 28 touched suites / 1,297 tests green. Wider sweep (cron routes, admin, purge, repositories, security, scripts, supabase, billing, finance, audit, billing routes, notifications): 446 suites, 443 green. The 3 red are `publicEndpointsAreThrottled` (known Windows path noise), `bookingNextStep.test.ts` and `supabaseFetch.test.ts`; neither of the last two reads any file this slice touches |
+
+**Code Review Comments**
+
+1. **F-1 (required, Medium)** LF is only true in this working copy. `core.autocrlf` is `true` here and `.gitattributes` has no rule for these files, so the committed blob is LF but every later Windows checkout writes CRLF (20261098 is CRLF on disk in this same tree). Two effects: the migration text test's "every file is LF only" (`raw(...).includes('\r')`) turns red locally on Windows the moment another worktree checks it out, and the operator pastes a CRLF body (the 96 hazard the test exists for). **Fix:** add-only `.gitattributes` rules, in the style of the cleanup-SQL lines: `supabase/migrations/20261100_business_os_plan_cancel_reminders.sql`, `supabase/SQL[[:space:]]Scripts/20261100_business_os_plan_cancel_reminders_rollback.sql`, `scripts/precheck-plan-cancel-reminders.sql`, `scripts/check-plan-cancel-reminders-migration.sql`, each `text eol=lf`.
+2. **F-2 (required, Low, docs only)** There is no apply runbook for 20261100. §6 still says 20261099, "not reserved yet" and "no grant change on the table", which DR-3 overturned. The migration header does say "Apply BEFORE the D4b merge deploy". **Fix:** correct §6 to 20261100 with the DR-3 grant, and add a short apply block (in §6 or §14): (1) `scripts/precheck-plan-cancel-reminders.sql`, every row `ok`; (2) apply 20261100 **before the merge deploy**; (3) `scripts/check-plan-cancel-reminders-migration.sql`, rows 1–11 `ok`, else roll back in the same sitting; (4) rollback only with the switch off or the code reverted. TL: confirm 20261100 is reserved in the coordination file (SA could not find that file in the tree).
+3. **F-3 (optional, Low)** `notifyPlanCancelEmail` awaits `markCancelReminderCovered` after the 4 s email deadline with no timer of its own, so S-11's latency bound becomes 4 s + audit flush + one unbounded DB round-trip. Suggest racing it against a short timer (for example 2 s, treated as `failed`). Not blocking: the Supabase client has its own request ceiling.
+4. **F-4 (optional, Low; PLAN PAYMENTS point 2)** One unreadable claimed row fails the whole batch, and because the claim orders by `current_period_end` it would head every batch until it leaves the window (up to about 3 days). **Ruling:** keep failing the whole batch. A guessed row is worse than none, and the rows that are unreadable here (a subscription or customer id that fails its pattern) cannot come from the validated writers. The alert already exists: the pass logs `claim_failed` with `alert: true` on every run. Adding `alert: true` to the repository's own `claimCancelReminders` error line is welcome but not required.
+5. **F-5 (information; PLAN PAYMENTS point 3) `past_due` is left out on purpose. No user decision is needed.** Both the claim (`subscription_status IN ('active','trialing')`) and the pass's fresh check (`RUNNING_STATUSES`) exclude it, so they agree. The reason is C-9: the reminder says "Choose Keep my plan before {date}" and "ends on {date}", and for a `past_due` plan neither is reliably true. Keep is refused on `past_due` (the engine answers `payment_failed_contact_us`, `planSubscriptionManage.ts` L22), and Stripe's dunning can end the subscription before the period end. That owner is already on the failed-payment path (P-7a: cancel ends now, the banner and payment-failure emails). "Paying" in `payingSubscriptionStatuses.ts` is a revenue classification, not "can be kept". A plan that is cured and goes back to `active` inside the window is reminded on the next daily run. Dev: add one line to the claim's header comment and the pass header saying this.
+
+**Rulings on Dev's declared deviations**
+
+1. **R-C allow-lists: accepted.** The event repository guard is exact and no new file names that repository, so adding the files there would be wrong. R-C's row has been amended to say "each file is added, sorted, to the caller guard of the repository it names". PLAN PAYMENTS agreed.
+2. **Repository test not purely add-only: accepted.** The count moves (updates 8→11, `.from(` 12→15, `user_id` 9→12, `livemode` 11→14, `stripe_subscription_id` 4→5, exactly one rpc) are exactly the 4 new methods plus the claim. The DR-4 loop skipping 20261100 is acceptable because the separate test pins the one UPDATE inside the claim function and its two SET columns. PLAN PAYMENTS signed off.
+3. **Failures without a count key → `deferred`; `unknown` → `notSent`: accepted.** All of those are "not done this run, will be retried or alerted". `unknown` completes the row (DR-5), and its registry label already reads "not confirmed sent (refused, failed or timed out)". The composer's own log line and audit row carry the exact outcome.
+4. **`partlyDoneWhen` (`deferred`, `deadlineHit`, `mismatch`, `notSent` ≥ 1): accepted.** `skipped` (switch off), `notCancelling`, `periodMismatch` and `covered` are correct answers, not partial runs.
+5. **Audit (`.catch` per row + one bounded end-of-run flush): accepted.** This is CLAUDE.md § Audit Trail's non-blocking rule plus the WC-7 flush, without spending the run deadline per row. The flush is raced against `AUDIT_FLUSH_TIMEOUT_MS` and never throws.
+6. **Wiring in `planCancelEmailDeps.ts`; view account = the claimed row's `user_id`, no `resolveAccountId`: accepted.** Keeping both wirings in one file shares D4a's lookups and keeps the entitlements importer count at the S-16 two. That file is already a declared non-gate importer and is on the auth-callers and routerPlacement lists. Using the claimed row's `user_id` directly is correct today. The billing row is keyed by the account, the seam is the identity, and passing it through `resolveAccountId` would only add an indirection that the claim already resolved. **Condition:** when the account seam stops being the identity (the owner and the account differ), this function has to split the recipient (the owner user) from the view's account. The header comment states the assumption; keep it there.
+7. **Copy: accepted.** "Want to keep it? Choose "Keep my plan" before {date}." meets DR-9: no "as you asked", no "Changed your mind?". `{button}` is filled from the button's own label, so the sentence and the button cannot drift. "before {date}" is the cautious and true form. The he/es wording goes to the user for G-5.
+8. **Migration additions: accepted, all three.** The 21-column pre-guard makes a surprise prod shape refuse instead of mis-count (the pre-check proves it first). The bounded inputs keep a bad caller from leasing the table. The rollback's 10-minute lease refusal (taken under `ACCESS EXCLUSIVE`) avoids dropping columns under a sending run.
+9. **`addedOn: '2026-10-29'`: accepted as a placeholder.** RM sets the real merge day.
+10. **Cancel while the cron holds the row: accepted.** The cron can only hold a row that is already cancelling, so this needs the engine's mirror to land inside that run's lease window, between the claim and the send. The outcome is two true emails, which is S-10's accepted class.
+11. **`docs/FEATURE_FLAGS.md` paragraph: accepted.** It is accurate (dashboard cancels included, deletion requests excluded, U-3, `skipped: 1`, needs 20261100) and has a Change History row.
+
+**Code Approved for QA: Yes.** F-1 and F-2 are needed before commit. F-3 and F-4 are optional. F-5 needs a one-line comment only.
+
+**Dev fixes (2026-10-29), all applied:**
+
+- [x] **F-1** `.gitattributes` gained four add-only `text eol=lf` lines (migration, rollback via `SQL[[:space:]]Scripts`, pre-check, checker), in the style of the cleanup-SQL lines. `git check-attr eol` reports `lf` for all four. `git ls-files --eol` after `git add -N` showed `w/lf attr/text eol=lf`, and the intent-to-add was then reset, so nothing is staged.
+- [x] **F-2** §6 now says 20261100 (reserved) and the DR-3 column grant, and has the apply runbook (pre-check → apply before the merge deploy → checker → rollback only with the switch off or the code reverted). TL still to confirm the coordination-file reservation.
+- [x] **F-3** `coverReminderAfterCancelEmail` races `markCovered` against `PLAN_CANCEL_REMINDER_COVER_TIMEOUT_MS` (2 s). A timeout is `failed`, logged `warn` with `reason: 'mark_timed_out'`, and never fails the response. Test added in `planCancelEmail.d4b.test.ts`.
+- [x] **F-4** `claimCancelReminders`' error line now carries `alert: true`.
+- [x] **F-5** One comment each in the migration header (claim function) and the pass header: `past_due` is excluded on purpose (Keep is refused, dunning can end it sooner; a plan cured inside the window is reminded on the next run).
 
 ---
 
@@ -537,6 +675,116 @@ emailTransport.ts / planSubscriptionManage.ts: no diff
 - [x] All acceptance criteria pass — ready for commit (QA side). Still owed before commit, not QA's: DR-14 plan-row edit (TL) and the PLAN PAYMENTS sign-off on the `route.d4a.test.ts` allow-list line (TL). The G-5 he/es wording review by the user.
 - [ ] Issues found — Dev must address before commit
 
+### QA Testing Report — D4b
+
+**QA — 2026-10-29** (uncommitted diff on `feature/plan-cancel-reminder-d4b` over `origin/main` `32effb8d`, SA F-1..F-5 applied)
+**Verdict:** ⚠️ **Code PASS; one Medium doc bug (B-1, runbook / headers only) to fix before commit.** No code defect found. No High bug.
+**Test mode:** full
+**Strategy used:** A (Jest, injected ports) for the pass and template; B-style route tests through the REAL cancel / reactivate routes, the REAL wiring and the REAL billing repository over a fake service-role client; the REAL cron route with the run faked; close reading (not execution) of the four SQL files; C (a throw-away render through the real composer) for the HTML previews. No database touched, no SQL run, no real email, nothing committed, pushed or stashed, no `jest -u`.
+**Focus:** api, pipeline-free cron, security (tenant isolation, PII), schema (migration text), copy / i18n
+**Skipped:** live sandbox path (§8 manual: test-clock reminder, second trigger sends none) — needs the switch on and 20261100 applied; listed under "What only a human click proves"
+**Input source:** prompt keywords (TL brief)
+
+#### QA test files added (test-only; no guard allow-list change)
+
+| File | Tests | What it adds |
+|---|---|---|
+| `lib/business-os/billing/__tests__/planCancelReminderPass.qa.test.ts` | 61 | Three runs truly interleaved (sends yield) over 70 rows: no double send, every row once, no lease left, nothing on day 2; a live lease is skipped, a dead one (91 s) reclaimed; a lost lease completes 0 rows + `alert`. DR-5 across the whole window: `unknown` completed and never re-claimed on days 1–3; `not_sent` released and sent by the next daily run; never retried after the end. Every Stripe "no" (flag off, `cancel_at` 0, ended, canceled / past_due / unpaid / incomplete / paused, ±1 s, −1 day, 0 or 2 items, null item end) and every C-4 field alone (id, customer, null customer, mode, `bos_user_id`) → released, never sent or completed; mismatch logs `alert`. F-5: `past_due` never claimed (model + SQL text). Tenant isolation: each send carries its own row's account, subscription, mode, end and key; Stripe naming account B on A's row sends to nobody; a hostile context id is ignored. R-B: 19 ports each throwing alone (sync and async) → the run still resolves. Deadline with a moving clock (4 of 10 sent, 6 released), a past deadline, a Stripe read that never answers. Counts JSON (5-digit and max-safe values) < 1,024 bytes; lease 90 s > `maxDuration` 60 s. Provider key exact shape, 82 chars ≤ 256, stable per period end. Log contexts: ids, reason codes and counts only |
+| `app/api/cron/bos-plan-cancel-reminders/__tests__/route.qa.test.ts` | 15 | Dev shipped no route test. Missing / wrong / unschemed / lower-case / suffixed / prefix secret → 401 and neither deps nor run touched; `CRON_SECRET` unset in production → 401 + `error` log for every header; empty secret → 401; `NODE_ENV=test` still needs it. Authorised → the run once, 45 s deadline, counts-only body; a defect throw → 500 with no details. `runtime` nodejs, `maxDuration` 60, `GET = withCronRunRecord('bos-plan-cancel-reminders', runJob)`, no other verb, no `console.`; `vercel.json` one entry `53 5 * * *` (the only `53` minute), one registry entry, `drainsQueue: null` |
+| `app/api/business-os/billing/plan/cancel/__tests__/route.d4b.qa.test.ts` | 22 | U-3 / R-D through the real routes: end in 1 h / 2 d / 2 d 23 h, sent → ONE update `{ cancel_reminder_sent_for }` only, `{ count: 'exact' }`, no `.select()` / `.or()`, filters exactly `user_id` (session) + `livemode` + `stripe_subscription_id` + `current_period_end` + `cancel_at_period_end = true`, no `updated_at`; `unknown` → marked; `+00:00` end written canonical; 3 d + 1 min / 10 d / past → no write; not_sent (refused, rejected, identity unreadable) → no write; switch off → nothing; count 0 → 200, no error. F-3: a mark that never answers is cut at 2,000 ms, `warn mark_timed_out`, same 200 body; error / throw → 200 + `warn mark_failed`. `ended_now` and `kept` (renewal inside 3 days) never mark. No address or plan name in any log line |
+| `lib/email/templates/__tests__/plan-cancel.reminder.qa.test.ts` | 31 | Subject = the lead without its full stop, date only, no `@` / HTML / plan name, no name placeholder exists; credits null / read-only days null / back-to-plan `until` null each drop their clause in en/he/es, no `null`/`undefined`/empty paragraph; the keep sentence's `{button}` is the label inside the very `<a href>` the HTML shows; he `<html lang="he" dir="rtl">`, content right-aligned, address isolated LTR; en / es LTR; DR-9 and "today" / "in N days" / "free tier" absent in all three languages for every view shape; no refund or "charged again" line |
+
+#### Test Coverage
+
+| Acceptance criterion (brief) | Tested? | Result | Notes |
+|---|---|---|---|
+| 1. Switch off → no claim | ✅ | Pass | Dev test + QA R-B (`isEnabled` throwing = off) |
+| 1. Two concurrent runs never send to the same row | ✅ | Pass | SKIP LOCKED model, 3 interleaved runs, 70 rows |
+| 1. Sent or unknown → completed with that period end, never claimed again (DR-5) | ✅ | Pass | Checked on every later day of the window |
+| 1. not_sent → released, retried next run | ✅ | Pass | Sent on day 2; never after the end |
+| 1. Stripe not cancelling / ended / other end / ≠ 1 item → released, not sent (S-14) | ✅ | Pass | 14 shapes |
+| 1. C-4 mismatch → released + `alert` | ✅ | Pass | Each field alone, plus a claim row in the other mode |
+| 1. Deadline → stops starting rows | ✅ | Pass | Moving clock; past deadline; hung Stripe read cut |
+| 1. Never throws (R-B) | ✅ | Pass | 19 ports one at a time. See E-1 for the two that are not guarded |
+| 1. Worst-case counts JSON < 1,024 bytes | ✅ | Pass | 10 keys at `MAX_SAFE_INTEGER` still fit |
+| 1. Lease > maxDuration | ✅ | Pass | 90 s > 60 s; 45 s + 8 s margin ≤ 60 s |
+| 1. Idempotency key shape and transport limits | ✅ | Pass | 82 chars, `IDEMPOTENCY_KEY_MAX_LENGTH` 256; `emailTransport.ts` unchanged |
+| 1. `past_due` never reminded (F-5) | ✅ | Pass | Claim (model + SQL) and choke point agree |
+| 1. Email only to the claimed row's own user | ✅ | Pass | Pass + deps wiring (`accountId: input.userId`) read |
+| 2. Missing / wrong secret → 401, nothing runs | ✅ | Pass | New route test |
+| 2. `CRON_SECRET` unset → fails closed | ✅ | Pass | 401 + `error` log |
+| 2. `withCronRunRecord`, nodejs, 60 s, `vercel.json` `53 5 * * *`, `bosCronJobs.ts` | ✅ | Pass | Also `runRecord.adoption` and both cron registry tests green |
+| 3. U-3 / R-D mark: ≤ 3 d sent/unknown → marked; > 3 d → not; not_sent → not | ✅ | Pass | Through the real routes and repository |
+| 3. Mark times out (F-3, 2 s) → failed, logged, 200 unchanged | ✅ | Pass | Measured ≈ 2,010 ms |
+| 3. ended_now / kept never mark (reactivated) | ✅ | Pass | |
+| 4. Complete / release CAS on id + claimed_by + user_id + livemode; lost lease 0 rows; `{count:'exact'}`, no `.select()`/`.or()`; no `updated_at`; R-C nulls the 3 columns on both swaps | ✅ | Pass | Read + Dev's `…d4b.test.ts` and the amended PLAN PAYMENTS test (R-C at L412 / L517). No QA repository file: naming the repository would need a guard allow-list change |
+| 5. DR-2 closure exclusion | ✅ | Pass | The 4 open statuses of the 20261093 CHECK; `user_id` uuid both sides |
+| 5. DR-3 grant = 3 columns only | ✅ | Pass | One `GRANT UPDATE (…3…) TO service_role`; post-condition 8 and checker row 10 also prove `user_id` / `livemode` stay non-updatable |
+| 5. No "into" anywhere | ✅ | Pass | 0 hits (case-insensitive) in all 4 files; 0 non-ASCII bytes |
+| 5. LF + `.gitattributes` | ✅ | Pass | 0 CR bytes in all 4; `git check-attr` → `eol: lf`, `text: set` for all 4 |
+| 5. Claim predicate matches §6 | ✅ | Pass | Line for line, plus S-12 mode, S-3 a lease, DR-2, `ORDER BY current_period_end, id` |
+| 5. Rollback restores the pre-migration state | ✅ | Pass | Drops function → index → CHECK → columns (column grant goes with them); dropped columns are `attisdropped`, so the 21-column pre-guard holds on a re-apply. **But see B-1 for its "switch off is enough" claim** |
+| 5. Anything that would fail in the SQL editor | ✅ | Pass | None found. `RETURN QUERY UPDATE … RETURNING` has applied precedent (`2026-08-14_payment_reminders_claim.sql`); `RETURNS TABLE` types (uuid, uuid, boolean, text, text, timestamptz, timestamptz) match the 20261025 columns exactly, so no "structure of query does not match" at run time; `reminder_*` names cannot shadow a column; index `LIKE` matches `pg_get_indexdef`'s form; `proconfig @> {search_path=public}` matches |
+| 6. en / he / es render; he RTL; subject; DR-9; `{button}` = label; null clauses dropped; never "free tier" | ✅ | Pass | Dev test + QA test; 3 previews below |
+| 7. No address / name / plan name in logs or audit | ✅ | Pass | Pass logs (key allow-list), route logs (3 mark modes), and the composer's real log line + audit row captured in the previews run (`*-logs-and-audit.json`): ids, `email: reminder`, outcome, language, provider, `periodEnd`, `actor: system` only |
+
+#### Issues Found
+
+**Bugs (must fix before commit):**
+
+1. **B-1 — "switch off" is not a safe state for the 20261100 rollback, and "code that runs first breaks nothing" is not true** — Severity: **Medium** (doc / runbook only, but it is the operator's prod instruction). Files: `supabase/SQL Scripts/20261100_business_os_plan_cancel_reminders_rollback.sql` L2-4, `supabase/migrations/20261100_business_os_plan_cancel_reminders.sql` L22-23, this workplan §6 runbook step 4.
+   - Why: R-C made `replaceCustomer` and `attachTestClockCustomer` write `cancel_reminder_sent_for` / `_claimed_by` / `_claimed_at` **unconditionally** (no switch). Without the columns, PostgREST refuses the whole update (PGRST204, column not in the schema cache).
+   - Steps: apply 20261100, deploy D4b, then roll back with only `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` off (as the rollback header and §6 step 4 allow) — or deploy D4b before the migration.
+   - Expected: plan checkout for an owner whose stored Stripe customer is gone still replaces it; the admin test-clock attach still works.
+   - Actual: `replaceCustomer` errors → `businessOsStripeCustomer.ts` throws `billing_row_not_recorded` → that checkout fails; `attachTestClockCustomer` fails the same way.
+   - Fix (text only): the rollback runs only **after the D4b code is reverted** (switch off is not enough, because of R-C); and the migration header should say a D4b deploy before 20261100 breaks the customer swap and the test-clock attach, which is why "apply BEFORE the merge deploy" is mandatory, not just safe. No code change needed.
+
+**Performance issues:** none. The cron run is bounded at 45 s + per-row 8 s margin inside 60 s; the cancel press gains at most the 2 s mark bound (F-3) on top of D4a's ≈ 6 s.
+
+**Edge cases (nice to fix / for the record):**
+
+1. **E-1 (Low, R-B letter):** `deps.newRunnerId()` (L290) and `deps.now()` (loop head, L321) are called outside any `try`, so a throwing runner-id or clock port would throw the run. The real ports are `randomUUID()` and `Date.now()`, which do not throw, and the route catches a defect throw (500, run `failed`). Wrap them if R-B is to hold literally.
+2. **E-2 (Low):** `release` and `complete` writes have no timer of their own. A hung database write keeps the run past its 45 s deadline until `maxDuration` kills it; the 90 s lease then frees the row. Safe, but the counts of such a run are lost.
+3. **E-3 (Low, accepted S-10 class):** a send that goes out but whose `complete` write fails leaves the row claimable when the lease expires, so the **next daily run re-sends** it. The provider key does not help there: Resend keeps a key about 24 h, and the next run is about 24 h later. The `complete_failed` line carries `alert: true`, so an operator sees it.
+4. **E-4 (copy, G-5):** the reminder's HTML heading is the subject and the first paragraph is the same sentence again ("Your plan ends on December 1, 2026" / "Your plan ends on December 1, 2026."). The cancelled email does not repeat itself this way. Copy-only.
+5. **E-5 (copy, G-5):** the footer "You're getting this because of a change to your plan" (he / es the same) is shared with the reminder, which reports no new change. True in a loose sense (the plan was set to end); the user may prefer a reminder-specific footer.
+6. **E-6 (Low, existing pattern):** like `bos-billing-reconcile`, the route runs **without a secret** when `NODE_ENV=development`. Local development shares the production database (`cronRunRecorder.ts` header), so a local GET with the switch on would send real reminders to production rows. Not new (copied shell); keep the switch off locally.
+7. **E-7 (information):** `unknown` is counted under `notSent` and so makes the run "partly done" on the admin page although the row is completed. SA accepted it (deviation 3); noting it so an operator does not chase it.
+
+#### Test Outputs / Logs
+
+```text
+QA files alone:  4 suites / 129 tests green (61 + 15 + 22 + 31)
+
+Regression sweep (lib/audit, lib/email, lib/business-os/billing, app/api/business-os/billing, app/api/stripe,
+lib/repositories/__tests__, lib/cron, app/api/cron, supabase/migrations/__tests__, supabase/__tests__,
+lib/admin/environment, lib/business-os/entitlements, lib/notifications) — includes every touched suite and the QA files:
+Test Suites: 411 passed, 411 total
+Tests:       14319 passed, 14319 total
+Snapshots:   111 passed, 111 total
+
+npm run test:bos-entitlements:  Test Suites: 331 passed / Tests: 9881 passed (EXIT 0)
+npm run lint:hooks:             clean (--max-warnings 0, EXIT 0)
+npx tsc --noEmit (8 GB heap):   ran to completion, 1,920 diagnostics (= Dev's count, all pre-existing),
+                                0 in any D4b or QA file; no OOM / V8 trace
+publicEndpointsAreThrottled:    3 known Windows-path failures (book/manage calendar, public consent-copy,
+                                public invoice pay); none names a D4b file
+SQL files (4):                  0 CR bytes, 0 non-ASCII bytes, 0 "into"; git check-attr eol = lf, text = set
+```
+
+**Rendered previews (eyeball only, not committed):** `C:/Users/Barak/AppData/Local/Temp/claude/C--Users-Barak-My-Projects-AgentsPilot-neuronforge/fbb66f51-b54b-4128-aea8-21f71f8538ff/scratchpad/d4b-emails/` (local scratchpad, forward slashes on purpose: Tailwind scans docs) → `en-reminder.html`, `he-reminder.html`, `es-reminder.html`, each with a `.txt` (subject, key, plain text) and a `-logs-and-audit.json` capture. Rendered through the real composer with zone `Asia/Jerusalem`, end `2026-11-30T22:30Z` (shows 1 December), a free-plan view (Test Flight, 1,000 credits, 7 read-only days).
+
+#### What only a human click proves
+
+- The §8 manual path on the sandbox once 20261100 is applied and the switch is on in a non-prod env: a test-clock subscription 2 days before its end → trigger the cron route → one reminder; trigger again → none; press Keep and re-cancel → none (same period end); cancel inside the last 3 days → only the "Plan cancelled" email.
+- Real inbox rendering (Gmail, Outlook; Hebrew RTL; dark mode) and a keyed Resend delivery.
+- The prod apply itself: pre-check all `ok`, apply before the merge deploy, checker rows 1–11 `ok` (run by the operator, not QA).
+
+#### Final Status
+
+- [ ] All acceptance criteria pass — ready for commit
+- [x] Issues found — Dev must address before commit: **B-1 only** (three comment / runbook lines, no code). Once fixed, no re-test is needed beyond `business-os-plan-cancel-reminders.migration.test.ts` (it reads those files). Still owed, not QA's: TL confirms the 20261100 reservation; the user's G-5 he/es review (E-4, E-5 are copy points for it).
+
 ---
 
 ## 14. Commit Info
@@ -556,3 +804,8 @@ emailTransport.ts / planSubscriptionManage.ts: no diff
 | 2026-10-28 | D4a F-1 + both suggestions (Dev) | F-1: `endedNow.lead` no longer says "not charged again" in en/he/es; the promise moved into `invoicesCancelled`, which shows only when `invoicesLeftOpen === 0`. New template test: `unpaidInvoicesCancelled: false` → no "charged again" wording in any language (text, HTML, subject). Suggestions: `planCancelEmailDeps.ts` reads the view on `context.accountId` (no `resolveAccountId` import; its non-gate entry is now `['readPlanEndingView']`); `AuthAccountRepository.ts` header now lists every `findUserIdentity` caller (comment only). D4a suites + both repository guards 21 / 760 green, `test:bos-entitlements` 326 / 9,729 green |
 | 2026-10-28 | QA — D4a | ✅ Pass, no bugs. Two QA test files (composer 83, routes 58; no guard allow-list change). 22 suites / 989 tests green, `test:bos-entitlements` 326 / 9,729, `lint:hooks` clean, `tsc` 0 in touched files (1,864 pre-existing, no OOM). `emailTransport.ts` and the engine unchanged. 3 low edge cases for the G-5 copy review; worst-case added latency ≈ 6 s (4 s + 2 s audit flush), within S-11. 12 HTML previews rendered for the user |
 | 2026-10-29 | G-5 user review — D4a | ✅ Diff and he/es copy approved. Mixed tense in the ended email: left as is. Invoice left open or not read: the ended email now says it may still be unpaid and could still be charged (`endedNow.invoiceMayBeOpen`, en/he/es), shown exactly when `invoicesCancelled` is not. Template + QA tests extended; 14 suites / 557 green |
+| 2026-10-29 | D4b code complete (Dev) | On `feature/plan-cancel-reminder-d4b` from `32effb8d`. Migration **20261100**, not 20261099, which main took: 3 columns, pair CHECK, partial index, definer claim function with DR-2's closure exclusion, DR-3 column grant, 24-column post-condition. Rollback, pre-check, checker and text test added. Repository: claim, complete and release (unscoped-by-design CAS), plus the user-scoped covered mark (R-D). Both swaps clear the 3 columns (R-C). The PLAN PAYMENTS test was amended for counts, grants, DR-4 and the allow-list. The reminder runs as its own cron, `/api/cron/bos-plan-cancel-reminders` at `"53 5 * * *"`, with ten unprefixed counts (R-A). The reminder template variant is in en/he/es (DR-9) with a provider key (S-10). FEATURE_FLAGS paragraph added. 400 / 14,081 touched suites green, `test:bos-entitlements` 331 / 9,881, `lint:hooks` clean, tsc 0 in touched files. Full Jest has 25 failing suites, none touching this slice. T-5, T-6 and T-7 ticked |
+| 2026-10-29 | SA code review — D4b | ⚠️ Approved with changes. F-1 (required): `.gitattributes` `eol=lf` rules for the 4 SQL files, because autocrlf would make them CRLF on the next Windows checkout. F-2 (required, docs): fix §6 (20261100, DR-3 grant) and add the apply order (pre-check, apply before the merge deploy, checker, rollback rule); TL confirms the 20261100 reservation. F-3 and F-4 optional. F-5: `past_due` left out on purpose (Keep is refused and dunning can end the plan sooner, C-9), so a one-line comment is enough and no user question is needed. All 11 Dev deviations accepted; deviation 6 has a condition about the account seam. R-C row amended: each file goes to the caller guard of the repository it names. Rollback reviewed. SA ran 28 touched suites (1,297 tests), all green, and a 446-suite sweep in which the only 3 failures are unrelated |
+| 2026-10-29 | SA code review fixes — D4b (Dev) | F-1: four add-only `text eol=lf` lines in `.gitattributes` for the 20261100 migration, rollback, pre-check and checker (verified with `git check-attr` / `git ls-files --eol`, nothing staged). F-2: §6 corrected to 20261100 and the DR-3 grant, apply runbook added. F-3: the covered mark is raced against a 2 s timer (`PLAN_CANCEL_REMINDER_COVER_TIMEOUT_MS`), timeout = `failed`, logged, test added. F-4: `alert: true` on the repository claim error. F-5: `past_due` exclusion stated in the migration and pass headers |
+| 2026-10-29 | QA — D4b | ⚠️ Code pass, one Medium doc bug. B-1: the rollback header, the migration header and §6 step 4 say the switch being off is enough, and that code deployed first breaks nothing. Neither is true: R-C's `replaceCustomer` / `attachTestClockCustomer` write the 3 columns whatever the switch says, so without them the stale-customer checkout and the test-clock attach fail. Fix is text only. 4 QA test files, 129 tests (pass 61, cron route 15, U-3 route 22, template 31), no guard allow-list change. Sweep 411 suites / 14,319 tests green; `test:bos-entitlements` 331 / 9,881; `lint:hooks` clean; `tsc` 0 in D4b and QA files (1,920 pre-existing, no OOM). SQL read closely, not run: nothing found that would fail in the editor. 7 edge cases (E-1 to E-7, Low or copy). 3 HTML previews (en/he/es) rendered for the user |
+| 2026-10-29 | QA B-1 fixed (TL) | Rollback header, migration header and §6 (gate + runbook step 4) corrected: applying 20261100 before the merge deploy is required, not just safe, and the rollback runs only after the D4b code is reverted and deployed; the switch being off is not enough, because `replaceCustomer` / `attachTestClockCustomer` write the three columns regardless. Text only; migration SQL unchanged |

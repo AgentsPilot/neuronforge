@@ -617,7 +617,7 @@ describe('backward: a gate cannot ship unregistered', () => {
     {
       file: 'lib/business-os/billing/planCancelEmailDeps.ts',
       symbols: ['readPlanEndingView'],
-      why: 'Account deletion lifecycle D4a / SX-3 (workplan §3.2; SA S-16): the production wiring of the plan cancel emails. `readPlanEndingView` is the display-only view the drawer uses of what the account has once the paid period ends, read for the "after that" paragraph of the email, on the account the route already resolved through the seam (`resolveAccountId(user.id)`). It refuses nothing by plan or capability and calls no `check()` / `decide()`, so it is not a gate.',
+      why: 'Account deletion lifecycle D4a / SX-3 (workplan §3.2; SA S-16): the production wiring of the plan cancel emails. `readPlanEndingView` is the display-only view the drawer uses of what the account has once the paid period ends, read for the "after that" paragraph of the email, on the account the route already resolved through the seam (`resolveAccountId(user.id)`). D4b (SX-3 part 2): the same view is read for the plan-ends reminder email, on the claimed billing row\'s account (its `user_id`, never input). It refuses nothing by plan or capability and calls no `check()` / `decide()`, so it is not a gate.',
     },
     // ── Plan payments P-3b.2, 2026-10-07 — the webhook plan handler ─────────
     {
