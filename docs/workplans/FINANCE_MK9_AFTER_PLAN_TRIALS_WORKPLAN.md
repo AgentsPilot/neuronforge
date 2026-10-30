@@ -6,7 +6,7 @@
 **Requirement:** [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) §0.4, row MK5BFU-FU-2 (found in [FINANCE_PAYING_FIRST_PAYMENT_SCALE_WORKPLAN.md](/docs/workplans/FINANCE_PAYING_FIRST_PAYMENT_SCALE_WORKPLAN.md), "20261098 (D3.1, after-plan moves)")
 **Branch:** `fix/finance-mk9-exclude-after-plan-trials` (worktree `neuronforge-mk9fu2`, off origin/main `a0804002`)
 **Date:** 2026-10-30
-**Status:** Code Complete, SA code-approved 2026-10-30 (uncommitted, for QA)
+**Status:** SA approved, QA passed; committed `7cdef77e`, PR #570 open, auto-merge (merge queue), 2026-10-30
 
 ## Overview
 
@@ -234,6 +234,14 @@ None. Only the Finance walk adds one integer column. The Subscriptions wiring, t
 
 ## Commit Info
 
+| Field | Value |
+|---|---|
+| Branch | `fix/finance-mk9-exclude-after-plan-trials` |
+| Commit | `7cdef77e` fix(admin-finance): leave after-plan free periods out of MK-9 trial-to-paid (MK5BFU-FU-2) |
+| Sync | origin/main `a0804002` already contained; nothing to merge. Re-run after sync: finance lib, finance route (AC-145, `EXPECTED_SHA256` still `38897cd3…4edf`), planGroups, plan repository, RC-15: 31 suites, 2,582 tests green |
+| PR | [#570](https://github.com/AgentsPilot/neuronforge/pull/570), open, auto-merge on (merge queue sets the strategy) |
+| Migration | None (relies on 20261098, applied on prod) |
+
 ---
 
 ## Change History
@@ -245,3 +253,4 @@ None. Only the Finance walk adds one integer column. The Subscriptions wiring, t
 | 2026-10-30 | QA report (QA): PASS | Full mode, no bugs. 65 + 2 + 331 suites green, typecheck:bos-llm 0 new, scoped tsc 0, lint:hooks 0, pins unmoved, 6 ad hoc edge cases green (scratch only). Prod checker not run (no SQL tool); 2 Low edge notes |
 | 2026-10-30 | SA C-1 run (RM) | Scoped tsc on touched files: 0 errors, no OOM. `npm run build` compiled; page-data step failed only on missing env vars; CI Build is the proof |
 | 2026-10-30 | SA C-2 recorded (RM) | 20261098 applied on prod; read-only MK9-C2 checker run on prod by the coordinator: `trial_accounts = 1`, `paid = 0`, 0 after-plan rows |
+| 2026-10-30 | RM: committed and PR opened | `7cdef77e`; PR #570 open, auto-merge on; Commit Info filled |
