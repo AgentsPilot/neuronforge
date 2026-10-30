@@ -2640,6 +2640,8 @@ export const he = {
     // Plan payments P-7a.3 (PF-14): points at Settings → Plan. Approved by the user 2026-10-27 (G-5).
     'settings.account_delete.blocker.plan_running': 'התוכנית שלכם עדיין פעילה. מבטלים אותה בהגדרות ← תוכנית, ואפשר למחוק את החשבון אחרי שהיא מסתיימת.',
     'settings.account_delete.blocker.stripe_connected': 'חשבון ה-Stripe שלכם עדיין מחובר לתשלומי לקוחות. נתקו אותו בהגדרות ← תשלומים.',
+    // D5 / SX-5 (P-8): G-8 names the button that clears it. The stripe_connected key above is no longer read (left in place, S-7).
+    'settings.account_delete.blocker.stripe_linked': 'חשבון ה-Stripe שלכם עדיין מקושר לתשלומי לקוחות. הסירו אותו בהגדרות העסק ← תשלומים ← הסרת החיבור. לחיצה על "נתק" בלבד לא מסירה אותו.',
     'settings.account_delete.blocker.client_plans_running': '{n} תוכניות תשלום של לקוחות עדיין פעילות. סיימו אותן קודם.',
     'settings.account_delete.blocker.client_payments_pending': '{n} תשלומים או החזרים של לקוחות עדיין בתהליך. המתינו שיסתיימו.',
     'settings.account_delete.blocker.client_plans_running_uncounted': 'תוכניות תשלום של לקוחות עדיין פעילות. סיימו אותן קודם.',
@@ -4486,6 +4488,22 @@ export const he = {
     'config.stripe.disconnected': 'מנותק',
     'config.stripe.disconnected_desc': 'חשבון ה-Stripe שלך מנותק. התחבר מחדש כדי לחזור לקבל תשלומים, או מחק את החשבון כדי להתחיל מחדש.',
     'config.stripe.reconnect': 'התחבר מחדש',
+    // Self-service exit D5 / SX-5: Business Setup → Payments, removing or disconnecting Stripe (add-only, S-7).
+    // remove_connection is the U-1 label ("Delete Account" → "Remove connection"); revert in components/payments/stripeConnectExitCopy.ts.
+    'config.stripe.remove_connection': 'הסרת החיבור',
+    'config.stripe.remove_title': 'להסיר את Stripe מהעסק?',
+    'config.stripe.remove_message_express': 'פעולה זו סוגרת את חשבון ה-Stripe שפתחנו עבורכם ומסירה אותו מהעסק. לא תוכלו עוד לפתוח את לוח הבקרה שלו ב-Stripe. התשלומים הקודמים נשארים ברשומות שלכם כאן. לא ניתן לבטל פעולה זו.',
+    'config.stripe.remove_message_standard': 'פעולה זו מסירה את הגישה שלנו לחשבון ה-Stripe שלכם. חשבון ה-Stripe נשאר פתוח ושלכם. התשלומים הקודמים נשארים ברשומות שלכם כאן.',
+    'config.stripe.refused.client_plans_running': '{n} תוכניות תשלום של לקוחות עדיין פעילות דרך Stripe. סיימו אותן קודם בהזמנות או בכרטיס של כל לקוח, ואז נסו שוב.',
+    'config.stripe.refused.client_plans_running_uncounted': 'תוכניות תשלום של לקוחות עדיין פעילות דרך Stripe. סיימו אותן קודם בהזמנות או בכרטיס של כל לקוח, ואז נסו שוב.',
+    'config.stripe.refused.client_payments_pending': '{n} תשלומים או החזרים של לקוחות עדיין בטיפול. חכו שיסתיימו ואז נסו שוב.',
+    'config.stripe.refused.client_payments_pending_uncounted': 'תשלומים או החזרים של לקוחות עדיין בטיפול. חכו שיסתיימו ואז נסו שוב.',
+    'config.stripe.refused.stripe_refused': 'Stripe עדיין לא מאפשר להסיר את החשבון, בדרך כלל כי יש בו עדיין כסף שלכם (יתרה או העברה בדרך). לא שינינו דבר. נסו שוב אחרי ש-Stripe יעביר את הכסף.',
+    'config.stripe.refused.stripe_unreachable': 'לא הצלחנו להתחבר ל-Stripe כרגע. לא שינינו דבר. נסו שוב בעוד כמה דקות.',
+    'config.stripe.refused.check_failed': 'לא הצלחנו לבדוק את זה כרגע. לא שינינו דבר. נסו שוב.',
+    'config.stripe.refused.not_available': 'אנחנו צריכים להשלים משהו מצדנו לפני שאפשר לעשות את זה. לא שינינו דבר. פנו אלינו בכתובת {support}.',
+    'config.stripe.refused.generic': 'לא ניתן היה להשלים את הפעולה. לא שינינו דבר. נסו שוב.',
+    'config.stripe.refused.record_not_removed': 'Stripe שחרר את החשבון, אבל לא הצלחנו להשלים את ההסרה אצלנו. פנו אלינו בכתובת {support}.',
     'config.payments.settings_title': 'הגדרות תשלום',
     'config.payments.settings_desc': 'אפשרויות תשלום מוגדרות לכל שירות. ערוך שירות כדי להגדיר את המחיר ואפשרויות תוכנית התשלום.',
     // Stripe Connect Wizard
