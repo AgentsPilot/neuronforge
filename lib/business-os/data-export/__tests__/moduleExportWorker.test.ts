@@ -787,14 +787,14 @@ describe('T-W16: two accounts in one run', () => {
 
 // ── T-W17: no switch, no entitlements (R-6, XC-19) ─────────────────────────
 
-describe('T-W17: the worker never reads the export switch or the entitlements', () => {
+describe('T-W17: the worker reads no feature flag and not the entitlements', () => {
   it.each(['lib/business-os/data-export/moduleExportWorker.ts', 'lib/business-os/data-export/moduleExportWorkerDeps.ts'])('%s', (file) => {
-    // Code only: the headers say in words that the switch is not read.
+    // Code only: the headers say in words that no flag is read.
     const code = readFileSync(join(process.cwd(), file), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
     expect(code).toMatch(/import /);
-    expect(code).not.toMatch(/featureFlags|isModuleExportEnabled/);
+    expect(code).not.toMatch(/featureFlags/);
     expect(code).not.toMatch(/business-os\/entitlements/);
   });
 });

@@ -1,8 +1,8 @@
 /**
  * The production cron schedule (admin reorganisation slice 5, part A).
  *
- * `vercel.json` schedules exactly the Business OS jobs listed below (24 as of
- * 2026-10-30). The three
+ * `vercel.json` schedules exactly the Business OS jobs listed below (23 after
+ * MX-3.1). The three
  * AgentsPilot schedules were retired on Offir's instruction (OQ-4, "sunset them
  * for now"): `/api/run-scheduled-agents`, `/api/cron/update-template-scores`
  * and `/api/cron/memory-consolidation`. Their CODE is kept (FR-A2), so
@@ -105,16 +105,9 @@ const BOS_CRONS: CronEntry[] = [
    */
   { path: '/api/cron/booking-money-reconcile', schedule: '*/15 * * * *' },
   /*
-   * The 19th: the data export daily sweep (DE-8b, 2026-10-17), shipped in the
-   * same PR as the zip writer (SA DE-8a Q-6). 05:25 is between the settlement
-   * gap check (05:17) and the billing reconcile (05:41); no hourly or daily
-   * job runs at :25.
-   */
-  { path: '/api/cron/data-export', schedule: '25 5 * * *' },
-  /*
-   * The data export worker (module export MX-3b, 2026-10-29), directly after
-   * the data export sweep. Every 5 minutes: a queue drain with a 300 s
-   * maxDuration under a 420 s lease. It also runs at :50, beside the account
+   * The data export worker (module export MX-3b, 2026-10-29). It sat directly
+   * after the data export sweep, which export MX-3.1 removed. Every 5
+   * minutes: a queue drain with a 300 s maxDuration under a 420 s lease. It also runs at :50, beside the account
    * deletion lifecycle job, on one shared Resend team limit.
    */
   { path: '/api/cron/data-export-modules', schedule: '*/5 * * * *' },
@@ -152,8 +145,8 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 24 Business OS jobs, unchanged and in order', () => {
-    expect(crons).toHaveLength(24);
+  it('schedules exactly the 23 Business OS jobs, unchanged and in order', () => {
+    expect(crons).toHaveLength(23);
     expect(crons).toEqual(BOS_CRONS);
   });
 

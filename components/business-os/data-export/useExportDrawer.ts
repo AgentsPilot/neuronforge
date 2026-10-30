@@ -12,8 +12,8 @@
  *   - Started: the caller shows the confirmation pop-up (BQ-E5-3); this hook
  *     clears the ticks and reloads the history, so the new request shows.
  *   - Refusals (in progress, daily limit, …) stay inline in the drawer.
- *   - History: the first page comes from the switch probe; the drawer reloads
- *     it every time it opens (SA optimisation suggestion).
+ *   - History: the drawer reads it every time it opens, starting from
+ *     `loading` (MX-3.1: there is no switch probe any more to pre-fetch it).
  *
  * The modules are sent in the module map's order, whatever order they were
  * ticked in, so the "Export requested" email and the history read the same.
@@ -66,19 +66,16 @@ export function useExportDrawer(options: {
   open: boolean;
   /** The offered module ids, in map order. */
   moduleIds: readonly string[];
-  initialHistory: ExportHistoryRequest[] | null;
   onStarted: (started: ExportDrawerStarted) => void;
 }): ExportDrawerState {
-  const { open, moduleIds, initialHistory, onStarted } = options;
+  const { open, moduleIds, onStarted } = options;
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [isBusy, setIsBusy] = useState(false);
   const [refusal, setRefusal] = useState<ExportDrawerRefusal | null>(null);
   const [blockedUntil, setBlockedUntil] = useState<string | null>(null);
   const [isConfirmationMissing, setIsConfirmationMissing] = useState(false);
   const [startedTo, setStartedTo] = useState<string | null>(null);
-  const [history, setHistory] = useState<ExportHistoryState>(
-    initialHistory ? { kind: 'ok', requests: initialHistory } : { kind: 'error' }
-  );
+  const [history, setHistory] = useState<ExportHistoryState>({ kind: 'loading' });
 
   const isInFlight = useRef(false);
   const isMounted = useRef(true);

@@ -20,12 +20,7 @@ import type { ModuleExportHistoryVerdict, ModuleExportStartVerdict } from '@/lib
 
 const mockProbe = jest.fn<Promise<ModuleExportHistoryVerdict>, []>();
 const mockStartModule = jest.fn<Promise<ModuleExportStartVerdict>, [readonly string[]]>();
-const mockStartZip = jest.fn();
 jest.mock('@/lib/client/businessOsDataExport', () => ({
-  startDataExport: () => mockStartZip(),
-  downloadDataExportAgain: jest.fn(),
-  fetchLastDataExport: jest.fn(async () => ({ kind: 'ok', lastExport: null })),
-  saveSignedDownload: jest.fn(() => true),
   fetchModuleExportHistory: () => mockProbe(),
   startModuleExport: (modules: readonly string[]) => mockStartModule(modules),
 }));
@@ -96,7 +91,6 @@ it('in flight: Escape and the X close nothing; on start the status line confirms
   expect(await screen.findByTestId('export-started')).toHaveTextContent(EMAIL);
   expect(mockToast).toHaveBeenCalledTimes(1);
   expect(mockStartModule).toHaveBeenCalledTimes(1);
-  expect(mockStartZip).not.toHaveBeenCalled();
 
   await escape();
   await waitFor(() => expect(screen.queryByTestId('export-drawer')).not.toBeInTheDocument());

@@ -83,10 +83,6 @@
       "schedule": "*/15 * * * *"
     },
     {
-      "path": "/api/cron/data-export",
-      "schedule": "25 5 * * *"
-    },
-    {
       "path": "/api/cron/data-export-modules",
       "schedule": "*/5 * * * *"
     },

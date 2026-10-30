@@ -79,7 +79,6 @@ import {
   type ExportContext,
   type ExportSectionId,
 } from '@/lib/business-os/data-export/sections';
-import { EXPORT_GROUPS, buildExportPayload } from '@/lib/business-os/data-export/payload';
 import { EXPORT_LIMITS } from '@/lib/business-os/data-export/limits';
 
 /** DE-4: the eight client_records sections, in registry order. */
@@ -484,63 +483,6 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
   });
 });
 
-describe('payload', () => {
-  // DE-9: `exportFileName` (the JSON route's `.json` name) is retired with the
-  // route; the zip's name on the owner's clock is pinned in fileName.test.ts.
-  it('buildExportPayload: format_version 2, provider and per-group controller, counts and failed list', async () => {
-    // DE-4 (user 2026-10-15): the failing section is user_profile, was plugin_connections.
-    mockFindProfile.mockResolvedValue({ data: null, error: new Error('down') });
-    const { logger } = recordingLogger();
-    const sections = await runAll(CTX, EXPORT_SECTIONS, logger);
-    const payload = buildExportPayload({ userId: USER, now: new Date('2026-07-15T12:00:00.000Z'), sections, durationMs: 7 });
-    expect(payload.export_metadata).toEqual({
-      format_version: 2,
-      user_id: USER,
-      export_date: '2026-07-15T12:00:00.000Z',
-      export_format: 'JSON',
-      gdpr_article: 'Article 15 (Right to Access) & Article 20 (Data Portability)',
-      provider: 'AgentPilot',
-      groups: {
-        account: {
-          gdpr_role: 'controller',
-          controller: 'AgentPilot',
-          description: 'Your own account details. AgentPilot is the controller of this data.',
-        },
-        // DE-4 (SA-Q13): the account holder is the controller, AgentPilot the processor.
-        client_records: {
-          gdpr_role: 'processor',
-          controller: 'account_holder',
-          description:
-            'Records you keep about your clients. You, the account holder, are the controller of these records. AgentPilot keeps them on your behalf, as its processor.',
-        },
-        // DE-7 (SA-Q3, D-15): the website and content, the same roles.
-        content: {
-          gdpr_role: 'processor',
-          controller: 'account_holder',
-          description:
-            'Your website, landing pages, smart links and picture library. You, the account holder, are the controller of this content. AgentPilot hosts it on your behalf, as its processor.',
-        },
-      },
-    });
-    expect(EXPORT_GROUPS.client_records.gdpr_role).toBe('processor');
-    expect(payload.summary.section_counts).toEqual({
-      account_identity: 1, user_profile: 0,
-      ...Object.fromEntries(DE3_IDS.map((id) => [id, 0])),
-      // DE-5: + the ten money sections.
-      ...Object.fromEntries(DE5_ACCOUNT_IDS.map((id) => [id, 0])),
-      ...Object.fromEntries(DE4_IDS.map((id) => [id, 0])),
-      ...Object.fromEntries(DE5_IDS.map((id) => [id, 0])),
-      // DE-6: + the ten DE-6 sections.
-      ...Object.fromEntries(DE6_IDS.map((id) => [id, 0])),
-      // DE-7: + the five content sections.
-      ...Object.fromEntries(DE7_IDS.map((id) => [id, 0])),
-    });
-    expect(payload.summary.failed_sections).toEqual(['user_profile']);
-    expect(payload.summary.export_duration_ms).toBe(7);
-    expect(JSON.stringify(payload)).not.toContain('NeuronForge');
-  });
-});
-
 // ── DE-5 (BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md §8; SA review DE-5 C-3, C-7) ──
 
 describe('DE-5 the money sections', () => {
@@ -848,14 +790,6 @@ describe('DE-7 D-15 the content sections', () => {
     expect(ids.indexOf('website_blocks')).toBe(ids.indexOf('website_pages') + 1);
     expect(EXPORT_SECTIONS.filter((s) => s.group === 'content').map((s) => s.id)).toEqual(DE7_IDS);
     for (const s of EXPORT_SECTIONS.filter((x) => DE7_IDS.includes(x.id))) expect(s.gdprRole).toBe('processor');
-    expect(EXPORT_GROUPS.content).toEqual({
-      gdpr_role: 'processor',
-      controller: 'account_holder',
-      description:
-        'Your website, landing pages, smart links and picture library. You, the account holder, are the controller of this content. AgentPilot hosts it on your behalf, as its processor.',
-    });
-    // Exactly three groups; format_version stays 2 (additive).
-    expect(Object.keys(EXPORT_GROUPS)).toEqual(['account', 'client_records', 'content']);
   });
 
   it('no row mapper: every content row is passed through exactly as read (jsonb whole, URLs as held; SA-Q7, SA-Q8)', async () => {

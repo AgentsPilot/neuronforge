@@ -7,9 +7,8 @@
  * network, no email.
  *
  * Adds to route.test.ts:
- *   - every "off" value, incl. near-misses ('true ', ' true', 'True', 'on',
- *     'yes', '0'), with the request body, headers and session never read;
- *   - the four probe outcomes as the real route produces them (C-1);
+ *   - the history read as the real route produces it (MX-3.1: no switch, so
+ *     anything but a valid 200 is `error`);
  *   - every refusal mapped end to end (route code → seam verdict), incl. the
  *     daily limit with and without retryAt (CR-2);
  *   - the email sent exactly once and after the flushed audit;
@@ -98,8 +97,6 @@ const logCalls = (jest.requireMock('@/lib/logger') as { __calls: unknown[][] }).
 import { GET, POST } from '../route';
 import { MODULE_EXPORT_URL, fetchModuleExportHistory, startModuleExport } from '@/lib/client/businessOsDataExport';
 
-const SWITCH = 'BUSINESS_OS_MODULE_EXPORT_ENABLED';
-
 /** The browser's fetch, answered by the real route handlers. */
 let lastRequest: NextRequest | null = null;
 const originalFetch = global.fetch;
@@ -118,14 +115,12 @@ beforeAll(() => {
 });
 afterAll(() => {
   global.fetch = originalFetch;
-  delete process.env[SWITCH];
 });
 
 beforeEach(() => {
   jest.clearAllMocks();
   logCalls.length = 0;
   lastRequest = null;
-  process.env[SWITCH] = 'true';
   mockGetUser.mockResolvedValue(USER);
   mockRateLimit.mockResolvedValue({ allowed: true, hits: 1, degraded: false });
   mockStartForOwner.mockResolvedValue({ data: { outcome: 'started', requestId: REQUEST }, error: null });
@@ -139,61 +134,8 @@ beforeEach(() => {
   mockListJobs.mockResolvedValue({ data: [], error: null });
 });
 
-function expectNothingRan() {
-  expect(mockGetUser).not.toHaveBeenCalled();
-  expect(mockRateLimit).not.toHaveBeenCalled();
-  expect(requestRepoCtor).not.toHaveBeenCalled();
-  expect(jobRepoCtor).not.toHaveBeenCalled();
-  expect(mockLanguage).not.toHaveBeenCalled();
-  expect(mockClock).not.toHaveBeenCalled();
-  expect(mockSendEmail).not.toHaveBeenCalled();
-  expect(mockLogAndFlush).not.toHaveBeenCalled();
-}
-
-describe('QA 1: switch off, every "off" value', () => {
-  it.each([undefined, '', 'false', '0', '1', 'TRUE', 'True', 'true ', ' true', 'on', 'yes', 'enabled'])(
-    'switch %p: POST and GET answer our 404; no body, header, session, throttle or DB read',
-    async (value) => {
-      if (value === undefined) delete process.env[SWITCH];
-      else process.env[SWITCH] = value;
-      const postRequest = new NextRequest(`http://localhost${MODULE_EXPORT_URL}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-correlation-id': 'c-1' },
-        body: JSON.stringify({ modules: ['clients'] }),
-      });
-      const getRequest = new NextRequest(`http://localhost${MODULE_EXPORT_URL}?userId=${OTHER}`, { method: 'GET' });
-      const spies = [
-        jest.spyOn(postRequest, 'text'),
-        jest.spyOn(postRequest, 'json'),
-        jest.spyOn(postRequest.headers, 'get'),
-        jest.spyOn(getRequest.headers, 'get'),
-      ];
-      for (const response of [await POST(postRequest), await GET(getRequest)]) {
-        expect(response.status).toBe(404);
-        expect(response.headers.get('cache-control')).toContain('no-store');
-        expect(await response.json()).toEqual({ success: false, error: 'Not found' });
-      }
-      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
-      expectNothingRan();
-    }
-  );
-
-  it('signed out and switch off: still 404, not 401 (the route does not advertise itself)', async () => {
-    delete process.env[SWITCH];
-    mockGetUser.mockResolvedValue(null);
-    expect((await fetchModuleExportHistory()).kind).toBe('off');
-    expect(await startModuleExport(['clients'])).toEqual({ kind: 'refused', code: 'off' });
-    expectNothingRan();
-  });
-});
-
-describe('QA 3: the probe against the real route (C-1)', () => {
-  it('switch off → our 404 → off', async () => {
-    delete process.env[SWITCH];
-    expect(await fetchModuleExportHistory()).toEqual({ kind: 'off' });
-  });
-
-  it('switch on, history readable → ok', async () => {
+describe('QA 3: the history read against the real route (MX-3.1)', () => {
+  it('history readable → ok', async () => {
     expect(await fetchModuleExportHistory()).toEqual({ kind: 'ok', requests: [] });
   });
 
@@ -203,7 +145,7 @@ describe('QA 3: the probe against the real route (C-1)', () => {
     ['request read fails (500)', () => mockListRecent.mockResolvedValue({ data: null, error: new Error('db down') })],
     ['job read fails (500)', () => mockListJobs.mockResolvedValue({ data: null, error: new Error('db down') })],
     ['unexpected throw (500)', () => mockListRecent.mockRejectedValue(new Error('boom'))],
-  ])('%s: our JSON error body → error (the switch is ON; never the ZIP)', async (_label, arrange) => {
+  ])('%s: our JSON error body → error', async (_label, arrange) => {
     arrange();
     expect(await fetchModuleExportHistory()).toEqual({ kind: 'error' });
   });
@@ -264,7 +206,6 @@ describe('QA 2: POST end to end (route → seam verdict)', () => {
     ['signed out (401)', () => mockGetUser.mockResolvedValue(null), { kind: 'refused', code: 'unauthorized' }],
     ['throttled (429)', () => mockRateLimit.mockResolvedValue({ allowed: false, hits: 99, degraded: false }), { kind: 'refused', code: 'throttled' }],
     ['repository error (500)', () => mockStartForOwner.mockResolvedValue({ data: null, error: new Error('rpc') }), { kind: 'refused', code: 'failed' }],
-    ['switch turned off between probe and click (404)', () => delete process.env[SWITCH], { kind: 'refused', code: 'off' }],
   ])('%s → the mapped refusal; no audit, no email', async (_label, arrange, expected) => {
     arrange();
     expect(await startModuleExport(['clients'])).toEqual(expected);

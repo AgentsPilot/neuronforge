@@ -31,9 +31,8 @@
 // wiring is moduleExportWorkerDeps.ts. This file names no repository class,
 // so the export-storage callers guard does not list it.
 //
-// It never reads `isModuleExportEnabled()` (R-6, D-19): with the switch off
-// nothing is queued, so there is nothing to claim. Nothing here imports
-// lib/business-os/entitlements (XC-19).
+// It reads no feature flag (R-6, D-19; export MX-3.1 removed the export
+// switch). Nothing here imports lib/business-os/entitlements (XC-19).
 //
 // Logs carry ids, counts, byte totals, durations and codes. Never an address,
 // a subject, a file name or a cell value (requirement §12). Every send passes
