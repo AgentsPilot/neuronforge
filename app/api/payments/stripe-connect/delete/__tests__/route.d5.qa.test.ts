@@ -24,13 +24,13 @@ jest.mock('@/lib/auth', () => ({ getUser: () => mockGetUser() }));
 
 const mockFindConnect = jest.fn();
 const mockDeleteConnect = jest.fn();
-const mockConnectOwner = jest.fn();
+const mockConnectOthers = jest.fn();
 jest.mock('@/lib/repositories/PaymentRepository', () => ({
   StripeConnectRepository: jest.fn().mockImplementation(() => ({
     findByUserId: (...args: unknown[]) => mockFindConnect(...args),
     delete: (...args: unknown[]) => mockDeleteConnect(...args),
   })),
-  stripeConnectRepository: { findOwnerIdByStripeAccountId: (...args: unknown[]) => mockConnectOwner(...args) },
+  stripeConnectRepository: { countOtherUsersNamingStripeAccount: (...args: unknown[]) => mockConnectOthers(...args) },
 }));
 
 const mockFindPlugin = jest.fn();
@@ -128,7 +128,7 @@ beforeEach(() => {
     error: null,
   });
   mockFindPlugin.mockResolvedValue(NO_PLUGIN);
-  mockConnectOwner.mockResolvedValue({ data: { user_id: USER.id }, error: null });
+  mockConnectOthers.mockResolvedValue({ data: 0, error: null });
   mockPluginOthers.mockResolvedValue({ data: 0, error: null });
   mockRunCheck.mockResolvedValue({ kind: 'checked', canDelete: true, targetUserId: USER.id, blockers: [], notes: [], guards: [], serverMs: 1 });
   mockCountLocal.mockResolvedValue(localCounts({}));
@@ -188,7 +188,7 @@ describe('QA D5: both tables name the same account', () => {
   it('another business owns the Connect row naming the account the plugin row names → not_available', async () => {
     mockFindConnect.mockResolvedValue({ data: null, error: null });
     mockFindPlugin.mockResolvedValue({ data: { profile_data: { stripe_account_id: ACCOUNT } }, error: null });
-    mockConnectOwner.mockResolvedValue({ data: { user_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }, error: null });
+    mockConnectOthers.mockResolvedValue({ data: 1, error: null });
     const res = await call();
     expect(res.status).toBe(409);
     expectNoStripeCall();
@@ -202,7 +202,7 @@ describe('QA D5: both tables name the same account', () => {
 describe('QA D5: plugin-only Standard account', () => {
   beforeEach(() => {
     mockFindConnect.mockResolvedValue({ data: null, error: null });
-    mockConnectOwner.mockResolvedValue({ data: null, error: null });
+    mockConnectOthers.mockResolvedValue({ data: 0, error: null });
     mockFindPlugin.mockResolvedValue({ data: { profile_data: { stripe_account_id: ACCOUNT } }, error: null });
     mockRetrieve.mockResolvedValue('standard');
   });

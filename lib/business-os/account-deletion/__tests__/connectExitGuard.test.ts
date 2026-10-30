@@ -149,29 +149,29 @@ describe('isStripeAccountShared (W-10)', () => {
   it('another user in the Connect table → shared, and the plugin count is not needed', async () => {
     const pluginOthers = jest.fn();
     await expect(
-      isStripeAccountShared(ACCOUNT, USER, { connectOwner: async () => ({ data: { user_id: 'someone-else' }, error: null }), pluginOthers })
+      isStripeAccountShared(ACCOUNT, USER, { connectOthers: async () => ({ data: 1, error: null }), pluginOthers })
     ).resolves.toBe('shared');
     expect(pluginOthers).not.toHaveBeenCalled();
   });
 
   it('another user’s plugin row → shared', async () => {
     await expect(
-      isStripeAccountShared(ACCOUNT, USER, { connectOwner: async () => ({ data: null, error: null }), pluginOthers: async () => ({ data: 1, error: null }) })
+      isStripeAccountShared(ACCOUNT, USER, { connectOthers: async () => ({ data: 0, error: null }), pluginOthers: async () => ({ data: 1, error: null }) })
     ).resolves.toBe('shared');
   });
 
   it('only our own rows → not shared', async () => {
     const pluginOthers = jest.fn().mockResolvedValue({ data: 0, error: null });
-    await expect(isStripeAccountShared(ACCOUNT, USER, { connectOwner: async () => ({ data: { user_id: USER }, error: null }), pluginOthers })).resolves.toBe('not_shared');
+    await expect(isStripeAccountShared(ACCOUNT, USER, { connectOthers: async () => ({ data: 0, error: null }), pluginOthers })).resolves.toBe('not_shared');
     expect(pluginOthers).toHaveBeenCalledWith(ACCOUNT, USER);
   });
 
   it('a read error is unreadable, never "not shared"', async () => {
     await expect(
-      isStripeAccountShared(ACCOUNT, USER, { connectOwner: async () => ({ data: null, error: { code: 'XX' } }), pluginOthers: async () => ({ data: 0, error: null }) })
+      isStripeAccountShared(ACCOUNT, USER, { connectOthers: async () => ({ data: null, error: { code: 'XX' } }), pluginOthers: async () => ({ data: 0, error: null }) })
     ).resolves.toBe('unreadable');
     await expect(
-      isStripeAccountShared(ACCOUNT, USER, { connectOwner: async () => ({ data: null, error: null }), pluginOthers: async () => ({ data: null, error: new Error('x') }) })
+      isStripeAccountShared(ACCOUNT, USER, { connectOthers: async () => ({ data: 0, error: null }), pluginOthers: async () => ({ data: null, error: new Error('x') }) })
     ).resolves.toBe('unreadable');
   });
 });

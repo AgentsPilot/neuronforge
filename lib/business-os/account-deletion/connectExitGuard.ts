@@ -140,14 +140,14 @@ export async function checkConnectExit(
 export type SharedAccountAnswer = 'not_shared' | 'shared' | 'unreadable';
 
 export interface SharedAccountDeps {
-  connectOwner(accountId: string): Promise<{ data: { user_id: string } | null; error: unknown }>;
+  connectOthers(accountId: string, userId: string): Promise<{ data: number | null; error: unknown }>;
   pluginOthers(accountId: string, userId: string): Promise<{ data: number | null; error: unknown }>;
 }
 
 export function defaultSharedAccountDeps(): SharedAccountDeps {
   return {
-    // Cross-user by design (rule 4): the account id is unique in this table, and only the owner id is read, compared, and dropped.
-    connectOwner: (accountId) => stripeConnectRepository.findOwnerIdByStripeAccountId(accountId),
+    // Cross-user by design (rule 4): a count of other businesses' rows only; no owner id leaves the repository.
+    connectOthers: (accountId, userId) => stripeConnectRepository.countOtherUsersNamingStripeAccount(accountId, userId),
     pluginOthers: (accountId, userId) => pluginConnectionRepository.countOtherUsersNamingStripeAccount(accountId, userId),
   };
 }
@@ -163,9 +163,9 @@ export async function isStripeAccountShared(
   deps: SharedAccountDeps = defaultSharedAccountDeps()
 ): Promise<SharedAccountAnswer> {
   try {
-    const owner = await deps.connectOwner(accountId);
-    if (owner.error) return 'unreadable';
-    if (owner.data && owner.data.user_id !== userId) return 'shared';
+    const connect = await deps.connectOthers(accountId, userId);
+    if (connect.error || connect.data === null) return 'unreadable';
+    if (connect.data > 0) return 'shared';
     const others = await deps.pluginOthers(accountId, userId);
     if (others.error || others.data === null) return 'unreadable';
     return others.data > 0 ? 'shared' : 'not_shared';
