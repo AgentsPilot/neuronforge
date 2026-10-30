@@ -22,7 +22,6 @@
  */
 
 import { Fragment, useCallback, useEffect, useState } from 'react';
-import type { CSSProperties } from 'react';
 import { Bot, Check, Loader2, Pause, Pencil, Play, Trash2 } from 'lucide-react';
 
 import { PluginIcon } from '@/components/PluginIcon';
@@ -146,12 +145,29 @@ const STATE_COLOUR: Record<AgentState, { fg: string; bg: string }> = {
  * the scrolling columns show straight through the text.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-const PINNED: CSSProperties = {
-  position: 'sticky',
-  insetInlineStart: 0,
-  background: 'var(--v2-surface)',
-  zIndex: 1,
-};
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THERE IS NO FROZEN COLUMN ANY MORE, AND THAT IS THE DECISION.
+ *
+ * The agent name used to be `position: sticky` so the times could scroll under
+ * it. Three faults came out of that, all of them only visible on a phone:
+ *
+ *   sticky does not work on a `<td>` in a `border-collapse: collapse` table,
+ *   which is a WebKit limitation and therefore every browser on iOS;
+ *
+ *   a sticky cell paints its background over the cell BOX, so a long name
+ *   overflowed and rendered on top of the column beside it;
+ *
+ *   and with the container never narrower than the table, nothing scrolled
+ *   under it anyway — the owner saw one column and no way to reach the rest.
+ *
+ * The owner's own answer, on 2026-10-30: the whole list should scroll, all
+ * columns together. That is simpler, it is what every other table in the
+ * product does, and it removes all three faults rather than fixing them one at
+ * a time. The row's colour bar and the agent's icon still identify it while the
+ * columns move.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 
 /**
  * The owner's locale for a date, from the language they chose.
@@ -422,7 +438,38 @@ export function RunningAgentsCard() {
         see when something next runs on a phone.
         ───────────────────────────────────────────────────────────────────────
       */}
-      <div style={{ overflowX: 'auto' }}>
+      {/*
+        ──────────────────────────────────────────────────────────────────────
+        CONSTRAINED TO THE VIEWPORT, NOT TO ITS PARENT.
+
+        `overflow-x: auto` only scrolls when the box is NARROWER than what it
+        holds, and that was never true here: a scroll container takes its width
+        from its containing block, and somewhere above this card the chain does
+        not constrain to the screen. So the box grew to the table's 680px, the
+        whole card ran off the side of the phone, and the one column that
+        happened to be on screen — the pinned name — was all an owner could see.
+        Nothing scrolled because there was nothing to scroll.
+
+        The first attempt capped this at `calc(100vw - 4rem)`, which was a guess
+        at how much page and card padding sits either side. When the real chrome
+        is wider than the guess the box ends up WIDER than its parent, and a
+        desktop grew a horizontal scrollbar the moment the editor opened. A
+        number nobody can verify is not a fix.
+
+        `max-width: 100%` and `min-width: 0` instead, which say the true thing:
+        never wider than whatever contains me, and willing to shrink. The second
+        half matters because a flex or grid item defaults to `min-width: auto`
+        and refuses to go below its content, which silently defeats every
+        `max-width` above it.
+        ──────────────────────────────────────────────────────────────────────
+      */}
+      <div
+        style={{
+          overflowX: 'auto',
+          maxWidth: '100%',
+          minWidth: 0,
+        }}
+      >
         {/*
           ──────────────────────────────────────────────────────────────────────
           `separate`, NOT `collapse`, AND THE WHOLE TABLE DEPENDS ON IT.
@@ -469,7 +516,7 @@ export function RunningAgentsCard() {
                     color: 'var(--v2-text-muted)',
                     borderBottom: '1px solid var(--v2-border)',
                     whiteSpace: 'nowrap',
-                    ...(i === 0 ? PINNED : null),
+
                   }}
                 >
                   {heading}
@@ -505,7 +552,7 @@ export function RunningAgentsCard() {
                 <Fragment key={agent.agentId}>
                 <tr>
                   {/* Who */}
-                  <td style={{ padding: '9px 10px', ...PINNED, borderBottom: rowRule }}>
+                  <td style={{ padding: '9px 10px', borderBottom: rowRule }}>
                     <span className="flex items-center gap-2.5">
                       <span
                         style={{
@@ -557,20 +604,19 @@ export function RunningAgentsCard() {
                       )}
                       {/*
                         ──────────────────────────────────────────────────────
-                        TRUNCATED, BECAUSE THIS CELL IS PINNED.
+                        CLIPPED, SO ONE LONG NAME CANNOT WIDEN THE WHOLE TABLE.
 
-                        `whitespace-nowrap` with no width cap let a long name —
-                        "Website enquiries from Gmail" — run past the cell it
-                        lives in. A sticky cell paints its background over the
-                        cell BOX, not over whatever its text overflows into, so
-                        the name rendered on top of the Watches column and the
-                        two read as one smeared line on a phone.
+                        `whitespace-nowrap` with no width cap means the column
+                        grows to whatever the longest name happens to be, and
+                        every other column is pushed further along a table the
+                        owner already has to scroll. It also used to overflow on
+                        top of the Watches column while this cell was pinned.
 
-                        Capped in `vw` rather than at a breakpoint: 45% of a
-                        narrow screen is about 175px and clips, while on a
-                        desktop it is far wider than any agent name and changes
-                        nothing — which matters, because the desktop layout is
-                        right as it is.
+                        Capped in `ch` — characters of the font actually in use
+                        — rather than in `vw`, which is a guess about the screen
+                        and was wrong elsewhere in this file. Twenty-two
+                        characters fits every agent we ship and clips only the
+                        genuinely long ones.
 
                         `title` so the full name is still available to anyone
                         who needs it, including a screen reader.
@@ -578,7 +624,7 @@ export function RunningAgentsCard() {
                       */}
                       <span
                         className="text-[13px] font-semibold text-[var(--v2-text-primary)] truncate"
-                        style={{ maxWidth: '45vw' }}
+                        style={{ maxWidth: '22ch' }}
                         title={agent.name}
                       >
                         {agent.name}
@@ -912,11 +958,11 @@ function ScheduleEditorRow({
             the only way to save a schedule was to notice the table scrolls and
             go looking for the button.
 
-            Sticky to the START edge, so it follows the viewport rather than the
-            table, and capped at roughly the visible width. On a desktop that
-            cap is wider than the card, `max-width: 100%` wins, and nothing
-            about the layout changes — which is how it should be, because the
-            desktop version is right.
+            It is sticky to the START edge so it follows the viewport rather
+            than the table. It does NOT set its own width: a first attempt used
+            `calc(100vw - 4rem)`, guessing at the page chrome, and when the real
+            chrome was wider the panel outgrew its parent and gave the desktop a
+            horizontal scrollbar the moment the editor opened.
             ────────────────────────────────────────────────────────────────────
           */
           className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-lg p-3.5"
@@ -925,9 +971,6 @@ function ScheduleEditorRow({
             border: '1px solid color-mix(in srgb, var(--v2-primary) 22%, transparent)',
             position: 'sticky',
             insetInlineStart: 0,
-            /* The card's own padding is the 4rem: anything at or under the
-               visible width works, and over it reintroduces the bug. */
-            width: 'calc(100vw - 4rem)',
             maxWidth: '100%',
           }}
         >
