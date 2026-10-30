@@ -8,7 +8,7 @@
  * plan empties without a matching (child table, constraint) entry in
  * INBOUND_FOREIGN_KEYS. Twice a migration added such an FK without touching
  * the generator, and account deletion stopped on prod (20261092, then 20261097
- * fixed by 20261101). This test replays every migration statically and fails
+ * fixed by 20261104). This test replays every migration statically and fails
  * the PR instead.
  *
  * What it checks (SA-6):
