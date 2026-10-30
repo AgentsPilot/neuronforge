@@ -62,7 +62,7 @@ Why the incomplete ledger matters: a bulk `supabase db push` would try to re-app
 | `scripts/precheck-*.sql`, `scripts/check-*-migration.sql` | Pre-checks and checkers |
 | `supabase/migrations/__tests__/` | Migration text tests (one per migration that has one) and the number guard |
 
-Do not follow the `supabase db push` / `psql` instructions in the older apply READMEs under `supabase/`; this skill is the procedure.
+Never run `supabase db push`, `db execute`, `migration up` or `psql` against a hosted project; this skill is the procedure, and the apply READMEs under `supabase/` point here.
 
 ## 4. The migration application flow
 
