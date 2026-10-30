@@ -788,7 +788,9 @@ With CR-1 and CR-2 fixed before RM commits. CR-3 is decided by the user at the d
 | Feature commit | `6cbd72e7` feat(business-os): retire the ZIP export and the module-export switch (MX-3.1) |
 | Sync with main | `e0d67b3a` merge of `origin/main` `1fafd0e7` (#570), no conflicts |
 | Recount after sync | `vercel.json` 23 crons, `BOS_CRON_JOBS` 23, `bosCronJobs.test` / `vercelCrons.test` literals 23, `adminGate.writes` 66: unchanged, all green |
-| PR | opened by RM; NOT on auto-merge (C-6: held until P-1..P-3 are recorded) |
+| Second sync with main | `3b469b91` merge of `origin/main` `d4e04a3a` (incl. DELETE D5 #573), no conflicts; recount: `vercel.json` 23, cron pins 23; 97 overlapping suites / 2,241 tests green |
+| Go-live gates | P-1 ✅ (prod already sends via Resend from `agentspilot.ai`: `BOS_INVITE_EMAIL_SENT` audit rows show provider `resend` with message ids, last 2026-10-26; DKIM, SPF and DMARC `p=reject` present in DNS). P-2 ✅ for Production (`RESEND_API_KEY`, `RESEND_FROM_EMAIL` = `AgentsPilot <notifications@agentspilot.ai>`, user's Vercel screenshot); Preview not needed, because crons run only on Production. P-3 ⏸ PARKED by the user 2026-10-30: assumed not a limit; plan limits asked of Offir by email |
+| PR | #574; auto-merge switched on 2026-10-30 after P-1/P-2 recorded and P-3 parked by the user (C-6) |
 | Merge commit | pending |
 
 ---
@@ -803,3 +805,4 @@ With CR-1 and CR-2 fixed before RM commits. CR-3 is decided by the user at the d
 | 2026-10-30 | SA code review: APPROVED WITH CHANGES | Re-checked on the worktree: required changes 1–4 and C-5–C-8 met. Census 120 → 117 handlers (incl. 3 `HEAD`), 91 → 89 files, no gate lost. Switch grep exact (1 history row). Frozen files empty. Cron 23/23. Path-string grep clean. 105 suites / 3,176 tests with only the baseline `oneAddressPolicy` failure. CR-1 unused `waitFor` import, CR-2 stale plan Status line (fix before commit). CR-3 = V-5 DrawerBox purpose line: user copy decision, SA proposes "Exports of this account's data, sent to the owner by email." V-1–V-4 and V-6 accepted |
 | 2026-10-30 | QA: PASS WITH NOTES | AC 1–5 and 8 pass in code and Jest; AC 6–7 and the Vercel / live parts wait for deploy. The route covers happy, 401, 400 and no-switch paths, so no test was added. Full `npm test` compared with the baseline: 0 changed; 1 new timing flake (`qa-slice5-pr2`, 3/3 green alone). authz-guard, entitlements and lint:hooks green. Notes: CR-3 purpose line; DELETE's `account_delete.warning` still says "Download my data" (S-4); stale ZIP comments in `DangerZonePanel` / settings `page.tsx` |
 | 2026-10-30 | CR-3 resolved | User approved SA's admin purpose line 'Exports of this account's data, sent to the owner by email.' (DrawerBox.tsx + drawerBox.render pin; CC-3 claim cleared by DELETE) |
+| 2026-10-30 | Go-live gates recorded; second sync | P-1 and P-2 pass (evidence in Commit Info). P-3 (Resend quota vs the 262-emails-per-owner-per-day worst case) parked by the user and asked of Offir by email. Merged `origin/main` `d4e04a3a` (DELETE D5 #573), no conflicts, crons still 23. Auto-merge on |
