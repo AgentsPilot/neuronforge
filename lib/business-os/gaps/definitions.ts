@@ -17,6 +17,9 @@ import { createLogger } from '@/lib/logger';
 import type { GapDefinition, GapItem } from './types';
 import { CLIENT_CANCELLED_PREFIX } from '@/lib/services/bookingCancellationReason';
 import { PLAN_STOPPED_STATUSES } from '@/lib/payments/planStatus';
+/* The milestone rule. Its own module so the gaps layer does not pull the email
+   stack in to ask one arithmetic question — see the note there. */
+import { chaserCanStillReach } from '@/lib/payments/overdueMilestones';
 
 const logger = createLogger({ service: 'BusinessGaps' });
 
@@ -494,7 +497,7 @@ const invoiceUnpaid: GapDefinition = {
   blocksOn: 'client',
   staleAfterHours: 0,
   action: 'chase_payment',
-  find: userId =>
+  find: (userId, now) =>
     safely('invoice_unpaid', async () => {
       const { data } = await supabaseServer
         .from('payment_invoices')
@@ -504,7 +507,34 @@ const invoiceUnpaid: GapDefinition = {
         .order('due_date', { ascending: true })
         .limit(50);
 
-      const owing = (data || []).filter(row => row.contact_id);
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * NOT YET DUE IS NOT A TASK.
+       *
+       * This selected every ISSUED invoice and offered "Chase payment" on each,
+       * so an invoice raised last week on thirty-day terms arrived on the card
+       * as something the owner should act on. Pressing it asks a client for
+       * money they do not owe yet, in the owner's name — and five real
+       * invoices went out that way from the sibling path before the chase
+       * itself learned to refuse.
+       *
+       * Whole days: somebody has until the end of the day they were given, so
+       * an invoice falling due today is not a task this morning.
+       *
+       * An invoice with NO due date is excluded here too. It is not nothing —
+       * `invoice_no_due_date` is the card that asks the owner to supply one —
+       * but it is not a debt anybody is late on, and guessing a date from the
+       * issue date is how the early chases started.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const todayKey = new Date(now).toISOString().slice(0, 10);
+
+      const owing = (data || []).filter(row => {
+        if (!row.contact_id) return false;
+
+        const dueKey = row.due_date ? String(row.due_date).slice(0, 10) : null;
+        return Boolean(dueKey && dueKey < todayKey);
+      });
 
       /*
        * ───────────────────────────────────────────────────────────────────────
@@ -534,22 +564,94 @@ const invoiceUnpaid: GapDefinition = {
        */
       const spent = new Set<string>();
       const invoiceIds = owing.map(row => row.id as string);
+
+      /*
+       * The business's own milestone list, for the second test below.
+       * `overdueMilestones` owns the default and the fallback — see its note on
+       * why this must not be a third copy of `[1,3,7]`.
+       */
+      const { data: reminderProfile } = await supabaseServer
+        .from('business_profiles')
+        .select('payment_overdue_reminder_days')
+        .eq('user_id', userId)
+        .maybeSingle();
+      const milestones = (reminderProfile?.payment_overdue_reminder_days ?? null) as
+        | number[]
+        | null;
+
+      const queued = new Set<string>();
+      const chased = new Set<string>();
       for (const ids of chunked(invoiceIds)) {
         const { data: reminders } = await supabaseServer
           .from('payment_reminders')
-          .select('invoice_id, status')
+          .select('invoice_id, status, reminder_type')
           .eq('user_id', userId)
+          /*
+           * OVERDUE ONLY, and this was wrong before.
+           *
+           * The table also holds `upcoming_due` and `due_today` rows, which the
+           * pre-due half of the schedule sends and which answer to a different
+           * switch entirely. Counting those meant an invoice whose only reminder
+           * was a courtesy note BEFORE it fell due read as "the chaser has
+           * worked this", and the row stayed hidden on the strength of a
+           * message about a debt that did not exist yet.
+           *
+           * Stated in the query AND below. A filter that silently stopped
+           * matching would put these invoices straight back into the blind
+           * spot this whole change exists to close.
+           */
+          .eq('reminder_type', 'overdue')
           .in('invoice_id', ids);
-        const queued = new Set<string>();
-        const sent = new Set<string>();
         for (const reminder of reminders || []) {
           const invoiceId = reminder.invoice_id as string | null;
           if (!invoiceId) continue;
+          if (reminder.reminder_type !== 'overdue') continue;
           const status = reminder.status as string;
           if (status === 'pending' || status === 'processing') queued.add(invoiceId);
-          if (status === 'sent') sent.add(invoiceId);
+          if (status === 'sent') chased.add(invoiceId);
         }
-        for (const id of sent) if (!queued.has(id)) spent.add(id);
+      }
+
+      /* The injected clock, not the wall clock. `findGaps` passes one so every
+         gap in a pass measures from the same instant — and so this is testable
+         against a fixed date. */
+      const nowMs = new Date(now).getTime();
+
+      for (const row of owing) {
+        const id = row.id as string;
+        /* Something is still coming. The robot has it. */
+        if (queued.has(id)) continue;
+
+        /* It has been chased and there is no more chasing coming. */
+        if (chased.has(id)) {
+          spent.add(id);
+          continue;
+        }
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * NEVER CHASED, AND NEVER WILL BE.
+         *
+         * `processOverdueItems` sends only when the day count EQUALS a
+         * milestone. Switch the chaser on while an invoice sits at day 13 with
+         * milestones {1,3,7} and no milestone will ever equal 13 again — the
+         * invoice is uncovered permanently, in silence.
+         *
+         * Before this, such an invoice had no reminders at all, so it was not
+         * `chased`; the chaser was on, so it was not `unmanned` either; and the
+         * gap is `blocksOn: 'client'`, so `ownerGaps` had already stripped it.
+         * The robot would not act and the card would not say so. Four real
+         * invoices reached 13, 23, 24 and 31 days overdue that way.
+         *
+         * A missed cron run on the exact milestone day lands here too, which is
+         * the same hole seen from the other side.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const due = row.due_date ? new Date(row.due_date as string).getTime() : NaN;
+        if (!Number.isFinite(due)) continue;
+        const daysOverdue = Math.floor((nowMs - due) / 86_400_000);
+        if (daysOverdue <= 0) continue;
+        if (!chaserCanStillReach(daysOverdue, milestones)) spent.add(id);
       }
 
       return owing.map(row => ({

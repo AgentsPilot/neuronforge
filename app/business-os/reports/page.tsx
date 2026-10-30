@@ -134,6 +134,7 @@ interface CrmState {
   activeClients: number;
   activeLeads: number;
   wentQuiet: number;
+  abandonedContacts: number;
   totalContacts: number;
 }
 
@@ -183,6 +184,9 @@ interface PaymentStats {
   plan_pending_count: number;
   lost_potential_amount: number;
   lost_potential_count: number;
+  /** Cancelled invoices vs cancelled plan periods with no invoice. */
+  lost_potential_invoice_count: number;
+  lost_potential_plan_count: number;
   charged_transactions_30d: number;
   failed_transactions_30d: number;
   invoices_paid_30d: number;
@@ -353,6 +357,8 @@ export default function ReportsPage() {
           plan_pending_count: p.plan_pending_count || 0,
           lost_potential_amount: p.lost_potential_amount || 0,
           lost_potential_count: p.lost_potential_count || 0,
+          lost_potential_invoice_count: p.lost_potential_invoice_count || 0,
+          lost_potential_plan_count: p.lost_potential_plan_count || 0,
           /*
            * Charges ACCEPTED, refunded ones included. Built on `charged` rather
            * than `succeeded`, which drops a sale the moment it is refunded —
@@ -382,6 +388,7 @@ export default function ReportsPage() {
           activeClients: c.active_clients || 0,
           activeLeads: c.active_leads || 0,
           wentQuiet: c.went_quiet || 0,
+          abandonedContacts: c.abandoned_contacts || 0,
           totalContacts: c.total_contacts || 0,
         });
       }
@@ -583,6 +590,8 @@ export default function ReportsPage() {
                     pendingInstallments={payments.plan_pending_count}
                     writtenOff={payments.lost_potential_amount}
                     writtenOffCount={payments.lost_potential_count}
+                    writtenOffInvoices={payments.lost_potential_invoice_count}
+                    writtenOffPlanPeriods={payments.lost_potential_plan_count}
                     money={money}
                     onOpenOrders={() => router.push('/business-os/orders')}
                   />
@@ -690,6 +699,7 @@ export default function ReportsPage() {
                     activeClients={crm.activeClients}
                     activeLeads={crm.activeLeads}
                     wentQuiet={crm.wentQuiet}
+                    abandonedContacts={crm.abandonedContacts}
                     totalContacts={crm.totalContacts}
                   />
                 </Band>

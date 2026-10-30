@@ -1,6 +1,12 @@
 'use client';
 
-import { FileText, CreditCard, CalendarClock, ChevronDown } from 'lucide-react';
+/*
+ * The row's LEADING icon says what kind of order it is: CreditCard, FileText,
+ * CalendarClock (see METHOD_ICON). The three ACTION glyphs below must not reuse
+ * any of them — "go to booking" was CalendarClock, so on a plan row the same
+ * glyph appeared twice meaning two different things.
+ */
+import { FileText, CreditCard, CalendarClock, ChevronDown, ExternalLink, Eye } from 'lucide-react';
 import { itemFlow, outstandingOf, type MoneyItem } from '@/lib/payments/moneyItems';
 import { planPeriodText } from './MoneyDetailDrawer';
 import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
@@ -77,6 +83,56 @@ interface MoneyRowProps {
    * back to the panel it was clicked in.
    */
   onOpenContact?: (contactId: string, bookingId: string | null) => void;
+  /**
+   * Open the CRM drawer ON THIS BOOKING, expanded.
+   *
+   * Distinct from `onOpenContact`, which lands on the client's payments. This
+   * uses the `section=bookings&booking=<id>` route that `BookingsTab` already
+   * reads as `focusBookingId`: it adds the id to its open set and scrolls to
+   * it. The machinery existed and the orders page was not linked to it.
+   *
+   * Only ever called with a real booking id; the button is not rendered
+   * without one.
+   */
+  onOpenBooking?: (contactId: string, bookingId: string) => void;
+}
+
+/** One row control: an icon that says what it is on hover and to a screen reader. */
+function RowAction({
+  onClick,
+  label,
+  icon,
+  ariaExpanded,
+}: {
+  onClick: () => void;
+  label: string;
+  icon: React.ReactNode;
+  ariaExpanded?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={event => {
+        event.stopPropagation();
+        onClick();
+      }}
+      title={label}
+      aria-label={label}
+      aria-expanded={ariaExpanded}
+      /*
+        Big enough to read as a button, and bordered so it reads as one at rest.
+        ───────────────────────────────────────────────────────────────────────
+        These were 20px glyphs on a transparent ground with the tint only on
+        hover: on a dark row they looked like decoration, and an owner could not
+        tell they were controls at all. 28px with a standing border and a 14px
+        icon is the smallest that reads as pressable, and it clears the 24px
+        touch floor on a phone where there is no hover to reveal anything.
+      */
+      className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] transition-colors hover:border-[var(--v2-text-muted)] hover:bg-[var(--v2-bg)] hover:text-[var(--v2-text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--v2-primary)]"
+    >
+      {icon}
+    </button>
+  );
 }
 
 export function MoneyRow({
@@ -91,6 +147,7 @@ export function MoneyRow({
   expanded = false,
   onToggleExpand,
   onOpenContact,
+  onOpenBooking,
 }: MoneyRowProps) {
   const tone = STATUS_TONE[item.status] ?? REPORTS_COLORS.UNATTRIBUTED;
   const chip = statusChipStyle(item.status);
@@ -390,7 +447,7 @@ export function MoneyRow({
             onSelect();
           }
         }}
-        className={`grid grid-cols-[1.25rem_minmax(0,1fr)_7rem_1.25rem] items-center gap-3 p-3 sm:grid-cols-[1.25rem_minmax(0,1.6fr)_minmax(0,1.1fr)_8.5rem_1.25rem] ${
+        className={`grid grid-cols-[1.25rem_minmax(0,1fr)_7rem_6rem] items-center gap-3 p-3 sm:grid-cols-[1.25rem_minmax(0,1.5fr)_minmax(0,0.85fr)_14rem_6rem] ${
           onSelect ? 'cursor-pointer hover:bg-[var(--v2-surface-hover)]' : ''
         }`}
       >
@@ -483,7 +540,7 @@ export function MoneyRow({
                   />
                 ))}
               </div>
-              <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-[var(--v2-text-muted)]">
+              <div className="mt-1 flex flex-wrap justify-center gap-x-2 gap-y-0.5 text-[10px] text-[var(--v2-text-muted)]">
                 {segments.map(segment => (
                   <span key={segment.label} className="inline-flex items-center gap-1">
                     <span
@@ -503,7 +560,7 @@ export function MoneyRow({
                 ))}
               </div>
               {stateCounts.length > 0 && (
-                <div className="mt-0.5 truncate text-[10px] text-[var(--v2-text-muted)]">
+                <div className="mt-0.5 truncate text-center text-[10px] text-[var(--v2-text-muted)]">
                   {stateCounts.join(' · ')}
                 </div>
               )}
@@ -524,15 +581,41 @@ export function MoneyRow({
           of a divider.
         */}
         <div className="min-w-0 text-end">
-          <div className="whitespace-nowrap text-[14px] font-bold tabular-nums text-[var(--v2-text-primary)]">
-            {formatCurrency(item.amount, item.currency)}
-          </div>
-          <div
-            className="mt-1 inline-flex max-w-full items-center gap-1 rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold"
-            style={chip}
-          >
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: tone }} />
-            <bdi className="truncate">{statusLabel}</bdi>
+          {/*
+            The figure and its state on ONE line.
+            ─────────────────────────────────────────────────────────────────
+            The chip sat under the amount, which cost a second line on every
+            row and pushed "0/3 paid" far enough from the money that the two
+            read as separate facts. The state is a fact ABOUT the figure, so it
+            sits beside it. `flex-wrap` lets a long label drop below on a narrow
+            column rather than squeezing the number.
+          */}
+          {/*
+            ONE line, and the figure reads in its own direction.
+            ─────────────────────────────────────────────────────────────────
+            `flex-wrap` dropped the badge to a second line the moment the pair
+            outgrew the column — which on a Hebrew date like "שולם 28 באוק׳
+            2026" was every row. The column is wider now (14rem, taken from the
+            chart) and this no longer wraps, so the money and its badge stay on
+            the graph's line.
+
+            `<bdi>` around the figure: "₪ 1,000.00" is a neutral symbol followed
+            by digits, and inside an RTL row the bidi algorithm reorders that
+            pair against the number's own direction. Isolating it renders the
+            amount the way the locale formatted it instead of the way the
+            surrounding paragraph pulls it.
+          */}
+          <div className="flex flex-nowrap items-center justify-end gap-1.5">
+            <bdi className="whitespace-nowrap text-[14px] font-bold tabular-nums text-[var(--v2-text-primary)]">
+              {formatCurrency(item.amount, item.currency)}
+            </bdi>
+            <span
+              className="inline-flex min-w-0 items-center gap-1 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold"
+              style={chip}
+            >
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: tone }} />
+              <bdi className="truncate">{statusLabel}</bdi>
+            </span>
           </div>
 
           {/* A row reading "paid" with money returned is the misleading case. */}
@@ -558,22 +641,57 @@ export function MoneyRow({
           `stopPropagation`, or the row's own handler fires too and the reader
           gets a drawer over the thing they just expanded.
         */}
-        {onToggleExpand ? (
-          <button
-            type="button"
-            onClick={event => {
-              event.stopPropagation();
-              onToggleExpand();
-            }}
-            aria-expanded={expanded}
-            aria-label={t('payments.toggle_detail') || 'Show the breakdown'}
-            className="flex h-5 w-5 items-center justify-center rounded text-[var(--v2-text-muted)] transition-colors hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)]"
-          >
-            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-          </button>
-        ) : (
-          <span aria-hidden="true" />
-        )}
+        {/*
+          THREE NAMED CONTROLS, not three things to discover.
+          ───────────────────────────────────────────────────────────────────
+          Every one of these already worked and none of them looked like a
+          control: the drill-down was a bare caret, opening the client was
+          hidden on the client's NAME, and the detail drawer was the row itself.
+          An owner had to learn the row to use it.
+
+          Each now says what it does. They sit in one cluster at the end of the
+          row, and each stops propagation — without that the row's own handler
+          fires too and a drawer lands on top of the thing just expanded.
+        */}
+        <div className="flex items-center justify-end gap-1">
+          {onToggleExpand ? (
+            <RowAction
+              onClick={onToggleExpand}
+              label={t('payments.row_expand') || 'Breakdown'}
+              ariaExpanded={expanded}
+              icon={
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                />
+              }
+            />
+          ) : (
+            <span aria-hidden="true" className="h-7 w-7" />
+          )}
+
+          {/*
+            Hidden without a booking, deliberately.
+            A standalone invoice typed for a walk-in has a client and no booking
+            to land on, and `&booking=` with nothing to match expands nothing —
+            which looks exactly like a button that does not work. The client is
+            still reachable from their name beside it.
+          */}
+          {onOpenBooking && item.contactId && item.bookingId ? (
+            <RowAction
+              onClick={() => onOpenBooking(item.contactId!, item.bookingId!)}
+              label={t('payments.row_jump') || 'Go to booking'}
+              icon={<ExternalLink className="h-4 w-4" />}
+            />
+          ) : null}
+
+          {onSelect ? (
+            <RowAction
+              onClick={onSelect}
+              label={t('payments.row_details') || 'Details'}
+              icon={<Eye className="h-4 w-4" />}
+            />
+          ) : null}
+        </div>
       </div>
 
       {/*

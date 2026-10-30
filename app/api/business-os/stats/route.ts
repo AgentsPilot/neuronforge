@@ -14,6 +14,22 @@ import { computeStageFlow, parseStageMove } from '@/lib/business-os/insight/stag
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { DISPATCHED_EMAIL_STATUSES } from '@/lib/business-os/emailSendStatus';
+/*
+ * Appointments and booked value are asked for rather than queried here.
+ *
+ * Both answers changed shape when a package became one booking with N meetings
+ * and quote-sold work moved its price onto the proposal. Each is a rule with
+ * traps in it — a NULL `start_time`, a superseded `moved` attempt, an accepted
+ * proposal that also has invoices — and this file had eleven booking queries
+ * that each would have had to learn them separately.
+ */
+import {
+  appointmentsInRange,
+  upcomingAppointments,
+  appointmentOutcomes,
+} from '@/lib/scheduling/appointmentFacts';
+import { bookedValueInRange } from '@/lib/business-os/reports/bookedValue';
+import { abandonedContactCount } from '@/lib/business-os/reports/abandonedContacts';
 import { WebsiteAnalyticsRepository } from '@/lib/repositories/WebsiteAnalyticsRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
@@ -215,13 +231,28 @@ interface CapabilityStats {
     completed_30d: number;
     cancelled_30d: number;
     no_show_30d: number;
+    /** Missed appointments a later one stands in for. */
+    no_show_made_up_30d: number;
+    /** Missed appointments still waiting on somebody — the real outstanding work. */
+    no_show_outstanding_30d: number;
     total_revenue_30d: number;
     // Booked (ordered) value, paid or not
     booked_value_this_week: number;
     booked_value_last_week: number;
+    /** The PRIMARY currency's total, never a sum across currencies. */
     booked_value_period: number;
+    booked_value_by_currency: { currency: string; value: number }[];
+    /** What `booked_value_period` is denominated in; null when nothing was booked. */
+    booked_value_currency: string | null;
     // Revenue by service
-    service_revenue: { service_id: string; service_name: string; revenue: number; count: number }[];
+    service_revenue: {
+      service_id: string;
+      service_name: string;
+      revenue: number;
+      count: number;
+      /** Written off against this service in the period, by `cancelledMoneyOf`. */
+      lost: number;
+    }[];
     // Milestone data
     first_booking_date?: string;
     // Note: first_booking_amount removed - total_amount no longer on scheduling_bookings
@@ -326,6 +357,11 @@ interface CapabilityStats {
     lost_potential_amount: number;
     /** How many cancelled invoices and stopped plan phases make up that sum. */
     lost_potential_count: number;
+    /** Cancelled invoices, and cancelled plan periods carrying no invoice. */
+    lost_potential_invoice_count: number;
+    lost_potential_plan_count: number;
+    /** What those bare plan periods are worth. Invisible to the orders list. */
+    lost_potential_plan_amount: number;
     invoices_sent_30d: number;
     invoices_paid_30d: number;
     invoices_overdue: number;
@@ -594,19 +630,22 @@ export async function GET(request: NextRequest) {
         .from('crm_contacts')
         .select('stage')
         .eq('user_id', user.id),
-      // Scheduling: bookings in last 30 days
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .gte('start_time', periodStart),
-      // Scheduling: upcoming bookings
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .gte('start_time', now.toISOString())
-        .eq('status', 'confirmed'),
+      /*
+       * Scheduling: APPOINTMENTS in the period, not bookings.
+       *
+       * This was `scheduling_bookings` filtered by `start_time`, and a package
+       * container has no `start_time` — in SQL `>= x` is FALSE for NULL, so
+       * every package silently left the count. Measured on one account: 4
+       * upcoming reported where 13 were open, the nine missing ones being
+       * sessions the owner was expected to attend.
+       *
+       * Resolved to `{ count }` so the positional destructuring below is
+       * untouched: this is a correction to an answer, not a reshaping of the
+       * fifty-odd queries that share this array.
+       */
+      appointmentsInRange(supabaseServer, user.id, periodStart).then(count => ({ count })),
+      // Scheduling: appointments still ahead that nobody has settled
+      upcomingAppointments(supabaseServer, user.id, now.toISOString()).then(count => ({ count })),
       // Scheduling: all services count
       supabaseServer
         .from('scheduling_services')
@@ -795,12 +834,15 @@ export async function GET(request: NextRequest) {
         .eq('booking_source', 'website')
         .gte('created_at', periodStart),
       // === DETAILED BREAKDOWN QUERIES ===
-      // Scheduling: bookings by status in last 30 days
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('status')
-        .eq('user_id', user.id)
-        .gte('start_time', periodStart),
+      /*
+       * Scheduling: how the period's appointments turned out.
+       *
+       * Was `booking.status`, which is the CONTAINER's outcome. A package whose
+       * container reads `confirmed` can hold six cancelled sessions, and the
+       * report called that business healthy. Counted per session now, and with
+       * the two no-show figures `replaces_meeting_id` finally makes separable.
+       */
+      appointmentOutcomes(supabaseServer, user.id, periodStart).then(data => ({ data })),
       // CRM: contacts by source
       supabaseServer
         .from('crm_contacts')
@@ -917,19 +959,17 @@ export async function GET(request: NextRequest) {
         .eq('user_id', user.id)
         .in('status', ['paid', 'refunded', 'partially_refunded'])
         .gte('paid_at', periodStart),
-      // Bookings this week (all statuses, for weekly comparison)
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .gte('start_time', sevenDaysAgo),
-      // Bookings last week (7-14 days ago)
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .gte('start_time', fourteenDaysAgoDate)
-        .lt('start_time', sevenDaysAgo),
+      /*
+       * Appointments this week and last, for the week-on-week line.
+       *
+       * The same NULL trap as the period counts above: a package never
+       * appeared in either week, so a business running mostly on packages saw
+       * a trend drawn from the minority of its diary.
+       */
+      appointmentsInRange(supabaseServer, user.id, sevenDaysAgo).then(count => ({ count })),
+      appointmentsInRange(supabaseServer, user.id, fourteenDaysAgoDate, sevenDaysAgo).then(
+        count => ({ count })
+      ),
       // Revenue by service — money charged for a service, whichever way it came
       // in. Two sources, merged into one row per service below:
       //   * payment_transactions — direct/checkout payments
@@ -967,30 +1007,26 @@ export async function GET(request: NextRequest) {
         .from('scheduling_services')
         .select('id, service_name')
         .eq('user_id', user.id),
-      // Booked VALUE this week — what clients ordered in the last 7 days, priced
-      // from the service, independent of whether payment has been collected.
-      // Dated by created_at (when it was booked), not start_time (when it happens).
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('scheduling_services(price)')
-        .eq('user_id', user.id)
-        .neq('status', 'cancelled')
-        .gte('created_at', sevenDaysAgo),
-      // Booked value last week (7-14 days ago), for the week-over-week trend
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('scheduling_services(price)')
-        .eq('user_id', user.id)
-        .neq('status', 'cancelled')
-        .gte('created_at', fourteenDaysAgoDate)
-        .lt('created_at', sevenDaysAgo),
+      /*
+       * Booked VALUE — what clients ordered, paid or not.
+       *
+       * Priced from the AGREEMENT now, not from `scheduling_services.price`.
+       * That column is NULL for quote-sold services, and `Number(price) || 0`
+       * turned NULL into zero in silence: on one account, ninety days, 24 of
+       * 41 bookings priced at zero, ten of which had really been invoiced
+       * 25,866.64. The figure an owner read as "what I sold" was a quarter of
+       * what they had sold, and the missing part was the whole quote channel.
+       *
+       * Still dated by `created_at` — when the order arrived, not when the
+       * appointment is. That is what "booked this week" has always meant, and
+       * it is also the only date a package has.
+       */
+      bookedValueInRange(supabaseServer, user.id, sevenDaysAgo).then(data => ({ data })),
+      bookedValueInRange(supabaseServer, user.id, fourteenDaysAgoDate, sevenDaysAgo).then(data => ({
+        data,
+      })),
       // Booked value across the selected reporting period
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('scheduling_services(price)')
-        .eq('user_id', user.id)
-        .neq('status', 'cancelled')
-        .gte('created_at', periodStart),
+      bookedValueInRange(supabaseServer, user.id, periodStart).then(data => ({ data })),
       /*
        * Refunds that HAPPENED in this period, from the ledger.
        *
@@ -1302,29 +1338,37 @@ export async function GET(request: NextRequest) {
     // PostgREST returns a to-one embed as an object, but returns an array when it
     // can't prove the relationship is to-one. Handle both so a shape change can't
     // silently turn this into zero. price is DECIMAL, so it may arrive as a string.
-    type BookedRow = { scheduling_services?: { price?: number | string | null } | { price?: number | string | null }[] | null };
-    const sumBookedValue = (rows: unknown): number =>
-      ((rows as BookedRow[] | null) || []).reduce((sum, booking) => {
-        const service = Array.isArray(booking.scheduling_services)
-          ? booking.scheduling_services[0]
-          : booking.scheduling_services;
-        return sum + (Number(service?.price) || 0);
-      }, 0);
-
-    const bookedValueThisWeek = sumBookedValue(bookedValueThisWeekData);
-    const bookedValueLastWeek = sumBookedValue(bookedValueLastWeekData);
-    const bookedValuePeriod = sumBookedValue(bookedValuePeriodData);
+    /*
+     * `total` is the PRIMARY currency's figure, not a sum across currencies —
+     * CLAUDE.md § Currency, which the old `sumBookedValue` broke by adding raw
+     * numbers whatever they were denominated in. `byCurrency` keeps them apart
+     * for any caller that can show more than one.
+     */
+    const bookedValueThisWeek = bookedValueThisWeekData.total;
+    const bookedValueLastWeek = bookedValueLastWeekData.total;
+    const bookedValuePeriod = bookedValuePeriodData.total;
 
 
     // === PROCESS DETAILED BREAKDOWN DATA ===
 
     // Scheduling breakdown by status
-    const bookingStatusCounts = { confirmed: 0, completed: 0, cancelled: 0, no_show: 0 };
-    (bookingsByStatus || []).forEach((b: { status: string }) => {
-      if (b.status in bookingStatusCounts) {
-        bookingStatusCounts[b.status as keyof typeof bookingStatusCounts]++;
-      }
-    });
+    /*
+     * The period's outcomes, now counted per APPOINTMENT rather than per
+     * booking — see the query note above.
+     *
+     * The four names on the wire are kept. They are read by the dashboard, the
+     * header, the live dashboard and the briefing's narration, and renaming
+     * them to match the meetings table would be a second change riding along
+     * inside a correction. What each one MEANS is unchanged: a confirmed
+     * appointment is one nobody has settled, and a completed one is one that
+     * was held.
+     */
+    const bookingStatusCounts = {
+      confirmed: bookingsByStatus?.open ?? 0,
+      completed: bookingsByStatus?.held ?? 0,
+      cancelled: bookingsByStatus?.cancelled ?? 0,
+      no_show: bookingsByStatus?.no_show ?? 0,
+    };
 
     // Contacts by source breakdown
     const sourceCountMap: Record<string, number> = {};
@@ -1696,6 +1740,19 @@ export async function GET(request: NextRequest) {
       return updatedAt < fourteenDaysAgo;
     }).length;
 
+    /*
+     * People who started a booking and never came back.
+     *
+     * Its own await rather than a slot in the `Promise.all` above: that array
+     * is destructured positionally, and a value whose resolved shape does not
+     * match its slot is `undefined` at request time with a clean typecheck and
+     * a clean build behind it. That mistake was made once in this file already.
+     *
+     * Three reads, and the figure is usually zero, so the cost is a rounding
+     * error against the fifty queries that precede it.
+     */
+    const abandonedContacts = await abandonedContactCount(supabaseServer, user.id);
+
     // Count contacts per pipeline stage
     const stageCountMap: Record<string, number> = {};
     (contactsByStage || []).forEach((contact: { stage: string }) => {
@@ -2037,9 +2094,48 @@ export async function GET(request: NextRequest) {
       status: string;
     };
     const revenueInvoices = (serviceRevenueInvoices || []) as RevenueInvoice[];
+
+    /*
+     * What each service LOST, beside what it earned.
+     *
+     * A service can be the best earner on the page and the worst offender
+     * behind it: the owner sees "Massage ₪9,000" at the top of the table and
+     * nothing says that ₪4,000 more was agreed for it and called off. Revenue
+     * alone names the winners; this names where the business is leaking.
+     *
+     * Priced with `cancelledMoneyOf`, the rule the orders page writes money off
+     * with, so a service's loss here and the page's total cannot disagree.
+     *
+     * Its own await rather than a slot in the positional `Promise.all` above —
+     * a value whose resolved shape does not match its slot is `undefined` at
+     * request time behind a clean typecheck and a clean build, which this file
+     * has already demonstrated once.
+     */
+    type CancelledInvoice = RevenueInvoice & {
+      refunded_amount: number | null;
+      sent_at: string | null;
+    };
+
+    const { data: cancelledForServices, error: cancelledForServicesError } = await supabaseServer
+      .from('payment_invoices')
+      .select('id, service_id, booking_id, amount, status, refunded_amount, sent_at')
+      .eq('user_id', user.id)
+      .eq('status', 'cancelled')
+      .gte('updated_at', periodStart);
+
+    if (cancelledForServicesError) {
+      requestLogger.warn(
+        { err: cancelledForServicesError },
+        'Could not read cancelled invoices for loss by service'
+      );
+    }
+
+    const cancelledInvoices = (cancelledForServices || []) as CancelledInvoice[];
     const bookingServiceById = new Map<string, string>();
     const unattributedBookingIds = Array.from(new Set(
-      revenueInvoices
+      /* Both sets: a cancelled invoice that names only its booking would
+         otherwise be attributed to nothing and show up as "Other". */
+      [...revenueInvoices, ...cancelledInvoices]
         .filter(inv => !inv.service_id && inv.booking_id)
         .map(inv => inv.booking_id as string)
     ));
@@ -2060,7 +2156,7 @@ export async function GET(request: NextRequest) {
     const invoiceServiceId = (inv: RevenueInvoice): string | null =>
       inv.service_id || (inv.booking_id ? bookingServiceById.get(inv.booking_id) ?? null : null);
 
-    const serviceRevenueMap: Record<string, { service_name: string; revenue: number; count: number }> = {};
+    const serviceRevenueMap: Record<string, { service_name: string; revenue: number; count: number; lost: number }> = {};
     const addServiceRevenue = (serviceId: string | null, amount: number | string | null) => {
       const key = serviceId || UNATTRIBUTED_SERVICE_ID;
       if (!serviceRevenueMap[key]) {
@@ -2069,7 +2165,8 @@ export async function GET(request: NextRequest) {
           // been deleted keeps its money but loses its name.
           service_name: serviceId ? serviceNameById.get(serviceId) || 'Unknown Service' : 'Other',
           revenue: 0,
-          count: 0
+          count: 0,
+          lost: 0
         };
       }
       // amount is DECIMAL and may arrive as a string.
@@ -2093,6 +2190,44 @@ export async function GET(request: NextRequest) {
       addServiceRevenue(invoiceServiceId(inv), inv.amount);
     });
 
+    /*
+     * And what each service lost, onto the row it already has.
+     *
+     * `addServiceRevenue` is not reused: a write-off is not revenue and must
+     * not move `count`, which the table heads as payments. A service with one
+     * payment and three cancellations should read "1", not "4".
+     *
+     * The full rule, not the shortcut the all-time figure takes: the real
+     * `sent_at` and whether a booking stands behind it, so a binned draft is
+     * worth nothing here exactly as it is everywhere else.
+     */
+    const addServiceLoss = (serviceId: string | null, amount: number) => {
+      if (amount <= 0) return;
+      const key = serviceId || UNATTRIBUTED_SERVICE_ID;
+      if (!serviceRevenueMap[key]) {
+        serviceRevenueMap[key] = {
+          service_name: serviceId ? serviceNameById.get(serviceId) || 'Unknown Service' : 'Other',
+          revenue: 0,
+          count: 0,
+          lost: 0,
+        };
+      }
+      serviceRevenueMap[key].lost += amount;
+    };
+
+    cancelledInvoices.forEach(inv => {
+      addServiceLoss(
+        invoiceServiceId(inv),
+        cancelledMoneyOf({
+          status: inv.status,
+          amount: inv.amount ?? 0,
+          refunded: inv.refunded_amount,
+          sentAt: inv.sent_at ?? null,
+          backedByBooking: Boolean(inv.booking_id),
+        })
+      );
+    });
+
     // Biggest service first, with the unattributed row pinned last however large
     // it is — it is a remainder, not a service competing for the top of the list.
     const serviceRevenueArray = Object.entries(serviceRevenueMap)
@@ -2100,7 +2235,8 @@ export async function GET(request: NextRequest) {
         service_id,
         service_name: data.service_name,
         revenue: data.revenue,
-        count: data.count
+        count: data.count,
+        lost: Math.round(data.lost * 100) / 100
       }))
       .sort((a, b) => {
         if (a.service_id === UNATTRIBUTED_SERVICE_ID) return 1;
@@ -2223,13 +2359,30 @@ export async function GET(request: NextRequest) {
         // Weekly comparison
         bookings_this_week: bookingsThisWeek || 0,
         bookings_last_week: bookingsLastWeek || 0,
-        // Counted off the rows already fetched for booked_value_this_week —
-        // same filter, same period, no extra query.
-        bookings_placed_this_week: bookedValueThisWeekData?.length || 0,
+        /*
+         * Counted off the same pass that priced them — same filter, same
+         * period, no extra query. `sources` records where each booking's price
+         * came from, so its values add up to the bookings considered,
+         * including the ones no price could be found for.
+         */
+        bookings_placed_this_week: Object.values(bookedValueThisWeekData.sources).reduce(
+          (total, n) => total + n,
+          0
+        ),
         // Detailed breakdown
         confirmed_30d: bookingStatusCounts.confirmed,
         completed_30d: bookingStatusCounts.completed,
         cancelled_30d: bookingStatusCounts.cancelled,
+        /*
+         * Missed appointments split by whether anything was done about them.
+         *
+         * No aggregate could separate these before `replaces_meeting_id`: on a
+         * package with two missed sessions, one made up and one still waiting
+         * on the client, both read identically through any count. The second
+         * number is the one that is actually work outstanding.
+         */
+        no_show_made_up_30d: bookingsByStatus?.no_show_made_up ?? 0,
+        no_show_outstanding_30d: bookingsByStatus?.no_show_outstanding ?? 0,
         no_show_30d: bookingStatusCounts.no_show,
         // What the service_revenue rows below add up to — the same money as
         // payments.revenue_30d, restricted to what could be tied to a service.
@@ -2240,6 +2393,17 @@ export async function GET(request: NextRequest) {
         booked_value_this_week: bookedValueThisWeek,
         booked_value_last_week: bookedValueLastWeek,
         booked_value_period: bookedValuePeriod,
+        /*
+         * The period's booked value kept apart by currency, and the label that
+         * belongs on the single figure above.
+         *
+         * `booked_value_period` is the largest currency's total, not a sum of
+         * all of them — no rate in this platform may convert money, so a
+         * business billing in two currencies gets one honest number and the
+         * rest here, rather than an addition that means nothing.
+         */
+        booked_value_by_currency: bookedValuePeriodData.byCurrency,
+        booked_value_currency: bookedValuePeriodData.primaryCurrency,
         // Revenue by service
         service_revenue: serviceRevenueArray,
         // Milestone data
@@ -2397,6 +2561,17 @@ export async function GET(request: NextRequest) {
         refunded_30d: (refundLedger30d ?? []).length,
         lost_potential_amount: lostPotentialAmount,
         lost_potential_count: lostPotentialCount,
+        /*
+         * The two halves, so the card can name them.
+         *
+         * A plan period with no invoice of its own is real cancelled money and
+         * the ONLY part the orders page cannot see — that list reads invoices.
+         * Reporting one combined count left the two figures looking like they
+         * should match when they never could.
+         */
+        lost_potential_invoice_count: cancelledInvoicesResult.data?.length || 0,
+        lost_potential_plan_count: cancelledStagesResult.data?.length || 0,
+        lost_potential_plan_amount: Math.round(lostFromStages * 100) / 100,
         invoices_sent_30d: invoiceCounts.sent,
         invoices_paid_30d: invoiceCounts.paid,
         /*

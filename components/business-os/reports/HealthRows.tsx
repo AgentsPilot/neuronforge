@@ -68,6 +68,7 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import {
   MIN_SAMPLE,
   MEASURE_KEY,
+  HIGHER_IS_BETTER,
   type HealthCategory,
 } from '@/lib/business-os/insight/health/businessHealth';
 
@@ -93,6 +94,12 @@ const DISPLAY_ORDER: HealthCategory[] = [
   'conversion',
   'acquisition',
   'operations',
+  /*
+   * Last, and deliberately. The five above are things the owner is trying to
+   * grow; this is the one they are trying to shrink, and ending on it keeps the
+   * card reading as a list of what is working before what is not.
+   */
+  'cancellations',
 ];
 
 /**
@@ -131,6 +138,20 @@ export function HealthRows({ categories }: HealthRowsProps) {
         // Zero change is "steady", a real answer, and not the same as absent.
         const up = hasChange && row!.change! > 0;
         const flat = hasChange && row!.change === 0;
+        /*
+         * WHICH WAY IT MOVED AND WHETHER THAT IS GOOD ARE TWO QUESTIONS.
+         *
+         * They were one, because every measure was higher-is-better and the
+         * header of this file said so — and said what would happen if that ever
+         * stopped being true: "the colours silently invert". `cancellations` is
+         * the measure that stopped it. A rate climbing from 4% to 19% would have
+         * drawn a green up-arrow and told the owner their business was improving.
+         *
+         * The arrow still follows the NUMBER, because a rate that rose did rise
+         * and an arrow that lied about that would be its own confusion. Only the
+         * colour follows the meaning.
+         */
+        const good = hasChange && (HIGHER_IS_BETTER[category] ? up : !up);
 
         /*
          * How far short the sample is, when that is why there is no rate.
@@ -184,7 +205,7 @@ export function HealthRows({ categories }: HealthRowsProps) {
                   className={`inline-flex items-center gap-1.5 font-semibold whitespace-nowrap ${
                     flat
                       ? 'text-[var(--v2-text-muted)]'
-                      : up
+                      : good
                         ? 'text-emerald-600 dark:text-emerald-400'
                         : 'text-rose-600 dark:text-rose-400'
                   }`}

@@ -71,6 +71,14 @@ export interface JourneyReadinessService {
  * dragged this module's `supabaseServer` into the browser bundle. Re-exported
  * so existing importers of this file keep working.
  */
+/*
+ * Imported AND re-exported.
+ *
+ * `export { type X } from '...'` forwards the name to this module's consumers
+ * but does NOT bind it locally, so `JourneyGap.kind` below could not see it.
+ */
+import type { JourneyGapKind } from '@/lib/business-os/journeyGapKinds';
+
 export {
   JOURNEY_GAP_KINDS,
   isJourneyGapKind,

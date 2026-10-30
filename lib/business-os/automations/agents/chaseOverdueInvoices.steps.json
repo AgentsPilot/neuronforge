@@ -1,0 +1,97 @@
+[
+  {
+    "step_id": "step1",
+    "id": "step1",
+    "type": "action",
+    "name": "Find invoices that are past due and still unpaid",
+    "description": "The TAIL the deterministic chaser leaves behind. `chase_invoices` fires on days 1, 3 and 7 past due and then stops for good; this finds what is still unpaid after that, which is the gap four real invoices sat in for 13 to 31 days. Filters: an unpaid status; a due date more than 7 days gone, so nothing still inside the chaser's milestones is touched; and nothing sent to this client about it in the last 7 days, so a run cannot repeat yesterday's ask. Capped at 25. THE UPPER BOUND IS THE OWNER'S, not mine: `{{input.stop_after_days}}` arrives as a negative offset from `agent_config`, chosen on the install dialog. It was a number written into this file, which meant every business on the platform gave up at the same moment regardless of what they sell.",
+    "plugin": "business-os",
+    "action": "find_invoices",
+    "params": {
+      "filters": [
+        {
+          "field": "status",
+          "op": "eq",
+          "value": {
+            "$semantic": "unpaid"
+          }
+        },
+        {
+          "field": "due_date",
+          "op": "lt",
+          "value": {
+            "$date": "today",
+            "offset": {
+              "days": -7
+            }
+          }
+        },
+        {
+          "field": "sent_at",
+          "op": "lt",
+          "value": {
+            "$date": "today",
+            "offset": {
+              "days": -7
+            }
+          }
+        },
+        {
+          "field": "due_date",
+          "op": "gte",
+          "value": {
+            "$date": "today",
+            "offset": {
+              "days": "{{input.stop_after_days}}"
+            }
+          }
+        }
+      ],
+      "order_by": [
+        {
+          "field": "due_date",
+          "dir": "asc"
+        }
+      ],
+      "limit": 25
+    },
+    "output_variable": "overdue_invoices",
+    "output_schema": {
+      "type": "object"
+    }
+  },
+  {
+    "step_id": "step2",
+    "id": "step2",
+    "type": "scatter_gather",
+    "name": "Ask for each one",
+    "description": "One send per invoice. `send_invoices` takes a single target that must come from a find result, which is what keeps a chase pointed at a row the owner actually owns. ONE PERSON'S REFUSAL MUST NOT STOP THE REST. In production a failing scatter item re-throws and aborts the whole run unless `continueOnError` is set, and per-person refusals are ordinary here: somebody unsubscribed since the last run, an address that bounces, a transport error. Worst of all, the find is ordered OLDEST FIRST, so the one person who cannot be written to would sit at the top of the list and block everybody behind them on every run, for good. The gather phase already separates the failures from the sends, so the run reports honestly instead of stopping.",
+    "scatter": {
+      "input": "{{overdue_invoices.rows}}",
+      "itemVariable": "current_invoice",
+      "steps": [
+        {
+          "step_id": "step3",
+          "id": "step3",
+          "type": "action",
+          "name": "Tell the client it is late",
+          "description": "`remind_invoices` is the CHASE, and the distinction is the whole reason this action exists. `send_invoices` is InvoiceDeliveryService: the invoice document with its PDF, the first time it reaches the client. This plan was built on that by mistake, so a weekly run would have re-sent the same bill to the same people with nothing explaining why. This sends `generateChaseInvoiceEmail` — the exact message the scheduled reminder and the insight queue already send, so a client cannot tell which of the three routes reached them. It re-reads the invoice first and refuses a settled one: between the find above and this send, a client may simply have paid, and chasing somebody for money they have already sent is the worst thing this plan could do.",
+          "plugin": "business-os",
+          "action": "remind_invoices",
+          "params": {
+            "target_id": "{{current_invoice.id}}"
+          },
+          "output_variable": "chase_result",
+          "output_schema": {
+            "type": "object"
+          }
+        }
+      ],
+      "continueOnError": true
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "chase_results"
+  }
+]

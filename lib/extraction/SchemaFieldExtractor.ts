@@ -553,7 +553,20 @@ export class SchemaFieldExtractor {
     text: string
   ): ExtractedField | null {
     const variations = this.getFieldNameVariations(schemaField);
-    const candidates: Array<{ value: string; confidence: number; source: string; rawMatch: string }> = [];
+    /*
+     * `value` matches what `cleanValue` returns, not `string`.
+     *
+     * `cleanValue` casts by the schema field's type, so a number field yields a
+     * number and a list field an array. The array declared `string`, while
+     * `ExtractedField.value` — where these end up — has always been the wide
+     * union. The declaration was the only narrow point in the chain.
+     */
+    const candidates: Array<{
+      value: string | number | boolean | any[];
+      confidence: number;
+      source: string;
+      rawMatch: string;
+    }> = [];
 
     // Strategy 1: Try "FieldName: value" pattern for each variation
     for (const variation of variations) {

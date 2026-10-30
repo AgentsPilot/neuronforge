@@ -22,6 +22,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
+import { appointmentOutcomes } from '@/lib/scheduling/appointmentFacts';
 import {
   scoreCategory,
   summariseHealth,
@@ -269,7 +270,21 @@ const operations: MeasureFn = async (supabase, userId, current, previous) => {
   const now = filled(current);
   const before = filled(previous);
 
-  return { current: now.value, previous: before.value, sample: now.sample, previousSample: before.sample };
+  return {
+    current: now.value,
+    previous: before.value,
+    sample: now.sample,
+    previousSample: before.sample,
+    /*
+     * The HOURS the percentage was taken of, which `sample` is not.
+     *
+     * `sample` counts bookings here, because that is what the `MIN_SAMPLE`
+     * gate needs to ask — eight appointments before a utilisation rate means
+     * anything. The division is hours over hours, so the card showed a rate
+     * beside a number it was not computed from. See `Measure.basis`.
+     */
+    basis: { value: Math.round(available), unitKey: 'health.unit.hours' },
+  };
 };
 
 /** Unique visitors who went on to get in touch. */
@@ -309,6 +324,48 @@ const acquisition: MeasureFn = async (supabase, userId, current, previous) => {
 /** Nothing records a discount, so there is nothing to measure. */
 const pricing: MeasureFn = async () => ({ current: null, previous: null, sample: 0, previousSample: 0 });
 
+/**
+ * The share of appointments that were called off.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE ONE MEASURE HERE WHERE DOWN IS GOOD — see `HIGHER_IS_BETTER`.
+ *
+ * Counted per APPOINTMENT, through `appointmentOutcomes`, which is what lets it
+ * see a package. A package is one booking with N meetings and the container
+ * carries no hour of its own, so every reader that asked `scheduling_bookings`
+ * filtered by `start_time` lost them silently — measured 2026-10-29, six
+ * cancelled sessions invisible on one account, on bookings carrying 5,500 ILS.
+ * A therapist selling only packages would have had no cancellation measure at
+ * all while believing she had one.
+ *
+ * `moved` is excluded by that helper and must stay excluded: a rescheduled
+ * appointment is not a cancelled one, and folding the two together would report
+ * every client who shifted an hour as a client who walked away.
+ *
+ * The denominator is every appointment whose hour fell in the window, settled
+ * or not — the rate answers "of the appointments I had, how many came off",
+ * which is the question an owner is really asking.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const cancellations: MeasureFn = async (supabase, userId, current, previous) => {
+  const [now, before] = await Promise.all([
+    appointmentOutcomes(supabase, userId, current.from, current.to),
+    appointmentOutcomes(supabase, userId, previous.from, previous.to),
+  ]);
+
+  const total = (o: typeof now) => o.open + o.held + o.no_show + o.cancelled;
+
+  const currentTotal = total(now);
+  const previousTotal = total(before);
+
+  return {
+    current: currentTotal > 0 ? (now.cancelled / currentTotal) * 100 : null,
+    previous: previousTotal > 0 ? (before.cancelled / previousTotal) * 100 : null,
+    sample: currentTotal,
+    previousSample: previousTotal,
+  };
+};
+
 const MEASURES: Array<[HealthCategory, MeasureFn]> = [
   ['cash_flow', cashFlow],
   ['retention', retention],
@@ -316,6 +373,7 @@ const MEASURES: Array<[HealthCategory, MeasureFn]> = [
   ['sales', sales],
   ['operations', operations],
   ['acquisition', acquisition],
+  ['cancellations', cancellations],
   ['pricing', pricing],
 ];
 

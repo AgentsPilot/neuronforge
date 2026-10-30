@@ -207,6 +207,103 @@ async function proposalInsertFrom(
 
 const HANDLERS: Record<string, Record<string, Handler>> = {
   contacts: {
+    /**
+     * File an enquiry that arrived as an email.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * Delegates to the one function every enquiry route uses, so a lead filed
+     * by a mailbox agent is indistinguishable from one filed by the website
+     * form — same parsing, same activity, same first message stored, and
+     * therefore visible to the unanswered-enquiry chase fifteen minutes later.
+     *
+     * This exists so the mailbox plans can stop calling the CRM plugin. The
+     * `business-os` plugin is the channel into this business's data and carries
+     * tenant scoping through `connection.user_id`; a second plugin reaching the
+     * same records is a second answer to who may touch the account.
+     *
+     * AN UNRESOLVED REFERENCE IS NOT CONTENT. Outlook returns one body per
+     * message — `body` for text, `html` for HTML, never both — so the plan
+     * passes both refs and one arrives as the literal `{{current_email.html}}`.
+     * Left alone it becomes the message text, no address is found, and the
+     * enquiry stays unread for ever: it fails safe but it fails. So a
+     * `{{…}}` that did not substitute is read as the absence it is. The same
+     * guard lives in the CRM executor, which is where this was learned.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    capture_enquiry: async (_q, data, ctx) => {
+      const resolved = (value: unknown): string | null => {
+        if (typeof value !== 'string') return null;
+        const trimmed = value.trim();
+        if (!trimmed || /^\{\{[^}]*\}\}$/.test(trimmed)) return null;
+        return value;
+      };
+
+      const body = resolved(data.raw_body) ?? resolved(data.body);
+      const html = resolved(data.raw_html) ?? resolved(data.html);
+
+      /*
+       * A message with nothing readable is a RESULT, not an error.
+       *
+       * This threw at first, and the cost is not small: neither mailbox plan
+       * sets `continueOnError` on its scatter, and in production a failing
+       * scatter item re-throws and aborts the whole run — so one odd message
+       * would end the sweep and leave every message behind it unprocessed.
+       *
+       * Returning `filed: false` means the plan's guard does not mark it read,
+       * so it stays in the inbox for a person while the rest of the batch
+       * carries on. That is the same outcome as an unreadable address, and it
+       * is what the comment above this handler already promised.
+       */
+      if (!body && !html) {
+        return {
+          data: { filed: false, reason: 'no_body', contact_id: null, is_new_contact: null },
+          error: null,
+        };
+      }
+
+      const { captureEnquiryFromEmail } = await import('@/lib/business-os/leads/captureEnquiry');
+
+      const outcome = await captureEnquiryFromEmail({
+        ownerId: ctx.userId,
+        subject: resolved(data.subject),
+        body,
+        html,
+        replyTo: resolved(data.reply_to),
+        cc: resolved(data.cc),
+        from: resolved(data.from),
+        owner: resolved(data.to),
+        provider: resolved(data.via),
+        template: (data.template ?? null) as never,
+        source: typeof data.source === 'string' ? data.source : undefined,
+      });
+
+      /*
+       * Not filing is a RESULT, not an error.
+       *
+       * `parseEnquiry` returns an address only when it appears verbatim in the
+       * message, so a message we cannot read files nothing — and the plan's
+       * next step must then leave it UNREAD for a person. Returning an error
+       * would abort the scatter item and, with `continueOnError` unset, the
+       * whole run. The plan reads `filed` and decides.
+       */
+      return {
+        data: outcome.filed
+          ? {
+              filed: true,
+              reason: null,
+              contact_id: outcome.contactId,
+              is_new_contact: outcome.isNewContact,
+            }
+          : {
+              filed: false,
+              reason: outcome.reason,
+              contact_id: null,
+              is_new_contact: null,
+            },
+        error: null,
+      };
+    },
+
     create: async (_q, data, ctx) =>
       crmContactRepository.create({
         user_id: ctx.userId,
@@ -256,6 +353,51 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
      * Branding is resolved so a one-off email looks like the business that sent
      * it, exactly as a fan-out does.
      */
+    /**
+     * The booking invite, as the chaser sends it.
+     *
+     * Delegates to `sendBookingLink` rather than composing anything: that
+     * function already resolves the booking URL, picks the service, chooses the
+     * client's language, applies branding and refuses when the business has no
+     * booking page (`no_booking_url`). Reproducing any of it here would be a
+     * second place to be wrong about the one email a stranger judges the
+     * business by.
+     *
+     * `data.opening` is the only thing a caller contributes — the template's
+     * `personalLine`, which renders nothing when absent. That is what lets an
+     * automation put an AI-written sentence at the top of a reviewed email
+     * without the model touching the link, the subject or the sign-off.
+     */
+    invite: async (q, data, ctx) => {
+      const contactId = requireTargetId(q);
+
+      const { sendBookingLink } = await import('@/lib/services/LeadBookingLinkService');
+
+      const outcome = await sendBookingLink(contactId, ctx.userId, {
+        opening: typeof data?.opening === 'string' ? data.opening : undefined,
+        /*
+         * The plan's claim that this message is about the same kind of work
+         * the person came for — the caller's half of soft opt-in, for somebody
+         * who never answered the consent question. The gate checks the sale or
+         * enquiry behind the address itself, and a refusal still refuses.
+         *
+         * Off unless the plan says so: a claim nobody made is not one this
+         * executor should invent.
+         */
+        softOptIn: data?.soft_opt_in === true,
+        /* Not the first contact: this reaches people who have already had the
+           invite once, so the template's follow-up wording is the honest one. */
+        reminder: true,
+        trigger: 'automated',
+      });
+
+      if (!outcome.ok) {
+        return { data: null, error: new Error(`Could not send the invite: ${outcome.reason}`) };
+      }
+
+      return { data: { sent: true, contactId }, error: null };
+    },
+
     send: async (q, data, ctx) => {
       const contactId = requireTargetId(q);
 
@@ -326,6 +468,31 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         );
 
       return { data: contact, error: null };
+    },
+  },
+
+  /**
+   * CHECKOUTS NOBODY FINISHED.
+   *
+   * One action, and it sends the same email the twice-hourly sweep sends.
+   * Delegating rather than composing is the point: a client must not be able
+   * to tell whether the cron or an agent reached them.
+   */
+  abandoned_bookings: {
+    remind: async (q, _data, ctx) => {
+      const attemptId = requireTargetId(q);
+      const { sendOneRecovery } = await import('@/lib/scheduling/abandonedRecovery');
+
+      const outcome = await sendOneRecovery(attemptId, ctx.userId);
+
+      if (!outcome.sent) {
+        return {
+          data: null,
+          error: new Error(`Could not write to that checkout: ${outcome.reason ?? 'unknown'}`),
+        };
+      }
+
+      return { data: { reminded: true, attemptId }, error: null };
     },
   },
 
@@ -468,6 +635,30 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
      * sent that nobody received is worse than one that was never sent, because
      * the owner stops chasing it.
      */
+    /**
+     * The chase, not the invoice.
+     *
+     * Delegates to the one function all three chase routes use, so the client
+     * gets the same message whether the scheduled reminder, the insight queue
+     * or an automation agent reached them. It re-checks the invoice is still
+     * unpaid before anything leaves.
+     */
+    remind: async (q, _data, ctx) => {
+      const invoiceId = requireTargetId(q);
+      const { sendInvoiceChase } = await import('@/lib/services/InsightActionDispatchService');
+
+      const outcome = await sendInvoiceChase(invoiceId, ctx.userId);
+
+      if (!outcome.sent) {
+        return {
+          data: null,
+          error: new Error(`Could not chase that invoice: ${outcome.reason ?? 'unknown'}`),
+        };
+      }
+
+      return { data: { chased: true, invoiceId }, error: null };
+    },
+
     send: async (q, _data, ctx) => {
       // Imported HERE, not at the top of the file.
       //
@@ -572,6 +763,30 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
      * Send it. The service claims the send first, so this cannot produce a
      * second email however many times it is asked.
      */
+    /**
+     * The nudge, not the send.
+     *
+     * `sendQuoteReminder` re-checks the quote is still `sent` or `viewed`
+     * before writing to anybody, so an accepted or declined one is never
+     * chased — the widest re-check on this path, and the reason an automation
+     * can be pointed at a list that may have moved since it was built.
+     */
+    remind: async (q, _data, ctx) => {
+      const proposalId = requireTargetId(q);
+      const { sendQuoteReminder } = await import('@/lib/services/ProposalSendService');
+
+      const outcome = await sendQuoteReminder(proposalId, ctx.userId);
+
+      if (!outcome.ok) {
+        return {
+          data: null,
+          error: new Error(`Could not nudge that quote: ${outcome.reason ?? 'unknown'}`),
+        };
+      }
+
+      return { data: { reminded: true, proposalId }, error: null };
+    },
+
     send: async (q, _data, ctx) => {
       const proposalId = requireTargetId(q);
       const { sendProposal } = await import('@/lib/services/ProposalSendService');

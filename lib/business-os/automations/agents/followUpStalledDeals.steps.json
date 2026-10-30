@@ -1,0 +1,107 @@
+[
+  {
+    "step_id": "step1",
+    "id": "step1",
+    "type": "action",
+    "name": "Find quotes sitting unanswered",
+    "description": "A deal is stalled when a price is with the client and nothing has come back. Four of the filters are the four the existing chaser checks one row at a time (`LeadResponseDispatchService.chaseQuote`), moved into the query: still awaiting a reply, the current version, not lapsed, and sent long enough ago that the 72-hour chaser has already had its turn. `awaiting_reply` rather than `decided_at is_null` because a withdrawn quote carries no decision date and must never be nudged — this account holds one. The fifth filter is the END OF LIFE, and it is the one that is not in the chaser: nothing sent more than 45 days ago. There is no idempotency claim on this path — the plugin calls the write directly, so the claim and the daily quota in `ForEachExecutor` never see it — which means the ONLY thing bounding how many times one client is nudged about one quote is this window. Fortnightly inside 7-45 days is two, maybe three notes, and then the agent lets it go: a quote that old wants re-quoting, not another reminder. THE UPPER BOUND IS THE OWNER'S, not mine: `{{input.stop_after_days}}` arrives as a negative offset from `agent_config`, chosen on the install dialog. It was a number written into this file, which meant every business on the platform gave up at the same moment regardless of what they sell.",
+    "plugin": "business-os",
+    "action": "find_proposals",
+    "params": {
+      "filters": [
+        {
+          "field": "status",
+          "op": "in",
+          "value": {
+            "$semantic": "awaiting_reply"
+          }
+        },
+        {
+          "field": "is_current_version",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "or": [
+            {
+              "field": "valid_until",
+              "op": "is_null"
+            },
+            {
+              "field": "valid_until",
+              "op": "gte",
+              "value": {
+                "$date": "today"
+              }
+            }
+          ]
+        },
+        {
+          "field": "sent_at",
+          "op": "lt",
+          "value": {
+            "$date": "today",
+            "offset": {
+              "days": -7
+            }
+          }
+        },
+        {
+          "field": "sent_at",
+          "op": "gte",
+          "value": {
+            "$date": "today",
+            "offset": {
+              "days": "{{input.stop_after_days}}"
+            }
+          }
+        }
+      ],
+      "order_by": [
+        {
+          "field": "sent_at",
+          "dir": "asc"
+        }
+      ],
+      "limit": 20
+    },
+    "output_variable": "quiet_quotes",
+    "output_schema": {
+      "type": "object"
+    }
+  },
+  {
+    "step_id": "step2",
+    "id": "step2",
+    "type": "scatter_gather",
+    "name": "Nudge each one",
+    "description": "`remind_proposals` sends the reminder, not the quote. The terms, the document and the version are untouched — re-sending would retire the version the client is holding, which is why this is a different action rather than a second call to send. ONE PERSON'S REFUSAL MUST NOT STOP THE REST. In production a failing scatter item re-throws and aborts the whole run unless `continueOnError` is set, and per-person refusals are ordinary here: somebody unsubscribed since the last run, an address that bounces, a transport error. Worst of all, the find is ordered OLDEST FIRST, so the one person who cannot be written to would sit at the top of the list and block everybody behind them on every run, for good. The gather phase already separates the failures from the sends, so the run reports honestly instead of stopping.",
+    "scatter": {
+      "input": "{{quiet_quotes.rows}}",
+      "itemVariable": "current_quote",
+      "steps": [
+        {
+          "step_id": "step3",
+          "id": "step3",
+          "type": "action",
+          "name": "Ask whether they need more time",
+          "description": "Refuses unless the quote is still sent or viewed, so one answered between the find and the send is left alone.",
+          "plugin": "business-os",
+          "action": "remind_proposals",
+          "params": {
+            "target_id": "{{current_quote.id}}"
+          },
+          "output_variable": "nudge_result",
+          "output_schema": {
+            "type": "object"
+          }
+        }
+      ],
+      "continueOnError": true
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "nudge_results"
+  }
+]

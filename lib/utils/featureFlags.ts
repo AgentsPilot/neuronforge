@@ -210,6 +210,60 @@ export function isAdminBusinessDeleteEnabled(): boolean {
 }
 
 /**
+ * The agent scheduler's off switch: may the platform run agents by the clock?
+ *
+ * **SERVER-ONLY. Default off** — unset, blank or anything unrecognised is off.
+ * No `NEXT_PUBLIC_` prefix: it decides whether the platform writes to a
+ * business's clients unprompted, so it is never compiled into a client bundle.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THE SCHEDULE SHIPS BEFORE THE SWITCH IS THROWN
+ *
+ * `/api/run-scheduled-agents` is scheduled in `vercel.json` from the moment
+ * this work lands — its guard test records the route being un-retired, and the
+ * schedule and that record belong in the same commit. But a live cron on the
+ * next deploy would run the adopted agents for real, and their plans send email
+ * to real clients.
+ *
+ * So the schedule lands inert. With this off the pass reaps nothing, queues
+ * nothing and runs nothing, and answers with zero counts and no error — which
+ * is also how an operator tells a scheduler that is switched off from one that
+ * is broken.
+ *
+ * ⚠️ **Leave it unset until the repeat-send gate is closed.** `sendInvoiceChase`
+ * currently performs no writes, so nothing records that a chase was sent;
+ * `executeMutate` carries no idempotency claim; and the invoice plan's
+ * `sent_at` filter reads the invoice's own send date, which is static. With
+ * `daily` among the chaser's cadence choices and `120` among its stop choices,
+ * switching this on today risks up to 120 consecutive emails to one client
+ * about one invoice.
+ *
+ * ⚠️ **It also holds back a double-run of the mailbox channel.** That agent is
+ * `mode='scheduled'` with `schedule_enabled` set, so this scheduler selects it
+ * — proven live on 2026-10-29, when a pass picked it up and ran it correctly
+ * through `WorkflowPilot`. But it still has its OWN cron
+ * (`/api/cron/inbox-enquiries`) claiming on `last_run` while this one claims on
+ * `next_run`, and neither claim excludes the other. Until that cron is retired
+ * and its `schedule_cron` is moved from every five minutes to every fifteen
+ * (its runner enforces a 15-minute floor today), switching this on means two
+ * schedulers reading one mailbox.
+ *
+ * Validation before then is done with BizQL's dry run, which genuinely performs
+ * nothing — it returns before the quota check, the idempotency claim and the
+ * send — so the whole chain can be proven while sending zero messages. The
+ * chain WAS proven that way: a read-only probe agent went cron → enqueue →
+ * claim → pilot → plugin → BizQL, completed in `production` mode, and a second
+ * pass re-queued and re-ran nothing.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * @returns {boolean} True only when `AGENT_SCHEDULER_ENABLED` is `true` / `1`
+ */
+export function isAgentSchedulerEnabled(): boolean {
+  const flag = process.env.AGENT_SCHEDULER_ENABLED;
+  return parseBooleanFlag(flag, false);
+}
+
+/**
  * The Business OS credits boost checkout's kill switch (credits boost slice 3,
  * SA F-14): may an owner start a boost purchase at all?
  *

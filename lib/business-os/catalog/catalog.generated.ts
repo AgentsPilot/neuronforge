@@ -3,7 +3,7 @@
  *
  * Produced by: npx tsx scripts/generate-business-catalog.ts
  * Source     : jgccgkyhpwirgknnceoh.supabase.co
- * Generated  : 2026-09-10T06:34:30.405Z
+ * Generated  : 2026-10-29T17:26:52.805Z
  *
  * This is the PHYSICAL half of the Business Catalog: what columns actually exist
  * in the database. The hand-authored semantic half lives in ./catalog.ts, and
@@ -16,7 +16,7 @@
 import type { PhysicalCatalog } from './catalog.schema';
 
 export const PHYSICAL_CATALOG: PhysicalCatalog = {
-  "generatedAt": "2026-09-10T06:34:30.405Z",
+  "generatedAt": "2026-10-29T17:26:52.805Z",
   "source": "jgccgkyhpwirgknnceoh.supabase.co",
   "tables": {
     "business_intake_forms": {
@@ -39,10 +39,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "version",
@@ -112,6 +112,189 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
         }
       ]
     },
+    "abandoned_bookings": {
+      "name": "abandoned_bookings",
+      "columns": [
+        {
+          "name": "id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": true,
+          "description": "Note: This is a Primary Key."
+        },
+        {
+          "name": "user_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "business_profiles",
+            "column": "user_id"
+          },
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
+        },
+        {
+          "name": "service_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_services",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `scheduling_services.id`."
+        },
+        {
+          "name": "first_name",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "last_name",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "email",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "phone",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "start_time",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "end_time",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "timezone",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "source",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "session_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "status",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "booking_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_bookings",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `scheduling_bookings.id`."
+        },
+        {
+          "name": "checkout_session_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "created_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "updated_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "page_url",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The booking page the client was on, for the rebook link. Stored rather than rebuilt: a page reached by custom domain, landing page or smart link cannot be reconstructed from the service alone."
+        },
+        {
+          "name": "locale",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "recovery_email_sent_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "When the abandoned-booking email was sent. Null means never. Guarantees one email per attempt, however often the sender runs."
+        }
+      ]
+    },
     "crm_contacts": {
       "name": "crm_contacts",
       "columns": [
@@ -132,10 +315,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "first_name",
@@ -272,6 +455,15 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "description": "utm_campaign from source_metadata."
+        },
+        {
+          "name": "stage_entered_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "When this contact entered its current stage. Maintained by trigger on a real stage change only. Readers should fall back to updated_at when NULL."
         }
       ]
     },
@@ -295,10 +487,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "contact_id",
@@ -442,10 +634,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "contact_id",
@@ -549,10 +741,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "contact_id",
@@ -893,10 +1085,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "contact_id",
@@ -1179,10 +1371,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "transaction_id",
@@ -1363,6 +1555,15 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "description": "What issuing this refund cost, where the processor charges for it. NULL means not known."
+        },
+        {
+          "name": "reason_note",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The owner's own sentence about why the money went back. Never a substitute for reason, which holds the countable code. Null for refunds issued before this column existed."
         }
       ]
     },
@@ -1386,10 +1587,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "service_id",
@@ -1530,10 +1731,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "contact_id",
@@ -1779,6 +1980,33 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "required": false,
           "hasDefault": false,
           "isPrimaryKey": false
+        },
+        {
+          "name": "cancel_reason",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Why the plan was stopped, from STOP_REASONS. Null for plans stopped before this column existed. Group with canonicalReason()."
+        },
+        {
+          "name": "cancel_note",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The sentence the owner typed. Never a substitute for cancel_reason, and not the refund reason — that is its own field on the refund."
+        },
+        {
+          "name": "cancelled_by",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Who stopped it. Always the owner today; the column exists so the first automated stop does not have to claim it was."
         }
       ]
     },
@@ -1802,10 +2030,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "payment_plan_id",
@@ -2035,6 +2263,55 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
             "column": "id"
           },
           "description": "Note: This is a Foreign Key to `proposals.id`."
+        },
+        {
+          "name": "cancel_reason",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Why this period was stopped, from STOP_REASONS. Null for periods cancelled before this column existed. Group with canonicalReason()."
+        },
+        {
+          "name": "cancel_note",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The sentence the owner typed. Never a substitute for cancel_reason, and not a refund reason — that is its own field on the refund."
+        },
+        {
+          "name": "cancelled_by",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Who stopped it: client, owner or system. The same three values every other cancellation surface uses."
+        },
+        {
+          "name": "cancelled_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "When it was stopped. Unlike payment_plan_subscriptions, this table had no such column — status went to cancelled with no timestamp, so nothing could say when a plan stopped billing."
+        },
+        {
+          "name": "meeting_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_meetings",
+            "column": "id"
+          },
+          "description": "The APPOINTMENT this stage bills, for a plan that charges per session. NULL where the plan has no appointment to bill against — a course, a product — or where the stage falls due on a date rather than on work being done. `booking_id` names the JOB and remains valid; this names which meeting of it. Note: This is a Foreign Key to `scheduling_meetings.id`."
         }
       ]
     },
@@ -2058,10 +2335,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "contact_id",
@@ -2297,6 +2574,64 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
             "column": "id"
           },
           "description": "Optional proposal document, attached to the email and shown to the client before they can accept. Note: This is a Foreign Key to `contact_documents.id`."
+        },
+        {
+          "name": "payment_terms_days",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Days to pay, agreed on this quote. Null inherits business_profiles.invoice_payment_terms_days."
+        },
+        {
+          "name": "stop_reason",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Why an accepted job ended early, from STOP_REASONS. Null when unknown. Distinct from decline_reason, which is why a quote was never agreed."
+        },
+        {
+          "name": "stop_note",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The owner's own sentence about why the job stopped. Optional, and never a substitute for stop_reason."
+        },
+        {
+          "name": "stopped_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "When the remaining stages were called off. Not updated_at, which any later edit moves."
+        },
+        {
+          "name": "sessions",
+          "format": "jsonb",
+          "jsonType": "unknown",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "A package: { \"dates\": [\"2026-10-07T10:00:00Z\", …], \"duration_minutes\": 60 }. NULL means this quote is not a package, which is every quote written before this column existed. Dates are EXPLICIT, never a cadence rule — a repeat rule would need clash detection, time-off reading, DST-correct stepping and a preview screen, and the owner picking six dates costs six date pickers."
+        },
+        {
+          "name": "package_booking_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_bookings",
+            "column": "id"
+          },
+          "description": "The container booking this accepted quote created, for a package. NULL on every quote that is not a package and on every package not yet accepted. Written by recordAcceptance alongside created_invoice_id and created_plan_id. ON DELETE SET NULL: if the purchase is removed the quote remains as the record of what was agreed, simply no longer pointing at a package — the reverse (losing the proposal) would destroy the agreement itself. Note: This is a Foreign Key to `scheduling_bookings.id`."
         }
       ]
     },
@@ -2320,10 +2655,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "service_id",
@@ -2381,7 +2716,8 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "jsonType": "string",
           "required": true,
           "hasDefault": true,
-          "isPrimaryKey": false
+          "isPrimaryKey": false,
+          "description": "One of: confirmed, pending, cancelled, completed, no_show. PENDING MEANS NOT CONFIRMED YET — either a payment is outstanding or the service is quoted and has no price yet. It is NOT a statement that money is owed: read payment_status for that, which is 'paid' whenever the price is zero or there is nothing to collect. The roster lives in lib/business-os/bookingStatus.ts."
         },
         {
           "name": "cancellation_reason",
@@ -2576,6 +2912,99 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "description": "When the intake request was emailed to the client. Replaces the template_key='pending' sentinel previously written into intake_responses."
+        },
+        {
+          "name": "intake_reminded_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "When the client was reminded to complete their intake form. Set once; null means never chased."
+        },
+        {
+          "name": "cancel_reason",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Why it was cancelled, from CLIENT_CANCEL_REASONS or OWNER_CANCEL_REASONS. Null for rows cancelled before this column existed. Group with canonicalReason() — some stored codes have equivalent spellings."
+        },
+        {
+          "name": "cancel_note",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The sentence the client or owner typed. Never a substitute for cancel_reason."
+        },
+        {
+          "name": "cancelled_by",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Who called it off. Replaces parsing the CLIENT_CANCELLED_PREFIX out of cancellation_reason, which is still written for existing readers."
+        },
+        {
+          "name": "parent_booking_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_bookings",
+            "column": "id"
+          },
+          "description": "The purchase this meeting belongs to, for a package. NULL on every ordinary booking and on the container itself, which is what makes \"purchases → parent_booking_id IS NULL\" correct for every reader. ON DELETE CASCADE: removing the purchase removes the meetings it bought, which is the only honest reading of deleting it. Note: This is a Foreign Key to `scheduling_bookings.id`."
+        },
+        {
+          "name": "occurrence_number",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Which meeting of the package this is, 1..N, in the order the owner chose. NULL on ordinary bookings and on the container. Never a count of payments — reusing installment_count for sessions is the mistake RetPackageEndingDetector was deleted for, because it counted a payment split as a package."
+        },
+        {
+          "name": "meeting_status",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "What happened at the APPOINTMENT, independent of the job. NULL means nobody has said yet, which is the ordinary state of a past meeting. held | no_show | cancelled. The job's own state stays in status/cancel_reason/cancelled_by."
+        },
+        {
+          "name": "outcome_by",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Who recorded the CURRENT attempt's outcome. Copied onto the attempt by syncMeeting; the pair is temporary in the same way meeting_status is. Distinct from cancelled_by, which is about the JOB rather than an appointment."
+        },
+        {
+          "name": "outcome_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "proposal_continues",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The owner's answer when a meeting was cancelled on a quoted job: is the quote still coming? NULL means nobody was asked, which is every row predating 20261083 and every booking whose meeting was never cancelled. Distinct from true on purpose. false makes the journey ask whether the booking should be closed, since work nobody will quote for should not sit open."
         }
       ]
     },
@@ -2599,10 +3028,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "service_name",
@@ -2825,10 +3254,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "vertical",
@@ -3162,7 +3591,8 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "jsonType": "boolean",
           "required": false,
           "hasDefault": true,
-          "isPrimaryKey": false
+          "isPrimaryKey": false,
+          "description": "Whether reminders are sent BEFORE an invoice is due (upcoming_due, due_today). Past-due chasing is chase_invoices_enabled, deliberately separate: a reminder before the date is a courtesy, one after it says you are late."
         },
         {
           "name": "payment_reminder_days_before",
@@ -3442,7 +3872,7 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "required": false,
           "hasDefault": false,
           "isPrimaryKey": false,
-          "description": "The address this business shows its clients — where to come. Free text, because a display address is written the way the business writes it. Distinct from invoice_address, which is the structured billing address printed on invoices and may deliberately differ."
+          "description": "The address this business shows its clients — where to come. Rendered from `address_parts` on save; still free text for rows that predate it. Distinct from invoice_address, which is the structured billing address printed on invoices and may deliberately differ."
         },
         {
           "name": "invoice_document_type",
@@ -3488,6 +3918,167 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": true,
           "isPrimaryKey": false,
           "description": "Opt-in for the morning briefing email. Off by default; requires a timezone on user_preferences to be meaningful."
+        },
+        {
+          "name": "invoice_payment_terms_days",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Default days to pay for invoices this business raises automatically. 0 = due on receipt."
+        },
+        {
+          "name": "subdomain",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The web address every public surface of this business publishes under, without the domain. Set by whichever surface is published first — a website's settings or a landing page's publish step — and inherited by every page created after. Falls back to user_code when never chosen."
+        },
+        {
+          "name": "lead_alert_email_enabled",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Send the owner an email the moment a contact form is submitted or a client books. On by default: the alert only fires because a real person asked to be contacted."
+        },
+        {
+          "name": "lead_autosend_enabled",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Send a booking link to a new lead automatically, ~15 minutes after the owner is alerted. Off by default: writing to a client on the business's behalf is an opt-in."
+        },
+        {
+          "name": "chase_invoices_enabled",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Whether the platform may email this business's clients about invoices that are past due. Answered through the advisor's \"Chase unpaid invoices\" card; read by PaymentReminderService's overdue scan, which is the only thing that sends. The schedule is payment_overdue_reminder_days."
+        },
+        {
+          "name": "chase_intake_enabled",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Send one reminder for an intake form still not returned. Off by default, and separate from the invoice chase — they are different appetites."
+        },
+        {
+          "name": "automations_declined",
+          "format": "text[]",
+          "jsonType": "array",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Operational automation ids the owner has explicitly said no to. Keeps the advisor from asking again, and is distinct from simply not being approved yet. Approving one removes it from here."
+        },
+        {
+          "name": "currency",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The business's DEFAULT currency: pre-fills the picker when a service is created and labels figures with no row behind them. Never a constraint — scheduling_services.currency remains the authority for what a client is charged, so a business in one country can price in another's currency. NULL means not chosen, which is deliberate and must stay distinguishable from a choice."
+        },
+        {
+          "name": "meeting_reminder_enabled",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Whether a reminder goes out before EVERY confirmed appointment. Answered through the advisor card; off until asked for. While it is ON, the insight-triggered reminder (send_reminder_sequence, fired by the no-show and cancellation-spike detectors) stands down for this business — the two are alternatives, not layers, and running both would send two reminders for one appointment. See InsightActionDispatchService.bookingReminder."
+        },
+        {
+          "name": "meeting_reminder_hours_before",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "How many hours before the appointment the reminder goes out, 1-168. Owner-chosen because the right answer differs by trade: a day suits a therapist, two hours suits a barber. Read by the meeting_upcoming gap and by enqueueApprovedChases."
+        },
+        {
+          "name": "meeting_reminder_notify_client",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Whether the client is reminded before their appointment. Only applies while meeting_reminder_enabled is true."
+        },
+        {
+          "name": "meeting_reminder_notify_owner",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Whether the OWNER is reminded before the appointment. Nothing else on the platform tells an owner anything before a booking. Only applies while meeting_reminder_enabled is true."
+        },
+        {
+          "name": "address_parts",
+          "format": "jsonb",
+          "jsonType": "unknown",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The display address in parts: {line1, line2, city, state, postal_code, country}. `country` is an ISO 3166-1 alpha-2 code chosen from a list, never typed. The `address` column holds the rendered one-line form of this and is what public surfaces read; it is composed on save, so the two do not drift. Empty on rows written before the structured form existed — there `address` alone is authoritative and must not be overwritten by a guess."
+        },
+        {
+          "name": "address_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "business_addresses",
+            "column": "id"
+          },
+          "description": "Which saved address `address_parts` is a copy of. NULL means the address was typed here and never added to the book, which is allowed — the copy is still what renders. ON DELETE SET NULL: removing an address from the book must not blank the address a business is currently showing its clients. Note: This is a Foreign Key to `business_addresses.id`."
+        },
+        {
+          "name": "invoice_address_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "business_addresses",
+            "column": "id"
+          },
+          "description": "Which saved address `invoice_address` is a copy of. Equal to `address_id` when the business bills from where it trades, which is the common case and is what makes correcting one correct both. Note: This is a Foreign Key to `business_addresses.id`."
+        },
+        {
+          "name": "auto_complete_meetings_enabled",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Owner consent for automation #5: mark a confirmed booking completed once its start time has passed and the staleness window has elapsed. Opt-in (DEFAULT false) because it writes to the owner's own records rather than sending anything. Added 2026-10-06."
+        },
+        {
+          "name": "chase_quotes_enabled",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Owner consent for automation #6: send ONE reminder on a quote still unanswered 72 hours after it was sent, asking whether the client needs more time or more information. Never a sequence — the queue dedupes per proposal, so a quote is followed up once and never again. Opt-in (DEFAULT false). Added 2026-10-10."
         }
       ]
     },
@@ -3511,10 +4102,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "detector_id",
@@ -3887,6 +4478,15 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "required": false,
           "hasDefault": true,
           "isPrimaryKey": false
+        },
+        {
+          "name": "resolved_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "When the condition stopped holding, set by the detection sweep rather than by a person. NULL for every other status."
         }
       ]
     },
@@ -3910,10 +4510,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "page_type",
@@ -4123,10 +4723,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "subdomain",
@@ -4342,10 +4942,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "code",
@@ -4600,23 +5200,23 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "contact_id",
           "format": "uuid",
           "jsonType": "string",
-          "required": true,
+          "required": false,
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
             "table": "crm_contacts",
             "column": "id"
           },
-          "description": "Note: This is a Foreign Key to `crm_contacts.id`."
+          "description": "NULL means the mail went to the business OWNER, not to a client — a briefing, a dispute alert. Client-scoped queries filter on this column, so a NULL row appears in no contact timeline, which is the point. Dashboard counts that mean \"business activity\" must exclude owner mail; see app/api/business-os/stats/route.ts. The log_email_activity trigger is guarded on this being NOT NULL because crm_activities.contact_id is itself NOT NULL. Note: This is a Foreign Key to `crm_contacts.id`."
         },
         {
           "name": "sequence_id",
@@ -4687,7 +5287,8 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "jsonType": "string",
           "required": false,
           "hasDefault": true,
-          "isPrimaryKey": false
+          "isPrimaryKey": false,
+          "description": "One of the values in lib/business-os/emailSendStatus.ts (EMAIL_SEND_STATUSES), enforced by email_sends_status_check. `bounced` and `complained` are terminal and are NOT the same thing: a bounce is a broken address, a complaint is a working address whose owner did not want the mail. `delivered`/`opened`/`clicked` are recorded as timestamps and do not rewrite this column."
         },
         {
           "name": "sent_at",
@@ -4768,6 +5369,50 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "required": false,
           "hasDefault": true,
           "isPrimaryKey": false
+        },
+        {
+          "name": "booking_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_bookings",
+            "column": "id"
+          },
+          "description": "The JOB this email was about, where it was about one. NULL for campaign and sequence sends, and for every row written before 20261077 — the link was never stored, and guessing it would put a heuristic into a column that reads as authoritative. Note: This is a Foreign Key to `scheduling_bookings.id`."
+        },
+        {
+          "name": "meeting_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_meetings",
+            "column": "id"
+          },
+          "description": "The APPOINTMENT this email was about — which attempt, for a booking rescheduled after an outcome. NULL where the email concerns the whole job rather than one appointment, and on every row predating 20261077. Note: This is a Foreign Key to `scheduling_meetings.id`."
+        },
+        {
+          "name": "is_resend",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "True when this was a REPEAT of mail the client had already been given — the owner pressing \"send again\". Set by the resend routes. Backfilled for confirmations only, where the second and later per booking are necessarily repeats; a reschedule notice shares its subject across moves and repeats legitimately, so those are left false rather than guessed at."
+        },
+        {
+          "name": "email_kind",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "What this message was, as its sender knew it: booking_confirmed, booking_rescheduled, missed_appointment, meeting_reminder, payment_receipt and so on. Set by lib/notifications/recordEmailSend.ts, which is the only writer. NULL on rows predating 20261081 — there is no honest way to assign one retrospectively, and the journey falls back to the subject. Deliberately not an enum: a new kind of mail should not need a migration."
         }
       ]
     },
@@ -4791,10 +5436,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "platform",
@@ -4957,10 +5602,10 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
+            "table": "business_profiles",
+            "column": "user_id"
           },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
         },
         {
           "name": "platform",
@@ -5066,740 +5711,6 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "description": "Hostnames this property reports traffic for. Used to detect overlap with AgentPilot-hosted pages so visits are not counted twice."
-        }
-      ]
-    },
-    "agents": {
-      "name": "agents",
-      "columns": [
-        {
-          "name": "id",
-          "format": "uuid",
-          "jsonType": "string",
-          "required": true,
-          "hasDefault": true,
-          "isPrimaryKey": true,
-          "description": "Note: This is a Primary Key."
-        },
-        {
-          "name": "agent_name",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "user_prompt",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "user_id",
-          "format": "uuid",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "created_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "system_prompt",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "description",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "is_archived",
-          "format": "boolean",
-          "jsonType": "boolean",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "input_schema",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "output_schema",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "connected_plugins",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "status",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "mode",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "schedule_cron",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "trigger_conditions",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "plugins_required",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "deactivation_reason",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "workflow_steps",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "generated_plan",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "ai_reasoning",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "ai_confidence",
-          "format": "real",
-          "jsonType": "number",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "detected_categories",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "created_from_prompt",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "ai_generated_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "agent_config",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "last_run",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Timestamp of the most recent execution"
-        },
-        {
-          "name": "next_run",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Pre-calculated next execution time for efficient querying"
-        },
-        {
-          "name": "timezone",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false,
-          "description": "Timezone for cron schedule evaluation (IANA format, e.g. America/New_York)"
-        },
-        {
-          "name": "updated_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "schedule_version",
-          "format": "integer",
-          "jsonType": "integer",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "schedule_enabled",
-          "format": "boolean",
-          "jsonType": "boolean",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "qstash_schedule_id",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Upstash QStash schedule ID for recurring agent executions"
-        },
-        {
-          "name": "intensity_score",
-          "format": "numeric",
-          "jsonType": "number",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false,
-          "description": "Computational complexity score (0-10) used for dynamic pricing multiplier"
-        },
-        {
-          "name": "last_intensity_update",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Timestamp of last intensity calculation update"
-        },
-        {
-          "name": "pilot_steps",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Normalized workflow steps for Pilot execution engine with dependencies, conditionals, and approvals. Separate from workflow_steps which is used for SmartAgentBuilder UI animation and AIS calculations. Format: [{ id, type, name, plugin, action, params, dependencies }]"
-        },
-        {
-          "name": "deleted_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "production_ready",
-          "format": "boolean",
-          "jsonType": "boolean",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "production_ready_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "calibration_run_count",
-          "format": "integer",
-          "jsonType": "integer",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "insights_enabled",
-          "format": "boolean",
-          "jsonType": "boolean",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false,
-          "description": "Whether to generate AI-powered insights for this agent. Requires additional LLM API calls for business language translation. Users can enable this per-agent to control costs."
-        },
-        {
-          "name": "workflow_purpose",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Business description of what this workflow does. Used by business intelligence system to provide context-aware insights. Falls back to agent_name + description if not provided."
-        },
-        {
-          "name": "workflow_hash",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "SHA-256 hash of pilot_steps JSON - used to detect workflow changes that invalidate calibration"
-        },
-        {
-          "name": "last_successful_calibration_id",
-          "format": "uuid",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "foreignKey": {
-            "table": "calibration_history",
-            "column": "id"
-          },
-          "description": "Note: This is a Foreign Key to `calibration_history.id`."
-        },
-        {
-          "name": "is_calibrated",
-          "format": "boolean",
-          "jsonType": "boolean",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false,
-          "description": "True when agent has completed successful calibration with 0 issues. Enables fast path verification on subsequent calibrations."
-        },
-        {
-          "name": "pilot_steps_original",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Original pilot_steps before any calibration modifications. Set once on first calibration and never modified."
-        },
-        {
-          "name": "business_entity_type",
-          "format": "character varying",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Business entity type detected from workflow prompt (e.g., Lead, Deal, Invoice). Auto-detected via LLM."
-        },
-        {
-          "name": "entity_detection_confidence",
-          "format": "numeric",
-          "jsonType": "number",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Confidence score (0.00-1.00) for entity type detection. Only store if >= 0.70."
-        },
-        {
-          "name": "entity_desirability",
-          "format": "character varying",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Classification for trend framing: desirable (more=better), undesirable (fewer=better), neutral."
-        },
-        {
-          "name": "manual_time_per_item_seconds",
-          "format": "integer",
-          "jsonType": "integer",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Time in seconds to manually process one item. Used for ROI calculation."
-        },
-        {
-          "name": "items_per_week_baseline",
-          "format": "integer",
-          "jsonType": "integer",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Average items processed per week (calculated from first 10 executions). Used for anomaly detection."
-        },
-        {
-          "name": "org_id",
-          "format": "uuid",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "foreignKey": {
-            "table": "organizations",
-            "column": "id"
-          },
-          "description": "Note: This is a Foreign Key to `organizations.id`."
-        },
-        {
-          "name": "tags",
-          "format": "text[]",
-          "jsonType": "array",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "calibration_prompt_decision",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "User response to the post-creation calibration prompt: accepted | declined | NULL (never prompted)."
-        },
-        {
-          "name": "calibration_prompt_decided_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Timestamp when calibration_prompt_decision was set."
-        },
-        {
-          "name": "hourly_rate_usd",
-          "format": "numeric",
-          "jsonType": "number",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Per-agent hourly rate for ROI calculation. Different automations may have different costs based on who performs the task."
-        },
-        {
-          "name": "calibration_status",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Post-creation calibration gate state: running | passed | failed | skipped | NULL (legacy, read-time deferred). Drives dashboard badge/tooltip, click-target, and access gate."
-        }
-      ]
-    },
-    "agent_executions": {
-      "name": "agent_executions",
-      "columns": [
-        {
-          "name": "id",
-          "format": "uuid",
-          "jsonType": "string",
-          "required": true,
-          "hasDefault": true,
-          "isPrimaryKey": true,
-          "description": "Note: This is a Primary Key."
-        },
-        {
-          "name": "agent_id",
-          "format": "uuid",
-          "jsonType": "string",
-          "required": true,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "foreignKey": {
-            "table": "agents",
-            "column": "id"
-          },
-          "description": "Note: This is a Foreign Key to `agents.id`."
-        },
-        {
-          "name": "execution_type",
-          "format": "text",
-          "jsonType": "string",
-          "required": true,
-          "hasDefault": true,
-          "isPrimaryKey": false,
-          "description": "Type of execution: calibration (test runs before agent is ready) or production (live runs after agent is deployed)"
-        },
-        {
-          "name": "scheduled_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": true,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "started_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "completed_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "status",
-          "format": "text",
-          "jsonType": "string",
-          "required": true,
-          "hasDefault": true,
-          "isPrimaryKey": false,
-          "description": "Status values: pending, queued, running, completed, failed, cancelled, retrying"
-        },
-        {
-          "name": "result",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "error_message",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "execution_duration_ms",
-          "format": "integer",
-          "jsonType": "integer",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "retry_count",
-          "format": "integer",
-          "jsonType": "integer",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "next_retry_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "created_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "updated_at",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "job_id",
-          "format": "character varying",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "queue_name",
-          "format": "character varying",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "progress",
-          "format": "integer",
-          "jsonType": "integer",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "user_id",
-          "format": "uuid",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "foreignKey": {
-            "table": "user_settings_complete",
-            "column": "id"
-          },
-          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
-        },
-        {
-          "name": "cron_expression",
-          "format": "character varying",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "next_scheduled_run",
-          "format": "timestamp with time zone",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "logs",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false
-        },
-        {
-          "name": "run_mode",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": true,
-          "isPrimaryKey": false,
-          "description": "Run mode: calibration (single test run), batch_calibration (multiple test cases), or production (live runs)"
-        },
-        {
-          "name": "total_cost_usd",
-          "format": "numeric",
-          "jsonType": "number",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Total cost in USD for all LLM calls during this execution"
-        },
-        {
-          "name": "primary_model",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Primary/most-used model during execution (e.g., gpt-4o, claude-opus-4-5)"
-        },
-        {
-          "name": "primary_provider",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Primary provider during execution (e.g., openai, anthropic)"
-        },
-        {
-          "name": "models_used",
-          "format": "jsonb",
-          "jsonType": "unknown",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Array of all models used: [{model, provider, tokens, cost}]"
-        },
-        {
-          "name": "routing_tier",
-          "format": "text",
-          "jsonType": "string",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Routing tier used: fast, balanced, or powerful"
-        },
-        {
-          "name": "complexity_score",
-          "format": "numeric",
-          "jsonType": "number",
-          "required": false,
-          "hasDefault": false,
-          "isPrimaryKey": false,
-          "description": "Complexity score (0-10) that determined routing tier"
         }
       ]
     }

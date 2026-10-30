@@ -68,8 +68,34 @@ export const COUNT_NOUN: Record<string, string> = {
    * measured, so this is empty hours in an average WEEK. Its own generated
    * title called them "empty meetings", which is already one step away from
    * what was counted; the verdict then took another step to "clients".
+   *
+   * WHICH week it is lives in `COUNT_PERIOD` rather than here, because this
+   * phrase is read back twice inside one sentence and a period clause doubled
+   * is a sentence nobody can follow.
    */
   open_hour: 'empty hours in their working week',
+};
+
+/**
+ * WHEN a count was measured, for the figures whose period can be mistaken.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE SECOND MOVE, AFTER THE SUBJECT WAS NAILED DOWN
+ *
+ * `COUNT_NOUN` stopped "29 empty hours" becoming "29 clients". It said nothing
+ * about when, and the next live note read "you have 29 empty hours IN THE
+ * COMING WEEK": the right number, the right noun, and a week that had not
+ * happened yet. Nothing measured it, nothing could check it, and it is the kind
+ * of sentence an owner plans a day around.
+ *
+ * Only the counts whose period is genuinely ambiguous need an entry. A count of
+ * unpaid invoices is a count of things that exist right now and reads that way
+ * on its own; an average across four past weeks does not.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const COUNT_PERIOD: Record<string, string> = {
+  open_hour:
+    'This was measured across the last 28 days and is an average of weeks that have ALREADY HAPPENED. Never write it as a forecast, and never attach it to a week that has not happened.',
 };
 
 /** The words naming what a count counts, or `null` when nothing recorded it. */
@@ -99,9 +125,13 @@ export function describeCount(count: number, entityType?: string | null): string
     return `${count} (WHAT THIS COUNTS WAS NOT RECORDED — do not put this number in a sentence)`;
   }
 
-  if (isPeopleCount(entityType)) return `${count} ${noun}`;
+  /* Appended once, after the subject is settled. See `COUNT_PERIOD`. */
+  const period = entityType ? COUNT_PERIOD[entityType] : undefined;
+  const when = period ? ` ${period}` : '';
 
-  return `${count} ${noun} (this number counts ${noun}, NOT clients and NOT bookings)`;
+  if (isPeopleCount(entityType)) return `${count} ${noun}${when}`;
+
+  return `${count} ${noun} (this number counts ${noun}, NOT clients and NOT bookings).${when}`;
 }
 
 /**

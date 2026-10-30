@@ -35,6 +35,14 @@ export interface ClientCountsProps {
   activeLeads: number;
   /** At a lead or client stage with no activity for 14 days. */
   wentQuiet: number;
+  /**
+   * Started a booking, never finished, and have not booked since.
+   *
+   * Distinct PEOPLE, not attempts: one client retrying a card journey five
+   * times is one person, and anyone who later booked is excluded — an
+   * abandonment they came back from is a recovered client, not lost business.
+   */
+  abandonedContacts: number;
   totalContacts: number;
 }
 
@@ -42,6 +50,7 @@ export function ClientCounts({
   activeClients,
   activeLeads,
   wentQuiet,
+  abandonedContacts,
   totalContacts,
 }: ClientCountsProps) {
   const { t } = useLanguage();
@@ -71,6 +80,16 @@ export function ClientCounts({
       alarm: wentQuiet > 0,
     },
     {
+      key: 'abandoned',
+      label: t('reports.count_abandoned'),
+      value: abandonedContacts,
+      note: t('reports.abandoned_note'),
+      dot: REPORTS_COLORS.WARNING,
+      /* Amber only when there are any, for the same reason `quiet` is: nobody
+         who walked away is a good state, not something to chase. */
+      alarm: abandonedContacts > 0,
+    },
+    {
       key: 'all',
       label: t('reports.count_all'),
       value: totalContacts,
@@ -79,7 +98,7 @@ export function ClientCounts({
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-[var(--v2-border)]">
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-px bg-[var(--v2-border)]">
       {cells.map(cell => (
         <div
           key={cell.key}

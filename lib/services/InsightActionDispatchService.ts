@@ -41,6 +41,7 @@ import {
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
+import { paymentReminderRepository } from '@/lib/repositories/PaymentReminderRepository';
 import { leadResponseRepository } from '@/lib/repositories/LeadResponseRepository';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { resolveEmailBranding } from '@/lib/email/branding';
@@ -173,22 +174,19 @@ async function dispatch(action: InsightAction): Promise<Outcome> {
     return { sent: false, reason: `daily cap for ${action.kind} reached (${DAILY_CAP[action.kind]})` };
   }
 
-  const profileResult = await businessProfileRepository.findByUserId(action.user_id);
-  const profile = profileResult.data;
-  if (!profile) return { sent: false, reason: 'business no longer exists' };
-
-  const locale = (profile.language ?? 'en') as Locale;
-  const tone = (action.payload.tone as EmailTone | undefined) ?? 'friendly';
-  const businessName = profile.company_name ?? 'Your business';
-  const branding = await resolveEmailBranding(action.user_id, locale, profile as never);
+  const ctx = await contextFor(
+    action.user_id,
+    (action.payload.tone as EmailTone | undefined) ?? 'friendly'
+  );
+  if (!ctx) return { sent: false, reason: 'business no longer exists' };
 
   switch (action.kind) {
     case 'chase_invoice':
-      return chaseInvoice(action, { businessName, locale, tone, branding });
+      return chaseInvoice(action, ctx);
     case 'followup_nudge':
-      return followupNudge(action, { businessName, locale, tone, branding });
+      return followupNudge(action, ctx);
     case 'booking_reminder':
-      return bookingReminder(action, { businessName, locale, tone, branding });
+      return bookingReminder(action, ctx);
     default:
       // A kind the CHECK constraint allows but this file has not learned yet.
       // Skipped rather than failed: retrying will not teach it.
@@ -203,10 +201,60 @@ interface Context {
   branding: Awaited<ReturnType<typeof resolveEmailBranding>>;
 }
 
+/**
+ * Everything an outbound message needs about the business, read once.
+ *
+ * Lifted out of `dispatchOne` so `sendInvoiceChase` can be called from outside
+ * the queue without a second copy of the same four reads. The queue still
+ * builds it once per row it claims, which is where it always was.
+ */
+async function contextFor(userId: string, tone: EmailTone = 'friendly'): Promise<Context | null> {
+  const { data: profile } = await businessProfileRepository.findByUserId(userId);
+  if (!profile) return null;
+
+  const locale = (profile.language ?? 'en') as Locale;
+
+  return {
+    businessName: profile.company_name ?? 'Your business',
+    locale,
+    tone,
+    branding: await resolveEmailBranding(userId, locale, profile as never),
+  };
+}
+
 async function chaseInvoice(action: InsightAction, ctx: Context): Promise<Outcome> {
   if (!action.invoice_id) return { sent: false, reason: 'no invoice on the action' };
 
-  const { data: invoice } = await paymentInvoiceRepository.findById(action.invoice_id, action.user_id);
+  return sendInvoiceChase(action.invoice_id, action.user_id, ctx);
+}
+
+/**
+ * Chase ONE invoice, by its id.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE SAME SEND, REACHABLE FROM OUTSIDE THE QUEUE.
+ *
+ * This was the body of `chaseInvoice` above and still is: one chase, one
+ * template, one set of refusals, whoever asks. It is exported because the
+ * automation agent has to reach it, and an agent can only call a plugin
+ * action — so `invoices.remind` in the catalog delegates here.
+ *
+ * Without it the agent's plan called `send_invoices`, which is
+ * `InvoiceDeliveryService`: the INVOICE itself with its PDF. The one path
+ * built to take invoice chasing over permanently would have re-sent the
+ * original bill rather than saying it was late, and the client would have
+ * received the same document twice with nothing explaining why.
+ *
+ * `ctx` is optional so the queue, which already built it once for a batch,
+ * does not read the business profile again per row.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function sendInvoiceChase(
+  invoiceId: string,
+  userId: string,
+  ctx?: Context
+): Promise<Outcome> {
+  const { data: invoice } = await paymentInvoiceRepository.findById(invoiceId, userId);
   if (!invoice) return { sent: false, reason: 'invoice no longer exists' };
 
   // The check that matters most. Between queueing and sending, the client may
@@ -219,14 +267,103 @@ async function chaseInvoice(action: InsightAction, ctx: Context): Promise<Outcom
   const to = invoice.client_email?.trim();
   if (!to) return { sent: false, reason: 'no email address for this invoice' };
 
-  const dueDate = invoice.due_date ? new Date(invoice.due_date) : null;
-  const daysOverdue = dueDate
-    ? Math.max(0, Math.floor((Date.now() - dueDate.getTime()) / 86_400_000))
-    : 0;
+  /*
+   * Built here when the caller had none — an agent calls this one invoice at a
+   * time and has no batch to amortise it over. The queue passes its own.
+   */
+  const context = ctx ?? (await contextFor(userId));
+  if (!context) return { sent: false, reason: 'business no longer exists' };
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT YET DUE IS NOT LATE. REFUSE IT.
+   *
+   * A business agrees payment terms with its client — the proposal's own
+   * `payment_terms_days`, the business default, or thirty days — and
+   * `dueDateFromTerms` turns that into this date. Chasing before it arrives is
+   * asking for money the client does not owe yet, in the owner's name.
+   *
+   * It has happened. Five real invoices were chased ahead of their due date, by
+   * up to NINETEEN days, every one of them selected by
+   * `CashRevenueAtRiskDetector` — which ages invoices by `created_at`, how long
+   * ago the bill was RAISED, rather than by when it falls due. An invoice
+   * issued ten days ago on thirty-day terms is not late by any reading.
+   *
+   * Checked HERE because this is the one place every chase funnels through: the
+   * scheduled reminder, the insight queue and the automation agent. Each
+   * selector can be wrong on its own; this cannot.
+   *
+   * A missing due date is refused too. Without one there is no day to be late
+   * on, and guessing one from the issue date is how this started.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const dueKey = invoice.due_date ? String(invoice.due_date).slice(0, 10) : null;
+
+  if (!dueKey) return { sent: false, reason: 'invoice has no due date' };
+
+  /* Whole days, on the same footing `dueDateFromTerms` writes them, so an
+     invoice falling due today is not chased at half past midnight. */
+  if (dueKey >= new Date().toISOString().slice(0, 10)) {
+    return { sent: false, reason: `not due until ${dueKey}` };
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * HAS ANYONE ALREADY CHASED THIS INVOICE THIS WEEK?
+   *
+   * THE GAP THIS CLOSES. This function sent and recorded NOTHING, so nothing
+   * anywhere could tell that a chase had gone out. Three callers reach it — the
+   * scheduled reminder, the insight queue and a scheduled agent — and the
+   * agent's plan believed it was deduped by a `sent_at` filter that reads the
+   * INVOICE's own send date, a value that never changes. So:
+   *
+   *   • an agent on a daily cadence would chase the same client every morning
+   *     until they paid, up to the 120 days its stop rule allows;
+   *   • and the agent could land on the same morning as the milestone chaser,
+   *     which is the collision the plan's `worksAlongside` note claims to
+   *     prevent and had no mechanism for.
+   *
+   * `payment_reminders` is where the scheduled chaser already records its
+   * overdue reminders, so reading it answers BOTH questions at once — and is
+   * why this is a shared table rather than a private marker. `overdue` is the
+   * existing type for exactly this; a new one would show as "Other" on the
+   * admin queue page's fixed label table.
+   *
+   * Seven days, matching the window the agent's own plan describes and sitting
+   * outside the chaser's 1/3/7 milestones.
+   *
+   * FAILS CLOSED. A read we cannot do is not permission to send: an unreadable
+   * history is exactly when a duplicate is most likely.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const CHASE_COOLDOWN_DAYS = 7;
+  const cooldownSince = new Date(
+    Date.now() - CHASE_COOLDOWN_DAYS * 86_400_000
+  ).toISOString();
+
+  const { data: alreadyChased, error: historyError } = await paymentReminderRepository
+    .findRecentByInvoice(invoiceId, 'overdue', cooldownSince, [
+      /* Cancelled and failed deliberately absent: one the owner called off is
+         not in the client's inbox, and one that failed never arrived. */
+      'pending',
+      'processing',
+      'sent',
+    ]);
+
+  if (historyError) {
+    return { sent: false, reason: 'could not read this invoice chase history' };
+  }
+
+  if (alreadyChased && alreadyChased.length > 0) {
+    return { sent: false, reason: `already chased within ${CHASE_COOLDOWN_DAYS} days` };
+  }
+
+  const dueDate = new Date(invoice.due_date as string);
+  const daysOverdue = Math.max(0, Math.floor((Date.now() - dueDate.getTime()) / 86_400_000));
 
   const { subject, html } = generateChaseInvoiceEmail({
     clientName: invoice.client_name?.trim() || 'there',
-    businessName: ctx.businessName,
+    businessName: context.businessName,
     invoiceNumber: invoice.invoice_number ?? '',
     amount: Number(invoice.amount ?? 0),
     currency: invoice.currency ?? 'USD',
@@ -240,12 +377,12 @@ async function chaseInvoice(action: InsightAction, ctx: Context): Promise<Outcom
     payUrl: await invoicePayLink({
       invoiceId: invoice.id,
       bookingId: (invoice as { booking_id?: string | null }).booking_id ?? null,
-      userId: action.user_id,
+      userId,
       baseUrl: platformOrigin(),
     }),
-    branding: ctx.branding,
-    locale: ctx.locale,
-    tone: ctx.tone,
+    branding: context.branding,
+    locale: context.locale,
+    tone: context.tone,
   });
 
   // Chasing an unpaid invoice is transactional: it is about a debt the
@@ -257,7 +394,7 @@ async function chaseInvoice(action: InsightAction, ctx: Context): Promise<Outcom
     html,
     // Was missing, so this went out branded "NeuronForge" with no reply path
     // back to the business that is actually owed the money.
-    ownerUserId: action.user_id,
+    ownerUserId: userId,
     /*
      * Flagged urgent only once the money is actually late, which is the same
      * line the subject branches on. A chase sent before the due date is a
@@ -268,7 +405,43 @@ async function chaseInvoice(action: InsightAction, ctx: Context): Promise<Outcom
      */
     urgent: daysOverdue > 0,
   });
-  return outcomeFromSend(sendResult);
+
+  const outcome = outcomeFromSend(sendResult);
+
+  /*
+   * Recorded only once it actually went.
+   *
+   * Written AFTER the send, not before, so a refused or failed delivery does
+   * not silence the next seven days of chasing — the client never heard from
+   * us, so the cooldown has nothing to protect them from.
+   *
+   * Non-blocking: the email has already left, and failing the call now would
+   * tell the caller nothing was sent when something was. The cost of a lost
+   * row is one possible duplicate in seven days; the cost of treating a
+   * successful send as a failure is a retry that definitely duplicates.
+   */
+  if (outcome.sent && invoice.contact_id) {
+    const { error: recordError } = await paymentReminderRepository.create({
+      user_id: userId,
+      invoice_id: invoiceId,
+      contact_id: invoice.contact_id,
+      reminder_type: 'overdue',
+      channel: 'email',
+      scheduled_at: new Date().toISOString(),
+      sent_at: new Date().toISOString(),
+      status: 'sent',
+      metadata: { daysOverdue, via: 'invoice_chase' },
+    } as never);
+
+    if (recordError) {
+      logger.error(
+        { err: recordError, invoiceId },
+        'Chased an invoice but could not record it; a duplicate is possible within the cooldown'
+      );
+    }
+  }
+
+  return outcome;
 }
 
 /**

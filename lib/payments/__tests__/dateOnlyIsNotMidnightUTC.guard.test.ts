@@ -110,8 +110,24 @@ describe('the contact drawer', () => {
     const fn = bookingsTab.match(/const stageDate = \(value: string[^)]*\) =>([\s\S]*?\n  \};)/);
     expect(fn).not.toBeNull();
     expect(fn![1]).toContain("timeZone: 'UTC'");
-    // The ternary is what keeps `paidAt` — a real instant — in the local zone.
-    expect(fn![1]).toMatch(/\.test\(value\)\s*\n?\s*\?/);
+    /*
+     * The BRANCH is what keeps `paidAt` — a real instant — in the local zone.
+     *
+     * This pinned `.test(value) ?`, which required the regex test and the
+     * ternary to be one expression. `stageDate` then named the test —
+     * `const dateOnly = /…/.test(value)`, with `dateOnly ? … : …` on the line
+     * below — which is the clearer spelling and made this find nothing.
+     *
+     * That is the SECOND time this assertion has failed on a rewrite that kept
+     * the rule (see the note above about `withYear`). So it now asks for the
+     * rule itself: a date-only value is anchored to UTC midnight, a real
+     * instant is handed to `new Date` untouched. How the choice between them is
+     * spelled is not this guard's business.
+     */
+    expect(fn![1]).toContain('T00:00:00Z');
+    expect(fn![1]).toMatch(/:\s*new Date\(value\)/);
+    /* Never the noon workaround, which Auckland defeats. */
+    expect(fn![1]).not.toContain('T12:00:00Z');
     expect(fn![1]).toContain('timeZoneOptions');
   });
 

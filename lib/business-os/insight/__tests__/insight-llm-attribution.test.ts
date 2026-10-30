@@ -156,7 +156,21 @@ describe('row 9 — health summary', () => {
      */
     const health = { categories: [], movingUp: null, improved: 0, declined: 0, steady: 0, measured: 0, unavailable: 0 };
 
-    await repository()['generateHealthNarrative'](U1, 72, 3, { cash_flow: 60 }, health, summary, [] as Insight[], 'en', ids(R1, G_A));
+    /*
+     * What cancellations cost, which the note states as a share of takings.
+     * Zeroes here: this file is about WHERE the call is attributed, and a
+     * business with nothing collected and nothing written off is the shape
+     * that must still produce a correctly-attributed call.
+     */
+    const cancelMoney = {
+      collected: 0,
+      lost: 0,
+      shareOfCollected: null,
+      currency: null,
+      mixedCurrency: false,
+    };
+
+    await repository()['generateHealthNarrative'](U1, 72, 3, { cash_flow: 60 }, health, summary, [] as Insight[], 'en', ids(R1, G_A), cancelMoney);
 
     expect(contexts()).toEqual([
       { userId: U1, feature: 'business-os-insights', component: 'health_summary', sessionId: G_A },

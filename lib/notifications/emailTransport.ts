@@ -17,6 +17,15 @@ import { createLogger } from '@/lib/logger';
 // callers (and the D9 test importing it from here) keep working unchanged.
 import { htmlToText } from '@/lib/email/htmlToText';
 import { marketingGate, type MarketingBlockReason } from '@/lib/consent/marketingGate';
+import { generateUnsubscribeToken } from '@/lib/consent/unsubscribeToken';
+import { platformOrigin } from '@/lib/utils/origins';
+import {
+  appendMarketingFooter,
+  buildMarketingFooter,
+  MarketingFooterError,
+} from '@/lib/notifications/marketingFooter';
+import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 
 export { htmlToText };
 
@@ -59,6 +68,15 @@ export type EmailKind =
       ownerUserId: string;
       /** For the audit line only. The address is the key consent is held against. */
       contactId?: string | null;
+      /*
+       * This message is about the same kind of work the person came for.
+       *
+       * The caller's half of soft opt-in, and only its half: the gate checks
+       * the relationship itself and a recorded refusal still refuses. Claim it
+       * only where it is true — a rebooking note to a client is the same kind
+       * of work, and a broadcast about something new is not.
+       */
+      softOptIn?: boolean;
     };
 
 export interface SendEmailBase {
@@ -378,15 +396,76 @@ function gmailConfigured(): boolean {
 }
 
 /**
- * The `List-Unsubscribe` header, or nothing.
+ * Where THIS send can be switched off, derived rather than asked for.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Built here, from the kind and the recipient, so that no caller can forget it.
+ * `unsubscribeUrl` stays on the params for mail that is neither marketing nor
+ * transactional in the usual sense — the morning briefing switches itself off
+ * in the owner's own settings, which is a different URL entirely.
+ *
+ * Marketing gets the public link every time. The transport is the only place
+ * that sees every marketing send, which is the whole reason this is not left to
+ * forty templates to remember.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+/** The path that implements RFC 8058 one-click. Also what marks a derived link. */
+const UNSUBSCRIBE_ENDPOINT = '/api/unsubscribe';
+
+function unsubscribeLinkFor(p: SendEmailParams): string | null {
+  if (p.unsubscribeUrl?.trim()) return p.unsubscribeUrl.trim();
+  if (p.kind !== 'marketing') return null;
+
+  try {
+    const token = generateUnsubscribeToken({
+      userId: p.ownerUserId,
+      /* The gate above refuses a marketing send to more than one recipient, so
+         there is exactly one address to key this on. */
+      email: p.to[0],
+      contactId: p.contactId ?? null,
+    });
+
+    return `${platformOrigin()}${UNSUBSCRIBE_ENDPOINT}?token=${encodeURIComponent(token)}`;
+  } catch (err) {
+    /* Only thrown when the signing secret is missing, which is a
+       misconfiguration. Logged, and the send continues without the header
+       rather than failing — but `marketingFooter` below throws the same way and
+       IS fatal, so a marketing email can never go out without a way off. */
+    logger.error({ err }, 'Could not build an unsubscribe link');
+    return null;
+  }
+}
+
+/**
+ * `List-Unsubscribe`, and one-click where there is an endpoint behind it.
  *
  * Angle brackets are required by RFC 2369 — a bare URL is ignored by the
  * clients this exists to satisfy.
+ *
+ * `List-Unsubscribe-Post` is declared ONLY for the link this transport built,
+ * because `/api/unsubscribe` is the only URL known to unsubscribe on an
+ * unauthenticated POST (RFC 8058). A caller-supplied URL gets the plain header:
+ * advertising one-click against an endpoint that does not implement it is worse
+ * than advertising nothing, since the client posts and nothing happens.
  */
 function unsubscribeHeaders(p: SendEmailParams): Record<string, string> {
   const url = p.unsubscribeUrl?.trim();
   if (!url) return {};
-  return { 'List-Unsubscribe': `<${url}>` };
+
+  const headers: Record<string, string> = { 'List-Unsubscribe': `<${url}>` };
+
+  /*
+   * One-click is declared when the URL IS the endpoint that implements it,
+   * rather than by asking who supplied it. `/api/unsubscribe` unsubscribes on
+   * an unauthenticated POST; the owner's settings page, which the morning
+   * briefing points at, does not — and a client posting to a page that ignores
+   * it makes the sender look broken.
+   */
+  if (url.includes(UNSUBSCRIBE_ENDPOINT)) {
+    headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
+  }
+
+  return headers;
 }
 
 /**
@@ -737,12 +816,45 @@ async function resolveSender(
     const { supabaseServer } = await import('@/lib/supabaseServer');
     const { data: profile } = await supabaseServer
       .from('business_profiles')
-      .select('company_name')
+      .select('company_name, email')
       .eq('user_id', ownerUserId)
       .maybeSingle();
 
-    const { data: authUser } = await supabaseServer.auth.admin.getUserById(ownerUserId);
-    const ownerEmail = authUser?.user?.email || undefined;
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE BUSINESS'S OWN ADDRESS FIRST, THE ACCOUNT'S ONLY AS A FALLBACK.
+     *
+     * This used to be the account login email, full stop. So every client of
+     * every business on the platform replied to whatever address the owner
+     * happened to sign up with, which for most people is a personal Gmail —
+     * while `business_profiles.email` sat holding the address they had
+     * deliberately published.
+     *
+     * Found on a live account where the two disagreed: the generated privacy
+     * policy told clients in writing to contact `ips@testIPS.com`, and Reply-To
+     * pointed at the owner's personal Gmail. One business, two faces, and the
+     * one the policy names was not the one anybody could reach.
+     *
+     * WHY IT MATTERS BEYOND TIDINESS. CAN-SPAM §7704(a)(1) requires header
+     * information that identifies the sender honestly, and GDPR requires a
+     * valid address for objections — somebody replying "stop emailing me" has
+     * to land where the business reads. A published address that is monitored
+     * satisfies both; a private one the owner may not watch satisfies neither
+     * well.
+     *
+     * NEVER EMPTY. Falling back to the account email rather than omitting the
+     * header: a marketing email with no reply path is the no-reply mailbox the
+     * regulators single out, and SPF/DKIM/DMARC are checked against From and
+     * the envelope sender, never this — so there is no deliverability cost to
+     * always having one.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const businessEmail = profile?.email?.trim() || undefined;
+
+    const { data: authUser } = businessEmail
+      ? { data: undefined }
+      : await supabaseServer.auth.admin.getUserById(ownerUserId);
+    const accountEmail = authUser?.user?.email || undefined;
 
     const address = fallbackFrom.match(/<([^>]+)>/)?.[1] || fallbackFrom;
     const name = profile?.company_name?.trim();
@@ -750,7 +862,7 @@ async function resolveSender(
     return {
       // Quoted: a business name with a comma in it splits the header otherwise.
       from: name ? `"${name.replace(/"/g, '')}" <${address}>` : fallbackFrom,
-      replyTo: ownerEmail,
+      replyTo: businessEmail ?? accountEmail,
     };
   } catch (err) {
     // Never block a send on this. An email from the platform's own name still
@@ -819,7 +931,9 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
       return { sent: false, provider: 'none', blocked: 'multi_recipient' };
     }
 
-    const verdict = await marketingGate.check(p.ownerUserId, p.to[0]);
+    const verdict = await marketingGate.check(p.ownerUserId, p.to[0], {
+      softOptIn: p.softOptIn === true,
+    });
     if (!verdict.allowed) {
       logger.warn(
         {
@@ -831,6 +945,59 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
         'Refused a marketing send'
       );
       return { sent: false, provider: 'none', blocked: verdict.reason };
+    }
+
+    /* What made it lawful, in the log beside the send. Soft opt-in is the one
+       anybody would later ask about, and "we sent it" is not an answer. */
+    logger.info(
+      { ownerUserId: p.ownerUserId, contactId: p.contactId ?? null, basis: verdict.basis },
+      'Marketing send allowed'
+    );
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE WAY OUT, ADDED HERE SO NO TEMPLATE CAN FORGET IT.
+     *
+     * A link in the body, the postal address CAN-SPAM wants, and the
+     * `List-Unsubscribe` header the derived URL triggers below. This is the
+     * only place that sees every marketing send, which is why it is done here
+     * and not in forty templates.
+     *
+     * A failure REFUSES THE SEND rather than degrading. Everything else in this
+     * transport falls back on missing data; a marketing email with no way off
+     * is the one message that cannot be taken back.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const unsubscribeUrl = unsubscribeLinkFor(p);
+
+    try {
+      if (!unsubscribeUrl) throw new MarketingFooterError('No unsubscribe link could be built');
+
+      const [{ data: profile }, { data: settings }] = await Promise.all([
+        businessProfileRepository.findByUserId(p.ownerUserId),
+        marketingConsentRepository.settings(p.ownerUserId),
+      ]);
+
+      const locale = profile?.language ?? 'en';
+
+      const footer = buildMarketingFooter({
+        businessName: profile?.company_name ?? '',
+        /* The gate already refused a business with no address, so this is
+           present — checked again because the builder refuses an empty one and
+           the two must not disagree. */
+        postalAddress: settings?.postal_address ?? '',
+        unsubscribeUrl,
+        locale,
+        isRtl: locale === 'he',
+      });
+
+      p = { ...p, html: appendMarketingFooter(p.html, footer), unsubscribeUrl };
+    } catch (err) {
+      logger.error(
+        { err, ownerUserId: p.ownerUserId },
+        'Refused a marketing send with no way to unsubscribe'
+      );
+      return { sent: false, provider: 'none', blocked: 'no_unsubscribe' };
     }
   }
 

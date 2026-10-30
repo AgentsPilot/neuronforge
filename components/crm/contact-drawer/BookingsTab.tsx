@@ -1029,18 +1029,44 @@ export function BookingsTab({
    * something else.
    */
   const stageDate = (value: string, withYear = false) => {
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const parsed = dateOnly ? new Date(`${value}T00:00:00Z`) : new Date(value);
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE YEAR ONLY WHEN IT IS NOT THIS ONE.
+     *
+     * `withYear` asked for the year unconditionally, and on a phone those four
+     * characters are what pushed the stage row past its card: "לתשלום עד 15
+     * באוק׳ 2026" is about 40px wider than the same line without them, on a
+     * row that was already 20px over a 340px drawer. The ⋯ menu, being last
+     * and unable to shrink, ended up outside the border.
+     *
+     * Dropping it loses nothing. The year this line disambiguates against is
+     * the CURRENT one, which is the year a reader assumes — "15 Oct" means
+     * this October unless told otherwise, and a plan that runs into next year
+     * still says so, because then the years differ and it is printed.
+     *
+     * Read on the same clock the formatting uses, or a date-only value near a
+     * year boundary would be compared in one zone and printed in another.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const year = dateOnly ? parsed.getUTCFullYear() : parsed.getFullYear();
+    const now = new Date();
+    const thisYear = dateOnly ? now.getUTCFullYear() : now.getFullYear();
+
     const parts: Intl.DateTimeFormatOptions = {
       day: 'numeric',
       month: 'short',
-      ...(withYear ? { year: 'numeric' } : {}),
+      ...(withYear && year !== thisYear ? { year: 'numeric' } : {}),
     };
 
-    return /^\d{4}-\d{2}-\d{2}$/.test(value)
-      ? new Date(`${value}T00:00:00Z`).toLocaleDateString(isRTL ? 'he-IL' : 'en-US', {
+    return dateOnly
+      ? parsed.toLocaleDateString(isRTL ? 'he-IL' : 'en-US', {
           timeZone: 'UTC',
           ...parts,
         })
-      : new Date(value).toLocaleDateString(isRTL ? 'he-IL' : 'en-US', timeZoneOptions(parts));
+      : parsed.toLocaleDateString(isRTL ? 'he-IL' : 'en-US', timeZoneOptions(parts));
   };
 
   const toggleBooking = (id: string) => {
@@ -5181,7 +5207,31 @@ export function BookingsTab({
                                                   key={stage.id}
                                                   className="flex flex-col gap-0.5 px-2.5 py-2"
                                                 >
-                                                  <div className="flex items-center gap-2">
+                                                  {/*
+                                                      WHY THE ⋯ ESCAPED THE CARD ON A PHONE.
+
+                                                      A flex item's automatic minimum size is its
+                                                      CONTENT, so an item can only be squeezed if
+                                                      it carries `overflow` of its own. On this
+                                                      line that was true of the label alone: the
+                                                      status chip and the ⋯ are `shrink-0` by
+                                                      design — a control that is squashed cannot be
+                                                      pressed — and the due date was `nowrap` with
+                                                      visible overflow, so it could never give.
+
+                                                      The row's minimum width was therefore the sum
+                                                      of all of it, about 20px past a 340px drawer,
+                                                      and the last child is the ⋯. The date is now
+                                                      the element that gives (below), and the year
+                                                      is dropped when it is the current one, which
+                                                      is where the width actually came back.
+
+                                                      `min-w-0` here is the floor for this line
+                                                      itself, so a future parent in row direction
+                                                      cannot reintroduce the same content-based
+                                                      minimum one level up.
+                                                  */}
+                                                  <div className="flex min-w-0 items-center gap-2">
                                                   {/*
                                                     GREEN MEANS THE BUSINESS KEPT IT.
                                                     ───────────────────────────────────
@@ -5273,7 +5323,21 @@ export function BookingsTab({
                                                   */}
                                                   {(stage.paidAt || stage.dueDate) && (
                                                     <span
-                                                      className="text-[11.5px] tabular-nums whitespace-nowrap"
+                                                      /*
+                                                        The element that gives, when something has
+                                                        to. `truncate` is nowrap plus an ellipsis
+                                                        plus the overflow rule, and `min-w-0` lets
+                                                        it actually shrink.
+
+                                                        Chosen over the amount, the status chip and
+                                                        the menu deliberately: a clipped date still
+                                                        reads as a date, where half a sum reads as a
+                                                        different sum and a clipped control cannot
+                                                        be pressed. In practice it rarely clips —
+                                                        dropping the current year gave this line
+                                                        back more room than it was short by.
+                                                      */
+                                                      className="min-w-0 truncate text-[11.5px] tabular-nums"
                                                       style={{ color: 'var(--v2-text-muted)' }}
                                                     >
                                                       {/* "שולם 7 באוק׳" — one fact where there

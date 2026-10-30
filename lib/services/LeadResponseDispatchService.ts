@@ -47,6 +47,7 @@ import { automationApplies } from '@/lib/business-os/gaps/automationApplies';
 import { findGaps } from '@/lib/business-os/gaps/findGaps';
 import { sendInvoice } from '@/lib/services/InvoiceDeliveryService';
 import { sendQuoteReminder } from '@/lib/services/ProposalSendService';
+import { marketingGate } from '@/lib/consent/marketingGate';
 import { BookingEmailService, getBusinessLocale } from '@/lib/services/BookingEmailService';
 
 const logger = createLogger({ service: 'LeadResponseDispatchService' });
@@ -575,6 +576,44 @@ async function inviteOrChaseLead(
     row.kind === 'invite' && typeof recommendation.opening === 'string'
       ? recommendation.opening
       : '';
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * HAS THIS PERSON SAID YES, AND NOT SINCE SAID NO?
+   *
+   * Asked HERE as well as at the transport, and the second check earns its
+   * place for two reasons, neither of which is safety: `sendEmail` refuses an
+   * unconsented marketing send whatever happens, so nothing was ever at risk
+   * of going out.
+   *
+   * IT REFUSES LATE. By then this queue has read the contact, resolved the
+   * business profile and its branding, picked a service, signed a booking
+   * token and rendered a template — all of it thrown away.
+   *
+   * AND IT REFUSES AS A FAILURE. The row was settled `send_failed`, detail
+   * "not sent: no_consent", and logged at error. Somebody unsubscribing
+   * between the enquiry and the two-day chase is an ordinary outcome, not a
+   * fault, and a queue whose error column fills with them is one nobody reads.
+   *
+   * So it is named as its own skip reason, with the gate's own verdict as the
+   * detail. The gate remains the authority and still runs underneath.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const { data: contact } = await supabaseServer
+    .from('crm_contacts')
+    .select('email')
+    .eq('id', row.contact_id)
+    .eq('user_id', row.user_id)
+    .maybeSingle();
+
+  if (!contact?.email) return { sent: false, reason: 'no_contact_email' };
+
+  const consent = await marketingGate.check(row.user_id, contact.email);
+
+  if (!consent.allowed) {
+    log.info({ reason: consent.reason, kind: row.kind }, 'Lead response not owed: no consent');
+    return { sent: false, reason: 'no_consent', detail: consent.reason };
+  }
 
   const outcome = await sendBookingLink(row.contact_id, row.user_id, {
     serviceId: row.service_id,

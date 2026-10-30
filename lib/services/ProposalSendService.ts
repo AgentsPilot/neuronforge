@@ -39,8 +39,22 @@ import { resolveUserLanguage } from '@/lib/business-os/userLanguage';
 import { resolveTermsDays } from '@/lib/payments/paymentTerms';
 import type { Locale } from '@/lib/i18n/config';
 import { recordEmailSend } from '@/lib/notifications/recordEmailSend';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 
 const logger = createLogger({ service: 'ProposalSendService' });
+
+/**
+ * One nudge per quote per week, counted from the nudge and not from the quote.
+ *
+ * Seven days because that is what the invoice chaser settled on and a client
+ * should not learn two different rhythms from one business. The cadence the
+ * owner picks is how often the AGENT looks; this is how often one client can
+ * hear about one quote, and the narrower of the two wins.
+ */
+const QUOTE_REMINDER_COOLDOWN_DAYS = 7;
+
+/** Its own verb on the timeline. `proposal_sent` is the quote itself. */
+const QUOTE_REMINDER_ACTIVITY = 'proposal_reminder';
 
 export type SendProposalOutcome =
   | { ok: true; proposal: Proposal; alreadySent: boolean }
@@ -497,6 +511,54 @@ export async function sendQuoteReminder(
     return { ok: false, reason: 'already_answered' };
   }
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * HAVE WE ALREADY NUDGED THIS QUOTE THIS WEEK?
+   *
+   * The status check above is not a repeat-send guard. It stops once the client
+   * ANSWERS, and the whole point of a nudge is that they have not. So a quote
+   * sitting at `sent` passed every check here on every run.
+   *
+   * `followUpStalledDeals` is what made that expensive. Its two filters on the
+   * quote look like deduplication and are not: `sent_at < today-7` and
+   * `sent_at >= today-stop_after_days` both read the day the QUOTE was sent, a
+   * value this function deliberately never touches. Between those two dates
+   * they are permanently true, so with `daily` offered as a cadence the same
+   * client heard about the same quote every morning for weeks.
+   *
+   * Same defect, and now the same fix, as the invoice chaser: ask at the choke
+   * point where the send happens, so all three callers are covered at once,
+   * and fail closed when the answer cannot be read.
+   *
+   * `crm_activities` rather than a private marker, keyed on `source_entity_id`
+   * — the quote, not the contact, because a contact may hold two and a nudge
+   * about one must not silence the other. The quote's own send already writes
+   * there as `proposal_sent`; this is the same row shape with its own verb, so
+   * the owner sees the nudge on the client's timeline too.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const cooldownSince = new Date(
+    Date.now() - QUOTE_REMINDER_COOLDOWN_DAYS * 86_400_000
+  ).toISOString();
+
+  const { data: alreadyNudged, error: historyError } =
+    await crmActivityRepository.findRecentForEntity(
+      userId,
+      proposalId,
+      QUOTE_REMINDER_ACTIVITY,
+      cooldownSince
+    );
+
+  if (historyError) {
+    log.error({ err: historyError }, 'Could not read this quote reminder history');
+    return { ok: false, reason: 'history_unreadable' };
+  }
+
+  if (alreadyNudged && alreadyNudged.length > 0) {
+    log.info({ count: alreadyNudged.length }, 'Quote already nudged inside the window');
+    return { ok: false, reason: 'already_reminded' };
+  }
+
   const { data: contact } = await supabaseServer
     .from('crm_contacts')
     .select('first_name, email')
@@ -556,6 +618,35 @@ export async function sendQuoteReminder(
     log.error({ error: result.error }, 'Quote reminder not sent');
     return { ok: false, reason: result.error || 'send_failed' };
   }
+
+  /*
+   * The record, written only now.
+   *
+   * After the send and after the `result.sent` check above, for the reason the
+   * invoice chaser records last: a row written before a delivery that never
+   * happened silences the next seven days for a client who heard nothing.
+   * `recordEmailSend` above deliberately logs failures too, which is why it
+   * cannot double as this marker.
+   *
+   * Non-blocking. The email has already left, so reporting a failure here would
+   * invite a retry that definitely duplicates, where a lost row risks at most
+   * one duplicate in seven days.
+   */
+  crmActivityRepository
+    .create({
+      user_id: userId,
+      contact_id: proposal.contact_id,
+      activity_type: QUOTE_REMINDER_ACTIVITY,
+      title: proposal.title,
+      description: proposal.title,
+      auto_logged: true,
+      source_capability: 'payments',
+      source_entity_id: proposalId,
+      activity_date: new Date().toISOString(),
+    })
+    .then(({ error }) => {
+      if (error) log.warn({ err: error }, 'Could not log the quote reminder (non-blocking)');
+    });
 
   log.info('Quote reminder sent');
   return { ok: true };

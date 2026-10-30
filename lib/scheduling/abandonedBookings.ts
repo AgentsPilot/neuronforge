@@ -193,17 +193,81 @@ export const ATTEMPT_WINDOW_MINUTES = 30;
  * is finished and must never be rewritten, which is what the status filter is
  * for rather than a date test alone.
  *
- * Returns how many were closed, for the caller's log.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AND IT CHECKS WHETHER THE BOOKING HAPPENED BEFORE CALLING IT ABANDONED.
+ *
+ * This used to be the `update` alone: anything still `started` past the window
+ * became `abandoned`, on the reasoning that the Stripe session has expired by
+ * then so the client cannot finish. That reasoning only covers the journey the
+ * attempt belongs to. It does not cover the client finishing ANOTHER way.
+ *
+ * `convertAttempt` has two callers, both inside `materialiseAttempt` — the card
+ * finalise and the webhook. A client who opens a card journey, gives up on it,
+ * and then books the same slot through `website/booking/create` (pay later, an
+ * invoice, a free service) completes through a path that never saw an attempt
+ * id and so cannot convert one. The row stays `started`, and this function then
+ * labelled it abandoned.
+ *
+ * Measured 2026-10-29: of 14 rows reading `abandoned`, EIGHT had a booking for
+ * the same service and slot created inside the attempt's own 30-minute window —
+ * the same journey finishing. Four more were booked later, which is a genuine
+ * abandonment followed by a rebooking, and two never booked at all. So the
+ * state was wrong for 8 of 14, every recovery email to those people chased
+ * somebody who had already bought, and any count built on it reports lost
+ * business that was never lost.
+ *
+ * Checked here rather than in each completion path because the paths are the
+ * thing that keeps changing. A new way to finish a booking inherits this
+ * automatically; it would have to remember to call `convertAttempt`.
+ *
+ * The ones that did complete are marked `converted` and pointed at their
+ * booking, not merely skipped — a row left `started` for ever is the dead state
+ * `theAttemptReachesAnEnding.guard` exists to prevent.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Returns how many were closed as abandoned, for the caller's log.
  */
 export async function sweepAbandoned(now: Date = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - ATTEMPT_WINDOW_MINUTES * 60 * 1000).toISOString();
 
   try {
+    const { data: candidates, error: readError } = await supabaseServer
+      .from('abandoned_bookings')
+      .select('id, user_id, service_id, start_time, created_at')
+      .eq('status', 'started')
+      .lt('created_at', cutoff);
+
+    if (readError) throw readError;
+    if (!candidates?.length) return 0;
+
+    const completed = await bookingsThatFinished(candidates);
+
+    const abandonedIds = candidates.map(c => c.id).filter(id => !completed.has(id));
+
+    if (completed.size > 0) {
+      /*
+       * Worth saying out loud: each one is a client who finished and would
+       * otherwise have been chased by a recovery email for a booking they had
+       * already made.
+       */
+      logger.warn(
+        { count: completed.size },
+        'Attempts completed through a path that never converted them; closing as converted'
+      );
+
+      for (const [attemptId, bookingId] of completed) {
+        await convertAttempt(attemptId, bookingId);
+      }
+    }
+
+    if (abandonedIds.length === 0) return 0;
+
     const { data, error } = await supabaseServer
       .from('abandoned_bookings')
       .update({ status: 'abandoned', updated_at: now.toISOString() })
+      .in('id', abandonedIds)
+      /* Still filtered, so a row converted between the read and here is safe. */
       .eq('status', 'started')
-      .lt('created_at', cutoff)
       .select('id');
 
     if (error) throw error;
@@ -213,4 +277,77 @@ export async function sweepAbandoned(now: Date = new Date()): Promise<number> {
     logger.error({ err }, 'Could not sweep abandoned booking attempts');
     return 0;
   }
+}
+
+/** One attempt as the sweeper reads it. */
+interface SweepCandidate {
+  id: string;
+  user_id: string;
+  service_id: string | null;
+  start_time: string | null;
+  created_at: string;
+}
+
+/**
+ * Which of these attempts already have the booking they were trying to make.
+ *
+ * Matched on business, service and slot, and only when the booking was created
+ * inside the attempt's own window. The window is what separates the two cases
+ * that otherwise look identical: a booking in it is this journey finishing by
+ * another route, while one an hour later is a client who gave up and came back
+ * — genuinely abandoned, and correctly swept.
+ *
+ * One read per business rather than one per attempt: a sweep handles every
+ * tenant's rows at once, and this is a cron.
+ */
+async function bookingsThatFinished(
+  candidates: SweepCandidate[]
+): Promise<Map<string, string>> {
+  const finished = new Map<string, string>();
+  const byOwner = new Map<string, SweepCandidate[]>();
+
+  for (const candidate of candidates) {
+    if (!candidate.service_id) continue;
+    const held = byOwner.get(candidate.user_id);
+    if (held) held.push(candidate);
+    else byOwner.set(candidate.user_id, [candidate]);
+  }
+
+  for (const [userId, owned] of byOwner) {
+    const earliest = owned.reduce(
+      (oldest, c) => (c.created_at < oldest ? c.created_at : oldest),
+      owned[0].created_at
+    );
+
+    const { data: bookings, error } = await supabaseServer
+      .from('scheduling_bookings')
+      .select('id, service_id, start_time, created_at')
+      .eq('user_id', userId)
+      .gte('created_at', earliest);
+
+    if (error) {
+      /* Soft: an unreadable half means these are swept as before, which is the
+         behaviour this replaced rather than something worse. */
+      logger.error({ err: error, userId }, 'Could not check whether attempts completed');
+      continue;
+    }
+
+    for (const candidate of owned) {
+      const opened = new Date(candidate.created_at).getTime();
+      const closes = opened + ATTEMPT_WINDOW_MINUTES * 60 * 1000;
+
+      const match = (bookings ?? []).find(booking => {
+        if (booking.service_id !== candidate.service_id) return false;
+        /* A slotless service is sold rather than booked; the slot cannot
+           disambiguate, so the service and the window have to. */
+        if (candidate.start_time && booking.start_time !== candidate.start_time) return false;
+        const made = new Date(booking.created_at as string).getTime();
+        return made >= opened - 60_000 && made <= closes;
+      });
+
+      if (match) finished.set(candidate.id, match.id as string);
+    }
+  }
+
+  return finished;
 }

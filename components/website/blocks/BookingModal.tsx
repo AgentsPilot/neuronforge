@@ -298,7 +298,18 @@ export function BookingModal({
     // never the client's, so the step is dropped instead and the booking
     // completes unpaid.
     ? flowForService(journeyService, { processorReady })
-    : (clientFlow || ['scheduling', 'client_info', 'payment', 'confirmation']);
+    : /*
+       * The fallback flow honours `processorReady` too.
+       *
+       * This branch runs before a service is chosen, and for pages whose stored
+       * blocks predate the journey facts. It hardcoded a list containing
+       * 'payment', so a business that cannot take cards still showed a payment
+       * step in the indicator until a service was picked and `flowForService`
+       * corrected it. Cosmetic rather than a charge — nothing collects from the
+       * indicator — but it contradicted the dialog one step later.
+       */
+      (clientFlow || ['scheduling', 'client_info', 'payment', 'confirmation'])
+        .filter(step => step !== 'payment' || processorReady);
 
   // Use helper functions to handle both legacy 'booking' and new 'scheduling'/'client_info' steps
   const hasScheduling = flowHasScheduling(effectiveFlow);

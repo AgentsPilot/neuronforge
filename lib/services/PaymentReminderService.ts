@@ -15,6 +15,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { platformOrigin } from '@/lib/utils/origins';
 import { invoicePayLink } from '@/lib/payments/invoicePayLink';
+import { DEFAULT_OVERDUE_DAYS } from '@/lib/payments/overdueMilestones';
 import { createLogger } from '@/lib/logger';
 import { emitPaymentEvent, PaymentProcessorType } from '@/lib/services/PaymentEventService';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
@@ -175,7 +176,7 @@ const DEFAULT_REMINDER_CONFIG: ReminderConfig = {
    * ───────────────────────────────────────────────────────────────────────────
    */
   daysBefore: [3],
-  overdueDays: [3, 7, 14],
+  overdueDays: DEFAULT_OVERDUE_DAYS,
   channels: ['email'],
   defaultChannel: 'email',
   /*
@@ -1419,12 +1420,29 @@ export class PaymentReminderService {
             }
           }
 
-          // Update status to overdue
+          /*
+           * ── OVERDUE MEANS THE CLIENT IS LATE, NOT THAT WE NEVER ASKED ────
+           *
+           * This flipped any past-due period to `overdue` whether or not it
+           * had ever been invoiced. An unbilled period then became unbillable:
+           * `billDueDatedStages` selects `status = 'pending'`, and the claim in
+           * `PaymentStageBillingService` requires `pending` too, so once the
+           * label moved nothing could ever raise its invoice.
+           *
+           * The two run in the same cron, billing first — so this only bites
+           * when a run is missed or the billing gate skipped the row. Either
+           * way the period was stranded permanently and silently, in a status
+           * that reads as the client's fault.
+           *
+           * `invoice_id` is the whole test: a period nobody has invoiced is
+           * not late, it is unasked.
+           */
           await this.supabase
             .from('payment_plan_installments')
             .update({ status: 'overdue', updated_at: new Date().toISOString() })
             .eq('id', installment.id)
-            .eq('status', 'pending');
+            .eq('status', 'pending')
+            .not('invoice_id', 'is', null);
         }
       }
 
@@ -1587,8 +1605,55 @@ export class PaymentReminderService {
   private async planCanNoLongerCharge(stage: {
     user_id: string;
     subscription_id?: string | null;
+    payment_plan_id?: string | null;
   }): Promise<boolean> {
-    if (!stage.subscription_id) return false;
+    /*
+     * ── NO SUBSCRIPTION AT ALL IS NOT THE SAME AS AN UNCERTAIN ONE ──────────
+     *
+     * This read `if (!stage.subscription_id) return false` — no subscription,
+     * so assume the card will collect it. That is the fail-closed rule stated
+     * above, and for a CARD plan it is right: a missing reference might still
+     * be a live subscription, and invoicing it would bill the client twice.
+     *
+     * But a business can sell a plan with no card at all, where each period is
+     * meant to be INVOICED when it falls due. Such a plan has no subscription
+     * by construction, so this answered "the card will get it" about a plan
+     * that has no card — the one case that most needs an invoice was the one
+     * case guaranteed never to get one.
+     *
+     * Measured: of 38 later periods on invoice-based plans, 0 were ever
+     * invoiced and 0 were ever paid, against 9 paid on card-based plans.
+     *
+     * So the absence is PROVED rather than assumed. A plan with no
+     * subscription row of its own is invoice-based and must be billed; a plan
+     * that HAS one, whose id merely did not reach this row, keeps the old
+     * fail-closed answer. Where the plan cannot be identified at all there is
+     * nothing to prove, and that also fails closed.
+     */
+    if (!stage.subscription_id) {
+      if (!stage.payment_plan_id) return false;
+
+      try {
+        const { data: subscription, error } = await this.supabase
+          .from('payment_plan_subscriptions')
+          .select('id')
+          .eq('payment_plan_id', stage.payment_plan_id)
+          .eq('user_id', stage.user_id)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        /* No subscription anywhere for this plan: nothing can ever charge it,
+           so the period has to be asked for. */
+        return !subscription;
+      } catch (err) {
+        logger.warn(
+          { err, paymentPlanId: stage.payment_plan_id },
+          'Could not tell whether this plan has a subscription; leaving the period alone'
+        );
+        return false;
+      }
+    }
 
     try {
       const { data: plan, error } = await this.supabase
@@ -1782,7 +1847,10 @@ export class PaymentReminderService {
 
       const { data: due, error } = await this.supabase
         .from('payment_plan_installments')
-        .select('id, user_id, contact_id, due_date, proposal_id, subscription_id')
+        /* `payment_plan_id` so `planCanNoLongerCharge` can tell an
+           INVOICE-BASED plan — one with no subscription anywhere — from a card
+           plan whose subscription id simply did not reach this row. */
+        .select('id, user_id, contact_id, due_date, proposal_id, subscription_id, payment_plan_id')
         .eq('status', 'pending')
         .eq('trigger', 'date')
         .is('invoice_id', null)

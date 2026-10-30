@@ -51,6 +51,7 @@ export type HealthCategory =
   | 'sales'
   | 'operations'
   | 'acquisition'
+  | 'cancellations'
   | 'pricing';
 
 /**
@@ -66,6 +67,29 @@ export interface Measure {
   previous: number | null;
   sample: number;
   previousSample: number;
+  /**
+   * What the rate was actually divided BY, when that is not the sample.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THE SAMPLE IS NOT ALWAYS THE DENOMINATOR.
+   *
+   * For every measure but one they are the same thing: 14 of 26 invoices were
+   * paid on time, so the rate is 53.8% and the sample is 26 — the reader can
+   * do the division themselves, which is the whole point of showing it.
+   *
+   * `operations` is the exception. Its rate is booked HOURS over available
+   * HOURS, while its sample counts BOOKINGS, because the sample's other job is
+   * the `MIN_SAMPLE` gate and "eight bookings before this is a rate" is the
+   * honest gate. The card then printed "12.5% of your hours booked, from 16"
+   * against 16 bookings and a denominator of 128 hours, so a reader working it
+   * out got 2 hours out of 16 — a different claim, wrong in both halves.
+   *
+   * So the denominator travels separately, with the words for its unit, and
+   * the card shows that instead where it exists. Absent means sample and
+   * denominator are the same number and nothing changes.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  basis?: { value: number; unitKey: string } | null;
 }
 
 export interface CategoryHealth {
@@ -81,6 +105,13 @@ export interface CategoryHealth {
   /** Why it is null, when it is. */
   unavailable: 'too_little_data' | 'not_measurable' | null;
   sample: number;
+  /**
+   * What the rate was divided by, when that is not `sample`. See `Measure`.
+   *
+   * Optional on purpose: every summary already stored lacks it, and those rows
+   * must go on rendering exactly as they do today.
+   */
+  basis?: { value: number; unitKey: string } | null;
 }
 
 /**
@@ -97,8 +128,69 @@ export const MIN_SAMPLE: Record<HealthCategory, number> = {
   sales: 5,
   operations: 8,
   acquisition: 25,
+  /*
+   * Eight appointments before a cancellation RATE means anything. Below that
+   * one person calling off reads as 25% and the owner is told their business
+   * is falling apart because somebody had flu.
+   */
+  cancellations: 8,
   pricing: Number.POSITIVE_INFINITY,
 };
+
+/**
+ * Which way is good.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Every measure here used to be higher-is-better, and three places quietly
+ * relied on it: `summariseHealth` counted a rise as an improvement, the card
+ * drew a rise as a green up-arrow, and `movingUp` divided by the result.
+ * `HealthRows.tsx` carried the warning in so many words — "if a lower-is-better
+ * measure is ever added to businessHealth.ts, this assumption breaks and the
+ * colours silently invert".
+ *
+ * Cancellations are that measure. A rate that climbed from 4% to 19% would have
+ * been reported as the business improving, in green, with an arrow pointing up.
+ *
+ * So the direction is data rather than an assumption, and every reader asks it
+ * instead of assuming. A category added later and left out of this map is a
+ * TypeScript error, not a silently green catastrophe.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const HIGHER_IS_BETTER: Record<HealthCategory, boolean> = {
+  cash_flow: true,
+  retention: true,
+  conversion: true,
+  sales: true,
+  operations: true,
+  acquisition: true,
+  /** The one that is not. More appointments called off is worse, never better. */
+  cancellations: false,
+  pricing: true,
+};
+
+/**
+ * A movement smaller than this is noise, not a trend.
+ *
+ * Two percentage points. Below it a rate that wobbled because one client
+ * rebooked would be reported to the owner as a direction of travel.
+ */
+const MEANINGFUL_POINTS = 2;
+
+/** Did this category move the right way, by a meaningful amount? */
+export function movedForTheBetter(category: CategoryHealth): boolean {
+  if (category.change === null) return false;
+  return HIGHER_IS_BETTER[category.category]
+    ? category.change > MEANINGFUL_POINTS
+    : category.change < -MEANINGFUL_POINTS;
+}
+
+/** Did it move the wrong way, by a meaningful amount? */
+export function movedForTheWorse(category: CategoryHealth): boolean {
+  if (category.change === null) return false;
+  return HIGHER_IS_BETTER[category.category]
+    ? category.change < -MEANINGFUL_POINTS
+    : category.change > MEANINGFUL_POINTS;
+}
 
 /**
  * What each category's rate actually counts.
@@ -113,6 +205,7 @@ export const MEASURE_KEY: Record<HealthCategory, string> = {
   sales: 'health.measure.enquiries_replied_to',
   operations: 'health.measure.calendar_filled',
   acquisition: 'health.measure.visitors_who_got_in_touch',
+  cancellations: 'health.measure.appointments_called_off',
   pricing: 'health.measure.none',
 };
 
@@ -141,6 +234,16 @@ export const MEASURE_IN_PLAIN_WORDS: Record<HealthCategory, string> = {
   sales: 'enquiries that got a reply',
   operations: 'how much of the time that was available to book actually got booked',
   acquisition: 'people who visited the website and then got in touch',
+  /*
+   * Worded so the model cannot mistake which way is good.
+   *
+   * Every other line here describes something the owner wants MORE of, and the
+   * prompt hands over movement as a bare "up 6 points from 14%" with no
+   * judgement attached. Called "cancellations" the model would have had to
+   * infer the direction; called "appointments that were called off" it reads as
+   * a loss in the sentence itself, and the note it writes says so.
+   */
+  cancellations: 'appointments that were called off instead of going ahead',
   pricing: 'prices (nothing records discounts yet, so this cannot be measured)',
 };
 
@@ -157,6 +260,9 @@ export function scoreCategory(category: HealthCategory, measure: Measure): Categ
     category,
     measureKey: MEASURE_KEY[category],
     sample: measure.sample,
+    /* Carried through untouched, including its absence: a measure whose
+       denominator IS its sample must not grow an empty object here. */
+    ...(measure.basis ? { basis: measure.basis } : {}),
   };
 
   // Nothing measures pricing today. Saying so beats scoring it 80.
@@ -203,19 +309,12 @@ export interface BusinessHealth {
   unavailable: number;
 }
 
-/**
- * A movement smaller than this is noise, not a trend.
- *
- * Two percentage points. Below it a rate that wobbled because one client
- * rebooked would be reported to the owner as a direction of travel.
- */
-const MEANINGFUL_POINTS = 2;
-
 export function summariseHealth(categories: CategoryHealth[]): BusinessHealth {
   const comparable = categories.filter(c => c.change !== null);
 
-  const improved = comparable.filter(c => c.change! > MEANINGFUL_POINTS).length;
-  const declined = comparable.filter(c => c.change! < -MEANINGFUL_POINTS).length;
+  /* Direction per category, not a sign test — see `HIGHER_IS_BETTER`. */
+  const improved = comparable.filter(movedForTheBetter).length;
+  const declined = comparable.filter(movedForTheWorse).length;
   const steady = comparable.length - improved - declined;
 
   return {

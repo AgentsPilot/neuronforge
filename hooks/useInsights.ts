@@ -76,6 +76,15 @@ export interface HealthMeasure {
   measureKey: string;
   unavailable: 'too_little_data' | 'not_measurable' | null;
   sample: number;
+  /**
+   * What the rate was divided by, when that is not `sample`.
+   *
+   * Only `operations` carries one: its rate is hours over hours while its
+   * sample counts bookings, so the card printed "12.5% of your hours booked,
+   * from 16" against a denominator of 128. Optional because every summary
+   * stored before this lacks it and must render unchanged.
+   */
+  basis?: { value: number; unitKey: string } | null;
 }
 
 export interface HealthMeasures {

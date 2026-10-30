@@ -91,7 +91,7 @@
       "schedule": "7 0 * * *"
     },
     {
-      "path": "/api/cron/inbox-enquiries",
+      "path": "/api/run-scheduled-agents",
       "schedule": "*/5 * * * *"
     },
     {

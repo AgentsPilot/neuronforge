@@ -30,7 +30,22 @@ const SITES = [
   'lib/business-os/insight/detectors/catalog/CashWorkUnbilledDetector.ts',
   'lib/business-os/insight/detectors/catalog/OpsPeakUnutilizedDetector.ts',
   'lib/business-os/insight/detectors/catalog/OpsUtilizationLowDetector.ts',
-  'lib/business-os/insight/detectors/catalog/RetCancellationSpikeDetector.ts',
+  /*
+   * `RetCancellationSpikeDetector` was here and no longer asks about attendance
+   * at all.
+   *
+   * Its one `meeting_status = 'held'` query existed to average
+   * `payment_amount` over bookings that took place, and value the week's
+   * cancellations at that average. `payment_amount` is NULL on every booking in
+   * the product — 0 of 319, measured 2026-10-29 — so the average was always
+   * null and the alert never once reported money. It now prices the
+   * cancellations themselves, through the rules the orders page writes money
+   * off with, and reads no attendance.
+   *
+   * Left out rather than relaxed: this list is files that DO ask the question,
+   * and keeping one that does not would make the guard pass for the wrong
+   * reason the next time somebody removes a real query.
+   */
   'lib/business-os/insight/detectors/catalog/RetRepeatBookingLowDetector.ts',
   'lib/business-os/insight/health/resolveBusinessHealth.ts',
   'lib/services/WebsiteBlockEnrichmentService.ts',

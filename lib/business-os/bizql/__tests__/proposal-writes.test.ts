@@ -131,3 +131,78 @@ describe('sending and withdrawing', () => {
     expect(result.preview).toContain('Kitchen refit');
   });
 });
+
+/**
+ * The nudge, and the one thing it must not be.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `send` and `remind` both put a quote in front of a client, and that is where
+ * the resemblance ends. `send` CLAIMS the quote out of draft: it retires the
+ * version it replaces, freezes the terms and attaches the document. Called on a
+ * quote the client already has, `sendProposal` answers `alreadySent` and does
+ * nothing — so an automation built on it would chase nobody while reporting
+ * success, which is the exact failure this work keeps turning up.
+ *
+ * `remind` is the other act: same quote, same price, same link, a short note
+ * asking whether they need more time. The handler is two lines, so what is
+ * worth guarding is that those two lines call the RIGHT service and that a
+ * refusal from it travels back as a failure rather than a cheerful no-op.
+ *
+ * `ProposalSendService` is mocked, so nothing is read and no email leaves —
+ * these are about the wiring, and the live account proved the refusal path for
+ * real (a withdrawn quote came back `already_answered`).
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+jest.mock('@/lib/services/ProposalSendService', () => ({
+  sendQuoteReminder: jest.fn(),
+  sendProposal: jest.fn(),
+}));
+
+describe('nudging a quote', () => {
+  const QUOTE = '22222222-2222-2222-2222-222222222222';
+
+  const nudge = () =>
+    executeMutate(
+      { op: 'mutate', entity: 'proposals', action: 'remind', target: { id: QUOTE } } as MutateQuery,
+      CTX
+    );
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it('asks the reminder service, not the sender', async () => {
+    /* The whole point of the action existing. A `remind` that reached
+       `sendProposal` would retire the version the client is reading. */
+    const svc = require('@/lib/services/ProposalSendService');
+    svc.sendQuoteReminder.mockResolvedValue({ ok: true });
+
+    const result = await nudge();
+
+    expect(svc.sendQuoteReminder).toHaveBeenCalledWith(QUOTE, CTX.userId);
+    expect(svc.sendProposal).not.toHaveBeenCalled();
+    expect(result.applied).toBe(true);
+  });
+
+  it('reports a refusal as a failure', async () => {
+    /*
+     * `already_answered` is what a quote accepted between the agent's find and
+     * its send comes back with. Swallowed, the run would report a nudge that
+     * never happened — and the owner was told their quotes were being chased.
+     */
+    const svc = require('@/lib/services/ProposalSendService');
+    svc.sendQuoteReminder.mockResolvedValue({ ok: false, reason: 'already_answered' });
+
+    await expect(nudge()).rejects.toThrow(/already_answered/);
+  });
+
+  it('needs a specific quote, never a described set', async () => {
+    /* One row per call, so a fan-out stays the scatter's business and inherits
+       its cap rather than hiding inside one write. */
+    await expect(
+      executeMutate(
+        { op: 'mutate', entity: 'proposals', action: 'remind' } as MutateQuery,
+        CTX
+      )
+    ).rejects.toThrow(/target id/);
+  });
+});

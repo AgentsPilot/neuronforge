@@ -81,6 +81,18 @@ export async function GET(request: NextRequest) {
       if (existingAccount.data) {
         // Update existing record (update method expects userId, not record id)
         await stripeConnectRepo.update(user.id, {
+          /*
+           * Coming back from Stripe onboarding RESUMES card payments.
+           *
+           * `paused_at` is the owner's decision to stop taking cards, and
+           * reconnecting is the owner undoing it — so this is one of the only
+           * two places allowed to write that column (the other is `disconnect`,
+           * which sets it). Without this an owner who paused and then
+           * reconnected would stay paused for ever, with a healthy Stripe
+           * account and no card payments, and nothing on screen explaining it.
+           */
+          paused_at: null,
+          paused_by: null,
           stripe_account_id: accountId,
           stripe_account_type: 'standard',
           charges_enabled: status.chargesEnabled,
@@ -140,6 +152,9 @@ export async function GET(request: NextRequest) {
 
       // Update database with current status (update method expects userId, not record id)
       await stripeConnectRepo.update(user.id, {
+        // Reconnecting resumes cards. See the note on the update above.
+        paused_at: null,
+        paused_by: null,
         charges_enabled: status.chargesEnabled,
         payouts_enabled: status.payoutsEnabled,
         details_submitted: status.detailsSubmitted,

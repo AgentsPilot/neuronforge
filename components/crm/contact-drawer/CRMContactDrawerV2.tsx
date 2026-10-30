@@ -6742,9 +6742,10 @@ export function CRMContactDrawerV2({
              * mail lists every session of the block, and a make-up booked after
              * it is absent from the one list the client reads.
              *
-             * It carries no money. A missed session keeps its portion, so the
-             * replacement's row shows no figure — which is the truth, and what
-             * makes this the owner's gift rather than an accounting move.
+             * What it carries depends on the answer the owner just gave about
+             * the missed hour: free when they charged for it, billed when they
+             * waived it. See the note on the charge below — the rule is one
+             * payment per hour the client actually gets.
              */
             /*
              * The hour that makes up for the missed one, named so the mail can
@@ -6754,8 +6755,38 @@ export function CRMContactDrawerV2({
             let madeUpWith: string | null = null;
 
             if (addReplacement && replacementOffer) {
-              /* Never billed: the missed hour was held, and the owner has
-                 already answered the money question on this dialog. */
+              /*
+               * ── ONE CHARGE PER HOUR ACTUALLY DELIVERED ──────────────────
+               *
+               * This passed `false` — the make-up is never billed — on the
+               * reasoning that the missed hour was held and the owner had
+               * already answered the money question on this dialog. That is
+               * right only when they answered CHARGE: the client paid for the
+               * slot they missed, so the make-up is the owner's gift, and two
+               * sessions sold produce two payments.
+               *
+               * It is wrong when they answered WAIVE. Nothing is charged for
+               * the missed hour, the make-up is free as well, and the client
+               * receives a delivered session for nothing. Measured on a live
+               * pay-per-session package: four sessions billed, and the make-up
+               * booked against a missed one carrying no money at all.
+               *
+               * So the make-up mirrors the waiver instead of ignoring it:
+               *
+               *   missed hour CHARGED  →  make-up free
+               *   missed hour WAIVED   →  make-up billed
+               *
+               * Either way exactly one payment exists per hour the client
+               * actually gets. `billsPerSession` still gates it — on an
+               * upfront block the money is already in and nothing bills per
+               * session, which is why the cancel path reads the same flag.
+               *
+               * `pendingOutcomeChargeable` is the same condition that decides
+               * whether `chargeSession` is sent to the endpoint at all; where
+               * there is no stage to bill or waive, there is nothing to mirror
+               * and the make-up stays free.
+               */
+              const missedHourWasWaived = pendingOutcomeChargeable && chargeSession === false;
               /*
                * The hour the owner SETTLED on, which is the proposal unless
                * they picked another from the dialog. Booking
@@ -6766,7 +6797,7 @@ export function CRMContactDrawerV2({
               const madeUp = await bookReplacement(
                 replacementOffer.containerId,
                 takes,
-                false,
+                replacementOffer.billsPerSession && missedHourWasWaived,
                 pendingOutcomeMeetingId
               );
 

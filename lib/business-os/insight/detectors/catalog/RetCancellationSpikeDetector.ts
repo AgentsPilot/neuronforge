@@ -16,6 +16,7 @@ import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../ty
  * thing, and falls back to the old prose for rows that predate the code.
  */
 import { cancelReasonBucket } from '@/lib/business-os/cancellationReasons';
+import { cancellationCost } from '@/lib/business-os/reports/cancellationCost';
 
 export class RetCancellationSpikeDetector extends BaseDetector {
   definition: DetectorDefinition = {
@@ -116,31 +117,42 @@ export class RetCancellationSpikeDetector extends BaseDetector {
       return null;
     }
 
-    // Get avg booking value for impact calculation
-    const { data: completedBookings } = await this.supabase
-      .from('scheduling_bookings')
-      .select('payment_amount')
-      .eq('user_id', userId)
-      /*
-       * The average is of meetings that HAPPENED — `meeting_status`, not
-       * `status`, since `complete()` no longer writes the latter. A cancelled
-       * booking must not be in this sample either way: it is the baseline the
-       * cancellations are being valued against.
-       */
-      .eq('meeting_status', 'held')
-      .not('payment_amount', 'is', null)
-      .limit(50);
+    /*
+     * WHAT THE CANCELLATIONS ACTUALLY COST.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This was `avg(payment_amount of held bookings) × cancellations`, and it
+     * had never once produced a figure. `scheduling_bookings.payment_amount` is
+     * NULL on every row in the product — measured 2026-10-29, 0 of 319 — so
+     * `avgBookingValue` was always null and `estimatedLoss` always undefined.
+     *
+     * The code was honest about it ("report no money rather than a guess"), so
+     * nothing failed and nothing looked wrong. The alert simply never mentioned
+     * money, for anyone, since it shipped.
+     *
+     * It is also the wrong question. An average of OTHER bookings is a proxy;
+     * what these cancellations cost is a fact, and it is already computed by the
+     * rules the orders page writes off money with. So the alert now carries the
+     * same number the reports page shows, and the two cannot disagree.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const cost = await cancellationCost(
+      this.supabase,
+      userId,
+      weekAgo.toISOString(),
+      now.toISOString()
+    );
 
-    const avgBookingValue = completedBookings && completedBookings.length > 0
-      ? completedBookings.reduce((sum, b) => sum + parseFloat(b.payment_amount || '0'), 0) / completedBookings.length
-      : null; // No priced booking to average — report no money rather than a guess
+    /*
+     * Undefined, not zero, when nothing was priced. Zero asserts "these cost
+     * nothing", which is a different claim from "we cannot say what they cost"
+     * — and the panel reads a zero as a fact.
+     */
+    const estimatedLoss = cost.lost > 0 ? cost.lost : undefined;
 
     // Calculate severity
     const severity = this.definition.severityFn(percentChange, currentCount);
 
-    // Estimate impact
-    const estimatedLoss =
-      avgBookingValue === null ? undefined : currentCount * avgBookingValue;
 
     /*
      * Grouped by CODE, not by the sentence.
