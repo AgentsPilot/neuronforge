@@ -193,6 +193,22 @@ describe('Q-C1: a captured subscription through the real list mapping into Step 
     expect(counts.mismatch).toBe(0);
   });
 
+  it('follow-ups C-3: the captured subscription with `cancel_at` set to its period end (flag false, dashboard style) through the REAL mapping: our row true agrees, our row false is cancel_flag_differs', async () => {
+    expect(Object.prototype.hasOwnProperty.call(CAPTURED, 'cancel_at')).toBe(true);
+    mockSubscriptionsList.mockResolvedValue({
+      object: 'list',
+      data: [{ ...CAPTURED, cancel_at_period_end: false, cancel_at: ITEM.current_period_end }],
+      has_more: false,
+    });
+    const agrees = harness([billingRow({ cancel_at_period_end: true })], planRow());
+    await agrees.run();
+    expect(agrees.findings()).toEqual([]);
+
+    const stale = harness([billingRow({ cancel_at_period_end: false })], planRow());
+    await stale.run();
+    expect(stale.findings().map((line) => line.ctx.kind)).toEqual(['cancel_flag_differs']);
+  });
+
   it('control: the captured subscription with no billing row is one orphan (complete list)', async () => {
     const h = harness([], {});
     const counts = await h.run();

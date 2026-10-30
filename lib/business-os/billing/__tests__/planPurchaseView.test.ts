@@ -388,6 +388,31 @@ describe('freeAccessAfter (P-7a.3, BQ-5): the Founding Partner sentence, only be
     expect(result!.manage).not.toHaveProperty('freeAccessAfter');
   });
 
+  // FU-P7a4-5: the port answers at the tier's end, which on a failing row can be
+  // long past; an end that has already gone is never shown. Strict: `> now`.
+  describe('FU-P7a4-5: a cohort end not after now is never shown', () => {
+    const unpaidLongAgo = () => subscribed({ subscriptionStatus: 'unpaid', currentPeriodEnd: PAST });
+
+    it('a failing (unpaid) row whose port names an end one day BEFORE now: no field, Cancel still offered', async () => {
+      const yesterday = new Date(NOW.getTime() - 86_400_000).toISOString();
+      const { result, calls } = await withPort(unpaidLongAgo(), async () => ({ endsAt: yesterday }));
+      expect(calls.n).toBe(1);
+      expect(result!.manage).toMatchObject({ cancel: true, paymentFailed: true });
+      expect(result!.manage).not.toHaveProperty('freeAccessAfter');
+    });
+
+    it('an end EQUAL to now: no field (strict)', async () => {
+      const { result } = await withPort(unpaidLongAgo(), async () => ({ endsAt: NOW.toISOString() }));
+      expect(result!.manage).not.toHaveProperty('freeAccessAfter');
+    });
+
+    it('an end one millisecond after now: shown', async () => {
+      const justAfter = new Date(NOW.getTime() + 1).toISOString();
+      const { result } = await withPort(unpaidLongAgo(), async () => ({ endsAt: justAfter }));
+      expect(result!.manage).toMatchObject({ freeAccessAfter: { endsAt: justAfter } });
+    });
+  });
+
   it('without the port (older callers), nothing changes', async () => {
     const h = harness({ billing: { data: subscribed(), error: null } });
     expect((await view(ON_A_TIER, h.deps))!.manage).not.toHaveProperty('freeAccessAfter');

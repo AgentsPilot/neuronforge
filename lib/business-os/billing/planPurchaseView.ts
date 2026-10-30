@@ -314,7 +314,10 @@ export async function readPlanPurchaseView(
   if (manage && (manage.cancel || manage.reactivate) && input.freeAccessAfterPaidTier) {
     try {
       const after = await input.freeAccessAfterPaidTier();
-      if (after && typeof after.endsAt === 'string' && Number.isFinite(Date.parse(after.endsAt))) {
+      // FU-P7a4-5: the port answers at the tier's end, which on a `failing` row
+      // can be long past; a cohort end that has already gone is never shown.
+      const endsAtMs = after && typeof after.endsAt === 'string' ? Date.parse(after.endsAt) : Number.NaN;
+      if (after && Number.isFinite(endsAtMs) && endsAtMs > now.getTime()) {
         manage.freeAccessAfter = { endsAt: after.endsAt };
       }
     } catch (err) {

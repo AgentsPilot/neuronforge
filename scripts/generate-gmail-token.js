@@ -4,9 +4,14 @@
 const { google } = require('googleapis');
 const readline = require('readline');
 
-const CLIENT_ID = '921980058947-60n3cm2uso92kbn4n97a51gg4ufkc3pu.apps.googleusercontent.com';
-const CLIENT_SECRET = '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';
+const CLIENT_ID = process.env.GMAIL_CLIENT_ID;
+const CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET;
 const REDIRECT_URI = 'http://localhost:8080'; // Simple localhost redirect
+
+if (!CLIENT_ID || !CLIENT_SECRET) {
+  console.error('Set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET before running this script.');
+  process.exit(1);
+}
 
 const oauth2Client = new google.auth.OAuth2(
   CLIENT_ID,

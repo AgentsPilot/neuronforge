@@ -48,6 +48,12 @@ import { supabaseFetch } from '@/lib/supabaseFetch'
  * attempt succeeds. Onboarding takes rather longer than a minute, so the case
  * is narrow — but it is a real bounce, not an impossible one.
  *
+ * Who that now covers changed. While the profile read used `single`, a missing
+ * row came back as an error and was never cached, so almost nobody held a
+ * cached `false`. The read now distinguishes the two, and the typical holder of
+ * a cached `false` is the user with no profile row at all — most of this
+ * project's users. The window is the same width; the set inside it is not.
+ *
  * Should that ever matter, the fix is a `rememberOnboarding(token, true)`
  * exported from here and called where completion is written. It is deliberately
  * NOT done on spec: it would put a cache-coherence dependency on the completion
@@ -145,13 +151,17 @@ function getServiceClient() {
  * Does this session still need onboarding? Asked at most once per token, and
  * at most once concurrently.
  *
- * `unknown` means the question could not be answered — no user, or the auth
- * call failed. The caller continues in that case, exactly as the original
- * code did: this is UX routing, and the protected pages do their own auth.
+ * `unknown` means the question could not be answered — no user, the auth call
+ * failed, or the profile read failed. The caller continues in that case,
+ * exactly as the original code did: this is UX routing, and the protected
+ * pages do their own auth.
  */
 export async function onboardingVerdict(
   accessToken: string,
-  log: { debug: (c: Record<string, unknown>, m: string) => void }
+  log: {
+    debug: (c: Record<string, unknown>, m: string) => void
+    warn: (c: Record<string, unknown>, m: string) => void
+  }
 ): Promise<'ok' | 'onboard' | 'unknown'> {
   const remembered = cachedOnboarding(accessToken)
   if (remembered !== null) return remembered ? 'ok' : 'onboard'
@@ -168,11 +178,16 @@ export async function onboardingVerdict(
 
     if (authError || !user) return 'unknown'
 
+    /* `maybeSingle`, not `single`. A user with no profile row is the normal
+       state before onboarding — most of this project's users are in it — but
+       `single` reports it as a PGRST116 error, indistinguishable here from the
+       database being unreachable. The two need opposite answers, so the read
+       must stop conflating them. */
     const { data: profile, error: profileError } = await supabase
       .from('business_profiles')
       .select('onboarding_completed')
       .eq('user_id', user.id)
-      .single()
+      .maybeSingle()
 
     log.debug(
       {
@@ -184,17 +199,40 @@ export async function onboardingVerdict(
       'Onboarding status resolved'
     )
 
+    /*
+     * A failed read is not an answer, so it must not become a redirect.
+     *
+     * This used to fall through to 'onboard', which on 2026-10-29 turned one
+     * bad service-role credential into an outage: every request was sent to
+     * `/onboarding-chat`, which sent the user back, which redirected again. A
+     * loop, with nothing on screen to say what was wrong.
+     *
+     * 'unknown' lets the request through instead. That is the right way for UX
+     * routing to fail — the protected pages do their own authorisation, so the
+     * cost is a completed user seeing one page they would have been redirected
+     * away from, against nobody being able to use the product at all.
+     */
+    if (profileError) {
+      /* `warn`, not `debug`. The edge logger's threshold is `info` outside
+         development (`lib/logger/edge.ts`), so a debug line here is dropped in
+         production — and this branch is reached precisely when the database or
+         the credential is wrong. Returning 'unknown' quietly would trade the
+         redirect loop for a silent one: the onboarding gate off platform-wide,
+         with nothing in the logs to attribute it to. Being unable to see it is
+         what made 2026-10-29 take an hour and a half. */
+      log.warn(
+        { err: profileError, userId: user.id },
+        'Onboarding profile read failed; answering "unknown" and letting the request through'
+      )
+      return 'unknown'
+    }
+
     if (profile?.onboarding_completed) {
       rememberOnboarding(accessToken, true)
       return 'ok'
     }
 
-    /*
-     * Not cached when the PROFILE READ failed. A transient error is not an
-     * answer, and remembering it would hold a fully onboarded user in the
-     * redirect for a minute over one bad query.
-     */
-    if (!profileError) rememberOnboarding(accessToken, false)
+    rememberOnboarding(accessToken, false)
     return 'onboard'
   })()
 

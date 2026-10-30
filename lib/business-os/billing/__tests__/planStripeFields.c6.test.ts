@@ -67,6 +67,8 @@ const FIELDS_READ: Readonly<Record<ObjectKind, readonly string[]>> = {
     'customer',
     'billing_cycle_anchor',
     'cancel_at_period_end',
+    // Follow-ups C-3: read since P-7a.1 (the mirror's derived flag, Step B, the engine).
+    'cancel_at',
     'ended_at',
     'livemode',
     'metadata',

@@ -16,6 +16,7 @@ import { InvoiceSettingsSection } from '@/components/business-os/settings/Invoic
 import { TabFooter, TabFooterSlot, TabFooterSlotProvider } from '@/components/business-os/settings/TabFooter';
 import { StripeConnectWizard } from '@/components/payments/StripeConnectWizard';
 import { StripeEmbeddedOnboarding } from '@/components/payments/StripeEmbeddedOnboarding';
+import { STRIPE_REMOVE_BUTTON_KEY, refusalLines, removeMessageKey, stripeExitLabel } from '@/components/payments/stripeConnectExitCopy';
 import { createLogger } from '@/lib/logger';
 import type { SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import {
@@ -177,8 +178,11 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     stripe_email?: string | null;
     country?: string | null;
     business_type?: string | null;
+    stripe_account_type?: string | null;
   } | null>(null);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+  // D5 / SX-5: why a Remove or Disconnect was refused, in the owner's words (never the route's raw text).
+  const [stripeExitError, setStripeExitError] = useState<string[] | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Set initial tab when dialog opens
@@ -401,6 +405,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
           stripe_email: stripeData.data.stripe_email,
           country: stripeData.data.country,
           business_type: stripeData.data.business_type,
+          stripe_account_type: stripeData.data.stripe_account_type,
         });
       } else {
         setStripeAccountData(null);
@@ -497,6 +502,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
   // Disconnect: Just removes from our database, keeps Stripe account
   const confirmDisconnectStripe = async () => {
     setShowDisconnectConfirm(false);
+    setStripeExitError(null);
     try {
       setStripeLoading(true);
 
@@ -514,10 +520,12 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
         // Keep stripeAccountData so we can still delete or reconnect
         logger.info('Stripe account disconnected from app');
       } else {
-        logger.error({ error: result.error }, 'Failed to disconnect Stripe');
+        logger.warn({ error: result.error }, 'Stripe disconnect refused');
+        setStripeExitError(refusalLines(t, result));
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to disconnect Stripe');
+      setStripeExitError(refusalLines(t, null));
     } finally {
       setStripeLoading(false);
     }
@@ -526,6 +534,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
   // Delete: Permanently deletes from Stripe AND our database
   const confirmDeleteStripe = async () => {
     setShowDeleteConfirm(false);
+    setStripeExitError(null);
     try {
       setStripeLoading(true);
 
@@ -540,12 +549,16 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
         setStripeConnected(false);
         setStripeOnboardingPending(false);
         setStripeAccountData(null);
-        logger.info('Stripe account permanently deleted');
+        setStripeDisconnected(false);
+        logger.info('Stripe account removed');
       } else {
-        logger.error({ error: result.error }, 'Failed to delete Stripe account');
+        // D5 / SX-5: a refusal keeps the account as it was; say why.
+        logger.warn({ error: result.error }, 'Stripe removal refused');
+        setStripeExitError(refusalLines(t, result));
       }
     } catch (error) {
-      logger.error({ err: error }, 'Failed to delete Stripe account');
+      logger.error({ err: error }, 'Failed to remove Stripe account');
+      setStripeExitError(refusalLines(t, null));
     } finally {
       setStripeLoading(false);
     }
@@ -1072,7 +1085,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                                 onClick={handleDeleteStripe}
                                 className="text-sm text-[var(--v2-text-muted)] hover:text-red-500 transition-colors"
                               >
-                                {t('config.stripe.delete_account') || 'Delete Account'}
+                                {stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
                               </button>
                             </div>
                           ) : stripeOnboardingPending ? (
@@ -1113,7 +1126,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-500 border border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 transition-colors"
                                 style={{ borderRadius: 'var(--v2-radius-button)' }}
                               >
-                                {t('config.stripe.delete_account') || 'Delete Account'}
+                                {stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
                               </button>
                             </div>
                           ) : stripeDisconnected ? (
@@ -1147,7 +1160,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-500 border border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 transition-colors"
                                 style={{ borderRadius: 'var(--v2-radius-button)' }}
                               >
-                                {t('config.stripe.delete_account') || 'Delete Account'}
+                                {stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
                               </button>
                             </div>
                           ) : (
@@ -1171,7 +1184,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-500 border border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 transition-colors"
                                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                                 >
-                                  {t('config.stripe.delete_account') || 'Delete Account'}
+                                  {stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
                                 </button>
                               )}
                             </div>
@@ -1179,6 +1192,19 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                         </div>
                       </div>
                     </div>
+
+                    {stripeExitError && (
+                      <div
+                        role="alert"
+                        className="border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 p-4 text-sm text-[var(--v2-text-primary)]"
+                        style={{ borderRadius: 'var(--v2-radius-card)' }}
+                        dir={isRTL ? 'rtl' : 'ltr'}
+                      >
+                        {stripeExitError.map((line) => (
+                          <p key={line}>{line}</p>
+                        ))}
+                      </div>
+                    )}
 
                     {/* Payment Settings Info */}
                     {stripeConnected && (
@@ -1314,10 +1340,10 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                 </div>
                 <div className="flex-1">
                   <h3 className="text-base font-semibold text-[var(--v2-text-primary)] mb-1">
-                    {t('config.stripe.delete_title') || 'Delete Stripe Account?'}
+                    {stripeExitLabel(t, 'config.stripe.remove_title')}
                   </h3>
                   <p className="text-sm text-[var(--v2-text-muted)]">
-                    {t('config.stripe.delete_message') || 'This will permanently delete your Stripe account. All payment history and settings will be lost. This action cannot be undone.'}
+                    {stripeExitLabel(t, removeMessageKey(stripeAccountData?.stripe_account_type))}
                   </p>
                 </div>
               </div>
@@ -1334,7 +1360,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                   className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-all"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
-                  {t('config.stripe.delete_account') || 'Delete Account'}
+                  {stripeExitLabel(t, STRIPE_REMOVE_BUTTON_KEY)}
                 </button>
               </div>
             </div>

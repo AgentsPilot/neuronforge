@@ -363,6 +363,18 @@ describe('after the fresh read (U-2, V-2, V-8)', () => {
     expect(refusedLines(h)[0]).toEqual(['error', expect.objectContaining({ alert: true }), 'Plan upgrade refused']);
   });
 
+  it.each([['preview', preview], ['confirm', confirm]] as const)(
+    'follow-ups C-3 (SA Q-5, W-6) %s: a `cancel_at` set alone at Stripe → subscription_cancelling before any preview or update call',
+    async (_label, run) => {
+      const h = harness();
+      h.state.subscription = subscription({ cancelAtPeriodEnd: false, cancelAt: PERIOD_END });
+      await expect(run(h)).resolves.toEqual({ ok: false, code: 'subscription_cancelling' });
+      expect(h.calls.preview).toEqual([]);
+      expect(h.calls.update).toEqual([]);
+      expect(refusedLines(h)[0][1]).toEqual(expect.objectContaining({ code: 'subscription_cancelling', reason: 'stripe_cancel_at' }));
+    }
+  );
+
   it('V-2: Stripe already bills the higher tier → upgrade_processing, a warn with NO alert', async () => {
     const h = harness();
     h.state.subscription = subscription({ items: [{ id: 'si_own', priceId: PRICE_TOP, currentPeriodStart: PERIOD_START, currentPeriodEnd: PERIOD_END }] });

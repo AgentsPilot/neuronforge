@@ -308,6 +308,63 @@ export class PluginConnectionRepository {
     }
   }
 
+  // ============ Stripe Connect exit (self-service exit SX-5 / D5) ============
+
+  /**
+   * Remove a user's connection row for one plugin. Data only: the caller
+   * invalidates any status cache (SA W-5). Used by the Stripe Connect delete
+   * once Stripe has confirmed the account is released, because the deletion
+   * guard G-8 counts any `stripe` row whatever its status.
+   */
+  async deleteByUserAndPlugin(userId: string, pluginKey: string): Promise<AgentRepositoryResult<number>> {
+    try {
+      const { error, count } = await this.supabase
+        .from('plugin_connections')
+        .delete({ count: 'exact' })
+        .eq('user_id', userId)
+        .eq('plugin_key', pluginKey);
+
+      if (error) throw error;
+      return { data: count ?? 0, error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * ⟨unscoped-by-design⟩ How many OTHER users' `stripe` connection rows name
+   * this Stripe account (SA W-10). A count only: no row, no user id, nothing of
+   * another tenant leaves this method.
+   *
+   * Why cross-user (CLAUDE.md rule 4, intentional): revoking our OAuth access to
+   * a Standard account (or deleting an Express one) cuts it off for EVERY
+   * business on the platform that names it, and `plugin_connections` has no
+   * uniqueness on the account id. The Connect delete must therefore prove no
+   * other business uses the account before it asks Stripe to release it.
+   *
+   * The account id comes from the caller's own row, and is checked against
+   * Stripe's id shape before it is placed in the filter.
+   */
+  async countOtherUsersNamingStripeAccount(
+    stripeAccountId: string,
+    excludeUserId: string
+  ): Promise<AgentRepositoryResult<number>> {
+    try {
+      if (!/^acct_[A-Za-z0-9]+$/.test(stripeAccountId)) throw new Error('Not a Stripe account id');
+      const { error, count } = await this.supabase
+        .from('plugin_connections')
+        .select('id', { count: 'exact', head: true })
+        .eq('plugin_key', 'stripe')
+        .neq('user_id', excludeUserId)
+        .or(`profile_data->>stripe_account_id.eq.${stripeAccountId},profile_data->>id.eq.${stripeAccountId}`);
+
+      if (error) throw error;
+      return { data: count ?? 0, error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
   // Stripe webhook: keyed by Stripe ids or rows the route has already proved owned (⟨unscoped-by-design⟩)
   //
   // Moved out of `lib/payments/stripeAccountContext.ts` (`resolveAccountOwner`)

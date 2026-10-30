@@ -104,7 +104,7 @@ No pin or hash is expected to move. AC-145's payload hash stays `38897cd3…4edf
 
 ## Business question (for BA/SA, not blocking)
 
-- **BQ-FU2-1:** should an account that paid a plan in the past and was later given a fresh trial **by an admin** (not by the after-plan move) also leave the MK-9 base? Today it stays in, and when its trial ends it counts as paid before the end. That is the "first payment before the trial start" rule declined above. Default: no change until asked. On 2026-10-30 production had 1 trial row in total.
+- **BQ-FU2-1:** should an account that paid a plan in the past and was later given a fresh trial **by an admin** (not by the after-plan move) also leave the MK-9 base? Today it stays in, and when its trial ends it counts as paid before the end. That is the "first payment before the trial start" rule declined above. Default: no change until asked. On 2026-10-30 production had 1 trial row in total. **User decision 2026-10-30: default taken, no change.**
 
 ## Implementation Notes
 
@@ -161,7 +161,7 @@ Reviewed the uncommitted diff in `neuronforge-mk9fu2` (12 files) against origin/
 
 ### Code Review Comments
 
-1. `lib/business-os/billing/afterPlanMove.ts` (context, not this diff) — the count is set by an owner-started cancel of a Stripe plan subscription, not by a proven first payment. A subscription that ended without ever being charged (a 100 % coupon, or any $0 first invoice) would put a never-paid owner out of the MK-9 base. Inside the user's decision wording ("after cancelling a paid plan"), zero rows today, and a rate under 10 trials is not shown anyway. Priority: Low — record under BQ-FU2-1 as BQ-FU2-2, no code change.
+1. `lib/business-os/billing/afterPlanMove.ts` (context, not this diff) — the count is set by an owner-started cancel of a Stripe plan subscription, not by a proven first payment. A subscription that ended without ever being charged (a 100 % coupon, or any $0 first invoice) would put a never-paid owner out of the MK-9 base. Inside the user's decision wording ("after cancelling a paid plan"), zero rows today, and a rate under 10 trials is not shown anyway. Priority: Low — record under BQ-FU2-1 as BQ-FU2-2, no code change. **User decision 2026-10-30 on BQ-FU2-2: default taken, no change (such an owner stays out of the base).**
 2. `financeHealth.test.ts` "mixed set" — the superset assertion only checks `C`; it is true by construction, so this is fine, but the test name promises more than it checks. Priority: Low (optimisation, not blocking).
 3. `BusinessOsAccountPlanRepository.ts` `pagePlans` — the error message names no row id (good, DR-10-style). No change.
 

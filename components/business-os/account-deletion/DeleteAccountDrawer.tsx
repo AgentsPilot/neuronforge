@@ -99,6 +99,8 @@ export function parseBlockers(value: unknown): BlockerView[] {
 /** SA N-3: a counted blocker without a number uses its uncounted copy, never an empty "{n}". */
 const COUNTED_CODES: ReadonlySet<BlockerCode> = new Set(['client_plans_running', 'client_payments_pending']);
 export function blockerCopyKey(blocker: BlockerView): string {
+  // D5 / SX-5 (P-8): G-8's text names the button that clears it, under a new key (translations are add-only, S-7).
+  if (blocker.code === 'stripe_connected') return 'settings.account_delete.blocker.stripe_linked';
   const base = `settings.account_delete.blocker.${blocker.code}`;
   return COUNTED_CODES.has(blocker.code) && blocker.count === undefined ? `${base}_uncounted` : base;
 }
