@@ -4,25 +4,9 @@ This directory contains SQL migration files for the AgentPilot database schema.
 
 ## Running Migrations
 
-### Option 1: Supabase CLI (Recommended)
-```bash
-# Run all pending migrations
-supabase db push
+Migrations are applied **one at a time, by pasting the single migration file into the Supabase SQL Editor**, with a read-only pre-check before and a checker after. The full procedure — including when to apply relative to merge and deploy — is the [`supabase-ops` skill](/.claude/skills/supabase-ops/SKILL.md) §4.
 
-# Or run a specific migration
-supabase db execute --file ./supabase/migrations/create_agent_prompt_threads.sql
-```
-
-### Option 2: Supabase Dashboard
-1. Go to your Supabase project dashboard
-2. Navigate to **SQL Editor**
-3. Copy the contents of the migration file
-4. Paste and execute
-
-### Option 3: Direct PostgreSQL Connection
-```bash
-psql -h your-project.supabase.co -U postgres -d postgres -f ./supabase/migrations/create_agent_prompt_threads.sql
-```
+> ⚠️ **Do not run `supabase db push`, `supabase db execute`, `supabase migration up` or `psql` against a hosted project.** A bulk push applies every file in this directory, and the migration ledger does not record SQL-editor applies, so the CLI cannot tell what is already applied. Reviewed migrations that must not be applied yet live in `supabase/held/`, not here.
 
 ## Migration Files
 

@@ -42,8 +42,12 @@ import {
   type SchedulingRepositoryResult,
 } from '@/lib/repositories/SchedulingRepository';
 import type { BookingStatus } from '@/lib/business-os/bookingStatus';
+/* Still needed: `lowerPlansForCancelledStages` takes a client, and its three
+   callers (this one, `cancelQuoteStages` and `SchedulingRepository`) each pass
+   their own. No query in this file uses it. */
 import { supabaseServer } from '@/lib/supabaseServer';
-import { OPEN_PROPOSAL_STATUSES } from '@/lib/repositories/ProposalRepository';
+import { proposalRepository } from '@/lib/repositories/ProposalRepository';
+import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
@@ -63,7 +67,7 @@ import { emitPaymentEvent } from '@/lib/services/PaymentEventService';
 import { voidInvoice } from '@/lib/payments/invoiceLifecycle';
 import { bookingPaymentState } from '@/lib/payments/bookingPaymentState';
 import { SERVICE_DATE_TERMS } from '@/lib/payments/invoiceTerms';
-import { isPlanStopped, PLAN_STOPPED_STATUSES } from '@/lib/payments/planStatus';
+import { isPlanStopped } from '@/lib/payments/planStatus';
 import { isSlotTakenError } from '@/lib/business-os/bookingStatus';
 import { isInstallmentPlan } from '@/lib/payments/PaymentPlanService';
 import { planStartDate } from '@/lib/payments/planSchedule';
@@ -519,30 +523,14 @@ export async function cancelBooking(
    * ───────────────────────────────────────────────────────────────────────────
    */
   try {
-    const { data: plan } = await supabaseServer
-      .from('payment_plan_subscriptions')
-      /*
-       * `installment_count`, NOT `periods_total` — which does not exist. One
-       * unknown name makes PostgREST reject the WHOLE select, so a typo here
-       * would report every cancelled booking as having no live plan: the
-       * silent-nothing failure this codebase has been bitten by before.
-       */
-      .select('id, status, installment_count, periods_paid, next_charge_at')
-      .eq('user_id', userId)
-      .eq('booking_id', bookingId)
-      /*
-       * Live plans only, and `maybeSingle` is safe BECAUSE of that filter: the
-       * partial unique index `idx_plan_subs_one_live_per_booking` allows at
-       * most one row per booking in exactly these statuses. Asking without the
-       * filter could match an old stopped plan alongside a live one, and
-       * `maybeSingle` would then throw — reporting "no plan" on precisely the
-       * booking that has two.
-       *
-       * The list is derived from `PLAN_STOPPED_STATUSES` rather than retyped,
-       * so this cannot drift from what `cancelPlan` considers finished.
-       */
-      .not('status', 'in', `(${PLAN_STOPPED_STATUSES.join(',')})`)
-      .maybeSingle();
+    /* Live plans only. The repository carries why that filter is what makes
+       `maybeSingle` safe here, and how the status list stays in step with
+       `cancelPlan`. Its sibling `findAnyForBooking` asks a deliberately
+       different question — see `deleteBooking`. */
+    const { data: plan } = await paymentPlanSubscriptionRepository.findLiveForBooking(
+      bookingId,
+      userId
+    );
 
     // Belt and braces: the filter above already excluded the stopped ones.
     if (plan && !isPlanStopped(plan.status as string)) {
@@ -580,52 +568,30 @@ export async function cancelBooking(
    * excluded and left exactly as they are.
    */
   try {
-    const { data: closed } = await supabaseServer
-      .from('payment_plan_installments')
-      .update({
-        status: 'cancelled',
-        /*
-         * THE REASON TRAVELS HERE TOO.
-         *
-         * ───────────────────────────────────────────────────────────────────
-         * It already travels to the proposal a few lines below — "one
-         * namespace, so the booking's cancel code is a valid stop code, and a
-         * report counting `client_not_paying` finds both". The periods closed
-         * by this very statement were the one thing left out, so a plan
-         * stopped THIS way recorded nothing countable while the same plan
-         * stopped from Manage Payment recorded a code, a note and an owner.
-         *
-         * The columns are the same three every other cancellation surface uses
-         * (20260930_installment_cancel_reason), which is what lets one report
-         * union them without a translation layer.
-         * ───────────────────────────────────────────────────────────────────
-         */
-        cancel_reason: params.cancelReason ?? null,
-        cancel_note: params.cancelNote ?? null,
-        cancelled_by: params.cancelledBy ?? 'owner',
-        cancelled_at: new Date().toISOString(),
-        next_retry_at: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('user_id', userId)
-      .eq('booking_id', bookingId)
-      /*
-       * Everything not settled, not just `pending`.
-       *
-       * A stage that had been BILLED — an invoice raised, nobody paid — stayed
-       * open on a cancelled booking, because this matched only `pending`. The
-       * invoices are cancelled a few statements above, so the stage was left
-       * disagreeing with its own invoice: "billed" on a booking that is off.
-       *
-       * `paid` is never rewritten; it records money that arrived. Same rule as
-       * `cancelQuoteStages` and `stopBookingPlan`, so the three ways of calling
-       * work off leave the same state behind.
-       */
-      .not('status', 'in', '(paid,cancelled)')
-      .is('subscription_id', null)
-      /* `amount` and `payment_plan_id` so the plan can be brought into line
-         below. The id alone was enough only while nothing did. */
-      .select('id, amount, payment_plan_id');
+    /*
+     * THE REASON TRAVELS HERE TOO.
+     *
+     * It already travels to the proposal below — "one namespace, so the
+     * booking's cancel code is a valid stop code, and a report counting
+     * `client_not_paying` finds both". The periods closed by this statement
+     * were the one thing left out, so a plan stopped THIS way recorded nothing
+     * countable while the same plan stopped from Manage Payment recorded a
+     * code, a note and an owner.
+     *
+     * The repository carries the rest: why every stage that is not settled is
+     * closed — the BILLED ones included, since their invoices were voided just
+     * above — why a subscription's projected periods are left alone, and why
+     * `paid` is never rewritten.
+     */
+    const { data: closed } = await paymentPlanRepository.cancelOpenStagesForBooking(
+      bookingId,
+      userId,
+      {
+        reason: params.cancelReason,
+        note: params.cancelNote,
+        by: params.cancelledBy,
+      }
+    );
 
     stagesClosed = closed?.length ?? 0;
 
@@ -686,76 +652,22 @@ export async function cancelBooking(
        * The quote has two bookings — `booking_id` is the job it was written
        * for, `package_booking_id` is the package its acceptance created — and
        * either should find it. Writing that as `.or(...)` directly on the
-       * UPDATE is the obvious thing and it does not work: PostgREST accepts an
-       * `or` filter on a SELECT and rejects it on an UPDATE, with the
-       * misleading "column proposals.booking_id does not exist".
+       * UPDATE is the obvious thing and it does not work; PostgREST rejects it
+       * with a misleading "column does not exist", it threw inside this very
+       * try whose catch only logs, and the quote was silently never stopped,
+       * its email never sent and the cascade below never reached.
        *
-       * Verified against this project's PostgREST, supabase-js 2.75.1:
-       *
-       *   SELECT .or(booking_id…)   ok
-       *   UPDATE .eq(booking_id…)   ok
-       *   UPDATE .or(booking_id…)   ERROR: column proposals.booking_id does not exist
-       *
-       * It threw inside the try this block sits in, whose catch only logs, so
-       * the quote was silently never stopped, its email never sent and the
-       * cascade below never reached. One read and an `.in('id', …)` is the
-       * boring version that works.
-       *
-       * ───────────────────────────────────────────────────────────────────────
-       * AND THE READ ITSELF ASKS TWICE RATHER THAN WITH `.or(...)`.
-       *
-       * `.or()` on a SELECT is legal and this read was correct with it. It is
-       * written as two equality reads anyway, because `mutationOrSelect.guard`
-       * scans forward from every `.update(` to the end of the enclosing BLOCK —
-       * 242 lines here — and reported this unrelated `.or()` as if it belonged
-       * to the instalment update far above. The guard protects against a real
-       * production failure and is not worth weakening with an exemption for a
-       * file that does not actually break the rule.
-       *
-       * Two reads, merged by id, cost one extra round trip and cannot be
-       * mistaken for anything by any reader, human or parser.
+       * `findAcceptedForBooking` and `stopAccepted` keep those two statements
+       * apart, and the repository carries the full account of why.
        * ───────────────────────────────────────────────────────────────────────
        */
-      const quoteRows = await Promise.all(
-        (['booking_id', 'package_booking_id'] as const).map(column =>
-          supabaseServer
-            .from('proposals')
-            .select('id, package_booking_id')
-            .eq('user_id', userId)
-            .eq(column, bookingId)
-            .eq('status', 'accepted')
-        )
+      const { data: quotes } = await proposalRepository.findAcceptedForBooking(bookingId, userId);
+
+      const { data: stoppedQuotes } = await proposalRepository.stopAccepted(
+        (quotes ?? []).map(q => q.id),
+        userId,
+        { reason: params.cancelReason, note: params.cancelNote }
       );
-
-      /* One quote can match on both columns; `id` is what de-duplicates it. */
-      const quotes = [
-        ...new Map(
-          quoteRows
-            .flatMap(result => result.data ?? [])
-            .map(row => [row.id as string, row])
-        ).values(),
-      ];
-
-      const { data: stoppedQuotes } = quotes?.length
-        ? await supabaseServer
-            .from('proposals')
-            .update({
-              status: 'stopped',
-              stop_reason: params.cancelReason ?? null,
-              stop_note: params.cancelNote?.trim() || null,
-              stopped_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            })
-            .eq('user_id', userId)
-            .in(
-              'id',
-              quotes.map(q => q.id as string)
-            )
-            .eq('status', 'accepted')
-            /* `package_booking_id` so the work the quote SOLD can be stopped
-               with it. See the cascade below. */
-            .select('id, package_booking_id')
-        : { data: [] as Array<{ id: string; package_booking_id: string | null }> };
 
       if ((stoppedQuotes?.length ?? 0) > 0) {
         log.info(
@@ -906,12 +818,10 @@ export async function cancelBooking(
   let packageBookingId: string | null = null;
 
   try {
-    const { data: packageQuotes } = await supabaseServer
-      .from('proposals')
-      .select('id, package_booking_id')
-      .eq('user_id', userId)
-      .eq('booking_id', bookingId)
-      .not('package_booking_id', 'is', null);
+    const { data: packageQuotes } = await proposalRepository.findPackageQuotesForBooking(
+      bookingId,
+      userId
+    );
 
     for (const quote of packageQuotes ?? []) {
       const packageId = quote.package_booking_id as string;
@@ -923,22 +833,15 @@ export async function cancelBooking(
 
       /* Already off, from an earlier attempt or the other direction. Doing it
          again would rewrite its `outcome_at` and re-run its side effects. */
-      const { data: already } = await supabaseServer
-        .from('scheduling_bookings')
-        .select('status, meeting_status')
-        .eq('id', packageId)
-        .eq('user_id', userId)
-        .maybeSingle();
+      const { data: already } = await schedulingBookingRepository.findCancellationState(
+        packageId,
+        userId
+      );
 
       /*
-       * BOTH columns, because `status` alone can miss.
-       *
-       * `cancel()` writes `status` and `meeting_status` together — except on a
-       * booking whose outcome was already recorded, where it deliberately
-       * writes NEITHER and leaves the outcome standing. A package whose
-       * sessions were all held therefore keeps `status: 'confirmed'` after
-       * being called off, and a guard reading only that would run the whole
-       * cascade again on the next press.
+       * BOTH columns, because `status` alone can miss — the repository method
+       * fetches both and says why. The decision of what counts as cancelled
+       * stays here, where the cascade is.
        */
       if (already?.status === 'cancelled' || already?.meeting_status === 'cancelled') {
         log.info({ bookingId, packageBookingId: packageId }, 'The package was already cancelled');
@@ -994,20 +897,26 @@ export async function cancelBooking(
    */
   let quotesWithdrawn = 0;
   try {
-    const { data: service } = await supabaseServer
-      .from('scheduling_services')
-      .select('sale_mode')
-      .eq('id', booking.service_id)
-      .maybeSingle();
+    /*
+     * Guarded on the id before it is used as a filter.
+     *
+     * `scheduling_bookings.service_id` is `uuid NOT NULL` and typed `string`,
+     * so a row that reaches here should always carry one. The guard is for the
+     * case where it does not arrive anyway — a projection or a fixture that
+     * omits it — because the read this replaced passed the value straight into
+     * `.eq('id', …)`, and `id=eq.undefined` is a PostgREST error rather than an
+     * empty result. Swallowed by this block's catch, it read as "not a quoted
+     * service" instead of as a failed query, which is how it went unnoticed.
+     */
+    const { data: service } = booking.service_id
+      ? await schedulingServiceRepository.findSaleMode(booking.service_id, userId)
+      : { data: null };
 
     if (service?.sale_mode === 'proposal') {
-      const { data: withdrawn } = await supabaseServer
-        .from('proposals')
-        .update({ status: 'withdrawn' })
-        .eq('user_id', userId)
-        .eq('booking_id', bookingId)
-        .in('status', OPEN_PROPOSAL_STATUSES)
-        .select('id');
+      const { data: withdrawn } = await proposalRepository.withdrawOpenForBooking(
+        bookingId,
+        userId
+      );
 
       quotesWithdrawn = withdrawn?.length ?? 0;
       if (quotesWithdrawn > 0) {
@@ -2059,13 +1968,12 @@ export async function createBookingInvoice(
    * ───────────────────────────────────────────────────────────────────────────
    */
   if (plan) {
-    const { error: stampError } = await supabaseServer
-      .from('payment_plan_installments')
-      .update({ invoice_id: invoice.id, updated_at: new Date().toISOString() })
-      .eq('payment_plan_id', plan.planId)
-      .eq('booking_id', bookingId)
-      .eq('installment_number', 1)
-      .eq('user_id', userId);
+    const { error: stampError } = await paymentPlanRepository.stampFirstPeriodInvoice(
+      plan.planId,
+      bookingId,
+      userId,
+      invoice.id
+    );
 
     if (stampError) {
       log.error(
@@ -2074,11 +1982,11 @@ export async function createBookingInvoice(
       );
     }
 
-    const { error: linkError } = await supabaseServer
-      .from('scheduling_bookings')
-      .update({ payment_plan_id: plan.planId, updated_at: new Date().toISOString() })
-      .eq('id', bookingId)
-      .eq('user_id', userId);
+    const { error: linkError } = await schedulingBookingRepository.linkPaymentPlan(
+      bookingId,
+      userId,
+      plan.planId
+    );
 
     if (linkError) {
       log.error(
@@ -2734,16 +2642,8 @@ export async function deleteBooking(params: {
    * database then rejects, which is the exact failure above.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  const { data: attachedPlan, error: planReadError } = await supabaseServer
-    .from('payment_plan_subscriptions')
-    // `installment_count`, never `periods_total` — one unknown column makes
-    // PostgREST reject the WHOLE select, and this would then report no plan on
-    // every booking that has one.
-    .select('id, status')
-    .eq('user_id', userId)
-    .eq('booking_id', bookingId)
-    .limit(1)
-    .maybeSingle();
+  const { data: attachedPlan, error: planReadError } =
+    await paymentPlanSubscriptionRepository.findAnyForBooking(bookingId, userId);
 
   if (planReadError) {
     // Refuse rather than guess. Proceeding would hit RESTRICT at the last step,

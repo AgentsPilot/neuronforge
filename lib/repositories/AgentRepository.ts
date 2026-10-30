@@ -269,6 +269,43 @@ export class AgentRepository {
   }
 
   /**
+   * Does this user have a live agent carrying `tag`?
+   *
+   * For the callers that identify an agent by TAG rather than by id — a channel
+   * whose connection is the agent itself, so a renamed agent must stay findable.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * RETURNS `{ data, error }`, NOT a bare boolean, and the distinction is the
+   * point of the method.
+   *
+   * `false` would collapse "no such agent" into "the question could not be
+   * asked", and the caller most in need of this is one that treats not-knowing
+   * as not-having. Keeping them apart is what lets a test assert that a failed
+   * read still produces the right answer, rather than asserting on a `false`
+   * that could have come from either.
+   *
+   * `deleted_at IS NULL` rather than `status != 'deleted'`: both columns exist
+   * and the two filters are not equivalent — a soft-deleted row is what this
+   * must exclude.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async existsWithTag(userId: string, tag: string): Promise<AgentRepositoryResult<boolean>> {
+    try {
+      const { count, error } = await this.supabase
+        .from('agents')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .contains('tags', [tag])
+        .is('deleted_at', null);
+
+      if (error) throw error;
+      return { data: (count ?? 0) > 0, error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Check if agent exists and belongs to user (excludes deleted)
    */
   async exists(id: string, userId: string): Promise<boolean> {

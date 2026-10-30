@@ -1,41 +1,12 @@
 # How to Apply Supabase Migrations
 
-## For Vercel/Production Deployment
+> This page describes one historical migration. For how **any** migration is applied today, follow the [`supabase-ops` skill](/.claude/skills/supabase-ops/SKILL.md) §4.
 
-### Option 1: Using Supabase Dashboard (Recommended for hosted Supabase)
+## Applying it
 
-1. Go to your Supabase project dashboard
-2. Navigate to **SQL Editor**
-3. Copy the contents of `20251201000000_create_search_similar_memories_function.sql`
-4. Paste into the SQL Editor and click **Run**
+Paste the single file `20251201000000_create_search_similar_memories_function.sql` into the Supabase **SQL Editor** and run it — with a read-only pre-check before and a checker after, per the skill.
 
-### Option 2: Using Supabase CLI (Local or CI/CD)
-
-```bash
-# Install Supabase CLI if not already installed
-npm install -g supabase
-
-# Login to Supabase
-supabase login
-
-# Link to your project
-supabase link --project-ref YOUR_PROJECT_REF
-
-# Apply migrations
-supabase db push
-
-# Or apply a specific migration
-psql YOUR_DATABASE_URL < supabase/migrations/20251201000000_create_search_similar_memories_function.sql
-```
-
-### Option 3: Direct Database Connection
-
-If you have direct access to your Supabase PostgreSQL database:
-
-```bash
-psql "postgresql://postgres:[YOUR-PASSWORD]@[YOUR-PROJECT-REF].supabase.co:5432/postgres" \
-  -f supabase/migrations/20251201000000_create_search_similar_memories_function.sql
-```
+> ⚠️ **Do not run `supabase db push`, `supabase db execute`, `supabase migration up` or `psql` against a hosted project.** A bulk push applies every file in `supabase/migrations/`, and the migration ledger does not record SQL-editor applies, so the CLI cannot tell what is already applied.
 
 ## Verifying the Migration
 

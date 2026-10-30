@@ -26,6 +26,17 @@ export interface AttributedContact {
   utm_source: string | null;
   utm_medium: string | null;
   utm_campaign: string | null;
+  /**
+   * Where a lead came from when there is no referrer and no utm to read — the
+   * mailbox channel writes its marker here, on `.via`.
+   *
+   * The select below has always fetched this column; the interface simply did
+   * not declare it, so the one consumer had to cast and the cast was the only
+   * type error in the repository. Declared rather than removed: dropping the
+   * column from the select would make the mailbox channel invisible on the card
+   * that exists to say where clients come from.
+   */
+  source_metadata: Record<string, unknown> | null;
 }
 
 export interface ContactOutcomes {

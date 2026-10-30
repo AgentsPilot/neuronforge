@@ -597,6 +597,173 @@ export class ProposalRepository {
     }
   }
 
+  /**
+   * The ACCEPTED quotes attached to a booking, either way round.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * TWO EQUALITY READS, MERGED BY ID — not one `.or()`.
+   *
+   * A quote has two bookings: `booking_id` is the job it was written for,
+   * `package_booking_id` is the package its acceptance created, and either
+   * should find it. The caller needs the ids so it can stop them by id, because
+   * PostgREST accepts an `or` filter on a SELECT and REJECTS it on an UPDATE,
+   * with the misleading "column proposals.booking_id does not exist":
+   *
+   *   SELECT .or(booking_id…)   ok
+   *   UPDATE .eq(booking_id…)   ok
+   *   UPDATE .or(booking_id…)   ERROR: column proposals.booking_id does not exist
+   *
+   * Verified against this project's PostgREST on supabase-js 2.75.1. Written as
+   * two reads rather than the legal `.or()` SELECT purely to keep find-then-act
+   * obvious at a glance; `latestForBooking` above uses the `.or()` form for the
+   * same two columns where it reads alone.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findAcceptedForBooking(
+    bookingId: string,
+    userId: string
+  ): Promise<RepositoryResult<Array<{ id: string; package_booking_id: string | null }>>> {
+    try {
+      const results = await Promise.all(
+        (['booking_id', 'package_booking_id'] as const).map(column =>
+          this.supabase
+            .from('proposals')
+            .select('id, package_booking_id')
+            .eq('user_id', userId)
+            .eq(column, bookingId)
+            .eq('status', 'accepted')
+        )
+      );
+
+      const failed = results.find(result => result.error);
+      if (failed?.error) throw failed.error;
+
+      /* One quote can match on both columns; `id` is what de-duplicates it. */
+      const merged = [
+        ...new Map(
+          results
+            .flatMap(result => result.data ?? [])
+            .map(row => [row.id as string, row as { id: string; package_booking_id: string | null }])
+        ).values(),
+      ];
+
+      return { data: merged, error: null };
+    } catch (error) {
+      logger.error({ err: error, bookingId, userId }, 'Failed to read the accepted quotes for a booking');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Stop accepted quotes by id, recording why.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * CONDITIONAL ON `accepted`, which does three things at once:
+   *   - makes a second press a no-op instead of rewriting `stopped_at`
+   *   - refuses a quote that was never agreed; `withdraw` owns those, and is
+   *     scoped to draft | sent | viewed for exactly that reason
+   *   - cannot clobber `declined`, `expired`, `withdrawn` or `superseded`
+   *
+   * Returns `package_booking_id` so the work the quote SOLD can be stopped with
+   * it — the caller's cascade needs it and cannot find it afterwards.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async stopAccepted(
+    ids: string[],
+    userId: string,
+    stop: { reason?: string | null; note?: string | null }
+  ): Promise<RepositoryResult<Array<{ id: string; package_booking_id: string | null }>>> {
+    if (ids.length === 0) return { data: [], error: null };
+
+    try {
+      const now = new Date().toISOString();
+      const { data, error } = await this.supabase
+        .from('proposals')
+        .update({
+          status: 'stopped',
+          stop_reason: stop.reason ?? null,
+          // Trimmed to null: an empty textarea must not store '' and read as a
+          // note that exists but says nothing.
+          stop_note: stop.note?.trim() || null,
+          stopped_at: now,
+          updated_at: now,
+        })
+        .eq('user_id', userId)
+        .in('id', ids)
+        .eq('status', 'accepted')
+        .select('id, package_booking_id');
+
+      if (error) throw error;
+      return {
+        data: (data ?? []) as Array<{ id: string; package_booking_id: string | null }>,
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, userId, count: ids.length }, 'Failed to stop the accepted quotes');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The quotes written for this booking that SOLD a package.
+   *
+   * Looked up by `booking_id` ALONE, deliberately: that is the direction the
+   * cancellation cascade runs. Cancelling the package itself finds no quote by
+   * that column and so cannot turn round and cancel anything, which is what
+   * keeps the cascade from recursing.
+   */
+  async findPackageQuotesForBooking(
+    bookingId: string,
+    userId: string
+  ): Promise<RepositoryResult<Array<{ id: string; package_booking_id: string | null }>>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('proposals')
+        .select('id, package_booking_id')
+        .eq('user_id', userId)
+        .eq('booking_id', bookingId)
+        .not('package_booking_id', 'is', null);
+
+      if (error) throw error;
+      return {
+        data: (data ?? []) as Array<{ id: string; package_booking_id: string | null }>,
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, bookingId, userId }, 'Failed to read the package quotes for a booking');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Withdraw every still-open quote for a booking, and say how many.
+   *
+   * Only `OPEN_PROPOSAL_STATUSES`. An accepted quote is deliberately not
+   * withdrawable, because money was created against it — `stopAccepted` is the
+   * path for those. Withdrawn rather than deleted: the quote and its price stay
+   * in the client's history, which is the record of why this did not happen.
+   */
+  async withdrawOpenForBooking(
+    bookingId: string,
+    userId: string
+  ): Promise<RepositoryResult<string[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('proposals')
+        .update({ status: 'withdrawn', updated_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .eq('booking_id', bookingId)
+        .in('status', OPEN_PROPOSAL_STATUSES)
+        .select('id');
+
+      if (error) throw error;
+      return { data: (data ?? []).map(row => row.id as string), error: null };
+    } catch (error) {
+      logger.error({ err: error, bookingId, userId }, 'Failed to withdraw the open quotes for a booking');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async markSuperseded(id: string, userId: string): Promise<void> {
     try {
       await this.supabase
