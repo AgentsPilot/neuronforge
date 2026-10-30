@@ -781,7 +781,15 @@ With CR-1 and CR-2 fixed before RM commits. CR-3 is decided by the user at the d
 
 ## Commit Info
 
-_RM populates this section._
+| Item | Value |
+|---|---|
+| Branch | `feature/bos-export-mx3-1-remove-switch-and-zip` |
+| Base | `main` `a0804002` |
+| Feature commit | `6cbd72e7` feat(business-os): retire the ZIP export and the module-export switch (MX-3.1) |
+| Sync with main | `e0d67b3a` merge of `origin/main` `1fafd0e7` (#570), no conflicts |
+| Recount after sync | `vercel.json` 23 crons, `BOS_CRON_JOBS` 23, `bosCronJobs.test` / `vercelCrons.test` literals 23, `adminGate.writes` 66: unchanged, all green |
+| PR | opened by RM; NOT on auto-merge (C-6: held until P-1..P-3 are recorded) |
+| Merge commit | pending |
 
 ---
 
