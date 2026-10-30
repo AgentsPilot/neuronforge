@@ -207,18 +207,18 @@ export async function buildContactStatement(params: {
   };
 
   /*
-   * A failed read is not an empty statement.
+   * A failed read is not an empty statement, and that is already enforced.
    *
    * This was `invoicesResult.data ?? []` with the error unbound, which is how a
    * phantom column turned into "this client owes nothing" for every statement
    * ever built. An owner acting on that under-bills; the client is simply not
-   * asked for money they owe. Saying so out loud is the only safe behaviour.
+   * asked for money they owe.
+   *
+   * The guard that followed is gone because `failure` above ALREADY throws on
+   * `invoicesResult.error`, which TypeScript proved by narrowing the result to
+   * `never` here. Two checks for one condition read as two protections while
+   * only one ran; the surviving one is the one at the top.
    */
-  if (invoicesResult.error) {
-    throw new ContactStatementError(
-      `Could not read this contact's open invoices: ${invoicesResult.error.message}`
-    );
-  }
 
   const openInvoices: StatementInvoice[] = ((invoicesResult.data ?? []) as unknown[]).map(i => {
     const row = i as Record<string, unknown>;

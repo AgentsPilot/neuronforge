@@ -1,12 +1,20 @@
 'use client';
 
-import React, { useState, useCallback, useEffect } from 'react';
-import { Loader2, Check, Clock } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Loader2, Check, Clock, Bot } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 /* The registry, for the one field that joins an insight to the standing
    automation doing the same work — see `nextStep` below. */
 import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
+import { automationForInsight } from '@/lib/business-os/automations/catalog';
+import type { ScheduleInterval } from '@/lib/business-os/schedule/interval';
+import {
+  cadenceRangeOf,
+  stopAfterRangeOf,
+  CADENCE_INTERVAL,
+} from '@/lib/business-os/schedule/ranges';
+import { IntervalPicker } from '@/components/business-os/schedule/IntervalPicker';
 import { BeforeAfterPanel, type ProjectionColumn } from './BeforeAfterPanel';
 import type { InsightData, InsightProjection } from './InsightDetailModal';
 
@@ -165,8 +173,37 @@ interface InsightAdvisorCardProps {
    * treated as "no news", not as failure.
    */
   onAction: (action: 'run' | 'snooze' | 'dismiss', insightId: string, params?: Record<string, unknown>) => Promise<void | boolean>;
-  onAutomate: (insightId: string, params: Record<string, unknown>) => Promise<void>;
+  /*
+   * Returns whether it was actually automated, where the host can tell.
+   *
+   * `Promise<void>` is what this was, and the card's refusal guard compared the
+   * result to `false` — dead against a type that can only be `undefined`. The
+   * host had the answer all along; see `handleInsightAutomate`. `void` stays in
+   * the union so a host that cannot report one still satisfies the prop.
+   */
+  onAutomate: (insightId: string, params: Record<string, unknown>) => Promise<void | boolean>;
   onDeclineAutomate: () => void;
+
+  /**
+   * An agent was installed and the server has closed this insight.
+   *
+   * The dashboard holds the list the carousel renders, so without a re-read
+   * the card the owner just dealt with stays on screen offering an agent that
+   * is already running. Deliberately NOT `onAutomate`, which posts the older
+   * `automate` action and would write a second standing rule for one press.
+   */
+  onAgentInstalled?: () => void;
+
+  /**
+   * Automation ids this business already has installed.
+   *
+   * Two detectors can conclude the same thing — `cash_ar_overdue` and
+   * `cash_revenue_at_risk` both reach `chase_overdue_invoices` — so switching
+   * an agent on from one card leaves the other still offering to install it. A
+   * second press is harmless, `installAutomation` is idempotent, but being
+   * asked twice to solve a problem already being handled is not.
+   */
+  installedAutomationIds?: string[];
 }
 
 // ===========================
@@ -235,8 +272,14 @@ const labelStyle: React.CSSProperties = {
 /** A choice chip, selected or not. Same shape for both rows. */
 function chipStyle(selected: boolean, isRTL: boolean): React.CSSProperties {
   return {
-    border: selected ? '1.5px solid rgba(249,115,22,0.55)' : '1.5px solid var(--v2-border)',
-    background: selected ? 'rgba(249,115,22,0.12)' : 'transparent',
+    border: selected ? '1.5px solid var(--v2-primary)' : '1.5px solid var(--v2-border)',
+    background: selected
+      /* `color-mix` is safe INLINE: an unsupported declaration is dropped and
+         the chip falls back to transparent. The same expression as a Tailwind
+         class would emit bare `var(--v2-primary)` as its fallback and paint the
+         chip solid — the note in NeedsYouCard records that. */
+      ? 'color-mix(in srgb, var(--v2-primary) 12%, transparent)'
+      : 'transparent',
     color: selected ? 'var(--v2-text-primary)' : 'var(--v2-text-secondary)',
     borderRadius: '999px',
     padding: '7px 14px',
@@ -265,10 +308,53 @@ export function InsightAdvisorCard({
   onAutomate,
   onDeclineAutomate,
   onOperationalNotify,
+  onAgentInstalled,
+  installedAutomationIds,
 }: InsightAdvisorCardProps) {
   const { t, isRTL, formatCurrency } = useLanguage();
   const [cardState, setCardState] = useState<InsightCardState>('default');
   const [runningStep, setRunningStep] = useState(0);
+
+  /*
+   * How often it should run, chosen BEFORE it is switched on.
+   *
+   * This is the owner's decision, not ours: how often the platform writes to
+   * their clients in their name is a different relationship at daily than at
+   * fortnightly.
+   *
+   * A number and a unit, where it used to be one of five words. Those five all
+   * fired at 09:00 and all meant a number of days, so an owner could not ask
+   * for every ten days — and the mailbox wizard, asking the same question in
+   * minutes, could not share the control. Undefined until the dialog opens, so
+   * the automation's own default decides where it starts.
+   */
+  const [cadenceInterval, setCadenceInterval] = useState<ScheduleInterval | undefined>(
+    undefined
+  );
+
+  /**
+   * Why the install was refused, in the owner's language.
+   *
+   * Held rather than thrown: a refusal is an ordinary answer here, not an
+   * error. Cleared when the card turns, with every other per-page state.
+   */
+  const [installRefusal, setInstallRefusal] = useState<string | null>(null);
+
+  /**
+   * The owner's end of life for one person.
+   *
+   * Still days on this dialog, and that is the RANGE's doing rather than this
+   * control's: the bound reaches BizQL as `{{input.stop_after_days}}` inside a
+   * `$date` offset measured in days, so hours here would be a fractional day.
+   * Every automation's range starts at days, so hours are never offered.
+   */
+  const [stopAfterInterval, setStopAfterInterval] = useState<ScheduleInterval | undefined>(
+    undefined
+  );
+
+  /** In flight, so a double press cannot become two agents. See `handleAutomate`. */
+  const installing = useRef(false);
+
   const [autoValue, setAutoValue] = useState(
     (automationConfig?.suggestedParams?.days_threshold as number) || 14
   );
@@ -312,6 +398,113 @@ export function InsightAdvisorCard({
   }, []);
 
   const insight = insights[currentIndex];
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * EVERY PAGE STARTS AS ITSELF.
+   *
+   * `cardState` belongs to the COMPONENT, and the carousel renders one
+   * component for all thirteen pages. So a state set on page one — "running",
+   * "handled", "completed" — was still set on page two, and on every page
+   * after it.
+   *
+   * Reported from a live account: one press on the invoice card put a green
+   * "Done · I'll keep an eye on this for you" on all thirteen, none of which
+   * had been acted on. The press had in fact failed, which is the sibling bug
+   * fixed in `handleAutomate` below, but the state spreading is what made it
+   * look like the whole list had been handled at once.
+   *
+   * Keyed on the insight's own id rather than the index, so the list
+   * reordering under a refresh cannot carry one card's state onto another.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    setCardState('default');
+    setRunningStep(0);
+    setInstallRefusal(null);
+    /* Both answers, so a new card opens on ITS automation's defaults rather
+       than on the last one's. Only the stop rule was cleared before, which
+       left a cadence chosen for a different agent in place. */
+    setCadenceInterval(undefined);
+    setStopAfterInterval(undefined);
+  }, [insight?.id]);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE AGENT WE SHIP FOR THIS INSIGHT, IF WE SHIP ONE.
+   *
+   * Joined on `paired_process_id`, the same key the covering-automation lookup
+   * below already uses. An insight is a trend; an agent is a worker installed
+   * once that keeps handling it. Fourteen detectors reduce to four processes,
+   * so one agent answers every detector that reaches the same conclusion.
+   *
+   * Null for most insights, and that is honest: there is then nothing to hand
+   * over, and the card says what it always said.
+   *
+   * MUST stay below `insight`, which it reads. It was declared among the
+   * `useState` calls at the top, where it reads naturally and crashes the page:
+   * `const` is hoisted but not initialised, so the browser threw "Cannot access
+   * 'insight' before initialization" the moment the card mounted. The hooks are
+   * where state goes; this is derived from a prop and belongs with the other
+   * derivations.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const offeredAgent = insight
+    ? automationForInsight({
+        detector_id: insight.detector_id,
+        paired_process_id: insight.paired_process_id,
+      })
+    : undefined;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THIS AUTOMATION MAY BE SET TO, AND WHERE THE CONTROL OPENS.
+   *
+   * Derived from the `cadenceChoices` and `stopAfterChoices` it already
+   * declares, so the walls cannot drift from the menu they replaced — and the
+   * six catalogue files did not have to change at all.
+   *
+   * The control opens on the automation's own defaults, not on the floor: the
+   * owner is being shown what we would have chosen for them, and asked whether
+   * they agree.
+   */
+  const cadenceRange = offeredAgent
+    ? cadenceRangeOf(offeredAgent)
+    : { min: { every: 1, unit: 'days' as const }, max: { every: 1, unit: 'days' as const } };
+
+  const stopAfterRange = offeredAgent
+    ? stopAfterRangeOf(offeredAgent)
+    : { min: { every: 1, unit: 'days' as const }, max: { every: 1, unit: 'days' as const } };
+
+  const cadenceValue =
+    cadenceInterval ??
+    (offeredAgent ? CADENCE_INTERVAL[offeredAgent.cadenceChoices[0]] : cadenceRange.min);
+
+  const stopAfterValue =
+    stopAfterInterval ??
+    (offeredAgent
+      ? { every: offeredAgent.defaultStopAfterDays, unit: 'days' as const }
+      : stopAfterRange.min);
+
+  /*
+   * The unit, agreeing with its number.
+   *
+   * Separate keys for one and many rather than a count glued to a word: "1 ימים"
+   * is as wrong as "1 days", and Hebrew does not form a plural by adding a
+   * letter to the singular.
+   */
+  const unitWord = (unit: 'minutes' | 'hours' | 'days', count: number) =>
+    t(`automation.unit.${unit}${count === 1 ? '_one' : ''}`) || unit;
+
+  /*
+   * Already switched on, from this card or from another one reporting the same
+   * problem. `cash_ar_overdue` and `cash_revenue_at_risk` both conclude
+   * "money is owed and nobody is asking for it", so the agent installed from
+   * one of them is already covering the other.
+   */
+  const agentAlreadyWorking = Boolean(
+    offeredAgent && installedAutomationIds?.includes(offeredAgent.id)
+  );
 
   /*
    * Past the insights, the carousel is showing an automation to approve.
@@ -531,7 +724,8 @@ export function InsightAdvisorCard({
    * implements, and offering to run one was how the card came to report success
    * for work that never started.
    */
-  const canRun = !isResolved && (!!operationalItem || !!insight?.paired_process_id);
+  const canRun =
+    !isResolved && (!!operationalItem || !!insight?.paired_process_id || !!offeredAgent);
 
   // Get eyebrow text based on stage
   const getEyebrowText = () => {
@@ -800,9 +994,190 @@ export function InsightAdvisorCard({
   // Handle automate
   const handleAutomate = useCallback(async () => {
     if (!insight) return;
-    await onAutomate(insight.id, { days_threshold: autoValue });
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * ONE PRESS IS ONE PRESS.
+     *
+     * A browser under memory pressure fired this four times in ten
+     * milliseconds and created four live agents, each scheduled, each about to
+     * write to the same clients. The database now refuses the duplicates —
+     * `agents_one_automation_per_user` — and this is the half that stops the
+     * requests leaving at all, which is the difference between a race the
+     * server has to resolve and no race.
+     *
+     * A ref rather than state: state updates are batched and asynchronous, so
+     * a second press in the same tick would read the old value and go.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (installing.current) return;
+    installing.current = true;
+
+    try {
+
+    /*
+     * An agent, where we ship one for this insight's process.
+     *
+     * It creates the owner's own `agents` row — which is what makes it
+     * something they can see, pause and remove — and carries the cadence they
+     * chose. The older path wrote a rule with no way to stop it, and told the
+     * owner to "turn it off in Operation", a screen that does not exist.
+     */
+    if (offeredAgent) {
+      const response = await fetch('/api/business-os/automation-agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          automationId: offeredAgent.id,
+          /*
+           * Both choices travel together: how often, and until when.
+           *
+           * `schedule` is the answer the owner gave; `stopAfterDays` is the
+           * other one, still in days because every automation's range starts
+           * there. The server clamps both to the automation's own range, so a
+           * stale tab cannot set a cadence the catalogue refused.
+           */
+          schedule: cadenceValue,
+          stopAfterDays: stopAfterValue.every,
+          /*
+           * So the card closes.
+           *
+           * The server marks this insight `automated`, which is not an open
+           * status, and it leaves the carousel. Without it the install
+           * succeeded and the insight stayed `new`: `cardState` showed the
+           * owner it was handled until they reloaded, and then the same card
+           * was back offering an agent already running. Re-pressing was
+           * harmless — `installAutomation` is idempotent — but nothing said so.
+           */
+          insightId: insight.id,
+        }),
+      });
+
+      /*
+       * ───────────────────────────────────────────────────────────────────
+       * A REFUSAL MUST SAY SOMETHING. RETURNING QUIETLY IS A DEAD BUTTON.
+       *
+       * The commonest refusal is `409 requirement_unmet`: the agent needs
+       * something this business does not have yet. Today that is almost always
+       * `can_send_marketing` — an automated booking invite is a solicitation,
+       * and `MARKETING_SENDING_ENABLED` is false platform-wide until
+       * unsubscribe support ships, so the transport would refuse every send.
+       *
+       * Refusing the install is right. Refusing it in silence is not: the
+       * owner picks a cadence, presses, and the card does nothing at all.
+       * ───────────────────────────────────────────────────────────────────
+       */
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+
+        setInstallRefusal(
+          body?.code === 'requirement_unmet' && body?.requires
+            ? t(`automation.requires.${body.requires}`) ||
+                t('automation.requires.default') ||
+                'This one cannot run for your business yet.'
+            : t('automation.install_failed') || 'I could not switch that on. Try again in a moment.'
+        );
+        return;
+      }
+
+      /*
+       * And NOT `onAutomate`, which is the older path: it posts the `automate`
+       * action, and that writes an `insight_automations` row of its own before
+       * marking the insight. One press would leave two standing rules for one
+       * job — the collision this codebase has documented three times.
+       *
+       * So the card shows the handled state from here, and the carousel drops
+       * the insight on the dashboard's next refresh, by which time the server
+       * has already closed it.
+       */
+      /*
+       * Tell the running-agents card to re-read itself.
+       *
+       * It loads once on mount, so without this the agent the owner just
+       * switched on does not appear until the next page load — and the card
+       * that was supposed to show "here is what is now working for you" sits
+       * there unchanged, which reads as the install having failed.
+       *
+       * An event rather than shared state: the two cards are siblings under a
+       * dashboard that owns neither, and threading a refresh callback through
+       * it would make the advisor card depend on a list it knows nothing about.
+       */
+      window.dispatchEvent(new CustomEvent('business-os:automation-installed'));
+
+      /* And the dashboard re-reads its insights, so this card goes with it. */
+      onAgentInstalled?.();
+
+      setCardState('automated');
+      return;
+    }
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AND THE OLDER PATH MUST ALSO BE ABLE TO SAY NO.
+     *
+     * This announced success whatever came back, exactly as `handleRun` did
+     * before its own fix — the comment there records the same lesson.
+     *
+     * It is not a rare branch. An insight whose `paired_process_id` is null is
+     * answered `400 This insight has no process to automate`, and detectors
+     * withhold that field on purpose: the revenue-at-risk card drops it on a
+     * run where nothing outstanding is an INVOICE, because the chase could
+     * not touch an instalment or a quote. On a live account the owner pressed
+     * it on a ₪4,600 card, the server refused, and the card said "Done · I'll
+     * keep an eye on this for you". Nothing was created: no agent, no standing
+     * rule, and the insight was still `new` the next morning.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+      const done = await onAutomate(insight.id, { days_threshold: autoValue });
+
+      if (done === false) return;
+
+      setCardState('automated');
+    } finally {
+      installing.current = false;
+    }
+  }, [insight, autoValue, onAutomate, offeredAgent, cadenceValue, stopAfterValue, onAgentInstalled, t]);
+
+  /**
+   * "I got it" — the ending for a card whose work an agent already has.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Two detectors can report the same problem at different altitudes, and the
+   * overlap registry keeps both cards on purpose: `cash_ar_overdue` names the
+   * four invoices that are late, `cash_revenue_at_risk` names everything
+   * outstanding. Switching the agent on from one leaves the other open about
+   * work already being handled, and the owner's only way out was to dismiss it
+   * — which records "this did not matter" against something that did.
+   *
+   * `acknowledgeOnly` so the server marks the insight and touches NO agent. A
+   * second install would reach `installAutomation`, which reads a re-install of
+   * a paused agent as the owner asking for it back and reactivates it. Pressing
+   * "I got it" must never un-pause something they deliberately stopped.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const handleAgentCovers = useCallback(async () => {
+    if (!insight || !offeredAgent) return;
+
+    const response = await fetch('/api/business-os/automation-agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        automationId: offeredAgent.id,
+        insightId: insight.id,
+        acknowledgeOnly: true,
+      }),
+    });
+
+    if (!response.ok) {
+      setInstallRefusal(
+        t('automation.install_failed') || 'I could not close that. Try again in a moment.'
+      );
+      return;
+    }
+
     setCardState('automated');
-  }, [insight, autoValue, onAutomate]);
+    onAgentInstalled?.();
+  }, [insight, offeredAgent, onAgentInstalled, t]);
 
   // Handle decline automate
   const handleDeclineAutomate = useCallback(() => {
@@ -881,7 +1256,33 @@ export function InsightAdvisorCard({
               label: canRun
                 ? t('insight.projection.handle_it') || 'If I handle it'
                 : t('insight.projection.what_to_do') || 'What to do about it',
-              value: renderLine(projection.letMeHandleIt?.summaryLine, projection.letMeHandleIt?.summary)
+              /*
+               * ───────────────────────────────────────────────────────────────
+               * WHERE AN AGENT IS WHAT THE BUTTON INSTALLS, SAY THAT.
+               *
+               * The projector writes "I chase all 4 today", which described the
+               * one-off: queue these items, a cron sends them within the hour.
+               * The button no longer does that. It installs an agent that runs
+               * on the cadence the owner is about to choose, so "today" is
+               * wrong on both counts — not today, and not just these four.
+               *
+               * The projector cannot know this: it runs server-side off the
+               * detector and has never heard of the catalogue. The card has
+               * `offeredAgent` in its hand, so the override belongs here.
+               *
+               * Insights we ship no agent for keep the projector's line, which
+               * is still exactly true for them.
+               * ───────────────────────────────────────────────────────────────
+               */
+              value: (offeredAgent
+                ? agentAlreadyWorking
+                  /* Present tense, because it is already true. "I'll take
+                     these over" on a card whose agent has been running since
+                     Tuesday is an offer the owner already accepted. */
+                  ? t('insight.projection.agent_on_it')
+                  : t('insight.projection.agent_takes_over')
+                : '')
+                || renderLine(projection.letMeHandleIt?.summaryLine, projection.letMeHandleIt?.summary)
                 || `~${formatCurrency(insight?.estimated_impact_usd || 0, {
                   showFree: false,
                   /*
@@ -893,7 +1294,11 @@ export function InsightAdvisorCard({
                    */
                   currencyOverride: (currency ?? undefined) as CurrencyCode | undefined,
                 })} recovered`,
-              subtext: renderLine(projection.letMeHandleIt?.detailsLine, projection.letMeHandleIt?.details),
+              /* The agent's own sentence underneath, so the column says what it
+                 will watch as well as that somebody is now watching. */
+              subtext: offeredAgent
+                ? t(offeredAgent.watchesKey)
+                : renderLine(projection.letMeHandleIt?.detailsLine, projection.letMeHandleIt?.details),
             },
           }
         : null;
@@ -997,18 +1402,42 @@ export function InsightAdvisorCard({
             rowGap: '8px',
           }}
         >
-          {/* Orange gradient orb: .adv-orb */}
+          {/*
+            ───────────────────────────────────────────────────────────────────
+            THE ADVISOR'S MARK, AND IT SAYS WHAT IT IS.
+
+            This was a plain gradient circle. It read as a decoration or an
+            avatar placeholder — a coloured dot beside "your advisor noticed",
+            which told a reader nothing about where the noticing came from.
+
+            `Bot` is the mark, and it is the same glyph the agents card and the
+            bookings tab use. Those two mean "a machine did this without a
+            person", and the advisor is the same machine speaking before it
+            does anything — so one glyph across all three reads as one worker
+            rather than three unrelated features.
+
+            The orange stays. The accent is the advisor's identity and this is
+            not a control — see the button guard for where the line falls.
+            ───────────────────────────────────────────────────────────────────
+          */}
           <span
             className="adv-orb"
             style={{
               width: '30px',
               height: '30px',
-              borderRadius: '50%',
-              background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
+              borderRadius: '9px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              /* The tint rather than the solid fill: a 30px block of saturated
+                 orange beside orange text is two loud things in one line. */
+              background: 'rgba(249,115,22,0.14)',
+              color: '#F97316',
               flexShrink: 0,
-              boxShadow: '0 0 0 5px rgba(249,115,22,0.12)',
             }}
-          />
+          >
+            <Bot className="w-4 h-4" strokeWidth={2.25} />
+          </span>
 
           {/* Eyebrow text: .adv-ey */}
           <span
@@ -1134,6 +1563,10 @@ export function InsightAdvisorCard({
                         borderRadius: i === currentIndex ? '4px' : '50%',
                         // Inactive dots ride the theme's border colour; the
                         // fixed light grey was near-white on a dark card.
+                        /* The advisor's accent, deliberately. The carousel is
+                           chrome rather than an action: the dots and the arrows
+                           say where you are in the card, and the platform's
+                           button colour belongs to things that DO something. */
                         background: i === currentIndex ? '#F97316' : 'var(--v2-border)',
                         transition: 'width 0.2s, background 0.2s',
                       }}
@@ -1530,6 +1963,59 @@ export function InsightAdvisorCard({
         )}
 
         {/* Action buttons (default state): .adv-acts */}
+        {/*
+          ─────────────────────────────────────────────────────────────────────
+          ALREADY COVERED, SAID BEFORE THE BUTTONS.
+
+          The card still describes a real problem — this one does not stop
+          being true because an agent is on it — so the finding stays and this
+          line explains who has it. Named, not "an automation": the owner
+          switched on something with a name, and seeing that name here is what
+          connects this card to the row in the list below.
+          ─────────────────────────────────────────────────────────────────────
+        */}
+        {cardState === 'default' && agentAlreadyWorking && offeredAgent && (
+          <div
+            style={{
+              marginTop: '16px',
+              padding: '11px 13px',
+              borderRadius: '12px',
+              background: 'rgba(34,197,94,0.10)',
+              border: '1.5px solid rgba(34,197,94,0.30)',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '9px',
+            }}
+          >
+            <Check className="w-4 h-4 shrink-0 mt-0.5" style={{ color: '#15803D' }} />
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: '13.5px',
+                  fontWeight: 600,
+                  color: 'var(--v2-text-primary)',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                }}
+              >
+                {(t('insight.covered_by') || '{agent} is already handling this').replace(
+                  '{agent}',
+                  t(offeredAgent.nameKey)
+                )}
+              </div>
+              <div
+                style={{
+                  fontSize: '12.5px',
+                  color: 'var(--v2-text-secondary)',
+                  marginTop: '2px',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                }}
+              >
+                {t(offeredAgent.watchesKey)}
+              </div>
+            </div>
+          </div>
+        )}
+
         {cardState === 'default' && (
           <div
             className="adv-acts"
@@ -1559,32 +2045,81 @@ export function InsightAdvisorCard({
                * it off when pressed would be a trap.
                */
               disabled={operationalState === 'on'}
+              /*
+               * ───────────────────────────────────────────────────────────
+               * WHERE AN AGENT EXISTS, THE BUTTON INSTALLS IT. FULL STOP.
+               *
+               * It used to call `handleRun`, which queues THESE items into
+               * `insight_actions` for a cron to send once. That is a second
+               * sender doing the agent's job, and it put the owner through the
+               * old path before the new one was even offered: the agent
+               * question only appeared after the one-off had already gone out.
+               *
+               * An insight means the deterministic chaser has run its course —
+               * 1, 3 and 7 days, then it stops — so what is left is not one
+               * more manual send, it is somebody to take the job over. Opening
+               * the offer asks how often first, which is the only question
+               * that has to be answered before the platform writes to a client
+               * in the owner's name.
+               *
+               * `handleRun` stays for insights we ship no agent for. Those
+               * still have only the one-off.
+               * ───────────────────────────────────────────────────────────
+               */
               onClick={
                 operationalItem
                   ? operationalState === 'on'
                     ? undefined
                     : () => handleDecide(true)
-                  : handleRun
+                  : agentAlreadyWorking
+                    /* Not an offer and not a dead status: the agent has this,
+                       and the press is the owner saying so and closing the
+                       card. */
+                    ? handleAgentCovers
+                    : offeredAgent
+                      ? () => setCardState('automate_offer')
+                      : handleRun
               }
-              className="adv-btn"
-              style={{
-                // Running reads as a settled state rather than an offer: the
-                // orange call-to-action is what invites a press.
-                background:
-                  operationalState === 'on'
-                    ? 'rgba(34,197,94,0.14)'
-                    : 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
-                color: operationalState === 'on' ? '#15803D' : '#FFFFFF',
-                borderRadius: '12px',
-                padding: '11px 18px',
-                fontSize: '14px',
-                fontWeight: 600,
-                boxShadow:
-                  operationalState === 'on' ? 'none' : '0 8px 20px -9px rgba(249,115,22,0.9)',
-                border: operationalState === 'on' ? '1.5px solid rgba(34,197,94,0.35)' : 'none',
-                cursor: operationalState === 'on' ? 'default' : 'pointer',
-                fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-              }}
+              /*
+               * ───────────────────────────────────────────────────────────────
+               * THE NEEDS-YOU ROW BUTTON, COPIED RATHER THAN APPROXIMATED.
+               *
+               * These are its exact classes. Setting the same numbers inline
+               * was not the same button: `text-xs` also carries a 1rem
+               * line-height and `font-semibold` a specific weight, and an
+               * explicit `fontFamily` overrode the stack the list inherits. The
+               * result measured identical and still did not look it.
+               *
+               * So nothing about the SHAPE is inline any more. The style prop
+               * carries colour only, which is the one thing that differs
+               * between the two states.
+               *
+               * `ap-primary-lift` is also what fixes the blur. In dark mode its
+               * rule in `globals.css` darkens the fill — white on this
+               * account's brand orange measures about 2.8:1, and text under
+               * roughly 4.5:1 stops resolving into letters and reads as being
+               * out of focus. The list had the class; this button did not, and
+               * that is the whole difference the eye was picking up.
+               *
+               * Dropped on the settled green state, which is a chip rather than
+               * an invitation — the same rule the list applies to its `done`
+               * rows.
+               * ───────────────────────────────────────────────────────────────
+               */
+              className={`adv-btn shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all hover:brightness-110 active:scale-[0.97] disabled:active:scale-100 disabled:hover:brightness-100${
+                operationalState === 'on' || agentAlreadyWorking ? '' : ' ap-primary-lift'
+              }`}
+              style={
+                operationalState === 'on' || agentAlreadyWorking
+                  ? {
+                      /* The settled chip, tinted from the success colour the
+                         same way the list tints its `done` rows. */
+                      background: 'color-mix(in srgb, var(--v2-success) 14%, transparent)',
+                      color: 'var(--v2-success)',
+                      cursor: operationalState === 'on' ? 'default' : 'pointer',
+                    }
+                  : { background: 'var(--v2-primary)', color: '#fff' }
+              }
             >
               {operationalItem
                 ? operationalState === 'on'
@@ -1594,24 +2129,35 @@ export function InsightAdvisorCard({
                   : operationalState === 'off'
                     ? t('automation.enable')
                     : t('automation.approve')
-                : t('insight.action.primary') || 'Handle it for me'}
+                : agentAlreadyWorking
+                  ? t('insight.action.got_it') || 'I got it'
+                  : t('insight.action.primary') || 'Handle it for me'}
             </button>
             )}
             {/* Secondary button: .adv-lite */}
             <button
               onClick={operationalItem ? () => handleDecide(false) : handleDismiss}
-              className="adv-lite"
-              style={{
-                border: '1.5px solid var(--v2-border)',
-                background: 'var(--v2-surface)',
-                borderRadius: '12px',
-                padding: '11px 18px',
-                fontSize: '14px',
-                fontWeight: 600,
-                color: 'var(--v2-text-secondary)',
-                cursor: 'pointer',
-                fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-              }}
+              /*
+               * ─────────────────────────────────────────────────────────────
+               * THE SAME SECONDARY AS THE NEEDS-YOU CARD: TEXT, NOT A BOX.
+               *
+               * This was a bordered box filled with `--v2-surface`. In dark
+               * mode that is the CARD'S OWN colour, so the button rendered as a
+               * faint outline around nothing and read as disabled — beside a
+               * solid indigo primary, which made the pair look like one live
+               * control and one dead one.
+               *
+               * The Needs-you card's secondary has no border and no fill: it is
+               * muted text that darkens on hover. Matching it fixes dark mode
+               * and makes the two cards agree, which is the same reason the
+               * primary moved to `--v2-primary`.
+               * ─────────────────────────────────────────────────────────────
+               */
+              /* The Needs-you cancel, by class: muted text that darkens on
+                 hover, no border and no fill. The handlers it replaced were an
+                 inline approximation of `hover:text-[...]`. */
+              className="px-2.5 py-1.5 text-xs font-semibold rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+              style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}
             >
               {isResolved
                 ? t('insight.action.acknowledge') || 'Got it'
@@ -1793,7 +2339,7 @@ export function InsightAdvisorCard({
         )}
 
         {/* Automation offer state: .auto-offer */}
-        {cardState === 'automate_offer' && canAutomate && (
+        {cardState === 'automate_offer' && (canAutomate || offeredAgent) && (
           <div
             className="auto-offer"
             style={{
@@ -1843,10 +2389,84 @@ export function InsightAdvisorCard({
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
               }}
             >
-              {t('insight.automate.description') || 'I\'ll watch every invoice and chase the ones that pass your limit. Up to three reminders, a week apart, in your voice. I stop the moment they pay, and I tell you when it works.'}
+              {/*
+                The agent's own sentence where we ship one. The fallback below
+                describes invoice chasing in particular, which is wrong on a
+                card about quiet enquiries — it was written when one agent was
+                the only thing this offer could mean.
+              */}
+              {offeredAgent
+                ? t(offeredAgent.descriptionKey)
+                : t('insight.automate.description') || 'I\'ll watch every invoice and chase the ones that pass your limit. Up to three reminders, a week apart, in your voice. I stop the moment they pay, and I tell you when it works.'}
             </div>
 
+            {/*
+              ─────────────────────────────────────────────────────────────────
+              HOW OFTEN, ASKED BEFORE IT IS SWITCHED ON.
+
+              The owner's decision, and the one question that must be answered
+              first: daily and fortnightly are different relationships with the
+              same client, in the owner's own name.
+
+              Named choices, never a cron field. An owner typing `* * * * *`
+              into a text box is a mailshot, and the install has no way to tell
+              that from a deliberate choice.
+
+              Replaces the days stepper below for insights we ship an agent
+              for. That stepper writes `days_threshold`, which NOTHING reads —
+              `CashArOverdueDetector` hardcodes 7 — so it asked the owner a
+              question and then ignored the answer.
+              ─────────────────────────────────────────────────────────────────
+            */}
+            {/*
+              ─────────────────────────────────────────────────────────────────
+              THE TWO QUESTIONS, EACH AS ONE CONTROL.
+
+              These were chips, and chips were right while each question had
+              three or four answers. They could not carry the request: the five
+              named cadences all fired at 09:00 and all meant a number of days,
+              so "every ten days" was unaskable — and the mailbox wizard, asking
+              the same question in minutes, could not share the control at all.
+
+              The range comes from the automation's own `cadenceChoices` and
+              `stopAfterChoices`, so an owner can reach anything between the
+              ends and nothing beyond them. Those lists were never a menu:
+              `win_back_quiet_clients` offers nothing faster than a fortnight
+              because it writes to people quiet for a year.
+
+              "How often" without "until when" is an agent that chases somebody
+              for ever, so both stay, side by side, answered before it runs.
+              Deliberately in days rather than attempts: counting sends per
+              person needs somewhere to keep the count, and a date bound needs
+              nothing — the person simply stops being selected.
+              ─────────────────────────────────────────────────────────────────
+            */}
+            {offeredAgent && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '14px' }}>
+                <IntervalPicker
+                  id="automation-cadence"
+                  label={t('automation.run_every') || 'How often should I do this?'}
+                  lead={t('automation.every') || 'Every'}
+                  value={cadenceValue}
+                  range={cadenceRange}
+                  onChange={setCadenceInterval}
+                  unitLabel={unitWord}
+                />
+
+                <IntervalPicker
+                  id="automation-stop-after"
+                  label={t('automation.stop_after') || 'Give up on someone after'}
+                  lead={t('automation.after') || 'After'}
+                  value={stopAfterValue}
+                  range={stopAfterRange}
+                  onChange={setStopAfterInterval}
+                  unitLabel={unitWord}
+                />
+              </div>
+            )}
+
             {/* Threshold control: .auto-thr */}
+            {!offeredAgent && (
             <div
               className="auto-thr"
               style={{
@@ -1896,8 +2516,8 @@ export function InsightAdvisorCard({
                     height: '34px',
                     fontSize: '17px',
                     fontWeight: 600,
-                    color: '#F97316',
-                    background: 'rgba(249, 115, 22, 0.10)',
+                    color: 'var(--v2-primary)',
+                    background: 'color-mix(in srgb, var(--v2-primary) 12%, transparent)',
                     border: 'none',
                     cursor: 'pointer',
                   }}
@@ -1927,8 +2547,8 @@ export function InsightAdvisorCard({
                     height: '34px',
                     fontSize: '17px',
                     fontWeight: 600,
-                    color: '#F97316',
-                    background: 'rgba(249, 115, 22, 0.10)',
+                    color: 'var(--v2-primary)',
+                    background: 'color-mix(in srgb, var(--v2-primary) 12%, transparent)',
                     border: 'none',
                     cursor: 'pointer',
                   }}
@@ -1937,6 +2557,34 @@ export function InsightAdvisorCard({
                 </button>
               </div>
             </div>
+            )}
+
+            {/*
+              The refusal, where the owner is looking when it happens.
+
+              Above the buttons rather than replacing them: the cadence they
+              chose is still on screen and still theirs, and the sentence
+              explains why the press did nothing rather than leaving them to
+              press again.
+            */}
+            {installRefusal && (
+              <div
+                role="status"
+                style={{
+                  marginTop: '12px',
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  fontSize: '13px',
+                  lineHeight: 1.5,
+                  background: 'var(--v2-bg)',
+                  color: 'var(--v2-text-secondary)',
+                  border: '1px solid var(--v2-border)',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                }}
+              >
+                {installRefusal}
+              </div>
+            )}
 
             {/* Action buttons: .auto-acts */}
             <div
@@ -1949,37 +2597,21 @@ export function InsightAdvisorCard({
               }}
             >
               <button
-                className="adv-btn"
+                /* The Needs-you row button's own classes, like the primary
+                   above. Nothing about the shape is inline — see the note
+                   there for why the same numbers were not the same button. */
+                className="adv-btn shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all hover:brightness-110 active:scale-[0.97] ap-primary-lift"
                 onClick={handleAutomate}
-                style={{
-                  background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
-                  color: '#FFFFFF',
-                  borderRadius: '12px',
-                  padding: '11px 18px',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  boxShadow: '0 8px 20px -9px rgba(249,115,22,0.9)',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-                }}
+                style={{ background: 'var(--v2-primary)', color: '#fff' }}
               >
                 {t('insight.automate.yes') || 'Yes, handle it'}
               </button>
               <button
-                className="adv-lite"
                 onClick={handleDeclineAutomate}
-                style={{
-                  border: '1.5px solid var(--v2-border)',
-                  background: 'var(--v2-surface)',
-                  borderRadius: '12px',
-                  padding: '11px 18px',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  color: 'var(--v2-text-secondary)',
-                  cursor: 'pointer',
-                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-                }}
+                /* Text, not a box — see the note on the secondary above. */
+                /* Same as the secondary above, and as the list's cancel. */
+                className="px-2.5 py-1.5 text-xs font-semibold rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}
               >
                 {t('insight.automate.no') || 'Keep asking me'}
               </button>
@@ -2111,7 +2743,8 @@ function PagerArrow({
          * The whole point of the arrows: at the first page the forward one is
          * the only lit thing in the row, and that is what says there is more to
          * see. So the enabled state is the card's own accent rather than the
-         * muted grey the dots use.
+         * muted grey the dots use — and it matches the active dot beside it,
+         * which is the same carousel control.
          */
         color: disabled ? 'var(--v2-border)' : '#F97316',
         cursor: disabled ? 'default' : 'pointer',

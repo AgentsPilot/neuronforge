@@ -57,14 +57,29 @@ jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
  * paid invoice leaked into the next test and its send never happened — the
  * failure looked like the dispatcher losing a retry when it was the fixture.
  */
-const invoiceState = { status: 'sent' };
+/*
+ * `dueDate` is part of the fixture now, and it was `null`.
+ *
+ * A chase is refused outright for an invoice with no due date, or one not yet
+ * due: not-yet-due is not late, and five real clients were chased for money
+ * they did not owe yet before that check existed. So a test about SENDING has
+ * to use an invoice that is genuinely overdue, and the refusals get their own
+ * cases below.
+ */
+const PAST_DUE = new Date(Date.now() - 10 * 86_400_000).toISOString().slice(0, 10);
+
+const invoiceState: { status: string; dueDate: string | null } = {
+  status: 'sent',
+  dueDate: PAST_DUE,
+};
 
 jest.mock('@/lib/repositories/PaymentRepository', () => ({
   paymentInvoiceRepository: {
     findById: async (id: string) => ({
       data: {
         id, status: invoiceState.status, invoice_number: 'INV-1', amount: 100, currency: 'GBP',
-        client_email: 'client@example.com', client_name: 'A Client', due_date: null,
+        client_email: 'client@example.com', client_name: 'A Client',
+        due_date: invoiceState.dueDate,
       },
       error: null,
     }),
@@ -185,6 +200,7 @@ describe('drainInsightActions', () => {
 
   beforeEach(() => {
     invoiceState.status = 'sent';
+    invoiceState.dueDate = PAST_DUE;
     contactState.data = null;
     leadResponseState.rows = [];
     profileState.meeting_reminder_enabled = false;
@@ -256,6 +272,56 @@ describe('drainInsightActions', () => {
 
     expect(result.sent).toBe(0);
     expect(result.skipped).toBe(1);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('refuses an invoice that is not due yet', async () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE ONE THAT ALREADY HAPPENED TO REAL CLIENTS.
+     *
+     * A business agrees terms — the proposal's own `payment_terms_days`, the
+     * business default, or thirty days — and `dueDateFromTerms` turns that into
+     * the due date. Chasing before it arrives asks for money the client does
+     * not owe yet, in the owner's name.
+     *
+     * Five invoices went out that way, by up to NINETEEN days, every one of
+     * them selected by `CashRevenueAtRiskDetector`, which ages invoices by
+     * `created_at` — when the bill was RAISED — rather than by when it falls
+     * due. The selector was wrong; this is the place that cannot be.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    invoiceState.dueDate = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+
+    install([invoiceRow('a')]);
+    const result = await drainInsightActions();
+
+    expect(result.sent).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('refuses one falling due TODAY, rather than chasing it this morning', async () => {
+    /* Whole days, on the footing `dueDateFromTerms` writes them. Somebody has
+       until the end of the day they were given. */
+    invoiceState.dueDate = new Date().toISOString().slice(0, 10);
+
+    install([invoiceRow('a')]);
+    const result = await drainInsightActions();
+
+    expect(result.sent).toBe(0);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('refuses one with no due date at all', async () => {
+    /* Without a due date there is no day to be late on, and guessing one from
+       the issue date is how the early chases started. */
+    invoiceState.dueDate = null;
+
+    install([invoiceRow('a')]);
+    const result = await drainInsightActions();
+
+    expect(result.sent).toBe(0);
     expect(sendEmail).not.toHaveBeenCalled();
   });
 

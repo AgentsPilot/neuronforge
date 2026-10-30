@@ -18,6 +18,7 @@ import { stripeIntervalFor, planPhases, type PlanFrequency } from '@/lib/payment
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { isCardCollectionPaused } from '@/lib/payments/stripeAccountContext';
 import { z } from 'zod';
 import Stripe from 'stripe';
 import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
@@ -164,6 +165,26 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       effectiveSubdomain = homepage?.subdomain || undefined;
+    }
+
+    /*
+     * The owner switched card payments off.
+     *
+     * Refusing here is not a dead end: the booking flow treats "no card" as
+     * "bill by invoice instead", so the client still books and the business
+     * raises a local invoice. This route only declines to take a card.
+     *
+     * Deliberately the NARROW check, not the full collection gate: this route
+     * resolves its own account id from `plugin_connections` first, and the full
+     * gate reads only `stripe_connect_accounts` — adopting it would refuse every
+     * owner who linked Stripe by OAuth and is currently getting paid.
+     */
+    if (await isCardCollectionPaused(supabaseServer, ownerId)) {
+      requestLogger.info({ ownerId }, 'Card payment refused: the owner paused card payments');
+      return NextResponse.json(
+        { success: false, error: 'cannot_collect', reason: 'paused_by_owner' },
+        { status: 409 }
+      );
     }
 
     // Look up Stripe Connect account - check both plugin_connections and stripe_connect_accounts

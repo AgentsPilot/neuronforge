@@ -129,3 +129,73 @@ describe('the slot maths lives in one place', () => {
     expect(route).not.toMatch(/^function generateTimeSlots\(/m);
   });
 });
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AND A DAY THE BUSINESS IS CLOSED IS NOT OFFERED
+ *
+ * The purchase flow has always greyed those out: its availability endpoint
+ * takes a `days` window and loops it, so its calendar knows which days hold
+ * anything before it paints. The portal asked one date at a time and so had
+ * nothing to grey out with — every day inside the advance window looked open,
+ * and a client picking a Saturday the owner has never worked got an empty
+ * diary and no reason for it.
+ *
+ * What matters here is not that the panel greys days, but that it greys them
+ * by the SAME rule that later decides whether there are hours. Two pipelines
+ * would eventually disagree, and the disagreement would read as "the calendar
+ * is lying" — the exact complaint this fixes.
+ */
+describe('which days the calendar offers', () => {
+  const range = route.slice(route.indexOf('const openDatesForRange'));
+  const body = range.slice(0, range.indexOf('\n    };'));
+
+  it('decides an open day with the same helpers as the single-day diary', () => {
+    expect(body).toMatch(/windowsForDate\(/);
+    expect(body).toMatch(/generateTimeSlots\(/);
+  });
+
+  it('counts time off and the external calendar, not just the weekly hours', () => {
+    /* A weekday rule alone would still offer a day blocked for a holiday. */
+    expect(body).toMatch(/schedulingTimeOffRepository\.list\(/);
+    expect(body).toMatch(/externalCalendarEventRepository\.getBusySlots\(/);
+    expect(body).toMatch(/busyMeetings\(/);
+  });
+
+  it('reads those facts once for the window, not once per day', () => {
+    /* `slotsForDate` in a loop is five round-trips a day. The loop that
+       remains must do no I/O — everything it needs is already in hand. */
+    const loop = body.slice(body.indexOf('for (let offset'));
+    expect(loop).not.toMatch(/await /);
+  });
+
+  it('does no diary work unless asked, like the single-day path', () => {
+    expect(route).toMatch(/openDays \? await openDatesForRange\(openDays\) : undefined/);
+  });
+
+  it('bounds the window — this is a public endpoint', () => {
+    expect(route).toMatch(/Math\.min\(Number\(openDaysRaw\), 30\)/);
+  });
+
+  it('the panel asks for the window and greys the rest', () => {
+    expect(panel).toMatch(/days: String\(OPEN_DAYS_AHEAD\)/);
+    expect(panel).toMatch(/!config\.openDates\.includes\(dateKeyOf\(date\)\)/);
+  });
+
+  it('and still offers the day when no answer arrived', () => {
+    /* Greying out everything because a request failed is the worse failure. */
+    expect(panel).toMatch(/if \(config\.openDates\)/);
+  });
+
+  it('applies it to the strip as well as the grid', () => {
+    /*
+     * `isDateSelectable` (the month grid) and `isDateOpen` (the ten-day strip)
+     * deliberately duplicate the rule, because the grid reads its month from
+     * `currentMonth` and the strip crosses month boundaries. So every rule has
+     * to be added twice, and a rule added once makes the strip offer a day the
+     * grid has greyed — which is worse than neither doing it.
+     */
+    expect(panel.match(/if \(config\.openDates\)/g)?.length).toBe(2);
+    expect(panel.match(/\.includes\(dateKeyOf\(/g)?.length).toBe(2);
+  });
+});

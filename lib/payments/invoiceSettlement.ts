@@ -276,11 +276,19 @@ export async function settleInvoicePaid(
      * that reasoning is unaffected: this path is for a payment already
      * recorded, whose receipt has already gone.
      */
-    const { data: current } = await db
+    /*
+     * Annotated because `SettlementDb` cannot narrow a select to its columns:
+     * the inferred row came back carrying `client_email` and friends from a
+     * different select on the same table, so `status` and `paid_at` — the two
+     * columns actually asked for — did not exist on it.
+     */
+    const { data: current } = (await db
       .from('payment_invoices')
       .select('id, status, paid_at')
       .eq('id', input.invoiceId)
-      .maybeSingle();
+      .maybeSingle()) as {
+      data: { id: string; status: string | null; paid_at: string | null } | null;
+    };
 
     /* `settled` already treats a `paid_at` with a lagging status as paid — see
        its own comment about exactly this window. Here the status is what needs

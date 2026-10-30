@@ -162,12 +162,19 @@ describe('what a quote is connected to', () => {
 });
 
 describe('what the chat may do with one', () => {
-  it('drafts, sends and withdraws — three separate decisions', () => {
-    // `create_and_send` is the fourth: drafting and sending in one decision,
-    // for the common case where the owner has already decided to quote.
+  it('drafts, sends, nudges and withdraws', () => {
+    // `create_and_send` is drafting and sending in one decision, for the common
+    // case where the owner has already decided to quote.
+    //
+    // `remind` is the fifth and is NOT a fifth way to send: same quote, same
+    // price, same link, a short note asking whether they need more time. It
+    // exists because `send` claims a quote out of draft — called on one the
+    // client already holds it answers `alreadySent` and does nothing, so an
+    // automation built on it would chase nobody and report success.
     expect(Object.keys(proposals.actions ?? {}).sort()).toEqual([
       'create',
       'create_and_send',
+      'remind',
       'send',
       'withdraw',
     ]);
@@ -184,6 +191,13 @@ describe('what the chat may do with one', () => {
   it('never sends in bulk', () => {
     // Quotes are individually priced by definition. A fan-out here would mean
     // one number mailed to a list of people it was not written for.
+    //
+    // `allowBulk` is what opens the BizQL `for_each` op, so this covers the
+    // CHAT fanning a write over a described set. It deliberately does not cover
+    // `remind`, which an automation calls once per row from its own
+    // `scatter_gather` with that row's id — each client a note about their own
+    // quote. Were `remind` granted bulk, the chat could nudge a set, and
+    // nothing in the grammar would hold the price to the person.
     for (const action of Object.values(proposals.actions ?? {})) {
       expect(action.allowBulk ?? false).toBe(false);
     }

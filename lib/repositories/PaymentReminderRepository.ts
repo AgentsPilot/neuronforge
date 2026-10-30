@@ -276,7 +276,21 @@ export class PaymentReminderRepository {
   async findRecentByInvoice(
     invoiceId: string,
     reminderType: string | null,
-    since: string
+    since: string,
+    /**
+     * Which statuses count, when the caller cares.
+     *
+     * Omitted means ANY row counts, which is what the overdue cron wants: it is
+     * asking "did this cron already schedule one today", and a `pending` row is
+     * precisely the evidence of that.
+     *
+     * A caller asking "has a chase actually REACHED this client" wants a
+     * narrower set. `cancelled` must not count — the owner called it off, so it
+     * is not occupying a slot in anyone's inbox — and nor must `failed`, which
+     * never arrived. Passing the set explicitly at the call site is clearer
+     * than a boolean nobody can read at a glance.
+     */
+    statuses?: readonly string[]
   ): Promise<PaymentRepositoryResult<Array<{ id: string }>>> {
     try {
       let query = this.supabase
@@ -287,6 +301,7 @@ export class PaymentReminderRepository {
         .limit(1);
 
       if (reminderType !== null) query = query.eq('reminder_type', reminderType);
+      if (statuses?.length) query = query.in('status', statuses);
 
       const { data, error } = await query;
 

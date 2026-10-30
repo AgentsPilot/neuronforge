@@ -237,6 +237,22 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
               if (bookingId) params.set('booking', bookingId);
               router.push(`/business-os/crm?${params.toString()}`);
             }}
+            /*
+             * The booking route, which is a DIFFERENT section from the one
+             * above. `section=bookings` plus `booking=<id>` is what
+             * `BookingsTab` reads as `focusBookingId`: it adds the id to its
+             * open set and scrolls the card into view. Sending `payments` here
+             * would land the owner on the right client and the wrong tab, with
+             * the booking they clicked still to be found by hand.
+             */
+            onOpenBooking={(contactId, bookingId) => {
+              const params = new URLSearchParams({
+                contact: contactId,
+                section: 'bookings',
+                booking: bookingId,
+              });
+              router.push(`/business-os/crm?${params.toString()}`);
+            }}
             searchQuery={searchQuery}
             /* The same `today` the search field reads the string with, so the
                chips it draws and the terms the list acts on cannot describe

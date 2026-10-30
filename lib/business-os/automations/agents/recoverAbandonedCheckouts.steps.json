@@ -1,0 +1,52 @@
+[
+  {
+    "step_id": "step1",
+    "id": "step1",
+    "type": "action",
+    "name": "Find checkouts nobody finished",
+    "description": "Somebody picked a service and a time, reached the payment step, and left. `status abandoned` is the whole definition and it is also the stop: `convertAttempt` writes `converted` the moment they come back and book, so a person who returns drops out of this list without anything having to remember them. `recovery_email_sent_at is_not_null` is the hand-off: the twice-hourly sweep sends ONE recovery email and stamps that column, so this agent only ever sees attempts the sweep has finished with. The upper bound is the owner's, from the install dialog: past it we stop, because somebody who walked away from a payment a long time ago has decided.",
+    "plugin": "business-os",
+    "action": "find_abandoned_bookings",
+    "params": {
+      "filters": [
+        { "field": "status", "op": "eq", "value": "abandoned" },
+        { "field": "email", "op": "is_not_null" },
+        { "field": "recovery_email_sent_at", "op": "is_not_null" },
+        { "field": "created_at", "op": "lt", "value": { "$date": "today", "offset": { "days": -3 } } },
+        { "field": "created_at", "op": "gte", "value": { "$date": "today", "offset": { "days": "{{input.stop_after_days}}" } } }
+      ],
+      "order_by": [{ "field": "created_at", "dir": "asc" }],
+      "limit": 10
+    },
+    "output_variable": "unfinished",
+    "output_schema": { "type": "object" }
+  },
+  {
+    "step_id": "step2",
+    "id": "step2",
+    "type": "scatter_gather",
+    "name": "Write to each one",
+    "description": "`remind_abandoned_bookings` delegates to `sendOneRecovery`, which re-reads the attempt and refuses one that has since converted: between this find and the send, the person may have come back and booked. It sends the same `booking-recovery` template the sweep sends, with the button opening on the service they were actually choosing rather than the list. ONE PERSON'S REFUSAL MUST NOT STOP THE REST: in production a failing scatter item aborts the run unless `continueOnError` is set, and the find is oldest-first, so the one unreachable person would sit at the top and block everybody behind them for good.",
+    "scatter": {
+      "input": "{{unfinished.rows}}",
+      "itemVariable": "current_attempt",
+      "continueOnError": true,
+      "steps": [
+        {
+          "step_id": "step3",
+          "id": "step3",
+          "type": "action",
+          "name": "Send the recovery email",
+          "description": "No AI step, deliberately. The template already names the service and the time they chose, which is the only thing worth saying to somebody who left at the payment step, and a written sentence about why they did not pay would be a guess about a person's finances.",
+          "plugin": "business-os",
+          "action": "remind_abandoned_bookings",
+          "params": { "target_id": "{{current_attempt.id}}" },
+          "output_variable": "recovery_result",
+          "output_schema": { "type": "object" }
+        }
+      ]
+    },
+    "gather": { "operation": "collect" },
+    "output_variable": "recovery_results"
+  }
+]

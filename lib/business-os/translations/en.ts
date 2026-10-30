@@ -488,6 +488,108 @@ export const en = {
     'gaps.action.chase_intake': 'Remind them',
     'gaps.action.chase_payment': 'Chase payment',
     'gaps.action.bill_stage': 'Mark done and bill',
+    'automation.chase_overdue_invoices.name': 'Chase overdue invoices',
+    'automation.requires.can_send_marketing': 'I cannot email your clients on your behalf yet. That switch is off across the platform until unsubscribe handling is in place.',
+    'automation.requires.sends_quotes': 'You have not sent any quotes yet, so there is nothing for this one to follow up.',
+    'automation.requires.bills_for_anything': 'You are not billing for anything yet, so there is nothing for this one to chase.',
+    'automation.requires.takes_bookings': 'You have no bookable services yet, so there is nothing for this one to work with.',
+    'automation.requires.intake_reaches_client': 'Your intake form is not reaching clients yet, so there is nothing for this one to chase.',
+    'automation.requires.default': 'This one cannot run for your business yet.',
+    'automation.install_failed': 'I could not switch that on. Try again in a moment.',
+    'automation.card_title': 'Working for you',
+    'automation.col_agent': 'Agent',
+    'automation.col_watches': 'Watches',
+    'automation.col_every': 'Every',
+    'automation.col_last': 'Last run',
+    'automation.col_next': 'Next run',
+    'automation.col_stops': 'Stops after',
+    'automation.blocked': 'Cannot run',
+    'automation.next_paused': 'not while paused',
+    'automation.next_blocked': 'waiting on you',
+    'automation.remove_title': 'Stop {agent}?',
+    'automation.remove_body': 'It stops writing to anyone from now on. Everything it has already sent stays as it is, and you can switch it on again later.',
+    'automation.running_count': 'running',
+    'automation.paused_count': '{n} paused',
+    'automation.paused': 'Paused',
+    'automation.pause': 'Pause it',
+    'automation.resume': 'Start it again',
+    'automation.remove': 'Remove it',
+    'automation.confirm_remove': 'Stop it',
+    'automation.last_run': 'last ran {date}',
+    'automation.never_run': 'has not run yet',
+    'automation.run_every': 'How often should I check?',
+    'automation.stop_after': 'How long should I keep trying?',
+    'automation.stop_after_days': '{days} days',
+    'automation.stop_after_months': '{months} months',
+    'automation.cadence.daily': 'Every day',
+    'automation.cadence.every_3_days': 'Every 3 days',
+    'automation.cadence.weekly': 'Once a week',
+    'automation.cadence.fortnightly': 'Twice a month',
+    'automation.cadence.monthly': 'Once a month',
+  /* For a schedule nobody chose from a list: the mailbox channel runs every
+     fifteen minutes, and the ledger showed that as a dash. */
+  'automation.cadence.every_n_minutes': 'every {n} minutes',
+  'automation.cadence.every_5_minutes': 'every 5 minutes',
+  'automation.cadence.every_15_minutes': 'every 15 minutes',
+  'automation.cadence.every_30_minutes': 'every 30 minutes',
+  'automation.cadence.hourly': 'every hour',
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE ONE CONTROL BOTH AGENT DIALOGS ASK WITH: "Every [ 2 ] [ hours ]".
+   *
+   * `every` and `after` are the word before the number, and they are two keys
+   * rather than one because "Every 30 days" and "After 30 days" are different
+   * sentences — the first is a cadence and the second is a bound.
+   *
+   * Each unit has a singular key as well as a plural. A count glued to one word
+   * gives "1 days", and Hebrew does not make a plural by adding a letter to the
+   * singular, so the two forms have to be two entries.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /* The schedule editor on the agents list. The value in the Every column is
+     the control, so the title explains what pressing it does. */
+  'automation.change_schedule': 'Change this schedule',
+  'automation.next_run_becomes': 'Next run would be {when}',
+  /* The inline lead on the agents list, where it carries the whole question:
+     "Runs every 3 days" reads as a sentence where "Every 3 days" is a fragment
+     that never says what happens. */
+  'automation.runs_every': 'Runs every',
+  'automation.every': 'Every',
+  'automation.after': 'After',
+  'automation.look_back': 'Up to',
+  'automation.unit.minutes': 'minutes',
+  'automation.unit.minutes_one': 'minute',
+  'automation.unit.hours': 'hours',
+  'automation.unit.hours_one': 'hour',
+  'automation.unit.days': 'days',
+  'automation.unit.days_one': 'day',
+  /* The same schedule in words, for the ledger. `{n}` is the number. */
+  'automation.every_n_minutes': 'every {n} minutes',
+  'automation.every_n_hours': 'every {n} hours',
+  'automation.every_n_days': 'every {n} days',
+  'leads.inbox.how_often': 'How often should we check?',
+  'leads.inbox.how_far_back': 'How far back should we keep looking?',
+  'leads.inbox.how_far_back_hint': 'An unread message older than this is not a new enquiry, so we leave it alone.',
+  'leads.inbox.n_days': '{n} days',
+  /* When the channel has not recorded which mailbox it watches. */
+  'automation.watches.mailbox': 'a connected mailbox',
+    'automation.chase_overdue_invoices.description': 'Reminds clients who have not paid once the due date has passed. Anyone who pays gets nothing.',
+    'automation.chase_overdue_invoices.watches': 'Invoices that were not paid on time',
+    'automation.follow_up_new_enquiries.name': 'Follow up on quiet enquiries',
+    'automation.follow_up_new_enquiries.description': 'Writes a short personal note to someone who got in touch and never booked.',
+    'automation.follow_up_new_enquiries.watches': 'People who got in touch and never booked',
+    'automation.follow_up_stalled_deals.name': 'Nudge quotes nobody answered',
+    'automation.follow_up_stalled_deals.description': 'Asks clients who got a quote and never answered whether they need more time. The quote and the price stay the same.',
+    'automation.follow_up_stalled_deals.watches': 'Quotes nobody answered',
+    'automation.rebook_quiet_clients.name': 'Get the next appointment in the book',
+    'automation.rebook_quiet_clients.description': 'Writes to clients who have been in before and have no next appointment, with a link to pick a time.',
+    'automation.rebook_quiet_clients.watches': 'Clients with no next appointment',
+    'automation.recover_abandoned_checkouts.name': 'Follow up on unfinished bookings',
+    'automation.recover_abandoned_checkouts.description': 'Writes to someone who started booking and did not finish paying, with a link back. Stops as soon as they book.',
+    'automation.recover_abandoned_checkouts.watches': 'People who started booking and did not finish',
+    'automation.win_back_quiet_clients.name': 'Reach out to clients who stopped coming',
+    'automation.win_back_quiet_clients.description': 'Writes to clients you have not seen for a long time and invites them back. Only to people who agreed to emails.',
+    'automation.win_back_quiet_clients.watches': 'Clients you have not seen for a long time',
     'gaps.action.send_invoice': 'Raise the invoice',
     'gaps.action.mark_delivered': 'Confirm it was handed over',
     'gaps.action.bill_stage_auto_held': 'Confirm and send invoice',
@@ -810,6 +912,8 @@ export const en = {
     // Before/After Projection Panel
     'insight.projection.do_nothing': 'If you do nothing',
     'insight.projection.handle_it': 'If I handle it',
+    'insight.projection.agent_takes_over': 'I take these over and keep on top of them',
+    'insight.projection.agent_on_it': 'I am on these already, and keeping on top of them',
 
     // Handled Section (What I've done today)
     'handled.title': "What I've handled for you today",
@@ -965,6 +1069,8 @@ export const en = {
     'insight.advisor': 'Your advisor',
     'insight.advisor.noticed': 'Your advisor noticed',
     'insight.action.primary': 'Handle it for me',
+    'insight.action.got_it': 'I got it',
+    'insight.covered_by': '{agent} is already handling this',
     'insight.action.secondary': 'Not now',
     'insight.action.acknowledge': 'Got it',
     'insight.running': 'Working on it...',
@@ -986,6 +1092,10 @@ export const en = {
     'health.more': 'Read the rest',
     'health.less': 'Show less',
     'health.of_n': 'from {n}',
+    /* The denominator with its unit named, for the one measure whose sample is
+       not what it divided by. See `Measure.basis`. */
+    'health.of_n_unit': 'of {n} {unit}',
+    'health.unit.hours': 'hours you offer',
     'health.not_yet': 'Not enough data yet to measure {categories}.',
     /*
      * Named `measuring`, not `category`, because these are not the category
@@ -1007,6 +1117,7 @@ export const en = {
     'health.measure.enquiries_replied_to': 'enquiries you answered',
     'health.measure.calendar_filled': 'of your hours booked',
     'health.measure.visitors_who_got_in_touch': 'visitors who got in touch',
+    'health.measure.appointments_called_off': 'of appointments were called off',
     'health.measure.none': 'not measured',
     'insight.seen.first': 'First time I\'ve seen this. I\'ll offer to handle it standing once it has happened a few times.',
     'insight.seen.again': 'You have seen this one before and it is still open.',
@@ -1672,7 +1783,28 @@ export const en = {
     'config.stripe.manage': 'Manage account',
     'config.stripe.disconnect': 'Disconnect',
     'config.stripe.disconnect_title': 'Disconnect Stripe?',
-    'config.stripe.disconnect_message': 'You will no longer be able to accept payments until you reconnect. Your Stripe account will remain active and can be reconnected later.',
+    'config.stripe.disconnect_message': 'Card payments stop. Clients can still book, and those bookings are billed by invoice instead. Your Stripe account stays active and you can switch cards back on at any time.',
+    // The support card: what to send us when payments are not working.
+    'config.stripe.support_title': 'Connection details',
+    'config.stripe.support_help': 'If payments are not working, copy these and send them to support. They identify your connection and contain no card or bank data.',
+    'config.stripe.support_copy': 'Copy details',
+    'config.stripe.support_copied': 'Copied',
+    'config.stripe.support_account': 'Account',
+    'config.stripe.support_cards': 'Card payments',
+    'config.stripe.support_payouts': 'Payouts',
+    'config.stripe.support_on': 'On',
+    'config.stripe.support_off': 'Off',
+    'config.stripe.support_paused': 'Paused by you',
+    'config.stripe.support_type': 'Connection type',
+    'config.stripe.support_checked': 'Status last checked',
+    'config.stripe.support_setup': 'Setup not finished at Stripe',
+    'config.stripe.support_two_links': 'This business is linked to Stripe twice, by onboarding and by OAuth. Payments and refunds can land on different accounts. Please mention this to support.',
+    // Shown when cards cannot be switched off yet. See connectExitBlockers.
+    'config.stripe.blocked_intro': 'There are still active payments or transactions that have not completed. To avoid disrupting your clients’ charges and payments, finish or close all open financial activity before disconnecting Stripe.',
+    'config.stripe.blocked_title': 'Stripe cannot be disconnected yet',
+    'config.stripe.blocked_plans': '{n} payment plans still charging',
+    'config.stripe.blocked_invoices': '{n} unpaid invoices that can be paid by card',
+    'config.stripe.blocked_check_failed': 'We could not check what is still outstanding, so nothing was changed. Please try again.',
     'config.stripe.delete_account': 'Delete Account',
     'config.stripe.delete_title': 'Delete Stripe Account?',
     'config.stripe.delete_message': 'This will permanently delete your Stripe account. All payment history and settings will be lost. This action cannot be undone.',
@@ -3483,6 +3615,10 @@ export const en = {
     'payments.search.group_period': 'Period',
     'payments.search.upper_amount': 'Upper amount',
     'payments.open_in_crm': 'Open in CRM',
+    // The order row's three explicit controls.
+    'payments.row_expand': 'Breakdown',
+    'payments.row_jump': 'Go to booking',
+    'payments.row_details': 'Details',
     'payments.not_yet_due': 'Not yet due',
     'payments.all_of_it_late': 'All of it is late',
     'payments.all_collected': 'Nothing outstanding',
@@ -3843,6 +3979,9 @@ export const en = {
     // refund's cost that is not the refund itself.
     'reports.fees_kept': 'in fees not returned',
     'reports.cancelled_count': 'cancelled',
+    // The two halves of the write-off figure.
+    'reports.lost_invoices': 'invoices',
+    'reports.lost_periods': 'plan payments',
     'crm.booking.quoted.stopped': 'Stopped',
     'crm.quote.stop.action': 'Stop this job',
     'crm.quote.stop.refund_label': 'Also refund what has been paid',
@@ -3997,6 +4136,8 @@ export const en = {
     'reports.count_leads': 'Open leads',
     'reports.count_quiet': 'Gone quiet',
     'reports.quiet_note': 'no activity in 14 days',
+    'reports.count_abandoned': 'Walked away',
+    'reports.abandoned_note': 'started a booking, never came back',
     'reports.count_all': 'All contacts',
     'reports.tile_ordered': 'Ordered in this period',
     'reports.ordered_note': 'at list price, paid or not',
@@ -4006,6 +4147,7 @@ export const en = {
     // Band 6 counts money ROWS, not bookings. See ServiceTable.
     'reports.col_payments': 'Payments',
     'reports.col_revenue': 'Revenue',
+    'reports.col_lost': 'Lost',
     'reports.col_service': 'Service',
     'reports.arrived_caption': '{leads} new contacts arrived in this period. The bookings and revenue are what arrived in the SAME period from anyone that channel ever brought, so a client who first came months ago still counts here. {untracked} of the new contacts came with no referrer and no tag, so they sit in the "{direct}" row.',
     'reports.needs_has': 'needs {min}, has {sample}',

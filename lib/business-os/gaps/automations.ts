@@ -43,6 +43,37 @@ export type OperationalAutomationId =
   | 'auto_complete_meetings'
   | 'chase_quotes';
 
+/**
+ * What a business must already do for an automation to mean anything.
+ *
+ * Named rather than inlined because the predefined automation agents
+ * (`lib/business-os/automations`) gate on the same facts. One vocabulary, so a
+ * business shape cannot answer "takes bookings" to one registry and something
+ * else to the other.
+ */
+export type AutomationRequirement =
+  | 'intake_reaches_client'
+  | 'takes_bookings'
+  | 'sends_quotes'
+  | 'bills_for_anything'
+  /**
+   * The platform may lawfully send a marketing email on this owner's behalf.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Not a question about the business, like the four above — a question about
+   * US. `marketingGate` fails closed on three separate grounds, and the first
+   * is platform-wide: `MARKETING_SENDING_ENABLED` is `false` until unsubscribe
+   * support ships, so EVERY marketing send is refused at the transport today.
+   *
+   * It exists because an automated booking invite is a solicitation
+   * (`sendBookingLink` sends `trigger: 'automated'` as `kind: 'marketing'`),
+   * and an automation that cannot send is worse than one we never offered: the
+   * owner activates it, is told their clients are being followed up, and
+   * nothing leaves the building.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  | 'can_send_marketing';
+
 export interface OperationalAutomation {
   id: OperationalAutomationId;
 
@@ -174,7 +205,7 @@ export interface OperationalAutomation {
    * WHY THE SECOND VALUE EXISTS
    *
    * Invoice chasing was built twice. This registry sent once at 72 hours past
-   * due; `PaymentReminderService` had been sending on days 1, 3 and 7 past due
+   * due; `PaymentReminderService` had been sending on its own milestone days
    * since long before, gated on a different column that nobody was ever asked
    * about. Day three fired both. They dedupe in different tables, so neither
    * could see the other, and the client got two emails from one business about
@@ -215,7 +246,7 @@ export interface OperationalAutomation {
    * enquiry, so nothing gates the reply.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  requires?: 'intake_reaches_client' | 'takes_bookings' | 'sends_quotes' | 'bills_for_anything';
+  requires?: AutomationRequirement;
 
   /**
    * Not offered until the owner has shown they already do this work by hand.
@@ -340,7 +371,8 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
      * Unused, and left in place as the record of what this used to do.
      *
      * The send was withdrawn to `PaymentReminderService`, which chases on days
-     * 1, 3 and 7 past due (`payment_overdue_reminder_days`). This 72-hour send
+     * its milestone days (`payment_overdue_reminder_days`, see
+     * `overdueMilestones` for the default). This 72-hour send
      * landed on top of that schedule's day three.
      *
      * ─────────────────────────────────────────────────────────────────────────

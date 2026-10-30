@@ -48,8 +48,7 @@ export type BosCronJobId =
   | 'abandoned-bookings'
   | 'data-export'
   | 'payment-reminders'
-  | 'finance-snapshot'
-  | 'inbox-enquiries';
+  | 'finance-snapshot';
 
 export type BosQueueId =
   | 'payment_reminders'
@@ -192,41 +191,6 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
       { key: 'skipped', path: ['skipped'], label: 'skipped' },
     ],
     partlyDoneWhen: [],
-  },
-  {
-    /*
-     * The 22nd: the mailbox lead channel (2026-10-25). One agent per connected
-     * mailbox reads the enquiry emails a business's own website form sends it
-     * and files each sender as a lead; the `lead-response` job above then
-     * replies with a booking link.
-     *
-     * Every 5 minutes, beside `lead-response` for the same reason: that job
-     * sends 15 minutes after a lead is filed, and a slower poll here would add
-     * to the client's wait rather than to ours. A run is one filtered mailbox
-     * search per channel and normally matches nothing.
-     *
-     * Not a queue drain — the mailbox IS the queue, and `is_unread` plus
-     * mark-as-read is what keeps a message from being filed twice.
-     */
-    id: 'inbox-enquiries',
-    path: '/api/cron/inbox-enquiries',
-    schedule: '*/5 * * * *',
-    ...EVERY_5,
-    ...MAX_60,
-    label: 'Website enquiries',
-    description: 'Reads enquiry emails from connected mailboxes and files them as leads',
-    scheduleWords: 'Every 5 minutes',
-    drainsQueue: null,
-    counts: [
-      { key: 'due', path: ['due'], label: 'channels due' },
-      { key: 'claimed', path: ['claimed'], label: 'picked up' },
-      { key: 'ran', path: ['ran'], label: 'checked' },
-      { key: 'failed', path: ['failed'], label: 'failed' },
-    ],
-    partlyDoneWhen: [{ kind: 'atLeast', key: 'failed', value: 1 }],
-    /* The real deploy day. A job with no run is otherwise timed from the first
-       run of ANY job, which would read "Stopped" on its first page load. */
-    addedOn: '2026-10-25',
   },
   {
     id: 'insight-automations',

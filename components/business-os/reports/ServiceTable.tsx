@@ -35,6 +35,14 @@ export interface ServiceRow {
   revenue: number;
   /** Money ROWS that produced this revenue: transactions plus unsettled invoices. */
   count: number;
+  /**
+   * Written off against this service in the period.
+   *
+   * Optional because a stored summary from before this existed has no such
+   * field, and a missing one must read as "not known" rather than as zero —
+   * the same discipline `HealthRows` keeps about absent figures.
+   */
+  lost?: number;
 }
 
 export interface ServiceTableProps {
@@ -73,6 +81,12 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
             >
               {t('reports.col_revenue')}
             </th>
+            <th
+              scope="col"
+              className="px-[18px] py-2.5 text-end text-[11px] font-bold uppercase tracking-[0.07em] text-[var(--v2-text-muted)] border-b border-[var(--v2-border)] whitespace-nowrap"
+            >
+              {t('reports.col_lost')}
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -98,6 +112,24 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
               </td>
               <td className="px-[18px] py-[11px] text-end text-sm tabular-nums text-[var(--v2-text-primary)] whitespace-nowrap">
                 {money(row.revenue)}
+              </td>
+              {/*
+                * Amber only when there is something to see.
+                *
+                * A column of zeroes down the best-performing services is noise
+                * that teaches the reader to skip the column, and the one row
+                * that matters goes with it. Nothing lost prints a dash, which
+                * is the same "no figure" the rest of these cards use.
+                */}
+              <td
+                className="px-[18px] py-[11px] text-end text-sm tabular-nums whitespace-nowrap"
+                style={
+                  row.lost && row.lost > 0
+                    ? { color: REPORTS_COLORS.WARNING, fontWeight: 600 }
+                    : { color: 'var(--v2-text-muted)' }
+                }
+              >
+                {row.lost && row.lost > 0 ? money(row.lost) : '—'}
               </td>
             </tr>
           ))}

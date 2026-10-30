@@ -29,6 +29,7 @@ import { VectorsStrip } from './VectorsStrip';
 import type { HandledEntry } from './HandledSection';
 import { DailyBriefingCard } from './DailyBriefingCard';
 import { NeedsYouCard, type GapView } from './NeedsYouCard';
+import { RunningAgentsCard } from './RunningAgentsCard';
 import { ClientReachJourney } from './ClientReachJourney';
 import type { OperationalItem } from './InsightAdvisorCard';
 import { briefingLines } from '@/lib/business-os/briefing/briefingLines';
@@ -712,9 +713,86 @@ export function LiveDashboard({
       setAutomationConfig(undefined);
       await refreshInsights();
     }
+    /*
+     * RETURNED, so the card can tell a refusal from a success.
+     *
+     * It already knew — `runAction` reports it — and threw the answer away,
+     * which made the card's own guard (`if (done === false) return`) dead code
+     * against a prop typed `Promise<void>`. The card then said "Done · I'll
+     * keep an eye on this for you" over a server that had refused: measured on
+     * a live account, a card worth ₪4,600, no agent created and the insight
+     * still `new` the next morning.
+     */
+    return success;
   }, [runAction, refreshInsights]);
 
   const handleDeclineAutomate = useCallback(() => setAutomationConfig(undefined), []);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT IS ALREADY WORKING, SO NO CARD OFFERS IT TWICE.
+   *
+   * Detectors overlap by design: `cash_ar_overdue` reports invoices past their
+   * due date and `cash_revenue_at_risk` reports everything outstanding, and on
+   * this account the same four invoices appear in both. They reach the same
+   * process, so they are offered the same agent — and switching it on from one
+   * card left the other still saying "want me to handle this from now on?"
+   *
+   * Read once here rather than per card: the carousel renders one component,
+   * and a fetch inside it would fire on every page turn.
+   *
+   * Re-read on the same event the running-agents card listens for, so
+   * installing from one card updates what every other card believes.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [installedAutomationIds, setInstalledAutomationIds] = useState<string[]>([]);
+
+  const loadInstalledAutomations = useCallback(async () => {
+    try {
+      const response = await fetch('/api/business-os/automation-agents');
+      if (!response.ok) return;
+      const body = await response.json();
+      if (!body.success) return;
+
+      setInstalledAutomationIds(
+        (body.data as { automationId: string; status: string }[])
+          /* Paused counts as installed. The owner has already answered this
+             question, and re-offering it is how a pause turns into a nag. */
+          .map(row => row.automationId)
+          .filter(Boolean)
+      );
+    } catch {
+      /* Silent: the worst case is a card offering an agent that is already
+         installed, which the install itself handles idempotently. */
+    }
+  }, []);
+
+  useEffect(() => {
+    loadInstalledAutomations();
+
+    const onInstalled = () => loadInstalledAutomations();
+    window.addEventListener('business-os:automation-installed', onInstalled);
+    return () => window.removeEventListener('business-os:automation-installed', onInstalled);
+  }, [loadInstalledAutomations]);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE OFFER BELONGS TO THE CARD THAT EARNED IT.
+   *
+   * `automationConfig` is set after a successful run and cleared only when the
+   * owner accepts or declines. The carousel renders ONE card component for
+   * every page, so paging away left it set — and `canAutomate` reads it, so the
+   * next eligible insight showed an automation offer belonging to the previous
+   * one.
+   *
+   * The sibling of the `cardState` leak fixed in `InsightAdvisorCard`: one
+   * press on the invoice card put a green "Done" on all thirteen pages. Both
+   * halves had to go, or the offer would simply have followed the tick around.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    setAutomationConfig(undefined);
+  }, [currentInsightIndex]);
 
   /*
    * `accountAgeDays` is gone from this component, and with it the last thing
@@ -2620,7 +2698,27 @@ export function LiveDashboard({
           height: 100%;
         }
         @media (max-width: 900px) {
-          .usage-readiness-row {
+          /*
+             BOTH SELECTORS, OR THE PHONE KEEPS TWO COLUMNS.
+
+             A media query adds no specificity. One class (0,1,0) cannot
+             override the two-class rule above it (0,2,0), so while the hero was
+             needs-you this single-column rule lost and the row stayed side by
+             side on a phone — at 3fr 1fr, which is the widest the desktop ever
+             makes it.
+
+             The order reset below has no such competition, so it DID apply, and
+             that is what made the symptom so odd: with both items back at
+             order 0 the usage dial took the 3fr track and the task list, the
+             card the row exists for, was squeezed into the 1fr one, a word per
+             line.
+
+             It only appeared when readiness stopped being the hero. Before
+             that, ur-hero-tasks was rarely on the row, so nothing outranked
+             this rule and the phone collapsed as intended.
+          */
+          .usage-readiness-row,
+          .usage-readiness-row.ur-hero-tasks {
             grid-template-columns: 1fr;
           }
           /* Stacked: source order wins again, so the glance sits above the
@@ -2831,6 +2929,10 @@ export function LiveDashboard({
           onAction={handleInsightAction}
           onAutomate={handleInsightAutomate}
           onDeclineAutomate={handleDeclineAutomate}
+          /* The server has already closed the insight; this is what takes it
+             off the carousel without a page reload. */
+          onAgentInstalled={refreshInsights}
+          installedAutomationIds={installedAutomationIds}
         />
       ) : (
         <AdvisorIdleCard
@@ -2840,6 +2942,20 @@ export function LiveDashboard({
           onPublish={() => onConfigureClick?.('website')}
         />
       ))}
+
+      {/*
+        WHAT IS ALREADY BEING HANDLED, directly under what still needs a person.
+
+        The pairing is the point. The advisor offers an agent and the insight
+        closes, so without this the owner's last sight of something they
+        switched on was the card disappearing. An install used to surface only
+        in the general agents list, beside hand-built agents and labelled with a
+        raw translation key.
+
+        Renders nothing until something is installed, so an account with no
+        agents sees no change.
+      */}
+      <RunningAgentsCard />
 
       {/* One vectors strip, from the server's own reading.
           There used to be two: this one, hand-rolled from dashboard stats, and

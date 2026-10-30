@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { BusinessHealthSummaryData, HealthMeasure } from '@/hooks/useInsights';
 
@@ -54,6 +54,81 @@ export function WeeklyReview({ summary, onOpenInsight }: WeeklyReviewProps) {
   const { t, language } = useLanguage();
   const isRTL = language === 'he';
   const [expanded, setExpanded] = useState(false);
+
+  /*
+   * IS THERE ACTUALLY ANYTHING MORE TO READ?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This was `summary_narrative.length > 220` — a character count standing in
+   * for an answer only the layout has. The paragraph is clamped to three LINES,
+   * and how many lines a string takes depends on the column width, the font and
+   * the language, none of which a character count knows about.
+   *
+   * So the Hebrew note on a wide screen fitted in its three lines with nothing
+   * hidden, ran past 220 characters, and the card offered "read the rest" of a
+   * paragraph the owner had just finished reading. Hebrew makes it worse in
+   * both directions — Heebo sets narrower than Inter and the text carries no
+   * capitals — so the proxy is not merely imprecise here, it is biased.
+   *
+   * Measured instead: a clamped element reports the full height it WOULD need
+   * in `scrollHeight` while `clientHeight` stays at the three lines on screen.
+   * A difference means there is text below the fold, which is exactly the
+   * question the button answers.
+   *
+   * Re-measured on resize, because the same note overflows on a phone and does
+   * not on a desktop, and the owner may rotate the one into the other.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const narrativeRef = useRef<HTMLParagraphElement | null>(null);
+  const [overflows, setOverflows] = useState(false);
+
+  const measureNarrative = useCallback(() => {
+    const element = narrativeRef.current;
+    if (!element) return;
+
+    /*
+     * Only while CLAMPED. Expanded, the element grows to fit and reports no
+     * overflow — measuring then would hide the button that collapses it again.
+     * The last clamped answer stands until the paragraph is put back.
+     */
+    if (expanded) return;
+
+    /* A pixel of tolerance: sub-pixel line heights round the two apart on some
+       zoom levels with nothing actually hidden. */
+    setOverflows(element.scrollHeight - element.clientHeight > 1);
+  }, [expanded]);
+
+  useEffect(() => {
+    measureNarrative();
+
+    let live = true;
+
+    /*
+     * Once more when the real font has loaded.
+     *
+     * The first measurement runs against the fallback stack, and Heebo sets
+     * narrower than system-ui — so a note measured as overflowing can fit once
+     * the webfont swaps in. The element's own box never changes (it is pinned
+     * at three lines), so the observer below cannot see this one.
+     */
+    document.fonts?.ready.then(() => { if (live) measureNarrative(); }).catch(() => {});
+
+    const element = narrativeRef.current;
+    /* Guarded: jsdom has no ResizeObserver, and a missing one should cost the
+       re-measure on resize, not the card. */
+    const observer =
+      element && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(measureNarrative)
+        : null;
+    if (observer && element) observer.observe(element);
+
+    return () => {
+      live = false;
+      observer?.disconnect();
+    };
+    /* `language` and the narrative itself both change the line count without
+       changing the element's width, so neither can be left out. */
+  }, [measureNarrative, summary.summary_narrative, language]);
 
   const measures = summary.health_measures ?? null;
   const measured = (measures?.categories ?? []).filter(c => c.rate !== null);
@@ -149,6 +224,7 @@ export function WeeklyReview({ summary, onOpenInsight }: WeeklyReviewProps) {
 
       {summary.summary_narrative && (
         <p
+          ref={narrativeRef}
           style={{
             fontSize: '14.5px',
             lineHeight: 1.55,
@@ -167,7 +243,8 @@ export function WeeklyReview({ summary, onOpenInsight }: WeeklyReviewProps) {
         </p>
       )}
 
-      {summary.summary_narrative && summary.summary_narrative.length > 220 && (
+      {/* Only when the clamp is genuinely hiding something. See `overflows`. */}
+      {summary.summary_narrative && overflows && (
         <button
           onClick={() => setExpanded(v => !v)}
           style={{
@@ -267,8 +344,23 @@ function MeasureChip({ measure, font }: { measure: HealthMeasure; font: string }
       <div style={{ fontSize: '11.5px', color: 'var(--v2-text-secondary)', marginTop: '2px', lineHeight: 1.35 }}>
         {t(measure.measureKey) || measure.category}
       </div>
+      {/*
+        The number the rate was actually taken OF.
+
+        `sample` is that number for every measure but one. Operations divides
+        booked hours by available hours while its sample counts bookings, so
+        this line read "12.5% of your hours booked — from 16" with 16 being
+        neither the denominator (128 hours) nor hours at all. Where a measure
+        carries its own denominator, that is what is shown, with its unit named
+        so the two figures cannot be read as different things.
+      */}
       <div style={{ fontSize: '11px', color: 'var(--v2-text-secondary)', opacity: 0.75, marginTop: '1px' }}>
-        {t('health.of_n', { n: measure.sample })}
+        {measure.basis
+          ? t('health.of_n_unit', {
+              n: measure.basis.value,
+              unit: t(measure.basis.unitKey) || measure.basis.unitKey,
+            })
+          : t('health.of_n', { n: measure.sample })}
       </div>
     </div>
   );

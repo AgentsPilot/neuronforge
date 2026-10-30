@@ -69,11 +69,20 @@ describe('the mapping is total', () => {
     const pluginActions = Object.keys((businessOsPlugin as { actions: Record<string, unknown> }).actions);
     const derived = OPERATIONS.map(([entity, op]) => `${op === 'compute' ? 'aggregate' : op}_${entity}`);
 
-    // 103 since the agent-platform entities left the chat catalog on main
-    // (2026-09-23). The number is deliberately hard-coded: it is the tripwire
-    // that says "the planner surface changed" rather than something that
-    // quietly follows the catalog wherever it goes.
-    expect(pluginActions).toHaveLength(103);
+    /*
+     * The number is deliberately hard-coded: it is the tripwire that says "the
+     * planner surface changed" rather than something that quietly follows the
+     * catalog wherever it goes.
+     *
+     * 103 since the agent-platform entities left the chat catalog (2026-09-23).
+     * 109 from the automation-agent work: an agent reaches ACTIONS and nothing
+     * else, so three capabilities that already existed needed doors onto them —
+     * `contacts.invite` (the booking invite), `proposals.remind` (the quote
+     * nudge, which is NOT `send`) and `invoices.remind` (the overdue chase,
+     * which is NOT `send`) — and `abandoned_bookings` arrived as an entity,
+     * bringing its own find, aggregate and remind.
+     */
+    expect(pluginActions).toHaveLength(109);
     expect(pluginActions.filter((action) => !derived.includes(action))).toEqual([]);
     expect(derived.filter((action) => !pluginActions.includes(action))).toEqual([]);
   });

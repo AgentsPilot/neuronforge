@@ -12,6 +12,7 @@ import { createLogger } from '@/lib/logger';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { StripeConnectRepository } from '@/lib/repositories/PaymentRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { checkConnectExitBlockers } from '@/lib/payments/connectExitBlockers';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 
 const logger = createLogger({ module: 'StripeConnectDelete' });
@@ -47,6 +48,42 @@ export async function DELETE(request: NextRequest) {
     }
 
     const account = accountResult.data;
+
+    /*
+     * Removing the connection is the PERMANENT exit, so it answers to the same
+     * rule as pausing and for the stronger reason: after this the account is
+     * gone from us, and a plan still charging on it becomes money arriving with
+     * nothing on our side to record, reconcile or refund it against.
+     *
+     * One shared check (`checkConnectExitBlockers`) rather than two, so the two
+     * buttons cannot disagree about what "settled" means.
+     */
+    const exit = await checkConnectExitBlockers(supabaseServer, user.id);
+
+    if (exit.kind !== 'clear') {
+      const code = exit.kind === 'blocked' ? 'exit_blocked' : 'check_failed';
+      requestLogger.warn(
+        { userId: user.id, code, blockers: exit.kind === 'blocked' ? exit.blockers : undefined },
+        'Stripe Connect removal refused'
+      );
+
+      auditTrail.log({
+        action: 'STRIPE_CONNECT_DELETE_REFUSED',
+        userId: user.id,
+        entityType: 'stripe_connect_account',
+        entityId: account.stripe_account_id,
+        details: { reason: code, blockers: exit.kind === 'blocked' ? exit.blockers : undefined },
+      }).catch(err => requestLogger.error({ err }, 'Audit failed'));
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: code,
+          ...(exit.kind === 'blocked' ? { blockers: exit.blockers } : {}),
+        },
+        { status: exit.kind === 'blocked' ? 409 : 503 }
+      );
+    }
     const stripeAccountId = account.stripe_account_id;
 
     // 3. Delete account from Stripe (if it exists)

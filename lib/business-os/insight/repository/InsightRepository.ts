@@ -11,6 +11,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveUserLanguage } from '@/lib/business-os/userLanguage';
 import { createLogger } from '@/lib/logger';
+import { cancellationCost, type CancellationCost } from '@/lib/business-os/reports/cancellationCost';
 import type { DetectionResult, InsightSeverity } from '../detectors/types';
 import type { SegmentRate } from '../patterns/segmentRate';
 import type { PrioritizedInsight } from '../prioritizer/InsightPrioritizer';
@@ -37,6 +38,11 @@ import {
 import { getCurrencySymbol } from '@/lib/utils/currencyHelpers';
 import type { BusinessHealth } from '../health/businessHealth';
 import { automationApplies } from '@/lib/business-os/gaps/automationApplies';
+/* Pure constants, both of them: the tag every installed automation agent
+   carries, and the one every mailbox channel carries. Neither file imports a
+   client, so neither drags anything into this one. */
+import { AUTOMATION_AGENT_TAG } from '@/lib/business-os/automations/types';
+import { INBOX_CHANNEL_TAG } from '@/lib/business-os/leads/inboxProviders';
 
 const logger = createLogger({ service: 'InsightRepository' });
 
@@ -1556,6 +1562,69 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
   }
 
   /**
+   * The automations that are AGENTS rather than switches.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A THIRD PLACE AN AUTOMATION CAN LIVE, AND THE NODE WAS BLIND TO IT.
+   *
+   * `countOperationalAutomations` above fixed the second (the boolean columns
+   * on `business_profiles`) and left the third untouched. Since then the
+   * platform grew two more populations of standing work, and both are rows in
+   * `agents`:
+   *
+   *   business-os-automation   a predefined automation agent the owner
+   *                            installed from the catalogue — chase the
+   *                            overdue tail, rebook quiet clients, win back
+   *                            lapsed ones. Scheduled, and it runs itself.
+   *
+   *   inbox-enquiries          the mailbox channel, reading the owner's mail
+   *                            every few minutes and filing each sender as a
+   *                            lead.
+   *
+   * Both are exactly what the node's name claims — work the platform does
+   * while nobody is watching — and neither reached the count. An owner with
+   * the Gmail channel running saw a number that did not include it.
+   *
+   * STATUS, NOT EXISTENCE. `status = 'active'` is what both pause paths clear
+   * (`agentRepository.pause`), so a paused automation stops counting the moment
+   * it is paused — the same rule `is_active` enforces for `insight_automations`
+   * and `automationApplies` for the switches. The milestone is not disturbed by
+   * that: `firstAutomationAt` records the handover and stays set.
+   *
+   * Counted ALONGSIDE the operational switches rather than deduped against
+   * them. An automation agent with `worksAlongside` set (the overdue chaser is
+   * the case) works the tail the deterministic chaser leaves behind: two
+   * separate things running, and the owner has switched on two.
+   * ───────────────────────────────────────────────────────────────────────────
+   *
+   * Never throws, for the same reason as the method above: an unreadable table
+   * should cost the number, not the page.
+   */
+  private async countAgentAutomations(userId: string): Promise<number> {
+    try {
+      const { count, error } = await this.supabase
+        .from('agents')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .is('deleted_at', null)
+        /* `overlaps`, not `contains`: either tag qualifies, and one query
+           answers for both populations. */
+        .overlaps('tags', [AUTOMATION_AGENT_TAG, INBOX_CHANNEL_TAG]);
+
+      if (error) throw error;
+
+      return count ?? 0;
+    } catch (error) {
+      logger.warn(
+        { err: error, userId },
+        'Could not count agent-backed automations; reporting none running'
+      );
+      return 0;
+    }
+  }
+
+  /**
    * Mark insight as surfaced (shown to user)
    *
    * ───────────────────────────────────────────────────────────────────────────
@@ -2967,15 +3036,42 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     try {
       const language = await this.getUserLanguage(userId);
 
-      // Calculate period boundaries (weekly)
+      /*
+       * The week this summary belongs to, IN UTC — the same Sunday for every
+       * machine that computes it.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * THE DUPLICATE THIS FIXES, WHICH COST A SECOND LLM NARRATIVE EACH TIME.
+       *
+       * These were `setDate`/`setHours`, which work in the LOCAL zone of
+       * whatever ran them. On Vercel that is UTC and the boundary is
+       * `Sun 00:00Z`. Run from a laptop on US Eastern it is `Sun 04:00Z`, and
+       * the guard below matches `period_start` EXACTLY — so the second runner
+       * cannot see the first runner's row, decides the week has no summary,
+       * and writes another one with a fresh narrative.
+       *
+       * Both rows then exist for one week. The dashboard shows the newer, so
+       * the card's "worked out Sunday" line reads whatever weekday the second
+       * run happened on. Two weeks on one live account are in this state:
+       *
+       *   2026-10-25T00:00:00Z  written Sun 03:30 by the nightly cron
+       *   2026-10-25T04:00:00Z  written Wed 16:28 from a US-Eastern machine
+       *
+       * UTC rather than the business's own zone deliberately. This boundary is
+       * a KEY — the measures themselves are rolling 28-day windows from `now`
+       * and do not use it — so what matters is that every runner agrees, and a
+       * business timezone would reintroduce exactly this bug for any code path
+       * that did not resolve it.
+       * ───────────────────────────────────────────────────────────────────────
+       */
       const now = new Date();
       const periodStart = new Date(now);
-      periodStart.setDate(now.getDate() - now.getDay()); // Start of week (Sunday)
-      periodStart.setHours(0, 0, 0, 0);
+      periodStart.setUTCDate(now.getUTCDate() - now.getUTCDay()); // Sunday
+      periodStart.setUTCHours(0, 0, 0, 0);
 
       const periodEnd = new Date(periodStart);
-      periodEnd.setDate(periodStart.getDate() + 6);
-      periodEnd.setHours(23, 59, 59, 999);
+      periodEnd.setUTCDate(periodStart.getUTCDate() + 6);
+      periodEnd.setUTCHours(23, 59, 59, 999);
 
       /*
        * ONE SUMMARY PER PERIOD, NOT ONE PER NIGHT.
@@ -3088,6 +3184,25 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       // Calculate total impact
       const totalImpactUsd = correlationSummary.totalImpactUsd;
 
+      /*
+       * What cancellations cost, over the SAME 28 days the rates above compare.
+       *
+       * Not the weekly `periodStart`/`periodEnd` either side of this: every
+       * figure the note is allowed to quote is a 28-day rate, and a money
+       * sentence measured over a different window would read as though it
+       * belonged with them.
+       *
+       * Priced by the rules the orders page uses, so the note and the page can
+       * never disagree about what a business earned or lost.
+       */
+      const HEALTH_WINDOW_DAYS = 28;
+      const cancelMoney = await cancellationCost(
+        this.supabase,
+        userId,
+        new Date(Date.now() - HEALTH_WINDOW_DAYS * 86_400_000).toISOString(),
+        new Date().toISOString()
+      );
+
       // Generate LLM narrative
       const { title, narrative, highlights, priorities } = await this.generateHealthNarrative(
         userId,
@@ -3104,7 +3219,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         correlationSummary,
         allInsights,
         language,
-        ids
+        ids,
+        cancelMoney
       );
 
       // Upsert the summary
@@ -3294,7 +3410,18 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     correlationSummary: CorrelationSummary,
     allInsights: Insight[],
     language: string,
-    ids: InsightRunIds
+    ids: InsightRunIds,
+    /**
+     * Takings and write-offs over the same 28 days, for the money sentence.
+     *
+     * OPTIONAL on purpose. The money sentence is an enhancement to the note;
+     * the note is the product. Making this required meant an absent figure
+     * threw before the LLM call and the owner got no weekly note at all —
+     * which is how the three `insights/health_summary` boundary tests started
+     * failing. Absent now reads the same as "nothing was written off", which
+     * is the honest thing to say when the figure cannot be priced.
+     */
+    cancelMoney?: CancellationCost
   ): Promise<{
     title: string;
     narrative: string;
@@ -3459,6 +3586,39 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         .map(c => `- ${MEASURE_IN_PLAIN_WORDS[c.category]}: NOT ENOUGH DATA${c.unavailable === 'not_measurable' ? ' (nothing records this yet)' : ` (only ${c.sample} to go on)`}`)
         .join('\n');
 
+      /*
+       * The money sentence, or nothing at all.
+       *
+       * An owner reads "6,575 was written off" and files it away. "You took
+       * 16,775 and lost 6,575, about 39% of what came in" is the same fact and
+       * the one that makes somebody ask why. The ratio is what carries it, so
+       * where there is no ratio there is no paragraph: a period that collected
+       * nothing gets a sentence rather than a percentage of zero.
+       *
+       * Small losses are left out deliberately. Every business cancels
+       * something, and a note that solemnly reports 2% every week teaches the
+       * owner to skip the paragraph that matters when it reaches 40%.
+       */
+      const MATERIAL_SHARE = 10;
+      const cancelMoneyBlock =
+        !cancelMoney || cancelMoney.currency === null || cancelMoney.lost <= 0
+          ? '- Nothing was written off in this period.'
+          : cancelMoney.shareOfCollected === null
+            ? `- ${cancelMoney.currency} ${cancelMoney.lost.toLocaleString()} was written off, and nothing at all was collected in these 28 days.`
+            : [
+                `- Collected: ${cancelMoney.currency} ${cancelMoney.collected.toLocaleString()}`,
+                `- Lost to cancellations: ${cancelMoney.currency} ${cancelMoney.lost.toLocaleString()}`,
+                `- That is ${cancelMoney.shareOfCollected}% of what was collected`,
+                cancelMoney.shareOfCollected >= MATERIAL_SHARE
+                  ? '- This is a big share of the period. Say so plainly, and say it early in the note.'
+                  : '- This is a small share. Mention it only if there is room; do not lead with it.',
+                cancelMoney.mixedCurrency
+                  ? `- This business also billed in other currencies. These figures are ${cancelMoney.currency} only, so say "in ${cancelMoney.currency}" rather than implying it is everything.`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join('\n');
+
       const prompt = `You are writing a short weekly note to a ${whoTheyAre}.
 
 They are very good at what they do. They are NOT a business person, they did not study business, and they do not think in business words. Write the way a friendly, practical person would talk to them over a coffee.
@@ -3478,6 +3638,9 @@ ${measuredList || 'Nothing yet — this business is too new to measure anything 
 
 WHAT COULD NOT BE MEASURED:
 ${unmeasuredList || 'Everything could be measured.'}
+
+WHAT CANCELLATIONS COST, over the same 28 days:
+${cancelMoneyBlock}
 
 RULES ABOUT THESE NUMBERS — these matter more than the writing:
 - Never invent a benchmark. There is no industry data here. "31% is low" is not
@@ -3508,6 +3671,16 @@ RULES ABOUT THESE ISSUES:
   not use that number at all; write the action without it.
 - You may not add up, divide or compare these numbers. If you did not receive
   the figure, it does not exist.
+- EVERY FIGURE HERE DESCRIBES A PERIOD THAT HAS ALREADY HAPPENED. Never place
+  one in the future and never name a period you were not given: not "this
+  coming week", not "next month", not "the days ahead". A live note turned "29
+  empty hours in an average week" into "you have 29 empty hours in the coming
+  week" — a forecast nothing measured, about a week that had not happened, and
+  the one claim on the card the owner could not check.
+- "what it is" is a HEADLINE WRITTEN EARLIER, and it can be older than the
+  count beside it or name the wrong thing. "the count" is the authority. Where
+  the two disagree about what is being counted, follow the count and ignore the
+  headline's noun.
 
 CONNECTED PATTERNS DETECTED:
 ${patterns || 'None'}
@@ -4181,6 +4354,16 @@ Generate in ${langName}. Respond with ONLY a JSON object:
        */
       const operationalRunning = await this.countOperationalAutomations(userId);
 
+      /*
+       * ...and the ones that are agents.
+       *
+       * The third population, added after the comment above was written: an
+       * installed catalogue automation and the mailbox channel are both rows in
+       * `agents`, both run on a schedule with nobody watching, and neither was
+       * in the number. See `countAgentAutomations`.
+       */
+      const agentRunning = await this.countAgentAutomations(userId);
+
       const { data: firstView } = await this.supabase
         .from('website_page_views')
         .select('viewed_at')
@@ -4441,8 +4624,14 @@ Generate in ${langName}. Respond with ONLY a JSON object:
              * on its own today", which is what the journey node claims. An
              * account that turned one on in March and paused it in April has
              * reached the milestone and has nothing running.
+             *
+             * All THREE places an automation can live: the detector-bound rules
+             * in `insight_automations`, the operational switches on the profile,
+             * and the agents — installed catalogue automations and the mailbox
+             * channel. The last group was missing, so an owner running the Gmail
+             * channel was told about everything except it.
              */
-            runningAutomations: (activeAutomations ?? 0) + operationalRunning,
+            runningAutomations: (activeAutomations ?? 0) + operationalRunning + agentRunning,
           },
           note,
           noteKey,

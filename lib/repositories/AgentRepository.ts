@@ -164,6 +164,75 @@ export class AgentRepository {
   /**
    * Find inactive (paused) agents for a user (for admin/recovery purposes)
    */
+  /**
+   * Every live agent of this business carrying a tag.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Tags are how the platform finds agents it created itself rather than ones
+   * the owner wrote: the mailbox channel is found by `inbox-enquiries`, and a
+   * Business OS automation by `business-os-automation`. Both had been reaching
+   * past this repository to ask, which is the direct-Supabase-in-a-service
+   * pattern CLAUDE.md rule 1 exists to stop.
+   *
+   * `deleted_at` is excluded here rather than left to the caller. A removed
+   * automation that still answers "are you installed?" would refuse to
+   * reinstall, and the owner would have no way to get it back.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /**
+   * Every agent this owner has put on a schedule.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * SELECTED BY THE SCHEDULING CONTRACT, NOT BY A TAG.
+   *
+   * `mode = 'scheduled'` is what the platform scheduler itself selects on, so
+   * this answers exactly "which of my agents does the platform run on a
+   * clock" — the question the agents list exists to answer.
+   *
+   * It replaced a tag read, which showed only the agents adopted from an
+   * insight and left the mailbox channel invisible: an agent by every measure,
+   * scheduled and running, absent from the one screen that says what is
+   * working. A tag names a FAMILY; the contract names the behaviour.
+   *
+   * Paused agents are included deliberately. "Nothing is running" and "six
+   * things are paused" are different states and the list has to tell them
+   * apart; the scheduler is what filters on `status`.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findScheduled(userId: string): Promise<AgentRepositoryResult<Agent[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('agents')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('mode', 'scheduled')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      return { data: data || [], error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  async findByTag(userId: string, tag: string): Promise<AgentRepositoryResult<Agent[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('agents')
+        .select('*')
+        .eq('user_id', userId)
+        .contains('tags', [tag])
+        .is('deleted_at', null)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      return { data: data || [], error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
   async findInactive(userId: string): Promise<AgentRepositoryResult<Agent[]>> {
     try {
       const { data, error } = await this.supabase

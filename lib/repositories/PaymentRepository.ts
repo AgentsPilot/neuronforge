@@ -141,6 +141,24 @@ export interface StripeConnectAccount {
    */
   currency: string | null;
   business_type: string | null;
+  /**
+   * When the OWNER chose to stop taking cards. Null means cards are on.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT one of the status flags above. Those record what STRIPE says and are
+   * rewritten from Stripe by `/api/payments/stripe-connect/refresh-status` on
+   * every settings-dialog open. This records a DECISION, and only an owner's
+   * action may write it — `refresh-status` must never touch it, or the pause is
+   * overwritten by Stripe's live answer and the account silently reconnects.
+   *
+   * While set, `resolvePaymentCollectionCapability` refuses and the platform
+   * bills by invoice: bookings still complete, they just raise a local invoice
+   * instead of taking a card.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  paused_at: string | null;
+  /** Who paused. Null for rows paused before the column existed. */
+  paused_by: string | null;
   created_at: string;
   updated_at: string;
 }

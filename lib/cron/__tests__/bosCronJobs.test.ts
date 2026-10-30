@@ -61,14 +61,43 @@ function intervalOf(schedule: string): number {
 const codeOf = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 describe('FR-R9: the registry is vercel.json', () => {
-  it('has exactly the 22 scheduled jobs, with the same schedules, byte for byte', () => {
-    const fromVercel = vercel.crons.map((c) => `${c.path} ${c.schedule}`).sort();
+  /*
+   * Scheduled paths that are NOT Business OS jobs, and so are not in this
+   * registry.
+   *
+   * One entry: `/api/run-scheduled-agents`, the agent scheduler, un-retired on
+   * 2026-10-29. It belongs to the AgentsPilot execution layer ABOVE Business
+   * OS, not to the data layer's own bounded chasers, so it has no registry row,
+   * no `bos_cron_runs` record and no late/stopped tile. Named here rather than
+   * handled by relaxing the comparison, so a NEW unregistered path still fails.
+   */
+  const NOT_A_BOS_CRON = ['/api/run-scheduled-agents'];
+
+  it('has exactly the 21 scheduled jobs, with the same schedules, byte for byte', () => {
+    const fromVercel = vercel.crons
+      .filter((c) => !NOT_A_BOS_CRON.includes(c.path))
+      .map((c) => `${c.path} ${c.schedule}`)
+      .sort();
     const fromRegistry = BOS_CRON_JOBS.map((j) => `${j.path} ${j.schedule}`).sort();
     expect(fromRegistry).toEqual(fromVercel);
+
+    /* Non-vacuous: the exception is genuinely scheduled, so the filter above is
+       exempting something real rather than nothing. */
+    for (const p of NOT_A_BOS_CRON) {
+      expect(vercel.crons.map((c) => c.path)).toContain(p);
+      expect(BOS_CRON_JOBS.map((j) => j.path)).not.toContain(p);
+    }
     // 17th: bos-billing-reconcile (credits boost slice 4b.2, 2026-10-09).
     // 18th: data-export (data export DE-8b, 2026-10-17).
     // 19th: finance-snapshot (finance slice 8.2, 2026-10-17).
-    expect(BOS_CRON_JOBS).toHaveLength(22);
+    /*
+     * 21 since 2026-10-30: `inbox-enquiries` was retired when the mailbox
+     * channel moved onto the platform scheduler. It was a Business OS cron for
+     * an agent, which meant the management layer reaching UP into the execution
+     * layer to run one — the only such import in `lib/business-os`. The
+     * scheduler owns every agent now, whichever doorway made it.
+     */
+    expect(BOS_CRON_JOBS).toHaveLength(21);
   });
 
   it('ids are unique, match their path, and satisfy the database job rule', () => {

@@ -1,12 +1,25 @@
 /**
  * The production cron schedule (admin reorganisation slice 5, part A).
  *
- * `vercel.json` schedules exactly the Business OS jobs listed below (22 as of
- * 2026-10-25). The three
- * AgentsPilot schedules were retired on Offir's instruction (OQ-4, "sunset them
- * for now"): `/api/run-scheduled-agents`, `/api/cron/update-template-scores`
- * and `/api/cron/memory-consolidation`. Their CODE is kept (FR-A2), so
- * re-enabling one is a one-line `vercel.json` change:
+ * `vercel.json` schedules the Business OS jobs listed below (21 as of
+ * 2026-10-30) plus ONE execution-layer route, `/api/run-scheduled-agents`.
+ *
+ * It was 22. `inbox-enquiries` was retired on 2026-10-30: the mailbox channel
+ * is an agent, and it now runs on the platform scheduler like every other one.
+ * Its own cron meant `lib/business-os` importing `@/lib/pilot` to run an agent
+ * itself — the management layer reaching up into the execution layer, and the
+ * only such import in the whole data layer. Deleting the cron deleted the
+ * import.
+ *
+ * The three AgentsPilot schedules were retired on Offir's instruction (OQ-4,
+ * "sunset them for now"): `/api/run-scheduled-agents`,
+ * `/api/cron/update-template-scores` and `/api/cron/memory-consolidation`.
+ * **On 2026-10-29 the first was un-retired on Offir's instruction**, because the
+ * scheduler it is the route for was finally built — it was the missing piece of
+ * the execution layer, not a Business OS job. The other two stay sunset.
+ *
+ * Their CODE is kept (FR-A2), so re-enabling one is a one-line `vercel.json`
+ * change:
  *
  *   { "path": "/api/run-scheduled-agents", "schedule": "*\/5 * * * *" }
  *   { "path": "/api/cron/update-template-scores", "schedule": "0 3 * * *" }
@@ -126,11 +139,39 @@ const BOS_CRONS: CronEntry[] = [
    * break the invariant the next test pins, that everything scheduled lives
    * under `/api/cron/`.
    */
-  { path: '/api/cron/inbox-enquiries', schedule: '*/5 * * * *' },
+  /*
+   * THE AGENT SCHEDULER, UN-RETIRED (2026-10-29).
+   *
+   * `/api/run-scheduled-agents` is back, on the owner's instruction, because
+   * the runner and scheduler are the one part of the AgentsPilot EXECUTION
+   * LAYER that was never built — and this is that layer's own route. The 2026-09-27
+   * "sunset them for now" decision stands for the other two below; this one is
+   * reversed.
+   *
+   * Its body was rewritten, not merely re-enabled. The old one dispatched
+   * through QStash into `runAgentWithContext` / `runAgentKit`, neither of which
+   * reads `pilot_steps` — so a compiled plan could not run that way, and an
+   * agent with no prompt died on `null.trim()`. It now claims each tick with a
+   * compare-and-swap, queues it as a `pending` scheduled row of
+   * `agent_executions`, and executes through `WorkflowPilot`.
+   *
+   * It is the ONE path that is scheduled outside `/api/cron/`, and the
+   * assertion below names it as the single exception: the Business OS crons
+   * belong to the data layer, and the execution layer's scheduler is not one of
+   * them.
+   *
+   * Scheduled while switched off: `AGENT_SCHEDULER_ENABLED` is server-only and
+   * defaults to off, so a pass reports zeros until it is set deliberately.
+   */
+  { path: '/api/run-scheduled-agents', schedule: '*/5 * * * *' },
 ];
 
+/*
+ * Still retired. `/api/run-scheduled-agents` was on this list until 2026-10-29,
+ * when the scheduler it is the route for was finally built; it is now scheduled
+ * above. These two remain sunset with their code kept (FR-A2).
+ */
 const RETIRED_AGENTSPILOT = [
-  { path: '/api/run-scheduled-agents', route: 'app/api/run-scheduled-agents/route.ts' },
   { path: '/api/cron/update-template-scores', route: 'app/api/cron/update-template-scores/route.ts' },
   { path: '/api/cron/memory-consolidation', route: 'app/api/cron/memory-consolidation/route.ts' },
 ];
@@ -138,13 +179,31 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 22 Business OS jobs, unchanged and in order', () => {
+  it('schedules exactly the 21 Business OS jobs plus the agent scheduler, unchanged and in order', () => {
     expect(crons).toHaveLength(22);
     expect(crons).toEqual(BOS_CRONS);
   });
 
-  it('every schedule is a Business OS job under /api/cron/', () => {
-    for (const cron of crons) expect(cron.path.startsWith('/api/cron/')).toBe(true);
+  /*
+   * One exception, named rather than allowed by a loosened rule.
+   *
+   * Every Business OS job lives under `/api/cron/` and is registered in
+   * `bosCronJobs.ts`, which is what gives it a run record and late/stopped
+   * monitoring. The agent scheduler is not a Business OS job: it belongs to the
+   * execution layer above, and `/api/run-scheduled-agents` is its own route.
+   * Listing it here keeps the invariant exact — a NEW path outside
+   * `/api/cron/` still fails this test.
+   */
+  const NOT_A_BOS_CRON = ['/api/run-scheduled-agents'];
+
+  it('every schedule is a Business OS job under /api/cron/, bar the named exception', () => {
+    for (const cron of crons) {
+      if (NOT_A_BOS_CRON.includes(cron.path)) continue;
+      expect(cron.path.startsWith('/api/cron/')).toBe(true);
+    }
+    /* Non-vacuous: the exception is really scheduled, so this is not a rule
+       with nothing to exempt. */
+    for (const p of NOT_A_BOS_CRON) expect(crons.map((c) => c.path)).toContain(p);
   });
 
   it.each(RETIRED_AGENTSPILOT)('$path is no longer scheduled, and its code is kept (FR-A2)', ({ path: cronPath, route }) => {

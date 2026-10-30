@@ -77,6 +77,14 @@ export const ENTITY_DOMAIN: Readonly<Record<string, ChatMapping>> = {
 
   // Scheduling
   bookings: 'chat.scheduling',
+  /*
+   * Checkouts nobody finished. Gated with scheduling, not separately: an
+   * abandoned attempt is a booking that did not happen, it is read from the
+   * same journey and acted on with the same recovery email, and a plan that
+   * includes the diary but not the people who nearly reached it would be a
+   * strange line to draw.
+   */
+  abandoned_bookings: 'chat.scheduling',
   services: 'chat.scheduling',
   business_profile: 'chat.scheduling',
 

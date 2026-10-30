@@ -128,6 +128,27 @@ export interface InboxChannelRow {
   template: EnquiryTemplate | null;
   lastRunAt: string | null;
   /**
+   * How often this channel checks, and how far back it looks, as the owner set
+   * them.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * CARRIED SO THE WIZARD CAN OPEN ON THEM.
+   *
+   * Setup's step four held these in `useState` seeded from constants, so it
+   * always opened on fifteen minutes and thirty days whatever the channel was
+   * actually set to. That is not merely a stale display: re-running setup takes
+   * the UPDATE path, so an owner who opened the wizard to fix their template
+   * and pressed "Start now" silently reset a cadence they had deliberately
+   * changed.
+   *
+   * Strings in the stored form (`"1d"`, `"12h"`), because that is what the
+   * config holds and the dialog parses. Null on a channel installed before the
+   * question was asked, where the dialog's default is the right answer.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  schedule: string | null;
+  stopAfter: string | null;
+  /**
    * Leads this mailbox has brought in the last 30 days.
    *
    * Counted from `source_metadata.via`, not from `source`: the source must
@@ -179,6 +200,11 @@ interface ChannelConfig {
   mail_query?: string;
   watching?: string;
   enquiry_template?: EnquiryTemplate | string;
+  /* The owner's two schedule answers, in the stored form. `stopAfterDays` is
+     the lossy copy that cannot hold hours; `stopAfter` is the exact one. */
+  schedule?: string;
+  stopAfter?: string;
+  stopAfterDays?: number;
 }
 
 /** `enquiry_template` is JSON on the agent, so it may arrive as a string. */
@@ -326,6 +352,19 @@ export async function inboxChannelStatus(userId: string): Promise<InboxChannelSt
         watching: config.watching ?? config.mail_query ?? null,
         template: readTemplate(config.enquiry_template),
         lastRunAt: (agent.last_run as string) ?? null,
+        /*
+         * Read off the config rather than off the cron: a days interval stores
+         * a carrier expression that states only the time of day, so the cron
+         * would tell the wizard "every day at nine" about an agent set to every
+         * three days.
+         */
+        schedule: typeof config.schedule === 'string' ? config.schedule : null,
+        stopAfter:
+          typeof config.stopAfter === 'string'
+            ? config.stopAfter
+            : typeof config.stopAfterDays === 'number'
+              ? `${config.stopAfterDays}d`
+              : null,
         /* Leads marked with this provider, plus any marked with none — a lead
            filed before the provider was recorded still belongs to the only
            channel that could have filed it. */

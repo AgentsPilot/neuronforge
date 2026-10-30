@@ -103,3 +103,104 @@ export function inboxChannelTag(provider: InboxProvider): string {
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export const INBOX_CHANNEL_CONFIG_KEY = 'inbox_channel';
+
+/**
+ * How often the owner wants this mailbox checked.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE SAME TWO QUESTIONS EVERY AGENT ASKS, ASKED HERE TOO.
+ *
+ * An agent adopted from an insight asks its owner two things before it runs:
+ * how often, and when to give up. The mailbox channel asked neither — its
+ * cadence was a constant in the setup module and its window was a date frozen
+ * at setup. It is the same kind of agent, so it gets the same two choices.
+ *
+ * Minutes rather than the named cadences the adopted agents use. Those run
+ * daily at the fastest, because they write to a business's clients; this reads
+ * a mailbox, and the number that matters is how long an enquiry waits before
+ * anyone sees it. Forcing one enum over both would mean offering "monthly" for
+ * a mailbox and "every five minutes" for a chaser, and neither is a real
+ * choice.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export type InboxCadence = 'every_5_minutes' | 'every_15_minutes' | 'every_30_minutes' | 'hourly';
+
+export const INBOX_CADENCE_CHOICES: readonly InboxCadence[] = [
+  'every_5_minutes',
+  'every_15_minutes',
+  'every_30_minutes',
+  'hourly',
+];
+
+/**
+ * Fifteen minutes, which is what the channel actually did.
+ *
+ * Its cron said five and its runner imposed a fifteen-minute floor, so five
+ * was never the real cadence. This offers the owner the choice the floor was
+ * making for them.
+ */
+export const INBOX_CADENCE_DEFAULT: InboxCadence = 'every_15_minutes';
+
+export const INBOX_CADENCE_CRON: Record<InboxCadence, string> = {
+  every_5_minutes: '*/5 * * * *',
+  every_15_minutes: '*/15 * * * *',
+  every_30_minutes: '*/30 * * * *',
+  hourly: '0 * * * *',
+};
+
+/**
+ * What each named cadence means as a number and a unit.
+ *
+ * The bridge from the four words this channel used to offer to the one control
+ * both dialogs now use. Needed in two directions: a channel installed under the
+ * old vocabulary has to OPEN the new control on the right value, and a caller
+ * still sending a word has to end up with the interval it meant.
+ *
+ * Written out rather than parsed back from `INBOX_CADENCE_CRON`, so adding a
+ * word without deciding what it means is a type error rather than a channel
+ * that silently checks the mail on some other schedule.
+ */
+export const INBOX_CADENCE_INTERVAL: Record<
+  InboxCadence,
+  { every: number; unit: 'minutes' | 'hours' | 'days' }
+> = {
+  every_5_minutes: { every: 5, unit: 'minutes' },
+  every_15_minutes: { every: 15, unit: 'minutes' },
+  every_30_minutes: { every: 30, unit: 'minutes' },
+  hourly: { every: 1, unit: 'hours' },
+};
+
+/**
+ * How far back to keep looking, in days.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A ROLLING WINDOW, WHICH IS THE WHOLE POINT.
+ *
+ * The channel bounded its search with `rule.since` — the date setup ran. That
+ * is a fixed point, so the window widens every day it runs: measured on a live
+ * channel four days after setup, it was four days wide and growing. With
+ * `max_results: 100` it eventually stops seeing the oldest mail without saying
+ * so, which is the worst way for a bound to fail.
+ *
+ * An unread message from three months ago is not a live enquiry. This is the
+ * owner saying where that line is, and it is computed at every run rather than
+ * stored, so it stays the same width for ever.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const INBOX_STOP_AFTER_CHOICES: readonly number[] = [7, 14, 30, 90];
+
+export const INBOX_STOP_AFTER_DEFAULT = 30;
+
+/**
+ * The channel's schedule bounds, which are the PLATFORM's bounds.
+ *
+ * Re-exported rather than restated: this channel used to carry its own pair,
+ * and that is exactly how three agents on one screen came to offer three
+ * different controls. One question, one answer, wherever it is asked — see
+ * `lib/business-os/schedule/ranges`.
+ *
+ * Kept under these names because the wizard and the setup module already read
+ * them, and a rename would be churn in files this change has no other business
+ * touching.
+ */
+export { SCHEDULE_RANGE as INBOX_CADENCE_RANGE, STOP_RANGE as INBOX_STOP_AFTER_RANGE } from '@/lib/business-os/schedule/ranges';

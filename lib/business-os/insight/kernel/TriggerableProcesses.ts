@@ -232,6 +232,10 @@ export const DETECTOR_TO_PROCESS: Record<string, string> = {
   conv_no_next_step: 'send_followup_nudge',
   conv_stage_dropoff: 'send_followup_nudge',
   conv_service_rate_drop: 'send_followup_nudge',
+  /* The browser-side copy of the pairing above. `recover_abandoned_checkouts`
+     is the agent; the card keeps the concentration finding, which is the half
+     no automation can act on. */
+  conv_abandoned_bookings: 'send_followup_nudge',
 };
 
 /**

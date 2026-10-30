@@ -81,9 +81,18 @@ describe('one channel per mailbox', () => {
           .filter((p): p is string => Boolean(p))
       );
 
-      /* Its own mailbox and the CRM. Any OTHER mail plugin in here is the bug
-         this covers: an agent asking a mailbox the owner never connected. */
-      expect([...plugins].sort()).toEqual([provider, 'crm'].sort());
+      /*
+       * Its own mailbox and `business-os`. Any OTHER mail plugin in here is the
+       * bug this covers: an agent asking a mailbox the owner never connected.
+       *
+       * Was `crm`. The plan now files through
+       * `business-os.capture_enquiry_contacts`, because the `business-os`
+       * plugin is the channel into this business's data and carries tenant
+       * scoping on `connection.user_id` — the CRM plugin reached the same
+       * records by a second door. Both call the same
+       * `captureEnquiryFromEmail`, so the filing itself is unchanged.
+       */
+      expect([...plugins].sort()).toEqual([provider, 'business-os'].sort());
     }
   });
 
@@ -101,7 +110,17 @@ describe('one channel per mailbox', () => {
        * lose an enquiry we could not parse: the message is consumed and no
        * contact exists, so nobody — owner or platform — ever sees it again.
        */
-      const guard = all.find(step => step.condition?.field === 'filing_result.filed');
+      /*
+       * `filing_result.row.filed`, not `filing_result.filed`.
+       *
+       * The `business-os` plugin answers `{ applied, summary, row }` and the
+       * handler's own result is `row` — where the `crm` plugin returned its
+       * fields flat. Repointing the plan at the business-os door moved the
+       * answer one level down, and the guard reads where the answer now is.
+       * Getting this wrong would silently lose the guard and mark every message
+       * read, filed or not.
+       */
+      const guard = all.find(step => step.condition?.field === 'filing_result.row.filed');
       expect(guard?.condition).toMatchObject({ operator: 'equals', value: true });
       expect(flatten(guard?.steps ?? [])).toContain(markRead);
     }

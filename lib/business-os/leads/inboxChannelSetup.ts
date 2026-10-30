@@ -46,7 +46,26 @@ import {
   PROVIDER_NAMES,
   type InboxProvider,
 } from './inboxChannel';
-import { INBOX_CHANNEL_CONFIG_KEY } from './inboxProviders';
+import {
+  INBOX_CADENCE_CRON,
+  INBOX_CADENCE_DEFAULT,
+  INBOX_CADENCE_CHOICES,
+  INBOX_CADENCE_INTERVAL,
+  INBOX_CADENCE_RANGE,
+  INBOX_CHANNEL_CONFIG_KEY,
+  INBOX_STOP_AFTER_DEFAULT,
+  INBOX_STOP_AFTER_RANGE,
+  type InboxCadence,
+} from './inboxProviders';
+import {
+  clampInterval,
+  formatInterval,
+  intervalMinutes,
+  parseInterval,
+  storageFor,
+  type ScheduleInterval,
+} from '@/lib/business-os/schedule/interval';
+import { INBOX_PLANS, inboxPlanVersion, inboxPluginsRequired } from './inboxPlans';
 import GMAIL_STEPS from './agent/inboxEnquiryAgent.steps.json';
 import OUTLOOK_STEPS from './agent/inboxEnquiryAgent.outlook.steps.json';
 
@@ -69,7 +88,29 @@ const logger = createLogger({ module: 'inboxChannelSetup' });
  * that usually returns nothing.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-const SCHEDULE_CRON = '*/5 * * * *';
+const SCHEDULE_CRON = '*/15 * * * *';
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY FIFTEEN, WHEN THE NOTE ABOVE ARGUES FOR FIVE
+ *
+ * Because fifteen is what actually happened. The note above is the cron's
+ * reasoning; `inboxChannelRunner` then imposed `MIN_MINUTES_BETWEEN_RUNS = 15`
+ * on top of it, so a five-minute cron produced a fifteen-minute poll. The two
+ * disagreed and the floor won.
+ *
+ * The floor existed for one reason the note explains: a brand-new channel with
+ * `last_run = null` should be checked within five minutes rather than waiting a
+ * quarter hour. The platform scheduler gives that for free — `next_run` is
+ * seeded to now at install and the scheduler itself ticks every five minutes,
+ * so the first run lands on the next pass and every run after it is fifteen
+ * minutes apart.
+ *
+ * So this preserves the real cadence and deletes the mechanism that was
+ * emulating it. Raising it back to five is now a one-word change here, and it
+ * would mean five — which is what the note above wanted all along.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 
 /**
  * What a cron expression alone does NOT do.
@@ -90,7 +131,7 @@ const SCHEDULE_CRON = '*/5 * * * *';
  * not wait for a second tick.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-function schedulingFacts(): {
+function schedulingFacts(cron: string): {
   mode: string;
   schedule_enabled: boolean;
   schedule_cron: string;
@@ -100,7 +141,16 @@ function schedulingFacts(): {
   return {
     mode: 'scheduled',
     schedule_enabled: true,
-    schedule_cron: SCHEDULE_CRON,
+    /*
+     * The owner's choice, not a constant. `SCHEDULE_CRON` is still the value
+     * the picker opens on; it is no longer the only answer.
+     *
+     * Passed in rather than looked up, because an interval in DAYS has no cron
+     * expression and the caller is what resolved that: see `storageFor`. For
+     * minutes and hours this is the exact expression; for days it states the
+     * time of day and the interval beside it decides the cadence.
+     */
+    schedule_cron: cron,
     /* UTC deliberately. A five-minute cron has no local meaning, and the
        runner defaults to UTC for a null zone anyway. */
     timezone: 'UTC',
@@ -607,8 +657,81 @@ export async function enableInboxChannel(input: {
   rule: MailboxRule;
   template: EnquiryTemplate;
   watching: string;
+  /**
+   * How often the owner wants this mailbox checked, and how far back to keep
+   * looking.
+   *
+   * The same two questions every adopted agent asks before it runs. The channel
+   * asked neither: its cadence was a constant in this file and its window was
+   * the date setup happened to run on. Optional here so an older caller still
+   * works, and both fall back to the default the floor was choosing anyway.
+   */
+  cadence?: InboxCadence;
+  stopAfterDays?: number;
+  /*
+   * The same two answers as a number and a unit, which supersede the pair
+   * above.
+   *
+   * `cadence` could only say one of four words, all of them minutes or an
+   * hour, so "twice a day" was unaskable here while "every four hours" was
+   * unaskable on the adopted dialog. One control now asks both, so this takes
+   * what that control produces.
+   *
+   * The named pair stays for callers that have not changed, and the stored
+   * shape keeps writing it.
+   */
+  schedule?: ScheduleInterval;
+  stopAfter?: ScheduleInterval;
 }): Promise<{ agentId: string }> {
   const { userId, provider, rule, template, watching } = input;
+
+  /*
+   * Checked against the offered lists, not trusted.
+   *
+   * The same guard `installAutomation` puts on its two choices: a caller
+   * cannot set a cadence or a window this channel never offered, so the
+   * stored value is always one the owner could have picked and the ledger can
+   * always put it into words.
+   */
+  const cadence =
+    input.cadence && INBOX_CADENCE_CHOICES.includes(input.cadence)
+      ? input.cadence
+      : INBOX_CADENCE_DEFAULT;
+
+  /*
+   * The interval the owner set, clamped to what the channel offers.
+   *
+   * Falls back to whatever the named cadence meant, so a caller that sends
+   * neither still gets the fifteen minutes the floor was choosing silently.
+   */
+  const chosen = storageFor(
+    clampInterval(
+      input.schedule ?? INBOX_CADENCE_INTERVAL[cadence],
+      INBOX_CADENCE_RANGE
+    )
+  );
+
+  /*
+   * How far back, in minutes, which is the only unit that can hold both ends.
+   *
+   * Stored as `stopAfterDays` too, rounded, so every surface that reads that
+   * key keeps working: the ledger shows it, and the channel card says it. The
+   * minutes are what `inputsFor` computes the window from, because an owner who
+   * asked for twelve hours must not get a day.
+   */
+  const stopAfter = clampInterval(
+    input.stopAfter ??
+      {
+        every:
+          typeof input.stopAfterDays === 'number' && input.stopAfterDays > 0
+            ? input.stopAfterDays
+            : INBOX_STOP_AFTER_DEFAULT,
+        unit: 'days',
+      },
+    INBOX_STOP_AFTER_RANGE
+  );
+
+  const stopAfterDays = Math.max(1, Math.round(intervalMinutes(stopAfter) / 1440));
   const log = logger.child({ userId, provider });
   const providerTag = inboxChannelTag(provider);
 
@@ -650,7 +773,22 @@ export async function enableInboxChannel(input: {
       /* All of it, not just the cron — a re-point must be able to revive an
          agent whose scheduling facts were cleared, or setup appears to succeed
          and nothing ever runs. */
-      ...schedulingFacts(),
+      ...schedulingFacts(chosen.cron),
+      /* MERGED, never replaced: `agent_config` also carries creation metadata
+         and the V6 ai_context (WP-48, WP-55), and a channel re-point must not
+         throw those away. */
+      /*
+       * The plan too, and the plugins it needs.
+       *
+       * A re-point is the natural moment to bring the row's COPY of the plan up
+       * to date — the runtime reads the copy, and leaving it behind meant a
+       * channel re-pointed today would still have been calling the retired
+       * `crm` door. Without these two lines the scheduler's refresh was the
+       * only thing that could ever fix it.
+       */
+      workflow_steps: INBOX_PLANS[provider],
+      pilot_steps: INBOX_PLANS[provider],
+      plugins_required: inboxPluginsRequired(provider),
       /* MERGED, never replaced: `agent_config` also carries creation metadata
          and the V6 ai_context (WP-48, WP-55), and a channel re-point must not
          throw those away. */
@@ -661,7 +799,35 @@ export async function enableInboxChannel(input: {
            resolves from, but the status reader looks here — so without it
            `InboxChannelRow.template` was a field that could never be
            populated, which reads as a bug rather than as an absence. */
-        [INBOX_CHANNEL_CONFIG_KEY]: { provider, watching, enquiry_template: template },
+        [INBOX_CHANNEL_CONFIG_KEY]: {
+          provider,
+          watching,
+          enquiry_template: template,
+          /* The owner's two choices. Written WHOLESALE like the stamp below,
+             so omitting either would silently reset it to the default. */
+          cadence,
+          stopAfterDays,
+          /*
+           * The two answers as intervals, which is what the control asks for
+           * and what `nextRunFor` and `inputsFor` read.
+           *
+           * Beside the named pair rather than instead of it: every surface
+           * that reads `cadence` or `stopAfterDays` keeps working, and a
+           * channel installed before this still opens the control on the right
+           * value through `INBOX_CADENCE_INTERVAL`.
+           *
+           * `stopAfter` carries the HOURS that `stopAfterDays` cannot. Twelve
+           * hours rounds to one day in that field, and an owner who asked for
+           * half a day must not be given a whole one — the window is computed
+           * from this.
+           */
+          ...(chosen.interval ? { schedule: formatInterval(chosen.interval) } : {}),
+          stopAfter: formatInterval(stopAfter),
+          /* Stamped here as well as on create. This key is written WHOLESALE,
+             so omitting it would silently delete the stamp and make a
+             just-refreshed row look stale for ever. */
+          planVersion: inboxPlanVersion(provider),
+        },
       },
     });
 
@@ -703,12 +869,47 @@ export async function enableInboxChannel(input: {
      */
     tags: [INBOX_CHANNEL_TAG, providerTag],
     status: 'active',
-    ...schedulingFacts(),
-    plugins_required: [provider, 'crm'],
-    workflow_steps: PROVIDERS[provider].plan,
-    pilot_steps: PROVIDERS[provider].plan,
+    ...schedulingFacts(chosen.cron),
+    /*
+     * `business-os`, not `crm`.
+     *
+     * The plan files its enquiry through `business-os.capture_enquiry_contacts`
+     * — the channel between the execution layer and this business's data, which
+     * carries tenant scoping on `connection.user_id`. It used the `crm` plugin,
+     * which reached the same records by a second door. Both open onto the same
+     * `captureEnquiryFromEmail`, so nothing about the filing changed.
+     *
+     * This column is what the runtime grants the run, so it has to name the
+     * plugin the plan actually calls.
+     */
+    plugins_required: inboxPluginsRequired(provider),
+    workflow_steps: INBOX_PLANS[provider],
+    pilot_steps: INBOX_PLANS[provider],
     agent_config: {
-      [INBOX_CHANNEL_CONFIG_KEY]: { provider, watching, enquiry_template: template },
+      [INBOX_CHANNEL_CONFIG_KEY]: {
+        provider,
+        watching,
+        enquiry_template: template,
+        cadence,
+        stopAfterDays,
+        /* The same two as intervals. See the create path above. */
+        ...(chosen.interval ? { schedule: formatInterval(chosen.interval) } : {}),
+        stopAfter: formatInterval(stopAfter),
+        /*
+         * What the row's copy of the plan IS, so the scheduler can tell this
+         * install is behind and refresh it.
+         *
+         * The plan is copied onto the row because that is what the runtime
+         * reads, and a copy goes stale: these plans were just repointed from
+         * the `crm` plugin to `business-os.capture_enquiry_contacts`, and
+         * without this every already-installed channel would have kept calling
+         * the old door for ever. The automation agents shipped that exact bug.
+         *
+         * An install made BEFORE this stamp existed has no value here, which
+         * reads as "not current" and refreshes once — which is what we want.
+         */
+        planVersion: inboxPlanVersion(provider),
+      },
     },
   });
 

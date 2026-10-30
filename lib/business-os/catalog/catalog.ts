@@ -406,6 +406,110 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
        * opt-in before the preview, and `sendEmail` refuses them again at the
        * transport. Raising or lowering this number changes reach, not lawfulness.
        */
+      /**
+       * Send the booking invite — the SAME email the enquiry chaser sends.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * WHY THIS EXISTS BESIDE `send`, RATHER THAN BEING IT
+       *
+       * `send` composes a message out of whatever subject and body the caller
+       * supplies, wrapped in branding. That is the right shape for "email this
+       * client about X" and the wrong shape for a follow-up: there is nothing
+       * to click. The booking URL, the greeting, the subject and the language
+       * all live in `booking-invite`, the template `sendBookingLink` has been
+       * using since it shipped, and rebuilding any of that from a caller's
+       * strings is four chances to get it wrong — starting with a model
+       * inventing a URL.
+       *
+       * So this one takes the LINE, not the letter. `personalLine` is a slot
+       * the template already has, and the template keeps everything else.
+       *
+       * It exists because an automation agent cannot call a function: the plan
+       * language reaches actions and nothing else. The capability was already
+       * written; what was missing was a door onto it.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      /*
+       * File an enquiry that arrived as an email.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * THE DOOR THE MAILBOX CHANNEL SHOULD ALWAYS HAVE COME THROUGH.
+       *
+       * The mailbox agents called `crm.capture_enquiry` — the CRM plugin — to
+       * file what they found. That worked, and it went around the front door:
+       * the `business-os` plugin is the channel between the execution layer and
+       * this business's data, and it is what carries tenant scoping through
+       * `connection.user_id`. A second plugin reaching the same records is a
+       * second answer to "who may touch this account".
+       *
+       * The logic is not duplicated. Both doors open onto the same
+       * `captureEnquiryFromEmail`, which is Business OS code and always was —
+       * the CRM plugin was only ever a delivery channel for it. So this is a
+       * door, not a reimplementation, which is the fourth time this has been
+       * the fix (see `contacts.invite`, `invoices.remind`, `proposals.remind`).
+       *
+       * `needsTarget: false` because there is no row yet: that is the point.
+       * The enquiry is a message, and what it produces is the contact.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      capture_enquiry: {
+        labels: {
+          en: 'file an enquiry that arrived by email',
+          he: 'תיוק פנייה שהתקבלה במייל',
+          es: 'registrar una consulta recibida por correo',
+        },
+        /*
+         * `write`, not `send`: it files a contact and an activity and sends
+         * nobody anything. The unanswered-enquiry chaser is what writes to the
+         * person, fifteen minutes later, and that is its own action.
+         */
+        risk: 'write',
+        /*
+         * No confirmation. A mailbox agent runs on a schedule with nobody
+         * watching, and filing a lead is the least destructive thing the
+         * platform does — the alternative is an enquiry nobody ever sees.
+         */
+        requiresConfirmation: false,
+        /* The fields below are an email, not columns of `crm_contacts`. */
+        writesRow: false,
+        needsTarget: false,
+        /*
+         * Nothing required, deliberately.
+         *
+         * Outlook returns ONE body per message — `body` for text, `html` for
+         * HTML, never both — so the plan passes both and one arrives as an
+         * unresolved reference. Requiring either would refuse half the
+         * messages; the handler reads what it was given and files nothing when
+         * it cannot find an address verbatim, which is the safe outcome.
+         */
+        requiredFields: [],
+        optionalFields: [],
+      },
+
+      invite: {
+        labels: {
+          en: 'send a booking invite',
+          he: 'שליחת הזמנה לקביעת תור',
+          es: 'enviar una invitación para reservar',
+        },
+        risk: 'send',
+        requiresConfirmation: true,
+        writesRow: false,
+        /*
+         * Nothing required. An invite with no opening line is exactly what the
+         * chaser sends today — `personalLine` renders nothing when absent —
+         * so the bare call is already a complete, reviewed email.
+         */
+        requiredFields: [],
+        allowBulk: true,
+        /*
+         * Half of `send`'s hundred. This one writes to people who have not
+         * answered, which is the kind of list that turns into a complaint
+         * faster than a list of people who asked for something.
+         */
+        maxFanout: 50,
+      },
+
       send: {
         labels: { en: 'send an email', he: 'שלח אימייל', es: 'enviar un correo' },
         risk: 'send',
@@ -749,14 +853,205 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         risk: 'update',
         requiresConfirmation: true,
       },
+      /**
+       * Tell a client an invoice is LATE. Not the invoice again.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * `send` below is `InvoiceDeliveryService`: the invoice document, its PDF
+       * attached, the first time it reaches the client. Called on one they
+       * already hold it sends the same bill a second time with nothing
+       * explaining why — which is precisely what an invoice-chasing automation
+       * built on it would do, every week, to the same people.
+       *
+       * This is the chase. `generateChaseInvoiceEmail`, the exact message the
+       * scheduled reminder and the insight queue already send, so the three
+       * routes cannot read differently to a client depending on which one
+       * reached them first. It re-checks the invoice is still unpaid at the
+       * last moment, because between an agent finding a row and sending it the
+       * client may simply have paid.
+       *
+       * It exists because an agent cannot call a function: the plan language
+       * reaches actions and nothing else. The capability was already written;
+       * what was missing was a door onto it. Third time — see `contacts.invite`
+       * and `proposals.remind`.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      remind: {
+        labels: {
+          en: 'chase an unpaid invoice',
+          he: 'תזכורת על חשבונית שלא שולמה',
+          es: 'reclamar una factura impagada',
+        },
+        risk: 'send',
+        requiresConfirmation: true,
+        writesRow: false,
+        requiredFields: [],
+      },
+
       send: {
         labels: { en: 'send invoice', he: 'שלח חשבונית', es: 'enviar factura' },
         risk: 'send',
         requiresConfirmation: true,
-        // Bulk send is what powers "chase everyone who owes me money", so it is
-        // permitted — but capped, and never without an explicit preview.
+        /*
+         * Bulk is permitted — capped, and never without an explicit preview.
+         *
+         * This comment used to say bulk send is "what powers 'chase everyone
+         * who owes me money'". It is not, and believing that is how the
+         * automation agent came to be built on this action: `send` delivers the
+         * DOCUMENT. Chasing is `remind` above.
+         */
         allowBulk: true,
         maxFanout: 100,
+      },
+    },
+  },
+
+  /**
+   * CHECKOUTS NOBODY FINISHED.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * Somebody picked a service and a time, reached the payment step, and left.
+   * It is NOT a booking and must never be counted as one: no hour is held, no
+   * money is owed, and the person has not agreed to anything. It is the record
+   * of an intention that ran out.
+   *
+   * It is also not a CONTACT. An attempt carries an address and a name typed
+   * into a form, and no `contact_id` — most of these people have never been in
+   * the CRM and inviting them in for walking away would fill it with strangers.
+   * That is why consent for them is keyed on the ADDRESS, which is how
+   * `marketing_consent_state` has always keyed it.
+   *
+   * `status` carries the whole lifecycle and is the only filter that matters:
+   * `started` is still in progress, `abandoned` is the subject, and
+   * `converted` is somebody who came back and booked — written by
+   * `convertAttempt` the moment the booking is made, which is what takes them
+   * out of every list here without anything having to remember them.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  abandoned_bookings: {
+    meaning:
+      'CHECKOUTS NOBODY FINISHED — somebody chose a service and a time, reached the payment ' +
+      'step, and left without paying. Not a booking: no hour is held and no money is owed. ' +
+      'Asked "how many bookings do I have", these are never part of the answer. They are ' +
+      'what "people who nearly booked" means, and the share falling on ONE service is the ' +
+      'useful question: several on the same service is a broken page or a price nobody will ' +
+      'pay, while the same number spread across six is ordinary.',
+    table: 'abandoned_bookings',
+    labels: {
+      one: { en: 'abandoned checkout', he: 'הזמנה שלא הושלמה', es: 'reserva sin terminar' },
+      many: { en: 'abandoned checkouts', he: 'הזמנות שלא הושלמו', es: 'reservas sin terminar' },
+    },
+    /* One flat list across the three languages, like every other entity. The
+       planner matches needles against it and does not know about locales. */
+    aliases: [
+      'abandoned booking',
+      'unfinished booking',
+      'dropped checkout',
+      'nearly booked',
+      'הזמנה שננטשה',
+      'כמעט הזמינו',
+      'לא השלימו הזמנה',
+      'reserva abandonada',
+      'checkout abandonado',
+    ],
+    /* The only tenant boundary this product has: these tables are read with
+       the service role, so RLS protects nothing. */
+    userScope: { kind: 'column', column: 'user_id' },
+    labelField: ['first_name', 'last_name'],
+    displayFields: ['first_name', 'email', 'start_time', 'status'],
+    defaultLimit: 50,
+    fields: {
+      id: { column: 'id', type: 'uuid', labels: { en: 'ID' } },
+      first_name: {
+        column: 'first_name',
+        type: 'string',
+        labels: { en: 'first name', he: 'שם פרטי', es: 'nombre' },
+      },
+      last_name: {
+        column: 'last_name',
+        type: 'string',
+        labels: { en: 'last name', he: 'שם משפחה', es: 'apellido' },
+      },
+      email: {
+        column: 'email',
+        type: 'string',
+        labels: { en: 'email', he: 'אימייל', es: 'correo' },
+      },
+      service_id: {
+        column: 'service_id',
+        type: 'uuid',
+        labels: { en: 'service', he: 'שירות', es: 'servicio' },
+      },
+      start_time: {
+        column: 'start_time',
+        type: 'datetime',
+        labels: { en: 'the time they chose', he: 'השעה שבחרו', es: 'la hora que eligieron' },
+      },
+      status: {
+        column: 'status',
+        type: 'enum',
+        format: 'enum',
+        labels: { en: 'status', he: 'סטטוס', es: 'estado' },
+        enumValues: ['started', 'abandoned', 'converted'],
+        enumLabels: {
+          started: { en: 'still going', he: 'בתהליך', es: 'en curso' },
+          abandoned: { en: 'abandoned', he: 'ננטשה', es: 'abandonada' },
+          converted: { en: 'came back and booked', he: 'חזרו והזמינו', es: 'volvió y reservó' },
+        },
+      },
+      /*
+       * When the ONE automatic recovery was spent. The cron stamps it whether
+       * or not the send landed — see `abandonedRecovery` — so an agent reading
+       * "is not null" is asking "has the sweep finished with this one", which
+       * is exactly the tail it is meant to work.
+       */
+      recovery_email_sent_at: {
+        column: 'recovery_email_sent_at',
+        type: 'datetime',
+        labels: {
+          en: 'recovery email sent',
+          he: 'נשלח מייל שחזור',
+          es: 'correo de recuperación enviado',
+        },
+      },
+      created_at: {
+        column: 'created_at',
+        type: 'datetime',
+        labels: { en: 'when they tried', he: 'מתי ניסו', es: 'cuándo lo intentaron' },
+      },
+    },
+    relations: {
+      service: {
+        target: 'services',
+        cardinality: 'one',
+        via: { column: 'service_id', side: 'local' },
+        labels: { en: 'service', he: 'שירות', es: 'servicio' },
+      },
+    },
+    actions: {
+      /**
+       * Write to somebody who did not finish.
+       *
+       * The SAME email the twice-hourly sweep sends — one template, so a
+       * client cannot tell which route reached them. Delegates to
+       * `sendOneRecovery`, which re-reads the attempt and refuses one that has
+       * since converted: between an agent finding a row and this running, they
+       * may have come back and booked.
+       *
+       * Deliberately not bulk-capable. The chat has no business mailing a set
+       * of people who walked away from a payment; an automation fans out from
+       * its own plan, one row at a time, under the owner's stop rule.
+       */
+      remind: {
+        labels: {
+          en: 'write to someone who did not finish booking',
+          he: 'פנייה למי שלא השלים הזמנה',
+          es: 'escribir a quien no terminó la reserva',
+        },
+        risk: 'send',
+        requiresConfirmation: true,
+        writesRow: false,
+        requiredFields: [],
       },
     },
   },
@@ -1324,6 +1619,49 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         labels: { en: 'send a quote', he: 'שלח הצעת מחיר', es: 'enviar un presupuesto' },
         risk: 'send',
         requiresConfirmation: true,
+      },
+      /**
+       * Nudge a quote that is sitting unanswered.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * NOT `send`, and the difference is not cosmetic. `send` is the FIRST
+       * send: it claims the quote from `draft`, retires the version it
+       * replaces, freezes the terms and attaches the document. Called on a
+       * quote the client already has, it returns `alreadySent` and does
+       * nothing — so an automation built on it would chase nobody while
+       * reporting success, which is the failure this codebase keeps finding.
+       *
+       * `sendQuoteReminder` is the other act: same quote, same terms, a short
+       * note asking whether they need more time. It refuses unless the quote
+       * is still `sent` or `viewed`, so an accepted or declined one is never
+       * nudged.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      remind: {
+        labels: {
+          en: 'nudge a quote',
+          he: 'תזכורת על הצעת מחיר',
+          es: 'recordar un presupuesto',
+        },
+        risk: 'send',
+        requiresConfirmation: true,
+        writesRow: false,
+        requiredFields: [],
+        /*
+         * NOT `allowBulk`, and the reason is worth stating because it looks
+         * like an oversight.
+         *
+         * `allowBulk` opens the BizQL `for_each` op, which is how the CHAT
+         * fans a write out over a described set. Quotes are individually
+         * priced, so `proposals-capability.test.ts` refuses that for every
+         * action here — one number going to a list of people it was not
+         * written for.
+         *
+         * The automation does not need it: a committed plan fans out in its own
+         * `scatter_gather`, which calls this once per row with that row's id.
+         * Each client gets a note about their own quote at their own price, and
+         * the size of the run is bounded by the find's `limit`.
+         */
       },
       /**
        * Take it off the table.

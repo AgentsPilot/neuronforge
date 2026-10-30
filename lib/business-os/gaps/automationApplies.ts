@@ -32,6 +32,8 @@ import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { intakeFormRepository } from '@/lib/repositories/IntakeFormRepository';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { auditTrailRepository } from '@/lib/repositories/AuditTrailRepository';
+import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentRepository';
+import { MARKETING_SENDING_ENABLED } from '@/lib/consent/marketingGate';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import type { OperationalAutomation } from './automations';
@@ -122,6 +124,8 @@ async function resolve(
       return takesBookings(userId);
     case 'sends_quotes':
       return sendsQuotes(userId);
+    case 'can_send_marketing':
+      return canSendMarketing(userId);
     case 'bills_for_anything':
       return billsForAnything(userId);
     default:
@@ -149,6 +153,35 @@ async function takesBookings(userId: string): Promise<boolean> {
     return (data ?? []).length > 0;
   } catch (err) {
     logger.warn({ err, userId }, 'Could not resolve bookable services; not offering the meeting reminder');
+    return false;
+  }
+}
+
+/**
+ * Can a marketing email lawfully leave on this owner's behalf?
+ *
+ * The same three questions `marketingGate` asks per recipient, minus the
+ * per-recipient one: the platform switch, and the postal address CAN-SPAM
+ * requires in every commercial message. Consent itself is per contact and
+ * cannot be answered here — the find inside each plan carries that.
+ *
+ * Asked BEFORE an automation is offered, because the gate's refusal is silent
+ * from the owner's side: they would activate a follow-up, be told it is
+ * running, and watch nothing happen. `MARKETING_SENDING_ENABLED` is `false`
+ * today, so this returns false for everybody — deliberately, and the day it
+ * flips these automations start being offered with no further change.
+ */
+async function canSendMarketing(userId: string): Promise<boolean> {
+  if (!MARKETING_SENDING_ENABLED) return false;
+
+  try {
+    const { data, error } = await marketingConsentRepository.settings(userId);
+    if (error) throw error;
+    return Boolean(data?.postal_address?.trim());
+  } catch (err) {
+    /* Fail closed, like the gate itself: not offering an automation is
+       recoverable, offering one that silently sends nothing is not. */
+    logger.warn({ err, userId }, 'Could not resolve marketing readiness; not offering the automation');
     return false;
   }
 }

@@ -143,6 +143,13 @@ describe('a resolved insight', () => {
   });
 
   it('still refuses to offer an action on something settled', () => {
-    expect(card).toContain('const canRun = !isResolved');
+    /*
+     * Whitespace-insensitive on purpose. This asserted the exact one-line
+     * spelling and broke the moment the condition grew a third clause and
+     * Prettier wrapped it — a formatting change failing a test about
+     * behaviour, which teaches the next person to edit the test rather than
+     * read it.
+     */
+    expect(card.replace(/\s+/g, ' ')).toContain('const canRun = !isResolved &&');
   });
 });

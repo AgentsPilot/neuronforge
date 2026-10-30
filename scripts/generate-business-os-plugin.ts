@@ -212,11 +212,34 @@ function writeActionDefinition(entityKey: string, entity: ResolvedEntity, action
 
   const dataProperties: Record<string, unknown> = {};
   for (const key of [...(action.requiredFields ?? []), ...(action.optionalFields ?? [])]) {
-    if (!entity.fields[key]) continue;
-    dataProperties[key] = {
-      type: entity.fields[key].type === 'money' ? 'number' : 'string',
-      description: describeField(entity, key),
-    };
+    if (entity.fields[key]) {
+      dataProperties[key] = {
+        type: entity.fields[key].type === 'money' ? 'number' : 'string',
+        description: describeField(entity, key),
+      };
+      continue;
+    }
+
+    /*
+     * A declared field that is not a column.
+     *
+     * `writesRow: false` means an action's fields are PARAMETERS rather than
+     * columns — `contacts.send` needs a subject and a body, and neither is a
+     * column of `crm_contacts`. This loop used to skip them, so those actions
+     * published a `data` object with no properties at all: `send_contacts` did
+     * not tell anyone it needs a subject or a body, and the only way to find
+     * out was to read the handler.
+     *
+     * Typed as a string because that is all the catalog knows — it carries the
+     * NAME of a non-column parameter and nothing else. Publishing the name is
+     * the part that was missing; a type richer than this would be invented.
+     */
+    if (action.writesRow === false) {
+      dataProperties[key] = {
+        type: 'string',
+        description: `${key} — a parameter of "${action.labels.en}", not a column of any row.`,
+      };
+    }
   }
 
   const isBulk = action.allowBulk === true;
@@ -232,6 +255,31 @@ function writeActionDefinition(entityKey: string, entity: ResolvedEntity, action
    * "email me this every quarter" safe to retry.
    */
   const isRead = action.risk === 'read';
+
+  /*
+   * Does this action point at an existing row?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * READ FROM THE CATALOG, NOT GUESSED FROM THE VERB'S SPELLING.
+   *
+   * This was `actionKey === 'create'`, which is true of exactly one verb and
+   * wrong about every other action that makes or configures something. The
+   * catalog has said `needsTarget: false` since those actions were written, the
+   * planner honours it (`validatePlan.ts`), and the generator ignored it — so
+   * seven published actions demanded a `target_id` their own handler never
+   * wanted:
+   *
+   *   create_and_send_proposals            export_ledger_business_profile
+   *   set_availability_business_profile    clear_availability_business_profile
+   *   open_time_business_profile           add_sections
+   *   sync_channel_connections
+   *
+   * A declared parameter that cannot be supplied is worse than a missing one:
+   * the model dutifully invents a lookup step to produce it, and validation
+   * then refuses the plan for a target that could only ever be the caller.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const needsTarget = actionKey !== 'create' && action.needsTarget !== false;
 
   return {
     description: `${action.labels.en} — ${label} in the user's own business records`,
@@ -252,8 +300,8 @@ function writeActionDefinition(entityKey: string, entity: ResolvedEntity, action
     input_cardinality: isBulk ? 'collection' : 'single',
     output_cardinality: 'single',
     output_fields: readableFields(entity),
-    required_params: actionKey === 'create' ? ['data'] : ['target_id'],
-    optional_params: actionKey === 'create' ? [] : ['data'],
+    required_params: needsTarget ? ['target_id'] : ['data'],
+    optional_params: needsTarget ? ['data'] : [],
     side_effect: action.risk,
     must_support: ['user_scoped', ...(action.requiresConfirmation ? ['confirmation'] : [])],
     // Caps live in `rules.limits`, the same place every other plugin declares
@@ -297,7 +345,7 @@ function writeActionDefinition(entityKey: string, entity: ResolvedEntity, action
     parameters: {
       type: 'object',
       properties: {
-        ...(actionKey === 'create'
+        ...(!needsTarget
           ? {}
           : {
               target_id: {
@@ -307,6 +355,30 @@ function writeActionDefinition(entityKey: string, entity: ResolvedEntity, action
                   `never invented.`,
               },
             }),
+        /*
+         * A `data` property whenever `data` is required.
+         *
+         * `dataProperties` is built only from declared fields that are real
+         * COLUMNS, so an action whose fields are parameters rather than columns
+         * (`writesRow: false`) contributes none — and a targetless action then
+         * published `required: ['data']` with no `data` in its properties at
+         * all, which is a contract that contradicts itself.
+         *
+         * Note the wider gap this does not close: `send_contacts` still fails
+         * to document its own `subject` and `body` for the same reason. Fixing
+         * that needs the catalog to carry a type and a description for
+         * non-column parameters, which it does not yet.
+         */
+        ...(!needsTarget && !Object.keys(dataProperties).length
+          ? {
+              data: {
+                type: 'object',
+                description:
+                  `Parameters for ${action.labels.en}. Handed to a reviewed handler; ` +
+                  'these are not columns of any row.',
+              },
+            }
+          : {}),
         ...(Object.keys(dataProperties).length
           ? {
               data: {
@@ -321,7 +393,17 @@ function writeActionDefinition(entityKey: string, entity: ResolvedEntity, action
             }
           : {}),
       },
-      required: actionKey === 'create' ? ['data'] : ['target_id'],
+      /*
+       * The SECOND place this was declared, and the one the runtime enforces.
+       *
+       * `BasePluginExecutor.validateRequiredParams` reads this array, not
+       * `required_params` above — so fixing one and not the other produced an
+       * action whose published contract said `data` while the validator still
+       * demanded `target_id`. Every call was refused with "Missing required
+       * parameter: target_id" before reaching its handler. Found by calling the
+       * new action for real; no test compared the two.
+       */
+      required: needsTarget ? ['target_id'] : ['data'],
     },
   };
 }
