@@ -218,6 +218,18 @@ export const AUDIT_EVENTS = {
   // Never an address, a name, a plan name or the leave reason.
   BOS_PLAN_CANCEL_EMAIL_SENT: 'BOS_PLAN_CANCEL_EMAIL_SENT',
   BOS_PLAN_CANCEL_EMAIL_NOT_SENT: 'BOS_PLAN_CANCEL_EMAIL_NOT_SENT',
+  // Self-service exit D5 / SX-5 (SA W-12): the owner's Stripe Connect Remove
+  // connection and Disconnect, done or refused. Entity type
+  // 'stripe_connect_account', id = the Stripe account id when one was
+  // resolved. Details: account type, how it was released (deleted |
+  // deauthorized | already_gone), refusal reason and step, blocker codes and
+  // counts, Stripe's error type and code. Never Stripe's message and never
+  // anything about another business (a shared account is `shared: true` only).
+  // The first two were written before D5 but never registered.
+  STRIPE_CONNECT_ACCOUNT_DISCONNECTED: 'STRIPE_CONNECT_ACCOUNT_DISCONNECTED',
+  STRIPE_CONNECT_ACCOUNT_DELETED: 'STRIPE_CONNECT_ACCOUNT_DELETED',
+  STRIPE_CONNECT_DISCONNECT_REFUSED: 'STRIPE_CONNECT_DISCONNECT_REFUSED',
+  STRIPE_CONNECT_DELETE_REFUSED: 'STRIPE_CONNECT_DELETE_REFUSED',
   // Business OS AI activity (Layer 3): one entry per AI action or background
   // job, summarising its LLM calls. Written by the server only; a browser can
   // never write one (lib/audit/requestSchemas.ts) and owners never read one
@@ -1403,6 +1415,29 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'A Business OS owner was not emailed about their plan cancel or keep, or the send was not confirmed in time (reason class only)',
+  },
+  // D5 / SX-5 (SA W-12). The severities are the ones the routes pass: a
+  // removal is 'warning' as it always was; a disconnect and either refusal are
+  // the owner's ordinary outcome, 'info'.
+  [AUDIT_EVENTS.STRIPE_CONNECT_ACCOUNT_DISCONNECTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner soft-disconnected their Stripe Connect account (it stays live at Stripe)',
+  },
+  [AUDIT_EVENTS.STRIPE_CONNECT_ACCOUNT_DELETED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS owner removed their Stripe Connect account after Stripe confirmed it was deleted or our access revoked',
+  },
+  [AUDIT_EVENTS.STRIPE_CONNECT_DISCONNECT_REFUSED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Stripe Connect disconnect was refused (client payment plans running, or the check could not be read); nothing changed',
+  },
+  [AUDIT_EVENTS.STRIPE_CONNECT_DELETE_REFUSED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Stripe Connect removal was refused (client money in flight, Stripe refused, or it could not be checked); nothing changed',
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',

@@ -79,6 +79,8 @@ const FALLBACK_COPY: Record<string, string> = {
   // Plan payments P-7a.3 (C-10): the same words as the en dictionary.
   'settings.account_delete.blocker.plan_running': 'Your plan is still running. Cancel it in Settings → Plan. You can delete your account once it has ended.',
   'settings.account_delete.blocker.stripe_connected': 'Your Stripe account is still connected for client payments. Disconnect it in Settings → Payments.',
+  // D5 / SX-5: the G-8 text the drawer reads now (the key above is no longer read).
+  'settings.account_delete.blocker.stripe_linked': 'Your Stripe account is still linked for client payments. Remove it in Business Setup → Payments → Remove connection. Disconnect on its own does not remove it.',
   'settings.account_delete.blocker.client_plans_running': '{n} client payment plans are still running. End them first.',
   'settings.account_delete.blocker.client_payments_pending': '{n} client payments or refunds are still pending. Wait for them to finish.',
   'settings.account_delete.blocker.client_plans_running_uncounted': 'Client payment plans are still running. End them first.',

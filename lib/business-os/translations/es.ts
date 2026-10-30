@@ -1604,6 +1604,22 @@ export const es = {
     'config.stripe.disconnected': 'Desconectado',
     'config.stripe.disconnected_desc': 'Tu cuenta de Stripe está desconectada. Reconecta para volver a aceptar pagos, o elimina la cuenta para empezar de nuevo.',
     'config.stripe.reconnect': 'Reconectar',
+    // Self-service exit D5 / SX-5: Business Setup → Payments, removing or disconnecting Stripe (add-only, S-7).
+    // remove_connection is the U-1 label ("Delete Account" → "Remove connection"); revert in components/payments/stripeConnectExitCopy.ts.
+    'config.stripe.remove_connection': 'Quitar conexión',
+    'config.stripe.remove_title': '¿Quitar Stripe de tu negocio?',
+    'config.stripe.remove_message_express': 'Esto cierra la cuenta de Stripe que creamos para ti y la quita de tu negocio. Ya no podrás abrir su panel de Stripe. Tus pagos anteriores siguen en tus registros aquí. No se puede deshacer.',
+    'config.stripe.remove_message_standard': 'Esto quita nuestro acceso a tu cuenta de Stripe. Tu cuenta de Stripe sigue abierta y sigue siendo tuya. Tus pagos anteriores siguen en tus registros aquí.',
+    'config.stripe.refused.client_plans_running': '{n} planes de pago de clientes siguen activos a través de Stripe. Termínalos primero en Pedidos o desde la ficha de cada cliente y vuelve a intentarlo.',
+    'config.stripe.refused.client_plans_running_uncounted': 'Hay planes de pago de clientes activos a través de Stripe. Termínalos primero en Pedidos o desde la ficha de cada cliente y vuelve a intentarlo.',
+    'config.stripe.refused.client_payments_pending': '{n} pagos o reembolsos de clientes todavía se están procesando. Espera a que terminen y vuelve a intentarlo.',
+    'config.stripe.refused.client_payments_pending_uncounted': 'Hay pagos o reembolsos de clientes que todavía se están procesando. Espera a que terminen y vuelve a intentarlo.',
+    'config.stripe.refused.stripe_refused': 'Stripe todavía no nos deja quitar esta cuenta, normalmente porque aún guarda dinero tuyo (un saldo o un pago en camino). No hemos cambiado nada. Vuelve a intentarlo cuando Stripe lo haya pagado.',
+    'config.stripe.refused.stripe_unreachable': 'No pudimos conectar con Stripe ahora. No hemos cambiado nada. Vuelve a intentarlo en unos minutos.',
+    'config.stripe.refused.check_failed': 'No pudimos comprobarlo ahora. No hemos cambiado nada. Vuelve a intentarlo.',
+    'config.stripe.refused.not_available': 'Tenemos que terminar algo por nuestra parte antes de poder hacerlo. No hemos cambiado nada. Escríbenos a {support}.',
+    'config.stripe.refused.generic': 'No se pudo completar. No hemos cambiado nada. Vuelve a intentarlo.',
+    'config.stripe.refused.record_not_removed': 'Stripe ya liberó la cuenta, pero no pudimos terminar de quitarla aquí. Escríbenos a {support}.',
     'config.payments.settings_title': 'Configuración de Pagos',
     'config.payments.settings_desc': 'Las opciones de pago se configuran por servicio. Edita un servicio para establecer su precio y opciones de plan de pago.',
 
@@ -4264,6 +4280,8 @@ export const es = {
     // Plan payments P-7a.3 (PF-14): points at Settings → Plan. Approved by the user 2026-10-27 (G-5).
     'settings.account_delete.blocker.plan_running': 'Tu plan sigue activo. Cancélalo en Configuración → Plan. Podrás eliminar tu cuenta cuando haya terminado.',
     'settings.account_delete.blocker.stripe_connected': 'Tu cuenta de Stripe sigue conectada para pagos de clientes. Desconéctala en Configuración → Pagos.',
+    // D5 / SX-5 (P-8): G-8 names the button that clears it. The stripe_connected key above is no longer read (left in place, S-7).
+    'settings.account_delete.blocker.stripe_linked': 'Tu cuenta de Stripe sigue vinculada para pagos de clientes. Quítala en Configuración del Negocio → Pagos → Quitar conexión. Desconectar no basta para quitarla.',
     'settings.account_delete.blocker.client_plans_running': '{n} planes de pago de clientes siguen activos. Finalízalos primero.',
     'settings.account_delete.blocker.client_payments_pending': '{n} pagos o reembolsos de clientes siguen pendientes. Espera a que terminen.',
     'settings.account_delete.blocker.client_plans_running_uncounted': 'Hay planes de pago de clientes que siguen activos. Finalízalos primero.',
