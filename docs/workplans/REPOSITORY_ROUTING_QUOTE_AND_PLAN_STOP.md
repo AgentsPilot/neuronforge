@@ -43,6 +43,7 @@ this document follows is unchanged.
 - [Exit Criteria](#exit-criteria)
 - [The Four Questions, And Their Answers](#the-four-questions-and-their-answers)
 - [Implementation — PR 1 (slices 1 and 2)](#implementation--pr-1-slices-1-and-2)
+- [Implementation — PR 2 (slices 3, 3b and 4)](#implementation--pr-2-slices-3-3b-and-4)
 - [Follow-ups](#follow-ups)
 - [SA Review](#sa-review)
 - [Change History](#change-history)
@@ -631,6 +632,108 @@ it is filed as FU-Q6 rather than fixed here: changing it inside a commit describ
 as a pure move is what D-3 and S-2 exist to prevent. It is pre-existing, it is on
 a money path, and it now at least logs — `findLiveForBooking` logs the error the
 inline read swallowed. **Recommend FU-Q6 be scheduled, not left open.**
+
+---
+
+## Implementation — PR 2 (slices 3, 3b and 4)
+
+### Slice 3 — M-1, M-2, M-5, M-6, M-7 and the constant move
+
+| Method | Class | Placed |
+|---|---|---|
+| `findBilledStagesForProposal` | `PaymentPlanRepository` | beside M-3/M-4, **before** the unscoped webhook header |
+| `cancelOpenStagesForProposal` | `PaymentPlanRepository` | ditto |
+| `findSettlementStateById` | `PaymentInvoiceRepository` | **before** the webhook header at the class tail |
+| `findOpenForBooking` | `PaymentInvoiceRepository` | ditto |
+| `findStopTarget` | `ProposalRepository` | end of class — this file carries **no** guarded region (verified: no test reads its source) |
+
+`LIVE_INVOICE_STATUSES` now lives in `PaymentRepository.ts` beside
+`ISSUED_INVOICE_STATUSES`, with the `draft`-versus-`pending` difference written
+between them. **S-2 honoured:** `SETTLED_INVOICE_STATUSES` stayed in
+`cancelQuoteStages.ts`, and so did its source-text assertion.
+
+**One thing the plan did not foresee.** `LIVE_INVOICE_STATUSES` has *two* uses in
+`cancelQuoteStages.ts`, not one: the loose sweep's `.in('status', …)` filter, and
+a per-row predicate inside the stage loop
+(`if (!LIVE_INVOICE_STATUSES.includes(invoice.status)) continue;`). The plan
+described it only as a query filter. So the **declaration** moved with the query,
+as ruled, and the call site **imports** it for the predicate — one list, one
+source of truth, no duplicated array. This is the only departure from the written
+plan and it changes nothing about S-2's reasoning.
+
+§Placement held: `PaymentPlanRepository.webhook.test.ts` stayed green, including
+the assertion pinning `.eq('user_id', userId)` in its scoped section to exactly 2.
+
+**43 unit tests across three new suites. Mutations: 21/21 caught.**
+
+The mutation harness was itself falsified before its result was trusted: an
+**equivalent** mutation (swapping the order of two `.eq()` filters, which
+`toContainEqual` cannot see) was confirmed to **survive**, and a real one (wrong
+table) to be caught. Without that check the run was worthless — a `cp1252`
+reader thread throws on the shekel sign in the new doc comments, and had that
+been setting the exit code, every mutation would have read "caught".
+
+### Slice 3b — the reason travels
+
+`cancelOpenStagesForProposal` gained `cancellation: { reason, note, by }` with
+`by` defaulting to `'owner'`, and writes `cancel_reason`, `cancel_note`,
+`cancelled_by` and `cancelled_at`. Per D-3 this is a **separately described
+commit**, not a rider on the move.
+
+Columns verified against `supabase/migrations/20260930_installment_cancel_reason.sql`:
+all four present and nullable, and `cancelled_by` carries
+`CHECK (… IN ('client','owner','system'))`, which the `'owner'` default
+satisfies. *(The live-schema MCP check timed out twice; the migration is the
+decisive local evidence and `cancelOpenStagesForBooking` already writes the same
+four columns to the same table in production.)*
+
+`cancelled_at` and `updated_at` are stamped from **one** `now`, with a test
+asserting they are equal — two `new Date()` calls can straddle a millisecond and
+leave a row that reads as edited after it was cancelled.
+
+### Slice 4 — `cancelQuoteStages.ts` routed
+
+All six queries gone: **`grep -c "\.from(" ` returns 0.** `supabaseServer`
+remains as the import plus the one documented hand-off to
+`lowerPlansForCancelledStages` — exit criterion 10 is per-file, and H-3 is why.
+
+| Site | Routed to |
+|---|---|
+| ownership read | `proposalRepository.findStopTarget` |
+| billed stages | `paymentPlanRepository.findBilledStagesForProposal` |
+| per-stage invoice | `paymentInvoiceRepository.findSettlementStateById` — the `currency` cast dropped |
+| loose sweep | `paymentInvoiceRepository.findOpenForBooking` |
+| stage close | `paymentPlanRepository.cancelOpenStagesForProposal`, now carrying the reason |
+| quote status | `proposalRepository.stopAccepted([id], …)` — delta D-2 |
+
+**§Finding held a second time.** The suite went 47 → 52 tests and 80 → 90
+assertions. Of the four dying source-text assertions, every one is re-homed, not
+dropped; only **one** existing assertion changed shape, exactly the one D-2
+predicted (`filters.id` → `ins.id`).
+
+The fake gained `in` — **required**, not defensive, per the Slice 4 Test Plan —
+plus pass-through `limit` / `order` / `range` / `single`. One bug caught in
+writing it: `builder.single = builder.maybeSingle` assigns `undefined`, because
+`maybeSingle` is defined further down the builder; it is a lazy call instead.
+
+**The loose-invoice path is executable for the first time**, and gained six
+behavioural tests: skipped unless asked, skipped without a booking, the dedupe
+holding at `invoicesVoided`, one void failure not abandoning the rest, and a
+failed sweep read not stopping the close. The four regex matches it replaces
+could only ever see the query's *shape*.
+
+### Exit criteria
+
+| # | Result |
+|---|---|
+| 1 | ✅ `.from(` = 0 in both files |
+| 2 | ✅ four assertions re-homed, one changed shape (D-2), none deleted; loose path gained coverage |
+| 3 | ✅ every method has filter tests, both halves of each pair |
+| 4 | ✅ **21/21** slice 3, slice 4 below, harness falsified |
+| 5 | ✅ 0 diagnostics in the changed files; the check proven able to fail |
+| 8 | ✅ all five guard suites green |
+| 9 | ✅ **zero new failing suites.** Full gate on the branch: 29 failed / 1889 passed of 1926 suites, 169 failed / 48415 passed tests. Baseline at the merge base: 33 failed of 1914. Set diff: **29 of the 33 still fail (all pre-existing), 4 no longer do** (jsdom render flakes — the baseline log carries a jsdom `Timeout`), **and nothing new**. The first diff of these two lists was wrong and said all 29 were new: `jest` prints `FAIL` more than once per suite, so the file held 58 raw lines for 29 suites and `comm`'s set logic broke on the duplicates. Worth recording — the bogus answer looked like a catastrophe and the real one is clean |
+| 10 | ✅ per-file, per H-3 |
 
 ---
 
@@ -1276,3 +1379,4 @@ test-integrity, is the right home.
 | 2026-10-31 | SA sign-off, revision 2 | **APPROVED.** §Slice 4 Test Plan approved; slices 1, 2, 3, 3b, 4 cleared to code. `## SA Review` verified intact (34 `[SA: …]` markers). One blocking addition before slice 2 — **S-1**: the Q-2 ruling makes `stopBookingPlan.test.ts:232` ("treats an already-stopped subscription as an ordinary invoice plan") unsatisfiable, because the fake's `maybeSingle` returns `rows[0]` without evaluating filters; declare it as delta D-5, express the case as an empty table, rename the test, record that the guarantee moves to `findLiveForBooking`'s own unit test, and add the status-filter mutation. Plus three notes: S-2 `SETTLED_INVOICE_STATUSES` stays at the call site, S-3 every routed site branches on `error` and never on `!data`, S-4 I-12 is confirmed test-integrity only and does not constrain production code |
 | 2026-10-31 | SA revision applied | Q-1/Q-2/Q-3/Q-4 rulings folded in; D-1 struck for D-1′; M-6 renamed `findOpenForBooking` and de-parameterised; M-7 renamed `findStopTarget`; M-4 returns null; §Placement added for the three guarded regions; §Slice 4 Test Plan added; invariants 6→12; exit criteria 2/3/4 rewritten and 8–10 added; `payment_plan_subscriptions.status` verified `NOT NULL`, answering Q-2's blocking condition |
 | 2026-10-31 | PR 1 coded (slices 1 and 2) | M-3/M-4 added to `PaymentPlanRepository` before the guarded region, 12 unit tests, **mutations 12/12**. `stopBookingPlan.ts` routed: `.from(` 0 and `supabaseServer` 0. §Finding held — 9 of 10 existing tests passed untouched and the one failure was exactly the test SA's S-1 predicted; renamed per D-5 and invariant I-5 additionally asserted in this suite rather than only moved out of it. **Mutations 5/6, the 6th equivalent** (M-4's own empty-list guard). Regression 127/128 suites, 2571/2572 tests — the one failure is the known Windows CRLF source-scan flake over a file this branch does not touch. FU-Q6 raised: the subscription read discards its error |
+| 2026-10-31 | PR 2 coded (slices 3, 3b and 4) | Five methods added before every guarded region; all five guard suites green, including the exact `.eq('user_id', userId)` count. `LIVE_INVOICE_STATUSES` moved, `SETTLED_INVOICE_STATUSES` stayed (S-2). **One departure from the plan:** the moved constant has TWO uses in `cancelQuoteStages.ts`, not one — a filter and a per-row predicate — so the declaration moved and the call site imports it. `cancelQuoteStages.ts` routed: `.from(` 0, `supabaseServer` retained for the documented hand-off (H-3). §Finding held again — 47→56 tests, four assertions re-homed not deleted, exactly one changed shape (D-2). The loose-invoice path is executable for the first time and gained six behavioural tests. **Mutations: slice 3 21/21, slice 4 13/13 — but only after the first slice-4 run surfaced three real gaps:** no test covered a stage pointing at a missing invoice row, nothing asserted the call site HANDS the reason to the close, and the S-3 error-branch trap was invisible until `logger.error` was captured. The harness itself was falsified first (an equivalent mutation confirmed to survive), because a `cp1252` reader thread throws on the shekel sign and would have made every mutation read as caught |

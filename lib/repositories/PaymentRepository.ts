@@ -991,6 +991,33 @@ export type CreatePaymentInvoiceInput =
  */
 export const ISSUED_INVOICE_STATUSES = ['sent', 'pending', 'overdue'] as const;
 
+/**
+ * Invoice states that are still asking the client for money.
+ *
+ * ───────────────────────────────────────────────────────────────────────────────
+ * NOT INTERCHANGEABLE WITH `ISSUED_INVOICE_STATUSES` ABOVE, and the difference
+ * is one word: this list has `draft` where that one has `pending`.
+ *
+ *   ISSUED  sent | pending | overdue    "an invoice the client has been given"
+ *   LIVE    draft | sent   | overdue    "an invoice that can still be voided"
+ *
+ * Reusing the wrong one on the cancellation path would silently stop voiding
+ * drafts and start voiding pendings — on the path whose entire subject is the
+ * two live quotes left payable after their job was called off, one of them
+ * ₪5,000.
+ *
+ * `paid` and `cancelled` are absent from both on purpose: one is settled, the
+ * other already done.
+ *
+ * Moved here from `cancelQuoteStages.ts` with the query that uses it
+ * (`PaymentInvoiceRepository.findOpenForBooking`). Its sibling
+ * `SETTLED_INVOICE_STATUSES` deliberately did NOT move: that one is a predicate
+ * applied to a row already returned, so it belongs with the call site that
+ * decides, not with the data layer.
+ * ───────────────────────────────────────────────────────────────────────────────
+ */
+export const LIVE_INVOICE_STATUSES = ['draft', 'sent', 'overdue'] as const;
+
 // ── Stripe webhook: invoice column lists and result shapes (CF-5 PR 2) ───────
 // Each list is the exact select string the webhook issued inline before it moved
 // here (docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES_WORKPLAN.md
@@ -1947,6 +1974,108 @@ export class PaymentInvoiceRepository {
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error }, 'Failed to create payment invoice with details');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * One invoice's settlement state, for a caller deciding whether to void it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Five columns and no more. `voidInvoice` refuses a settled invoice on its
+   * own, so this read is not the guard — it is what keeps a correct case from
+   * producing a frightening error line in the log, and what lets the caller sum
+   * what the client actually paid on the way past.
+   *
+   * `currency` IS TYPED HERE, which is the point of the method beyond the move.
+   * The inline read it replaces had no type, so the call site reached the column
+   * through `(invoice as { currency?: string | null }).currency` — a cast that
+   * existed only because an untyped row cannot be indexed (CLAUDE.md rule 6).
+   *
+   * ONE READ PER INVOICE, deliberately preserved. The caller runs this inside
+   * its void loop, which is an N+1 — and collapsing it into a single
+   * `.in('id', ids)` read would break the coupling that makes the sum correct:
+   * the settled invoices are exactly the ones the loop SKIPS, so the sum and the
+   * skip have to be the same branch.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findSettlementStateById(
+    id: string,
+    userId: string
+  ): Promise<
+    PaymentRepositoryResult<{
+      id: string;
+      status: string;
+      amount: number | null;
+      refunded_amount: number | null;
+      currency: string | null;
+    }>
+  > {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_invoices')
+        .select('id, status, amount, refunded_amount, currency')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return {
+        data: (data ?? null) as {
+          id: string;
+          status: string;
+          amount: number | null;
+          refunded_amount: number | null;
+          currency: string | null;
+        } | null,
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, invoiceId: id, userId }, 'Failed to read the settlement state of an invoice');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * A booking's invoices that are still asking the client for money.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NAMED `findOpenForBooking`, NOT `findLiveForBooking`, and that is not a
+   * style choice. `PaymentPlanSubscriptionRepository.findLiveForBooking` already
+   * exists, means something else entirely — the one unstopped plan on a booking
+   * — and both are reachable from the same two cancellation paths. Two
+   * same-named methods meaning different things, one row apart in a money path,
+   * is how the wrong one gets called.
+   *
+   * NO `statuses` PARAMETER. The filter is `LIVE_INVOICE_STATUSES` and nothing
+   * else: a caller-supplied status list is a generic filter wearing a specific
+   * name, and it is how `ISSUED_INVOICE_STATUSES` would eventually be passed in
+   * by a reader who saw two lists and picked one. The constant lives beside its
+   * sibling with the difference spelled out.
+   *
+   * This exists for the invoice NO STAGE POINTS AT. A single-payment quote
+   * raises one invoice straight against its booking, and `payment_invoices` has
+   * no `proposal_id`, so nothing links it back to the quote — which is why
+   * stopping such a quote used to leave its invoice `sent`: owed, chased, and
+   * still payable from the public page.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findOpenForBooking(
+    bookingId: string,
+    userId: string
+  ): Promise<PaymentRepositoryResult<Array<{ id: string; status: string }>>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_invoices')
+        .select('id, status')
+        .eq('user_id', userId)
+        .eq('booking_id', bookingId)
+        .in('status', [...LIVE_INVOICE_STATUSES]);
+
+      if (error) throw error;
+      return { data: (data ?? []) as Array<{ id: string; status: string }>, error: null };
+    } catch (error) {
+      logger.error({ err: error, bookingId, userId }, 'Failed to read the open invoices of a booking');
       return { data: null, error: error as Error };
     }
   }

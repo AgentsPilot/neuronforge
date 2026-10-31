@@ -776,6 +776,63 @@ export class ProposalRepository {
       logger.error({ err: error, id }, 'Could not supersede the previous version');
     }
   }
+
+  /**
+   * The quote a stop is about to act on, read to prove it is this owner's.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT `findById`, which is `select('*')`. That pulls `accepted_snapshot` and
+   * every frozen tax field on a path that reads one column, on a table whose
+   * rows carry the whole agreed quote.
+   *
+   * Read BEFORE anything is written, and the reason is the difference between
+   * two failures that look alike. The update that follows is scoped by
+   * `user_id` as well, so a stranger's proposal id writes nothing either way —
+   * but without this read it reports success, which says "there was nothing
+   * left to stop" where the truth is "that is not yours".
+   *
+   * Five columns, byte-faithful to the inline read this replaces. Only
+   * `booking_id` is ever used; `status` and `title` are dead at the call site.
+   * Narrowing them is a separate change, because dropping a column from a read
+   * and moving the read are two different reviews.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findStopTarget(
+    id: string,
+    userId: string
+  ): Promise<
+    RepositoryResult<{
+      id: string;
+      user_id: string;
+      booking_id: string | null;
+      status: string;
+      title: string | null;
+    }>
+  > {
+    try {
+      const { data, error } = await this.supabase
+        .from('proposals')
+        .select('id, user_id, booking_id, status, title')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return {
+        data: (data ?? null) as {
+          id: string;
+          user_id: string;
+          booking_id: string | null;
+          status: string;
+          title: string | null;
+        } | null,
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, id, userId }, 'Failed to read the quote a stop is about to act on');
+      return { data: null, error: error as Error };
+    }
+  }
 }
 
 export const proposalRepository = new ProposalRepository();
