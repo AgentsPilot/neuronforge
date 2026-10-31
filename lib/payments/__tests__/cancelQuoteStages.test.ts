@@ -47,8 +47,18 @@ const dbState: {
   /** Proposal rows the status update claims to have changed — [] means it was not `accepted`. */
   stoppedRows: Array<{ id: string }>;
   statusError: unknown;
-  selects: Array<{ table: string; filters: Record<string, unknown>; nots: string[]; is: Record<string, unknown> }>;
-  updates: Array<{ table: string; row: Record<string, unknown>; filters: Record<string, unknown>; nots: string[]; is: Record<string, unknown> }>;
+  /**
+   * Invoices returned for the BOOKING sweep — the ones no stage points at.
+   *
+   * This did not exist, and could not: the sweep's query ends in `.in(...)`,
+   * which the fake had no method for, so the chain broke before it resolved and
+   * the path was unreachable in this suite. Its only coverage was four regex
+   * matches against the module's own source text, which moved to the repository
+   * unit tests when the query did. These rows are what replaced them.
+   */
+  looseInvoices: Array<{ id: string; status: string }>;
+  selects: Array<{ table: string; filters: Record<string, unknown>; ins: Record<string, unknown>; nots: string[]; is: Record<string, unknown> }>;
+  updates: Array<{ table: string; row: Record<string, unknown>; filters: Record<string, unknown>; ins: Record<string, unknown>; nots: string[]; is: Record<string, unknown> }>;
   closeError: unknown;
   /** Written by the mock itself, so ordering assertions cannot pass by construction. */
   order: string[];
@@ -56,6 +66,7 @@ const dbState: {
   proposal: null,
   billedStages: [],
   invoices: {},
+  looseInvoices: [],
   closedRows: [],
   stoppedRows: [{ id: 'prop-1' }],
   statusError: null,
@@ -81,6 +92,7 @@ jest.mock('@/lib/supabaseServer', () => ({
     from(table: string) {
       const filters: Record<string, unknown> = {};
       const isFilters: Record<string, unknown> = {};
+      const inFilters: Record<string, unknown> = {};
       const nots: string[] = [];
       let mode: 'select' | 'update' = 'select';
       let updateRow: Record<string, unknown> = {};
@@ -88,9 +100,17 @@ jest.mock('@/lib/supabaseServer', () => ({
       const builder: Record<string, unknown> = {};
 
       const resolveQuery = () => {
-        dbState.selects.push({ table, filters: { ...filters }, nots: [...nots], is: { ...isFilters } });
+        dbState.selects.push({ table, filters: { ...filters }, ins: { ...inFilters }, nots: [...nots], is: { ...isFilters } });
         if (table === 'payment_plan_installments') {
           return { data: dbState.billedStages, error: null };
+        }
+        /*
+         * The booking sweep. Reached only now that `in` keeps the chain alive —
+         * before the move this returned `{ data: null }` for every table but
+         * installments, so the sweep silently iterated nothing.
+         */
+        if (table === 'payment_invoices') {
+          return { data: dbState.looseInvoices, error: null };
         }
         return { data: null, error: null };
       };
@@ -98,7 +118,7 @@ jest.mock('@/lib/supabaseServer', () => ({
       builder.select = () => {
         if (mode === 'update') {
           // Terminal on an update: returns the rows that changed.
-          dbState.updates.push({ table, row: updateRow, filters: { ...filters }, nots: [...nots], is: { ...isFilters } });
+          dbState.updates.push({ table, row: updateRow, filters: { ...filters }, ins: { ...inFilters }, nots: [...nots], is: { ...isFilters } });
           dbState.order.push(`close:${table}`);
           if (table === 'proposals') {
             return Promise.resolve({
@@ -132,6 +152,28 @@ jest.mock('@/lib/supabaseServer', () => ({
         nots.push(`${column} ${op} ${value}`);
         return builder;
       };
+      /*
+       * REQUIRED, not defensive. `stopAccepted` chains `.in('id', ids)`, so
+       * without this the proposal update throws BEFORE its terminal `.select()`
+       * — and the throw now lands inside a repository `try`, where it is
+       * swallowed and reported as an ordinary error. Roughly ten tests would
+       * fail with a missing update rather than a missing method.
+       */
+      builder.in = (column: string, value: unknown) => {
+        inFilters[column] = value;
+        return builder;
+      };
+      /*
+       * These four ARE defensive, and deliberately so. This fake is an explicit
+       * builder, not a Proxy: a repository method reaching for a chain method it
+       * does not define throws, and §Finding exception 2 is that such a throw is
+       * no longer loud. A green suite is not evidence here, so the cheap
+       * insurance is to pass through what a future method is likely to call.
+       */
+      builder.limit = () => builder;
+      builder.order = () => builder;
+      builder.range = () => builder;
+      builder.single = () => (builder.maybeSingle as () => Promise<unknown>)();
 
       builder.maybeSingle = async () => {
         if (table === 'proposals') return { data: dbState.proposal, error: null };
@@ -176,12 +218,30 @@ jest.mock('@/lib/payments/invoiceLifecycle', () => ({
   voidInvoice: (...args: unknown[]) => voidInvoiceMock(...args),
 }));
 
+/*
+ * `logger.error` is CAPTURED, not just silenced.
+ *
+ * One line in this module is an operational instruction — "Money stopped but the
+ * quote still reads accepted; it needs marking stopped by hand" — and whether it
+ * fires is behaviour, not noise. Branching the status update on `!stoppedRows`
+ * instead of on `statusError` (SA S-3) changes nothing a result assertion can
+ * see: it only makes that line fire on every SECOND press, sending an owner to
+ * fix a quote that is already correct. A mutation proving exactly that survived
+ * until this mock could be read.
+ */
+const loggerErrorMock = jest.fn();
+const loggerWarnMock = jest.fn();
+
 jest.mock('@/lib/logger', () => ({
   createLogger: () => ({
-    child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }),
+    child: () => ({
+      info: jest.fn(),
+      warn: (...args: unknown[]) => loggerWarnMock(...args),
+      error: (...args: unknown[]) => loggerErrorMock(...args),
+    }),
     info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
+    warn: (...args: unknown[]) => loggerWarnMock(...args),
+    error: (...args: unknown[]) => loggerErrorMock(...args),
   }),
 }));
 
@@ -193,6 +253,7 @@ beforeEach(() => {
   dbState.proposal = { ...QUOTE };
   dbState.billedStages = [];
   dbState.invoices = {};
+  dbState.looseInvoices = [];
   dbState.closedRows = [];
   dbState.stoppedRows = [{ id: 'prop-1' }];
   dbState.statusError = null;
@@ -211,7 +272,12 @@ beforeEach(() => {
     dbState.order.push('void');
     return { data: {}, error: null };
   });
+  loggerErrorMock.mockReset();
+  loggerWarnMock.mockReset();
 });
+
+/** The messages this module logs that mean something to an operator. */
+const loggedMessages = () => loggerErrorMock.mock.calls.map(c => String(c[1]));
 
 /*
  * The reason is mandatory, so the default harness call carries one. Tests about
@@ -304,7 +370,13 @@ describe('saying the job ended — the second half of the one press', () => {
   it('scopes the status update by user_id too', async () => {
     await run();
     expect(statusUpdate()!.filters.user_id).toBe('user-1');
-    expect(statusUpdate()!.filters.id).toBe('prop-1');
+    /*
+     * `in('id', ['prop-1'])`, not `eq('id', 'prop-1')` — declared delta D-2.
+     * `stopAccepted` is shared with the booking cascade, which stops several
+     * quotes at once, so it takes a list. Identical in SQL for one id; the
+     * assertion changes shape because the recorded filter does.
+     */
+    expect(statusUpdate()!.ins.id).toEqual(['prop-1']);
   });
 
   it('records the reason code for counting', async () => {
@@ -718,18 +790,145 @@ describe('the unpaid invoice outside the stages', () => {
     expect(code).toContain('if (cancelUnpaidInvoice && proposal.booking_id)');
   });
 
-  it('only ever touches money that has not arrived', () => {
-    // `draft`, `sent`, `overdue` — never paid, refunded or partially refunded.
-    const sweep = code.slice(code.indexOf('if (cancelUnpaidInvoice'), code.indexOf('if (cancelUnpaidInvoice') + 900);
-    expect(sweep).toContain(".in('status', LIVE_INVOICE_STATUSES)");
-    expect(code).toContain("const LIVE_INVOICE_STATUSES = ['draft', 'sent', 'overdue']");
-    expect(code).toContain("const SETTLED_INVOICE_STATUSES = ['paid', 'refunded', 'partially_refunded']");
+  /*
+   * THE FOUR ASSERTIONS THAT USED TO BE HERE MOVED, they were not dropped.
+   *
+   * They matched this file's source text for the sweep's query — the `in` filter
+   * on the status list, the list's own declaration, and the two `eq` scopes —
+   * because that query could not be executed from this suite at all. Now that it
+   * lives in `paymentInvoiceRepository.findOpenForBooking`, each one is an
+   * assertion on a real call in
+   * `lib/repositories/__tests__/PaymentInvoiceRepository.quoteStop.test.ts`,
+   * which also pins the constant's value AND the one word that separates it from
+   * `ISSUED_INVOICE_STATUSES`.
+   *
+   * What stays here is what is still this file's own decision.
+   */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND NOW THE PATH ITSELF RUNS, for the first time in this suite.
+   *
+   * Every test below was impossible before the query moved: the sweep ends in
+   * `.in(...)`, the fake had no such method, and the chain could not resolve.
+   * This is the coverage the four source-text matches were standing in for, and
+   * it is strictly more than they could assert — they could see the query's
+   * shape, not what the function does with its answer.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  describe('now that it is reachable', () => {
+    const WITH_BOOKING = { ...QUOTE, booking_id: 'booking-9' };
+
+    const stop = (cancelUnpaidInvoice: boolean) =>
+      cancelQuoteStages({
+        proposalId: 'prop-1',
+        userId: 'user-1',
+        reason: 'client_stopped',
+        cancelUnpaidInvoice,
+      });
+
+    it('leaves the invoice alone unless the owner asks', async () => {
+      dbState.proposal = { ...WITH_BOOKING };
+      dbState.looseInvoices = [{ id: 'inv-loose', status: 'sent' }];
+
+      const result = await stop(false);
+
+      /*
+       * The default, and the decision it encodes: an owner stopping half way is
+       * often still owed for the half that happened. Voiding it for them would
+       * decide that nothing is owed.
+       */
+      expect(voidInvoiceMock).not.toHaveBeenCalled();
+      expect(result.invoicesVoided).toBe(0);
+    });
+
+    it('voids the booking invoice no stage points at, when asked', async () => {
+      dbState.proposal = { ...WITH_BOOKING };
+      dbState.looseInvoices = [{ id: 'inv-loose', status: 'sent' }];
+
+      const result = await stop(true);
+
+      /* The ₪5,000 case: one invoice raised straight against the booking, with
+         nothing linking it back to the quote. */
+      expect(voidInvoiceMock).toHaveBeenCalledWith({ invoiceId: 'inv-loose', userId: 'user-1' });
+      expect(result.invoicesVoided).toBe(1);
+    });
+
+    it('does not void a stage invoice twice', async () => {
+      dbState.proposal = { ...WITH_BOOKING };
+      /* The same invoice reached both ways: through its stage, and again in the
+         booking sweep. */
+      dbState.billedStages = [{ id: 'st-1', invoice_id: 'inv-1' }];
+      dbState.invoices = { 'inv-1': { id: 'inv-1', status: 'sent' } };
+      dbState.looseInvoices = [
+        { id: 'inv-1', status: 'sent' },
+        { id: 'inv-loose', status: 'overdue' },
+      ];
+
+      const result = await stop(true);
+
+      /*
+       * Without the dedupe `invoicesVoided` reads 3 for two invoices, and the
+       * owner is told more was called off than exists.
+       */
+      expect(result.invoicesVoided).toBe(2);
+      expect(voidInvoiceMock).toHaveBeenCalledTimes(2);
+      expect(voidInvoiceMock.mock.calls.map(c => c[0].invoiceId)).toEqual(['inv-1', 'inv-loose']);
+    });
+
+    it('one invoice refusing to void does not abandon the rest', async () => {
+      dbState.proposal = { ...WITH_BOOKING };
+      dbState.looseInvoices = [
+        { id: 'inv-bad', status: 'sent' },
+        { id: 'inv-good', status: 'sent' },
+      ];
+      voidInvoiceMock.mockImplementation(async ({ invoiceId }: { invoiceId: string }) => {
+        dbState.order.push('void');
+        if (invoiceId === 'inv-bad') return { data: null, error: new Error('processor said no') };
+        return { data: {}, error: null };
+      });
+
+      const result = await stop(true);
+
+      /* A job half-called-off is worse than one called off with an invoice still
+         open: the open invoice is visible, the half-finished state is not. */
+      expect(result.ok).toBe(true);
+      expect(result.invoicesVoided).toBe(1);
+      expect(voidInvoiceMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('a failed sweep read does not stop the quote being closed', async () => {
+      dbState.proposal = { ...WITH_BOOKING };
+      dbState.looseInvoices = [];
+      dbState.closedRows = [{ id: 'st-2' }];
+
+      const result = await stop(true);
+
+      /* The stages are the fact that matters; the sweep is an extra the owner
+         asked for. */
+      expect(result.ok).toBe(true);
+      expect(result.stagesClosed).toBe(1);
+    });
+
+    it('never runs for a quote with no booking', async () => {
+      /* `payment_invoices` has no `proposal_id`, so there is nothing to scope a
+         sweep by — and `QUOTE` deliberately has `booking_id: null`. */
+      dbState.looseInvoices = [{ id: 'inv-loose', status: 'sent' }];
+
+      const result = await stop(true);
+
+      expect(voidInvoiceMock).not.toHaveBeenCalled();
+      expect(result.invoicesVoided).toBe(0);
+    });
   });
 
-  it('stays inside this quote and this owner', () => {
-    const sweep = code.slice(code.indexOf('if (cancelUnpaidInvoice'), code.indexOf('if (cancelUnpaidInvoice') + 900);
-    expect(sweep).toContain(".eq('user_id', userId)");
-    expect(sweep).toContain(".eq('booking_id', proposal.booking_id)");
+  it('keeps the settled list, which is a judgement about a row and not a filter', () => {
+    /*
+     * `SETTLED_INVOICE_STATUSES` did NOT move with its sibling. It is applied to
+     * an invoice already returned, to decide what counts as collected — there is
+     * no query for it to travel with. `refunded` and `partially_refunded` are in
+     * it because both were PAID.
+     */
+    expect(code).toContain("const SETTLED_INVOICE_STATUSES = ['paid', 'refunded', 'partially_refunded']");
   });
 
   it('does not void the same invoice twice', () => {
@@ -742,6 +941,101 @@ describe('the unpaid invoice outside the stages', () => {
   it('one invoice refusing to void does not abandon the rest', () => {
     const sweep = code.slice(code.indexOf('if (cancelUnpaidInvoice'), code.indexOf('if (cancelUnpaidInvoice') + 1100);
     expect(sweep).toMatch(/if \(voidError\) \{[\s\S]*logger\.warn[\s\S]*continue;/);
+  });
+});
+
+
+/*
+ * ───────────────────────────────────────────────────────────────────────────────
+ * THREE GAPS A MUTATION RUN FOUND, and they are the reason a green suite is not
+ * evidence. Each of these mutations survived the first run:
+ *
+ *   · `if (!invoice) continue;`  ->  `if (false) continue;`
+ *   · the close stops being passed the owner's reason
+ *   · the status update branches on `!stoppedRows` instead of on `statusError`
+ *
+ * None of them is caught by a filter assertion on a repository, because none of
+ * them is about what is ASKED — they are about what this function does with the
+ * answer.
+ * ───────────────────────────────────────────────────────────────────────────────
+ */
+describe('what the mutation run caught the tests not saying', () => {
+  it('skips a stage whose invoice row is gone, instead of crashing on it', async () => {
+    /*
+     * A stage carries an `invoice_id` whose row this owner cannot read: deleted,
+     * or belonging to someone else. Without the guard the next line asks a null
+     * for its `.status` and the whole stop dies — every later stage left open on
+     * a job that ended, for one dangling pointer.
+     */
+    dbState.billedStages = [
+      { id: 'st-1', invoice_id: 'inv-gone' },
+      { id: 'st-2', invoice_id: 'inv-2' },
+    ];
+    dbState.invoices = { 'inv-2': { id: 'inv-2', status: 'sent' } };
+    dbState.closedRows = [{ id: 'st-3' }];
+
+    const result = await run();
+
+    expect(result.ok).toBe(true);
+    /* The reachable one still voided — the loop carried on past the gap. */
+    expect(result.invoicesVoided).toBe(1);
+    expect(voidInvoiceMock).toHaveBeenCalledWith({ invoiceId: 'inv-2', userId: 'user-1' });
+  });
+
+  it("passes the owner's reason through to the close", async () => {
+    /*
+     * The repository writes `cancel_reason` when it is given one, and its own
+     * test proves that. This proves the call site HANDS it over — which is the
+     * half that was missing, and the half the shared-namespace invariant
+     * actually depends on. The owner answered on the stop dialog; dropping the
+     * answer here throws it away at the last step.
+     */
+    await cancelQuoteStages({
+      proposalId: 'prop-1',
+      userId: 'user-1',
+      reason: 'client_stopped',
+      note: '  Client paused it.  ',
+    });
+
+    expect(stageUpdate()!.row.cancel_reason).toBe('client_stopped');
+    /* Trimmed, so an empty textarea cannot store '' and read as a note. */
+    expect(stageUpdate()!.row.cancel_note).toBe('Client paused it.');
+    expect(stageUpdate()!.row.cancelled_by).toBe('owner');
+  });
+
+  it('does not tell an operator to fix a quote by hand on a second press', async () => {
+    /*
+     * SA S-3. The status update is conditional on `accepted`, so a second press
+     * legitimately matches no rows — `stoppedRows` is empty and nothing is
+     * wrong. Branching that log on `!stoppedRows` instead of on `statusError`
+     * compiles, passes every result assertion, and sends the owner to repair a
+     * quote that is already correct.
+     */
+    dbState.stoppedRows = [];
+
+    const result = await run();
+
+    expect(result.ok).toBe(true);
+    expect(result.proposalStopped).toBe(false);
+    expect(loggedMessages()).not.toContain(
+      'Money stopped but the quote still reads accepted; it needs marking stopped by hand'
+    );
+  });
+
+  it('DOES tell an operator to fix it by hand when the status update really failed', async () => {
+    /* The same line, on the case it exists for — so the test above cannot pass
+       by the log never firing at all. */
+    dbState.statusError = new Error('deadlock');
+
+    const result = await run();
+
+    /* Loud, and still not a failure of the whole call: the money is stopped,
+       which is the part that reaches the client. */
+    expect(result.ok).toBe(true);
+    expect(result.proposalStopped).toBe(false);
+    expect(loggedMessages()).toContain(
+      'Money stopped but the quote still reads accepted; it needs marking stopped by hand'
+    );
   });
 });
 
