@@ -22,6 +22,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 - [5. Later Slices (DO-2 to DO-5)](#5-later-slices-do-2-to-do-5)
 - [DO-2 Specification — supabase-ops skill](#do-2-specification--supabase-ops-skill)
 - [DO-3 Specification — vercel-ops skill](#do-3-specification--vercel-ops-skill)
+- [DO-4 Specification — github-ops skill](#do-4-specification--github-ops-skill)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
 - [7. Acceptance Criteria (DO-1)](#7-acceptance-criteria-do-1)
 - [8. Out of Scope / Future Roadmap](#8-out-of-scope--future-roadmap)
@@ -41,8 +42,8 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 |---|---|---|
 | DO-1 | Agent definition, `env-change-protocol` skill, CLAUDE.md row, TL handshake rows, RM boundary note, SA plan-review note | ✅ MERGED 2026-10-30 (PR #578). Fresh-session tool-list smoke test still owed. See [DO-1 implementation notes](#do-1-implementation-notes) |
 | DO-2 | `supabase-ops` skill | ✅ MERGED 2026-10-30 (PR #579). See [DO-2 implementation notes](#do-2-implementation-notes). Follow-ups FU-1 to FU-3 logged in [SA Review — DO-2](#sa-review--do-2): FU-1 ✅ MERGED 2026-10-30 (PR #584); FU-2 ⬜ (next migration that ships a checker); FU-3 ⬜ (DO-5) |
-| DO-3 | `vercel-ops` skill | 🟡 QA passed, awaiting user diff review (2026-10-31). See [QA Report — DO-3](#qa-report--do-3), [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3) and [DO-3 implementation notes](#do-3-implementation-notes) |
-| DO-4 | `github-ops` skill | ⬜ |
+| DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
+| DO-4 | `github-ops` skill | 🟡 User approved the diff 2026-10-31; PR open, auto-merge on. See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | ⬜ |
 | DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | ⬜ |
 
@@ -192,13 +193,15 @@ Specified in detail in [DO-2 Specification](#do-2-specification--supabase-ops-sk
 
 How to read and verify Supabase state: advisors, logs, migration list against repo migration files, auth settings, backups. How to prepare a migration for the user to apply (pre-check SQL, the exact apply step, post-check SQL) without DO applying DDL. Must carry the gotcha: **the Supabase SQL editor misreads the word "into" even inside string literals**, so pre-check and post-check SQL must avoid it.
 
-### DO-3 `vercel-ops` skill 🟡
+### DO-3 `vercel-ops` skill ✅
 
 Specified in detail in [DO-3 Specification](#do-3-specification--vercel-ops-skill). Original scope:
 
 How to read and change Vercel state: projects, env vars by name and target (Production, Preview, Development), crons, domains, deployments and their logs. How to wait for a deploy to report done before testing, and how to find which deployment holds a given value. Must carry the gotchas: **the Vercel CLI is not installed yet** (MCP first, CLI only once installed), and **docs-only changes skip CI and the Vercel deploy via `.github/ci/non-deploying-change.sh` (exit 0 means skip)**, so a quick green on a docs PR is correct.
 
-### DO-4 `github-ops` skill ⬜
+### DO-4 `github-ops` skill 🟡
+
+Specified in detail in [DO-4 Specification](#do-4-specification--github-ops-skill). Original scope:
 
 How to read and plan changes to repo and org settings: branch protection, required checks, merge queue, auto-merge setting, secret scanning, Actions permissions and workflows. Branch-protection changes are in the user-executes tier. Must carry the gotchas: **auto-merge only when CI is the sole gate**; **pace bulk PR and push activity** (abuse-detection suspension); **never `git stash`** (the stash list is shared across parallel sessions and worktrees).
 
@@ -453,6 +456,170 @@ The function region should match the Supabase project's region (`supabase-ops` �
   *Suggested:* yes — counts by path and status in a stated window, no log lines copied (rule (c)).
 - [ ] **Q-D3-4: Does the skill name the marketing-site project's role in more detail** (what it holds, which values it shares with the web app)?
   *Suggested:* only that it exists and holds its own Supabase configuration. Which variables it holds is an inventory fact for the untracked private docs and DO-5's `env-drift-audit`, not tracked text.
+
+---
+
+## DO-4 Specification — github-ops skill
+
+**By BA — 2026-10-31.** Branch `feature/devops-github-ops`. Config/docs-only slice: no application code, no CI job, no CI time.
+
+DO-4 builds on `devops.md` and the `env-change-protocol` skill and **does not repeat them**. The eight steps (pacing is step 8), the tiers, the approval channel, the order-against-deploy table, the change-record template, the public-repo rule, the Bash/`gh` allowed list and the forbidden families stay where they are. RM's procedure for getting code to `main` (branch, commit, push, PR, `gh pr merge --auto --merge`, the merge queue, the "Auto merge is not allowed" fallback, conflict handling) stays in `release-manager.md`. `github-ops` holds only what is specific to GitHub settings, Actions and workflow runs, and how to read and verify them, and points back to those files for the rest. It should read like `supabase-ops` and `vercel-ops`: a pointer table first, numbered sections, a closing checklist.
+
+### D4.1 Deliverables
+
+| # | File | Action | What |
+|---|---|---|---|
+| D4-1 | `.claude/skills/github-ops/SKILL.md` | New | The skill (§D4.2). Target ≤ ~200 lines. |
+| D4-2 | `.claude/skills/github-ops/*.md` (reference files) | New, optional | Only if SKILL.md would exceed ~200 lines. Natural split: a read-commands reference (each read with its named-field `--json` / `--jq` selector, field names checked at build, §D4.2(h)) and the dashboard-only settings table. SKILL.md links to each. |
+| D4-3 | `.claude/agents/devops.md` | Edited | One line in `### Bash and gh`: "Procedures and gotchas for reading repo settings, branch protection, rulesets, the merge queue, Actions and workflow runs: the `github-ops` skill." Nothing else changes, unless SA rules otherwise on Q-D4-3, Q-D4-5 or Q-D4-6. |
+| D4-4 | `.claude/agents/release-manager.md` | **Not edited**, unless SA rules otherwise on Q-D4-7 | RM's merge procedure is RM's. The stacked-PR rule (§D4.2(d)) is the one candidate pointer line. |
+| D4-5 | `CLAUDE.md` | **Not edited** | Same reasoning as D2-4 and D3-4: the Common Gotchas `env-change-protocol` row already routes "change branch protection or another repo setting, change Actions" to the protocol. Git Conventions and the Ship drill are unchanged. |
+| D4-6 | This requirement | Edited | Status, implementation notes, reviews. |
+
+### D4.2 What the skill must teach
+
+Each item says what the skill states. The repo evidence each one is grounded in is named so Dev can check it; the skill itself carries the rule, not the history.
+
+**(a) Reading state** (Read tier, the allowed `gh` and `git` forms in `devops.md` only)
+
+| Topic | The skill states |
+|---|---|
+| Scope | Run from a checkout of this repo. `gh` fills `{owner}` and `{repo}` in a `gh api` path from the checkout; use those placeholders in every path, so no owner or org name is typed, logged or written. An owner, org, app or installation ID never goes into a file, a report or a chat summary. |
+| Named fields only (hard rule) | Several GitHub read responses carry actor logins (owner accounts included), team and app IDs, ruleset bypass actors, or values. Select named fields on **every** read: `--jq '<selector>'` on `gh api`, `--json <fields>` on `gh pr|run|repo view` and the list commands. Never print a whole response. `--jq` and `--json` filter output only; they are not field flags and do not turn the call into a POST. Grounded in the DO-3 ruling (SA Review — DO-3, Q-D3-2) that a call's full response reaches the session context and the local transcript, so "I read it but did not copy it" is not a control. |
+| Repo settings | `gh api repos/{owner}/{repo} --jq …` for: Allow auto-merge, Automatically delete head branches, which merge methods are allowed (merge commit, squash, rebase), the default branch and visibility. `gh repo view --json …` covers all of these except Allow auto-merge, for which it has no field. The secret scanning and push protection states are under `security_and_analysis` in the same `gh api` response, which GitHub returns only to a caller with admin rights: an absent object is "not read", never "off". Field names checked at build (§D4.2(h)). *(SA-corrected.)* |
+| Branch protection **and** rulesets | Read **both** every time (Q-D4-1): the classic protection of `main` (`gh api repos/{owner}/{repo}/branches/main/protection --jq …`) and rulesets, through `gh api` only: `repos/{owner}/{repo}/rulesets --jq …` and the effective rules for `main`, `repos/{owner}/{repo}/rules/branches/main --jq …` (repo and org rulesets). `gh ruleset list` and `gh ruleset view` have no `--json` and print ruleset IDs, the source owner and bypass details, so they are not used. In the classic response, select required checks by `context` only, never with their app ID. Report: the required status check names, whether branches must be up to date (strict), whether rules apply to admins, the required review count, linear history, whether force-push and deletion are allowed, and whether a merge queue is required (a ruleset shows it as a `merge_queue` rule; the classic response has no merge-queue field, so for a classic rule the evidence is recent `merge_group` runs, `gh run list --event merge_group --json …`, plus the dashboard). An error from either read (no admin rights, 404) is "not read", never "not protected". Actor lists (users, teams, apps, bypass actors) are reported as a count only, never by login or ID. *(SA-corrected.)* |
+| Required checks | **Read, never assumed.** The current required list comes from the read above, at the time of the job. The skill names no required check and no count: the list changes, and CLAUDE.md keeps counts and statuses out of standing text. `gh pr checks <n> --required` shows a PR's required checks only. |
+| Actions | `gh api repos/{owner}/{repo}/actions/permissions --jq …` and `…/actions/permissions/workflow --jq …` for which actions are allowed, the default `GITHUB_TOKEN` permission, and whether Actions may approve PRs. `gh workflow list --json …` for what exists, and the file in `.github/workflows/` for its definition (`gh workflow view` has no `--json`; SA-corrected); `gh run list|view --json …` for status, conclusion, event, head SHA and jobs. |
+| Secrets and variables | `gh secret list`: names and updated time only. `gh variable list` **prints values by default**, so the skill prescribes `gh variable list --json name,updatedAt` (Q-D4-5). Repo, environment and org scopes follow the same rule. A value is never read, by DO or by the main session. |
+| Workflow run logs | `gh run view <id> --json jobs` first, for the failing job and step. A log is read only through a narrow filter, and only its error class is reported (Q-D4-3). Actions masks registered secrets only: a value printed some other way (a variable, a test fixture, PII in test data) shows in clear in the log of a public repo. |
+| Security alerts | The secret scanning alerts endpoints return the detected secret **in clear**: never called, by any route. Dependabot and code scanning alerts are open weaknesses (Q-D4-4). |
+| Platform facts | No GitHub documentation tool is in DO's list. A fact that may change (an endpoint, a field, a setting's behaviour) is checked at use time against `gh <command> --help`, and the skill does not hardcode it beyond what it states. |
+
+**(b) When a check actually protects `main`** (the core procedure; a read-only audit DO can run on its own)
+
+A check protects `main` only when every one of these holds. DO reads the required list (item (a)) and the workflow files, and reports each failure as drift, by check name. Check names are not secret: they are in the public workflow files.
+
+1. **It is required.** A red check that is not required never blocks a merge. Two PRs, each green on its own base, can break `main` together (a semantic merge conflict). The merge queue re-tests each PR on top of the latest `main`, but it waits only for **required** checks.
+2. **Its name equals a job `name:` exactly.** Renaming a required job breaks the gate unless the protection is updated in the same change (grounded: the verdict-job header of `.github/workflows/tests.yml`).
+3. **Its workflow triggers on `pull_request` and on `merge_group`.** Without `merge_group` the check never reports on the queue's `gh-readonly-queue/main/…` commit, and every queued PR times out (grounded: the trigger comment on every required workflow in `.github/workflows/`, and `docs/workplans/CI_MERGE_QUEUE_WORKPLAN.md`).
+4. **No `paths:` or `paths-ignore:` filter on those triggers.** A path-filtered required workflow never reports on a PR it filters out, so the merge waits forever, and `merge_group` does not support `paths:`. The skip is decided **inside** the job by `.github/ci/non-deploying-change.sh` (or `.github/ci/jest-gate-scope.sh` for the Jest gate), and the job still reports (grounded: the "NO `paths:` FILTER, ON PURPOSE" headers). `plugin-tests.yml` uses `paths:` and has no `merge_group` trigger: it is not required, and cannot become required as written.
+5. **It cannot be skipped into a pass.** GitHub counts a SKIPPED required check as passing. A matrix leg, a job with a skippable job-level `if:`, or a job with `needs:` and no `if: always()` (it is skipped when a job it needs fails) is never required; a matrix gates through one verdict job with `if: always()` (grounded: `.github/workflows/tests.yml` header and `gate` job).
+6. **It reports on every PR.** The Vercel deployment status is never made required: `vercel.json` disables deployments for the queue's `gh-readonly-queue/**` branches, so it never reports on a queue commit and every queued PR would time out; docs-only changes also skip the build (`vercel-ops` §5), so docs-only PRs would become unmergeable (SA-corrected). The same goes for any check that does not report on every PR.
+7. **Which checks are required is SA's call, not DO's.** DO reports a guarding workflow that is not required, or a required name with no matching job, as drift. It never decides the fix.
+
+Order against the merge, for a change to the required set (the protocol's `When` field, applied to GitHub):
+
+- **Adding a required check:** the workflow change merges first, and the check reports once on a real PR; the setting is changed after. The other order stalls every PR and the queue.
+- **Removing or renaming a required check:** the setting changes first (or in the same sitting as the merge), then the workflow change merges. The other order leaves every PR waiting for a name that never reports.
+
+**(c) Merge queue and auto-merge** (facts for planning and verification; the procedure is RM's)
+
+- `main` has a merge queue. `gh pr merge <n> --auto --merge` on a queue-protected branch **enqueues** the PR, and `gh` says the merge strategy is set by the merge queue. Merge commit only, never squash or rebase. The procedure is in `release-manager.md` § Merging the PR; the skill points there.
+- **Allow auto-merge** is a repo setting DO owns. When it is off, `--auto` fails with "Auto merge is not allowed". Reading it: item (a). Turning it on: production tier, the user executes.
+- **Auto-merge only when CI is the sole remaining gate.** When a DO plan has a step that must land or be checked before the merge (a migration apply, a setting, a user demo or live check), the plan says "do not put the PR on auto-merge until step N is verified". The standing preference itself is in `team-leader.md`; the skill points there.
+- Queue runs use `gh-readonly-queue/main/pr-<n>-<sha>` branches and the `merge_group` event. Vercel does not deploy them (`vercel-ops` §5). A failed queue run removes the PR from the queue; the PR shows why.
+- **Verifying a PR landed on `main`:** `gh pr view <n> --json state,baseRefName,mergeCommit,mergedAt` shows MERGED **with base `main`**, and the merge commit is contained in `main`: `gh api repos/{owner}/{repo}/compare/main...<sha> --jq .status` returns `identical` or `behind`. This is the read-only equivalent of `git merge-base --is-ancestor <sha> origin/main`, which is not in DO's allowed list and needs a fresh fetch (Q-D4-6). "MERGED" alone is never the evidence (item (d)).
+
+**(d) Stacked PRs**
+
+- GitHub retargets an open child PR to the parent's base only when the parent's head branch is **deleted** after the merge, by the "Automatically delete head branches" setting or by hand. When it is not deleted (read the setting, item (a); do not assume), the child is **not** retargeted (SA-corrected). Merging the child then lands it in the parent's branch, not in `main`, and the PR still says MERGED.
+- Rule: avoid stacking. If it is unavoidable: after the parent merges, the child's base is changed to `main` (`gh pr edit <n> --base main`, an RM action; forbidden for DO), and the landing is verified per item (c) before anything is called merged.
+- DO's part, in a verification job: check each PR's `baseRefName` and the compare result. Whether the repo should delete head branches on merge is Q-D4-7.
+
+**(e) Pacing and accounts**
+
+- Protocol step 8 holds the rule; the skill adds the GitHub specifics. Abuse detection judges the **account**, across every session and worktree that uses its token, so parallel sessions add up. The account was once suspended for days after a burst of PR and push activity from many parallel sessions. (Grounding for the spec, not for the skill: about 200 merged PRs in 10 days, peaking near 35 a day, then a suspension of about three days.)
+- Concrete rules: one session at a time opens PRs or pushes; a wait for CI or for a setting polls with pauses, never in a tight loop; before a batch of PRs, count the account's PRs opened today with a read (`gh pr list --author "@me" --state all --search "created:>=<date>" --limit 1000 --json number --jq length`; without `--limit` it stops at 30 (SA-corrected)) and report it. The skill gives no numeric limit (Q-D4-8).
+- **Recovery accounts.** Any account kept for recovery never runs an AI session, is never logged in to `gh` in a session, and is never named, or said to exist, in tracked text (SA-corrected). No session switches `gh` accounts (`gh auth` commands are not on DO's allowed list; `gh auth token` is forbidden outright).
+
+**(f) Git hazards in a shared repo**
+
+- **Never `git stash`.** The stash list is shared by every worktree and session of the repo, so a pop can take another session's work. It is already in `devops.md`'s forbidden git writes; the skill states it with the reason, because the main session uses the skill too.
+- The worktree `node_modules` junction hazard is DO-5's (`claude-harness-ops`); a pointer only.
+
+**(g) Public-repo specifics for GitHub**
+
+- The repo is public: workflow files, logs of its workflow runs, PR text, commit messages and check names are readable by anyone.
+- Never in tracked text or in a chat summary that may be pasted into one: an owner or org ID, an app or installation ID, a ruleset or bypass-actor ID, token scopes, an owner account's login, the state of a security setting that is off, or an open alert. Those are open weaknesses or identifiers, and go to the untracked private docs only.
+- A secret is set by the user, in the dashboard or the user's own terminal. Its value never passes through a chat or a session.
+- Workflows: a workflow never gains a secret it does not need; the required workflows declare `permissions: contents: read`, and a plan that widens `permissions:` is reviewed by SA. A PR from a fork gets no secrets on `pull_request`; `pull_request_target` combined with checking out the PR's code is never proposed.
+- Push protection blocks a push carrying a recognised secret. Bypassing it is the user's call only, and a bypassed secret is treated as leaked: rotate it per `env-change-protocol`.
+
+**(h) Dashboard-only settings, and checking field names**
+
+A table like `vercel-ops`' `dashboard-settings.md`. The user opens the area, reports what it shows (never a value), and the record names the setting, not an account.
+
+| Setting | Dashboard area |
+|---|---|
+| Merge queue configuration (method, group size, timeout) | Repo → Settings → Branches (classic rule) or Rules → Rulesets |
+| Allow auto-merge, delete head branches, allowed merge methods | Repo → Settings → General → Pull Requests |
+| Secret scanning, push protection, Dependabot, code scanning | Repo → Settings → Code security |
+| Allowed actions, fork PR workflow approval, workflow permissions | Repo → Settings → Actions → General |
+| Secret and variable values | Repo → Settings → Secrets and variables (values are never read back) |
+| Collaborators and roles | Repo → Settings → Collaborators |
+| Org member privileges, two-factor requirement, org Actions policy, org rulesets | Org → Settings |
+
+Field names (V13 in SA Review — DO-3, applied to GitHub): Dev checks every `--json` field and every `--jq` path the skill names against `gh <command> --help` (and, for a `gh pr|run|repo view`, the list of available fields `gh` prints) and the REST reference, and drops any name that does not exist. Any read Dev makes to check a name uses a named-field selector (item (a)). The implementation notes list each name checked and how, without quoting a response.
+
+**(i) What the skill does not change**
+
+- Every settings change — branch protection, rulesets, the required set, merge-queue configuration, Allow auto-merge, delete head branches, merge methods, secret scanning, push protection, Actions permissions, secrets, variables, collaborators — is **production tier**. DO plans it per `env-change-protocol` (the before-state from item (a), the exact dashboard path, how to undo as the before-state value, the probe), SA reviews it, the user executes it, and DO verifies it.
+- **Verifying a settings change:** first a read of the changed field after the user saves, compared with the planned value (a probe that fails when the change did not land). Where behaviour matters (a new required check, a queue setting), the behaviour evidence is the **next real PR**, watched by the main session with the undo ready, not a probe PR (Q-D4-2).
+- Workflow files and `.github/ci/**` are code: Dev writes them through a PR, SA reviews them. DO checks item (b) against the diff in its plan, and verifies after the merge.
+
+### D4.3 Boundaries
+
+| Neighbour | Owns | `github-ops` relation |
+|---|---|---|
+| `env-change-protocol` | The eight steps (incl. pacing), tiers, approval, order against the deploy, record template, public-repo rule | Referenced, never repeated |
+| `devops.md` | The Bash/`gh` allowed list, the forbidden families (incl. `git stash`, `gh auth token`, GitHub writes), the public-repo rule, where plans go | Referenced; one pointer line added |
+| RM (`release-manager.md`) | Branch, commit, push, PR, `--auto --merge`, the merge-queue procedure, the enqueue fallback, conflicts, retargeting a child PR | Referenced, never restated. A setting that blocks RM is DO's to plan |
+| TL (`team-leader.md`) | The auto-merge standing preference and when a PR goes on auto-merge | Referenced; the skill adds only the "CI is the sole remaining gate" line in DO's plans |
+| `vercel-ops` | Docs-only skipped builds, merge-queue branches not deployed | Referenced for why the Vercel status is never required |
+| `.github/ci/non-deploying-change.sh`, `jest-gate-scope.sh`, `jest-gate-check.mjs`, `jest-quarantine.json` | What is skippable; the Jest gate's scope and checks; the quarantine (removals only, SA-reviewed) | Source of truth, referenced; not copied |
+| Dev | Workflow files and CI scripts | DO reads them; never edits them |
+| SA | Which checks are required; review of production-tier plans | Unchanged |
+| DO-5 `claude-harness-ops` | Worktrees, the `node_modules` junction, harness permissions | Referenced only |
+
+### D4.4 Acceptance criteria (DO-4)
+
+- [ ] `.claude/skills/github-ops/SKILL.md` exists; frontmatter has `name: github-ops` (matching the folder) and a `description` in the existing skills' format, parsed cleanly by a YAML parser.
+- [ ] The description fires on: branch protection, rulesets, required checks, a merge queue that is stuck or a check that never reports, "Auto merge is not allowed", deleting head branches, a stacked PR, "did my PR land on main", secret scanning or push protection, Actions permissions, a failed workflow run, GitHub secret or variable names, PR volume or an account suspension. It says it is used by the main session and DO. It names no owner, org, account, app, installation or ID.
+- [ ] The skill covers (a)–(i) of §D4.2 and the boundaries of §D4.3, and links to `env-change-protocol`, `devops.md` and `release-manager.md` instead of restating them. QA greps the new files for `Snapshot the before-state`, `| **Read** |`, `zero policies` and `enqueuePullRequest`: 0 hits expected.
+- [ ] The skill names no required check and states no count: QA greps the new files for each job `name:` in `.github/workflows/*.yml`; 0 hits, or each hit is explained as an example that is not a list of what is required.
+- [ ] The skill states the seven rules of §D4.2(b) and both order rules for a change to the required set.
+- [ ] The skill states the named-fields rule (`--jq` / `--json` on every read), that secret scanning alerts are never called, and the `gh variable list` form ruled on Q-D4-5.
+- [ ] The skill states the "landed on `main`" check (base `main` plus the compare read, never MERGED alone) and the stacked-PR rule.
+- [ ] The skill states the pacing specifics and the recovery-account rule, without naming or asserting any account and without a numeric limit (unless Q-D4-8 is ruled otherwise).
+- [ ] The skill states "never `git stash`" with its reason.
+- [ ] SKILL.md is ≤ ~200 lines, or the overflow is in reference files under `.claude/skills/github-ops/` that SKILL.md links to.
+- [ ] `devops.md` has the one pointer line (D4-3) and no other change, unless SA rules otherwise on Q-D4-3, Q-D4-5 or Q-D4-6 (then SA states the allowed change).
+- [ ] The finding-11 regex from §7 over the added lines of the diff returns zero hits, or each hit is explained in the QA report.
+- [ ] No tracked text in the diff contains an owner, org or account login, an owner, org, app, installation or ruleset ID, a token scope, a security setting that is off, an open alert, or another open weakness of the live system. QA reads the diff for this.
+- [ ] Every repo path the skill names exists in the worktree; the skill states no counts (checks, workflows, PRs).
+- [ ] The implementation notes list each `--json` field and `--jq` path checked (§D4.2(h)) and how, with no response quoted.
+- [ ] The diff touches only `.claude/skills/github-ops/**`, `.claude/agents/devops.md` and this requirement (plus `release-manager.md`, only if SA rules so on Q-D4-7).
+
+### D4.5 Open questions for SA
+
+- [ ] **Q-D4-1: Branch protection and rulesets — which is authoritative?** GitHub has both, and both can protect `main`. The effective-rules read covers rulesets (repo and org level) but not classic protection; classic protection has its own endpoint. The merge queue was turned on through classic protection (`docs/workplans/CI_MERGE_QUEUE_WORKPLAN.md`, the "Queue enabled" row), and its configuration may not be readable through REST for a classic rule.
+  *Suggested:* neither alone. DO reads **both** every time, and reports the effective state as the union, with each rule's source. The skill does not say which mechanism is in use today, since it can change. A setting no read shows (the queue's configuration) is a dashboard step (§D4.2(h)), not a GraphQL read (Q-D4-9).
+- [ ] **Q-D4-2: How does DO verify a settings change landed?**
+  *Suggested:* a read of the changed field after the user saves is the evidence for the stored state, and it can fail. The behaviour evidence is the **next real PR**, watched by the main session with the undo ready. No probe PR by default: it costs CI time and adds PR volume (pacing, §D4.2(e)). SA may allow one docs-only probe PR when a change could block every merge and cannot wait for a real PR. A docs-only PR still exercises reporting, because the required jobs skip inside the job and still report.
+- [ ] **Q-D4-3: Can `gh run view --log` output carry secrets or PII, and how is it reported?** Yes: masking covers registered secrets only. Values printed some other way, variables, and PII in test data show in clear, and the whole log enters the session.
+  *Suggested:* never `--log` whole. `--json jobs` first, for the failing job and step; then `--log-failed` only through a narrow filter (e.g. `| grep -n -m 40 -E "error|Error|FAIL"`), reporting the error class, never copying a line into a file, and never one that names a person. DO does not read the logs of any job whose steps reference `secrets.*` (SA-corrected). SA rules whether this becomes an allowed-list line in `devops.md` (today `gh run view` is allowed without qualification) or stays in the skill only.
+- [ ] **Q-D4-4: Does the skill cover Dependabot and code scanning alerts?** Neither `.github/dependabot.yml` nor a code scanning workflow exists in the repo today. An open alert is an open weakness.
+  *Suggested:* DO-4 covers only whether each feature is **enabled** (a named-field read). Alerts are not read in DO-4. Secret scanning alerts are never read, because they return the secret. If alert triage is wanted later, it is its own slice, with output to the untracked private docs only, and counts by severity at most in any chat summary.
+- [ ] **Q-D4-5: `gh variable list` prints values.** `devops.md` allows it as "names only; never copy a value into a file", but the values already enter the session.
+  *Suggested:* change that allowed-list entry in `devops.md` to `gh variable list --json name,updatedAt` (and `gh secret list --json name,updatedAt` for symmetry). This is one more line edit in `devops.md` beyond D4-3, so SA rules on it.
+- [ ] **Q-D4-6: Verifying a merge is on `main` without `git merge-base` or `git fetch`.** Neither is on DO's allowed list.
+  *Suggested:* use the compare read (`gh api repos/{owner}/{repo}/compare/main...<sha> --jq .status`) plus `gh pr view --json state,baseRefName,mergeCommit`. No allowed-list change. The alternative (allow `git fetch origin main` and `git merge-base --is-ancestor`) is equivalent but adds a local ref write.
+- [ ] **Q-D4-7: Stacked PRs — change the setting, and does RM carry the rule?**
+  *Suggested:* DO-4 changes no setting. Turning on "Automatically delete head branches" (so GitHub retargets a child PR) is a production-tier settings change for the user to decide, planned separately; side effect: a session still pushing to a merged branch recreates it on the remote. Because retargeting a child PR is RM's action, add one line to `release-manager.md` § Merging the PR pointing to `github-ops` §(d). SA rules whether that line is in DO-4's file list.
+- [ ] **Q-D4-8: Does the skill give a numeric pacing limit?** GitHub publishes no threshold for abuse detection.
+  *Suggested:* no number. The rules in §D4.2(e) (one session pushing at a time, polling with pauses, counting today's PRs before a batch) carry it. The incident figures stay in the user's private memory and in this spec as grounding.
+- [ ] **Q-D4-9: Read-only GraphQL.** `gh api graphql` always POSTs, and its query is passed with a field flag (`-f query=…`), so `devops.md` forbids it today. Some state (merge-queue entries and configuration) may be visible only through GraphQL.
+  *Suggested:* it stays forbidden for DO, read queries included. The field-flag rule is simple and checkable; an exception for "queries but not mutations" would rest on prose reading of the query text. Whatever only GraphQL shows is a main-session read with the user, or a dashboard step.
 
 ---
 
@@ -760,6 +927,11 @@ Approved. It reads the project's log store and cannot change project state, so i
 | 2026-10-31 | DO-3 code complete | Dev built the `vercel-ops` skill (SKILL.md + `dashboard-settings.md` + `tool-parameters.md`) and the `devops.md` pointer line, with Q-D3-1 to Q-D3-4 and V1–V14 applied. Q-D3-2 decided from documentation only (env list: `value` required on every item; project object: `env` list and a `crons` field). V13: `group_by` names corrected; `get_runtime_errors` has no deployment filter. CLAUDE.md unchanged. Uncommitted, awaiting SA code review and QA. |
 | 2026-10-31 | SA code review DO-3 | CODE APPROVED. Dev's deviation accepted: `get_runtime_logs` with `deploymentId` is the only per-deployment evidence, `get_runtime_errors` a project-wide first look. SA fixed four wording items (`level` is not the HTTP status in §6 and `tool-parameters.md`; the `crons` enabled state falls back to the dashboard when `get_project` does not carry it, in §6 and `dashboard-settings.md`). `group_by` names re-checked by QA on a schema load. Awaiting QA. |
 | 2026-10-31 | QA DO-3 | QA passed: 9 checks pass, the fresh-session load test deferred. No bugs. Three non-blocking edge cases in `tool-parameters.md` / §7 (the `environment` values for `get_runtime_logs` are not listed; three parameter statements are unverified; "not installed" is stated indirectly). Awaiting the user's diff review. |
+| 2026-10-31 | DO-3 merged; DO-4 spec | DO-3 merged (PR #589). BA wrote the DO-4 Specification (`github-ops` skill): deliverables, what the skill teaches (named-field reads only, branch protection and rulesets read together, required checks read never assumed, the seven rules for a check that protects `main` and the order for changing the required set, merge queue and auto-merge facts with the RM boundary, "landed on main" verification, stacked PRs, pacing and the backup owner account, never `git stash`, public-repo specifics, dashboard-only settings), boundaries, acceptance criteria, SA questions Q-D4-1 to Q-D4-9. CLAUDE.md unchanged. Awaiting SA review. |
+| 2026-10-31 | SA review DO-4 | APPROVED WITH CHANGES. Q-D4-1: read classic protection and rulesets, rulesets through `gh api` only; an error is "not read". Q-D4-2: next real PR, probe PR only by SA. Q-D4-3: never a whole log; `--log-failed` piped to `grep -m` only, as a `devops.md` allowed-list line. Q-D4-4: enabled states only, no alerts path. Q-D4-5: `--json name,updatedAt` in `devops.md`, `gh variable get` named forbidden. Q-D4-6: accepted. Q-D4-7: no setting change; RM gets the stacked-PR pointer. Q-D4-8: no number, `--limit` added. Q-D4-9: GraphQL stays forbidden. Auto-merge exception is not in TL/RM: TL row amended + one RM sentence join the file list. Findings G1–G18. SA fixed nine spec statements in place. |
+| 2026-10-31 | DO-4 code complete | Dev built the `github-ops` skill (SKILL.md + `read-commands.md` + `dashboard-settings.md`), the `devops.md` pointer line and allowed/forbidden amendments (G1, G2, G3, G11, G15, Q-D4-3, Q-D4-5, Q-D4-9), the RM manual-gate sentence and stacked-PR pointer, and the TL "Auto-merge when CI is the only gate" row, with a short qualifier on the other auto-merge lines of RM and TL. Uncommitted, awaiting SA code review and QA. |
+| 2026-10-31 | SA code review DO-4 | CODE APPROVED. Every `gh` command, flag and `--json` field in the skill checked against local `gh --help` and field lists; paths, frontmatter, CRLF, finding-11 regex, owner/repo-name and workflow-name greps all clean. The extra "unless a manual gate is open" qualifiers (RM x4, TL x2) ruled inside G18(d): each defers to the TL row and adds no rule. SA fixed five wording items: the `devops.md` `gh api` line and `gh pr|run|repo|workflow` line now forbid `value`, actor, login and email fields (`gh repo view --json` offers commit emails, `gh pr view --json commits` author emails); SKILL.md §1 never-select list widened to match; SKILL.md §2 `gh pr checks --required` given `--json`; the TL row example aligned with the "check" gate. |
+| 2026-10-31 | QA DO-4 | QA passed: 9 checks pass, the fresh-session load test deferred. No bugs. Frontmatter, triggers, paths and sections, the public-repo greps (finding-11 regex, owner/repo name, 6+ digits, URLs, every workflow and job `name:`), the restatement greps, named fields and `--limit` on every read, banned forms only as prohibitions, every `gh` flag and `--json` field against local `gh` 2.92.0 (no network call), the `devops.md` diff against G18(a), the RM/TL auto-merge qualifiers, files touched and CRLF all checked. Four non-blocking edge cases: `--limit` on the §2 shorthand, the `// []` jq guard, two §D4.3 CI files not pointed to, one unqualified RM mechanism line. |
 
 ---
 
@@ -1251,6 +1423,381 @@ Read through `search_vercel_documentation` only. **No env or project tool was ca
   1. `tool-parameters.md` lists `environment` for `get_runtime_logs` without its values. Add "`production` or `preview` only — a custom environment is not accepted; scope by `deploymentId`" so nobody passes a custom-environment slug there by analogy with `filter_project_envs`.
   2. Three statements in `tool-parameters.md` are outside the facts the main session verified, and QA could not load the schemas itself (no tool-schema loader in this session): `get_runtime_logs` `since`/`until` "take an ISO date or a relative lookback"; `get_runtime_errors` takes `teamId`; `list_deployments` `state` "takes a comma-separated list". None conflicts with the verified facts. They are unverified, not wrong. Re-check them on the next schema load.
   3. "The CLI is not installed" (§D3.4) is stated indirectly: §7 says nobody should read "not installed" as the control, and "if the main session ever installs the CLI". The control is stated outright: no `vercel` by any route. Acceptable as it stands.
+
+### Final Status
+
+- [x] All acceptance criteria pass (the load test is deferred). Ready for the user's diff review.
+- [ ] Issues found
+
+---
+
+## SA Review — DO-4
+
+**Reviewed by SA — 2026-10-31**
+**Verdict: APPROVED WITH CHANGES.** The scope, the "points back, never restates" shape and the core procedure in §D4.2(b) are right. The seven rules match the repo: every required workflow has `merge_group`, no `paths:`, the skip decided inside the job, and a verdict job with `if: always()`. `plugin-tests.yml` is correctly called out as not required and not requirable. The gaps are three:
+- The spec names reads that cannot meet its own named-fields rule (`gh ruleset list|view`, `gh workflow view`, an auto-merge field `gh repo view` does not have).
+- `devops.md`'s allowed list, which is the only guard on Bash, still allows several value-bearing GETs and whole logs that the skill means to forbid.
+- The auto-merge exception the skill wants to point to is not in `team-leader.md` or `release-manager.md`.
+
+Dev builds DO-4 with rulings Q-D4-1 to Q-D4-9, the auto-merge ruling and findings G1–G18 applied. No second SA spec pass; SA checks them at code review.
+
+SA fixed nine spec statements in place, each marked *(SA-corrected)* or listed under the finding that names it.
+
+**Facts SA settled with read-only calls** (GET only, each with a narrow `--jq`, nothing else printed):
+- `main` is protected by a classic rule.
+- No repository ruleset exists, and the effective-rules read for `main` returns no rule.
+- The classic protection response has no merge-queue field.
+- Recent `merge_group` runs exist, so the queue is in use.
+- `gh` help (local, no network) shows that `gh repo view --json` has no auto-merge or security field, that `gh ruleset list|view` and `gh workflow view` have no `--json`, that `gh pr list` defaults to 30 results, and that `gh variable list --json` offers `value` as a field.
+
+No ID, login or check name was recorded here.
+
+### Rulings on the open questions
+
+**Q-D4-1: read both, report the union with each rule's source. BA's suggestion accepted, with corrections (G1, G4, G5).**
+- Rulesets are read through `gh api` only: the repo rulesets list, and the effective rules for `main` (repo and org level).
+- The classic response carries no merge-queue setting. For a classic rule, "a queue is required" is shown by recent `merge_group` runs (`gh run list --event merge_group --json …`) together with a dashboard check. A ruleset's queue shows up as a `merge_queue` rule.
+- An error from either read (no admin rights, or 404) is "not read". It is never "not protected".
+- The skill does not say which mechanism is in use today.
+
+**Q-D4-2: accepted.**
+- The evidence for the stored state is a read of the changed field after the user saves.
+- The evidence for behaviour is the next real PR, watched by the main session with the undo ready.
+- A docs-only probe PR is allowed only by SA, in a plan that names why the change cannot wait. Such a PR exercises **reporting** only. It does not exercise the test path, so it is never evidence that a new check passes on code.
+
+**Q-D4-3: never a whole log. The rule goes into `devops.md`'s allowed list, not only the skill (G3).**
+- The allowed form is `gh run view <id> --json jobs --jq …` first. Then, only if needed, `gh run view <id> --log-failed` piped into a bounded filter (`grep -n -m <N> -E …`). That pipe is the only allowed use of `grep` on `gh` output.
+- `gh run view --log`, `gh run download`, and the `gh api` log and artifact download paths are forbidden.
+- DO reports the error class and never copies a line into a file.
+- DO does not read the logs of any job whose steps reference `secrets.*`.
+
+**Q-D4-4: accepted.**
+- DO reads only whether each feature is enabled, as named fields under `security_and_analysis`, which GitHub returns only to a caller with admin rights.
+- No alerts endpoint is called, by path rule in `devops.md` (G2): not `secret-scanning`, not `dependabot/alerts`, not `code-scanning/alerts`.
+- The enabled state of a security feature that is off is an open weakness. It goes to the untracked private docs only, never into a tracked file or a chat summary.
+- Alert triage, if wanted, is its own slice.
+
+**Q-D4-5: accepted, and widened.**
+- In `devops.md`, the line becomes `gh secret list --json name,updatedAt` and `gh variable list --json name,updatedAt`, with any `--env` scope. `value` is never selected.
+- `gh variable get` is added by name to the forbidden "Secrets and variables" row, because it prints a value and is the obvious command to reach for.
+- Org scope is read with `gh api orgs/{owner}/…` and a `--jq` selector, not with `--org <name>` (G15).
+
+**Q-D4-6: accepted. No allowed-list change.**
+- The read is `gh pr view <n> --json state,baseRefName,mergeCommit,mergedAt --jq …`, selecting `.mergeCommit.oid`, then the compare read on that SHA.
+- `identical` or `behind` means the commit is on `main`. `ahead` or `diverged` means it is not.
+- A 404 is "not verified".
+
+**Q-D4-7: no setting change in DO-4; RM gets one pointer line.** BA's suggestion accepted.
+- D4-4 becomes **Edited**: one line in `release-manager.md` § Merging the PR pointing to `github-ops` §(d).
+- The retarget fact is corrected (G9).
+- Turning on "Automatically delete head branches" is a separate production-tier plan, if the user wants it.
+
+**Q-D4-8: no number.** BA's suggestion accepted.
+- The PR count gets `--limit` (G6). Without it the count stops at 30 and under-reports exactly in the burst it exists to catch.
+- The pacing rule is scoped to batches (G13).
+
+**Q-D4-9: GraphQL stays forbidden for DO, read queries included.** BA's suggestion accepted.
+- `gh api graphql` is added by name to the forbidden "GitHub writes" row. It is already covered by the field-flag rule; the name makes it obvious.
+- What the skill reads instead: recent `merge_group` runs, `gh pr checks <n> --required --json …`, and `gh pr view --json mergeStateStatus,autoMergeRequest --jq …`, with `autoMergeRequest` selected as present or absent and its merge method only, never `enabledBy` (G10).
+
+**Auto-merge and manual gates (the tension BA raised): the rule is not where §D4.2(c) and §D4.3 say it is.**
+- `team-leader.md` § Standing User Preferences says "Auto-merge every PR".
+- `release-manager.md` § Merging the PR says every PR goes on auto-merge "as soon as it is opened".
+- Neither file, and not `env-change-protocol`, carries the user's standing decision (2026-10-15) that a PR with a user demo or a production-migration or live-check gate stays off auto-merge until the user confirms the gate is done.
+- The TL handshake row "Any pre-merge environment step: DO verifies it is done before the user's diff approval goes to RM" covers in-cycle environment steps only. It does not cover a demo or live-check gate, or a standalone plan.
+- **Ruling:**
+  - The rule's home is TL's "Auto-merge every PR" row, amended with the exception.
+  - RM § Merging the PR gets one sentence: when the brief names an open manual gate, open the PR without `--auto`, report it, and put it on auto-merge only once TL relays that the user has confirmed the gate.
+  - D4-4 (RM) and a new **D4-7 (`team-leader.md`, one row amended)** join the file list.
+  - TL checks the exact wording against the user's 2026-10-15 decision before Dev edits. It records an existing decision; it does not make a new one.
+  - The skill then points to the TL row and keeps only DO's plan instruction: a `Before merge` step's `When` field says "PR stays off auto-merge until step N is verified".
+- Until those lines exist, the skill must not claim that `team-leader.md` holds the preference.
+
+### Findings
+
+G1. **[§D4.2(a) rulesets] `gh ruleset list` and `gh ruleset view` cannot meet the named-fields rule.**
+- Neither command has `--json`.
+- `list` prints ruleset IDs and the source owner and repo.
+- `view` prints bypass details.
+- **SA fixed the spec:** rulesets are read through `gh api` with `--jq` only.
+- `devops.md` drops `gh ruleset list|view` from the allowed list.
+
+— Priority: High
+
+G2. **[`devops.md` `gh api` line] An unqualified GET reaches value-bearing and PII endpoints.**
+- These are all plain GETs that the current line allows:
+  - the secret-scanning alerts endpoint, which returns the secret;
+  - repo, environment and org Actions variables, which return values;
+  - the run-log and artifact download paths, which fetch whole logs;
+  - `user`, which returns a login and an email;
+  - collaborators, which returns logins.
+- The skill's bans do not reach Bash. `devops.md` is the guard.
+- The line is amended:
+  - every `gh api` read carries a `--jq` that names fields;
+  - never a `secret-scanning`, `dependabot/alerts` or `code-scanning/alerts` path;
+  - never a `/logs` or artifact download path;
+  - login lists are reported as a count.
+
+— Priority: High
+
+G3. **[`devops.md` `gh run view`; Q-D4-3] `gh run view` is allowed unqualified, and `grep` is not on the allowed list.** The narrow-filter rule the spec relies on therefore has no allowed form. The amended line is given in the Q-D4-3 ruling. — Priority: High
+
+G4. **[§D4.2(a) repo settings] `gh repo view --json` has no auto-merge field and no security fields.**
+- **SA fixed the spec:** Allow auto-merge and `security_and_analysis` come from `gh api repos/{owner}/{repo} --jq …`.
+- `security_and_analysis` is returned only to a caller with admin rights, so a missing object is "not read", never "off".
+
+— Priority: Medium
+
+G5. **[§D4.2(a) classic protection] Two traps in the classic response.**
+- Required checks carry an app ID next to the name. Select `context` only.
+- The response has no merge-queue field.
+
+**SA fixed the spec** (both, plus the error = "not read" rule). — Priority: Medium
+
+G6. **[§D4.2(e) PR count] `gh pr list` returns 30 by default.** **SA fixed the spec:** the count read carries `--limit 1000`. Any other counting `gh pr list` or `gh run list` in the skill does the same. — Priority: Medium
+
+G7. **[§D4.2(c), §D4.3 TL row] The auto-merge pointer is false today.** See the auto-merge ruling. — Priority: Medium
+
+G8. **[§D4.2(b) rules 5 and 6] Two missing facts.**
+- A job with `needs:` and no `if: always()` is skipped when a job it needs fails. It then reads as a pass, exactly like a skippable `if:`. That is the reason the verdict job in `tests.yml` is `if: always()`.
+- The stronger reason the Vercel status is never required is that `vercel.json` disables deployments for `gh-readonly-queue/**`. So that status never reports on a queue commit, and every queued PR would time out. Docs-only skips come second.
+
+**SA fixed the spec** (both). — Priority: Medium
+
+G9. **[§D4.2(d)] The retarget trigger is the deletion of the branch, not the setting.**
+- GitHub retargets open child PRs when the parent's head branch is deleted after the merge, whether the setting deletes it or someone deletes it by hand.
+- **SA fixed the spec.**
+- The rule is unchanged: avoid stacking, and verify the landing with the base-plus-compare check.
+
+— Priority: Medium
+
+G10. **[§D4.2(a) named fields] Name the actor-bearing fields to never select.**
+- On `gh pr view|list`: `author`, `mergedBy`, `assignees`, `reviews`, `latestReviews`, `reviewRequests`, and `autoMergeRequest.enabledBy`.
+- The same applies to a check or run actor.
+- Any login list is a count.
+- The skill carries this as one short list. Dev checks the field names at build (§D4.2(h)).
+
+— Priority: Low
+
+G11. **[§D4.2(a) Actions] `gh workflow view` has no `--json`.**
+- **SA fixed the spec:** the read is `gh workflow list --json …`, and the workflow file in `.github/workflows/` gives the definition.
+- `devops.md` keeps `gh workflow list` only.
+
+— Priority: Low
+
+G12. **[§D4.2(c)] Restatement of RM.** "Merge commit only, never squash or rebase", the failed-queue-run sentence, and the "Auto merge is not allowed" fallback are RM's text. The skill keeps only the GitHub facts: the queue sets the method, and Allow auto-merge is a readable setting. For the rest it points to RM. — Priority: Low
+
+G13. **[§D4.2(e)] "One session at a time opens PRs or pushes" is broader than protocol step 8.**
+- Step 8 paces bulk actions. As written, the line would set a new standing rule for every session, which is for TL to set with the user.
+- Scope it to a batch: during a batch of PRs or pushes, one session runs it.
+
+— Priority: Low
+
+G14. **[§D4.2(e)] Recovery accounts.**
+- The skill should not assert that a second owner account exists. That is an account fact about a public repo.
+- **SA reworded the spec:** "any account kept for recovery" never runs a session, is never logged in to `gh`, and is never named, or said to exist, in tracked text.
+- The AC is reworded to match.
+
+— Priority: Low
+
+G15. **[§D4.2(a) secrets and variables] Org scope.**
+- `--org <name>` makes the org name a typed argument.
+- Use `gh api orgs/{owner}/actions/secrets` and `…/variables` with a `--jq` selector on names only.
+- An org read needs org-admin rights. A failure is "not read".
+
+— Priority: Low
+
+G16. **[Q-D4-3 grounding] Named a single job, where the rule is about any job with secrets.** **SA fixed the spec:** "any job whose steps reference `secrets.*`". — Priority: Low
+
+G17. **[§D4.2(b) rule 2] Check names should be unique across workflows.** Two jobs with the same `name:` in different workflows make the required check ambiguous. DO reports a duplicate as drift. — Priority: Low
+
+G18. **[§D4.4] Add criteria so the rulings can fail.**
+- (a) The `devops.md` diff is exactly the following, and nothing else:
+  - the D4-3 pointer line;
+  - the `gh api` line amended (G2);
+  - the secrets and variables line (Q-D4-5);
+  - the `gh pr|run|repo|workflow` line (G1, G3, G11);
+  - the forbidden-table additions `gh variable get`, `gh run download`, `gh api graphql` and `gh auth status` (that last one prints the login and token scopes).
+- (b) QA greps the new files for `gh ruleset list`, `gh ruleset view`, `gh workflow view` and `--log ` (followed by a space). Each hit must be a prohibition.
+- (c) Every `gh` read the skill shows carries `--json`/`--jq`, except the `--log-failed | grep -m` form. Every counting list carries `--limit`.
+- (d) The RM diff is at most two added sentences in § Merging the PR. The TL diff is one amended row. TL confirmed the wording first.
+- (e) QA greps the new files for the repo's owner and repo name: 0 hits.
+- (f) The restatement grep adds `--squash or --rebase`.
+- (g) The "files touched" criterion now includes `team-leader.md` and `release-manager.md`.
+
+— Priority: Medium
+
+### Checked and honoured
+
+- **Facts against the repo:**
+  - All six `pull_request` workflows other than `plugin-tests.yml` have `merge_group`, `permissions: contents: read`, no `paths:`, and an in-job skip through `.github/ci/non-deploying-change.sh` or `.github/ci/jest-gate-scope.sh`.
+  - `tests.yml` has the matrix behind an `if: always()` verdict job.
+  - `plugin-tests.yml` has `paths:`, no `merge_group`, and its secret-bearing jobs run only on the schedule or a dispatch.
+  - `vercel.json` disables `gh-readonly-queue/**`.
+  - `docs/workplans/CI_MERGE_QUEUE_WORKPLAN.md` enabled the queue through the classic rule, which matches the live read.
+- **Facts against GitHub:**
+  - A skipped required check passes.
+  - A path-filtered required workflow leaves the check pending.
+  - `merge_group` does not take `paths:`.
+  - The compare statuses mean what §D4.2(c) says.
+  - `gh variable list` prints values by default.
+  - `gh api graphql` always POSTs.
+  - The secret-scanning alerts endpoint returns the secret.
+  - A fork PR gets no secrets on `pull_request`.
+- **Order rules for the required set** (add after the check reports once; remove before) are right and generic.
+- **No write:** the spec gives DO no `gh` write. `gh pr edit --base` is named as RM's, settings changes are production tier for the user, and GraphQL stays forbidden.
+- **Public-repo:**
+  - The finding-11 regex over §D4 and over this review returns zero hits.
+  - There are no IDs, logins, check-name lists or token scopes.
+  - The incident figures in §D4.2(e) are grounding in the spec only, and the skill carries none.
+- **No restatement**, apart from G12. The steps, tiers, template and pacing rule point to `env-change-protocol`, and the tool rules point to `devops.md`. The §D4.4 grep is kept and widened.
+- **Config/docs only:** no app code, no CI job, no CI time.
+
+### Approval
+
+[x] DO-4 spec approved. Dev builds with Q-D4-1 to Q-D4-9, the auto-merge ruling and G1–G18 applied. `devops.md` changes as G18(a) states. `release-manager.md` gets the stacked-PR pointer and the manual-gate sentence. `team-leader.md` gets one amended row, after TL confirms the wording.
+
+---
+
+## DO-4 implementation notes
+
+**By Dev — 2026-10-31.** Config/docs-only slice, no separate workplan. Nothing committed.
+
+### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `.claude/skills/github-ops/SKILL.md` | New | Pointer table, §1 scope and named-fields rule, §2 reading state, §3 logs and alerts, §4 the seven rules + order rules, §5 merge queue and auto-merge facts, §6 landed on `main` + stacked PRs, §7 pacing and accounts, §8 git hazards, §9 public-repo specifics, §10 settings changes and verification, §11 checklist |
+| `.claude/skills/github-ops/read-commands.md` | New | Every read with its named-field selector, and the "never used" list |
+| `.claude/skills/github-ops/dashboard-settings.md` | New | The §D4.2(h) dashboard table |
+| `.claude/agents/devops.md` | Edited | The D4-3 pointer line; the three `gh` allowed-list lines amended in place (G2, Q-D4-5/G15, G1/G3/G11/Q-D4-3); forbidden table: `gh api graphql`, `gh variable get`, `gh auth status` (replaces `gh auth status --show-token`), `gh run download` |
+| `.claude/agents/release-manager.md` | Edited | § Merging the PR: the manual-gate sentence and the stacked-PR pointer (two added sentences) plus an "unless a manual gate is open" qualifier on its opening clause. The same qualifier, per TL's brief, on the merge-gating bullet, the end-of-cycle trigger, "Then put it on auto-merge" and the "Never merge by hand" bullet |
+| `.claude/agents/team-leader.md` | Edited | The row renamed to "Auto-merge when CI is the only gate" and amended with the user's 2026-10-15 decision (wording checked by TL). The same short qualifier, per TL's brief, on the flow line and the "User approves" handshake row |
+| This requirement | Edited | §0, these notes, Change History |
+
+### Field names checked (§D4.2(h))
+
+No response was quoted. No secret, variable, alert, log or actor endpoint was called.
+
+| Name | How checked |
+|---|---|
+| `gh pr view\|list` fields (`state`, `baseRefName`, `mergeCommit`, `mergedAt`, `mergeStateStatus`, `autoMergeRequest`, `number`) and the never-select actor fields (`author`, `mergedBy`, `assignees`, `reviews`, `latestReviews`, `reviewRequests`) | The field list `gh` prints for `--json` with no value |
+| `gh pr checks --json` (`name`, `state`, `bucket`, `workflow`) and `--required` | Field list + `--help` |
+| `gh run view --json` (`jobs`); `gh run list --json` (`workflowName`, `event`, `status`, `conclusion`, `headSha`, `createdAt`); `--event`, `--limit` (default 20), `--workflow`, `--branch`; `--job`, `--log-failed` | Field list + `--help` |
+| `gh workflow list --json` (`name`, `path`, `state`), `--limit` | Field list + `--help` |
+| `gh secret list --json` / `gh variable list --json` (`name`, `updatedAt`; `value` exists on variables and is banned), `--env`, `--org` | Field list + `--help` |
+| `gh pr list` `--author`, `--search`, `--limit` (default 30) | `--help` |
+| Repo: `allow_auto_merge`, `delete_branch_on_merge`, `allow_merge_commit`, `allow_squash_merge`, `allow_rebase_merge`, `default_branch`, `visibility`, `security_and_analysis` | `gh api` GET with a `has(...)` selector: booleans only |
+| Classic protection: `required_status_checks.checks`, `.strict`, `.contexts`, `enforce_admins`, `required_pull_request_reviews`, `required_linear_history`, `allow_force_pushes`, `allow_deletions` | `gh api` GET with a `has(...)` selector: booleans only |
+| `actions/permissions` (`enabled`, `allowed_actions`); `actions/permissions/workflow` (`default_workflow_permissions`, `can_approve_pull_request_reviews`) | `gh api` GET with `--jq keys`: key names only |
+| Rulesets list and effective rules for `main` | `gh api` GET with `--jq length` (agrees with SA's read). The field names (`name`, `target`, `enforcement`, `source_type`; `type`, `ruleset_source_type`, rule type `merge_queue`) come from the REST reference, not a live read, because both lists are empty |
+| `security_and_analysis.secret_scanning.status`, `.secret_scanning_push_protection.status`; compare `.status`; org `secrets[].name`, `variables[].name` / `updated_at`; `autoMergeRequest.mergeMethod`; job `steps[].conclusion` | REST reference / documented `gh` shapes; not read live (Dev does not call security state, org scope or job data) |
+
+### Acceptance criteria (§D4.4 as amended by G18)
+
+| Criterion | How it is met |
+|---|---|
+| Frontmatter | `name: github-ops` (matches folder) + single-line `description`, same format as `vercel-ops` |
+| Description triggers | Branch protection, rulesets, required checks, a stuck queue or a check that never reports, "Auto merge is not allowed", deleting head branches, stacked PR, "did my PR land on main", secret scanning or push protection, Actions permissions, a failed workflow run, secret or variable names, PR volume or an account suspension; "used by the main session and by the DevOps (DO) agent"; no owner, org, account, app or ID |
+| (a)–(i), §D4.3, no restatement | (a) §1–§3 + `read-commands.md`; (b) §4; (c) §5; (d) §6; (e) §7; (f) §8; (g) §9; (h) `dashboard-settings.md` + these notes; (i) §10; boundaries in the pointer table. Restatement grep (`Snapshot the before-state`, `\| **Read** \|`, `zero policies`, `enqueuePullRequest`, `--squash or --rebase`) over the new files: 0 hits |
+| No required check named, no count | Grep of the new files for each job `name:` in `.github/workflows/*.yml`: 0 hits |
+| Seven rules + both order rules | §4 rules 1–7 (rule 2 carries G17's uniqueness, rule 5 G8's `needs:`, rule 6 G8's `vercel.json` reason) and the two order bullets |
+| Named fields, no secret-scanning alerts, `gh variable list` form | §1, §2 secrets row, §3 last bullet, `read-commands.md` |
+| Landed on `main`, stacked PRs | §6 (G9's deletion trigger) |
+| Pacing, recovery accounts | §7, scoped to a batch (G13), no number (Q-D4-8), recovery accounts per G14 |
+| Never `git stash` with reason | §8 |
+| Size | SKILL.md 133 lines; reference files 28 and 15 lines, linked from SKILL.md |
+| G18(a) `devops.md` | Exactly: the pointer line, the `gh api` line, the secrets and variables line, the `gh pr\|run\|repo\|workflow` line (`gh ruleset list\|view` and `gh workflow view` dropped), and the forbidden additions `gh variable get`, `gh run download`, `gh api graphql`, `gh auth status` |
+| G18(b) | Grep of the new files for `gh ruleset list`, `gh ruleset view`, `gh workflow view`, `--log `: 3 lines, each a prohibition (SKILL.md §2 rulesets and Actions rows; the `read-commands.md` "Never used" line) |
+| G18(c) | Every `gh` read shown carries `--json` or `--jq`, except the `--log-failed \| grep -n -m` form; every list carries `--limit` |
+| G18(d) | RM: two added sentences in § Merging the PR. TL: one amended row. Beyond that, per TL's brief, a short "unless a manual gate is open" qualifier on four other RM lines and two other TL lines, so neither file still says every PR goes on auto-merge unconditionally. SA rules whether these fit G18(d) |
+| G18(e) | Owner and repo name over the new files and the added lines: 0 hits |
+| Finding-11 regex | Over the three new files and the added lines of the agent-file diffs: 0 hits. Extra grep for 6+ digit runs and `http(s)://`: 0 hits |
+| Public-repo read | No owner, org, account login, ID, token scope, off security setting, open alert or check-name list in the new text |
+| Paths exist, no counts | `.claude/skills/env-change-protocol/SKILL.md`, `.claude/skills/vercel-ops/SKILL.md`, `.claude/agents/devops.md`, `.claude/agents/release-manager.md`, `.claude/agents/team-leader.md`, `.github/workflows/tests.yml`, `.github/workflows/plugin-tests.yml`, `.github/ci/non-deploying-change.sh`, `.github/ci/jest-gate-scope.sh`, `vercel.json`, `docs/workplans/CI_MERGE_QUEUE_WORKPLAN.md` exist. `claude-harness-ops` is named as DO-5's, not built yet. No count of checks, workflows or PRs stated |
+| Files touched (G18 g) | `.claude/skills/github-ops/**`, `devops.md`, `release-manager.md`, `team-leader.md`, this requirement. CLAUDE.md unchanged |
+
+---
+
+## SA Code Review — DO-4
+
+**Code Review by SA — 2026-10-31**
+**Status:** ✅ Code Approved. SA made five small wording fixes directly; they are listed below.
+
+Reviewed in the DO-4 worktree against the DO-4 Specification, SA Review — DO-4 (Q-D4-1 to Q-D4-9, the auto-merge ruling, G1–G18) and the DO-4 implementation notes. No command beyond local `gh <cmd> --help` and the `--json` field lists was run. No GitHub API call was made.
+
+### Ruling on Dev's flagged item (qualifiers beyond G18(d))
+
+Accepted. G18(d) limited new *rules* to two RM sentences and one TL row. The extra qualifiers add no rule:
+- RM: the merge-gating bullet, the end-of-cycle trigger, "Then put it on auto-merge" and "Never merge by hand".
+- TL: the flow line and the "User approves" row.
+
+Each says only "unless a manual gate is open" (or "once no manual gate is open") and points to § Merging the PR or § Standing User Preferences. Without them both files would still say every PR goes on auto-merge, which is the false statement G7 named. Each was checked against the user's 2026-10-15 decision:
+- The TL row carries the decision exactly: auto-merge + Auto-fix only when green CI is the only remaining gate; a PR with a demo, production-migration or check gate stays off auto-merge until the user confirms the gate is done; diff approval before commit is unchanged.
+- The RM sentence carries the procedure only: no `--auto` while the brief names an open gate, and auto-merge once TL relays the user's confirmation.
+- No qualifier widens or narrows the rule. One example in the TL row was inconsistent with it; SA aligned it (fix 5).
+
+### Code Review Comments
+
+1. `devops.md` allowed and forbidden lists — coherent with G18(a): the pointer line, the three `gh` lines amended, and the forbidden additions `gh api graphql`, `gh variable get`, `gh auth status`, `gh run download`. `gh ruleset list|view` and `gh workflow view` are dropped. No write form remains. — Pass
+2. `devops.md` `gh api` line and `gh pr|run|repo|workflow` line — "named fields" alone still allowed a login or an email:
+   - `gh repo view --json` offers `owner`, `assignableUsers`, `mentionableUsers` and `viewer…` commit-email fields;
+   - `gh pr view --json commits` carries author emails;
+   - a `gh api` read could name `.owner.login`, or `.value` on a variables path.
+
+   **SA fixed** (fixes 1–3). — Priority: High (fixed)
+3. Every `gh` flag and `--json` field in the skill exists in local `gh` 2.92.0: `pr checks --json`/`--required` (`name`, `state`, `bucket`, `workflow`); `secret|variable list --json name,updatedAt` and `--env`; `workflow list --json name,path,state` and `--limit`; `run list` `--event`/`--workflow`/`--branch`/`--limit` and its fields; `run view --json jobs`, `--job`, `--log-failed`; `pr list` `--author`/`--search`/`--limit`; the `pr view` fields; the `{owner}`/`{repo}` placeholders of `gh api`. The REST field names (rulesets, effective rules, compare, `security_and_analysis`, org secrets and variables) match the documented REST shapes. — Pass
+4. SKILL.md §2 showed `gh pr checks <n> --required` without `--json` (G18(c)). **SA fixed** (fix 4). — Priority: Low (fixed)
+5. Logs and alerts — `--json jobs` first, then `--log-failed | grep -n -m` only, never for a job that uses `secrets.*`. No alerts endpoint. GraphQL is forbidden in both files. — Pass
+6. Restatement — the grep for the protocol and RM markers (including `--squash or --rebase` and `enqueuePullRequest`) over the new files: 0 hits. §5 states the queue facts and points to RM and TL. — Pass
+7. Public-repo — over the three new files and the added agent-diff lines: the finding-11 regex, an owner/repo/person-name grep, a 6+ digit and URL grep, and a grep for every workflow and job `name:` in `.github/workflows/*.yml`: 0 hits. — Pass
+8. Paths and sections exist: `env-change-protocol`, `vercel-ops` §5 (with the `gh-readonly-queue/**` fact), the `tests.yml` verdict header, `plugin-tests.yml`, both `.github/ci/` scripts, `vercel.json`, `CI_MERGE_QUEUE_WORKPLAN.md`, TL § Standing User Preferences, RM § Merging the PR. The frontmatter parses (`name: github-ops`, `description`). All files are CRLF only, and every diff is line-level. — Pass
+
+### Fixes made by SA
+
+1. `devops.md` `gh api` line: "never a `value`, actor, login or email field" added.
+2. `devops.md` `gh pr|run|repo|workflow` line: "never an actor, login or email field (`github-ops` §1)" added.
+3. SKILL.md §1: the never-select list also names `comments`, `commits` and `headRepositoryOwner` on `gh pr`, and `owner`, `assignableUsers`, `mentionableUsers` and `viewer…` on `gh repo view`, plus email fields in general.
+4. SKILL.md §2: `gh pr checks <n> --required --json …`.
+5. `team-leader.md` auto-merge row: the example "(docs, or code with no demo or production-migration step)" now reads "no demo, production-migration or check step", so it cannot class a check-gated PR as CI-only.
+
+### Optimisation Suggestions
+
+- The classic-protection `--jq` in `read-commands.md` iterates `.required_status_checks.checks[]`. With no required checks, jq errors, and §1 then records "not read". A `// []` guard would tell "none" apart from "not read". Not blocking.
+- `\|` inside table code spans is correct markdown but is not copy-paste-ready shell. A one-line note in `read-commands.md` would help.
+
+### Code Approved for QA: Yes
+
+---
+
+## QA Report — DO-4
+
+**QA — 2026-10-31**
+**Test mode:** full · **Strategy:** static checks (grep, YAML parse, path existence, local `gh` help and field lists, read-through). This is a docs/config-only slice, so there is no runtime to exercise. · **Focus:** security (public-repo, no-write, named fields), schema (frontmatter, `gh` flags and fields) · **Skipped:** the fresh-session load test (deferred, as for DO-1 and DO-3) · **Input source:** TL prompt + §D4.4 as amended by G18 + SA Code Review — DO-4 (including SA's five fixes). Run in the DO-4 worktree on the uncommitted changes. No `gh api` call and no other network call was made: only `gh <cmd> --help` and `gh <cmd> --json` with no field list, which fails at flag parsing and prints the field names. QA edited nothing except this section, the §0 DO-4 row and the Change History row.
+
+### Test Coverage
+
+| # | Acceptance criterion | Result | Evidence |
+|---|---|---|---|
+| 1 | Frontmatter parses; `name` matches folder; description triggers; size; links | Pass | js-yaml load (the main checkout's `node_modules`) from a scratch script outside the repo: keys `name`, `description`; `name = github-ops`; description 1046 chars, single line. All 16 D4.4 triggers found by substring: branch protection, ruleset, required check, a merge queue that is stuck, a check that never reports, "Auto merge is not allowed", deleting head branches, stacked PR, "did my PR land on main", secret scanning, push protection, Actions permissions, a failed workflow run, secret or variable names, PR volume, account suspension. It says "Used by the main session and by the DevOps (DO) agent", and names no owner, org, account, app, installation or ID. SKILL.md 133 lines; `read-commands.md` 28, `dashboard-settings.md` 15. Both are linked from SKILL.md and both exist |
+| 2 | Every repo path and section cited exists | Pass | Backticked tokens with `/` or `.` extracted from the three files and tested with `test -e`. Exist: `.claude/agents/devops.md`, `.claude/agents/release-manager.md`, `.claude/agents/team-leader.md`, `.claude/skills/env-change-protocol/SKILL.md`, `.claude/skills/vercel-ops/SKILL.md`, `.github/ci/non-deploying-change.sh`, `.github/ci/jest-gate-scope.sh`, `.github/workflows/`, `.github/workflows/tests.yml`, `.github/workflows/plugin-tests.yml`, `vercel.json`, `docs/workplans/CI_MERGE_QUEUE_WORKPLAN.md`. The rest are globs, API paths, jq paths or branch patterns, not repo paths. `claude-harness-ops` is named as DO-5's, "not built yet". Sections: `devops.md` § Bash and `gh` (line 97), RM § Merging the PR (line 101), TL § Standing User Preferences with the "Auto-merge when CI is the only gate" row, `vercel-ops` §5 with the `gh-readonly-queue/**` line, the `vercel.json` `gh-readonly-queue/**: false` key, the `tests.yml` "SHARDS PLUS ONE VERDICT JOB" header with the `if: always()` verdict job, and the "Queue enabled … classic branch protection" row of the queue workplan. The six `pull_request` workflows other than `plugin-tests.yml` each have `merge_group` with the "Without this trigger nothing reports there" comment, no `paths:`, `contents: read`, a "No `paths:` filter on purpose" header and the in-job skip script. `plugin-tests.yml` has `paths:` and no `merge_group`. Every statement in §4 holds against the files |
+| 3 | Public repo | Pass | Corpus: the three new files plus every added line of `git diff -U0` (`^+`, excluding `+++`), 532 lines across all four edited files. Finding-11 regex (SA Review, finding 11): 0 hits. Owner and repo name, and the user's and a team member's names, case-insensitive: 0. 6+ digit runs: 0. `https?://`, `www.` and TLD patterns: 0. Every workflow and job `name:` in `.github/workflows/*.yml` (18 distinct, including step names), as a fixed string: 0 hits. Read-through: no login, ID, token scope, off security setting, open alert or check-name list. The pacing incident is stated without figures |
+| 4 | No restatement | Pass | Over the three new files: `Snapshot the before-state`, `\| **Read** \|`, `zero policies`, `enqueuePullRequest`, `--squash or --rebase`: 0/0/0/0/0. Extra greps for protocol labels and RM text (`never squash`, `Reversible write`, `Production or irreversible`, `How to undo`, `Before-state`, `Executed by`, `### Step`, `Classify the tier`, `Auto-merge every PR`, `git merge origin/main`): all 0. `Auto merge is not allowed` has 2 hits: the description trigger D4.4 requires, and §5's statement that `--auto` fails with that message when the setting is off. That is the GitHub fact G12 keeps; the fallback stays in RM |
+| 5 | Named fields, `--limit`, banned forms | Pass, with a note | A scratch script pulled every backticked `gh …` span (61) from the three files and flagged spans with no `--json`/`--jq` and `gh pr\|run\|workflow list` spans with no `--limit`. Every concrete read command (all 19 rows of `read-commands.md` and the SKILL.md §2, §3, §5 and §6 commands) carries `--json` with named fields or `--jq` with a named selector, except the `--log-failed \| grep -n -m 40 -E …` form G18(c) allows. The flagged spans are command-family names in prose (§1 "on `gh api`", "`gh pr\|run\|repo\|workflow`"), `gh api` followed in the same sentence by "with `--jq`" (§2 repo and org rows), `gh <command> --help`, the RM facts `gh pr merge … --auto --merge` and `gh pr edit --base` (named as RM's and forbidden for DO), and prohibitions. The one count (today's PRs) carries `--limit 1000`. The `read-commands.md` lists carry `--limit 20`/`100`. Banned forms, each hit read in context: `gh ruleset list\|view` (SKILL §2 rulesets row "never used"; read-commands "Never used"), `gh workflow view` (SKILL §2 Actions "never used"; "Never used"), `--log ` (Never used only), `gh run download` (Never used), `gh variable get` (checklist "no"; Never used), `gh api graphql` (SKILL §5 "DO never calls"; Never used), `gh auth` (SKILL §7 "not on DO's allowed list"; Never used), `secret-scanning`, `dependabot/alerts`, `code-scanning/alerts`, `user`, collaborators, run logs, artifacts (Never used; SKILL §3 "never called"), actor/login/email fields (SKILL §1 never-select list; checklist), `enabledBy` (§1 never-select; read-commands "never `enabledBy`"), `value` (§2, checklist, read-commands "Never `value`"), `--org` ("never `--org <name>`"). Every hit is a prohibition. No selector names an actor, login, email, `value`, `id`, `source` or `ruleset_id` field. Note: see edge case 1 |
+| 6 | Every `gh` subcommand, flag and `--json` field exists in local `gh` 2.92.0 | Pass | `--json` field lists: `pr view\|list` has `state`, `baseRefName`, `mergeCommit`, `mergedAt`, `mergeStateStatus`, `autoMergeRequest`, `number`, and every never-select name (`author`, `mergedBy`, `assignees`, `reviews`, `latestReviews`, `reviewRequests`, `comments`, `commits`, `headRepositoryOwner`). `pr checks` has `name`, `state`, `bucket`, `workflow`. `run view` has `jobs`; `run list` has `workflowName`, `event`, `status`, `conclusion`, `headSha`, `createdAt`. `workflow list` has `name`, `path`, `state`. `secret list` has `name`, `updatedAt`; `variable list` has those plus `value` (so the ban is needed). `repo view` has `owner`, `assignableUsers`, `mentionableUsers` and `viewer…` email fields, and no auto-merge or `security_and_analysis` field, as §2 says. Flags from `--help`: `pr checks --required --json --jq`; `run view --job --log-failed --log --json --jq`; `run list --event --workflow --branch --limit` (default 20); `pr list --author --search --state --limit` (default 30); `workflow list --limit` (default 50); `secret\|variable list --env --org --json`. `gh ruleset list\|view` and `gh workflow view` have no `--json`. `gh api --help` documents the `{owner}`/`{repo}` placeholders. REST paths and fields were not called (no network), so they rest on SA's code review and Dev's notes |
+| 7 | `devops.md`, RM and TL diffs | Pass | `devops.md` (+8/−6): exactly G18(a). The pointer line (plus a blank line); the `gh api` line amended (named-field `--jq`, SA fix 1 "never a `value`, actor, login or email field", login lists as a count, no `secret-scanning`/`dependabot/alerts`/`code-scanning/alerts`/log/artifact/`user`/collaborators path); the secrets and variables line (`--json name,updatedAt`, `--env`, never `value`, org through `gh api orgs/{owner}/…`); the `gh pr\|run\|repo\|workflow` line (`gh ruleset list\|view` and `gh workflow view` dropped, `--json` named fields, SA fix 2 "never an actor, login or email field", `--limit`, the `--log-failed \| grep -n -m` form, never `--log`, never a `secrets.*` job). Forbidden table: `gh api graphql` (read queries included), `gh variable get`, `gh auth status` (replaces `--show-token`), `gh run download`. No write form was added to the allowed list. RM (+7/−5): the manual-gate sentence and the stacked-PR pointer in § Merging the PR, plus the four short qualifiers SA ruled inside G18(d). TL (+3/−3): the row amended to "Auto-merge when CI is the only gate". It says auto-merge only when green CI is the only remaining gate, that a PR with a demo, production-migration or check gate stays off auto-merge until the user confirms, and that diff approval before commit is unchanged. SA fix 5's example ("no demo, production-migration or check step") is present, plus the flow-line and "User approves" qualifiers. A grep of `.claude/` (worktrees excluded) for `every PR`, `as soon as it is opened`, `auto-merge every` and all `auto-merge`/`--auto` mentions: the only "every PR … as soon as it is opened" is RM line 103, which carries "unless a manual gate is open" in the same sentence. Every other auto-merge statement in RM and TL carries the qualifier or points to the qualified row. The remaining "every PR" hits are in the skills and are about checks, not auto-merge. See edge case 4 |
+| 8 | Files touched; line endings; no whole-file diffs | Pass | `git status --short --untracked-files=all`: M `devops.md`, `release-manager.md`, `team-leader.md`, this requirement; untracked the three `github-ops` files. `git diff HEAD -- CLAUDE.md` empty. CRLF, read byte-wise with Node: 0 LF-only lines in the three new files and in the four edited files (`core.autocrlf=true`, index LF and working tree CRLF, the same as the base). `git diff` shows the added lines without CR because of autocrlf; the working-tree bytes are CRLF. Diff sizes are line-level: devops +8/−6, RM +7/−5, TL +3/−3, requirement +514/−4. The requirement's 4 removed lines are the §0 DO-3/DO-4 rows and the §5 DO-3/DO-4 headings, updated in place |
+| 9 | Coverage of §D4.2 (a)–(i) and §D4.3 | Pass | Read-through: (a) §1–§3 + `read-commands.md`; (b) §4, all seven rules (with G17 uniqueness, G8 `needs:` and the `vercel.json` reason) and both order rules; (c) §5; (d) §6 (deletion trigger per G9); (e) §7, scoped to a batch, no number, recovery accounts per G14; (f) §8, never `git stash` with its reason; (g) §9; (h) `dashboard-settings.md`; (i) §10. The boundaries are in the pointer table. See edge case 3 |
+| 10 | Fresh-session load test | Deferred | Skill files load at session start, so this needs a fresh session, as for DO-1 and DO-3. Not failed |
+
+### Issues Found
+
+- **Bugs:** none.
+- **Edge cases (nice to fix, non-blocking):**
+  1. SKILL.md §2 Actions row names `gh workflow list --json` and `gh run list|view --json` as shorthand without `--limit`. §1 states "Every list command carries `--limit`" and the exact forms in `read-commands.md` carry it, so the rule holds. Adding `--limit` to the shorthand would make the row copy-safe.
+  2. SA's open optimisation still applies: the classic-protection `--jq` in `read-commands.md` iterates `.required_status_checks.checks[]` with no `// []` guard. With no required checks, jq errors and the read is recorded as "not read" rather than "none".
+  3. §D4.3 names `.github/ci/jest-gate-check.mjs` and `jest-quarantine.json` as sources of truth. The skill names only the two scope scripts. Nothing in the skill depends on the other two, so this is a pointer gap, not a wrong statement.
+  4. RM line 151 ("the merge itself runs through auto-merge + the merge queue") has no qualifier. It says how the merge runs, not when auto-merge goes on, so it does not contradict the TL row. Noted only.
 
 ### Final Status
 
