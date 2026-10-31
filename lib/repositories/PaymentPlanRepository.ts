@@ -1085,6 +1085,12 @@ export class PaymentPlanRepository {
    * only `paid` and `cancelled` are settled. `paid` is never rewritten — that
    * records money that actually arrived.
    *
+   * THE REASON TRAVELS, in one namespace with every other cancellation surface
+   * (`20260930_installment_cancel_reason`) — which is what lets a single report
+   * union them without a translation layer. The owner has already answered on
+   * the stop dialog, so writing `cancelled` without it would throw the answer
+   * away at the last step.
+   *
    * `amount` and `payment_plan_id` are typed loosely to match
    * `cancelOpenStagesForBooking`. Both are `NOT NULL` in the database, and both
    * methods feed the same consumer; two shapes for one consumer is worse than
@@ -1093,20 +1099,30 @@ export class PaymentPlanRepository {
    */
   async cancelOpenStagesForProposal(
     proposalId: string,
-    userId: string
+    userId: string,
+    cancellation: {
+      reason?: string | null;
+      note?: string | null;
+      by?: string | null;
+    } = {}
   ): Promise<
     PaymentPlanRepositoryResult<
       Array<{ id: string; amount: number | null; payment_plan_id: string | null }>
     >
   > {
     try {
+      const now = new Date().toISOString();
       const { data, error } = await this.supabase
         .from('payment_plan_installments')
         .update({
           status: 'cancelled',
+          cancel_reason: cancellation.reason ?? null,
+          cancel_note: cancellation.note ?? null,
+          cancelled_by: cancellation.by ?? 'owner',
+          cancelled_at: now,
           // The retry scheduler reads this; a cancelled stage must not be retried.
           next_retry_at: null,
-          updated_at: new Date().toISOString(),
+          updated_at: now,
         })
         .eq('user_id', userId)
         .eq('proposal_id', proposalId)

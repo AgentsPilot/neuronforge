@@ -211,6 +211,55 @@ describe('PaymentPlanRepository.cancelOpenStagesForProposal', () => {
     expect(data).toEqual(rows);
   });
 
+  it('writes the cancellation the owner gave, in the shared namespace', async () => {
+    const { client, calls } = mockSupabase({ data: [] });
+
+    await new PaymentPlanRepository(client).cancelOpenStagesForProposal(PROPOSAL, USER, {
+      reason: 'client_stopped',
+      note: 'Client paused the renovation.',
+    });
+
+    /*
+     * One namespace with every other cancellation surface
+     * (`20260930_installment_cancel_reason`), which is what lets a single report
+     * union them without a translation layer. `cancelled_by` defaults to
+     * `owner`, the value the table's CHECK constraint allows alongside `client`
+     * and `system`.
+     */
+    expect(calls.update).toMatchObject({
+      cancel_reason: 'client_stopped',
+      cancel_note: 'Client paused the renovation.',
+      cancelled_by: 'owner',
+    });
+    expect(calls.update!.cancelled_at).toEqual(expect.any(String));
+  });
+
+  it('stamps cancelled_at and updated_at with the same instant', async () => {
+    const { client, calls } = mockSupabase({ data: [] });
+
+    await new PaymentPlanRepository(client).cancelOpenStagesForProposal(PROPOSAL, USER, {
+      reason: 'other',
+    });
+
+    /*
+     * Two `new Date()` calls can straddle a millisecond, and a row whose
+     * `cancelled_at` is after its `updated_at` reads as edited after it was
+     * cancelled.
+     */
+    expect(calls.update!.cancelled_at).toBe(calls.update!.updated_at);
+  });
+
+  it('lets the caller name who stopped it', async () => {
+    const { client, calls } = mockSupabase({ data: [] });
+
+    await new PaymentPlanRepository(client).cancelOpenStagesForProposal(PROPOSAL, USER, {
+      reason: 'other',
+      by: 'system',
+    });
+
+    expect(calls.update).toMatchObject({ cancelled_by: 'system' });
+  });
+
   it('reports closing nothing as success, not as failure', async () => {
     const { client } = mockSupabase({ data: [] });
 
