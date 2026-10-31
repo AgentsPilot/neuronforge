@@ -98,11 +98,13 @@ Procedures and gotchas for reading state, waiting for a deploy and verifying a v
 
 Bash reaches past the tool list, so these rules are the only guard. **Allowed** (read forms only):
 
-- `gh api <path>` as a GET — no `-X`/`--method` other than `GET`, and no `-f`/`-F`/`--field`/`--raw-field`/`--input` (any field flag turns the call into a POST)
-- `gh secret list`, `gh variable list` — names only; never copy a value into a file
-- `gh pr view|list|checks`, `gh run view|list`, `gh repo view`, `gh ruleset list|view`, `gh workflow list|view`
+- `gh api <path>` as a GET — no `-X`/`--method` other than `GET`, and no `-f`/`-F`/`--field`/`--raw-field`/`--input` (any field flag turns the call into a POST). Always with a `--jq` that names fields, never a whole response, never a `value`, actor, login or email field, and any login list reported as a count. Never a `secret-scanning`, `dependabot/alerts` or `code-scanning/alerts` path, a run-log or artifact download path, `user`, or a collaborators path
+- `gh secret list --json name,updatedAt`, `gh variable list --json name,updatedAt` (with `--env <name>` where needed) — never the `value` field. Org scope: `gh api orgs/{owner}/actions/secrets|variables` with a `--jq` on names, never `--org <name>`
+- `gh pr view|list|checks`, `gh run view|list`, `gh repo view`, `gh workflow list` — always with `--json <named fields>`, never an actor, login or email field (`github-ops` §1), and `--limit` on a list. Logs: `gh run view <id> --json jobs` first; then only `gh run view --job <job-id> --log-failed | grep -n -m <N> -E "<pattern>"` — the only allowed `grep` on `gh` output, never `--log`, and never for a job whose steps reference `secrets.*`
 - `git status|log|diff|show|branch --list|worktree list`
 - reading repo files (`.github/`, `vercel.json`, `supabase/migrations/`, `.claude/settings*.json`)
+
+Procedures and gotchas for reading repo settings, branch protection, rulesets, the merge queue, Actions and workflow runs: the `github-ops` skill.
 
 **Anything not on the allowed list is forbidden.** The table below names the families most likely to be reached for; it is not the full list.
 
@@ -110,9 +112,9 @@ Bash reaches past the tool list, so these rules are the only guard. **Allowed** 
 
 | Family | Examples |
 |---|---|
-| GitHub writes | `gh api -X PUT\|PATCH\|POST\|DELETE`, any `gh api` with a field flag, `gh repo edit\|delete\|archive\|rename`, `gh ruleset` changes |
-| Secrets and variables | `gh secret set\|delete`, `gh variable set\|delete`, `gh auth token`, `gh auth status --show-token` |
-| PRs, runs and workflows | `gh pr create\|merge\|close\|edit\|review\|ready`, `gh run rerun\|cancel\|delete`, `gh workflow run\|enable\|disable`, `gh release …` |
+| GitHub writes | `gh api -X PUT\|PATCH\|POST\|DELETE`, any `gh api` with a field flag, `gh api graphql` (read queries included), `gh repo edit\|delete\|archive\|rename`, `gh ruleset` changes |
+| Secrets and variables | `gh secret set\|delete`, `gh variable set\|delete`, `gh variable get` (prints a value), `gh auth token`, `gh auth status` (prints the login and token scopes) |
+| PRs, runs and workflows | `gh pr create\|merge\|close\|edit\|review\|ready`, `gh run rerun\|cancel\|delete`, `gh run download`, `gh workflow run\|enable\|disable`, `gh release …` |
 | Git writes | `git commit\|push\|merge\|rebase\|reset\|clean\|stash`, `git checkout --`, `git restore`, `git branch -D`, `git worktree remove` |
 | Secret exposure | printing `.env*` files, `printenv`, `env`, `echo $SOME_KEY`, anything that writes a decrypted value to disk |
 | Vercel CLI (once installed) | any write command, and **`vercel env pull` outright** — it writes decrypted values to disk |

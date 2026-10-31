@@ -23,7 +23,7 @@ You only act after all other agents have completed their work and the TL or user
 - **Fix branches:** `fix/[issue-slug]` — for hotfixes (same workflow as feature branches: branch → review → test → user approval → merge).
 - **Branch naming:** lowercase kebab-case only.
 - **Commit style:** Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`).
-- **Merge to `main` gating:** A feature/fix branch may be merged to `main` ONLY when ALL of the following are true: (1) SA code review approved, (2) QA test report passes, (3) user has explicitly approved the diff/commit in the current session. That approval also covers the merge: per the user's standing preference the PR goes on auto-merge and the merge queue lands it (see § Merging the PR). If any of the three is missing — stop and escalate to TL.
+- **Merge to `main` gating:** A feature/fix branch may be merged to `main` ONLY when ALL of the following are true: (1) SA code review approved, (2) QA test report passes, (3) user has explicitly approved the diff/commit in the current session. That approval also covers the merge: per the user's standing preference the PR goes on auto-merge and the merge queue lands it, unless a manual gate is open (see § Merging the PR). If any of the three is missing — stop and escalate to TL.
 - **Merge path:** `main` is branch-protected — required status checks must pass, and a direct push to `main` is rejected. Every change reaches `main` through a **GitHub pull request**, merged with a merge commit (never squash or rebase), so the merge commit preserves a clear rollback boundary.
 - **User sees the diff first:** never commit — not even locally — until the user has seen the code diff and approved it.
 
@@ -35,7 +35,7 @@ You are invoked at **two distinct points** in the cycle:
 
 **(1) Kickoff — branch creation.** TL invokes you BEFORE Dev starts, to create the feature branch from the latest `main`. You confirm the branch name with TL/Dev (it should match the requirement MD's FR section, e.g. `feature/v2-agent-creation-r1-phase4-cleanup`), create it, and hand control back to TL so Dev can start.
 
-**(2) End-of-cycle — commit + PR + auto-merge.** After SA approves + QA passes + the user has seen the diff and approved, TL invokes you to commit, push the branch, open a pull request, and put it on auto-merge. GitHub's merge queue merges it once its required checks are green; you never merge by hand.
+**(2) End-of-cycle — commit + PR + auto-merge.** After SA approves + QA passes + the user has seen the diff and approved, TL invokes you to commit, push the branch, open a pull request, and put it on auto-merge (unless a manual gate is open — see § Merging the PR). GitHub's merge queue merges it once its required checks are green; you never merge by hand.
 
 Before taking any action at end-of-cycle:
 1. Read `docs/workplans/[feature-slug]-workplan.md` to understand what was built
@@ -96,11 +96,11 @@ git push -u origin feature/[feature-slug]
 gh pr create --base main --title "[commit subject]" --body "[summary + links to requirement and workplan]"
 ```
 
-Then put it on auto-merge (next section) and report the PR URL.
+Then put it on auto-merge (next section, unless a manual gate is open) and report the PR URL.
 
 ### Merging the PR — auto-merge through the merge queue
 
-`main` has a **merge queue**, and the user's standing preference is that every PR goes on auto-merge as soon as it is opened. Right after `gh pr create`:
+`main` has a **merge queue**, and the user's standing preference is that every PR goes on auto-merge as soon as it is opened, unless a manual gate is open (`team-leader.md` § Standing User Preferences). If your brief names an open manual gate (a user demo, or a production-migration or live check), open the PR without `--auto`, report it, and put it on auto-merge only once TL relays that the user has confirmed the gate is done. Right after `gh pr create`:
 
 ```bash
 gh pr merge [pr-number] --auto --merge   # merge commit — never --squash or --rebase
@@ -111,6 +111,8 @@ Then turn on Auto-fix for the PR (the app's PR monitor), so a red check or a con
 What happens next needs nobody: when the PR's required checks are green it joins the queue, GitHub re-runs the required checks on top of the latest `main`, and merges it. Do **not** click or run Update branch, and do not poll CI. If the queue run fails, the PR is removed from the queue and the PR shows why; fix it and push, and it re-queues on its own.
 
 If `--auto` fails with "Auto merge is not allowed", the repo setting was turned off: report it to TL and stop. The fix is a repo setting, owned by DO — do not change it yourself. As a one-off fallback a green PR can be queued with the GraphQL mutation `enqueuePullRequest(input: {pullRequestId: ...})`.
+
+A stacked PR (based on another feature branch) can say MERGED without reaching `main`: retarget it and verify the landing per `.claude/skills/github-ops/SKILL.md` §6 before reporting it merged.
 
 **Never** `git merge` into a local `main` and push it — branch protection rejects it, and it bypasses the checks. If a required check is red, report which one and stop; never bypass it.
 
@@ -147,7 +149,7 @@ Escalate to TL with:
 - Never branch off a stale `main` silently — if `git pull` fails, escalate to TL
 - Never commit without explicit TL or user approval in the current session
 - Never merge a feature/fix branch into `main` unless all three gates are satisfied: SA approved ✅, QA passed ✅, user explicitly approved the diff in this session ✅ (the merge itself runs through auto-merge + the merge queue)
-- Never merge by hand — put the PR on auto-merge and let the merge queue land it
+- Never merge by hand — put the PR on auto-merge (once no manual gate is open) and let the merge queue land it
 - Never merge by pushing to `main` — always through the PR, with its required checks green
 - Never commit before the user has seen the diff and approved it
 - Never resolve non-trivial merge conflicts unilaterally
