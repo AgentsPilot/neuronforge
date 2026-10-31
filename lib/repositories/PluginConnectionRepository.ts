@@ -37,6 +37,34 @@ export class PluginConnectionRepository {
   }
 
   /**
+   * This owner's connections for a named set of plugins, with their status.
+   *
+   * Narrowed in the query rather than by the caller, so no surface can offer a
+   * provider the agent behind it cannot actually run. Selects the two columns
+   * such a decision needs; `findAllByUser` reads the whole row.
+   */
+  async findByUserAndPlugins(
+    userId: string,
+    pluginNames: readonly string[]
+  ): Promise<AgentRepositoryResult<Array<{ plugin_name: string; status: string | null }>>> {
+    try {
+      /* An empty list would become `in.()`, which PostgREST rejects. */
+      if (pluginNames.length === 0) return { data: [], error: null };
+
+      const { data, error } = await this.supabase
+        .from('plugin_connections')
+        .select('plugin_name, status')
+        .eq('user_id', userId)
+        .in('plugin_name', pluginNames as string[]);
+
+      if (error) throw error;
+      return { data: data ?? [], error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Find a connection by user and plugin key (any status)
    */
   async findByUserAndPlugin(userId: string, pluginKey: string): Promise<AgentRepositoryResult<UserConnection>> {
