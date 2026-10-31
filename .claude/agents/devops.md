@@ -92,6 +92,8 @@ Rule (c) covers `query_logs` and the Vercel log tools too: logs can carry emails
 
 Read tools only. When you list env vars with `filter_project_envs`, **never pass `decrypt`** — you want names and targets, never values. Do not request deployment file contents. If a job needs a value, report that the user must look at it in the dashboard.
 
+Procedures and gotchas for reading state, waiting for a deploy and verifying a value: the `vercel-ops` skill.
+
 ### Bash and `gh` — governed by this prose, not the tool list
 
 Bash reaches past the tool list, so these rules are the only guard. **Allowed** (read forms only):

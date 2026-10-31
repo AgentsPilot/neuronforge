@@ -1,6 +1,6 @@
 # Requirement: DevOps (DO) Agent
 
-> **Last Updated**: 2026-10-30
+> **Last Updated**: 2026-10-31
 
 **Created by:** BA
 **Date:** 2026-10-30
@@ -21,6 +21,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 - [4. DO-1 Functional Requirements](#4-do-1-functional-requirements)
 - [5. Later Slices (DO-2 to DO-5)](#5-later-slices-do-2-to-do-5)
 - [DO-2 Specification — supabase-ops skill](#do-2-specification--supabase-ops-skill)
+- [DO-3 Specification — vercel-ops skill](#do-3-specification--vercel-ops-skill)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
 - [7. Acceptance Criteria (DO-1)](#7-acceptance-criteria-do-1)
 - [8. Out of Scope / Future Roadmap](#8-out-of-scope--future-roadmap)
@@ -30,6 +31,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 - [SA Review — DO-2](#sa-review--do-2)
 - [DO-2 implementation notes](#do-2-implementation-notes)
 - [SA Code Review — DO-2](#sa-code-review--do-2)
+- [SA Code Review — DO-3](#sa-code-review--do-3)
 
 ---
 
@@ -38,8 +40,8 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | Slice | Scope | Status |
 |---|---|---|
 | DO-1 | Agent definition, `env-change-protocol` skill, CLAUDE.md row, TL handshake rows, RM boundary note, SA plan-review note | ✅ MERGED 2026-10-30 (PR #578). Fresh-session tool-list smoke test still owed. See [DO-1 implementation notes](#do-1-implementation-notes) |
-| DO-2 | `supabase-ops` skill | ✅ MERGED 2026-10-30 (PR #579). See [DO-2 implementation notes](#do-2-implementation-notes). Follow-ups FU-1 to FU-3 logged in [SA Review — DO-2](#sa-review--do-2): FU-1 🟡 in review; FU-2 ⬜ (next migration that ships a checker); FU-3 ⬜ (DO-5) |
-| DO-3 | `vercel-ops` skill | ⬜ |
+| DO-2 | `supabase-ops` skill | ✅ MERGED 2026-10-30 (PR #579). See [DO-2 implementation notes](#do-2-implementation-notes). Follow-ups FU-1 to FU-3 logged in [SA Review — DO-2](#sa-review--do-2): FU-1 ✅ MERGED 2026-10-30 (PR #584); FU-2 ⬜ (next migration that ships a checker); FU-3 ⬜ (DO-5) |
+| DO-3 | `vercel-ops` skill | 🟡 QA passed, awaiting user diff review (2026-10-31). See [QA Report — DO-3](#qa-report--do-3), [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3) and [DO-3 implementation notes](#do-3-implementation-notes) |
 | DO-4 | `github-ops` skill | ⬜ |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | ⬜ |
 | DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | ⬜ |
@@ -184,13 +186,15 @@ The MCP tool names must be **listed explicitly** in the agent frontmatter. Two S
 
 Each later slice gets its own short scoping pass before build. Every skill follows the `env-change-protocol` skill and the public-repo rule.
 
-### DO-2 `supabase-ops` skill 🟡
+### DO-2 `supabase-ops` skill ✅
 
 Specified in detail in [DO-2 Specification](#do-2-specification--supabase-ops-skill). Original scope:
 
 How to read and verify Supabase state: advisors, logs, migration list against repo migration files, auth settings, backups. How to prepare a migration for the user to apply (pre-check SQL, the exact apply step, post-check SQL) without DO applying DDL. Must carry the gotcha: **the Supabase SQL editor misreads the word "into" even inside string literals**, so pre-check and post-check SQL must avoid it.
 
-### DO-3 `vercel-ops` skill ⬜
+### DO-3 `vercel-ops` skill 🟡
+
+Specified in detail in [DO-3 Specification](#do-3-specification--vercel-ops-skill). Original scope:
 
 How to read and change Vercel state: projects, env vars by name and target (Production, Preview, Development), crons, domains, deployments and their logs. How to wait for a deploy to report done before testing, and how to find which deployment holds a given value. Must carry the gotchas: **the Vercel CLI is not installed yet** (MCP first, CLI only once installed), and **docs-only changes skip CI and the Vercel deploy via `.github/ci/non-deploying-change.sh` (exit 0 means skip)**, so a quick green on a docs PR is correct.
 
@@ -324,6 +328,131 @@ Each item says what the skill states. The repo evidence each one is grounded in 
   *Suggested:* out of DO-2's file list. The skill states the flow; a follow-up docs fix replaces those sections with a pointer to the skill.
 - [ ] **Q-D2-4: Older workplans say the operator runs the checker.** Going forward DO or the main session runs it.
   *Suggested:* the skill states the new rule; old workplans are not edited.
+
+---
+
+## DO-3 Specification — vercel-ops skill
+
+**By BA — 2026-10-31.** Branch `feature/devops-vercel-ops`. Config/docs-only slice: no application code, no CI job, no CI time.
+
+DO-3 builds on `devops.md` and the `env-change-protocol` skill and **does not repeat them**. The eight steps, the tiers, the approval channel, the order-against-deploy table, the change-record template, the public-repo rule, the Vercel tool list, the `decrypt` ban and the forbidden Bash families stay where they are. `vercel-ops` holds only what is specific to Vercel, and points back to those two files for the rest. It should read like `supabase-ops`: a pointer table first, numbered sections, a closing checklist.
+
+### D3.1 Deliverables
+
+| # | File | Action | What |
+|---|---|---|---|
+| D3-1 | `.claude/skills/vercel-ops/SKILL.md` | New | The skill (§D3.2). Target ≤ ~200 lines. |
+| D3-2 | `.claude/skills/vercel-ops/*.md` (reference files) | New, optional | Only if SKILL.md would exceed ~200 lines. Natural split: a "which deployment holds this value" walkthrough, and the dashboard-only settings table. SKILL.md links to each. |
+| D3-3 | `.claude/agents/devops.md` | Edited | One line in `### Vercel`: "Procedures and gotchas for reading state, waiting for a deploy and verifying a value: the `vercel-ops` skill." Nothing else in the agent file changes (unless SA rules otherwise on Q-D3-1). |
+| D3-4 | `CLAUDE.md` | **Not edited** | Same reasoning as D2-4: the Common Gotchas `env-change-protocol` row already routes env-var, cron, domain and deploy work to the protocol, which is where users land. One more row would duplicate the route. |
+| D3-5 | This requirement | Edited | Status, implementation notes, reviews. |
+
+### D3.2 What the skill must teach
+
+Each item says what the skill states. The repo evidence each one is grounded in is named so Dev can check it; the skill itself carries the rule, not the history.
+
+**(a) Reading state** (Read tier, the Vercel tools in `devops.md` only)
+
+| Topic | The skill states |
+|---|---|
+| Scope first | Resolve the team and the project with `list_teams` / `list_projects` at the start of each job, and reuse that scope for every later call. Never guess a project; if two could match, ask. IDs and slugs are held only in the call, never written into a file, a report or a chat summary. |
+| More than one project | The team has **more than one Vercel project** (the web app project and a marketing-site project, by role; resolve the current list with `list_projects`, and report any project with no known role as "an unrecognised project"). Each project holds its own env vars, so a value one project uses may also exist in another. Any "where does this value live" or "is this var set" answer covers **every** project, named **by role** ("the web app project", "the marketing-site project"). A check of one project is reported as one project, not as "Vercel". |
+| Projects | `get_project` for framework, Node version, root directory and the linked Git repo — facts only. Settings it does not show are dashboard-only (item (e)). |
+| Deployments | `list_deployments` (filter by project, `target`, `state`, `sha`, `branch`, `since`) and `get_deployment` for state, target (production or preview), the **commit SHA it was built from**, and its created and ready times. `list_deployment_events` for the build log of one deployment — read for the error class and the failing step, never copied whole (build logs can echo env var names and paths). |
+| Runtime logs and errors | `get_runtime_errors` first for a production problem, then `get_runtime_logs`. Prefer `group_by` (path, level, source, deployment) for counts, and scope to one deployment and a stated window that brackets the change. Report counts, status codes and error classes. Never copy a log line that names a person (rule (c) in `devops.md`). Log retention is plan-limited: an empty window older than retention proves nothing. |
+| Env vars | `filter_project_envs` for **names, targets (Production, Preview, Development) and Git-branch scope only**. A Preview var can be scoped to one Git branch (`gitBranch`), so "set on Preview" and "set for this branch's preview" are different facts. Never pass `decrypt`. If the response carries a value field for any variable, it is not read, copied or summarised (see Q-D3-2). The value itself is a user dashboard step. |
+| Domains | `list_domains`, `get_domain`, `get_domain_config`, `list_project_domains`, `get_project_domain` for which project and target a domain points at, and whether its DNS config is valid. Facts only; domain and DNS writes are excluded. |
+| Crons | The source of truth is `vercel.json` `crons` in the repo (path + schedule). Vercel runs crons on **production deployments only**: a Preview never fires them, so a cron change is verified against production. Confirm a cron ran by reading runtime logs for its path in a window after its schedule time (`group_by` path, status), not by its presence in the file. There is no cron tool; whether crons are enabled for a project is dashboard-only. |
+| Docs | `search_vercel_documentation` for any platform fact that may change (limits, retention, cron behaviour, build-time env handling). The skill does not hardcode such facts beyond what is stated here. |
+
+**(b) Which deployment holds this value** (the core procedure)
+
+The skill states the rule and the steps, grounded in the incident behind `env-change-protocol` (a check that raced the deploy, tested a sibling key, and used a probe that could not fail):
+
+- An env var change applies **only to deployments built after the save**. A running deployment keeps the value it was built with. Saving a variable is not a deploy.
+- `NEXT_PUBLIC_*` values are **inlined into the client bundle at build time** (grounded: "the value is fixed at build time: setting or changing it on Vercel needs a redeploy" in `docs/feature_flags.md`; the readers in `lib/utils/featureFlags.ts` use literal `process.env.NEXT_PUBLIC_*` reads, which is what lets Next.js inline them). A change to one needs a rebuild of the deployment that serves it; a server-only var also needs a new deployment to be picked up.
+- Steps, each with its evidence:
+  1. Record the time of the save (the user reports it, or the dashboard shows it), the project by role and the target.
+  2. Trigger or wait for a new deployment of that project and target (a push, or a dashboard "Redeploy" by the user — a user step).
+  3. Find the **first deployment of that project and target created after the save time** (`list_deployments` with `since`, `target`, and the expected `sha` when it is a code deploy).
+  4. Wait for that deployment to report READY (item (c)).
+  5. Probe **that** deployment — its own URL or a server-side, timestamped output that names it — never the alias's previous deployment, never another project, never the other target. The probe is chosen per `env-change-protocol` step 5; the skill does not restate it.
+- For a production alias: confirm the production domain now points at the deployment from step 3 before probing through the domain. `get_project_domain` shows a domain's settings, not which deployment serves it; read the step-3 deployment with `get_deployment` and check that its aliases include the production domain. A READY production deployment does **not** always receive the domain (after an Instant Rollback, or when production domains are not auto-assigned); see SA Review — DO-3, V3.
+
+**(c) Waiting for a deploy to report done**
+
+- Poll `get_deployment` (or `list_deployments` filtered by `sha` and `target`) until the state is READY **for the expected SHA**. A READY deployment of a different SHA is not the one being waited for.
+- ERROR: read `list_deployment_events` for the failing step and error class; report it and stop — nothing is verified. CANCELED or BLOCKED: report it; never treat it as done.
+- Docs-only changes are skipped by the Ignored Build Step: `vercel.json` `ignoreCommand` runs `.github/ci/non-deploying-change.sh`, where **exit 0 means SKIP**. It skips `docs/**`, root-level `*.md`, `scripts/**` (minus the Jest suites and the CI gate scripts it carves back out) and `.claude/**`. Nested `.md` is **not** skipped: it is production code, because the V6 pipeline reads prompts from disk. Renames are counted on both sides (`--no-renames`). So on a docs-only PR, "no new deployment" or a canceled/skipped build is the **expected** outcome, not a failure, and a quick green check is correct. An ignored build is recorded as a **CANCELED** deployment: it is the expected outcome only when its build events show the script's `SKIP:` line; any other CANCELED is the stop case in the bullet above.
+- The consequence for verification: an env var saved while the only change merging is docs-only gets **no** new deployment from that merge. The plan must name the deployment that will carry the change (a code push or a user "Redeploy"), not assume the merge produces one.
+- `vercel.json` disables deployments for merge-queue branches (`gh-readonly-queue/**`), so a queue run is never a deployment to wait for.
+
+**(d) The Vercel CLI**
+
+- The Vercel CLI is **not installed**. MCP first, always. The MCP tool descriptions name CLI fallbacks; they are not used while the CLI is absent.
+- Installing it is out of DO-3 (§8). If it is installed later: read commands only, and **`vercel env pull` is forbidden outright** — it writes decrypted values to disk (SA finding 1; the Vercel CLI row in `devops.md`). The skill points to that row and does not restate the family list.
+
+**(e) Dashboard-only settings** — a user step, by area name only
+
+A table like `supabase-ops` §2. The user opens the area in the project (named by role) or team settings, reports what it shows, and the record names the environment by role. If the dashboard has moved, find the current path with `search_vercel_documentation`.
+
+| Setting | Dashboard area |
+|---|---|
+| Deployment protection (Vercel Authentication, password, bypass) | Project → Settings → Deployment Protection |
+| Production branch, Git connection, ignored build step override | Project → Settings → Git |
+| Build and development settings (framework, commands, Node version, root directory) | Project → Settings → Build and Deployment |
+| Function region, max duration, memory | Project → Settings → Functions |
+| Cron jobs enabled/disabled, run history | Project → Settings → Cron Jobs |
+| Env var **values** | Project → Settings → Environment Variables |
+| Team members and roles | Team → Settings → Members |
+| Plan, usage, billing | Team → Settings → Billing |
+| Firewall rules, attack challenge mode | Project → Firewall |
+| Log drains | Team → Settings → Drains |
+
+The function region should match the Supabase project's region (`supabase-ops` §6); the skill points there and does not restate it.
+
+**(f) What the skill does not change**
+
+- Every env var write, redeploy, promote, rollback, domain or cron change is planned per `env-change-protocol` and executed by the user (production) or by the main session with the user (reversible, Preview only). DO's Vercel tools stay read-only in DO-3 unless SA rules otherwise on Q-D3-1.
+- A cron added or changed in `vercel.json` is a code change (Dev, through a PR); the skill covers only how to verify it ran after the production deploy.
+
+### D3.3 Boundaries
+
+| Neighbour | Owns | `vercel-ops` relation |
+|---|---|---|
+| `env-change-protocol` | The eight steps, tiers, approval, order against deploy, record template, public-repo rule | Referenced, never repeated |
+| `devops.md` | DO's Vercel tool list, the `decrypt` ban, the forbidden Bash/CLI families, where plans go | Referenced; one pointer line added |
+| `supabase-ops` | Supabase state, the migration apply flow, region note | Referenced for the region match and for any value that lives in a Supabase project |
+| `vercel:*` plugin skills (`vercel:env-vars`, `vercel:deployments-cicd`, `vercel:vercel-cli`) | Generic Vercel guidance | Referenced for generic facts; the skill adds only this repo's operating procedure. Where a plugin skill suggests a write or `vercel env pull`, this repo's rules win |
+| `.github/ci/non-deploying-change.sh` | What counts as non-deploying | Referenced as the source of truth; the skill does not copy its path list beyond the summary in §D3.2(c) |
+| Dev | `vercel.json` (crons, `ignoreCommand`, `git.deploymentEnabled`, rewrites) and app code reading env vars | DO reads them; never edits them |
+| SA | Review of production-tier plans | Unchanged |
+
+### D3.4 Acceptance criteria (DO-3)
+
+- [ ] `.claude/skills/vercel-ops/SKILL.md` exists; frontmatter has `name: vercel-ops` (matching the folder) and a `description` in the existing skills' format, parsed cleanly by a YAML parser.
+- [ ] The description fires on: checking or setting a Vercel env var, which deployment has a value, waiting for a deploy, a deploy that failed or was skipped, build logs, runtime logs or errors, a cron that did not run, a domain, deployment protection or another Vercel project setting. It says it is used by the main session and DO. It names no project, team, URL or ID.
+- [ ] The skill covers (a)–(f) of §D3.2 and the boundaries of §D3.3, and links to `env-change-protocol` instead of restating the eight steps, tiers, template or probe. QA greps the new files for `Snapshot the before-state`, `| **Read** |` and `zero policies`: 0 hits expected.
+- [ ] The skill states: changes apply only to deployments built after the save; `NEXT_PUBLIC_*` is baked at build; the probe targets the first deployment created after the save, once READY, for the expected SHA.
+- [ ] The skill states that more than one Vercel project exists and every "where does this live" answer covers each, by role.
+- [ ] The skill states the CLI is not installed, MCP first, and `vercel env pull` is forbidden outright (by pointer to `devops.md`).
+- [ ] SKILL.md is ≤ ~200 lines, or the overflow is in reference files under `.claude/skills/vercel-ops/` that SKILL.md links to.
+- [ ] `devops.md` has the one pointer line (D3-3) and no other change (unless Q-D3-1 is ruled otherwise, in which case SA states the allowed change).
+- [ ] The finding-11 regex from §7 over the added lines of the diff returns zero hits, or each hit is explained in the QA report.
+- [ ] No tracked text in the diff contains a project or team ID, a project or team slug, a deployment URL, a key prefix, an env var value, where a secret is stored, or an open weakness of the live system. Projects named by role only. QA reads the diff for this.
+- [ ] Every repo path the skill names exists in the worktree; the skill states no counts (crons, projects, env vars).
+- [ ] The diff touches only `.claude/skills/vercel-ops/**`, `.claude/agents/devops.md` and this requirement.
+
+### D3.5 Open questions for SA
+
+- [ ] **Q-D3-1: Does DO-3 add a Preview-only env-var write tool (R5)?** R5 allowed DO-3 to propose `create_project_env` / `edit_project_env` with a hard rule that the target is exactly `preview`.
+  *Suggested:* **no — keep DO's Vercel tools read-only in DO-3.** The tools take the target as a parameter, so the tool list cannot enforce "Preview only"; the rule would rest on prose alone, which is the gap R5 named. A Preview var can also be branch-scoped, so a mis-set `gitBranch` is a second unenforced field. The main session applies reversible writes with the user in the loop, as today; DO plans and verifies. Revisit only if a read-only-style enforcement appears (e.g. a scoped token or a harness permission rule that matches the target argument) — log it for DO-5 next to FU-3.
+- [ ] **Q-D3-2: Can `filter_project_envs` return a value without `decrypt`?** The tool's own description says `decrypt` "requests decrypted values"; it does not say what the response holds for a plain-type (non-sensitive) variable.
+  *Suggested:* Dev checks the response **shape** once at build time — field names only, reporting whether a value-bearing field is present and for which variable types, never its contents — and cites it by role in the implementation notes. Whatever the result, the skill says any value field in a list response is never read, copied or summarised.
+- [ ] **Q-D3-3: Is confirming a cron ran a Read-tier job DO may run on its own?** It uses `get_runtime_logs` on production.
+  *Suggested:* yes — counts by path and status in a stated window, no log lines copied (rule (c)).
+- [ ] **Q-D3-4: Does the skill name the marketing-site project's role in more detail** (what it holds, which values it shares with the web app)?
+  *Suggested:* only that it exists and holds its own Supabase configuration. Which variables it holds is an inventory fact for the untracked private docs and DO-5's `env-drift-audit`, not tracked text.
 
 ---
 
@@ -626,6 +755,11 @@ Approved. It reads the project's log store and cannot change project state, so i
 | 2026-10-30 | DO-2 code complete | Dev built the `supabase-ops` skill (SKILL.md + two reference files) and the `devops.md` pointer line, with Q-D2-1 to Q-D2-4 and S1–S10 applied. CLAUDE.md unchanged. Uncommitted, awaiting SA code review and QA. |
 | 2026-10-30 | SA code review DO-2 | CODE APPROVED. S1–S10 honoured. SA fixed six items in the skill files ("into" rule narrowed to literals/comments, unmeasured fresh-backend claim removed, pre-checks in the drop-`SET` rule, paste-error step, `CONCURRENTLY` exception, no raising lookups). S1's main-session check was run separately and closed (see SA Code Review — DO-2, item 2). QA passed (6/6). |
 | 2026-10-30 | DO-2 merged; FU-1 built | DO-2 merged (PR #579). FU-1: the `Running Migrations` sections of `supabase/migrations/README.md` and `supabase/SQL Scripts/README.md`, and the apply options in `supabase/migrations/APPLY_MIGRATIONS.md`, replaced with the paste-one-file flow, a pointer to `supabase-ops` §4, and a warning against `db push` / `db execute` / `migration up` / `psql` on a hosted project. |
+| 2026-10-31 | FU-1 merged; DO-3 spec | FU-1 merged (PR #584). BA wrote the DO-3 Specification (`vercel-ops` skill): deliverables, what the skill teaches (reading state across every project by role, which deployment holds a value, waiting for READY on the expected SHA, docs-only skips, CLI not installed and `vercel env pull` forbidden, dashboard-only settings), boundaries, acceptance criteria, SA questions Q-D3-1 to Q-D3-4 (Q-D3-1: BA suggests no Preview-only write tool). CLAUDE.md unchanged. Awaiting SA review. |
+| 2026-10-31 | SA review DO-3 | APPROVED WITH CHANGES. Q-D3-1: no Vercel write tool, `devops.md` gets only the pointer line. Q-D3-2: no live shape probe; Dev reads the documented response schema; `filter_project_envs` and `get_project` treated as value-bearing. Q-D3-3: yes, Read tier, never trigger a cron. Q-D3-4: roles only, no "which values it holds". Findings V1–V14 (DO has no HTTP probe, value-bearing responses, domain not always assigned after rollback, ignored build = CANCELED, `npx vercel`, user never pastes values, who triggers a deploy, cron rules, unverified parameter names, AC additions). SA fixed five spec statements in place (featureFlags grounding, production-alias check, CANCELED reconciliation, docs-only wording, `vercel.json` keys) and removed the marketing project's Supabase-config detail. |
+| 2026-10-31 | DO-3 code complete | Dev built the `vercel-ops` skill (SKILL.md + `dashboard-settings.md` + `tool-parameters.md`) and the `devops.md` pointer line, with Q-D3-1 to Q-D3-4 and V1–V14 applied. Q-D3-2 decided from documentation only (env list: `value` required on every item; project object: `env` list and a `crons` field). V13: `group_by` names corrected; `get_runtime_errors` has no deployment filter. CLAUDE.md unchanged. Uncommitted, awaiting SA code review and QA. |
+| 2026-10-31 | SA code review DO-3 | CODE APPROVED. Dev's deviation accepted: `get_runtime_logs` with `deploymentId` is the only per-deployment evidence, `get_runtime_errors` a project-wide first look. SA fixed four wording items (`level` is not the HTTP status in §6 and `tool-parameters.md`; the `crons` enabled state falls back to the dashboard when `get_project` does not carry it, in §6 and `dashboard-settings.md`). `group_by` names re-checked by QA on a schema load. Awaiting QA. |
+| 2026-10-31 | QA DO-3 | QA passed: 9 checks pass, the fresh-session load test deferred. No bugs. Three non-blocking edge cases in `tool-parameters.md` / §7 (the `environment` values for `get_runtime_logs` are not listed; three parameter statements are unverified; "not installed" is stated indirectly). Awaiting the user's diff review. |
 
 ---
 
@@ -745,7 +879,7 @@ S10. **[§D2.4 ACs] Tighten two criteria so they can fail.**
 
 | # | What | Owner |
 |---|---|---|
-| FU-1 | Replace the `db push` / `psql` sections of the three apply READMEs with a pointer to `supabase-ops` (Q-D2-3) | BA scope → Dev, docs-only, right after DO-2. 🟡 Built 2026-10-30 on `fix/supabase-apply-readmes` |
+| FU-1 | Replace the `db push` / `psql` sections of the three apply READMEs with a pointer to `supabase-ops` (Q-D2-3) | BA scope → Dev, docs-only, right after DO-2. ✅ MERGED 2026-10-30 (PR #584) |
 | FU-2 | New checkers use the `begin read only; … commit;` wrapper; the migration text tests accept it; old checkers untouched (Q-D2-1) | Dev, next migration that ships a checker |
 | FU-3 | A read-only-mode Supabase connection for DO, which would turn rule (a) into real enforcement (from R1) | DO-5 |
 
@@ -858,3 +992,267 @@ Cited from the main session's measurement on 2026-10-30 against the production S
 - FU-1 (README `db push` sections) remains the priority follow-up; §3's "do not follow the older apply READMEs" is the stopgap.
 
 ### Code Approved for QA: Yes
+
+---
+
+## SA Review — DO-3
+
+**Reviewed by SA — 2026-10-31**
+**Verdict: APPROVED WITH CHANGES.** The scope, the file list, leaving CLAUDE.md alone, and the "points back, never restates" shape match `supabase-ops`. The core procedure in §D3.2(b) is the right one, and the facts are right: an env var change reaches only deployments built after the save, `NEXT_PUBLIC_*` is inlined at build, crons run on production only, `ignoreCommand` exit 0 means skip, and merge-queue branches are not deployed. The gaps are in **how** DO can probe, in two read tools whose responses can carry values, and in what "READY" proves for a production domain. Dev builds DO-3 with rulings Q-D3-1 to Q-D3-4 and findings V1–V14 applied. No second SA spec pass; SA checks them at code review.
+
+SA fixed five spec statements in place (marked in the findings) and removed one detail from §D3.2(a) under Q-D3-4.
+
+### Rulings on the open questions
+
+**Q-D3-1: no Vercel write tool in DO-3. BA's suggestion accepted.**
+- `create_project_env` / `edit_project_env` take `target` (and `gitBranch`, and a custom environment) as arguments. The frontmatter tool list allows a tool or does not; it cannot match an argument. "Preview only" would rest on prose alone, which is exactly the gap R5 named.
+- A Preview var with no `gitBranch` reaches **every** preview deployment, including other people's PRs. "Preview" is therefore not automatically low blast radius.
+- `devops.md` gets only the D3-3 pointer line. Its "read-only today" sentence stays true, so nothing else changes.
+- Logged as **FU-4** for DO-5, next to FU-3: revisit only if an enforcement appears that does not rest on prose (a token scoped to Preview, or a harness permission rule that can match a tool argument).
+
+**Q-D3-2: Dev does NOT probe the live response shape. Decide from documentation; treat the response as value-bearing either way.**
+- Schema read (the tool definition only, no call): `filter_project_envs` takes `idOrName`, `gitBranch` ("must have target=preview"), `decrypt` (deprecated, "the environment variable value will be decrypted"), `source`, `customEnvironmentId`, `customEnvironmentSlug`, and team scope. The parameters say nothing about what the response holds when `decrypt` is not passed.
+- A "field names only" check is not possible after the fact. Any call returns its full response into the session context and the local session transcript, so whatever value it holds has already been exposed. The BA's suggested build-time call is ruled out.
+- **What Dev does at build:** read the documented response schema of the platform's "list environment variables of a project" endpoint and of "get a project" through `search_vercel_documentation`, which returns documentation only. Record by field name in the implementation notes whether the response can carry a `value` field and for which variable types (plain, encrypted, sensitive), and whether the project object carries an env list or protection-bypass entries. No env or project tool is called for this.
+- **What the skill says, whatever the docs show (see V2):** `filter_project_envs` and `get_project` are **value-bearing responses**. Report only named fields (key, target, Git-branch scope, type, last-updated time). Never quote raw output, never summarise a value, never pass `decrypt` or `source`.
+
+**Q-D3-3: yes, Read tier. DO may confirm a cron ran on its own.**
+- Counts by path and status from `get_runtime_logs` / `get_runtime_errors` in a window after the schedule time, scoped to the current production deployment. No log line copied (rule (c)).
+- The window must sit inside log retention. An empty window older than retention is "not checked", never "did not run".
+- **Running** a cron is not Read tier. That means the dashboard's run button, or a request carrying the cron secret. It executes a production job and needs a secret: production tier, the user executes. DO never triggers one (V8).
+
+**Q-D3-4: roles only. BA's suggestion accepted, and narrowed.**
+- The skill says more than one project exists, gives the known roles, and says to resolve the current list with `list_projects` each time. A project with no known role is reported as unrecognised. It states no count.
+- **SA removed "that holds its own Supabase configuration" from §D3.2(a).** Which credentials a given project stores is a "where a secret is stored" fact (§3.4). The generic rule replaces it: each project holds its own env vars, so a value can exist in more than one project, and a rotation or "where does this live" answer covers each.
+- Which variables each project holds belongs in the untracked inventory and in DO-5's `env-drift-audit`.
+
+### Findings
+
+V1. **[§D3.2(b) step 5] DO cannot make the HTTP probe the step describes.**
+- DO's Bash allowed list has no HTTP client ("anything not on the allowed list is forbidden"). Preview deployments, and often production deployment URLs, sit behind Deployment Protection, so an unauthenticated request gets the platform's login wall. That is a probe that can neither pass nor fail on the change.
+- The skill states who probes what:
+  - DO's own evidence is server-side and timestamped: `get_runtime_logs` / `get_runtime_errors` scoped to **that deployment**, for a request or job the change affects.
+  - An HTTP or browser probe of a deployment URL is done by the main session or the user. They use their existing Vercel authentication (the `access-protected-vercel-deployment` plugin skill). They never use a protection-bypass secret and never turn protection off to probe.
+  - A 401/403 from the protection page is "not probed". It is not a pass and not a fail.
+- Deployment URLs and custom domains are never written into tracked text.
+— Priority: High
+
+V2. **[§D3.2(a) Env vars, Projects] Two of DO's read tools can return values.** This is the general form of Q-D3-2.
+- `filter_project_envs` without `decrypt` may still return `value` (in clear for plain-type variables, as ciphertext otherwise).
+- The project object returned by `get_project` may include an env list, and protection-bypass entries keyed by the bypass secret itself. Dev confirms both from the docs (Q-D3-2). The rule does not wait on the answer.
+- The skill carries one "value-bearing responses" rule for both tools: named fields only, no raw output in any file, report or chat, and `decrypt` and `source` are never passed.
+- `get_project` stays in the list, because it is the only source for the framework, root directory and Git link. The rule above is what keeps it safe.
+— Priority: High
+
+V3. **[§D3.2(b) production alias] A READY production deployment is not always the one serving the domain.**
+- After an Instant Rollback the platform stops auto-assigning production domains to new production deployments until the rollback is undone or a deployment is promoted. The same is true when production domains are configured not to auto-assign (a staged production deployment).
+- In both cases the new deployment is READY but receives no traffic. A probe through the domain then tests the old deployment.
+- `get_project_domain` does not show which deployment serves a domain. **SA fixed the spec line:** read the step-3 deployment with `get_deployment` and check that its aliases include the production domain.
+- If they do not, stop. "Promote" is a production write, so the user executes it.
+- Rolling releases can also split production traffic. If one is active, the probe must name the deployment it hit, through server-side evidence.
+— Priority: High
+
+V4. **[§D3.2(c)] An ignored build is recorded as a CANCELED deployment.** That contradicted "CANCELED: never treat it as done" two bullets earlier. **SA fixed the spec:** CANCELED is the expected outcome only when the build events show the script's `SKIP:` line on a docs-only change. Any other CANCELED is a stop. The skill should also say the script **fails open**: an unresolvable base or an empty diff builds (exit 1), so a build on a docs-only push is possible and not an error. — Priority: Medium
+
+V5. **[§D3.2(d)] "Not installed" is not a control.**
+- `npx vercel …`, `npm exec vercel` and `pnpm dlx vercel` download and run the CLI on the spot. So does `vercel env pull`, by that route.
+- The skill states that DO runs no `vercel` invocation by any route. That is already true under "anything not on the allowed list is forbidden"; the skill says it in so many words.
+- The Vercel MCP server's own instruction to "use CLI fallbacks" when MCP fails, and the fallback lines inside the tool descriptions, are **not followed** by DO. An MCP failure is reported, not worked around.
+— Priority: Medium
+
+V6. **[§D3.2(a) Env vars, (e) Env var values] What the user reports from the dashboard.**
+- The user never pastes a value into chat. They report presence, target, Git-branch scope, type and last-updated time, or "matches what I expected: yes/no".
+- A **sensitive**-type variable cannot be read back even in the dashboard. Its correctness is proven only by a probe through the deployed surface (protocol step 5), never by reading it.
+— Priority: Medium
+
+V7. **[§D3.2(b) steps 2–3] Who triggers the deploy, and which deployment is "the one".**
+- DO never triggers a deployment. A push reaches the branch through Dev/RM. A Redeploy is the user's on production, and the main session's with the user on Preview.
+- Step 2 should name that owner in the plan.
+- "First deployment created after the save" can be superseded by a later one. The probe target is the deployment that was created after the save **and** currently serves the target (for production, the one holding the domain, V3). It is "the first" only when nothing newer exists.
+- A deployment created before the save is never evidence, even if it finished building after the save.
+— Priority: Medium
+
+V8. **[§D3.2(a) Crons] Three cron rules to add.**
+- (1) Never trigger a cron (Q-D3-3).
+- (2) The active cron set is the **current production deployment's**. After a rollback, the older deployment's `vercel.json` crons are the ones running.
+- (3) DO-1's implementation notes say crons are read "from `vercel.json` and from `get_project`", while §D3.2(a) says enabled/disabled is dashboard-only. Dev checks the documented project object (Q-D3-2 docs read) for a crons field. If one exists, the skill reads the enabled state from it under V2's named-fields rule. If not, it stays a dashboard step. The skill states the one answer it found, not both.
+— Priority: Medium
+
+V9. **[§D3.2(b)] The grounding for "`NEXT_PUBLIC_*` is inlined" was wrong.** `lib/utils/featureFlags.ts` has no comment saying so. The statement is in `docs/feature_flags.md`. **SA fixed the spec.** — Priority: Low
+
+V10. **[§D3.3 Dev row] `vercel.json` has no `functions` key.** Its keys are crons, `ignoreCommand`, `git.deploymentEnabled` and rewrites. **SA fixed the spec.** Because the file sets no region or duration, those are dashboard facts, which is consistent with §D3.2(e). — Priority: Low
+
+V11. **[§D3.2(c)] "An env-var change merged alongside a docs-only PR."** An env var is saved in the dashboard; it is never merged. **SA reworded the spec** to "an env var saved while the only change merging is docs-only". — Priority: Low
+
+V12. **[§D3.2(a) Env vars] Custom environments.** The tool takes `customEnvironmentId`/`customEnvironmentSlug`, so a project can have targets beyond the three named. The skill says "every target, including any custom environment `get_project` shows", and does not assume three. — Priority: Low
+
+V13. **[§D3.2(a), (c)] Parameter and state names are not verified.**
+- The `list_deployments` filters (`target`, `state`, `sha`, `branch`, `since`, and the unit `since` takes), the `group_by` values on `get_runtime_logs`, and the deployment state names have not been checked against the live server.
+- Dev checks them by loading each tool's schema at build (no call) and drops any name that does not exist.
+- The skill keys on READY versus everything else, and does not list states that may not exist.
+— Priority: Low
+
+V14. **[§D3.4] Add criteria so V1–V8 can fail.**
+- (a) The skill states the value-bearing-responses rule for both tools, naming `decrypt` and `source` as never passed (V2).
+- (b) It states DO's probe is runtime evidence scoped to the deployment, that HTTP/browser probes belong to the main session or the user, and that no bypass secret is used (V1).
+- (c) It states the production-domain check and the rollback case (V3).
+- (d) The implementation notes record the Q-D3-2 documentation result by field name, and state that no env or project tool was called for it.
+- (e) A QA read for domain names and deployment hostnames. The regex catches only the platform's default hostname, not a custom domain.
+— Priority: Medium
+
+### Checked and honoured
+
+- **Facts against the platform and the repo:** env changes need a new build; `NEXT_PUBLIC_*` is fixed at build (`docs/feature_flags.md`); crons are production-only; `ignoreCommand` runs `.github/ci/non-deploying-change.sh` and exit 0 = SKIP, exit 1 = BUILD, fail-open; the skip list (`docs/**`, root `*.md`, `scripts/**` minus the gate scripts and Jest suites, `.claude/**`), nested `.md` built, `--no-renames`; `git.deploymentEnabled` disables `gh-readonly-queue/**`. All are correct as stated, apart from the V3/V4 nuances.
+- **No write, no secret:** §D3.2(f) keeps every Vercel write with the user or the main session; `decrypt` stays banned; `vercel env pull` is forbidden by pointer. V2, V5 and V6 close the remaining paths by which a value could reach DO or a chat.
+- **No duplication:** the steps, tiers, template and probe point to `env-change-protocol`; the tool list, `decrypt` ban and Bash families point to `devops.md`; the region note points to `supabase-ops` §6 (line checked). The §D3.4 grep for restated protocol text is kept.
+- **Public-repo:** the finding-11 regex over §D3 returns zero hits. There are no IDs, slugs, URLs, key prefixes or open weaknesses. The one secret-location hint (the marketing project's Supabase config) was removed under Q-D3-4.
+- **Paths named exist:** `vercel.json`, `.github/ci/non-deploying-change.sh`, `docs/feature_flags.md`, `lib/utils/featureFlags.ts`, `.claude/skills/supabase-ops/SKILL.md` §6, `.claude/agents/devops.md` `### Vercel`. The plugin skills `vercel:env-vars`, `vercel:deployments-cicd` and `vercel:vercel-cli` exist in the installed plugin. The Vercel CLI is confirmed absent from PATH and from `node_modules/.bin`.
+- **Config/docs only:** no app code, no CI job, no CI time.
+
+### Follow-ups (not DO-3)
+
+| # | What | Owner |
+|---|---|---|
+| FU-4 | A Preview-only Vercel env write for DO, only with enforcement that does not rest on prose (a scoped token, or a harness rule that matches tool arguments) (Q-D3-1) | DO-5 |
+
+### Approval
+
+[x] DO-3 spec approved. Dev builds with Q-D3-1 to Q-D3-4 and V1–V14 applied. `devops.md` changes by the D3-3 pointer line only.
+
+---
+
+## DO-3 implementation notes
+
+**By Dev — 2026-10-31.** Config/docs-only slice, no separate workplan. Nothing committed.
+
+### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `.claude/skills/vercel-ops/SKILL.md` | New | The skill: pointer table, §1 scope and projects by role, §2 value-bearing responses, §3 reading state, §4 which deployment holds a value (steps + who probes what), §5 waiting for a deploy and docs-only skips, §6 crons, §7 the CLI, §8 checklist |
+| `.claude/skills/vercel-ops/dashboard-settings.md` | New | The dashboard-only settings table (§D3.2(e)), with the region pointer to `supabase-ops` §6 |
+| `.claude/skills/vercel-ops/tool-parameters.md` | New | Parameter names checked against the loaded tool schemas (V13) |
+| `.claude/agents/devops.md` | Edited | One pointer line under `### Vercel`, nothing else |
+
+### Q-D3-2 documentation result (V2, V14 d)
+
+Read through `search_vercel_documentation` only. **No env or project tool was called** — not `filter_project_envs`, not `get_project`, not any other account tool. Tool schemas were loaded (no call) for V13.
+
+- **List env vars of a project** (the endpoint behind `filter_project_envs`): the documented 200 schema lists `value` as a **required** field on every item, next to `key`, `type`, `target`, `gitBranch`, `customEnvironmentIds`, `decrypted` (boolean), `updatedAt`, `updatedBy`, `comment`, `securityIssues`, `contentHint`. `type` is one of `encrypted`, `plain`, `secret`, `sensitive`, `system`. The docs do **not** say, per type, whether `value` is clear text or ciphertext when `decrypt` is not passed; the `decrypted` flag is the only per-item signal. So a `value` can come back for every type.
+- **The project object** (as documented for the list and create responses; the "find a project" page in the index shows no field list): carries an `env` array whose items hold `value`, `legacyValue`, `vsmValue` and `internalContentHint` (described as holding the value encrypted), plus `decrypted`. A `protectionBypass` object keyed by `additionalProperties` is documented on the protection-bypass endpoint; its presence on the project object was not shown by the index excerpts, and the skill treats it as present.
+- **Crons on the project object (V8 3):** a `crons` field with `enabledAt`, `disabledAt`, `deploymentId`, `updatedAt` and `definitions` (`path`, `schedule`). The skill states this one answer: the enabled state is read from `get_project` by those named fields; run history stays a dashboard step.
+- **Result for the skill:** both tools are value-bearing, as SA ruled. §2 of the skill applies to both: named fields only, no raw output, never `decrypt` or `source`.
+
+### V13 schema checks (loaded, not called)
+
+| Tool | Checked | Result |
+|---|---|---|
+| `list_deployments` | `target`, `state`, `sha`, `branch`, `since` | All exist. `since` / `until` are JavaScript timestamps in milliseconds; `from` / `to` deprecated |
+| `list_deployments` | `state` values | The schema lists them; the skill keys on READY versus everything else and names only READY and CANCELED |
+| `get_deployment` | SHA source | Needs `withGitRepoInfo` |
+| `get_runtime_logs` | `group_by` | `requestPath`, `level`, `source`, `deploymentId`, `branch` — the spec's "path" and "deployment" corrected to these. One value per call. `deploymentId` filter exists |
+| `get_runtime_errors` | deployment scope | **No deployment filter** (project, `routes`, window, max seven days). So V1's per-deployment evidence is `get_runtime_logs` only; the skill says so |
+| `filter_project_envs` | `gitBranch`, `customEnvironmentId` / `customEnvironmentSlug`, `decrypt`, `source` | All exist; `decrypt` and `source` banned in §2 |
+
+### Acceptance criteria (§D3.4 as amended by V14)
+
+| Criterion | How it is met |
+|---|---|
+| Frontmatter | `name: vercel-ops` (matches folder) + single-line `description`, same format as `supabase-ops`; parsed with js-yaml: keys `name`, `description` |
+| Description triggers, no project/URL/ID | Env var check/set, which deployment has a value, wait for a deploy, failed or skipped deploy, build logs, runtime logs or errors, cron that did not run, domain, deployment protection or another project setting; "used by the main session and by the DevOps (DO) agent"; no project, team, URL or ID |
+| Covers (a)–(f), §D3.3, no restatement | (a) §1, §3, §6; (b) §4; (c) §5; (d) §7; (e) `dashboard-settings.md`; (f) end of §3 and §6; boundaries in the pointer table. Grep of the new files for `Snapshot the before-state`, `\| **Read** \|`, `zero policies`: 0 hits |
+| After-save rule, `NEXT_PUBLIC_*`, deployment / READY / SHA | §4 opening bullets and steps 3–4 (V7 wording: created after the save and serving the target); §5 first bullet |
+| More than one project, by role | §1 |
+| CLI not installed, MCP first, `vercel env pull` | §7, by pointer to the `devops.md` Vercel CLI row; V5 routes (`npx`, `npm exec`, `pnpm dlx`) and no MCP CLI fallbacks |
+| V14 (a) value-bearing rule | §2, naming `decrypt` and `source` |
+| V14 (b) probe ownership | §4 "Who probes what": runtime logs scoped to the deployment; HTTP/browser by main session or user; no bypass secret; 401/403 = "not probed" |
+| V14 (c) production domain + rollback | §4 step 5 |
+| V14 (d) | Section above; no env or project tool called |
+| V14 (e) domains / hostnames | Read by Dev: no custom domain, deployment hostname or project name in the new files. QA reads again |
+| V3–V12 | V3 §4 step 5 (incl. rolling release); V4 §5 CANCELED + `SKIP:` + fail-open; V6 §2; V7 §4 step 2–3; V8 §6; V9 §4 grounding; V10 `dashboard-settings.md` last paragraph; V11 §5; V12 §3 env row |
+| Q-D3-1 | No write tool; `devops.md` has only the pointer line |
+| Q-D3-3 | §6: confirming a run is Read tier; running one is production tier, user executes |
+| Q-D3-4 | §1: roles only, `list_projects` each time, unknown = unrecognised, each project holds its own env vars |
+| Size | SKILL.md 107 lines; reference files 22 and 15, linked from SKILL.md |
+| `devops.md` | One added line (plus its blank separator), nothing else |
+| Finding-11 regex | Over the three new files and the added lines of the `devops.md` diff: 0 hits |
+| Public-repo read | No ID, slug, deployment URL, custom domain, key prefix, value, secret location or open weakness; projects by role |
+| Paths exist, no counts | `.claude/skills/env-change-protocol/SKILL.md`, `.claude/agents/devops.md`, `.claude/skills/supabase-ops/SKILL.md`, `docs/feature_flags.md`, `lib/utils/featureFlags.ts`, `vercel.json`, `.github/ci/non-deploying-change.sh` checked in the worktree; plugin skills `vercel:env-vars`, `vercel:deployments-cicd`, `vercel:vercel-cli`, `vercel:access-protected-vercel-deployment` exist in the installed plugin. No count of crons, projects or env vars stated |
+| Files touched | `.claude/skills/vercel-ops/**`, `.claude/agents/devops.md`, this requirement. CLAUDE.md unchanged |
+
+---
+
+## SA Code Review — DO-3
+
+**Code Review by SA — 2026-10-31**
+**Status: CODE APPROVED** (four small wording fixes made by SA, listed below). Q-D3-1 to Q-D3-4 and V1–V14 are honoured.
+
+### Ruling on Dev's deviation (`get_runtime_errors` has no deployment filter)
+
+**Accepted.** V1 asked for server-side evidence scoped to *that deployment*; a project-wide tool cannot give it, so `get_runtime_logs` with `deploymentId` is the only per-deployment evidence. `get_runtime_errors` stays as the project-wide first look for a production problem, which also matches the Vercel MCP server's own "errors first, then logs" order. Its seven-day ceiling is recorded in `tool-parameters.md`. No spec change needed: V1 named both tools as sources, not both as per-deployment.
+
+### Code Review Comments
+
+| # | Item | Result |
+|---|---|---|
+| 1 | No restatement | ✅ The pointer table sends the eight steps, tiers, template and probe to `env-change-protocol`, the tool list, `decrypt` ban and CLI row to `devops.md`, the region to `supabase-ops` §6. The §D3.4 grep (`Snapshot the before-state`, `\| **Read** \|`, `zero policies`) over the new files: 0 hits. |
+| 2 | No write, no decrypt, no deploy/cron trigger, no `vercel` | ✅ §2 bans `decrypt` and `source` and `get_project_env`; §3 closes with every write going to the user or the main session; §4 step 2 "DO never triggers a deployment"; §6 "Never trigger a cron"; §7 bans every `vercel` route (`npx`, `npm exec`, `pnpm dlx`) and the MCP CLI fallbacks; `dashboard-settings.md` forbids changing protection to make a probe work. |
+| 3 | Value-bearing responses (V2, V6, V14 a) | ✅ §2: named fields only, no raw output, no summarising or measuring a value, user never pastes a value, sensitive type proven only by probe. |
+| 4 | Probe ownership and production domain (V1, V3, V7, V14 b/c) | ✅ §4 steps 2–6 and "Who probes what": deployment-scoped runtime logs for DO, HTTP probes by the main session or user without a bypass secret, 401/403 = "not probed"; aliases-include-domain check with the rollback, non-auto-assign and rolling-release cases. |
+| 5 | CANCELED, fail-open, docs-only (V4, V11) | ✅ §5, checked against `.github/ci/non-deploying-change.sh`: exit 0 = SKIP, the `SKIP:` echo line, fail-open on empty diff, `--no-renames`, the root-`*.md`-only rule and the carve-outs. `gh-readonly-queue/**` matches `vercel.json`. |
+| 6 | V8 crons field | ✅ One answer stated (enabled state from `get_project` `crons` named fields; run history dashboard). SA added the absent-field case (fix 2) so the rule cannot read as "absent = disabled". |
+| 7 | V13 `group_by` values | ✅ with caveat. `requestPath`, `level`, `source`, `deploymentId`, `branch`, one per call, are used consistently in §6 and `tool-parameters.md`. SA could not load the tool schemas in this session (ToolSearch not exposed to this agent), so the names rest on Dev's schema load; QA re-checks by loading the `get_runtime_logs` schema (no call). `level` is not the HTTP status, so "by path and status" was wrong; SA fixed it (fixes 1 and 3). |
+| 8 | V12 custom environments, branch scope | ✅ §3 env row: every target including custom environments; unscoped Preview reaches every preview. |
+| 9 | Public-repo rule | ✅ Finding-11 regex over the three new files and the added lines of `git diff -U0`: 0 hits. A read for hostnames, custom domains, project names, `http(s)://` and TLD patterns: 0 hits. Projects named by role only; no cron paths, counts or IDs. |
+| 10 | Paths exist | ✅ `.claude/skills/env-change-protocol/SKILL.md`, `.claude/skills/supabase-ops/SKILL.md` (§6 region line present), `.claude/agents/devops.md`, `docs/feature_flags.md` (build-time redeploy line), `lib/utils/featureFlags.ts` (literal `process.env.NEXT_PUBLIC_*` reads), `vercel.json` (keys `ignoreCommand`, `git`, `crons`, `rewrites`), `.github/ci/non-deploying-change.sh`; the four `vercel:*` plugin skills exist in the installed plugin. Both reference files linked from SKILL.md. |
+| 11 | Frontmatter and description | ✅ js-yaml parses to `name`, `description`; `name` matches the folder. The description fires on every trigger in §D3.4 (check or set an env var, which deployment has a value, wait for a deploy, failed or skipped deploy, build/runtime logs and errors, a cron that did not run, a domain, deployment protection or another project setting), says main session and DO, names no project, URL or ID. |
+| 12 | `devops.md` | ✅ Exactly the D3-3 pointer line plus its blank separator, under `### Vercel`. Every Vercel tool the skill tells DO to use is in the frontmatter list. |
+| 13 | Size, CRLF | ✅ SKILL.md 107 lines (within ~200); files are CRLF like their neighbours. |
+
+### Fixes made by SA
+
+1. `SKILL.md` §6 — "report counts by path and status" changed to "by path and by level, and a status code only where the entries carry one": `level` is the log level, not the HTTP status.
+2. `SKILL.md` §6 — added "if a response does not carry them, the enabled state is a dashboard step" to the `crons` field rule.
+3. `tool-parameters.md` `get_runtime_logs` row — "by path and by status" changed to "by path and by level", with the same level-is-not-status note.
+4. `dashboard-settings.md` cron row — now "run history; the enabled state when `get_project` does not carry it", matching fix 2.
+
+### Optimisation Suggestions
+
+- §4 step 3 "currently serves the target" reads naturally for production; for Preview it means the newest deployment of that branch. Not blocking.
+
+### Code Approved for QA: Yes
+
+---
+
+## QA Report — DO-3
+
+**QA — 2026-10-31**
+**Test mode:** full · **Strategy:** static checks (grep, YAML parse, path existence, read-through). This is a docs/config-only slice, so there is no runtime to exercise. · **Focus:** security (public-repo, no-write), schema (frontmatter, tool parameters) · **Skipped:** the fresh-session load test (deferred, as for DO-1) · **Input source:** TL prompt + §D3.4 as amended by V14 + SA Code Review — DO-3. Run in the DO-3 worktree on the uncommitted changes. QA edited nothing except this section, the §0 DO-3 row and the Change History row.
+
+### Test Coverage
+
+| # | Acceptance criterion | Result | Evidence |
+|---|---|---|---|
+| 1 | Frontmatter parses; `name` matches folder; description triggers | Pass | js-yaml load (the main checkout's `node_modules`; the worktree has none) from a scratch script outside the repo: keys `name`, `description`; `name = vercel-ops`; description 840 chars. It fires on: check or set an env var, which deployment has a value, wait for a deploy, a deploy that failed or was skipped, build logs, runtime logs or errors, a cron that did not run, a domain, deployment protection or another project setting. It says "used by the main session and by the DevOps (DO) agent", and names no project, team, URL or ID |
+| 2 | Size; linked reference files exist | Pass | SKILL.md 107 lines; `dashboard-settings.md` 22, `tool-parameters.md` 15. Both are linked from SKILL.md and both exist |
+| 3 | Every repo path named exists; no counts | Pass | Backticked tokens with `/` or `.` extracted from the three files and tested with `test -e`. Exist: `.claude/agents/devops.md`, `.claude/skills/env-change-protocol/SKILL.md`, `.claude/skills/supabase-ops/SKILL.md` (§6 region line, line 104), `.github/ci/non-deploying-change.sh`, `docs/feature_flags.md` (build-time lines 501, 533), `lib/utils/featureFlags.ts` (10 literal `process.env.NEXT_PUBLIC_` reads), `vercel.json`. The rest are globs or keys, not paths: `docs/**`, `scripts/**`, `.claude/**`, `*.md`, `gh-readonly-queue/**`, `git.deploymentEnabled`, `process.env.NEXT_PUBLIC_*`. Facts checked against the files: `vercel.json` keys are `ignoreCommand`, `git`, `crons`, `rewrites`; `git.deploymentEnabled` disables `gh-readonly-queue/**`; the script exits 0 on SKIP after echoing `SKIP:`, exits 1 (BUILD) on an unresolvable base or an empty diff, uses `--no-renames`, skips `docs/*`, `scripts/*`, `.claude/*` and root-level `*.md`, and builds nested `.md`, the four gate scripts and `scripts/` test suites. No count of crons, projects or env vars stated |
+| 4 | Finding-11 regex; V14(e) read | Pass | Regex over the added lines of `git diff -U0` (`^+`, excluding `+++`) and over the three new files: 0 hits. Over the whole requirement: 1 hit, line 623, the regex quoting itself (expected). Extra greps over the new files and the added diff lines for `https?://`, `www.`, TLDs (`.com .io .dev .app .net .org .co .il .ai`), the product and repo names, `dpl_`, and 6+ digit runs: 0 hits. Read-through: projects named by role only ("the web app project", "the marketing-site project"); "the production domain" is generic; no custom domain, deployment hostname, project name, slug, key prefix, value, secret location or open weakness |
+| 5 | No restatement | Pass | The §D3.4 greps (`Snapshot the before-state`, `\| **Read** \|`, `zero policies`) over the three files: 0/0/0. Extra greps for the `env-change-protocol` tier and timing labels and template fields (`Reversible write`, `Production or irreversible`, `Before merge`, `After deploy`, `How to undo`, `Before-state`, `Executed by`, `### Step N`, `Classify the tier`): all 0. `The eight steps` has 1 hit, in the pointer table, which points to the skill. `devops.md` forbidden-family table markers (`gh secret`, `gh api`, `printenv`, `db push`, `git commit`, `Secret exposure`, `Family`): all 0; §7 points to the "Vercel CLI row of the forbidden families in `devops.md`" |
+| 6 | Safety: no write, no `decrypt`/`source`, no `get_project_env`, no deploy/cron trigger, no `vercel` by any route | Pass | Grep for write tool names (`create_`, `edit_`, `update_`, `delete_`, `promote_`, `rollback_`, `assign_`), `redeploy`, `decrypt`, `source`, `get_project_env`, `trigger`, `vercel <subcommand>`, `npx`, `npm exec`, `pnpm dlx`, `CLI`. Every hit is a prohibition or a hand-off: §2 line 34 (never `decrypt`/`source`, never `get_project_env`), §3 line 49 (every write by the user or main session; DO read-only), §4 step 2 (DO never triggers a deployment; Redeploy by the user / main session), §6 line 88 (never trigger a cron), §7 lines 92–94 (no `vercel` via binary, `npx`, `npm exec`, `pnpm dlx`; MCP CLI fallbacks not followed; `vercel env pull` forbidden by pointer), checklist lines 99, 105, 106. No write tool is named anywhere in the three files |
+| 7 | `devops.md` diff; tool names in frontmatter | Pass | `git diff -U0`: exactly two added lines, the D3-3 pointer line and a blank, no removed line. All 15 Vercel tools the skill tells DO to use (`list_teams`, `list_projects`, `get_project`, `filter_project_envs`, `list_deployments`, `get_deployment`, `list_deployment_events`, `get_runtime_logs`, `get_runtime_errors`, `list_domains`, `get_domain`, `get_domain_config`, `list_project_domains`, `get_project_domain`, `search_vercel_documentation`) are in the parsed `tools:` list as `mcp__plugin_vercel_vercel__<name>`. The only tool name not in the list is `get_project_env`, which the skill names only to forbid it |
+| 8 | Files touched; line endings; diff size | Pass | `git status --short`: M `.claude/agents/devops.md`, M this requirement, untracked `.claude/skills/vercel-ops/` (the three files). `git diff HEAD -- CLAUDE.md` empty. `git diff --numstat`: devops.md +2/−0; requirement +368/−6, where the 6 removed lines are the Last Updated line and the five status lines updated in place (§0 DO-2/DO-3, §5 headings, FU-1 row), not a whole-file rewrite. CRLF: 0 LF-only lines in the three new files, 0 added diff lines without CR in either edited file |
+| 9 | Tool parameters agree with the schema facts | Pass, with notes | Facts from the main session's schema load (no call), recorded as evidence: `get_runtime_logs.group_by` ∈ {`requestPath`, `level`, `source`, `deploymentId`, `branch`}; `get_runtime_logs.environment` ∈ {`production`, `preview`} only; `get_runtime_errors` has no deployment filter (`projectId`, `routes`, `since` ≤ 7 days, `until`); `list_deployments.state` values BUILDING, ERROR, INITIALIZING, QUEUED, READY, CANCELED, BLOCKED; `list_deployments` `since`/`until` are JavaScript ms timestamps, `from`/`to` deprecated. `tool-parameters.md` agrees on every one: `group_by` same five, one per call; `get_runtime_errors` "no deployment filter", seven-day maximum; `list_deployments` ms and `from`/`to` deprecated; the state list is not enumerated, and the skill keys on READY versus everything else, naming only READY and CANCELED (both in the enum). Nothing in the skill implies `get_runtime_logs.environment` takes a custom environment: §3 sends custom environments to `filter_project_envs` only, and runtime logs are scoped by `deploymentId`. See edge cases 1 and 2 |
+| 10 | Fresh-session load test | Deferred | Agent and skill files load at session start, so this needs a fresh session, as for DO-1. Not failed |
+
+### Issues Found
+
+- **Bugs:** none.
+- **Edge cases (nice to fix, non-blocking):**
+  1. `tool-parameters.md` lists `environment` for `get_runtime_logs` without its values. Add "`production` or `preview` only — a custom environment is not accepted; scope by `deploymentId`" so nobody passes a custom-environment slug there by analogy with `filter_project_envs`.
+  2. Three statements in `tool-parameters.md` are outside the facts the main session verified, and QA could not load the schemas itself (no tool-schema loader in this session): `get_runtime_logs` `since`/`until` "take an ISO date or a relative lookback"; `get_runtime_errors` takes `teamId`; `list_deployments` `state` "takes a comma-separated list". None conflicts with the verified facts. They are unverified, not wrong. Re-check them on the next schema load.
+  3. "The CLI is not installed" (§D3.4) is stated indirectly: §7 says nobody should read "not installed" as the control, and "if the main session ever installs the CLI". The control is stated outright: no `vercel` by any route. Acceptable as it stands.
+
+### Final Status
+
+- [x] All acceptance criteria pass (the load test is deferred). Ready for the user's diff review.
+- [ ] Issues found
