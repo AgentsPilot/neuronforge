@@ -904,6 +904,120 @@ export class PaymentPlanRepository {
   }
 
   /**
+   * The periods of a booking's plan that are still owed.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * READ SEPARATELY FROM THE CLOSE, and that separation is the caller's whole
+   * mechanism: each period's invoice has to be voided individually, and a bulk
+   * update would leave nothing to iterate. The ids this returns are what
+   * `cancelStagesByIds` then closes, so the close agrees with the voids.
+   *
+   * NO `subscription_id` FILTER, deliberately — and this is the one difference
+   * from `cancelOpenStagesForBooking` a later "consistency" fix would reach for.
+   * `stopBookingPlan` delegates a LIVE Stripe plan to `cancelPlan` and returns;
+   * the only subscription that reaches this read is a STOPPED one, whose
+   * remaining periods nobody will collect and which must be closed like any
+   * other. Adding `is('subscription_id', null)` here would silently leave them
+   * open, so the unit test asserts the filter's ABSENCE.
+   *
+   * EVERYTHING NOT SETTLED. `paid` records money that arrived and `cancelled`
+   * is already done; a `billed` period — invoice raised, nobody paid — is still
+   * owed and must come back. Same rule as `cancelOpenStagesForBooking` and
+   * `cancelQuoteStages`, so the three ways of calling work off agree.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findOpenPeriodsForBooking(
+    bookingId: string,
+    userId: string
+  ): Promise<
+    PaymentPlanRepositoryResult<
+      Array<{ id: string; invoice_id: string | null; installment_number: number }>
+    >
+  > {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_plan_installments')
+        .select('id, invoice_id, installment_number')
+        .eq('user_id', userId)
+        .eq('booking_id', bookingId)
+        .not('status', 'in', '(paid,cancelled)');
+
+      if (error) throw error;
+      return {
+        data: (data ?? []) as Array<{
+          id: string;
+          invoice_id: string | null;
+          installment_number: number;
+        }>,
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, bookingId, userId }, 'Failed to read the open periods for a booking');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Close exactly these periods, by id.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * BY ID, NOT BY BOOKING, and that is the correctness of it. The caller has
+   * just voided one invoice per period; closing the rows it read — rather than
+   * re-deriving them from `booking_id` — is what stops a period written between
+   * the read and the close from being cancelled with its invoice left standing.
+   * `cancelOpenStagesForBooking` is the booking-scoped transition and is NOT
+   * interchangeable with this one: it also filters `subscription_id IS NULL`
+   * and returns the rows.
+   *
+   * `user_id` stays on the update as well as the read. The ids came from a
+   * scoped read, so this is belt and braces — but an id list is exactly the
+   * shape that would carry a stranger's row if a caller ever built it from
+   * somewhere else.
+   *
+   * Answers with nothing. The caller already knows how many it asked to close
+   * and reads only the error; making this return a count would mean adding a
+   * `.select()` to a write that today returns none.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async cancelStagesByIds(
+    ids: readonly string[],
+    userId: string,
+    cancellation: {
+      reason?: string | null;
+      note?: string | null;
+      by?: string | null;
+    } = {}
+  ): Promise<PaymentPlanRepositoryResult<null>> {
+    /* An empty list would become `in.()`, which PostgREST rejects. Nothing to
+       close is not an error — the caller's own early return says the same. */
+    if (ids.length === 0) return { data: null, error: null };
+
+    try {
+      const now = new Date().toISOString();
+      const { error } = await this.supabase
+        .from('payment_plan_installments')
+        .update({
+          status: 'cancelled',
+          cancel_reason: cancellation.reason ?? null,
+          cancel_note: cancellation.note ?? null,
+          cancelled_by: cancellation.by ?? 'owner',
+          cancelled_at: now,
+          // The retry scheduler reads this; a cancelled period must not be retried.
+          next_retry_at: null,
+          updated_at: now,
+        })
+        .in('id', ids as string[])
+        .eq('user_id', userId);
+
+      if (error) throw error;
+      return { data: null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId, count: ids.length }, 'Failed to close the plan periods');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Stamp a booking's FIRST plan period with the invoice raised for it.
    *
    * ───────────────────────────────────────────────────────────────────────────
