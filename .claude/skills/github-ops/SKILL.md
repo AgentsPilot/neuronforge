@@ -14,7 +14,7 @@ This repo's operating procedure for GitHub settings, Actions and workflow runs. 
 | Getting code to `main`: branch, commit, push, PR, auto-merge, the merge queue procedure and its fallback, conflicts, retargeting a child PR | `.claude/agents/release-manager.md` § Merging the PR |
 | When a PR goes on auto-merge | `.claude/agents/team-leader.md` § Standing User Preferences, the "Auto-merge when CI is the only gate" row |
 | Docs-only skipped builds; merge-queue branches not deployed | `.claude/skills/vercel-ops/SKILL.md` §5 |
-| Worktrees, the `node_modules` junction, harness permissions | DO-5's `claude-harness-ops` skill (not built yet) |
+| Worktrees, the `node_modules` junction, harness permissions | `.claude/skills/claude-harness-ops/SKILL.md` |
 | Every read command with its named-field selector; settings only the dashboard shows | [read-commands.md](read-commands.md), [dashboard-settings.md](dashboard-settings.md) |
 
 ---

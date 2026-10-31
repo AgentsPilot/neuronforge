@@ -106,6 +106,8 @@ Bash reaches past the tool list, so these rules are the only guard. **Allowed** 
 
 Procedures and gotchas for reading repo settings, branch protection, rulesets, the merge queue, Actions and workflow runs: the `github-ops` skill.
 
+Procedures and gotchas for reading harness state (settings scopes, permissions, MCP servers, hooks, subagent tool lists, worktrees): the `claude-harness-ops` skill. You never open `~/.claude.json` or any user-scope settings file, with Read or any other tool: those reads are the main session's, by keys and counts.
+
 **Anything not on the allowed list is forbidden.** The table below names the families most likely to be reached for; it is not the full list.
 
 **Forbidden** command families:
