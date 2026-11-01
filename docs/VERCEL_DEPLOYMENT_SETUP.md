@@ -1,5 +1,22 @@
 # 🚀 Vercel Deployment Setup Guide
 
+> 🛑 **STALE — DO NOT FOLLOW THIS GUIDE. Last accurate around 2025-10-30.**
+>
+> Kept for history only. Six things in it are now wrong, three of them harmful:
+>
+> | What it says | Reality |
+> |---|---|
+> | Two Supabase keys, in plaintext | **This doc is where they leaked from.** Both were revoked 2026-11-01 and are dead on every surface. Keys are never written in a committed file. |
+> | "copy from `.env.local`" and paste a `eyJ…` JWT | That key format is retired. Production uses `sb_publishable_…` / `sb_secret_…`. |
+> | "Set all variables to apply to Production, Preview, **and** Development" | Contradicts the environment split — the point of which is that Preview and Development must **not** hold production credentials. |
+> | `neuronforge-kohl.vercel.app` throughout | Not a current domain. |
+> | `profiles` RLS policy SQL to run by hand | `profiles` has since been hardened; running this could re-open a closed hole. Never hand-apply policy SQL from a doc this old. |
+> | `console.log` output as the debugging path | Violates CLAUDE.md rule 3 (structured Pino logging). |
+>
+> **Authoritative source:** `docs/ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md`.
+
+---
+
 ## ✅ Required Configuration Steps
 
 ### 1. Vercel Environment Variables
@@ -13,10 +30,10 @@ Add these environment variables in your Vercel project settings:
 NEXTAUTH_URL=https://neuronforge-kohl.vercel.app
 NEXT_PUBLIC_APP_URL=https://neuronforge-kohl.vercel.app
 
-# Supabase (copy from .env.local)
+# Supabase — values come from the Supabase dashboard, NOT from a file
 NEXT_PUBLIC_SUPABASE_URL=https://jgccgkyhpwirgknnceoh.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnY2Nna3locHdpcmdrbm5jZW9oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNjY3OTMsImV4cCI6MjA2Nzc0Mjc5M30.h6VfcNOsEusgykZ9nR8mUStMrmbePp4ThFLlZHpqtWo
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnY2Nna3locHdpcmdrbm5jZW9oIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MjE2Njc5MywiZXhwIjoyMDY3NzQyNzkzfQ.NkUzCksSNNDy0UNr3jD-JYPAHUfEBKXc4wM6zqGEr2s
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<set in Vercel — never written in a committed file>
+SUPABASE_SERVICE_ROLE_KEY=<set in Vercel — never written in a committed file>
 SUPABASE_URL=https://jgccgkyhpwirgknnceoh.supabase.co
 
 # OpenAI
