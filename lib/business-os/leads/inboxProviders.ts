@@ -5,10 +5,11 @@
  * WHY THIS IS A SEPARATE FILE
  *
  * These belong with `inboxChannel.ts` by subject, and cannot live there by
- * dependency: that module imports `supabaseServer`, and the card and the setup
- * dialog are `'use client'`. A TYPE import from it is erased at compile time
- * and harmless, but `PROVIDER_NAMES` is a VALUE — importing it would pull the
- * service-role Supabase client into a browser bundle.
+ * dependency: that module imports repositories, which are server-side only
+ * (CLAUDE.md rule 1), and the card and the setup dialog are `'use client'`. A
+ * TYPE import from it is erased at compile time and harmless, but
+ * `PROVIDER_NAMES` is a VALUE — importing it would pull the service-role
+ * Supabase client into a browser bundle.
  *
  * So anything a client component needs by value lives here, where there is
  * nothing to pull. `inboxChannel.ts` re-exports all of it, so server code can

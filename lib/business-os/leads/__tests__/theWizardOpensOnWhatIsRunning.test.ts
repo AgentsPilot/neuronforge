@@ -30,10 +30,16 @@
  */
 
 /*
- * `inboxChannelStatus` reads `supabaseServer.from('agents')` directly rather
- * than through the repository, so the table is what has to answer. Measured,
- * not assumed: the first version of this file mocked `agentRepository` and
- * every test failed with an empty channel list.
+ * The TABLE is what answers here, even though `inboxChannelStatus` now reads
+ * through repositories: every repository singleton resolves `supabaseServer` at
+ * construction, so mocking that module means the singletons hold this fake.
+ * Measured, not assumed — these five cases passed unchanged across the move.
+ *
+ * Kept at this seam on purpose. It is the cheaper fake for "given these rows,
+ * what does the row say", which is all this suite asks. The questions it CANNOT
+ * ask — what the call site requested, and what happens when a read fails — are
+ * covered one layer up, against the repositories, in
+ * `theChannelCountsItsLeads.test.ts`.
  */
 let agents: unknown[] = [];
 let connections: unknown[] = [];
