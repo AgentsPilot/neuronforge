@@ -70,7 +70,7 @@ describe('what the drawer never has (§10.1)', () => {
     expect(container.querySelector('a[href*="export"]')).toBeNull();
     expect(screen.queryByRole('button', { name: /download|export/i })).toBeNull();
     // The warning names the place instead.
-    expect(container.textContent).toContain('Settings → Download my data');
+    expect(container.textContent).toContain('Settings → Export data');
   });
 
   it('no mailto outside the blocker, not-available and failure lines', () => {
@@ -111,7 +111,7 @@ describe('the statement box', () => {
     renderDrawer();
     expect(box()).toBeInTheDocument();
     expect(button()).toBeDisabled();
-    fireEvent.change(box(), { target: { value: 'I have downloaded my data' } });
+    fireEvent.change(box(), { target: { value: 'I have exported my data' } });
     expect(button()).toBeDisabled();
     fireEvent.change(box(), { target: { value: DELETION_STATEMENTS.en.toUpperCase() } });
     expect(button()).toBeEnabled();
