@@ -41,14 +41,14 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-const findByTag = jest.fn();
+const findStateByTag = jest.fn();
 const findByUserAndPlugins = jest.fn();
 const getLeadAutosendEnabled = jest.fn();
 const findLeadsByVia = jest.fn();
 const loggerWarnMock = jest.fn();
 
 jest.mock('@/lib/repositories/AgentRepository', () => ({
-  agentRepository: { findByTag: (...args: unknown[]) => findByTag(...args) },
+  agentRepository: { findStateByTag: (...args: unknown[]) => findStateByTag(...args) },
 }));
 jest.mock('@/lib/repositories/PluginConnectionRepository', () => ({
   pluginConnectionRepository: {
@@ -84,15 +84,18 @@ import { INBOX_CHANNEL_TAG } from '../inboxProviders';
 
 const USER = 'owner-1';
 
-/** One channel agent, as `findByTag` hands it over. */
+/**
+ * One channel agent, in the four columns `findStateByTag` actually selects.
+ *
+ * Deliberately NOT a whole `Agent`: the narrow projection is the contract, and
+ * a fixture carrying `tags` or `agent_name` would let a reader believe this
+ * code may read them.
+ */
 function channelAgent(provider: string, overrides: Record<string, unknown> = {}) {
   return {
     id: `agent-${provider}`,
-    user_id: USER,
-    agent_name: `Website enquiries from ${provider}`,
     status: 'active',
     last_run: '2026-10-30T17:55:07.000Z',
-    tags: [INBOX_CHANNEL_TAG, `${INBOX_CHANNEL_TAG}:${provider}`],
     agent_config: { inbox_channel: { provider } },
     ...overrides,
   };
@@ -105,7 +108,7 @@ const lead = (provider?: string) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
-  findByTag.mockResolvedValue({ data: [channelAgent('google-mail')], error: null });
+  findStateByTag.mockResolvedValue({ data: [channelAgent('google-mail')], error: null });
   findByUserAndPlugins.mockResolvedValue({
     data: [{ plugin_name: 'google-mail', status: 'active' }],
     error: null,
@@ -150,13 +153,24 @@ describe('the count reaches the surfaces', () => {
     expect(days).toBeLessThan(30.1);
   });
 
+  it('finds the channels by the family tag, for this owner', async () => {
+    /*
+     * The tag is ours and the agent's name is the owner's, which is why the
+     * channel is found by tag at all. A wrong tag here returns nothing and
+     * reads as an owner who has set nothing up.
+     */
+    await inboxChannelStatus(USER);
+
+    expect(findStateByTag).toHaveBeenCalledWith(USER, INBOX_CHANNEL_TAG);
+  });
+
   it('counts each mailbox separately rather than sharing one total', async () => {
     /*
      * Two addresses are two independent sources of leads, and the card shows a
      * number per row. A single total put on both would tell an owner their
      * quiet mailbox is as busy as their busy one.
      */
-    findByTag.mockResolvedValue({
+    findStateByTag.mockResolvedValue({
       data: [channelAgent('google-mail'), channelAgent('outlook')],
       error: null,
     });
@@ -196,7 +210,7 @@ describe('the count reaches the surfaces', () => {
      * once — on the first — and never duplicated. Counting it on both would
      * make the rows add up to more leads than the business received.
      */
-    findByTag.mockResolvedValue({
+    findStateByTag.mockResolvedValue({
       data: [channelAgent('google-mail'), channelAgent('outlook')],
       error: null,
     });
@@ -248,7 +262,7 @@ describe('a read that did not happen is not reported as a fact', () => {
      * the setup invitation. Without the log, a broken read looks like an owner
      * who has not started.
      */
-    findByTag.mockResolvedValue({ data: null, error: new Error('boom') });
+    findStateByTag.mockResolvedValue({ data: null, error: new Error('boom') });
 
     const status = await inboxChannelStatus(USER);
 
