@@ -37,7 +37,7 @@ jest.mock('@/lib/business-os/LanguageContext', () => ({
 import { DownloadMyDataButton } from '../DownloadMyDataButton';
 import { EXPORT_DRAWER_COPY } from '../exportDrawerCopy';
 import { EXPORT_TIME_FIELDS } from '../formatExportTime';
-import { enabledModules } from '@/lib/business-os/data-export/exportModules';
+import { EXPORT_MODULES, enabledModules } from '@/lib/business-os/data-export/exportModules';
 
 const en = EXPORT_DRAWER_COPY.en;
 const he = EXPORT_DRAWER_COPY.he;
@@ -112,6 +112,8 @@ describe('the export drawer', () => {
     await renderOn();
     await openDrawer();
     for (const entry of enabledModules()) expect(screen.getByTestId(`export-module-${entry.id}`)).toHaveAttribute('data-state', 'unchecked');
+    // A switched-off module is not offered at all (user decision 2026-10-31).
+    for (const entry of EXPORT_MODULES.filter((m) => !m.on)) expect(screen.queryByTestId(`export-module-${entry.id}`)).toBeNull();
     expect(screen.getByTestId('export-submit')).toBeDisabled();
     expect(screen.getByTestId('export-drawer-files')).toHaveTextContent(en.filesNotIncluded);
   });
@@ -131,13 +133,14 @@ describe('the export drawer', () => {
   it('Export sends the ticked modules in map order; the pop-up confirms with the address; the ticks clear; the history reloads', async () => {
     await renderOn();
     await openDrawer();
-    tick('website');
+    // Two modules the real map ships switched on, ticked against map order.
+    tick('quotes');
     tick('clients');
     const historyCallsBefore = mockHistory.mock.calls.length;
     await act(async () => {
       fireEvent.click(screen.getByTestId('export-submit'));
     });
-    expect(mockStartModule).toHaveBeenCalledWith(['clients', 'website']);
+    expect(mockStartModule).toHaveBeenCalledWith(['clients', 'quotes']);
     // SA CR-3: the address in the toast is isolated with FSI / PDI.
     expect(mockToastSuccess).toHaveBeenCalledWith(`Export started. The exported files will be sent to ⁨${EMAIL}⁩ once ready.`);
     // SA CR-1: the same sentence is announced in the drawer's own polite status region, the address in <bdi>.

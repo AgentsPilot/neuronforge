@@ -62,6 +62,9 @@ const noRead = () => {
   expect(mockFirst).not.toHaveBeenCalled();
   expect(mockRange).not.toHaveBeenCalled();
 };
+// The default preset is this_month, which on the 1st of a month is today only and
+// reads no range (none_in_window). Tests that need a range read name 7d.
+const SEVEN_DAYS = '?preset=7d';
 const noStore = (res: Response) => expect(res.headers.get('cache-control')).toBe('no-store');
 
 beforeEach(() => {
@@ -142,7 +145,7 @@ describe('200: the server-built view (E-99)', () => {
   });
 
   it('returns the view and never the raw rows', async () => {
-    const { data } = await (await call()).json();
+    const { data } = await (await call(SEVEN_DAYS)).json();
     expect(data.state).toBe('ready');
     expect(Object.keys(data).sort()).toEqual(['credits', 'firstSnapshotDate', 'planMix', 'state', 'weekly', 'window']);
     expect(JSON.stringify(data)).not.toMatch(/as_of_date|"metric"|"rows"/);
@@ -155,7 +158,7 @@ describe('200: the server-built view (E-99)', () => {
   });
 
   it('the info line carries no value', async () => {
-    await call();
+    await call(SEVEN_DAYS);
     const line = mockLog.info.mock.calls.find((c) => c[1] === 'Admin read the Finance history');
     expect(line?.[0]).toMatchObject({ state: 'ready', rows: 2 });
     expect(JSON.stringify(mockLog.info.mock.calls)).not.toContain('12.5');
@@ -177,7 +180,7 @@ describe('E-100 and HS-FR-16: not installed and failures', () => {
 
   it('a read error (the ceiling included): 500, the fixed message, details only in development', async () => {
     mockRange.mockResolvedValue({ data: null, error: new Error('Finance snapshot read reached its ceiling') });
-    const res = await call();
+    const res = await call(SEVEN_DAYS);
     expect(res.status).toBe(500);
     noStore(res);
     expect(await res.json()).toEqual({ success: false, error: 'Could not read the finance history.' });

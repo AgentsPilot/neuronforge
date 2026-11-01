@@ -319,6 +319,15 @@ interface Harness {
 
 const accepted = (id: string): SendEmailResult => ({ sent: true, provider: 'resend', providerMessageId: id });
 
+/**
+ * The real map with every module switched on. The worker tests are about the
+ * run's mechanics (claims, parts, retries, budget), not about which modules
+ * the product ships, so the harness uses this map unless a test passes its
+ * own. Switched-off tests start from it and turn one module off. The product
+ * switches themselves are pinned in exportModules.test.ts.
+ */
+const ALL_ON: readonly ExportModuleDefinition[] = EXPORT_MODULES.map((m) => ({ ...m, on: true }));
+
 function harness(opts: { moduleMap?: readonly ExportModuleDefinition[] } = {}): Harness {
   let t = T0;
   const events: string[] = [];
@@ -357,7 +366,7 @@ function harness(opts: { moduleMap?: readonly ExportModuleDefinition[] } = {}): 
       lines: linesFor[input.moduleId] ?? ['row,1', 'row,2'],
       rowCountBySection: {},
     })),
-    moduleMap: opts.moduleMap ?? EXPORT_MODULES,
+    moduleMap: opts.moduleMap ?? ALL_ON,
     send: jest.fn(async (payload: SendEmailParams) => {
       sends.push({ at: t, payload });
       events.push('send');
@@ -448,6 +457,27 @@ describe('T-W1: the happy path, three modules of one request', () => {
   });
 });
 
+// User decision 2026-10-31 (SA Option A): Services is not offered, but its
+// names still label quotes. Over the REAL map, not ALL_ON.
+describe('T-W1b: a quotes job on the real map reads the lookup sections', () => {
+  it('readSections is called a second time with clients and services, and the builder gets those rows', async () => {
+    expect(EXPORT_MODULES.find((m) => m.id === 'services')?.on).toBe(false);
+    const h = harness({ moduleMap: EXPORT_MODULES });
+    h.store.add({ user_id: USER_A, request_id: REQ_A, module: 'quotes' });
+    await h.run();
+    const readSections = h.deps.readSections as jest.Mock;
+    expect(readSections).toHaveBeenCalledTimes(2);
+    expect(readSections.mock.calls[0][1]).toEqual(['quotes']);
+    expect(readSections.mock.calls[1][1]).toEqual(['clients', 'services']);
+    const builder = h.deps.buildJoinedCsv as jest.Mock;
+    expect(builder).toHaveBeenCalledTimes(1);
+    const input = builder.mock.calls[0][0] as JoinedCsvInput;
+    expect(Object.keys(input.lookupRowsBySection ?? {}).sort()).toEqual(['clients', 'services']);
+    expect(input.lookupRowsBySection?.services).toEqual([{ id: 'r1' }]);
+    expect(h.sends).toHaveLength(1);
+  });
+});
+
 describe('T-W2: a module larger than one email', () => {
   it('is cut into X parts keyed export:{id}:1..X, each within the budget with BOM and header, parts_total fixed first', async () => {
     const h = harness();
@@ -472,7 +502,7 @@ describe('T-W2: a module larger than one email', () => {
 
 describe('T-W3: pacing', () => {
   it('every send of the run, parts and notices, is at least 600 ms after the one before', async () => {
-    const off = EXPORT_MODULES.map((m) => (m.id === 'services' ? { ...m, on: false } : m));
+    const off = ALL_ON.map((m) => (m.id === 'services' ? { ...m, on: false } : m));
     const h = harness({ moduleMap: off });
     h.linesFor.clients = bigModule(15);
     h.store.add({ user_id: USER_A, request_id: REQ_A, module: 'clients' });
@@ -677,7 +707,7 @@ describe('T-W11 / T-W12: too large', () => {
 
 describe('T-W13 / T-W14: a module switched off or unknown fails closed (SA-P4)', () => {
   it('switched off: failed module_switched_off, no section read, no builder, "not available" email', async () => {
-    const off = EXPORT_MODULES.map((m) => (m.id === 'services' ? { ...m, on: false } : m));
+    const off = ALL_ON.map((m) => (m.id === 'services' ? { ...m, on: false } : m));
     const h = harness({ moduleMap: off });
     const job = h.store.add({ user_id: USER_A, request_id: REQ_A, module: 'services' });
     await h.run();
@@ -1102,7 +1132,7 @@ describe('T-W23: no address, file name or cell value in any log line, the transp
       text: async () => '{"id":"re_live"}',
       json: async (): Promise<unknown> => ({ id: 're_live' }),
     }));
-    const off = EXPORT_MODULES.map((m) => (m.id === 'services' ? { ...m, on: false } : m));
+    const off = ALL_ON.map((m) => (m.id === 'services' ? { ...m, on: false } : m));
     const h = harness({ moduleMap: off });
     h.deps.send = sendEmail;
     h.linesFor.clients = ['client,SECRET-CELL-VALUE', 'client,another'];
@@ -1127,7 +1157,7 @@ describe('T-W23: no address, file name or cell value in any log line, the transp
 
 describe('T-W24: audit details carry exactly the XC-13 keys', () => {
   it('SENT and FAILED', async () => {
-    const off = EXPORT_MODULES.map((m) => (m.id === 'services' ? { ...m, on: false } : m));
+    const off = ALL_ON.map((m) => (m.id === 'services' ? { ...m, on: false } : m));
     const h = harness({ moduleMap: off });
     h.store.add({ user_id: USER_A, request_id: REQ_A, module: 'clients' });
     h.store.add({ user_id: USER_A, request_id: REQ_A, module: 'services' });
