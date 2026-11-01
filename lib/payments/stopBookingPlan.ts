@@ -129,16 +129,24 @@ export async function stopBookingPlan(input: {
    * index `idx_plan_subs_one_live_per_booking` covers exactly the four
    * non-stopped statuses, so at most one row can match.
    *
-   * The error stays deliberately UNREAD, exactly as it was before this was
-   * routed, so a failed read still falls through to the invoice path — and
-   * closes local periods on a plan that may still be charging. That is a real
-   * hazard and it is NOT introduced here: it is recorded as FU-Q6 rather than
-   * fixed inside a commit that only moves the query.
+   * A FAILED READ REFUSES, and has to: "no live plan" and "could not find
+   * out whether there is one" both arrive here as the same `null`. Treating
+   * the second as the first closes the local periods and voids the invoices
+   * on a booking whose subscription keeps its schedule — the owner is shown
+   * a stopped plan while the client goes on being charged. That is the exact
+   * failure this branch exists to prevent, reached by a different road.
+   *
+   * So the error is read, as it is for every other read in this function.
+   * The owner gets a refusal they can retry, and nothing is written either
+   * way. (This was carried as FU-Q6 when the query was first routed.)
    */
-  const { data: livePlan } = await paymentPlanSubscriptionRepository.findLiveForBooking(
-    bookingId,
-    userId
-  );
+  const { data: livePlan, error: planError } =
+    await paymentPlanSubscriptionRepository.findLiveForBooking(bookingId, userId);
+
+  if (planError) {
+    log.error({ err: planError }, 'Could not check whether this plan is billed by Stripe');
+    return { ...empty, error: "Could not check this booking's payment plan" };
+  }
 
   if (livePlan) {
     if (!input.stripe) {
