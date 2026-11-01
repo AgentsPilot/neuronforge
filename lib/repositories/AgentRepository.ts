@@ -239,20 +239,6 @@ export class AgentRepository {
   async findByTag(userId: string, tag: string): Promise<AgentRepositoryResult<Agent[]>> {
     try {
       const { data, error } = await this.supabase
-        /*
-         * `select('*')` is load-bearing here — narrow it only together with
-         * the readers below.
-         *
-         * `lib/business-os/leads/inboxChannel.ts` takes `last_run` off these
-         * rows, and the shared `Agent` type does not declare that column, so it
-         * reads it through a cast. Narrow the column list and the value becomes
-         * `undefined` with nothing to catch it: not the compiler, which the
-         * cast hides it from, and not the suites, whose mocks supply the field
-         * themselves. Every running channel would then report `never_run`, and
-         * its owner would be told a working mailbox had never run — the same
-         * shape of silent-wrong-answer bug as the phantom `deleted_at` filter
-         * this reader was rewired to escape.
-         */
         .from('agents')
         .select('*')
         .eq('user_id', userId)
