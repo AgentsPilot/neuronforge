@@ -23,6 +23,8 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 - [DO-2 Specification — supabase-ops skill](#do-2-specification--supabase-ops-skill)
 - [DO-3 Specification — vercel-ops skill](#do-3-specification--vercel-ops-skill)
 - [DO-4 Specification — github-ops skill](#do-4-specification--github-ops-skill)
+- [DO-5 Specification — claude-harness-ops and env-drift-audit skills](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills)
+- [SA Review — DO-5](#sa-review--do-5)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
 - [7. Acceptance Criteria (DO-1)](#7-acceptance-criteria-do-1)
 - [8. Out of Scope / Future Roadmap](#8-out-of-scope--future-roadmap)
@@ -43,8 +45,8 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-1 | Agent definition, `env-change-protocol` skill, CLAUDE.md row, TL handshake rows, RM boundary note, SA plan-review note | ✅ MERGED 2026-10-30 (PR #578). Fresh-session tool-list smoke test still owed. See [DO-1 implementation notes](#do-1-implementation-notes) |
 | DO-2 | `supabase-ops` skill | ✅ MERGED 2026-10-30 (PR #579). See [DO-2 implementation notes](#do-2-implementation-notes). Follow-ups FU-1 to FU-3 logged in [SA Review — DO-2](#sa-review--do-2): FU-1 ✅ MERGED 2026-10-30 (PR #584); FU-2 ⬜ (next migration that ships a checker); FU-3 ⬜ (DO-5) |
 | DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
-| DO-4 | `github-ops` skill | 🟡 User approved the diff 2026-10-31; PR open, auto-merge on. See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
-| DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | ⬜ |
+| DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
+| DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) 🟡 DO-5a built, SA code approved, QA passed 2026-10-31; user approved the diff, PR open with auto-merge (see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) ⬜ after 5a merges, with a short re-check. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file) awaits the user. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
 | DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | ⬜ |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
@@ -199,13 +201,15 @@ Specified in detail in [DO-3 Specification](#do-3-specification--vercel-ops-skil
 
 How to read and change Vercel state: projects, env vars by name and target (Production, Preview, Development), crons, domains, deployments and their logs. How to wait for a deploy to report done before testing, and how to find which deployment holds a given value. Must carry the gotchas: **the Vercel CLI is not installed yet** (MCP first, CLI only once installed), and **docs-only changes skip CI and the Vercel deploy via `.github/ci/non-deploying-change.sh` (exit 0 means skip)**, so a quick green on a docs PR is correct.
 
-### DO-4 `github-ops` skill 🟡
+### DO-4 `github-ops` skill ✅
 
 Specified in detail in [DO-4 Specification](#do-4-specification--github-ops-skill). Original scope:
 
 How to read and plan changes to repo and org settings: branch protection, required checks, merge queue, auto-merge setting, secret scanning, Actions permissions and workflows. Branch-protection changes are in the user-executes tier. Must carry the gotchas: **auto-merge only when CI is the sole gate**; **pace bulk PR and push activity** (abuse-detection suspension); **never `git stash`** (the stash list is shared across parallel sessions and worktrees).
 
-### DO-5 `claude-harness-ops` skill + `env-drift-audit` skill ⬜
+### DO-5 `claude-harness-ops` skill + `env-drift-audit` skill 🟡
+
+Specified in detail in [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills). Original scope:
 
 `claude-harness-ops`: how to read and change `.claude/settings*.json`, permissions, MCP servers, hooks and worktrees safely. Must carry the gotcha: **worktrees share `node_modules` through a Windows junction, and `git worktree remove --force` deletes the shared contents. Unlink the junction first.**
 
@@ -623,6 +627,218 @@ Field names (V13 in SA Review — DO-3, applied to GitHub): Dev checks every `--
 
 ---
 
+## DO-5 Specification — claude-harness-ops and env-drift-audit skills
+
+**By BA — 2026-10-31.** Branch `feature/devops-harness-ops`. Config/docs-only slice: no application code, no CI job, no CI time.
+
+DO-5 builds on `devops.md`, `env-change-protocol`, `supabase-ops`, `vercel-ops` and `github-ops`, and **does not repeat them**. The eight steps, the tiers, the approval channel, the change-record template, the public-repo rule, the Bash/`gh` allowed list, the read-only SQL rules (a)–(d) and every platform's read procedure stay where they are. `claude-harness-ops` holds only what is specific to the Claude Code harness. `env-drift-audit` holds only how to compare expected with live state and how to report it; every live read it needs is a pointer to the platform skill that owns it. DO-5 also settles three deferred items: **FU-3** (a read-only Supabase connection for DO), **FU-4** (a Preview-only Vercel env write) and the **ClickUp tools** decision (R3).
+
+**Recommended split (Q-D5-1):**
+
+| Slice | Scope | Why separate |
+|---|---|---|
+| **DO-5a** | `claude-harness-ops` skill; FU-3 (plan + `devops.md` tool-list change); FU-4 and ClickUp decisions recorded | Small, self-contained. FU-3 is a harness change, so it belongs with the harness skill. |
+| **DO-5b** | `env-drift-audit` skill | Depends on all four platform skills and on FU-3's SQL connection. Its design (expected-state sources, severity, report location) needs its own SA pass. |
+
+The rest of this section specifies both, so SA can rule on everything at once. If SA accepts the split, Dev builds DO-5a first; DO-5b gets a short re-check before its build.
+
+### D5.1 Context and findings
+
+| # | Finding (checked 2026-10-31) | Consequence for DO-5 |
+|---|---|---|
+| F1 | `.claude/settings.json` is tracked. It holds one Bash allow rule and nothing else: no deny rules, no hooks, no MCP settings. No `.mcp.json` exists in the repo. | The project's harness config is almost empty. Most harness state is in user scope (`~/.claude/settings.json`, `~/.claude.json`), plugins, and the local settings file. |
+| F2 | **`.claude/settings.local.json` is also tracked** (`git ls-files`), and has been changed in many commits. It holds only `permissions.allow` (Bash and Read rules). A BA pattern scan (counts only) of its current content and its git history found no secret-shaped string. Some entries carry an absolute personal path. *(SA-added)* | Claude Code documents this file as personal and says it keeps it out of git when it creates it. Here it is tracked in a **public** repo, so every "Yes, and don't ask again" approval can be committed and published. Q-D5-2. |
+| F3 | Claude Code treats a **tracked** local settings file as repository-supplied: its allow rules wait until the folder is trusted ([permissions § When your local settings file needs trust](https://code.claude.com/docs/en/permissions)). On Windows, the local file stays next to `.claude/settings.json` in the starting directory instead of the repo root ([settings § Where Claude Code keeps the local file](https://code.claude.com/docs/en/settings)). | In this repo each worktree reads **its own checked-out copy**. An approval given in a worktree edits a tracked file on that branch, and can ride along in a PR. |
+| F4 | Settings precedence: managed → command line → project local → shared project → user. List keys such as `permissions.allow` **merge** across files. Deny beats ask beats allow; an allow rule cannot carve an exception out of a deny ([settings § Settings precedence](https://code.claude.com/docs/en/settings), [permissions](https://code.claude.com/docs/en/permissions)). | The skill states this once, so a harness plan reads every scope, not one file. |
+| F5 | MCP servers have three scopes: local and user (stored in `~/.claude.json`, untracked) and project (`.mcp.json`, tracked). `.mcp.json` supports `${VAR}` expansion in `url` and `headers`. Project servers need approval in interactive sessions. Plugin servers are named `mcp__plugin_<plugin>_<server>__<tool>` ([mcp](https://code.claude.com/docs/en/mcp)). Local-scope servers are stored under the project's path. | A server URL that carries a project ref must never go in `.mcp.json` as a literal. Whether a local-scope server loads in a worktree (a different path) is not stated in the docs; Dev checks it (Q-D5-4). |
+| F6 | **FU-3 research.** The hosted Supabase MCP server takes a `read_only=true` URL parameter that "execute[s] all queries as a read-only Postgres user", plus `project_ref` (one project, no account tools) and `features` (tool groups). Supabase recommends project scoping ([Supabase MCP guide](https://supabase.com/docs/guides/getting-started/mcp); [supabase-mcp README](https://github.com/supabase-community/supabase-mcp)). Neither page lists every tool that read-only mode disables. | Read-only mode enforces rule (a) **in the database**, not in prose. Which other tools it removes is checked at build, not assumed. |
+| F7 | A project subagent can declare `mcpServers` (by name, or inline), its own `hooks`, and `disallowedTools`. Inline servers and frontmatter hooks of a **project** agent load only after the folder is trusted; until then Claude Code skips the hooks and logs an error ([sub-agents](https://code.claude.com/docs/en/sub-agents)). An entry in `tools:` that does not resolve is dropped silently (R2). | A subagent hook **fails open** when the folder is not trusted. A tool-list entry for a server that is not configured **fails closed** (the tool is simply missing). |
+| F8 | **FU-4 research.** Settings-file permission rules match MCP tools by **name only**: Claude Code skips any `mcp__` rule with parentheses in a settings file. A parameter rule for an MCP tool works only as a deny rule passed with `--disallowedTools` for one session, and only on a top-level scalar parameter, never a field inside an array or object ([permissions § Match by input parameter](https://code.claude.com/docs/en/permissions)). A `PreToolUse` hook receives `tool_name` and the full `tool_input`, and can deny with exit code 2 or `permissionDecision: "deny"`; MCP matchers need a regex such as `mcp__server__.*` ([hooks](https://code.claude.com/docs/en/hooks)). Vercel tokens can be scoped to an account, a team or a project; BA found no token scoped to one environment ([Vercel access tokens](https://vercel.com/docs/accounts/access-tokens), [project-scoped tokens](https://vercel.com/changelog/project-scoped-tokens)). | No **permission rule** can enforce "target is exactly Preview": the env tools' target is a list, which parameter rules cannot match. Only a hook can, and a hook is a new pattern (CLAUDE.md rule 7) that fails open when untrusted (F7). Q-D5-6. |
+| F9 | Worktree hazards already learned in this repo: the shared `node_modules` junction; the shared stash list (`github-ops` §8); local test results are authoritative only while both trees' dependency sets agree, and CI's `npm ci` is the authority (`docs/workplans/admin-authz-unification.md`, SA ruling (c)); never kill processes by image name (`docs/retrospectives/STRIPE_CONNECT_REFUND_WEBHOOK_RETROSPECTIVE.md`, lesson 4). `.claude/worktrees/` is gitignored. | The skill gathers these in one place, as rules with the reason, and points to `github-ops` for the stash. |
+
+### D5.2 What the skills must teach
+
+#### D5.2.1 `claude-harness-ops` (DO-5a)
+
+Each item says what the skill states. It reads like the other ops skills: a pointer table first, numbered sections, a closing checklist.
+
+**(a) Where harness state lives, and how to read it** (Read tier)
+
+| Source | Tracked? | How to read it |
+|---|---|---|
+| Managed settings | No | `/status` → `Setting sources` (main session). DO reports "managed: present / absent", never its content. |
+| `~/.claude/settings.json` (user) | No | Keys and counts only (`jq 'keys'`, `jq '.permissions.allow \| length'`). Never print the file. |
+| `.claude/settings.json` (shared project) | Yes | Read in full; it is public. |
+| `.claude/settings.local.json` (project local) | **Yes, today** (F2) | Keys and counts first. Read entries only to check a planned change; never paste them into chat. |
+| `~/.claude.json` | No | **Never printed or read in full, and never opened by DO.** It holds account details, MCP server configs (URLs, headers) and trust decisions. Server **names** and status only, in the main session. `claude mcp list` prints each server's URL, so the session reports names and status from it and never repeats a URL; `claude mcp get` prints headers and is not used. *(SA-corrected)* |
+| `.mcp.json` | Would be | None exists. If one is added, it uses `${VAR}` for any ref or token (F5). |
+| Plugin servers and agents | No | Server names from the tool names (`mcp__plugin_…`). |
+| Subagent frontmatter (`.claude/agents/*.md`) | Yes | `tools:`, `disallowedTools`, `mcpServers`, `hooks`, `permissionMode`. |
+
+- Precedence and merging (F4) in one short table. Lists merge; deny wins; a hook never overrides a deny rule.
+- Checks that only the main session can run: `/status`, `/permissions`, `/mcp`, `claude doctor` (rejected entries). DO asks the main session for them in its report.
+
+**(b) Changing settings and permissions**
+
+- Every harness change follows `env-change-protocol`. The skill gives the harness tier table (Q-D5-3): adding or widening an allow rule, an MCP server, a hook, or a `permissionMode` is a **production-tier** plan (SA reviews, the user executes); removing an allow rule or adding a deny rule is **reversible**.
+- **Who edits the file.** Tracked harness files (`.claude/settings.json`, `.claude/agents/*.md`) change through a PR like any repo file. User-scope files and `~/.claude.json` are changed by the user only. DO never edits any of them (`devops.md` § What you may write).
+- **Before-state and probe.** The before-state is the keys and counts from (a). The probe is the behaviour: a new deny rule is proven by a call that it blocks; a new allow rule by a call that no longer prompts; a removed rule by a call that prompts again. Settings reload live, except a few keys read at start ([settings § When edits take effect](https://code.claude.com/docs/en/settings)). Agent files and tool lists load at **session start**, so a change to them is verified in a fresh session.
+- **The tracked local file (F2, F3).** Until Q-D5-2 is settled: before any commit, check whether `.claude/settings.local.json` is in the diff, and never commit it by accident. Never approve "don't ask again" for a command that embeds a secret, a token, a URL with an ID, or an absolute personal path, because the rule is written to a tracked file in a public repo.
+
+**(c) MCP servers**
+
+- Scopes and where each is stored (F5). A server URL with a project ref or a token goes only into user or local scope, never into a tracked file. A tracked config uses `${VAR}`.
+- Server names: a name the user chooses (stable, by role, for example a read-only Supabase server) may be written in tracked text. A claude.ai connector's instance ID never may (R1).
+- **After any server change:** a fresh-session check that every name in DO's `tools:` still resolves (R2 smoke test). An unresolved name is dropped silently, so "the agent loaded" proves nothing.
+- Adding a server is production tier: it gives every session in that scope new tools.
+
+**(d) Hooks**
+
+- What a hook can do: run any command, with the user's credentials, before or after a tool call; deny a call (F8).
+- A new hook is a **new pattern** (CLAUDE.md rule 7): SA reviews it before it is added.
+- **A hook must fail closed to count as a guard.** A project subagent's frontmatter hook is skipped when the folder is not trusted (F7), so it is never the only guard on a write.
+
+**(e) Worktrees** (the gotchas, with the reason for each)
+
+- **The `node_modules` junction.** A worktree's `node_modules` is a Windows junction to the main checkout's. `git worktree remove --force` follows the junction and **deletes the shared contents**, breaking every worktree and the main checkout. Safe removal, verified (PowerShell, main session with the user):
+  1. `$j = Get-Item '<wt>/node_modules'; $j.LinkType; $j.Target` — note the target. There can be more than one shared folder, so the target is read, never assumed to be the main checkout's. If `LinkType` is `SymbolicLink` or anything else not empty and not `Junction`, stop and ask the user. *(SA-corrected)*
+  2. `if ($j.LinkType -eq 'Junction') { $j.Delete() }`. This removes the link only.
+  3. Check that `Test-Path '<wt>/node_modules'` is now `False`, and that `<target>/next/package.json` still exists, where `<target>` is the folder noted in step 1. *(SA-corrected)*
+  4. Only then run `git worktree remove '<wt>'`, without `--force`. If it refuses, report why; never add `--force`, `rm -rf` or `Remove-Item -Recurse` to get past it while any link may remain. *(SA-corrected)*
+- `cmd /c rmdir` is not a fallback: the PowerShell tool blocks it, and Git Bash mangles quoted paths with spaces.
+- **Baseline comparisons** (for example "was this test red before my change?") use `git archive <base>` extracted into a scratch directory, not a temporary worktree, so no junction is created or removed.
+- **Never `git stash`.** Pointer to `github-ops` §8; not restated.
+- **Shared dependencies.** Local test results count only while the worktree's and the main checkout's dependency sets agree. CI's `npm ci` is the authority (F9).
+- **Shared machine.** Never kill processes by image name (`taskkill /IM`, `pkill`); that reaches every session. Identify a hung process by PID and working directory, and ask the user (F9).
+- DO's part: `git worktree list` only. `git worktree remove` is already forbidden in `devops.md`.
+
+**(f) Public-repo specifics for the harness**
+
+- Never in tracked text: a project ref, a connector instance ID, a URL with an ID, a token, an absolute personal path, or the content of `~/.claude.json` or user settings.
+- An allow rule is a public statement of what the session may run without asking. Keep tracked rules narrow.
+
+**(g) FU-3: a read-only Supabase connection for DO** (Q-D5-4)
+
+- **What the user does (production tier, a harness change):** add one HTTP MCP server, in user or local scope (never `.mcp.json`), named by role (for example `supabase-readonly`), pointing at the hosted Supabase MCP server with `read_only=true`, `project_ref` of the production project, and `features` limited to the groups DO needs. Then log it in with `/mcp`. The project ref is typed only into the user's own config.
+- **What Dev changes:** in `devops.md`'s `tools:` list, replace the plugin server's `execute_sql` with the read-only server's `execute_sql`. Dev confirms each name in a fresh session before the change merges. The other plugin read tools stay, unless SA rules that DO moves to the new server for all of them.
+- **What stays the same:** rules (a)–(d) and the `begin read only; …; commit;` wrapper stay, as defence in depth. The skill states that read-only mode makes rule (a) enforced by the database for that server.
+- **Fail-safe:** if the server is not configured, its tool name does not resolve and DO has no SQL tool at all (F7). That fails closed.
+- **Build check (main session, with the user, before the `tools:` swap merges):** a write inside the `begin read only` wrapper fails on **any** server (measured in Q-D2-1), so it cannot prove read-only mode. The probe runs **without** the wrapper, as a one-time exception to rule (b) made by the main session, never by DO: `select current_setting('transaction_read_only')` returns `on` through the new server and `off` through the plugin server (the control that shows the probe can fail); an unwrapped `create temp table` through the new server is rejected; and a catalog fact that only the intended project has comes back, so the server is pinned to the right project. The record names the project by role and the error by class. *(SA-corrected; see SA Review — DO-5, H1)*
+
+**(h) FU-4 and ClickUp decisions** (Q-D5-6, Q-D5-7)
+
+- The skill states what was decided, in one line each, so a later session does not reopen them without new facts.
+
+#### D5.2.2 `env-drift-audit` (DO-5b)
+
+A **read-only** audit. It changes nothing and fixes nothing. Each finding becomes a change plan in a later job.
+
+**(a) Expected state: three sources, by what they may hold**
+
+| Source | Tracked? | What it supplies |
+|---|---|---|
+| Repo files | Yes | Workflow files and their job names; `vercel.json` (crons, ignore command, disabled branches); `supabase/migrations/**` and checkers; `.claude/settings.json` and agent `tools:` lists; env var **names** the code reads (feature flags, `.env.example`). |
+| Change records | Yes, by role | Each cycle workplan's `## Environment changes` section: what a recorded step said the end state is. |
+| Private inventory | **No** | Everything that is an ID, a value location or a weakness: which project holds which env var names, the expected settings of security features, the project for each role. |
+
+The skill says: an expected value that is an ID, a secret location or a security setting lives only in the private inventory. The audit reads it there and **never copies it** into tracked text or chat.
+
+**(b) Live state: pointers, not procedures**
+
+| Area | Live read | Owned by |
+|---|---|---|
+| GitHub | Repo settings, protection and rulesets, required checks against job names (the seven rules), Actions permissions, secret and variable **names** | `github-ops` |
+| Vercel | Projects by role, env var names by target, crons, production deployment against `main` | `vercel-ops` |
+| Supabase | Migrations by catalog evidence (never the ledger), advisor counts, auth settings | `supabase-ops` |
+| Harness | Settings scopes by keys and counts, DO's tool names resolve, MCP server names, worktrees and junctions | `claude-harness-ops` |
+
+Third-party platforms join when DO-6 exists. Until then the audit lists them as "not audited".
+
+**(c) Comparison rules**
+
+- Every area reports one of: **no drift**, **drift** (with a severity), or **not read** (no access, error, retention passed). "Not read" is never "no drift" (the rule of every ops skill).
+- Names are compared, never values. An env var is "present in Production and Preview", never its value.
+- A change record that disagrees with live state is drift, even if the live state looks right: the record or the platform is wrong.
+
+**(d) Severity scale** (Q-D5-9)
+
+| Severity | Meaning | Example (by kind) |
+|---|---|---|
+| **Critical** | Security exposure now, or production broken or at risk on the next deploy | A required gate that cannot fail; a security feature expected on and found off; a value-bearing permission wider than recorded |
+| **High** | Will break the next merge, deploy or migration | A required check name with no job; an env var the code needs missing from a target; a migration not applied that merged code reads |
+| **Medium** | Wrong but not harmful today | A cron in the repo not on the platform; a stale record; an unresolved tool name in an agent file |
+| **Low** | Cosmetic or informational | A leftover worktree; an unused allow rule |
+
+**(e) Output**
+
+| Output | Where | Holds |
+|---|---|---|
+| Full drift report | **Untracked private docs only** | Findings by area and severity, with what to compare. A Critical finding is an open weakness, so the report is never tracked. |
+| Chat summary | DO's report | **Counts** by area and severity, plus "not read" areas. No setting names for Critical findings, no IDs, no values. |
+| Fix plans | Per finding, a later DO change-plan job | A fix for a security finding is planned in the private docs until it lands (Q-D5-10). |
+
+**(f) When it runs:** on demand by the user or TL, and as a suggested step at the end of a DO stream. No scheduled run (a schedule would be a new pattern; Q-D5-11).
+
+### D5.3 Files to change
+
+| # | File | Slice | Action | What |
+|---|---|---|---|---|
+| D5-1 | `.claude/skills/claude-harness-ops/SKILL.md` | 5a | New | §D5.2.1. Target ≤ ~200 lines; reference files only if needed. |
+| D5-2 | `.claude/agents/devops.md` | 5a | Edited | (1) One pointer line to `claude-harness-ops` for harness reads. (2) FU-3: `tools:` swap of `execute_sql` (only after the user's server exists and names resolve; Q-D5-4). Nothing else, unless SA rules otherwise. *(SA-corrected:)* (1) also says DO never opens `~/.claude.json` or user-scope settings (H3). (2) replaces the plugin entry, never joins it, and goes in only after the H1 probe passed; otherwise it is follow-up FU-3b (H4). |
+| D5-3 | `.claude/skills/github-ops/SKILL.md` | 5a | Edited | The pointer row "DO-5's `claude-harness-ops` skill (not built yet)" loses "(not built yet)" and links the file. |
+| D5-4 | `.claude/settings.local.json`, `.gitignore` | 5a | Only if SA and the user decide so on Q-D5-2 | Untrack the file and ignore it. |
+| D5-5 | `.claude/skills/env-drift-audit/SKILL.md` | 5b | New | §D5.2.2. Target ≤ ~150 lines. |
+| D5-6 | `.claude/agents/devops.md` | 5b | Edited | One pointer line: drift reports follow `env-drift-audit`. |
+| D5-7 | `CLAUDE.md` | — | **Not edited** | The Common Gotchas `env-change-protocol` row already routes MCP, permission and hook changes. |
+| D5-8 | This requirement | both | Edited | Status, implementation notes, reviews. |
+
+### D5.4 Acceptance criteria
+
+**DO-5a**
+
+- [ ] `.claude/skills/claude-harness-ops/SKILL.md` exists; frontmatter `name: claude-harness-ops` (matching the folder) and a `description` that parses cleanly. It fires on: settings files, permissions or allow rules, "don't ask again", an MCP server, a hook, a subagent tool list, a worktree to create or remove, `node_modules` missing or broken, and the tracked local settings file. It says it is used by the main session and DO, and names no server ID or ref.
+- [ ] The skill covers §D5.2.1 (a)–(h) and points to `env-change-protocol`, `devops.md` and `github-ops` instead of restating them. QA greps the new file for `Snapshot the before-state`, `| **Read** |` and `zero policies`: 0 hits.
+- [ ] The junction procedure is stated with all four steps in order (read the target, delete the link, check the link is gone and the target intact, remove without `--force`) *(SA-corrected)*, the `cmd /c rmdir` warning and the `git archive` baseline rule. `git stash` appears only as a pointer to `github-ops`.
+- [ ] The skill states that `~/.claude.json` is never printed, and that harness reads are keys and counts.
+- [ ] FU-3: the change record for the user's server is in the implementation notes, by role, with the tool names checked in a fresh session. No URL, ref or connector ID in the diff. Or, if SA rules FU-3 out of 5a, the notes say so. *(SA-corrected:)* the record includes the H1 probe results with the plugin-server control; if the probe has not passed, the swap is not in the diff and the notes name FU-3b.
+- [ ] `devops.md` changes only as D5-2 states.
+- [ ] The finding-11 regex from §7 over the added lines of the diff returns zero hits, or each hit is explained in the QA report. QA also reads the diff for absolute personal paths and server URLs.
+- [ ] The diff touches only the files in D5.3 for 5a.
+
+**DO-5b**
+
+- [ ] `.claude/skills/env-drift-audit/SKILL.md` exists with valid frontmatter; the description fires on "drift", "audit the environments", "is everything configured as expected", "what is out of sync".
+- [ ] It names the three expected-state sources and what each may hold; the four live areas as pointers only; the three result states (no drift, drift, not read); the severity scale; and the output table, with the full report in the private docs only.
+- [ ] It contains no read procedure owned by another skill. QA greps it for `--jq`, `filter_project_envs` and `begin read only`: 0 hits, or each hit is a pointer.
+- [ ] The finding-11 regex returns zero hits; the diff touches only the 5b files in D5.3.
+
+### D5.5 Open questions for SA
+
+- [ ] **Q-D5-1: Split DO-5?**
+  *Suggested:* yes. DO-5a = `claude-harness-ops` + FU-3 + the FU-4 and ClickUp decisions. DO-5b = `env-drift-audit`, after 5a merges, so it can point to every skill and use FU-3's connection. This matches the small-numbered-slices preference.
+- [ ] **Q-D5-2: The tracked `.claude/settings.local.json`.** Claude Code documents it as a personal file kept out of git (F2). Tracked in a public repo, each standing approval can be committed and published, and on Windows each worktree edits its own tracked copy (F3).
+  *Suggested:* untrack it: `git rm --cached` plus a `.gitignore` line, through a normal PR (Dev writes, RM commits). The user decides, because it changes their own permissions in every worktree created after that (a new worktree starts with no local file). History keeps the old content; the BA scan found nothing secret-shaped in it, so no rewrite is needed. Until then, the skill's "check the diff before commit" rule applies.
+- [ ] **Q-D5-3: Tiers for harness changes.**
+  *Suggested:* adding or widening an allow rule, an MCP server, a hook or a `permissionMode` = production tier (SA reviews, the user executes). Removing an allow rule or adding a deny rule = reversible. A change to DO's own `tools:` list = SA review always.
+- [ ] **Q-D5-4: FU-3 — build it, and how?**
+  *Suggested:* build it in 5a. A server the user adds in **user scope** (local scope is stored per project path, and may not load in a worktree; Dev or the main session checks this before choosing), named by role, with `read_only=true`, `project_ref` and a narrow `features` list. Not `.mcp.json` (tracked, and it would give every session the server). Not an inline `mcpServers` entry in `devops.md` (the URL would be in a tracked file, and inline servers need folder trust). Only `execute_sql` moves to the new server at first. Rules (a)–(d) and the wrapper stay. SA rules whether other Supabase projects (by role) get their own read-only server, or DO keeps no SQL tool for them.
+- [ ] **Q-D5-5: Does read-only mode remove other tools?** The docs do not list them (F6).
+  *Suggested:* do not rely on it. DO's `tools:` list stays the guard for every non-SQL tool. Dev records which tools the new server exposes, by name, in the implementation notes.
+- [ ] **Q-D5-6: FU-4 — Preview-only Vercel env write.**
+  *Suggested:* **do not build; close FU-4.** No permission rule can match the env tools' target list (F8). A `PreToolUse` hook could check `tool_input`, but it is a new pattern, it fails open when the folder is not trusted (F7), and it would have to parse the target list and the Git-branch scope correctly to be safe. No Preview token scope exists (F8). The demand is low: the main session can set a Preview variable with the user today. Reopen only if Vercel offers an environment-scoped token, or Claude Code lets a settings rule match an MCP argument.
+- [ ] **Q-D5-7: ClickUp tools.**
+  *Suggested:* **keep deferred, and close it as "not needed".** R3's reasons still hold: no DO job needs it, the update-task tool cannot be limited to the status field, and the list ID is private. The same hook limits as FU-4 apply. Reopen if a DO job appears that needs task status.
+- [ ] **Q-D5-8: Who checks `/status`, `/mcp` and `claude doctor`?** These are interactive.
+  *Suggested:* the main session, at the user's request. DO's report lists them as "main-session checks owed".
+- [ ] **Q-D5-9: Severity scale.**
+  *Suggested:* the four levels in §D5.2.2(d). "Not read" is a separate state, not a severity.
+- [ ] **Q-D5-10: Can a fix plan for a security drift sit in a tracked workplan?** A plan names the setting that is wrong, which is an open weakness until fixed.
+  *Suggested:* no. It stays in the private docs until the fix is verified. Afterwards the tracked record may say what changed, by role, as closed history.
+- [ ] **Q-D5-11: Scheduled drift audit?**
+  *Suggested:* not in DO-5. On demand only. A scheduled run would need its own SA review (a new pattern, and an unattended session holding platform tools).
+
+---
+
 ## 6. Non-Functional Requirements
 
 - **Security:** no secret values printed or decrypted. No project refs, IDs, secret locations or open weaknesses in any tracked file. Production and irreversible actions are executed by the user only.
@@ -932,6 +1148,11 @@ Approved. It reads the project's log store and cannot change project state, so i
 | 2026-10-31 | DO-4 code complete | Dev built the `github-ops` skill (SKILL.md + `read-commands.md` + `dashboard-settings.md`), the `devops.md` pointer line and allowed/forbidden amendments (G1, G2, G3, G11, G15, Q-D4-3, Q-D4-5, Q-D4-9), the RM manual-gate sentence and stacked-PR pointer, and the TL "Auto-merge when CI is the only gate" row, with a short qualifier on the other auto-merge lines of RM and TL. Uncommitted, awaiting SA code review and QA. |
 | 2026-10-31 | SA code review DO-4 | CODE APPROVED. Every `gh` command, flag and `--json` field in the skill checked against local `gh --help` and field lists; paths, frontmatter, CRLF, finding-11 regex, owner/repo-name and workflow-name greps all clean. The extra "unless a manual gate is open" qualifiers (RM x4, TL x2) ruled inside G18(d): each defers to the TL row and adds no rule. SA fixed five wording items: the `devops.md` `gh api` line and `gh pr|run|repo|workflow` line now forbid `value`, actor, login and email fields (`gh repo view --json` offers commit emails, `gh pr view --json commits` author emails); SKILL.md §1 never-select list widened to match; SKILL.md §2 `gh pr checks --required` given `--json`; the TL row example aligned with the "check" gate. |
 | 2026-10-31 | QA DO-4 | QA passed: 9 checks pass, the fresh-session load test deferred. No bugs. Frontmatter, triggers, paths and sections, the public-repo greps (finding-11 regex, owner/repo name, 6+ digits, URLs, every workflow and job `name:`), the restatement greps, named fields and `--limit` on every read, banned forms only as prohibitions, every `gh` flag and `--json` field against local `gh` 2.92.0 (no network call), the `devops.md` diff against G18(a), the RM/TL auto-merge qualifiers, files touched and CRLF all checked. Four non-blocking edge cases: `--limit` on the §2 shorthand, the `// []` jq guard, two §D4.3 CI files not pointed to, one unqualified RM mechanism line. |
+| 2026-10-31 | DO-4 merged; DO-5 spec | DO-4 merged (PR #590). BA wrote the DO-5 Specification (`claude-harness-ops` and `env-drift-audit` skills): findings F1–F9 (the tracked local settings file, settings precedence, MCP scopes, Supabase read-only mode, subagent hooks failing open, no permission rule that matches an MCP argument), what each skill teaches, files to change, acceptance criteria, SA questions Q-D5-1 to Q-D5-11. BA recommends splitting into DO-5a (harness skill + FU-3) and DO-5b (drift audit), building FU-3 with a user-scope read-only server, and closing FU-4 and ClickUp without building. CLAUDE.md unchanged. Awaiting SA review. |
+| 2026-10-31 | SA review DO-5 | APPROVED WITH CHANGES. Q-D5-1: split; Dev builds DO-5a first, DO-5b after 5a merges with a short re-check. Q-D5-2: SA recommends untracking, the user decides; back up the file first, because pulling the untrack commit deletes it from every other checkout; no history rewrite. Q-D5-3: accepted, widened to every prompt- or trust-relaxing key. Q-D5-4: build in user scope, swap `execute_sql` only (never both listed), no URL in tracked text, other projects get no SQL tool until each has its own server. Q-D5-5 to Q-D5-11 accepted (FU-4 and ClickUp closed). Findings H1–H10: the FU-3 read-only probe must run unwrapped with a plugin-server control (the wrapped write probe could not fail); the server-name binding is trust-on-config; DO never opens user-scope files; junction removal reads the target first. SA fixed eight spec statements in place. |
+| 2026-10-31 | DO-5a code complete | Dev built the `claude-harness-ops` skill (SKILL.md only), the `devops.md` pointer line with the H3 clause, and the `github-ops` pointer-row fix, with Q-D5-1 to Q-D5-11 and H1–H9 applied. The FU-3 `tools:` swap is not in the diff (the user has not added the read-only server; the H1 probe has not run), so it is FU-3b. Q-D5-2 untouched (awaits the user). CLAUDE.md unchanged. Uncommitted, awaiting SA code review and QA. |
+| 2026-10-31 | SA code review DO-5a | CODE APPROVED. Deviation 1 (H7 creation command) kept: two workplans record `New-Item -ItemType Junction` working, the same evidence standard as the removal procedure. Deviation 2 (Q-D5-3 key names): none of the six names is backed by evidence in the repo, so SA replaced them with descriptions and a "read the key name from the settings docs" instruction. Deviation 3 (docs named, not linked) accepted. SA fixed three items: the six key names, the `jq` reads (`jq` is not installed here; replaced with tested `node -p` key and count reads), and "twice mis-quoted" (the record shows one). Finding-11 regex and personal-path greps: 0 hits. Awaiting QA. |
+| 2026-10-31 | QA DO-5a | PASSED, all 10 checks. Finding-11 regex: 0 hits over the new skill and the 643 added diff lines. Personal-path, `mcp.supabase` and worktree-name hits appear only in BA and SA text that quotes the grep patterns or names the gitignored folder, not in the skill. Cited paths and sections exist. Frontmatter parses. Restatement grep: 0/0/0. `devops.md` diff is the H3 pointer line only, with one plugin `execute_sql`. The junction steps match H5, and the property names were confirmed by a read-only `Get-Item`. Both `node -p` reads are assigned to the main session and run cleanly against the tracked settings file. FU-3 matches H1, H2 and H4, with no URL. No whole-file churn. No blocking issues; 3 non-blocking edge cases. Awaiting the user's diff review. |
 
 ---
 
@@ -1798,6 +2019,299 @@ Each says only "unless a manual gate is open" (or "once no manual gate is open")
   2. SA's open optimisation still applies: the classic-protection `--jq` in `read-commands.md` iterates `.required_status_checks.checks[]` with no `// []` guard. With no required checks, jq errors and the read is recorded as "not read" rather than "none".
   3. §D4.3 names `.github/ci/jest-gate-check.mjs` and `jest-quarantine.json` as sources of truth. The skill names only the two scope scripts. Nothing in the skill depends on the other two, so this is a pointer gap, not a wrong statement.
   4. RM line 151 ("the merge itself runs through auto-merge + the merge queue") has no qualifier. It says how the merge runs, not when auto-merge goes on, so it does not contradict the TL row. Noted only.
+
+### Final Status
+
+- [x] All acceptance criteria pass (the load test is deferred). Ready for the user's diff review.
+- [ ] Issues found
+
+---
+
+## SA Review — DO-5
+
+**Reviewed by SA — 2026-10-31**
+**Verdict: APPROVED WITH CHANGES.** The split, the "points back, never restates" shape, the harness source table, the hook and FU-4 reasoning, and the drift-audit result states are right. FU-3 is the right design: a user-scope server with read-only mode turns rule (a) into a database guard, and a missing server fails closed. The gaps are four:
+- The FU-3 build check could not fail. A write inside the `begin read only` wrapper is rejected on any server (Q-D2-1 measured exactly that), so it proves nothing about the new server.
+- The tool-list binding is by server **name** only. A server with that name and a different config resolves just as well.
+- DO's Read tool has no path limit, so "never print `~/.claude.json`" needs a DO rule, not only a skill line.
+- The junction procedure assumed one shared folder. There can be more than one, so the target must be read, not assumed.
+
+Dev builds **DO-5a** with rulings Q-D5-1 to Q-D5-11 and findings H1–H10 applied. No second SA spec pass for 5a; SA checks them at code review. DO-5b gets a short BA re-check and an SA pass before its build.
+
+SA fixed eight spec statements in place, each marked *(SA-corrected)* or *(SA-added)*: the junction procedure (now four steps), its acceptance criterion, the FU-3 build check, the `~/.claude.json` row (`claude mcp list` prints URLs; `claude mcp get` not used), F2 (some entries carry an absolute personal path), the D5-2 row (H3, H4), the FU-3 acceptance criterion (H1, H4), and a ToC line for this review.
+
+No platform call was made for this review. The public-repo regex (finding 11) over the added lines of the diff returns zero hits. The only URLs added are public documentation pages, with no ID in them.
+
+### Rulings on the open questions
+
+**Q-D5-1: split. BA's suggestion accepted.**
+- **DO-5a** = `claude-harness-ops`, the FU-3 procedure, the FU-4 and ClickUp decisions recorded, the D5-2(1) pointer line and the D5-3 pointer fix.
+- The FU-3 `tools:` swap (D5-2(2)) goes into the 5a PR **only if** the user has added the server and the H1 probe has passed before the PR is ready. Otherwise 5a merges without it, and the swap is follow-up **FU-3b**: a one-line `devops.md` PR after the probe. 5a never waits on a user action.
+- **DO-5b** = `env-drift-audit`, after 5a merges. It does not depend on FU-3b: if DO has no read-only server yet, the Supabase area reads through the plugin server under rules (a)–(d), as today.
+
+**Q-D5-2: untrack it. SA recommends it; the user decides.**
+- `git rm --cached .claude/settings.local.json` plus one `.gitignore` line, through a normal PR (Dev writes, RM commits). It goes in its own commit inside 5a, or its own small PR, so it can be reverted alone.
+- **Required addition (H6):** when the untrack commit reaches another checkout through a pull or merge, git **deletes** that checkout's copy, because the file was tracked there. Before the PR merges, the user copies the file from the main checkout to a private location, and restores it after the main checkout pulls `main`. Worktrees on older branches keep their tracked copy until they merge `main`, and then lose it the same way.
+- **No history rewrite.** The BA scan found nothing secret-shaped. A personal path in old commits is low-sensitivity, already public, and not an open weakness. Rewriting a public repo's history is a far larger, irreversible action.
+- Until the user decides, the skill's "check the diff for the local file before every commit" rule applies.
+- In this review, as in the spec, the file is described by keys and counts only.
+
+**Q-D5-3: accepted, and widened.**
+- Production tier (SA reviews, the user executes):
+  - adding or widening an allow rule;
+  - adding an MCP server, in any scope;
+  - adding a hook;
+  - changing `permissionMode` or `defaultMode`;
+  - any key that turns off a prompt, a sandbox or a trust check (for example auto-approving project MCP servers). Dev confirms the current key names from the settings docs at build.
+- Reversible tier: removing an allow rule, adding a deny rule, removing an MCP server the user added.
+- A change to **DO's own `tools:` list**, either way, always goes to SA, and lands through a PR.
+- The skill's harness tier table classifies harness changes only. It points to `env-change-protocol` §1 for what each tier means, and must not use the protocol table's own row format (the `| **Read** |` grep stays meaningful).
+
+**Q-D5-4: build it. User scope, `execute_sql` only, fails closed. BA's suggestion accepted, with H1–H4.**
+- **Scope: user scope.** Local scope is keyed by project path, and every worktree has its own path, so a local-scope server would not reach DO in a worktree. Dev does not need to measure this: user scope is the choice either way.
+- **The user** adds the server and logs in with `/mcp`. The user types the project ref only into their own config, in their own terminal. The main session never runs the add command, so the ref never enters a transcript.
+- **No URL in tracked text,** not even with a placeholder. The skill names the server by role, names the three settings (`read_only=true`, the project pin, a narrow feature list), and points to the Supabase MCP guide for the URL shape.
+- **Feature list:** only the group that holds `execute_sql` (Dev reads the group name from the Supabase guide).
+- **The swap:** in `devops.md`'s `tools:` list, the plugin server's `execute_sql` is **replaced**, never joined. Both listed at once would let DO pick the writable one.
+- **Fallback:** until the H1 probe has passed, the plugin `execute_sql` stays exactly as it is. If the new server later goes missing, the name drops, DO has no SQL tool, and it reports SQL checks as "not read". Undo = revert the one `tools:` line.
+- **Who verifies:** the main session, with the user, runs H1 before the swap merges. After the merge, the fresh-session tool-list smoke test (finding 11) shows that the new name resolves and the plugin `execute_sql` is gone.
+- **Other projects (by role):** DO keeps no SQL tool for them after the swap. When DO needs SQL on another project, the user adds a second server, named by role, by the same procedure, and SA reviews the `tools:` change.
+- Rules (a)–(d) and the wrapper stay unchanged. The skill states that read-only mode makes rule (a) enforced by the database on that server only.
+
+**Q-D5-5: accepted.** DO's `tools:` list stays the guard for every non-SQL tool. Dev records the new server's exposed tool names in the implementation notes, by name only.
+
+**Q-D5-6: close FU-4. BA's suggestion accepted.** This is consistent with R5 and Q-D3-1. Their reopen condition was a scoped token or a harness rule that matches an argument. Neither exists for a list-valued target, and a hook is a new pattern that fails open when the folder is not trusted. The skill states the closure and the two reopen conditions in one line.
+
+**Q-D5-7: close ClickUp as "not needed". Accepted.** R3's reasons hold. Reopen only with a DO job that needs task status.
+
+**Q-D5-8: accepted.** `/status`, `/permissions`, `/mcp` and `claude doctor` are main-session checks. DO lists them as "main-session checks owed". The main session reports names, counts and status from them, never a URL, header or path (H3).
+
+**Q-D5-9: accepted, for DO-5b.** "Not read" is a separate state. A "not read" on an area that holds a Critical-class check (security features, required gates) is listed first in the summary, because it can hide a Critical finding. The 5b re-check confirms the examples.
+
+**Q-D5-10: accepted.** This is consistent with Q-D4-4 and S8. A security-drift fix plan stays in the private docs until the fix is verified. Afterwards the tracked record may say what changed, by role, as closed history.
+
+**Q-D5-11: accepted.** On demand only. A scheduled run would be a new pattern with an unattended session holding platform tools, so it needs its own SA review.
+
+### Findings
+
+H1. **[§D5.2.1(g) build check] The probe as drafted could not fail.**
+- A write inside `begin read only; …; commit;` is rejected on any server. Q-D2-1 measured exactly that on the plugin server.
+- **SA fixed the spec.** The probe runs without the wrapper, as a one-time exception to rule (b) made by the main session, never by DO:
+  - `select current_setting('transaction_read_only')` returns `on` through the new server and `off` through the plugin server. The `off` is the control that shows the probe can fail.
+  - An unwrapped `create temp table` through the new server is rejected. If it were not rejected, the temp table dies with the session and leaves nothing behind.
+  - A catalog fact that only the intended project has comes back, so the server is pinned to the right project.
+- The record names the project by role and the error by class.
+
+— Priority: High
+
+H2. **[§D5.2.1(g), F7] The `tools:` binding is by name, so it is trust-on-config.**
+- `devops.md` is tracked and loads on every machine and for every collaborator. A user-scope server with the same name but without read-only mode would resolve, and DO would get a writable `execute_sql`. "Fails closed" is true only when the name is absent.
+- The skill states this residual risk plainly:
+  - anyone who adds a server under that name must give it the three settings;
+  - H1 is re-run after any re-add or reconfigure;
+  - rules (a)–(d) and the wrapper stay as the guard that does not depend on config.
+- No tracked file can verify a user-scope config, so this is a stated limit, not a blocker.
+
+— Priority: High
+
+H3. **[§D5.2.1(a); `devops.md`] DO's Read tool has no path limit.**
+- The Bash allowed list does not reach `~/.claude/settings.json` (and has no `jq`), but the Read tool can open any file, including `~/.claude.json`, which holds MCP server configs and headers.
+- **Required:** the D5-2(1) pointer line also says that DO never opens `~/.claude.json` or user-scope settings, and that those reads are the main session's, by keys and counts.
+- The `jq` examples in (a) are main-session commands, and the skill labels them so.
+- This is the only `devops.md` addition beyond D5-2 as drafted.
+
+— Priority: High
+
+H4. **[§D5.2.1(g)] Stage the swap so 5a never waits on the user.** See the Q-D5-1 and Q-D5-4 rulings: replace, never join; FU-3b if the probe has not passed. D5-2 and the FU-3 criterion are amended to match. — Priority: Medium
+
+H5. **[§D5.2.1(e) junction removal] Read the target; never assume the main checkout.**
+- More than one shared `node_modules` folder exists on this machine, so step 2 as drafted could check the wrong folder and pass.
+- A symbolic link is followed by recursive delete exactly like a junction.
+- The drafted procedure also never checked that the link was gone before `git worktree remove`.
+- **SA fixed the spec:** four steps: read `LinkType` and `Target`, stopping on any link type other than a junction; delete the link; check the link is gone and `<target>/next/package.json` exists; remove the worktree without `--force`, and never get past a refusal with `--force`, `rm -rf` or `Remove-Item -Recurse`.
+- The skill does not name any shared folder or path. It says only "there can be more than one".
+
+— Priority: High
+
+H6. **[Q-D5-2] Untracking deletes the file in other checkouts.** See the Q-D5-2 ruling: the user backs it up first and restores it after pulling. The skill's Q-D5-2 note and the PR description both carry this. — Priority: High
+
+H7. **[§D5.2.1(e)] Creating a worktree needs a line too.** The description fires on "a worktree to create", but (e) covers removal only. The skill says:
+- How a new worktree gets its dependencies: a junction to a shared folder, made by the main session with the user. Dev states the exact command only after checking it works, as the removal procedure was.
+- That a shared folder missing a dependency `main` added makes tests fail locally while CI passes (F9). It is fixed with the user, never by `npm install` in a stale checkout.
+- If Dev cannot verify a creation command, the skill says "ask the user", and gives no command.
+
+— Priority: Medium
+
+H8. **[§D5.2.1(b)] The tracked local file is also read by the main session, not only DO.**
+- The "never approve don't-ask-again for a command that embeds a secret, a token, a URL with an ID or a personal path" rule is for the main session and the user, because DO never sees a prompt.
+- The skill addresses it to them, and adds: when an approval would write a personal path, choose "Yes" (once), not "don't ask again".
+
+— Priority: Low
+
+H9. **[§D5.4 AC] Make the new rulings checkable.** Add:
+- (a) The `devops.md` diff is exactly the following, and nothing else:
+  - the pointer line with the H3 clause;
+  - and, only if FU-3b is folded in, one `tools:` entry replaced.
+  QA counts the Supabase `execute_sql` entries in `tools:`: exactly one.
+- (b) QA greps the new skill for an absolute personal path (`[A-Za-z]:\\`, `/Users/`, `/c/Users`), for `http` near the read-only server name, and for `mcp.supabase`: 0 hits, apart from a pointer to the Supabase guide.
+- (c) The skill states the H2 residual risk, the H1 probe with its control, and "replace, never join".
+- (d) If Q-D5-2 is decided yes: `git ls-files .claude/settings.local.json` is empty, `.gitignore` has the line, and the PR description carries the H6 backup step.
+- (e) The worktree section has the creation line (H7), and no folder name or path.
+
+— Priority: Medium
+
+H10. **[§D5.2.2 for the 5b re-check] Three points to carry into 5b, not blocking 5a.**
+- The "env var names the code reads" source should name `lib/utils/featureFlags.ts` and the repo's env example file only after Dev checks they exist.
+- The Harness area's "worktrees and junctions" read is a main-session read, because DO cannot run `Get-Item` (not on the allowed list).
+- "Production deployment against `main`" points to `vercel-ops`, and its SHA check to `github-ops` §6.
+
+— Priority: Low
+
+### Checked and honoured
+
+- **Public-repo:**
+  - The finding-11 regex over the added lines of the diff: 0 hits. A grep for absolute personal paths and 6+ digit runs: 0 hits.
+  - The URLs are public Claude Code, Supabase and Vercel documentation pages, with no ID in them.
+  - The spec names no project ref, connector ID, server URL, secret location or open weakness. "The tracked local file has no secret-shaped string" and "some entries carry a personal path" are counts-free facts, not values.
+  - The spec tells Dev to write no URL, no ref and no folder path (tightened by H5 and the Q-D5-4 ruling).
+- **No restatement:** the eight steps, tiers, record template, tool lists, forbidden commands, SQL rules (a)–(d) and every platform read stay in `env-change-protocol`, `devops.md` and the ops skills. `git stash` is a pointer to `github-ops` §8. The restatement grep in §D5.4 is kept.
+- **DO stays read-only on platforms:** DO never edits any harness file. The user executes server, hook, permission and settings changes. Tracked harness files change by PR. DO's own `tools:` list changes only through SA (Q-D5-3).
+- **FU-3 fails closed when the server is absent** (R2: an unresolved name is dropped), with the fallback and the stated name-binding limit (H2).
+- **The junction procedure** matches the removal verified in this repo, with the target read added (H5). `git worktree remove` stays forbidden for DO. The removal is the main session's, with the user.
+- **Consistency with earlier rulings:** R1 (no connector ID, plugin server named), R2 (explicit names, smoke test), R3 (ClickUp), R5 and Q-D3-1 (FU-4 reopen conditions), Q-D2-1 (the wrapper, and why the drafted probe could not fail), S8 and Q-D4-4 (open findings stay private).
+- **Size and CI:** 5a is one skill of about 200 lines, two pointer lines and an optional untrack commit. Config and docs only: no app code, no CI job, no CI time.
+- **CLAUDE.md** is not edited (D5-7). This is correct: the Common Gotchas `env-change-protocol` row already routes MCP, permission and hook changes.
+
+### Follow-ups
+
+| # | What | Owner |
+|---|---|---|
+| FU-3b | The `devops.md` `tools:` swap of `execute_sql` to the read-only server, if it is not in the 5a PR (H4) | Dev, after the user adds the server and the main session's H1 probe passes; SA reviews the one line |
+| FU-5 | DO-5b short re-check with H10 and the Q-D5-9 note before its build | BA, then SA |
+| FU-6 | Q-D5-2 decision, and the H6 backup step if yes | User; Dev and RM if yes |
+
+FU-4 and the ClickUp tools decision are **closed** (Q-D5-6, Q-D5-7).
+
+### Approval
+
+[x] DO-5 spec approved with changes. **Dev builds DO-5a first:** the `claude-harness-ops` skill, the D5-2(1) pointer line with the H3 clause, and the D5-3 fix, with Q-D5-1 to Q-D5-11 and H1–H9 applied. The FU-3 swap goes in only after the H1 probe passes (otherwise FU-3b), and the Q-D5-2 untrack only if the user says yes. DO-5b starts after 5a merges, following FU-5.
+
+---
+
+## DO-5a implementation notes
+
+**By Dev — 2026-10-31.** Config/docs-only slice, no separate workplan. Nothing committed. No `claude mcp` command, no platform tool and no user-scope file was used: nothing in 5a needed a live read.
+
+### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `.claude/skills/claude-harness-ops/SKILL.md` | New | Pointer table; §1 who reads what (H3); §2 where harness state lives + precedence; §3 harness tier table, who edits, before-state and probe, the tracked local file (H8, Q-D5-2 procedure with the H6 backup); §4 MCP servers; §5 hooks; §6 worktrees (four-step removal, creation line H7); §7 public-repo specifics; §8 FU-3 (user steps, H1 probe with control, replace never join, fallback, H2 limit); §9 closed decisions (FU-4, ClickUp); §10 checklist. No reference files: the spec did not need any |
+| `.claude/agents/devops.md` | Edited | One pointer line to `claude-harness-ops`, with the H3 clause. `tools:` unchanged |
+| `.claude/skills/github-ops/SKILL.md` | Edited | D5-3: the pointer row links `.claude/skills/claude-harness-ops/SKILL.md` and loses "(not built yet)". No `§6` stash pointer exists in `github-ops`; the stash rule is its §8, and the new skill points there |
+| This requirement | Edited | §0, these notes, Change History |
+
+### FU-3 (Q-D5-4, H1, H4)
+
+- **The swap is not in the diff.** The user has not added the read-only server, so no H1 probe has run and no tool name could be checked in a fresh session. The plugin `execute_sql` stays in `tools:` exactly as it was. The swap is follow-up **FU-3b** (one `tools:` line, after the main session's H1 probe passes, SA reviews it).
+- **No change record yet.** The record for the user's server (by role, the H1 results with the plugin-server control, the new server's exposed tool names by name for Q-D5-5) is written when FU-3b runs.
+- **Feature group:** the skill names `database` as the group that holds `execute_sql`, from the Supabase MCP README's group list (account, docs, database, debugging, development, functions, storage, branching), and tells the reader to check the guide at use.
+
+### Acceptance criteria (§D5.4 DO-5a, with H9)
+
+| Criterion | How it is met |
+|---|---|
+| Frontmatter and triggers | `name: claude-harness-ops` (matches folder) + single-line `description`, same format as `github-ops`. Fires on settings files, permissions or allow rules, "don't ask again", MCP server, hook, subagent tools list, creating or removing a worktree, `node_modules` missing or broken, the tracked local settings file. Says "used by the main session and by the DevOps (DO) agent". No server ID or ref |
+| (a)–(h) covered, pointers not restatements | (a) §1–§2; (b) §3; (c) §4; (d) §5; (e) §6; (f) §7; (g) §8; (h) §9. Restatement grep (`Snapshot the before-state`, `\| **Read** \|`, `zero policies`): 0 hits. The tier table uses a `Harness change \| Tier` layout, not the protocol's row format, and points to `env-change-protocol` §1 for what a tier means |
+| Junction procedure | §6: the four SA-corrected steps in order, the `cmd /c rmdir` warning, the `git archive` baseline rule. `git stash` appears twice, both pointers to `github-ops` §8 |
+| `~/.claude.json` never printed; keys and counts | §1 and §2 |
+| FU-3 | Notes above: swap not in the diff, FU-3b named |
+| `devops.md` only as D5-2 (H9 a) | The diff is the one pointer line with the H3 clause. Supabase `execute_sql` entries in `tools:`: exactly one (the plugin one) |
+| H9 (b) | Grep of the new skill for the H9 (b) personal-path patterns, the Supabase MCP hostname and the worktree folder: 0 hits. `http` appears once, the Supabase guide link in the pointer table, not near the server name |
+| H9 (c) | §8: the H2 limit, the H1 probe with the `off` control, "replaced, never joined" |
+| H9 (d) | Not applicable: Q-D5-2 not decided. `.claude/settings.local.json` and `.gitignore` untouched |
+| H9 (e) | §6 has the creation line; no folder name or path |
+| Finding-11 regex | Over the added lines of the diff and over the new skill folder: 0 hits |
+| Files touched | The three 5a files in D5.3 plus this requirement. CLAUDE.md unchanged |
+
+### Deviations for SA
+
+1. **H7 creation command.** I did not run a junction creation (no worktree or link is created in this slice). The skill gives `New-Item -ItemType Junction -Path '<wt>/node_modules' -Target '<shared>'` because two workplans in this repo record it working where `mklink /J` from Git Bash mis-quoted its target, and it is Microsoft's documented form. The shared folder and how the worktree itself is created are "ask the user", with no command. If SA reads H7 as "only a command Dev ran", replace that sentence with "ask the user".
+2. **Q-D5-3 key names.** The prompt- and trust-relaxing examples (`enableAllProjectMcpServers`, `enabledMcpjsonServers`, `sandbox.enabled`, `sandbox.autoAllowBashIfSandboxed`, `disableBypassPermissionsMode`, `permissions.defaultMode`) were checked against the Claude Code settings documentation pages found by search, not by loading the current settings page directly. The skill tells the reader to confirm the names in the settings docs at use.
+3. **Claude Code doc pages are named, not linked.** To keep `http` to the one Supabase guide pointer (H9 b), the skill names the settings, permissions, mcp, hooks and sub-agents pages instead of linking them.
+
+---
+
+## SA Code Review — DO-5a
+
+**Code Review by SA — 2026-10-31**
+**Status:** ✅ Code Approved. SA made three small fixes directly; they are listed below.
+
+Reviewed in the DO-5a worktree against the DO-5 Specification §D5.2.1 (a)–(h), the §D5.4 criteria for 5a, SA Review — DO-5 (Q-D5-1 to Q-D5-11, H1–H9) and the DO-5a implementation notes. No platform call, no `claude mcp` command and no web fetch. No user-scope file and no `.claude/settings.local.json` entry was opened. The tracked settings files were read by key name and count only.
+
+### Rulings on Dev's flagged deviations
+
+1. **H7 creation command: kept.** H7 asked for a command "only after checking it works, as the removal procedure was". The removal procedure was itself verified from this repo's records, not re-run for the spec. The creation command meets the same standard: two workplans (credit deduction slice 7, upgrade modal UM-2) record `New-Item -ItemType Junction` working, and UM-2 records `mklink` producing a malformed target first. The skill still says "ask the user" for how the worktree is made and which shared folder it links to, and it adds the `LinkType` and `next/package.json` check after the link is made. One wording fix: the records show `mklink` failing once, not twice (fix 3).
+2. **Q-D5-3 key names: dropped.** No file in the repo outside this requirement and the new skill names any of the six keys. The tracked `.claude/settings.json` and `.claude/settings.local.json` hold only `permissions.allow`, so they confirm none of them. A search-result check is not the settings page, so the names cannot be stated as fact. SA replaced the two rows with descriptions (fix 1): "the default permission mode in a settings file", and "auto-approving project MCP servers, turning the sandbox off, approving Bash automatically inside the sandbox, or lifting a block on bypass-permissions mode", plus "This skill names no key for these; read the current key name from the settings docs before writing it into a plan". `permissionMode` stays: it is a subagent frontmatter field from BA's F7 research, already in the approved spec table (a), and not one of the six.
+3. **Doc pages named, not linked: accepted.** The pointer table names the five pages and tells the reader to check a key there at use. That keeps `http` to the one Supabase guide link, as H9(b) wants.
+
+### Code Review Comments
+
+1. Pointers, not restatement — §3 points to `env-change-protocol` §1 for what a tier means and uses a `Harness change \| Tier` layout. `git stash` appears only as a pointer to `github-ops` §8 (which exists: "Git hazards in a shared repo"). SQL rules (a)–(d) and the wrapper point to `devops.md` and `supabase-ops`. The restatement grep (`Snapshot the before-state`, `| **Read** |`, `zero policies`): 0 hits. — Pass
+2. (a)–(h) coverage — (a) §1–§2, with H3 in §1 and the `~/.claude.json` row as SA-corrected (`claude mcp list` prints URLs; `claude mcp get` not used); (b) §3 with H8 and the Q-D5-2 procedure carrying the H6 backup; (c) §4; (d) §5; (e) §6; (f) §7; (g) §8; (h) §9 with both reopen conditions. — Pass
+3. §2 user-settings row and §1 — gave `jq 'keys'` and `jq '.permissions.allow | length'`. `jq` is not installed on this machine (Git Bash `which jq` finds nothing), so the main session could not follow the step. **SA fixed** (fix 2) with two `node -p` reads; both forms were run against the tracked `.claude/settings.json` and returned the key list and a count. — Priority: Medium (fixed)
+4. §3 tier table — the six unverified key names. **SA fixed** (fix 1). — Priority: High (fixed)
+5. §6 junction removal — the four steps match the SA-corrected spec in substance and order: read `LinkType` and `Target`, stop on any non-empty, non-`Junction` type; `$j.Delete()` only for a junction; `Test-Path` is `False` and `<target>/next/package.json` exists; `git worktree remove` without `--force`. Step 4 is stricter than the spec ("never … to get past a refusal", without the "while any link may remain" qualifier), which is the safer reading. "There can be more than one shared folder" is stated, with no folder named. The `cmd /c rmdir` warning and the `git archive` baseline rule are there. — Pass
+6. §8 FU-3 — matches H1 (unwrapped probe by the main session, never DO; `on` through the new server, `off` through the plugin server as the control; unwrapped `create temp table` rejected; a catalog fact for the pinning; record by role and error class), H2 (binding by name only, all three settings for anyone using the name, H1 re-run after a re-add or reconfigure, no tracked file can verify a user-scope config) and H4 (replace, never join; only after the probe; plugin `execute_sql` stays until then; undo is one line). User scope only, no URL, ref typed by the user in their own terminal. — Pass
+7. `devops.md` — the diff is +2/−0: the pointer line with the H3 clause and its blank line. `tools:` is unchanged, with exactly one Supabase `execute_sql` (the plugin one). H9(a) holds. — Pass
+8. `github-ops` — one row, 1/1: "(not built yet)" removed and the file linked. — Pass
+9. Frontmatter — `name: claude-harness-ops` matches the folder; `description` is a single line in the `github-ops` format, fires on every trigger in the spec, names the main session and DO, and has no ID or ref. — Pass
+10. Public-repo — the two path-pattern hits in the added lines are BA and SA text, not the skill. F9 names `.claude/worktrees/`, the repo-relative folder already listed in the tracked `.gitignore`: no worktree name and no absolute path. H9(b) quotes the grep patterns themselves (`[A-Za-z]:\\`, `/Users/`, `/c/Users`, `mcp.supabase`), not a path. Neither leaks anything. — Pass
+11. Line endings — the new SKILL.md is LF in the working copy. Every sibling `SKILL.md`, `devops.md` and this requirement are LF in the index and CRLF in the working copy, with `core.autocrlf=true` and no `.gitattributes` rule for `.md`. Git stores the new file as LF on commit, the same as its siblings, so the difference is cosmetic and does not matter. The edited files kept CRLF. — Pass
+
+### Fixes made by SA
+
+1. SKILL.md §3: the two tier rows that named `permissions.defaultMode`, `enableAllProjectMcpServers`, `enabledMcpjsonServers`, `sandbox.enabled`, `sandbox.autoAllowBashIfSandboxed` and `disableBypassPermissionsMode` now describe the setting, and tell the reader to read the key name from the settings docs before writing it into a plan.
+2. SKILL.md §2 and §1: the `jq` reads replaced with `node -p` key and count reads of the user settings file. §1 now refers to "the user-settings key and count reads in §2".
+3. SKILL.md §6: "`mklink /J` from Git Bash twice mis-quoted its target" now reads "mis-quoted its target".
+
+### Optimisation Suggestions
+
+- §2 "On Windows the local settings file sits next to…" — the qualifier adds nothing, since the rule holds on any OS. Not blocking.
+- When FU-3b runs, the change record should also record the new server's exposed tool names (Q-D5-5), as the implementation notes already say.
+
+### Code Approved for QA: Yes
+
+---
+
+## QA Report — DO-5a
+
+**QA — 2026-10-31**
+**Test mode:** full · **Strategy:** static checks (grep, YAML parse, path and heading existence, byte-level line-ending read, read-through), plus two local read-only runs: the SA `node -p` forms against the tracked settings file, and a `Get-Item` property read on existing `node_modules` folders. This is a docs/config-only slice with no runtime to exercise. · **Focus:** security (public-repo, user-scope boundary, junction safety), schema (frontmatter) · **Skipped:** the fresh-session load test (deferred, as for DO-1, DO-3 and DO-4) · **Input source:** TL prompt + §D5.4 (DO-5a) as amended by SA Review — DO-5 (H1–H9) + SA Code Review — DO-5a. Run in the DO-5a worktree on the uncommitted changes. No platform call, no `claude mcp` command, no network call. No user-scope file was opened. No `.claude/settings.local.json` entry was read. No worktree or junction was created or removed. QA edited nothing except this section, the §0 DO-5 row and the Change History row.
+
+### Test Coverage
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 1 | Public repo (finding-11 regex, personal paths, `mcp.supabase`, worktree names, URLs) | Pass | **Corpus:** the new SKILL.md, plus every added line of `git diff -U0` with the new file `git add -N`'d and then `git reset` (643 lines across the four files). **Finding-11 regex:** 0 hits in the skill, 0 in the added lines. **In the skill:** drive-letter backslash, `C:\Users`, `/Users/`, `/c/Users`, `mcp\.supabase`, the worktree folder name, `worktrees/`, query strings (`?x=`), `www.`, 6+ digit runs and the user's, a team member's and the org name are all 0. `https?://` has 1 hit: the Supabase MCP guide link in the pointer table, which H9(b) allows. **In the added lines:** `/Users/` 2, `/c/Users` 2, `mcp.supabase` 2, `worktrees/` 2, all in BA and SA text. H9(b) quotes the grep patterns themselves. F9 and the SA code review name the gitignored, repo-relative `.claude/worktrees/`. None of these is a path or a leak. The other added `https://` hits are public docs pages in the BA findings table (code.claude.com docs, the Supabase guide, the Supabase MCP repo, two Vercel docs and changelog pages). None carries a query string, ID or ref |
+| 2 | Cited paths and sections exist | Pass | `test -e` OK for `.claude/skills/env-change-protocol/SKILL.md`, `.claude/agents/devops.md`, `.claude/skills/github-ops/SKILL.md`, `.claude/skills/supabase-ops/SKILL.md`, `.claude/settings.json`, `.claude/settings.local.json`, `.gitignore` and `.claude/agents/`. `.mcp.json` is absent, as the skill says. **Sections:** `env-change-protocol` §1 "Classify the tier first"; `github-ops` §8 "Git hazards in a shared repo"; `devops.md` "### Supabase (plugin server only)" with rules (a)–(d) and the wrapper; "What you may write" (a bold run-in label at line 70, not a heading); `git worktree list` on the allowed list; `git worktree remove` on the forbidden list. `.gitignore` lists `.claude/worktrees/`. The DO-1 tool-list smoke test is in the DO-1 criteria |
+| 3 | Frontmatter | Pass | js-yaml (the main checkout's `node_modules`) from a scratch script: keys `name`, `description`; `name = claude-harness-ops`, matching the folder; description 894 chars on one line. Every §D5.4 trigger is present: settings file, permission or allow rule, "don't ask again", MCP server, hook, subagent's tools list, creating or removing a worktree, `node_modules` missing or broken, tracked `.claude/settings.local.json`. It says "Used by the main session and by the DevOps (DO) agent" and names no server ID or ref |
+| 4 | No restatement | Pass | `Snapshot the before-state`, `\| **Read** \|`, `zero policies`: 0/0/0. Extra greps: `Classify the tier`, `### Step`, `How to undo`, `Executed by`, `begin read only;`, `git commit\|push`, `enqueuePullRequest` are all 0. `SELECT-only` has 1 hit, §8's "rule (a) (SELECT-only)": a reference, not the rule table. `git stash` has 2 hits, both pointers to `github-ops` §8. Tiers point to `env-change-protocol` §1, the tool list and Bash forms to `devops.md`, and SQL rules to `devops.md` and `supabase-ops` |
+| 5 | `devops.md` | Pass | `git diff -U0`: one added line (the pointer with the H3 clause, "You never open `~/.claude.json` or any user-scope settings file, with Read or any other tool…") and one blank line, and nothing removed. No `tools:` line in the diff. `execute_sql` appears exactly once in `tools:`, as `mcp__plugin_supabase_supabase__execute_sql` (the plugin one) |
+| 6 | Junction removal | Pass | §6 has the four steps in order. (1) `$j = Get-Item …; $j.LinkType; $j.Target`, stopping on any non-empty, non-`Junction` type, with the symbolic-link reason. (2) `$j.Delete()`, guarded by `-eq 'Junction'`. (3) `Test-Path` is `False`, and `<target>/next/package.json` exists, where `<target>` is the folder from step 1. (4) `git worktree remove` without `--force`, and never `--force`, `rm -rf` or `Remove-Item -Recurse` to get past a refusal. `--force` has 3 hits: the hazard statement, the step-4 prohibition and the checklist; none is a suggestion. "There can be more than one shared folder"; no folder is named. The `cmd /c rmdir` warning and the `git archive` baseline rule are both present. **Property check:** this worktree has no `node_modules`, so `Get-Item` found nothing there. A read-only `Get-Item` on the main checkout (a real folder: LinkType empty, the `Target` property and the `Delete()` method exist) and on the two sibling worktrees that have one (LinkType `Junction`, Target set) confirms the names the skill uses. No target path was printed |
+| 7 | `node -p` reads | Pass | §2 user-settings row: "Main session only: keys and counts". §1 lists "the user-settings key and count reads in §2" under main-session checks and says DO never opens user-scope settings, so the reads are not DO's. Both forms, with the require path swapped to `path.resolve('.claude/settings.json')` (the tracked file), ran cleanly: `Object.keys(...)` → `[ 'permissions' ]`; `(…permissions?.allow ?? []).length` → `1`. The home-directory file was not read |
+| 8 | FU-3 section | Pass | §8 (lines 115–141): 0 hits for `https?:`, `www.`, `.com`, `<url>` and `example.`. The URL shape is left to the Supabase guide. **H1:** an unwrapped probe "made by the main session, never by DO"; `on` through the new server and `off` through the plugin server, "the control that shows the probe can fail"; an unwrapped `create temp table` rejected; a catalog fact for the pinning; the record by role and error class. **H2:** "the binding is by name only, so it trusts the config"; a same-name server without read-only mode gives DO a writable `execute_sql`; all three settings are required; H1 is re-run after any re-add or reconfigure; no tracked file can verify the config. **H4:** "**replaced** … never joined", only after the H1 probe passed, one line through a PR with SA review, the plugin `execute_sql` stays until then, undo is one line. §9: FU-4 is "closed, not built" and ClickUp is "closed as not needed", each with a reopen condition |
+| 9 | Line endings | Pass | `git diff --numstat` is the same with and without `--ignore-cr-at-eol`: devops 2/0, github-ops 1/1, requirement 481/4. No whole-file churn. A byte read with Node shows 0 LF-only lines in the three edited files (index LF, working tree CRLF, `core.autocrlf=true`, the same as the base). The new SKILL.md is LF in the working copy; SA ruled this cosmetic, since Git stores it as LF like its siblings. The requirement's 4 removed lines are the §0 DO-4/DO-5 rows and the §5 DO-4/DO-5 headings, updated in place |
+| 10 | `settings.local.json`, `.gitignore`, `CLAUDE.md` unchanged; files touched | Pass | `git diff --quiet HEAD` on the three files succeeds. `git status --short --untracked-files=all` shows only the four D5.3 files for 5a. `.claude/settings.local.json` is still tracked, as expected while Q-D5-2 awaits the user. The H9(d) check does not apply yet |
+| 11 | Fresh-session load test | Deferred | Skills load at session start, as for DO-1, DO-3 and DO-4. Not failed |
+
+### Issues Found
+
+- **Blocking:** none.
+- **Non-blocking (edge cases, nice to fix):**
+  1. §6 removal has no branch for a worktree whose `node_modules` is **missing** or is a **real folder** (LinkType empty). For a missing one (this worktree is one), step 1 reads nothing and step 3's `<target>/next/package.json` cannot be checked. For a real folder, step 3's `Test-Path` stays `True`. Both fail safe, because the reader stops before step 4, but the skill does not say what to do next. Suggest one line: "If `node_modules` is absent, skip to step 4; if it is a real folder, stop and ask the user."
+  2. The pointer "`devops.md` § What you may write" targets a bold run-in label (line 70), not a heading, so it cannot be found by heading search. It can be found by text search. Noted only.
+  3. SA's open optimisation stands: the "On Windows" qualifier in §2 adds nothing.
 
 ### Final Status
 

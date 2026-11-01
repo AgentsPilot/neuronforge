@@ -77,3 +77,6 @@ scripts/tmp-*.ts
 
 # Claude Code launch configuration: local dev-server definitions, per machine.
 .claude/launch.json
+
+# Claude Code local settings: per-user permission rules, per machine.
+.claude/settings.local.json

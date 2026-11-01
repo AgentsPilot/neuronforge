@@ -229,13 +229,54 @@ describe('a Stripe plan', () => {
     expect(updates).toHaveLength(0);
   });
 
-  it('treats an already-stopped subscription as an ordinary invoice plan', async () => {
-    tables['payment_plan_subscriptions'] = [{ id: 'sub-1', status: 'cancelled' }];
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * RENAMED, AND THE OLD NAME WOULD NOW BE A LIE — delta D-5.
+   *
+   * This used to set a `cancelled` plan row and prove the call site looked past
+   * it: `subscription && !isPlanStopped(subscription.status)`. That decision has
+   * moved INTO the query — `findLiveForBooking` filters `PLAN_STOPPED_STATUSES`
+   * out — so a stopped plan can no longer arrive here to be looked past.
+   *
+   * The fake cannot express the old case either. Its `maybeSingle` is
+   * `Array.isArray(rows) ? rows[0] ?? null : …`, which hands back the first row
+   * WITHOUT evaluating any filter, so a `cancelled` row set here would reach the
+   * call site, be treated as live, and fail for the wrong reason.
+   *
+   * So the case is now "no live plan", which is what the invoice path actually
+   * depends on — and the status filter is asserted directly below, where it is
+   * applied.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('falls through to the invoice path when no plan is live', async () => {
+    tables['payment_plan_subscriptions'] = [];
 
     const result = await stopBookingPlan({ bookingId: BOOKING, userId: USER, reason: 'other' });
 
     expect(cancelPlan).not.toHaveBeenCalled();
     expect(result.ok).toBe(true);
     expect(result.cancelledPeriods).toBe(2);
+  });
+
+  it('asks only for a LIVE plan, in the query', async () => {
+    /*
+     * Invariant I-5, asserted where the scope is applied rather than left to
+     * the repository's own suite. Without this filter the read could match an
+     * old stopped plan beside a live one — and `maybeSingle` would then throw,
+     * reporting "no plan" on precisely the booking that has two, which closes
+     * local rows while Stripe keeps charging the client.
+     *
+     * The fake records the column and the operator of a `.not(…)`, which is
+     * enough to prove the filter is there.
+     */
+    await stopBookingPlan({ bookingId: BOOKING, userId: USER, reason: 'other' });
+
+    const planRead = reads.find(r => r.table === 'payment_plan_subscriptions');
+
+    expect(planRead).toBeDefined();
+    expect(planRead!.filters).toContainEqual(['status', 'in']);
+    // Rule 4, and the booking scope, both applied in the query.
+    expect(planRead!.filters).toContainEqual(['user_id', USER]);
+    expect(planRead!.filters).toContainEqual(['booking_id', BOOKING]);
   });
 });

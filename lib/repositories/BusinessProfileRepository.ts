@@ -600,6 +600,35 @@ export class BusinessProfileRepository {
   }
 
   /**
+   * Whether this business has the lead auto-reply switched on.
+   *
+   * One column, like `getPaymentTermsDays` and for the same reason: the caller
+   * is deciding whether to warn that enquiries are being filed and nobody is
+   * being answered, and should not read a settings form to find out.
+   *
+   * `null` means no profile row, which is not the same as `false` — a business
+   * that has never been set up has not chosen to leave replies off.
+   */
+  async getLeadAutosendEnabled(
+    userId: string
+  ): Promise<BusinessProfileRepositoryResult<boolean | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('lead_autosend_enabled')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      return { data: data?.lead_autosend_enabled ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read the lead autosend setting');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Business picker for the admin LLM usage report (Layer 1.1 FR-2).
    *
    * INTENTIONAL CROSS-ACCOUNT READ (CLAUDE.md Rule 4): there is no user_id
