@@ -271,11 +271,18 @@ export async function inboxChannelStatus(userId: string): Promise<InboxChannelSt
      * ─────────────────────────────────────────────────────────────────────────
      */
     const [agentsRead, connectionsRead, autosendRead, leadsRead] = await Promise.all([
-      /* EVERY channel, not the newest one. A business with two mailboxes has
-         two, and a `limit(1)` read would report the Gmail one as the whole
-         account and leave the Outlook one invisible — running, unmonitored,
-         and offered for setup again. `findByTag` is ordered and unlimited. */
-      agentRepository.findByTag(userId, INBOX_CHANNEL_TAG),
+      /*
+       * EVERY channel, not the newest one. A business with two mailboxes has
+       * two, and a `limit(1)` read would report the Gmail one as the whole
+       * account and leave the Outlook one invisible — running, unmonitored,
+       * and offered for setup again. This read is ordered and unlimited.
+       *
+       * `findStateByTag`, not `findByTag`: that one selects `*`, and a channel
+       * agent carries its ~11 KB plan in BOTH `workflow_steps` and
+       * `pilot_steps` — ~22 KB per mailbox, on four surfaces, to read the four
+       * small fields below.
+       */
+      agentRepository.findStateByTag(userId, INBOX_CHANNEL_TAG),
       /* Only what the agent can run — see SUPPORTED_PROVIDERS. Narrowed in the
          query rather than at each surface, so none of them can offer a
          provider that would file nothing. */
@@ -353,8 +360,7 @@ export async function inboxChannelStatus(userId: string): Promise<InboxChannelSt
        * `last_run` is null until the runner claims the agent, which is the
        * fact meant here.
        */
-      const lastRun = (agent as { last_run?: string | null }).last_run ?? null;
-      if (state === 'running' && !lastRun) rowProblems.push('never_run');
+      if (state === 'running' && !agent.last_run) rowProblems.push('never_run');
 
       channels.push({
         provider,
@@ -362,7 +368,7 @@ export async function inboxChannelStatus(userId: string): Promise<InboxChannelSt
         state,
         watching: config.watching ?? config.mail_query ?? null,
         template: readTemplate(config.enquiry_template),
-        lastRunAt: lastRun,
+        lastRunAt: agent.last_run,
         /*
          * Read off the config rather than off the cron: a days interval stores
          * a carrier expression that states only the time of day, so the cron

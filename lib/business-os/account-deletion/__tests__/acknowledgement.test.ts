@@ -18,7 +18,7 @@ import {
 } from '../acknowledgement';
 import { normaliseConfirmation } from '@/lib/business-os/purge/confirmation';
 
-const NIQQUD_HE = 'הוֹרַדְתִּי אֶת הַנְּתוּנִים שֶׁלִּי וַאֲנִי רוֹצֶה לִמְחוֹק אֶת הַחֶשְׁבּוֹן שֶׁלִּי לִצְמִיתוּת';
+const NIQQUD_HE = 'יִיצֵּאתִי אֶת הַנְּתוּנִים שֶׁלִּי וְהוֹרַדְתִּי אֶת הַמִּסְמָכִים שֶׁלִּי וַאֲנִי רוֹצֶה לִמְחוֹק אֶת הַחֶשְׁבּוֹן שֶׁלִּי לִצְמִיתוּת';
 
 describe('the statements', () => {
   it.each(STATEMENT_LANGUAGES)('%s has a non-empty statement', (language) => {
