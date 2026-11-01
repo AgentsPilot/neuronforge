@@ -1017,6 +1017,134 @@ export class PaymentPlanRepository {
     }
   }
 
+
+  /**
+   * The stages of a QUOTE that have already been invoiced.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Scoped by `proposal_id`, which is the one thing a milestone quote's stages
+   * always have. `cancelBooking` scopes by `booking_id` and `cancelPlan` by
+   * `subscription_id`; a quote raised from the CRM rather than an appointment
+   * has neither, which is the gap `cancelQuoteStages` exists to close.
+   *
+   * EVERY STAGE WITH AN INVOICE, not only the ones still asking for money. The
+   * caller pushes all of them into `stageInvoiceIds` BEFORE testing liveness,
+   * and two things read that list afterwards: the loose-invoice sweep's dedupe,
+   * and the refund targets. The paid ones are precisely the stages with money to
+   * give back, so narrowing this to live invoices would drop them from both.
+   *
+   * `subscription_id IS NULL` keeps a live plan's projected periods out. That is
+   * real money still arriving, it is not this path's business, and it is the
+   * same exclusion `cancelOpenStagesForBooking` makes — which is what lets the
+   * two be scoped loosely without colliding.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findBilledStagesForProposal(
+    proposalId: string,
+    userId: string
+  ): Promise<PaymentPlanRepositoryResult<Array<{ id: string; invoice_id: string | null }>>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_plan_installments')
+        .select('id, invoice_id')
+        .eq('user_id', userId)
+        .eq('proposal_id', proposalId)
+        .not('invoice_id', 'is', null)
+        .is('subscription_id', null);
+
+      if (error) throw error;
+      return {
+        data: (data ?? []) as Array<{ id: string; invoice_id: string | null }>,
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, proposalId, userId }, 'Failed to read the billed stages of a quote');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Take a quote's remaining stages off the books.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The proposal-scoped twin of `cancelOpenStagesForBooking`, and deliberately
+   * a SEPARATE method rather than a `by` parameter on it: the two differ only
+   * in which column they scope on, and a method that took either would let one
+   * caller pass neither.
+   *
+   * Returns the ROWS, not a count, because the caller has to bring the plan's
+   * stored `total_amount` and `installment_count` into line with what was just
+   * closed — `lowerPlansForCancelledStages` eats these rows — and cannot do that
+   * from a number.
+   *
+   * EVERYTHING NOT SETTLED, which includes the BILLED ones. This read
+   * `.eq('status', 'pending')` once, on the reasoning that a billed stage is
+   * represented by the invoice voided before it. True of the money, false of the
+   * record: it left stage 2 of a stopped quote reading `billed`, shown as unpaid
+   * in the drawer with nothing left to pay, and still counted as owed because
+   * only `paid` and `cancelled` are settled. `paid` is never rewritten — that
+   * records money that actually arrived.
+   *
+   * THE REASON TRAVELS, in one namespace with every other cancellation surface
+   * (`20260930_installment_cancel_reason`) — which is what lets a single report
+   * union them without a translation layer. The owner has already answered on
+   * the stop dialog, so writing `cancelled` without it would throw the answer
+   * away at the last step.
+   *
+   * `amount` and `payment_plan_id` are typed loosely to match
+   * `cancelOpenStagesForBooking`. Both are `NOT NULL` in the database, and both
+   * methods feed the same consumer; two shapes for one consumer is worse than
+   * one loose shape. They tighten together or not at all.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async cancelOpenStagesForProposal(
+    proposalId: string,
+    userId: string,
+    cancellation: {
+      reason?: string | null;
+      note?: string | null;
+      by?: string | null;
+    } = {}
+  ): Promise<
+    PaymentPlanRepositoryResult<
+      Array<{ id: string; amount: number | null; payment_plan_id: string | null }>
+    >
+  > {
+    try {
+      const now = new Date().toISOString();
+      const { data, error } = await this.supabase
+        .from('payment_plan_installments')
+        .update({
+          status: 'cancelled',
+          cancel_reason: cancellation.reason ?? null,
+          cancel_note: cancellation.note ?? null,
+          cancelled_by: cancellation.by ?? 'owner',
+          cancelled_at: now,
+          // The retry scheduler reads this; a cancelled stage must not be retried.
+          next_retry_at: null,
+          updated_at: now,
+        })
+        .eq('user_id', userId)
+        .eq('proposal_id', proposalId)
+        .not('status', 'in', '(paid,cancelled)')
+        .is('subscription_id', null)
+        .select('id, amount, payment_plan_id');
+
+      if (error) throw error;
+      return {
+        data: (data ?? []) as Array<{
+          id: string;
+          amount: number | null;
+          payment_plan_id: string | null;
+        }>,
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, proposalId, userId }, 'Failed to close the open stages of a quote');
+      return { data: null, error: error as Error };
+    }
+  }
+
   /**
    * Stamp a booking's FIRST plan period with the invoice raised for it.
    *

@@ -50,6 +50,7 @@ You run as a background subagent. You cannot hold a step-by-step dialogue with t
 
 1. **Read-only audit or inventory** — what is configured, by area. Report by role ("the production Supabase project", "the Preview environment"), never by ID.
 2. **Drift report** — expected state (repo files, recorded change records) against live state, by area and severity.
+   Drift reports follow the `env-drift-audit` skill: the checks, the result states, the severity classes and where the report goes.
 3. **Environment change plan** — written to the cycle workplan under `## Environment changes`, one change per step, in the skill's template.
 4. **Post-change verification** — run the plan's probes after the change landed, and record the evidence.
 

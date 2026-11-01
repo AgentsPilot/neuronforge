@@ -69,19 +69,36 @@
  */
 
 import { createLogger } from '@/lib/logger';
+/*
+ * STILL IMPORTED, and not an oversight. `lowerPlansForCancelledStages` takes a
+ * client as its first argument — it is shared with the booking and subscription
+ * stop paths, which hand it their own — so this file passes one too. Every
+ * QUERY in here goes through a repository; what stays is the hand-off.
+ */
 import { supabaseServer } from '@/lib/supabaseServer';
+import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
+import { paymentInvoiceRepository, LIVE_INVOICE_STATUSES } from '@/lib/repositories/PaymentRepository';
+import { proposalRepository } from '@/lib/repositories/ProposalRepository';
 import { voidInvoice } from '@/lib/payments/invoiceLifecycle';
 import type { StopReason } from '@/lib/business-os/cancellationReasons';
 
 const logger = createLogger({ module: 'CancelQuoteStages' });
 
-/**
- * Invoice states that are still asking the client for money.
+/*
+ * `LIVE_INVOICE_STATUSES` IS NOW DECLARED IN `PaymentRepository.ts`, and its
+ * sibling below stayed here.
  *
- * Derived from the same three `cancelBooking` voids. `paid` and `cancelled` are
- * absent on purpose: one is settled, the other already done.
+ * It moved with the query that applies it as a FILTER
+ * (`paymentInvoiceRepository.findOpenForBooking`), and it is declared there
+ * beside `ISSUED_INVOICE_STATUSES` with the one word between them spelled out —
+ * `draft` against `pending` — because that is the pair a reader can confuse.
+ * This file imports it for the per-stage check below, where the same list is
+ * asked of a row already in hand rather than of the database.
+ *
+ * `SETTLED_INVOICE_STATUSES` stays here deliberately. It is only ever a
+ * predicate over a returned row — this call site deciding what counts as
+ * collected — so there is no query for it to travel with.
  */
-const LIVE_INVOICE_STATUSES = ['draft', 'sent', 'overdue'];
 
 /**
  * Invoice states meaning money arrived.
@@ -164,12 +181,10 @@ export async function cancelQuoteStages(input: {
    * update nothing and report success, which reads as "there was nothing to
    * stop" rather than "that is not yours".
    */
-  const { data: proposal, error: proposalError } = await supabaseServer
-    .from('proposals')
-    .select('id, user_id, booking_id, status, title')
-    .eq('id', proposalId)
-    .eq('user_id', userId)
-    .maybeSingle();
+  const { data: proposal, error: proposalError } = await proposalRepository.findStopTarget(
+    proposalId,
+    userId
+  );
 
   if (proposalError) {
     logger.error({ err: proposalError, proposalId }, 'Could not read the quote');
@@ -208,18 +223,8 @@ export async function cancelQuoteStages(input: {
    * voids at Stripe and writes the audit entry. Skipping it would leave a
    * hosted invoice page payable after the job was called off.
    */
-  const { data: billedStages, error: billedError } = await supabaseServer
-    .from('payment_plan_installments')
-    .select('id, invoice_id')
-    .eq('user_id', userId)
-    .eq('proposal_id', proposalId)
-    .not('invoice_id', 'is', null)
-    /*
-     * A subscription's periods are real money still arriving on a live plan and
-     * are not this function's business. Same exclusion `cancelBooking` makes,
-     * and the reason both can be scoped loosely without colliding.
-     */
-    .is('subscription_id', null);
+  const { data: billedStages, error: billedError } =
+    await paymentPlanRepository.findBilledStagesForProposal(proposalId, userId);
 
   if (billedError) {
     logger.error({ err: billedError, proposalId }, 'Could not read the billed stages of this quote');
@@ -257,12 +262,10 @@ export async function cancelQuoteStages(input: {
      * invoice anyway (`loadUnsettled`), but checking first keeps a paid phase
      * from producing a scary error line in the log for a case that is correct.
      */
-    const { data: invoice } = await supabaseServer
-      .from('payment_invoices')
-      .select('id, status, amount, refunded_amount, currency')
-      .eq('id', stage.invoice_id)
-      .eq('user_id', userId)
-      .maybeSingle();
+    const { data: invoice } = await paymentInvoiceRepository.findSettlementStateById(
+      stage.invoice_id,
+      userId
+    );
 
     if (!invoice) continue;
 
@@ -277,10 +280,18 @@ export async function cancelQuoteStages(input: {
     if (SETTLED_INVOICE_STATUSES.includes(invoice.status)) {
       collectedForEmail +=
         Math.max(0, Number(invoice.amount ?? 0) - Number(invoice.refunded_amount ?? 0));
-      collectedCurrency ??= (invoice as { currency?: string | null }).currency ?? null;
+      /* Typed by `findSettlementStateById`; this needed a cast while the read
+         was inline and the row had no type. */
+      collectedCurrency ??= invoice.currency ?? null;
     }
 
-    if (!LIVE_INVOICE_STATUSES.includes(invoice.status)) continue;
+    /*
+     * Asked of the row, not of the database: this is the per-stage decision
+     * about one invoice already in hand, so it stays a predicate at the call
+     * site. The one place the same list IS a filter — the booking sweep below —
+     * now applies it inside `findOpenForBooking`.
+     */
+    if (!(LIVE_INVOICE_STATUSES as readonly string[]).includes(invoice.status)) continue;
 
     const { error: voidError } = await voidInvoice({ invoiceId: invoice.id, userId });
 
@@ -316,12 +327,10 @@ export async function cancelQuoteStages(input: {
    * ───────────────────────────────────────────────────────────────────────────
    */
   if (cancelUnpaidInvoice && proposal.booking_id) {
-    const { data: loose, error: looseError } = await supabaseServer
-      .from('payment_invoices')
-      .select('id, status')
-      .eq('user_id', userId)
-      .eq('booking_id', proposal.booking_id)
-      .in('status', LIVE_INVOICE_STATUSES);
+    const { data: loose, error: looseError } = await paymentInvoiceRepository.findOpenForBooking(
+      proposal.booking_id,
+      userId
+    );
 
     if (looseError) {
       logger.warn({ err: looseError, proposalId }, 'Could not read the booking invoices of this quote');
@@ -349,35 +358,35 @@ export async function cancelQuoteStages(input: {
    * money lost, via `cancelledPlanMoneyOf`. Left `pending` they are owed money
    * on a job that ended.
    */
-  const { data: closed, error: closeError } = await supabaseServer
-    .from('payment_plan_installments')
-    .update({ status: 'cancelled', next_retry_at: null, updated_at: new Date().toISOString() })
-    .eq('user_id', userId)
-    .eq('proposal_id', proposalId)
-    /*
-     * EVERYTHING NOT SETTLED, which includes the billed ones.
-     *
-     * ─────────────────────────────────────────────────────────────────────────
-     * This read `.eq('status', 'pending')`, on the reasoning that "a billed one
-     * is represented by the invoice voided above". True of the MONEY — that
-     * invoice cannot be paid and nobody is chased for it — and false of the
-     * RECORD, which is what every reader sees.
-     *
-     * The quote for הצעת מחיר לשיפוץ is the case: both invoices voided, stage 1
-     * closed because it happened to be `pending`, stage 2 left reading `billed`
-     * on a job marked `stopped`. The drawer showed it as unpaid, the count said
-     * "0/2 paid" with nothing left to pay, and `unpaidPeriods` still treats it
-     * as owed because only `paid` and `cancelled` are settled.
-     *
-     * A stage whose invoice this same call just voided should agree with it.
-     * `paid` is never rewritten: that records money that actually arrived.
-     * ─────────────────────────────────────────────────────────────────────────
-     */
-    .not('status', 'in', '(paid,cancelled)')
-    .is('subscription_id', null)
-    /* `amount` and `payment_plan_id` so the plan can be brought into line
-       below. The id alone was enough only while nothing did. */
-    .select('id, amount, payment_plan_id');
+  /*
+   * EVERYTHING NOT SETTLED, which includes the billed ones — and the reason
+   * travels with the write.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The filter lives in `cancelOpenStagesForProposal` now; what belongs here is
+   * why it is written the way it is. This update once said
+   * `.eq('status', 'pending')`, on the reasoning that "a billed one is
+   * represented by the invoice voided above". True of the MONEY — that invoice
+   * cannot be paid and nobody is chased for it — and false of the RECORD, which
+   * is what every reader sees.
+   *
+   * The quote for הצעת מחיר לשיפוץ is the case: both invoices voided, stage 1
+   * closed because it happened to be `pending`, stage 2 left reading `billed`
+   * on a job marked `stopped`. The drawer showed it as unpaid, the count said
+   * "0/2 paid" with nothing left to pay, and `unpaidPeriods` still treats it as
+   * owed because only `paid` and `cancelled` are settled.
+   *
+   * `reason` is passed because one namespace with every other cancellation
+   * surface is what lets a single report union them. The owner is standing
+   * there and has already answered; writing `cancelled` without it throws the
+   * answer away.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const { data: closed, error: closeError } =
+    await paymentPlanRepository.cancelOpenStagesForProposal(proposalId, userId, {
+      reason: input.reason,
+      note: input.note?.trim() || null,
+    });
 
   if (closeError) {
     logger.error(
@@ -433,21 +442,14 @@ export async function cancelQuoteStages(input: {
    *     scoped to draft | sent | viewed for exactly that reason
    *   - cannot clobber `declined`, `expired`, `withdrawn` or `superseded`
    */
-  const { data: stoppedRows, error: statusError } = await supabaseServer
-    .from('proposals')
-    .update({
-      status: 'stopped',
-      stop_reason: input.reason,
-      // Trimmed to null: an empty textarea must not store '' and read as a note
-      // that exists but says nothing.
-      stop_note: input.note?.trim() || null,
-      stopped_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', proposalId)
-    .eq('user_id', userId)
-    .eq('status', 'accepted')
-    .select('id');
+  const { data: stoppedRows, error: statusError } = await proposalRepository.stopAccepted(
+    [proposalId],
+    userId,
+    /* Trimming is the repository's; it writes `stop_note: note?.trim() || null`
+       so an empty textarea cannot store '' and read as a note that says
+       nothing. */
+    { reason: input.reason, note: input.note }
+  );
 
   if (statusError) {
     /*

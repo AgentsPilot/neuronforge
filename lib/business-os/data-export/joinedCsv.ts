@@ -25,8 +25,8 @@
 //
 // Lookups (XC-10) are DECLARED in joinedCsvReferences.ts. A lookup falls back
 // to the raw value when the reference is not found, the label is empty, the
-// key is ambiguous, the target section is not exportable, or its module is
-// switched off (C-3, C-4). Lookup rows are reduced to key -> label maps built
+// key is ambiguous, or the target section is not exportable (C-3, C-4).
+// Lookup rows are reduced to key -> label maps built
 // from the declared label columns only (C-11).
 //
 // PURE: no I/O, no logger, no repository, no `server-only`. Rows arrive already
@@ -39,8 +39,6 @@ import { exportColumnsOf, exportDescriptorOfSection } from '@/lib/business-os/da
 import { NON_TABLE_SECTIONS, type ExportSectionId } from '@/lib/business-os/data-export/classificationTypes';
 import {
   EXPORT_MODULES,
-  isModuleEnabled,
-  moduleOfSection,
   sectionsOfModule,
   type ExportModuleDefinition,
   type ExportModuleId,
@@ -114,23 +112,23 @@ export const CLASSIFIED: JoinedCsvClassification = {
 // ── Lookup availability ─────────────────────────────────────────────────────
 
 /**
- * Whether a lookup target may give a label: the section is exportable and its
- * module is switched on in `map`. A classification error here means "not
- * available, keep the id" (C-4); it is never raised. Whether the owner ticked
- * the target's module in this request does not matter.
+ * Whether a lookup target may give a label: the target section is classified
+ * exportable (exactly one include descriptor, or non-table). The module map
+ * does NOT decide this: a module is a product label for what the drawer
+ * offers, and a section's own exclusion is the privacy stop (user decision
+ * 2026-10-31: service names stay in quotes, invoices and payments with
+ * Services not offered). A classification error means "not available, keep
+ * the id" (C-4); it is never raised. Ticks in the request do not matter.
  */
 export function lookupTargetAvailable(
   section: ExportSectionId,
-  map: readonly ExportModuleDefinition[] = EXPORT_MODULES,
   classification: JoinedCsvClassification = CLASSIFIED
 ): boolean {
   try {
-    if (!classification.isExportableSection(section)) return false;
+    return classification.isExportableSection(section);
   } catch {
     return false;
   }
-  const owner = moduleOfSection(section, map);
-  return owner !== null && isModuleEnabled(owner, map);
 }
 
 function referencesOf(sections: readonly ExportSectionId[]): { column: ColumnReference[]; parent: ColumnReference[] } {
@@ -160,7 +158,7 @@ export function lookupSectionsFor(
     if (!used.has(id)) continue;
     const section = LOOKUP_TARGETS[id].section;
     if (inModule.has(section) || out.includes(section)) continue;
-    if (lookupTargetAvailable(section, map, classification)) out.push(section);
+    if (lookupTargetAvailable(section, classification)) out.push(section);
   }
   return out;
 }
@@ -310,7 +308,7 @@ export function buildJoinedCsv(input: JoinedCsvInput): JoinedCsv {
   const labelMaps = new Map<LookupTargetId, LabelMap>();
   for (const id of new Set<LookupTargetId>([...refs.column, ...refs.parent].map((r) => r.target))) {
     const target = LOOKUP_TARGETS[id];
-    if (!lookupTargetAvailable(target.section, map, classification)) continue;
+    if (!lookupTargetAvailable(target.section, classification)) continue;
     let targetColumns: readonly string[];
     try {
       targetColumns = classification.columnsOf(target.section);
