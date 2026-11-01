@@ -48,7 +48,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
 | DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) ✅ DO-5a MERGED 2026-10-31 (PR #592; see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) 🟡 spec re-checked by BA 2026-10-31 (FU-5: H10, the Q-D5-9 note, the H3 boundary, the check list §D5.2.2(g), Q-D5b-1 to Q-D5b-4); SA short pass 2026-10-31 **APPROVED WITH CHANGES** (see [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)); DO-5b built (see [DO-5b implementation notes](#do-5b-implementation-notes)); **SA code review 2026-10-31: Code Approved for QA**, with four small skill fixes (repo reads use `origin/main:./<path>` from the worktree root; `devops.md` unchanged beyond the pointer line); **QA 2026-10-31: QA passed**, with two small non-blocking items, both fixed (see [QA Report — DO-5b](#qa-report--do-5b)); **user approved the diff 2026-11-01**, PR open with auto-merge. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file): ✅ PR #593 MERGED 2026-10-31; `origin/main` shows the file untracked and the `.gitignore` line. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
-| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | ⬜ |
+| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
 
@@ -216,7 +216,7 @@ Specified in detail in [DO-5 Specification](#do-5-specification--claude-harness-
 
 `env-drift-audit`: a read-only audit that compares the expected state (repo files, recorded change records, untracked private inventory) with the live state across GitHub, Vercel, Supabase and the harness. It outputs a drift report by area and severity, with no secret values and no IDs in any tracked output.
 
-### DO-6 `third-party-ops` skill ⬜
+### DO-6 `third-party-ops` skill 🟡
 
 One skill, one section per platform the system needs to operate: Stripe (platform + Connect, test vs live keys, webhook endpoints and signing secrets, API version), Resend and SMTP (sending domain, DNS records for SPF/DKIM, sender addresses, API key per environment), Google Cloud (OAuth consent screen and verification, redirect URIs per environment, enabled APIs), LLM providers (keys and spend limits per environment), QStash, AWS (Textract), WhatsApp and Slack apps, image and FX-rate providers, registrar and DNS. For each: what must differ between environments, where the code reads it (env var names only), the dashboard step the user performs, and an app-side probe that fails when the setting is wrong. Scope it with an inventory pass first (env var prefixes and SDK imports), since the list is expected to grow. May split into smaller slices per platform group if the scoping pass shows it is large.
 
@@ -912,6 +912,259 @@ Notes for Dev:
 
 ---
 
+## DO-6 Specification — third-party-ops skill
+
+**By BA — 2026-11-01.** Branch `feature/devops-third-party-ops`. Config/docs-only slice: no application code, no CI job, no CI time.
+
+DO-6 builds on `devops.md`, `env-change-protocol`, `vercel-ops`, `supabase-ops` and `env-drift-audit`, and **does not repeat them**. The eight steps, the tiers, the approval channel, the order against the deploy, the change-record template, the public-repo rule, DO's tool list, the read-only SQL rules (a)–(d), how to set and verify a Vercel env var, and which deployment holds a value all stay where they are. `third-party-ops` holds only what is specific to each external platform: what must differ between environments, where the code reads it, the dashboard step the user performs, the app-side probe, and the platform's gotchas.
+
+**DO holds no third-party tool** (`devops.md` § What You Own, "Platforms without a tool"; its `tools:` line has only Supabase and Vercel MCP tools). For every platform in this skill the user operates the dashboard. DO plans from the repo and verifies from the app side. DO-6 changes nothing in `devops.md` except one pointer line.
+
+### D6.0 Recommended split (Q-D6-2)
+
+The inventory pass (names only, no `.env*` file opened) found about 12 platform-core vendors and about 10 plugin OAuth apps. One slice is too large. Each slice below adds one reference file to the skill and one row to its platform index. Order: the platform whose misconfiguration costs money or blocks customers first.
+
+| Slice | Platform family | Scope (one line) |
+|---|---|---|
+| **DO-6a** | Skill skeleton + **Stripe** (platform and Connect) | The shared rules and the per-platform template; Stripe keys and mode, webhook endpoints and signing secrets, endpoint API version, Connect client and OAuth redirect URIs, portal configuration, plan prices. **Fully specified below.** |
+| DO-6b | Email: Resend, SMTP, Gmail system sender | Resend key and sending domain (SPF, DKIM, DMARC records), sender address, Resend webhook and its subscribed events; SMTP relay settings; the Gmail fallback sender; the transport's fallback order. |
+| DO-6c | Google Cloud | Sign-in client and plugin OAuth client, consent screen and verification, redirect URIs per environment, enabled APIs, browser-key restrictions for Places, the Search key. |
+| DO-6d | LLM providers | OpenAI, Anthropic, Groq and Kimi keys and spend limits per environment; the model-name env vars; Mistral noted as not wired (below). |
+| DO-6e | Domains, registrar and DNS | The three address names (`NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_MARKETING_URL`, `NEXT_PUBLIC_PUBLIC_SITE_HOST`), the wildcard public-site host, registrar renewal and lock, which DNS records belong to which platform (pointers to `vercel-ops` and DO-6b). |
+| DO-6f | Queues, AWS and small API-key providers | QStash token, URL and the current/next signing keys (rotation), callback address per environment; AWS Textract credential and region; Pexels; the two FX-rate providers. |
+| DO-6g | Messaging apps (Meta, Slack) | WhatsApp Business app (client, configuration, webhook verify token), Meta Ads app on the same developer platform, Slack app redirect URIs; the tunnel names that are local-only. |
+| DO-6h | Plugin OAuth apps | Airtable, Discord, Dropbox, HubSpot, LinkedIn, Microsoft, Notion, Salesforce: one table, since each is "client ID and secret per environment, redirect URI from the app address". |
+
+Each later slice gets a short BA scoping pass and an SA short pass before build, like DO-5b.
+
+**Inventory points the BA confirmed from code:**
+
+- **SendGrid is not a transport.** `lib/notifications/emailTransport.ts` returns `provider: 'resend' | 'smtp' | 'gmail' | 'none'` and tries Resend, then SMTP, then Gmail. SendGrid appears there only in a comment listing SMTP relays the SMTP path can use. The other two mentions the inventory found (`EmailAutomationRepository`, the replay route) were not re-read; DO-6b re-checks them.
+- **Mistral has no key name.** `lib/ai/providers/mistralProvider.ts` takes its key through its constructor, and `lib/ai/providerFactory.ts` never constructs it (`PROVIDERS` lists openai, anthropic, kimi, groq). Nothing reads a Mistral key, so there is nothing to configure until a caller wires it. DO-6d records this as "not wired"; it is not a gap.
+- **The repo already has a complete env-var name catalogue.** `lib/admin/environment/catalogue.ts` lists every name the application reads, with its group (`payments`, `email`, `ai`, `plugins`, `external`, `jobs`, …), sensitivity class, and an `expectedIn` of required / optional / forbidden for production, preview and local. A drift guard (`lib/admin/environment/__tests__/catalogueDrift.guard.test.ts`) fails the Jest gate when code reads a name the catalogue lacks. This is a better expected-names source than the two `env-drift-audit` V-2 uses (Q-D6-6). The admin Environment page (`/admin/environment`, route `app/api/admin/environment/route.ts`) shows, **on the deployment it is served from**, each name as Set / Not set (secrets) and flags `required-not-set` and `should-not-be-set`. It never shows a secret value.
+
+### D6.1 Context and findings (Stripe, checked 2026-11-01)
+
+| # | Finding | Consequence for DO-6a |
+|---|---|---|
+| F1 | `lib/business-os/billing/stripeMode.ts` takes the mode from the secret key's prefix (test or live) and fails closed on anything else. Test-mode and live-mode billing rows share one database, and code reads the row of the current mode. | The key's **mode** is configuration, not only a credential. A key in the wrong mode makes the app read the other mode's billing rows. The skill states the generic `sk_test_` / `sk_live_` concept only. |
+| F2 | `app/api/stripe/webhook/route.ts` tries `STRIPE_WEBHOOK_SECRET`, then `STRIPE_CONNECT_WEBHOOK_SECRET`, against every delivery. Its comment says Connect events may arrive at the same endpoint or a separate one, "a dashboard setting nobody here controls". No secret set → 500 "Webhook secret not configured"; no secret matches → 400 "Invalid signature" and **no claim row is written**. | Which endpoint layout is in use is a dashboard fact for the private inventory. The two outcomes give a probe that can fail. |
+| F3 | The route records each verified event in `processed_webhook_events` (`lib/repositories/ProcessedWebhookEventRepository.ts`): `processing` → `completed`, or `failed` so a retry reclaims it. A delivery of an event already `completed` returns 200 with `duplicate: true` and runs no handler. Every line after verification carries the event's `livemode`. | **Re-sending an already-delivered event from the Stripe dashboard is a safe production probe:** it proves the signing secret and moves no money. A `failed` event would be reprocessed, so the probe uses only an event shown as delivered with 2xx. |
+| F4 | The SDK is pinned: `STRIPE_API_VERSION` in `lib/business-os/billing/stripeClient.ts`, kept equal to the version in `lib/stripe/StripeService.ts` by a guard test. `lib/payments/invoiceSubscription.ts` records a real defect: a field moved between API versions, casts hid it, and plan periods were charged in Stripe and recorded as nothing. Webhook payloads follow the **endpoint's** API version, which is set in the dashboard. | Endpoint API version ≠ the pin is drift with money impact. The skill names the file to read the pin from, never the value. |
+| F5 | The production event list in `docs/STRIPE_WEBHOOK_SETUP_GUIDE.md` (Part 2, five events) is behind the route, which also acts on refund, dispute, payment-intent, checkout-expiry and Connect subscription events. The retrospective `docs/retrospectives/STRIPE_CONNECT_REFUND_WEBHOOK_RETROSPECTIVE.md` (FU-7, A-11) requires the Connect endpoint to be subscribed to the three `refund.*` events. The route now ignores `charge.refunded`. | The skill **derives** the event list from code at `origin/main` and never copies a list. The stale guide is a follow-up (Q-D6-10). |
+| F6 | Connect OAuth: `app/api/payments/stripe-connect/oauth-link/route.ts` reads `STRIPE_CLIENT_ID` and builds its redirect from `platformOrigin()` (`lib/utils/origins.ts`), which refuses a loopback address on Vercel. The plugin path uses `app/oauth/callback/[plugin]/route.ts` and `NEXT_PUBLIC_STRIPE_CLIENT_ID` (placeholder in `lib/plugins/definitions/stripe-plugin-v2.json`). `docs/STRIPE_CONNECT_SETUP_GUIDE.md` §2.2 registers both callback paths. | Each environment's address needs **both** callback paths registered in the Connect OAuth settings of the matching mode. |
+| F7 | `lib/business-os/billing/portalConfiguration.ts` refuses to open the customer portal when `STRIPE_BOS_PORTAL_CONFIGURATION_ID` is missing, unreadable, in the other mode, inactive, or allows more than card and invoices. Each refusal logs `bos_billing_portal_configuration_missing`, `_unreadable` or `_mismatch` with `alert: true`. It is created by `scripts/setup-bos-portal-configuration.ts`, which stops on drift. | An existing app-side probe that fails when the setting is wrong. |
+| F8 | `lib/business-os/billing/planPriceCatalog.ts`: plan prices are found by lookup keys that are the same in both modes. `BUSINESS_OS_PLAN_PRICES_ENABLED` is turned on per environment only after `scripts/check-bos-plan-prices.ts` passes against that environment's Stripe account. The script is read-only, takes the key from a file **outside every git checkout** (`scripts/lib/stripe-script-guards.ts`), never prints the key, and stops if the key belongs to another account than the one the operator names. | A readiness check the user (key holder) runs before a flag is turned on. It checks a key file, not the deployed value, so it is a **pre-check**, never the post-change probe (protocol step 4). |
+| F9 | `lib/client/stripeJs.ts` checks only the publishable key's **shape**, and the key is a `NEXT_PUBLIC_` name, so it is inlined at build. | A publishable key from the other mode or another account passes the shape check. Changing it needs a new build (`vercel-ops` §4). |
+| F10 | Older scripts such as `scripts/check-stripe-webhook-status.ts` pin an older API version and print object IDs, endpoint URLs and metadata. | They are not probes for this skill. Only the guarded Business OS scripts (F8) are named. |
+| F11 | `lib/admin/environment/catalogue.ts` group `payments` expects: secret key and publishable key required in production and preview; platform webhook secret required in production, optional in preview; Connect webhook secret, client IDs and portal configuration optional everywhere. | The expected **names** per environment come from the catalogue at `origin/main`. The expected **values and modes** come from the private inventory. |
+
+### D6.2 What the skill must teach
+
+#### D6.2.1 Shared rules (`SKILL.md`, every platform)
+
+Each item says what the skill states. It reads like the other ops skills: a pointer table first, numbered sections, a closing checklist.
+
+**(a) Pointer table.** `env-change-protocol` (steps, tiers, approval, order against deploy, record template, public-repo rule); `devops.md` (no third-party tools, what DO may write, § Report Format); `vercel-ops` §2–§4 (env var names by target, value-bearing responses, which deployment holds a value, `NEXT_PUBLIC_` rebuild, who probes what); `supabase-ops` §2 and `devops.md` rules (a)–(d) (any SQL evidence); `env-drift-audit` (where the third-party checks join).
+
+**(b) Scope.** A third party is any external service the code calls, imports an SDK of, or reads an env var for. The list of names is `lib/admin/environment/catalogue.ts` at `origin/main`, by group. A name in code that the catalogue lacks fails the drift guard, so DO never searches the code for names. Our own shared secrets (the cron secret, the link-signing secrets, the agent-run webhook secret, the IP salt) are **not** third parties: they follow `env-change-protocol` and `vercel-ops` only (Q-D6-11).
+
+**(c) Who does what.**
+
+| Step | Who |
+|---|---|
+| Read the repo (names, callback paths, event types, pinned versions) | DO or the main session |
+| Read or change anything in a vendor dashboard | **The user.** DO gives the exact step by area name and asks for a report of presence, mode, status and last-updated time: never a value. |
+| Move a value from the dashboard to Vercel | The user, per `vercel-ops` and `env-change-protocol`. **The value never passes through chat or a file.** |
+| Probe the deployed surface | Browser or HTTP probe: the main session or the user (`vercel-ops` §4, "Who probes what"). Server-side evidence: DO, from that deployment's runtime logs, by counts and message class. |
+
+**(d) The per-platform template.** Every reference file has the same six parts, so later slices only add a file: (1) what must differ between environments, (2) where the code reads it (names and files), (3) the dashboard steps, (4) probes, (5) gotchas with their repo grounding, (6) its drift checks (Q-D6-5).
+
+**(e) Common rules.**
+
+- **Mode and account per environment.** When a vendor has test and live modes or separate accounts, which one each environment uses is recorded in the private inventory by role. Every credential of that vendor in one environment must be the same mode and the same account.
+- **One webhook secret per endpoint.** A signing secret belongs to one endpoint at one address. Each environment that receives webhooks has its own endpoint and its own secret. A local listener has its own secret too.
+- **Redirect URIs come from the app address.** Each environment's address (`NEXT_PUBLIC_APP_URL`, read through `platformOrigin()`) plus the callback path must be registered with the vendor, per environment. Preview deployment URLs change per deployment, so only a stable address can be registered.
+- **Rotation overlaps.** Set the new credential, wait for the deploy that carries it to be Ready, probe it, and only then revoke the old one (after deploy). Whether and how long a vendor keeps the old one valid is checked in the vendor's docs at use time, not hardcoded.
+- **Verify the deployed value, never the key in hand.** A script the user runs with a key file is a pre-check. The post-change probe goes through the deployed surface (protocol steps 4 and 5).
+- **Never a live money event as a probe.** In production, probe with a replay the code treats as a duplicate, or with a page that loads without paying.
+- **Public repo.** Tracked text names vendors and environments by role. Never an account, client, endpoint, configuration or price identifier, an endpoint URL, a key prefix beyond the generic test/live concept, or which setting is wrong today.
+
+**(f) Platform index.** One row per platform family: its reference file, or "not covered yet (DO-6x)". Until a family is covered, its drift checks are "not audited".
+
+#### D6.2.2 Stripe (`stripe.md`, DO-6a)
+
+**(1) What must differ between environments**
+
+| Setting | Production | Preview | Local | Why (finding) |
+|---|---|---|---|---|
+| Secret key mode | live | test | test | F1. Suggested; the user confirms (Q-D6-1). |
+| Publishable key | Same mode **and** same account as that environment's secret key | same rule | same rule | F9 |
+| Connect client (both client-ID names) | The client of that mode | same rule | same rule | F6 |
+| Connect OAuth redirect URIs | That environment's address + both callback paths, in that mode's Connect settings | Only a stable Preview address, if Preview runs Connect (Q-D6-3) | Loopback + both paths, test mode | F6 |
+| Webhook endpoint and signing secret(s) | An endpoint at the production address, in live mode; secret(s) per the recorded layout (one endpoint or two) | Only if Preview receives webhooks (Q-D6-3) | The Stripe CLI listener and its own secret | F2, F11 |
+| Endpoint subscribed events | Every event type the route acts on, derived from code at `origin/main`; the Connect side includes the three `refund.*` events | same rule | the CLI's `--events` list in the setup guide, which lags too (F5) | F5 |
+| Endpoint API version | Equal to `STRIPE_API_VERSION` at `origin/main` | same | the CLI's version, checked at use time | F4 |
+| Portal configuration | One created in that mode by the setup script | same rule, test mode | same | F7 |
+| Plan prices | Present in that account with the lookup keys, before `BUSINESS_OS_PLAN_PRICES_ENABLED` is on there | same | same | F8 |
+| Which Stripe account | Private inventory | Private inventory | Private inventory | Public-repo rule |
+
+**(2) Where the code reads it**
+
+| Name | Read in |
+|---|---|
+| `STRIPE_SECRET_KEY` | `lib/stripe/StripeService.ts`, `lib/business-os/billing/stripeClient.ts`, `lib/business-os/billing/stripeMode.ts` (and many callers through them) |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | `lib/client/stripeJs.ts` (build-inlined) |
+| `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET` | `app/api/stripe/webhook/route.ts` |
+| `STRIPE_CLIENT_ID` | `app/api/payments/stripe-connect/oauth-link/route.ts` |
+| `NEXT_PUBLIC_STRIPE_CLIENT_ID` | `lib/plugins/definitions/stripe-plugin-v2.json` (placeholder) |
+| `STRIPE_BOS_PORTAL_CONFIGURATION_ID` | `lib/business-os/billing/portalConfiguration.ts` |
+| Event types the route acts on | the `switch` in `app/api/stripe/webhook/route.ts`, plus the Business OS resolvers it calls first (`lib/business-os/billing/webhookDispatcher.ts`, `planCheckoutSessionEvents.ts`, the boost resolver) |
+| API version pin | `STRIPE_API_VERSION` in `lib/business-os/billing/stripeClient.ts` |
+| Expected names per environment | `lib/admin/environment/catalogue.ts`, group `payments` |
+
+The flags `BUSINESS_OS_PLAN_PRICES_ENABLED`, `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` and `BUSINESS_OS_CREDITS_BOOST_ENABLED` are ours, not Stripe's. The skill names them only as "depends on the Stripe state above", and points to `docs/feature_flags.md`.
+
+The skill gives each file path once and the reader confirms it at use time. If a path has moved, the catalogue names the variable and the reader finds where it is now read.
+
+**(3) Dashboard steps (the user)**
+
+By area name, because the vendor's UI moves; the skill says "confirm the path in the dashboard at use time":
+
+- API keys area, in the right mode: create, roll or restrict a key. A key roll is production tier.
+- Webhooks area: the endpoint's address, mode, "events on your account" or "on connected accounts", subscribed events, API version, recent deliveries, roll secret, resend an event.
+- Connect settings, OAuth: the client ID of that mode, and the redirect URI list.
+- Customer portal configuration: created and checked by `scripts/setup-bos-portal-configuration.ts`, never edited by hand.
+- Setting the value on Vercel: `vercel-ops` and `env-change-protocol`; not restated.
+
+Existing setup docs (`docs/STRIPE_WEBHOOK_SETUP_GUIDE.md`, `docs/STRIPE_CONNECT_SETUP_GUIDE.md`, `docs/STRIPE_ENV_SETUP.md`) are linked for click-paths, with the warning that their event lists lag the code (F5).
+
+**(4) Probes** (each fails when the setting is wrong)
+
+| Change | Probe | Fails when | Who | Evidence |
+|---|---|---|---|---|
+| Webhook signing secret (set, rolled, layout changed) | The user resends an event from the endpoint's delivery list that already shows a 2xx delivery, after the deploy is Ready (F3) | Wrong or missing secret: 400 "Invalid signature" or 500 "Webhook secret not configured" in the dashboard delivery row | User (dashboard); DO (logs) | The dashboard's status for that delivery (user reports it), and that deployment's runtime logs on the webhook path in a window after the resend: counts by level, plus the message class ("Received event" / "Signature verification failed" / "No Stripe webhook secret configured"). Never a copied line. |
+| Endpoint subscribed events | DO derives the expected types from code (§2); the user reads the endpoint's list | A type the route acts on is not subscribed | DO + user | Names compared, in the change record by count ("all N present", or the missing type names, which are public code facts) |
+| Endpoint API version | The user reports the endpoint's version; DO reads the pin at `origin/main` | They differ | DO + user | Both by role ("equals the pin": yes/no) |
+| Secret key mode / account | The main session or user opens the plan checkout on **that** deployment without paying. The vendor marks test mode in the checkout. | Production shows test mode, or a non-production deployment does not | Main session or user | Screenshot-free report: "test mode badge shown: yes/no", the deployment by role, the time |
+| Publishable key | Same checkout: the frame loads | Not configured (the app shows its "not configured" line), or wrong mode or account (the frame fails to load; expected Stripe error class) | Main session or user | Loaded: yes/no, error class only |
+| Connect client and redirect URIs | The main session or user starts "connect an existing Stripe account" on that deployment and **stops at the vendor's authorise page** | The vendor's page shows an error for an unknown client or unregistered redirect URI (Dev confirms against the vendor's docs at build) | Main session or user | Page loaded without error: yes/no; mode shown |
+| Portal configuration | The user opens Settings → Plan → Update card on that deployment | Refused: "not available right now", and a `bos_billing_portal_configuration_*` line with `alert: true` (F7) | User; DO (logs) | DO: count of those event names in that deployment's logs after the probe time = 0 |
+| Plan prices before the flag | `npm run check-bos-plan-prices` with the key file outside every checkout and the expected account named (F8) | Any FAIL row, or a refusal | User (key holder) | VERDICT row only. It is a pre-check; after the flag is on, the post-change evidence is that deployment's logs showing no new `bos_billing_event_denied` with reason `unknown_price` for a test-mode plan invoice |
+
+Supporting SQL evidence (DO, rules (a)–(d), counts only): `processed_webhook_events` rows after the change time, grouped by `status` and by the `livemode` in its metadata. Because the table is shared by whichever deployments use that database, it is **supporting** evidence only; the per-deployment runtime logs are primary (Q-D6-8).
+
+**(5) Gotchas** (each with its grounding)
+
+- **The mode is in the key** (F1). A test key on production does not fail loudly: the app reads test-mode billing rows.
+- **The publishable key's shape check passes a key from the wrong mode or account** (F9). It is build-inlined: a change needs a new build (`vercel-ops` §4).
+- **A signature failure writes nothing** (F2). An empty `processed_webhook_events` window does not prove "no events"; read the deployment's logs and the dashboard's delivery status too.
+- **Resend only a delivered event** (F3). A resend of a `failed` event reprocesses it, which can move money.
+- **Never send a synthetic test event to production.** It runs the handlers with fabricated objects. Synthetic events are for a test-mode endpoint.
+- **The endpoint's API version decides the payload shape** (F4). A version change is a code change first (Dev moves the pin, SA reviews). The endpoint follows **after** the deploy with the new pin is Ready. Whether the vendor allows a parallel endpoint for the overlap is checked in its docs at use time.
+- **The setup guides' event lists are stale** (F5). Derive from code at `origin/main`. `charge.refunded` is ignored by the route; refunds come from `refund.*` on the Connect side.
+- **Two callback paths, two client-ID names** (F6). Registering one path leaves the other flow broken.
+- **The portal never falls back to the vendor's default** (F7). A missing configuration closes Update card on purpose. Create it with the script per mode; never hand-edit it.
+- **Key files stay outside every checkout** (F8). The guarded scripts refuse otherwise. The other Stripe scripts in `scripts/` print identifiers and are not used here (F10).
+- **Preview addresses change per deployment** and Preview is behind deployment protection (Q-D6-3). A webhook or OAuth redirect can only target a stable address. A probe that meets the protection page is "not probed" (`vercel-ops` §4).
+
+**(6) Tiers** (Q-D6-9). Adding or changing a **test-mode** webhook endpoint is reversible (`devops.md` already lists it). Anything in live mode, any key creation, roll or revoke, Connect OAuth settings, and a live portal configuration are production tier: SA reviews the plan, the user executes.
+
+**(7) Order against the deploy** (the protocol's table, applied to Stripe)
+
+| Change | When |
+|---|---|
+| A new Stripe name the merging code requires | Before merge (set on every target the catalogue marks required) |
+| A webhook endpoint or event type the merging code starts to handle | Before merge (an unsubscribed type is simply never delivered) |
+| Key or secret roll | Set new → deploy Ready → probe → revoke old **after deploy** |
+| API version change | After the deploy that moves the pin |
+| `BUSINESS_OS_PLAN_PRICES_ENABLED` on | After `check-bos-plan-prices` passes for that environment's account |
+
+#### D6.2.3 How it plugs into `env-drift-audit`
+
+Third-party checks join as a fifth area, **Third-party**, one platform at a time. A platform not yet covered stays "not audited". For DO-6a (rows held where Q-D6-5 decides; IDs are new):
+
+| ID | Check | Expected state from | Live read (pointer) | Class | Who reads |
+|---|---|---|---|---|---|
+| T-ST-1 | Every `payments`-group name the catalogue marks required for an environment is on that Vercel target; none it marks forbidden is present | `lib/admin/environment/catalogue.ts` at `origin/main`; private inventory (project per role) | `vercel-ops` §3 Env vars | High | DO |
+| T-ST-2 | No Stripe name beyond the publishable key and the two client-ID names carries the `NEXT_PUBLIC_` prefix | Catalogue at `origin/main` | `vercel-ops` §3 Env vars (names only) | Critical | DO |
+| T-ST-3 | Mode and account per environment: secret key, publishable key, Connect client and portal configuration all in the recorded mode and account | Private inventory | User report (dashboard); the checkout probe; portal-refusal log count | Critical | User; DO (log count) |
+| T-ST-4 | Each recorded webhook endpoint: enabled, right address and mode, account / connected-accounts side as recorded, subscribed to every type the code acts on, API version equal to the pin | Code at `origin/main` (types, pin); private inventory (layout) | User report (dashboard) | High | User; DO (the code side) |
+| T-ST-5 | Webhook delivery health: no signature failures and no handler failures on the webhook path since the last recorded run | Change records | That deployment's runtime logs (`vercel-ops` §3); supporting `processed_webhook_events` counts by status (`supabase-ops` §2, rule (c)) | High | DO |
+| T-ST-6 | Connect OAuth redirect URIs: both callback paths registered for each environment's address in the matching mode | Code at `origin/main` (paths); private inventory (addresses) | User report (dashboard) | High | User |
+| T-ST-7 | Portal configuration passes the setup script's check, and plan prices pass where the plan-price flag is on | Scripts at `origin/main`; private inventory (where the flag is on) | `scripts/setup-bos-portal-configuration.ts`, `scripts/check-bos-plan-prices.ts`, run by the key holder | High | User |
+
+`env-drift-audit` edits for DO-6a: §1, "Third-party platforms are 'not audited' until a skill for them exists" becomes "…until `third-party-ops` covers them; see its platform index". §3 gains a Third-party row pointing to `third-party-ops`. §6 summary item 3 becomes "Third-party: per platform, audited or not audited". §7 gains the rows above, or one pointer line to them (Q-D6-5). Nothing else changes.
+
+### D6.3 Files to change (DO-6a)
+
+| # | File | Action | What |
+|---|---|---|---|
+| D6-1 | `.claude/skills/third-party-ops/SKILL.md` | New | §D6.2.1. Target ≤ ~120 lines. Frontmatter `name: third-party-ops`. The description fires on: Stripe, a payment key, a webhook endpoint or signing secret, test or live mode, a Connect setting, a customer portal configuration, an OAuth redirect URI or client, a vendor API key, a sending domain, a vendor dashboard, "is the integration configured", and each later family's names as it is added. It says it is used by the main session and DO. |
+| D6-2 | `.claude/skills/third-party-ops/stripe.md` | New | §D6.2.2. Target ≤ ~170 lines. |
+| D6-3 | `.claude/agents/devops.md` | Edited | One pointer line after the "Platforms without a tool" paragraph: "Procedures, probes and gotchas per third-party platform: the `third-party-ops` skill." **`tools:` unchanged; nothing else changes.** |
+| D6-4 | `.claude/skills/env-drift-audit/SKILL.md` | Edited | The four edits in §D6.2.3, per the Q-D6-5 ruling. |
+| D6-5 | `.claude/skills/env-change-protocol/SKILL.md` | **Not edited** | It already names third-party platforms in its scope line and description. |
+| D6-6 | `CLAUDE.md` | **Not edited** | The DO row and the env-change-protocol route already cover it. |
+| D6-7 | This requirement | Edited | Status, implementation notes, reviews. |
+
+### D6.4 Acceptance criteria (DO-6a)
+
+- [ ] `.claude/skills/third-party-ops/SKILL.md` exists. Frontmatter `name: third-party-ops` matches the folder, and the `description` parses cleanly and fires on the D6-1 triggers.
+- [ ] SKILL.md holds (a)–(f) of §D6.2.1 and links `stripe.md` from its platform index. Every other family shows "not covered yet" with its slice number.
+- [ ] `stripe.md` holds the seven parts of §D6.2.2. Every file path it names exists in the worktree.
+- [ ] No restatement. QA greps both new files for `Snapshot the before-state`, `| **Read** |`, `begin read only`, `filter_project_envs` and `decrypt`: 0 hits, or each hit is a pointer.
+- [ ] No copied lists. The skill holds no Stripe event-type list and no API version value. It names the files they are derived from. QA greps `stripe.md` for a dated version string (`20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]\.`): 0 hits.
+- [ ] Probes. Each row of the probe table names who runs it and what it returns when the setting is wrong. No probe needs DO to hold a secret. The production webhook probe is the resend of an already-delivered event, never a synthetic event.
+- [ ] Public repo. The finding-11 regex from §7 over the added lines returns zero hits, or each hit is explained in the QA report. QA also greps the added lines for vendor identifier prefixes other than the generic `sk_test_` / `sk_live_` concept (account, client, endpoint, signing-secret, portal-configuration, price and publishable-key prefixes): 0 hits. QA reads the diff for an endpoint URL, a domain, an account or a weakness.
+- [ ] `devops.md` diff is exactly the one pointer line (D6-3). `tools:` is unchanged.
+- [ ] `env-drift-audit` diff is exactly the D6-4 edits. Its other checks, classes and summary order are unchanged.
+- [ ] The diff touches only the D6.3 files.
+
+### D6.5 Open questions
+
+**For the user (business):**
+
+- [ ] **Q-D6-1: Which Stripe mode does each environment use?**
+  *Suggested:* production live; Preview and local test, always. A live key never sits on a non-production target. The account each mode belongs to stays in the private inventory.
+- [ ] **Q-D6-2: Is the slice order right?**
+  *Suggested:* the order in §D6.0: Stripe, email, Google, LLM providers, domains and DNS, then queues/AWS/small providers, messaging apps, plugin OAuth apps. Money and customer-facing mail first. Plugin apps last, because a broken one affects one plugin, not the platform.
+- [ ] **Q-D6-3: Should payments work end to end on Preview?** Today the catalogue marks the platform webhook secret optional on Preview, and Preview addresses change per deployment.
+  *Suggested:* no, for now. Preview would use test keys for checkout and the portal. Webhooks and Connect OAuth are tested locally with the Stripe CLI listener and the loopback redirect. If end-to-end Preview testing is wanted, SA designs it (a stable Preview address, and how a vendor reaches it through deployment protection).
+
+**For SA (technical):**
+
+- [ ] **Q-D6-4: Skill layout.**
+  *Suggested:* one `SKILL.md` (shared rules + platform index) and one reference file per platform family. Each later slice adds a file and an index row, and never edits another family's file.
+- [ ] **Q-D6-5: Where do the T- drift checks live?**
+  *Suggested:* in each platform's reference file, in `env-drift-audit` §7's column format, with one pointer line in §7 ("T- checks: `third-party-ops`, each platform's drift section"). This keeps `env-drift-audit` near its ~150-line target, and later slices do not edit it again. The alternative is all rows in `env-drift-audit` §7.
+- [ ] **Q-D6-6: Use the environment catalogue as the expected-names source.**
+  *Suggested:* yes for T-ST-1 and T-ST-2. `lib/admin/environment/catalogue.ts` is complete by its drift guard and carries `expectedIn` per environment. It holds no values, so DO may read it. Whether `env-drift-audit` V-2 should also move from `featureFlags.ts` + `.env.example` to the catalogue is a separate follow-up for SA. It is not in DO-6a.
+- [ ] **Q-D6-7: Does DO get any Stripe access?**
+  *Suggested:* no, not in DO-6a. DO holds no Stripe tool or key. Stripe reads are the user's dashboard reports, plus the guarded scripts run by the key holder. Revisit only if a vendor MCP with a read-only, mode-scoped credential exists. That would be a harness change under `claude-harness-ops`.
+- [ ] **Q-D6-8: SQL evidence from `processed_webhook_events`.**
+  *Suggested:* allowed for DO, as counts by `status` and by metadata `livemode` in a stated window (rules (a)–(c)). It is not a rule (d) table: it holds event IDs and status, no credential. It is supporting evidence only, because more than one deployment may write to the same database. The primary evidence is that deployment's runtime logs.
+- [ ] **Q-D6-9: Tiers for Stripe changes.**
+  *Suggested:* §D6.2.2(6). A test-mode endpoint is reversible. Live mode, keys, Connect OAuth settings and a live portal configuration are production tier.
+- [ ] **Q-D6-10: The stale setup guides (F5).**
+  *Suggested:* not fixed in DO-6a, which stays inside `.claude/`. Log a follow-up (Dev, docs-only) to replace the event lists in `docs/STRIPE_WEBHOOK_SETUP_GUIDE.md` with a pointer to how the list is derived. The skill already derives the list from code and copies none.
+- [ ] **Q-D6-11: Our own shared secrets.**
+  *Suggested:* out of DO-6. The cron secret, the link-signing secrets, the agent-run webhook secret and the IP salt follow `env-change-protocol` and `vercel-ops`. The QStash signing keys are third-party (DO-6f).
+- [ ] **Q-D6-12: Deriving the event list.** The route is long, and the Business OS resolvers decide some types before its `switch`.
+  *Suggested:* the skill names the files (§D6.2.2(2)), and Dev records the derivation steps at build, checked once against the current code. If deriving the list proves unreliable, a code-side constant is a later Dev change, not part of DO-6a.
+
+---
+
+### D6.6 User decisions (2026-11-01)
+
+| Q | Decision |
+|---|---|
+| Q-D6-1 | Target: production live, Preview and local test. DO-6a records the **current** setup as found and changes nothing; the per-environment key mode is checked by T-ST-3 and the checkout probe. What the live check found is recorded privately, not here. Any change is a later decision by the user. |
+| Q-D6-2 | Order accepted. The user asked to confirm every service is still in use. The main session checked QStash (the one the user doubted): it is still in use, so it stays in DO-6f. **Each later slice starts by confirming its services are live** (a code path that runs, and the names set on Vercel) and drops any that are not. |
+| Q-D6-3 | The user does not want Preview's payment setup changed now. DO-6a records Preview as it is; no slice in DO-6 changes Preview's Stripe setup. |
+
+---
+
 ## 6. Non-Functional Requirements
 
 - **Security:** no secret values printed or decrypted. No project refs, IDs, secret locations or open weaknesses in any tracked file. Production and irreversible actions are executed by the user only.
@@ -1231,6 +1484,10 @@ Approved. It reads the project's log store and cannot change project state, so i
 | 2026-10-31 | DO-5b code complete | Dev built the `env-drift-audit` skill (SKILL.md only, 141 lines, no reference file) and the one `devops.md` pointer line under job 2, with Q-D5b-1 to Q-D5b-4 and SA findings 1–10 applied. PR #593 (untrack the local settings file) is merged, so CH-3 is DO's. Two items flagged for SA: the Git Bash rewrite of `origin/main:<dot path>` arguments, and the Grep only-matching question, which Dev could not confirm from its own tool schema. CLAUDE.md unchanged. Uncommitted, awaiting SA code review. |
 | 2026-10-31 | SA code review DO-5b | Code Approved for QA. Dot-path rewrite: the skill now reads repo files as `origin/main:./<path>` from the worktree root. That is plain `git show`, already allowed, with a root-listing self-check. `git ls-tree` and the `MSYS_NO_PATHCONV=1` prefix were rejected as allowed-list changes that are not needed. Presence comes from the folder listing. The Q-D5-10 fix-plan pointer is accepted. Grep `-o` exists, but the guard needs an invert match the Grep tool lacks, so the `.env.example` names stay a main-session check. SA re-ran the procedure as counts only: guard 0, names 4, diff-stat 0. Four small skill fixes; `devops.md` +1/−0 unchanged. Finding-11 regex: 0 hits in the skill and in the 351 added lines; no personal paths. |
 | 2026-10-31 | QA DO-5b | PASSED, 12 checks, no blocking issue. Finding-11 regex: 0 hits in the skill and in the 413 added lines across the four files. All 22 checks present, with classes equal to the spec. SA ruling 1 run live: from the root, `./.gitignore` reads (82 lines) and `./.claude/` lists 3 names; from `lib/` the same read fails "does not exist" and the root listing shows no `.github/`. `.env.example` as counts only: guard 0, names 4, BRE 0, diff-stat 0. `claude-harness-ops` fix: 5/5 lines, no churn, consistent with `origin/main`. Two non-blocking items: the `claude-harness-ops` description still opens with "the tracked local settings file", and that file's edit is outside the 5b rows of D5.3 and not yet recorded here. |
+| 2026-11-01 | DO-6 spec | Inventory pass (env var names, SDKs, hosts; names only). BA spec with split DO-6a..6h; SA approved with 7 changes; user decisions Q-D6-1..3 recorded in §D6.6. |
+| 2026-11-01 | DO-6a code complete | Dev built the `third-party-ops` skill: `SKILL.md` (86 lines: pointers, scope, who does what, common rules, template, platform index, checklist) and `stripe.md` (134 lines: the seven parts plus the T-ST drift rows), with SA required changes 1–7 and Q-D6-4..12 applied. `devops.md` +1 pointer line, `tools:` unchanged; `env-drift-audit` four pointer edits (145 lines). Two spec corrections from the code: the plan resolver is `planInvoiceResolver.ts`, and `charge.refunded` is read by the boost resolver on the platform side. Changes nothing about the current Stripe setup. Uncommitted, awaiting SA code review. |
+| 2026-11-01 | DO-6a SA code review | Code Approved for QA. Every quoted log string and cited path verified in code. SA fixes: SKILL.md `devops.md` pointer names all four sections; `stripe.md` §1 no longer states Preview's current state; `env-drift-audit` §1 names the five areas. Rulings on Dev's six items; FU-D6-e logged (Stripe clients without `apiVersion`). Condition before commit: the main session corrects the T-ST-1 pointer in §D6.6 and rewords two current-state phrases there. |
+| 2026-11-01 | QA DO-6a | PASSED, 14 checks, one Medium item before commit. Every §D6.4 criterion passes; SA change 1(f): the resend probe holds (a)–(e), and all 10 quoted log or response strings are verbatim in the webhook route. Finding-11 regex 0 over the added lines (new files `git add -N`'d); vendor-prefix, URL and path greps 0; 38 cited paths exist; every cross-skill section resolves. §D6.6 already corrected. Medium: SA Code Review — DO-6a quotes the removed current-state phrases, so tracked text still states them. Low: the new files are LF. |
 
 ---
 
@@ -2611,3 +2868,276 @@ Reviewed in the DO-5b worktree against §D5.2.2 (a)–(g), the §D5.4 DO-5b crit
 - [ ] Issues found
 
 **TL routing of the two Low items (2026-10-31):** (1) fixed by the main session: the `claude-harness-ops` description now says "the local settings file", and its §2 line notes a new worktree has no copy. (2) Accepted into the 5b PR rather than a separate PR: the edit is 7 lines, docs-only, corrects text made stale by Q-D5-2 (PR #593), and QA has checked it.
+
+---
+
+## SA Review — DO-6 (spec)
+
+**By SA — 2026-11-01.**
+**Verdict: APPROVED WITH CHANGES.** The split is right, DO-6a is small enough, and the spec keeps to the rules that matter: it points instead of restating, `devops.md` gets one line, DO gets no Stripe tool, and nothing adds CI time. Every code claim I spot-checked holds. The production webhook probe is the one weak point. "Resend an event that already shows 2xx" is **not** money-safe as written. A 2xx in the dashboard does not prove that a `completed` claim row exists, and the claim row is the only thing that stops a handler from running. Required change 1 adds the precondition that makes the probe safe. Three smaller probe rows needed fixes (changes 2–4), and two rows needed precision (changes 5–6).
+
+Reviewed in the DO-6 worktree at `origin/main` (merge of #595), against §0, §3.1–§3.5, the DO-6 scope paragraph, SA Review — DO-5 and SA Review — DO-5b (short pass) as the model, `devops.md`, and the `env-change-protocol`, `vercel-ops`, `supabase-ops` and `env-drift-audit` skills. No platform call, no SQL, no network call. No `.env*` file and no private doc was opened. Local reads only: source files, `git log`, line counts.
+
+### Code claims (spot-check)
+
+| Claim | Result | Where |
+|---|---|---|
+| A delivery of an already-`completed` event returns 200 `duplicate: true` and runs no handler | **Verified.** The check comes after signature verification and before the Business OS dispatcher and the `switch`. Two more `duplicate: true` returns exist: a live `processing` claim, and a unique violation on insert. Neither runs a handler. | `app/api/stripe/webhook/route.ts`, `POST`, idempotency block |
+| No secret → 500; no match → 400; no claim row is written | **Verified.** Both return before any claim. The route tries **both** secrets on every delivery (this matters for change 1(d)). | same, secrets loop |
+| `catalogue.ts` is guarded and covers production, preview and local | **Verified.** `exp(production, preview, local)` takes R / O / X (required / optional / forbidden). The drift guard scans `app`, `lib`, `components` and `hooks`, plus plugin `${NAME}` placeholders. The Stripe rows match F11. *Nuance:* the guard is complete for the read forms it recognises (dot, bracket-literal, destructuring, same-file constant). It does not cover a computed name. "DO never searches the code for names" stands. | `lib/admin/environment/catalogue.ts`, `__tests__/catalogueDrift.guard.test.ts` |
+| Mistral key not read | **Verified.** No `MISTRAL` name in `lib/` or `app/`. `PROVIDERS` lists four providers. `MistralProvider` takes its key through its constructor and is never constructed outside tests. | `lib/ai/providerFactory.ts`, `lib/ai/providers/mistralProvider.ts` |
+| SendGrid is not a transport | **Verified.** The provider union is `resend \| smtp \| gmail \| none`. SendGrid appears only in the SMTP comment. | `lib/notifications/emailTransport.ts` |
+| F4 pin, F6 both client names, F7 log event names, F8 key-file guard, F9 shape-only check | **Verified.** Every file path named in §D6.2.2(2) and the three setup docs exist. One precision for F6: change 6. | as cited |
+
+### Is the production resend probe money-safe? (point 4)
+
+Only when the claim row for **that event**, in **that deployment's database**, is `completed` at the moment of the resend. A 2xx in the dashboard does not imply that, in five cases a reader can see in the code:
+
+- (i) **The row was deleted.** The operator account-cleanup migrations delete a cleaned-up account's `processed_webhook_events` rows, so its old events have no claim.
+- (ii) **The claim was never written.** If the insert fails with anything other than a unique violation, the route continues, runs the handler and returns 2xx without a row.
+- (iii) **The row is stuck at `processing`.** `completeClaim()` does not check the result of `complete()`. A failed completing write still returns 2xx and leaves the row at `processing`. A resend after `STALE_CLAIM_AGE_MS` takes the row back and **runs the handler again**. Stripe never retries a 2xx, so the manual resend is the only thing that reaches this path, and that resend is the probe.
+- (iv) **The duplicate read fails at resend time.** The route then goes on to insert. If the row exists, the unique violation still stops it. If the row is absent, as in (i) or (ii), nothing does.
+- (v) **The first delivery was served against a different database.** That is a deployment on another project, before an endpoint moved.
+
+**Connect vs platform:** the event ID is the dedupe key whichever endpoint receives the event, so one endpoint versus two changes nothing here. The layout does change what the probe proves, though (change 1(d)). Business OS dispatch runs only for platform events. Both sides pass the same claim check first.
+
+### Required changes
+
+1. **[§D6.2.2(4) webhook row, (5) "Resend only a delivered event", acceptance criteria] Make the resend probe safe and conclusive.** — Priority: High
+   - (a) **Precondition, before the resend:** DO confirms `select count(*) from processed_webhook_events where event_id = <the event> and status = 'completed'` returns **1**, on the database that deployment uses. Rules (a)–(c) apply, and the query returns a count. The user supplies the event ID in chat. It is not a secret, but it never goes into tracked text, and the change record holds it only in the private docs. If the count is 0 or DO cannot read it, **do not resend**. The probe is "not probed".
+   - (b) **Prefer a low-stakes event:** an event whose type the route acknowledges without a money handler. Derive the type from code at use time, and never hardcode it in the skill.
+   - (c) **Evidence classes:** the expected success class after the resend is "Received event" followed by "Event already processed, skipping duplicate". If "Event recorded, processing" or "Retrying previously failed event" appears for the resent event, the resend has reached a handler. DO stops and escalates to the user and SA.
+   - (d) **Probe each endpoint whose secret changed, from that endpoint's own delivery list.** The route tries both secrets, so a resend from the other endpoint passes on the unchanged secret and proves nothing.
+   - (e) **During a roll overlap a pass proves nothing.** When the vendor signs with both the old and the new secret during an overlap (check the vendor docs at use time), a pass while the old secret is still valid does not prove that the new value is deployed. The result is "pass, not conclusive (overlap)". Repeat the probe after the old secret has expired, or record it as not conclusive.
+   - (f) **New acceptance criterion:** QA confirms the stripe.md webhook row holds (a)–(e).
+2. **[§D6.2.2(4) "Secret key mode / account" and "Publishable key" rows] State the checkout probe's preconditions and side effects.** — Priority: Medium
+   - **Preconditions:** the plan-checkout flag is on for that deployment, since the route returns 404 otherwise, and an internal account that is eligible to start a checkout exists. If either is missing, the result is "not probed".
+   - **Side effects** (not money; SA accepts them for a production probe): opening checkout can create a vendor customer for that account in that mode, an open session that later expires and whose expiry event the route handles, and an audit row. stripe.md names them so they are expected.
+   - **Follow-up (not DO-6a, Dev + SA):** show the Stripe key **mode** (test / live, derived from the prefix, never the key) on the admin Environment page. That is a mode probe with no customer side effect.
+3. **[§D6.2.2(4) "Plan prices" row] The post-flag evidence cannot fail as written.** `unknown_price` denies fire only when a plan invoice arrives, and a "test-mode plan invoice" has no meaning on production. Replace it: after the flag is on, open the plan page or start checkout on that deployment. DO then counts `bos_billing_lookup_key_missing` (logged with `alert: true` by `planPriceCatalog.ts`) in that deployment's logs after the probe time, and the count must be 0. — Priority: Medium
+4. **[T-ST-1] DO cannot read the local column.** DO opens no `.env*` file, and local is not a Vercel target unless the private inventory says a Development target is in use. So T-ST-1 covers the Vercel targets only, and local is "not read (main session / user)". The same applies to "Local" in the (1) table: it is guidance, not a DO check. — Priority: Medium
+5. **[§D6.2.2(2), T-ST-4, Q-D6-12] Derive event types per side.** T-ST-4 compares each endpoint's subscription, so the derivation must say which types the route acts on for **platform** events (the dispatcher plus the `switch`) and which for **Connect** events (the `switch` branches on `event.account`). A type that reaches the `switch` default, or is only logged as ignored, is not "acted on". Subscribing to extra types is harmless but writes claim rows. If Dev cannot derive the split reliably at build, T-ST-4's per-side comparison is "not read (side)", never a guess. — Priority: Medium
+6. **[F6, T-ST-6] The Connect OAuth redirect is the path *plus a query string*.** `oauth-link/route.ts` appends a query parameter to the callback path. Dev confirms against the vendor docs at build whether the registered URI must include it. The skill says "the redirect exactly as the route builds it, read at use time", not "the callback path". — Priority: Low
+7. **[Q-D6-5] Move the T-ST rows into stripe.md.** The rows go in a "Drift checks" section in the `env-drift-audit` §7 column format. `env-drift-audit` gets only the §1, §3, §6 item 3 and §7 one-line edits. It is 142 lines today, and the four edits must keep it within about 150. — Priority: Low
+
+**Follow-ups logged (not DO-6a):**
+- **FU-D6-a (Dev, code):** `completeClaim()` should log a failed `complete()` write at error level with `alert: true`, so case (iii) shows up. This is reliability, not an attacker-reachable gap: every path needs a valid signature.
+- **FU-D6-b:** the Environment-page mode display (change 2).
+- **FU-D6-c:** the stale setup guides (Q-D6-10).
+- **FU-D6-d:** V-2 moves its name source to the catalogue (Q-D6-6).
+
+### Rulings on Q-D6-4 to Q-D6-12
+
+- **Q-D6-4: accepted.** One `SKILL.md` (the shared rules and the index) and one reference file per family. A later slice adds a file and an index row and edits no other family's file. The one exception is a correction to the shared rules, which gets its own SA pass.
+- **Q-D6-5: accepted, the reference-file option.** See change 7.
+- **Q-D6-6: accepted** for T-ST-1 and T-ST-2, read at `origin/main`. The catalogue is pure data with no values, so DO may read it in full. Moving V-2 is FU-D6-d.
+- **Q-D6-7: accepted.** DO gets no Stripe tool or key. A future read-only, mode-scoped vendor MCP would be a `claude-harness-ops` change with its own SA review.
+- **Q-D6-8: accepted.** Counts by `status` and by metadata `livemode` in a stated window. The table is not a rule (d) table. It is supporting evidence only, and the runtime logs are primary. It also serves the single-event count in change 1(a), which is a count and so within rule (c).
+- **Q-D6-9: accepted.** One clarification: a test-mode endpoint is in the reversible tier, but DO holds no Stripe tool, so the user applies it after the approval in chat, as `devops.md` already says. Creating, rolling or revoking a test-mode **key** is production tier, because a key action is a key rotation under §3.3.
+- **Q-D6-10: accepted.** FU-D6-c is docs-only: Dev replaces the event lists with a pointer to the derivation.
+- **Q-D6-11: accepted.** Our own shared secrets are out of DO-6. The QStash signing keys are DO-6f.
+- **Q-D6-12: accepted, with change 5.** Dev records the derivation steps per side. A code-side constant with a guard is a later Dev change if deriving the list proves unreliable.
+
+### Split and order (point 1)
+
+- **The split DO-6a..6h is accepted.** The technical order is right: money first, then customer mail, then sign-in. Plugin OAuth apps come last because a failure there affects one plugin, not the platform.
+- **DO-6a is small enough.** It is two new files and two pointer edits, the same size as DO-3 or DO-4. If stripe.md runs past about 180 lines, Dev trims prose, never probe or drift rows, and asks SA before splitting the file.
+
+### Checked and honoured (point 5 and point 6)
+
+- **Pointers, not restatement:** the shared rules point to `env-change-protocol`, `vercel-ops` §2–§4, `supabase-ops` §2 and `devops.md` (a)–(d). The restatement grep criterion stays.
+- **`devops.md`:** exactly one pointer line. `tools:` is unchanged, and DO gets no Stripe tool.
+- **CI time:** none. Config and docs only, with no CI job.
+- **Public repo:** the spec holds no account, client, endpoint, price, portal or configuration ID, no endpoint URL, no personal path and no private-doc location. Key prefixes appear only as the generic `sk_`/`pk_` test/live concept. The loopback callback URLs in the existing setup guide are not copied.
+- **Open weaknesses:** F5 says the guide lags the code, not that any live endpoint is unsubscribed. The claim-row cases above can be seen in public code and cannot be reached without a valid signature. They are worded as probe preconditions, and nothing here says any production row is in that state. **No content has to move to the private docs.** Any finding from an actual run (which endpoint lacks which type, which mode is where) does go to the private docs only.
+
+### For the user (Q-D6-1 to Q-D6-3)
+
+These remain the user's decisions. SA has no technical objection to the BA's suggestions: production live, Preview and local test (Q-D6-1); the order in §D6.0 (Q-D6-2); and no end-to-end payments on Preview for now (Q-D6-3). If the user wants end-to-end Preview payments, SA designs it as a separate item.
+
+### Approval
+
+[x] DO-6 spec approved with changes. **Dev may build DO-6a** (D6-1 to D6-4, D6-7), with changes 1–7 applied, once the user has answered Q-D6-1 to Q-D6-3. SA does a code review, then QA. DO-6b to DO-6h each get a BA scoping pass and an SA short pass before build.
+
+---
+
+## DO-6a implementation notes
+
+**By Dev — 2026-11-01.** Config/docs-only slice, no separate workplan. Nothing committed. No platform tool, no SQL, no Stripe call. No `.env*` file and no private doc was opened. Local reads only: source files, line counts, and two web searches of the vendor's docs (below). The skill records the current Stripe setup as a pointer to the private inventory and changes nothing (Q-D6-1, Q-D6-3).
+
+### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `.claude/skills/third-party-ops/SKILL.md` | New (86 lines) | Frontmatter `name: third-party-ops`, single-line description with the D6-1 triggers, used by the main session and DO. Pointer table (a); §1 scope with the catalogue as the name source (b, Q-D6-6, Q-D6-11); §2 who does what (c, Q-D6-7); §3 common rules (e); §4 the six-part template (d); §5 platform index (f, Q-D6-4) with DO-6b..6h "not covered yet" and the Q-D6-2 "confirm the services are live" rule; §6 checklist |
+| `.claude/skills/third-party-ops/stripe.md` | New (134 lines) | §1 what differs (with the Q-D6-1 target and the Q-D6-3 Preview rule), §2 where the code reads it plus the per-side derivation steps, §3 dashboard steps, §4 probes (table, the resend probe, the checkout probe, supporting SQL), §5 gotchas, §6 drift checks T-ST-1..7, §7 tiers and order |
+| `.claude/agents/devops.md` | Edited (+2/−0: the pointer line and its blank line) | After the "Platforms without a tool" paragraph. `tools:` unchanged |
+| `.claude/skills/env-drift-audit/SKILL.md` | Edited (+5/−2, 145 lines) | §1 sentence; §3 Third-party row; §6 item 3; §7 one pointer bullet under the table |
+| This requirement | Edited | §0 DO-6 row, these notes, Change History |
+
+### SA required changes
+
+| # | Where it landed |
+|---|---|
+| 1 (High) | `stripe.md` §4, "The resend probe", steps 1–7. (a) step 3: count of `completed` rows for that `event_id` on the database that deployment uses must be exactly 1, else "not probed"; the event ID comes in chat and stays out of tracked text. (b) step 2: prefer a type that reaches no money handler on that side, derived at use time, none named. (c) steps 5–6: pass is "Received event" then "Event already processed, skipping duplicate"; "Event recorded, processing", "Retrying previously failed event" or `bos_webhook_stale_claim_reclaimed` means stop and escalate to the user and SA. The stale-claim line was added because the reclaim path also reaches a handler (`route.ts`, `processing` branch). (d) step 1. (e) step 7: "pass, not conclusive (overlap)". (f) is QA's criterion against these steps |
+| 2 | `stripe.md` §4, "The checkout probe": the flag precondition (404 otherwise) and the eligible-account precondition, each "not probed" when missing; side effects (customer, open session and its expiry event, audit row); never enter payment details. FU-D6-b not built |
+| 3 | `stripe.md` §4, "Plan prices, after the flag" row: count of `bos_billing_lookup_key_missing` after the probe time = 0. **Refined from the code:** the checkout does not load the full price catalog. `planCheckoutPrice.ts` checks only the current tier's key (and logs the same event name, plus `bos_billing_checkout_price_mismatch`), while the full catalog (`planPriceCatalog.ts`, current and retired keys) is loaded by the plan invoice list and the upgrade preview. So the probe runs both the checkout and the invoice list, and counts both event names. Both caches log nothing on a hit (catalog a few minutes, checkout 60 s and only for a passing price), which is why the gotcha says to probe the new deployment |
+| 4 | T-ST-1 covers Vercel targets only; local is "not read (main session / user)". `stripe.md` §1 states the Local column is guidance, never a DO check |
+| 5 | `stripe.md` §2, derivation steps 1–5, per side, with "not read (side)" in step 5 and in T-ST-4's reader column. Default and log-only cases are not "acted on"; extra subscriptions are harmless but write claim rows |
+| 6 | Checked against the vendor's Connect OAuth reference (below). The skill says register each redirect "exactly as the code builds it, read at use time" (`stripe.md` §1, §5, T-ST-6), and names the query string |
+| 7 | The T-ST rows live in `stripe.md` §6 in the §7 column format. `env-drift-audit` got only the four one-line edits and is 145 lines |
+
+Q-D6-4..12 rulings: Q-D6-4 in SKILL.md §5 (one file per family, shared-rule corrections get their own SA pass). Q-D6-5 is change 7. Q-D6-6: T-ST-1 and T-ST-2 read the catalogue; V-2 untouched (FU-D6-d). Q-D6-7: SKILL.md §2 last paragraph. Q-D6-8: supporting SQL paragraph in `stripe.md` §4. Q-D6-9: `stripe.md` §7, including "a test-mode key action is production tier". Q-D6-10: the guides are linked with the "lists lag" warning and not edited (FU-D6-c). Q-D6-11: SKILL.md §1. Q-D6-12: the derivation, below.
+
+### Event-type derivation, checked once at build
+
+Run on this worktree's code (the merge of #595), following `stripe.md` §2 steps 1–5. Both sides could be derived with certainty, so no side is "not read (side)" today. Counts only, so this note cannot go stale as a list: **13 types acted on for platform events, 14 for Connect events.** The skill holds neither the list nor the counts.
+
+Two corrections to the BA text, both from the code:
+
+- §D6.2.2(2) named `planCheckoutSessionEvents.ts` as a resolver. It is handler-side. The resolvers are those in `DEFAULT_RESOLVERS` (`webhookDispatcher.ts`): the plan resolver in `planInvoiceResolver.ts` and the boost resolver, whose type lists are in `boostChargeEvents.ts` and `boostWebhookSession.ts`. The skill starts from `DEFAULT_RESOLVERS`, so a new resolver is picked up.
+- F5 / the gotcha said "the route ignores `charge.refunded`". The `switch` ignores it on both sides, but on the platform side the boost resolver reads it before the `switch` (boost refunds). The gotcha says so; a platform endpoint that drops it would miss boost refunds.
+
+### Checked against the vendor's docs (2026-11-01)
+
+- **Connect OAuth redirect (change 6).** The Connect OAuth reference says the request's `redirect_uri` must exactly match one of the registered redirect URIs, that a live-mode URI must use HTTPS, that the first registered URI is used when none is sent, and that a mismatch returns `invalid_redirect_uri`. It does not say in so many words whether the query string is compared. The skill therefore says "register exactly as the code builds it" and lets the authorise-page probe confirm. Both facts are marked "confirm at use time".
+- **Webhook secret roll overlap (change 1(e)).** The search returned only secondary sources (an optional overlap of up to 24 hours, signing with both secrets until it ends). Not confirmed from the vendor's own page. The skill hardcodes no window and says to check the vendor's docs at use time.
+
+### Deviations for SA
+
+1. **`stripe.md` §1 table shape.** The BA table had Production / Preview / Local columns. The skill has one "Rule per environment" column plus the target sentence, because the per-environment mode is now the user's target (Q-D6-1) while the current setup is private, and a per-column value would read as the expected state. No row was dropped.
+2. **`env-drift-audit` §6 item 3** reads "Third-party: per platform, audited (counts as in item 2) or not audited". The parenthesis is beyond the spec's wording; without it the summary does not say what an audited platform reports.
+3. **`env-drift-audit` §1** still says "A run covers all four areas". It was left as is, because the spec says nothing else changes. SA may want "the areas" there.
+4. **Q-D6-1 wording.** §D6.6 says the per-environment key mode "is checked by probe T-ST-1". T-ST-1 sees names only; the mode check is T-ST-3 (and the checkout probe). The skill follows the T-ST table. §D6.6 is the user's record, so Dev did not edit it.
+5. **Line endings.** The two new files are LF in the working copy; the edited files kept CRLF (byte count: every line).
+
+### Open items
+
+- **Not checked, for SA:** several Stripe clients in `app/api/stripe/webhook/route.ts` are built with `new Stripe(process.env.STRIPE_SECRET_KEY!)` and no `apiVersion`, so they use the SDK's default rather than `STRIPE_API_VERSION`. Whether the default equals the pin was not checked. It affects outgoing calls, not the webhook payload shape. Not in the skill.
+- FU-D6-a..d stand as SA logged them; none is built here.
+- Public-repo scan (the finding-11 regex) over every added line of the working diff, the two new files included (`git add -N`), the BA and SA spec text included: **0 hits**. The restatement grep over both new files (`Snapshot the before-state`, `| **Read** |`, `begin read only`, `filter_project_envs`, `decrypt`): 0. The dated-version grep over `stripe.md`: 0. A grep for vendor identifier prefixes (publishable, client, endpoint, portal-configuration, price, customer, session, intent and restricted-key prefixes) over both new files: 0. Every file path the two new files name exists in the worktree.
+
+---
+
+## SA Code Review — DO-6a
+
+**Code Review by SA — 2026-11-01**
+**Status:** ✅ Code Approved for QA. SA made three small fixes directly (below). **One condition before commit**, for the main session: the §D6.6 wording items in ruling 4. They are not in the skill and do not block QA.
+
+Reviewed in the DO-6a worktree on the uncommitted changes, against §D6.2–§D6.4, §D6.6, SA Review — DO-6 (spec) (changes 1–7, Q-D6-4..12) and the DO-6a implementation notes. No platform call, no SQL, no Stripe call, no network call. No `.env*` file and no private doc was opened. Local reads only: source files, `git diff`, byte counts, and the installed SDK's `package.json` and its default-version constant (for ruling 6).
+
+### Code claims (spot-check)
+
+| Claim in `stripe.md` | Result |
+|---|---|
+| Webhook route at `app/api/stripe/webhook/route.ts`, both secrets read there | **Verified.** |
+| Every quoted log string | **Verified, each present in the route:** "Received event", "Event already processed, skipping duplicate", "Event recorded, processing", "Retrying previously failed event", `bos_webhook_stale_claim_reclaimed`, "Signature verification failed", "No Stripe webhook secret configured", the responses "Invalid signature" and "Webhook secret not configured", and "Unhandled event type". `duplicate: true` appears 3 times (the three duplicate returns in SA Review — DO-6) |
+| `bos_billing_lookup_key_missing` logged with `alert: true` by both `planPriceCatalog.ts` and `planCheckoutPrice.ts`; `bos_billing_checkout_price_mismatch` by `planCheckoutPrice.ts` | **Verified.** Dev's refinement to change 3 is right: the checkout checks one tier's key, while the full catalog is loaded by `planBillingDocuments.ts` (the invoice list) among others. Probing both and counting both names is correct |
+| `bos_billing_portal_configuration_` prefix with `alert: true` | **Verified:** the missing, unreadable and mismatch events in `portalConfiguration.ts` |
+| Resolvers: `DEFAULT_RESOLVERS` in `webhookDispatcher.ts` = plan + boost; Connect returns before any resolver | **Verified** (`if (event.account) return { kind: 'not_business_os' }`). The correction to the BA text (`planInvoiceResolver.ts`, not `planCheckoutSessionEvents.ts`) is right |
+| The boost resolver reads `charge.refunded`; the `switch` only logs it | **Verified** (`boostChargeEvents.ts`; the route's `case 'charge.refunded'` logs "ignored") |
+| `STALE_CLAIM_AGE_MS` in `ProcessedWebhookEventRepository.ts`; cleanup migrations delete claim rows | **Verified** (the operator test-account cleanup migrations) |
+| Mode from the key prefix, secret or restricted, fails closed (`stripeMode.ts`); shape-only publishable check with a "not configured" line (`stripeJs.ts`) | **Verified** |
+| The checkout route answers 404 with the flag off; the plan checkout is embedded, so the publishable-key probe really exercises the key | **Verified** (`planCheckout.ts`: embedded session; `PlanEmbeddedCheckout.tsx` loads `stripeJs`) |
+| Connect redirect = `platformOrigin()` + path + query string; `platformOrigin()` refuses loopback on Vercel | **Verified** (`oauth-link/route.ts`, `lib/utils/origins.ts`) |
+| A guard test keeps `StripeService.ts` equal to `STRIPE_API_VERSION` | **Verified** (`boostCheckoutAccess.test.ts` compares the two) |
+| `check-bos-plan-prices` npm script; key-file guard; the older webhook-status script pins an older version | **Verified** |
+| Cache facts ("a few minutes"; checkout caches only a passing price) | **Verified** (5 min and 60 s in code; the skill hardcodes neither, correctly) |
+| Every backticked file path in both new files exists | **Verified** (scripted `test -e`, 0 missing) |
+
+### Required changes 1–7
+
+| # | Result |
+|---|---|
+| 1 (a)–(e) | **Pass.** Steps 1–7 hold every sub-item. Step 3 uses rules (a)–(c), names `processed_webhook_events`, `status = 'completed'`, "exactly 1", and "do not resend / not probed" on 0, error or doubt. Step 6's extra stop class (`bos_webhook_stale_claim_reclaimed`) is **accepted**: the reclaim path reaches a handler, and a `processing` row is case (iii). (f) is QA's |
+| 2 | **Pass.** Both preconditions with "not probed", the three side effects, "never enter payment details". The added invoice-list precondition (prices flag + a billing row of that mode) is correct |
+| 3 | **Pass**, refined as above |
+| 4 | **Pass.** T-ST-1 is Vercel targets only; §1's Local line says guidance, never a DO check |
+| 5 | **Pass.** Per-side derivation, "not acted on" cases, harmless-but-claim-row note, "not read (side)" in step 5 and in T-ST-4 |
+| 6 | **Pass.** "Exactly as the code builds it, read at use time", query string named, probe confirms |
+| 7 | **Pass.** T-ST rows in `stripe.md` §6 in the §7 column format; `env-drift-audit` 145 lines, four edits plus SA fix 3 |
+
+Q-D6-4..12: each landed where the notes say (spot-checked SKILL.md §1, §2, §5 and `stripe.md` §4, §7). Q-D6-9's "a test-mode key action is production tier" is in §7.
+
+### Rulings on Dev's six items
+
+1. **One "Rule per environment" column in `stripe.md` §1: accepted.** Per-environment value columns would read as the expected state and would put the current setup, which is private, next to the target. The target sentence plus "as recorded" is the right shape. No row was dropped; the local guidance survives in the Local line and the webhook row.
+2. **"(counts as in item 2)" in `env-drift-audit` §6 item 3: accepted.** Without it an audited platform's summary has no defined content. It is a clarification of the spec's wording, not a new rule.
+3. **"all four areas" in `env-drift-audit` §1: change it. SA fixed it** (fix 3). §D6.2.3 makes Third-party a fifth area, and §3 now has a fifth row, so "four" is now wrong. The line names the five areas, so it cannot go stale by count again. This stays inside the D6-4 edit to §1; it is not a new rule.
+4. **§D6.6 Q-D6-1 says "checked by probe T-ST-1": the main session should correct the pointer before commit.** It is a factual cross-reference, not the decision: T-ST-1 reads names only; the mode check is T-ST-3 plus the checkout probe. The correction is "…is checked by T-ST-3 and the checkout probe", with the decision unchanged. SA did not edit the user's record. **Same pass, same condition:** two phrases in §D6.6 state the current setup in tracked text: Q-D6-3's opening phrase and Q-D6-2's sentence about where the QStash variables are set. They hold no value or ID, but the rule is that the current env setup is private. Suggested rewording, decision unchanged: Q-D6-3 "The user does not want Preview's Stripe setup changed now; no slice in DO-6 changes it"; Q-D6-2 "The main session confirmed QStash is still in use, so it stays in DO-6f" (the detail goes to the private inventory). The main session confirms the wording with the user if it wants to, then edits. SA removed the same kind of phrase from `stripe.md` (fix 2).
+5. **Secret-roll overlap not confirmed from the vendor's own page: accepted as is.** The skill hardcodes no window and says "check its docs at use time" (SKILL.md §3, `stripe.md` step 7 and the API-version gotcha). Step 7 is safe either way: with an overlap the result is "not conclusive", without one a pass is conclusive. No build-time confirmation is needed; whoever runs a roll confirms at that time.
+6. **`new Stripe(process.env.STRIPE_SECRET_KEY!)` without `apiVersion` in the webhook route: follow-up, not DO-6a.** SA checked: the route has 8 such constructions. The installed SDK's default version **equals the pin today**, so there is no drift now. But the dependency range allows a minor upgrade, and the vendor's SDK minor releases can move the default version. The existing guard compares only `StripeService.ts` with the pin, so a lockfile refresh could move these outgoing calls off the pin silently. Logged as **FU-D6-e (Dev, code, Low):** build those clients through the pinned client (or pass `apiVersion: STRIPE_API_VERSION`), and extend the guard to fail on a `new Stripe(` without `apiVersion` in `app/` and `lib/`. Not in the skill: it is a code fact for Dev, not an operations step.
+
+### Code Review Comments
+
+1. Frontmatter: `name: third-party-ops` matches the folder; one-line description holding every D6-1 trigger; names the main session and DO; no ID. — Pass
+2. SKILL.md (a)–(f), the index with DO-6b..6h "not covered yet", and the Q-D6-2 "confirm the services are live" rule. — Pass
+3. SKILL.md pointer row for `devops.md` named one section for four facts. **SA fixed** (fix 1). — Low (fixed)
+4. `stripe.md` §1 had a sentence describing Preview's current payment setup. **SA fixed** (fix 2). — Medium (fixed)
+5. `stripe.md` holds the seven parts; 134 lines, inside ~170. No event-type list (one type, `charge.refunded`, is named as a gotcha example, as the spec does) and no dated version string (0). — Pass
+6. Pointers, not restatement: restatement grep 0 in both files. Every cited section exists (`devops.md` § Permission Tiers, § Tool Rules, § Report Format; `vercel-ops` §2–§4 and "Who probes what"; `supabase-ops` §1–§2; `env-drift-audit` §1, §3, §7). — Pass
+7. `devops.md`: +2/−0, the D6-3 line and a blank line; `tools:` unchanged (0 `tools` lines in the diff). DO gets no Stripe tool, and SKILL.md §2 says a vendor MCP is a `claude-harness-ops` change. — Pass
+8. CI time: none. Docs and config only; no workflow touched. — Pass
+9. Public repo: the brief's regex over every added line (new files `git add -N`'d, then `git reset`), re-run after the SA fixes: **0**. Extra greps for publishable, restricted, customer, session, price, endpoint and client prefixes, `https?://`, user paths, worktree paths and the two private-doc names: 0 real hits (2 false positives: `checkout_price_mismatch` matching a price-prefix pattern). The vendor's IDs, endpoint URLs, the account and the current layout appear nowhere; the probe-precondition cases are worded as public code facts, as SA Review — DO-6 ruled. The only remaining current-state phrases are in §D6.6 (ruling 4). — Pass, with the condition
+10. Line endings: the two new files are LF (0 CR), as in DO-5a and DO-5b; the three edited files keep CRLF (CR count equals LF count: 162, 145, this file). — Pass
+
+### Fixes made by SA
+
+1. `third-party-ops/SKILL.md` pointer table: the `devops.md` row now names § What You Own ("Platforms without a tool"), § Permission Tiers ("What you may write"), § Tool Rules ("Supabase (plugin server only)", rules (a)–(d)) and § Report Format.
+2. `third-party-ops/stripe.md` §1: a sentence describing Preview's current payment setup → "No DO-6 slice changes Preview's Stripe setup (user decision)."
+3. `env-drift-audit/SKILL.md` §1: "A run covers all four areas…" → "A run covers every area (GitHub, Vercel, Supabase, Harness, Third-party)…".
+
+### Optimisation Suggestions
+
+- The checkout probe's "the vendor marks test mode in the checkout" is a vendor UI fact; a later edit could add "(confirm at use time)" for consistency with the other vendor facts. Not blocking.
+- FU-D6-b (mode on the Environment page) would replace the checkout probe for T-ST-3's secret-key half and remove its side effects; worth taking before DO-6b.
+
+### Code Approved for QA: Yes
+
+Condition before commit (main session, not QA): ruling 4's §D6.6 edits.
+
+---
+
+## QA Report — DO-6a
+
+**QA — 2026-11-01**
+**Test mode:** full · **Strategy:** static checks (grep, YAML parse, path and heading existence, verbatim string lookup in the webhook route, byte-level line-ending count, `git diff --numstat` with and without `--ignore-cr-at-eol`, read-through). This is a docs/config-only slice with no runtime to exercise. · **Focus:** security (public repo, current-state text, probe safety), schema (frontmatter) · **Skipped:** the fresh-session load test (deferred, as for DO-1 to DO-5b) · **Input source:** TL prompt + §D6.4 + SA Review — DO-6 (spec) change 1(f) + SA Code Review — DO-6a. Run in the DO-6a worktree on the uncommitted changes. No platform call, no SQL, no Stripe call, no network call. No `.env*` file and no private doc was opened. QA edited nothing except this section, the §0 DO-6 row and one Change History row.
+
+### Test Coverage
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 1 | §D6.4: SKILL.md exists, frontmatter | Pass | js-yaml parse: keys `name`, `description`; `name = third-party-ops`, matching the folder; description 951 chars on one line, and its only `: ` is the key separator. Each D6-1 trigger is present: Stripe, a payment key, a webhook endpoint or signing secret, test or live mode, a Connect setting, a customer portal configuration, an OAuth redirect URI or client, a vendor API key, a sending domain, a vendor dashboard, "is the integration configured". Names the main session and DO |
+| 2 | §D6.4: SKILL.md holds (a)–(f), index | Pass | (a) the pointer table (5 rows); (b) §1; (c) §2; (e) §3 (all seven common rules plus "vendor facts at use time"); (d) §4, six parts; (f) §5, with `stripe.md` linked and DO-6b..6h each "not covered yet (DO-6x)", plus "not audited" until covered. 86 lines, inside ~120 |
+| 3 | §D6.4: `stripe.md` seven parts, paths exist | Pass | §1 what differs, §2 where read (plus the per-side derivation), §3 dashboard, §4 probes, §5 gotchas, §6 drift checks T-ST-1..7, §7 tiers and order. 134 lines, inside ~170. Every backticked path in both files tested with `test -e`: 38 exist, 0 missing (the only non-hit is the string `origin/main`, which is not a path) |
+| 4 | §D6.4: no restatement | Pass | `Snapshot the before-state`, `\| **Read** \|`, `begin read only`, `filter_project_envs`, `decrypt` over both new files: 0 hits. The eight steps, the tiers table and rules (a)–(d) are named by pointer only |
+| 5 | §D6.4: no copied lists | Pass | Dated-version grep over `stripe.md`: 0. No event-type list: the only type named is `charge.refunded`, as a gotcha example (the spec does the same); `refund.*` is a family name. The pin is named by file and constant, not value |
+| 6 | §D6.4: probes | Pass | All 9 rows of the probe table name who runs it and what it shows when the setting is wrong. "No probe needs DO to hold a secret" is stated, and every key-bearing action is the user's. The production webhook probe is the resend; synthetic events to production are forbidden in §5 |
+| 7 | SA change 1(f): resend probe (a)–(e) | Pass | (a) step 3: count of `processed_webhook_events` rows with that `event_id` and `status = 'completed'`, on the database that deployment uses, must be exactly 1; 0, an error or doubt means "do not resend", "not probed"; the event ID stays out of tracked text. (b) step 2: prefer a type that reaches no money handler, derived at use time, none named. (c) steps 5–6: pass is "Received event" then "Event already processed, skipping duplicate"; stop and escalate on "Event recorded, processing", "Retrying previously failed event" or `bos_webhook_stale_claim_reclaimed`. (d) step 1: each endpoint whose secret changed, from its own delivery list, with the both-secrets reason. (e) step 7: "pass, not conclusive (overlap)". **Verbatim in `app/api/stripe/webhook/route.ts`** (`grep -cF`): "Received event" 1, "Event already processed, skipping duplicate" 1, "Event recorded, processing" 1, "Retrying previously failed event" 1, `bos_webhook_stale_claim_reclaimed` 1, "Signature verification failed" 2, "No Stripe webhook secret configured" 1, "Invalid signature" 1, "Webhook secret not configured" 1, "Unhandled event type" 1; `duplicate: true` 3. Other names: `bos_billing_lookup_key_missing` in `planPriceCatalog.ts` and `planCheckoutPrice.ts`; `bos_billing_checkout_price_mismatch` in `planCheckoutPrice.ts`; `bos_billing_portal_configuration_` in `portalConfiguration.ts`; `STALE_CLAIM_AGE_MS` in the repository; `DEFAULT_RESOLVERS` in `webhookDispatcher.ts`; `charge.refunded` read in `boostChargeEvents.ts`; "not available right now" in `planBillingDocuments.ts`; `check-bos-plan-prices` in `package.json` |
+| 8 | Cross-skill pointers resolve | Pass | `devops.md`: § What You Own (with "Platforms without a tool"), § Permission Tiers (the test-mode endpoint is in its Reversible row; "What you may write" label), § Tool Rules / "Supabase (plugin server only)" with rules (a)–(d), § Report Format. `vercel-ops` §2, §3, §4 with "Who probes what", the `NEXT_PUBLIC_` build-inline line and the 401/403 "not probed" line. `supabase-ops` §1, §2. `env-drift-audit` §1, §2, §3, §4, §5, §6, §7. `env-change-protocol` §3 steps 4 and 5. `claude-harness-ops` exists |
+| 9 | `devops.md` | Pass | `git diff`: one hunk, +2/−0 (the D6-3 line and a blank line) after the "Platforms without a tool" paragraph. No `tools:` line in the diff |
+| 10 | `env-drift-audit` | Pass | 145 lines (≤ ~150). +5/−2: §1 sentence (plus SA fix 3, the five area names), §3 Third-party row, §6 item 3, §7 one pointer bullet. G-, V-, S-, CH- rows, classes and the summary order are unchanged |
+| 11 | Public repo (regex and prefixes) | Pass | The brief's regex over `git diff -U0` added lines with the new folder `git add -N`'d, then `git reset -q` (`git status` shows it untracked again): **0**. Extra over the same lines: `https?://`, `localhost:`, vendor identifier prefixes (publishable, restricted, customer, session, intent, event, price, portal-configuration, account-link, endpoint, product, subscription, invoice), `Users/`, the user's name, `worktrees/`, both private-doc names: 0 |
+| 12 | Current env setup in tracked text | **Fail (Medium)** | Both new files: none. §D6.6 already carries the corrected wording (Q-D6-1 "checked by T-ST-3 and the checkout probe"; Q-D6-3 and Q-D6-2 no longer state the setup). **But** SA Code Review — DO-6a quotes the removed phrases verbatim, so the requirement still states them: see Issue 1 |
+| 13 | Line endings, churn | Pass | CR count equals LF count in the three edited files (162, 145, 3096 before this report); `git ls-files --eol` shows `w/crlf`. `git diff --numstat` is the same with `--ignore-cr-at-eol` (2/0, 5/2, 485/2). The requirement's 2 removed lines are the §0 DO-6 row and the old "### DO-6 … ⬜" heading. The two new files are LF (0 CR), as in DO-5a and DO-5b |
+| 14 | Only D6.3 files | Pass | `git status --untracked-files=all`: the three edited files and the two new files only. `env-change-protocol` and `CLAUDE.md` untouched (D6-5, D6-6) |
+| 15 | Fresh-session load test | Deferred | Skills load at session start. Not failed |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+
+1. **Current-state phrases survive as quotes in SA Code Review — DO-6a** — File: `docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`, § SA Code Review — DO-6a: ruling 4, Code Review Comment 4 and Fix 2 — Severity: Medium.
+   - Steps to reproduce: search § SA Code Review — DO-6a for quoted phrases that describe the current Preview or Vercel setup.
+   - Expected: no tracked text states which environment's Stripe setup works or which targets hold a variable. SA ruled that rule applies (ruling 4) and removed the phrase from `stripe.md`.
+   - Actual: ruling 4 quotes the two §D6.6 phrases, Comment 4 quotes the `stripe.md` phrase, and Fix 2 quotes it as the "before" text. The phrases were removed from §D6.6 and `stripe.md` but are now in the review instead. They hold no value or ID, so this is not High. Fix: describe the fixed text without quoting it, for example "a phrase stating Preview's current payment state" and "a phrase stating which targets hold QStash's variables". This is the requirement only, not the skill.
+
+#### Edge Cases (nice to fix)
+
+1. **§D6.5 Q-D6-3 "Suggested" reads like a fact** — "Preview uses test keys for checkout and the portal" is in the BA's suggestion, so it is a proposal, but it is written in the present tense. Optional rewording: "Preview would use test keys…". Severity: Low.
+2. **New files are LF** — Git warns that they become CRLF on the next touch. Same as DO-5a and DO-5b, which SA ruled cosmetic. Severity: Low.
+
+### Final Status
+
+- [ ] All acceptance criteria pass — ready for commit
+- [x] Issues found — the main session must fix Issue 1 (Medium, requirement text only) before commit. Every §D6.4 criterion and SA change 1(f) pass, and the skill files themselves need no change.
