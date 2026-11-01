@@ -85,6 +85,52 @@ beforeEach(() => {
 });
 
 describe('an agent that has run before', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CLOCK IS PINNED, BECAUSE THE EXPECTATIONS BELOW ARE ABSOLUTE DATES.
+   *
+   * `nextTickAfter` counts from the tick but deliberately ADVANCES PAST `now`
+   * — an agent dormant for a month must not fire a month of back-dated
+   * messages, one per pass. Its `now` defaulted to the real clock, so
+   * "three days after a 29 October last run is 1 November" held only while the
+   * suite ran before 1 November 09:00 UTC, after which the resume correctly
+   * picked 4 November. Pinned a day after the fixture's own stopped clock,
+   * which is what its comment says it is.
+   *
+   * That is the implementation being RIGHT and the test being undated. Pinning
+   * `now` is what makes these assertions mean what they say on any day.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const RESUME_PRESSED_AT = new Date('2026-10-24T12:00:00.000Z');
+
+  beforeAll(() => {
+    jest.useFakeTimers({
+      /* Every fakeable API EXCEPT `Date`, so the clock moves and nothing
+         else does: the awaits below keep production timing. */
+      doNotFake: [
+        'hrtime',
+        'nextTick',
+        'performance',
+        'queueMicrotask',
+        'requestAnimationFrame',
+        'cancelAnimationFrame',
+        'requestIdleCallback',
+        'cancelIdleCallback',
+        'setImmediate',
+        'clearImmediate',
+        'setInterval',
+        'clearInterval',
+        'setTimeout',
+        'clearTimeout',
+      ],
+    });
+    jest.setSystemTime(RESUME_PRESSED_AT);
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
   it('is next due in the future, not in the past', async () => {
     /* THE BUG, as one assertion. Everything else here is about WHERE in the
        future, and this is about it being there at all. */
