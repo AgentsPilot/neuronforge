@@ -840,6 +840,52 @@ describe('an agent scheduled by interval rather than by cron', () => {
     next_run: '2026-10-29T09:00:00.000Z',
   };
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CLOCK IS PINNED, BECAUSE THE EXPECTATIONS BELOW ARE ABSOLUTE DATES.
+   *
+   * `nextTickAfter` counts from the tick but deliberately ADVANCES PAST `now`
+   * — an agent dormant for a month must not fire a month of back-dated
+   * messages, one per pass. Its `now` defaulted to the real clock, so
+   * "29 October plus three days is 1 November" held only while the suite itself
+   * ran before 1 November 09:00 UTC. On 2026-11-01 it stopped holding and took
+   * main red: the answer became 4 November, correctly, because 1 November 09:00
+   * was already in the past.
+   *
+   * That is the implementation being RIGHT and the test being undated. Pinning
+   * `now` is what makes these assertions mean what they say on any day.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const PASS_RAN_AT = new Date('2026-10-29T09:12:00.000Z');
+
+  beforeAll(() => {
+    jest.useFakeTimers({
+      /* Every fakeable API EXCEPT `Date`, so the clock moves and nothing
+         else does: the awaits below keep production timing. */
+      doNotFake: [
+        'hrtime',
+        'nextTick',
+        'performance',
+        'queueMicrotask',
+        'requestAnimationFrame',
+        'cancelAnimationFrame',
+        'requestIdleCallback',
+        'cancelIdleCallback',
+        'setImmediate',
+        'clearImmediate',
+        'setInterval',
+        'clearInterval',
+        'setTimeout',
+        'clearTimeout',
+      ],
+    });
+    jest.setSystemTime(PASS_RAN_AT);
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
   it('moves next_run by the interval, not by the carrier cron', async () => {
     /*
      * THE WHOLE POINT. Reading the carrier would reschedule a three-day agent
