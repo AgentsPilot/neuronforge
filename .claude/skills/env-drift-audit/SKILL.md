@@ -21,7 +21,7 @@ This repo's procedure for comparing expected with live environment state and rep
 ## 1. When it runs
 
 - **On demand only**, by the user or TL. **No schedule**: a scheduled run would be a new pattern, with an unattended session holding platform tools. DO never starts a run itself; a report may suggest one (at the end of a DO stream, or after a production-tier change lands).
-- A run covers all four areas unless the brief names fewer. A partial run lists the other areas as "not audited". Third-party platforms are "not audited" until a skill for them exists.
+- A run covers every area (GitHub, Vercel, Supabase, Harness, Third-party) unless the brief names fewer. A partial run lists the other areas as "not audited". Third-party platforms are "not audited" until `third-party-ops` covers them; see its platform index.
 - Each run compares against the **expected state**, never against the previous report.
 
 ## 2. Expected state: three sources
@@ -47,6 +47,7 @@ This repo's procedure for comparing expected with live environment state and rep
 | Vercel | `vercel-ops` §1, §3 (projects, env var names by target, deployments, domains), §4 step 5 (production aliases), §5 (skipped builds), §6 (crons) | DO; the user for dashboard-only settings |
 | Supabase | `supabase-ops` §2 (catalog evidence, never the ledger; advisors; extensions and functions). SQL follows `devops.md` rules (a)–(d), through whichever `execute_sql` DO's `tools:` holds | DO; the user for auth settings and backups |
 | Harness | `claude-harness-ops` §1: DO reads only the tracked harness files, its own loaded tools and `git worktree list` | DO; everything else is a main-session check |
+| Third-party | `third-party-ops` §5 (platform index); each covered platform's file, part 6 (its T- checks and their live reads) | DO for repo, log and count reads; the user for dashboard reads |
 
 DO never opens `~/.claude.json` or a user-scope settings file (`claude-harness-ops` §1). Those checks are reported as "main-session check owed".
 
@@ -85,7 +86,7 @@ DO never opens `~/.claude.json` or a user-scope settings file (`claude-harness-o
 
 1. "Critical-class checks not read:" with their check IDs, or "none". Always first.
 2. One row per area (GitHub, Vercel, Supabase, Harness): counts for Critical, High, Medium, Low, no drift and not read.
-3. "Third-party: not audited".
+3. Third-party: per platform, audited (counts as in item 2) or not audited.
 4. The main-session checks owed, by check ID.
 5. The `origin/main` commit read.
 
@@ -119,6 +120,8 @@ Sources and pointers only: no expected value, setting value, project, folder or 
 | CH-4 | No `.mcp.json`, or every ref and token in it is a `${VAR}` | Repo at `origin/main` | `claude-harness-ops` §2, §4 | Critical | DO |
 | CH-5 | User and managed settings, MCP server names and status; once FU-3b lands, the read-only server has its three settings and its probe was re-run after any re-add | Change records; private inventory | `claude-harness-ops` §1, §2, §8 | Critical | Main session |
 | CH-6 | No leftover worktree; each worktree's `node_modules` is a junction with an intact target | Active work named in the brief | `git worktree list` (DO); junctions: `claude-harness-ops` §6 | Low | DO (list); main session (junctions) |
+
+- **T- checks** (Third-party): `third-party-ops`, each covered platform's drift section, under the rules of this skill.
 
 - **S-1:** a migration with no checker and no named objects is **not read (no checker)**, never "applied". **S-3:** a table the migrations leave without RLS is drift unless the private inventory records it as intended; DO does not decide that a missing policy is on purpose. Supabase checks are counts, booleans and catalog facts only (rule (c)); S-2's lint names go to the full report, never to chat.
 - **CH-1 with CH-5:** CH-1 sees which server name DO is bound to; only CH-5 can see whether that server is really read-only (`claude-harness-ops` §8).
