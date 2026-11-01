@@ -9,7 +9,7 @@
  * `/settings`. It never opens a second dialog on top (V-8), so focus and
  * Escape stay with the one dialog that owns them.
  *
- * In order: the warning (it NAMES Settings → Download my data; there is no
+ * In order: the warning (it NAMES Settings → Export data; there is no
  * download button and no export control here), what happens next, then either
  * the blockers with no statement box, or the statement and its box with the
  * Delete button disabled until the typed text matches a statement in any

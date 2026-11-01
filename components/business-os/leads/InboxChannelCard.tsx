@@ -43,8 +43,9 @@ import type {
   InboxChannelProblem,
   InboxChannelStatus,
 } from '@/lib/business-os/leads/inboxChannel';
-/* The leaf module, by VALUE. `inboxChannel` imports `supabaseServer`, so a
-   value import from it would pull the service-role client into this bundle. */
+/* The leaf module, by VALUE. `inboxChannel` imports repositories, which are
+   server-side only, so a value import from it would pull the service-role
+   client into this bundle. */
 import { PROVIDER_NAMES } from '@/lib/business-os/leads/inboxProviders';
 
 export interface InboxChannelCardProps {

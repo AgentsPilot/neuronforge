@@ -65,7 +65,10 @@
  */
 
 import { createLogger } from '@/lib/logger';
-import { supabaseServer } from '@/lib/supabaseServer';
+import { agentRepository } from '@/lib/repositories/AgentRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { channelAttributionRepository } from '@/lib/repositories/ChannelAttributionRepository';
+import { pluginConnectionRepository } from '@/lib/repositories/PluginConnectionRepository';
 import type { EnquiryTemplate } from './enquiryTemplate';
 import { INBOX_CHANNEL_VIA } from './captureEnquiry';
 import {
@@ -82,10 +85,10 @@ const logger = createLogger({ module: 'inboxChannel' });
  * re-exported here so server code can keep asking this one module everything
  * about the channel.
  *
- * They had to move: this module imports `supabaseServer`, and the card and the
- * setup dialog are `'use client'`. A type import from here is erased and
- * harmless; `PROVIDER_NAMES` is a value, so importing it would have pulled the
- * service-role Supabase client into a browser bundle.
+ * They had to move: this module imports repositories, which are server-side
+ * only, and the card and the setup dialog are `'use client'`. A type import
+ * from here is erased and harmless; `PROVIDER_NAMES` is a value, so importing
+ * it would have pulled the service-role Supabase client into a browser bundle.
  */
 export {
   INBOX_CHANNEL_CONFIG_KEY,
@@ -241,62 +244,76 @@ export async function inboxChannelStatus(userId: string): Promise<InboxChannelSt
        short enough to be about now rather than all time. */
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [{ data: agents }, { data: connections }, { data: profile }, { data: leadRows }] =
-      await Promise.all([
-      supabaseServer
-        .from('agents')
-        /*
-         * `last_run`, not `updated_at`.
-         *
-         * This read `updated_at` and called it the last check, which is a
-         * different fact: the row is touched by every edit, so a channel that
-         * has never run once reports having run the moment its owner renames
-         * it. `last_run` is what the scheduled runner stamps when it actually
-         * claims the agent, and null there means it genuinely has not run.
-         */
-        .select('id, status, agent_config, tags, last_run')
-        .eq('user_id', userId)
-        .contains('tags', [INBOX_CHANNEL_TAG])
-        .is('deleted_at', null)
-        /* EVERY channel, not the newest one. A business with two mailboxes has
-           two, and `limit(1)` would have reported the Gmail one as the whole
-           account and left the Outlook one invisible — running, unmonitored,
-           and offered for setup again. */
-        .order('created_at', { ascending: true }),
-      supabaseServer
-        .from('plugin_connections')
-        .select('plugin_name, status')
-        .eq('user_id', userId)
-        /* Only what the agent can run — see SUPPORTED_PROVIDERS. Narrowed
-           here rather than at each surface, so none of them can offer a
-           provider that would file nothing. */
-        .in('plugin_name', SUPPORTED_PROVIDERS as unknown as string[]),
-      supabaseServer
-        .from('business_profiles')
-        .select('lead_autosend_enabled')
-        .eq('user_id', userId)
-        .maybeSingle(),
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * FOUR READS, ALL THROUGH REPOSITORIES (CLAUDE.md rule 1) — AND THE BUG
+     * THAT PAID FOR THE MOVE.
+     *
+     * The lead count was read here as a hand-written query carrying
+     * `.is('deleted_at', null)` on `crm_contacts`. That table has NO
+     * `deleted_at` column; deletes are hard. PostgREST rejects the WHOLE query
+     * for one unknown name (42703), this code destructured only `data` and
+     * discarded `error`, and a null result tallies to zero — so every inbox
+     * channel reported 0 leads, on all four surfaces, for as long as the
+     * marker had been shipping. No request failed and no log line was red.
+     *
+     * `findLeadsByVia` is the same read without the phantom filter, with the
+     * absence of that filter pinned by its own test. The identical mistake had
+     * already emptied `findAttributedContacts`, which is why the fix belongs in
+     * the repository where one note and one test cover every caller, rather
+     * than in a query each surface writes for itself.
+     *
+     * The errors are no longer dropped: each read that fails is logged below.
+     * A failed read still reports the benign-looking value (no channels, zero
+     * leads, no warning) because this function must not throw — see the
+     * contract above — so the log is the ONLY way to tell "nothing to report"
+     * from "could not find out".
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const [agentsRead, connectionsRead, autosendRead, leadsRead] = await Promise.all([
+      /*
+       * EVERY channel, not the newest one. A business with two mailboxes has
+       * two, and a `limit(1)` read would report the Gmail one as the whole
+       * account and leave the Outlook one invisible — running, unmonitored,
+       * and offered for setup again. This read is ordered and unlimited.
+       *
+       * `findStateByTag`, not `findByTag`: that one selects `*`, and a channel
+       * agent carries its ~11 KB plan in BOTH `workflow_steps` and
+       * `pilot_steps` — ~22 KB per mailbox, on four surfaces, to read the four
+       * small fields below.
+       */
+      agentRepository.findStateByTag(userId, INBOX_CHANNEL_TAG),
+      /* Only what the agent can run — see SUPPORTED_PROVIDERS. Narrowed in the
+         query rather than at each surface, so none of them can offer a
+         provider that would file nothing. */
+      pluginConnectionRepository.findByUserAndPlugins(userId, SUPPORTED_PROVIDERS),
+      businessProfileRepository.getLeadAutosendEnabled(userId),
       /* One read for every channel's count. Narrow: the marker, this owner,
          the window. */
-      supabaseServer
-        .from('crm_contacts')
-        .select('source_metadata')
-        .eq('user_id', userId)
-        .is('deleted_at', null)
-        .gte('created_at', since)
-        .contains('source_metadata', { via: INBOX_CHANNEL_VIA }),
+      channelAttributionRepository.findLeadsByVia(userId, since, INBOX_CHANNEL_VIA),
     ]);
+
+    for (const [what, err] of [
+      ['the channel agents', agentsRead.error],
+      ['the mailbox connections', connectionsRead.error],
+      ['the lead auto-reply setting', autosendRead.error],
+      ['the lead counts', leadsRead.error],
+    ] as const) {
+      if (err) logger.warn({ err, userId }, `Could not read ${what}; reporting without it`);
+    }
+
+    const agents = agentsRead.data ?? [];
 
     /* Tallied per provider, so two mailboxes report their own numbers rather
        than sharing one. */
     const leadsByProvider = new Map<string, number>();
-    for (const row of leadRows ?? []) {
+    for (const row of leadsRead.data ?? []) {
       const meta = (row.source_metadata ?? {}) as { provider?: string };
       const key = meta.provider ?? '';
       leadsByProvider.set(key, (leadsByProvider.get(key) ?? 0) + 1);
     }
 
-    const connected = (connections ?? [])
+    const connected = (connectionsRead.data ?? [])
       .filter(c => c.status === 'active')
       .map(c => c.plugin_name as InboxProvider);
 
@@ -311,7 +328,7 @@ export async function inboxChannelStatus(userId: string): Promise<InboxChannelSt
     const seen = new Set<InboxProvider>();
     const channels: InboxChannelRow[] = [];
 
-    for (const agent of agents ?? []) {
+    for (const agent of agents) {
       /* `agent_config`, namespaced. There is no `agents.config` column — see
          the note on INBOX_CHANNEL_CONFIG_KEY — and the JSONB it does have is
          shared with creation metadata and the V6 ai_context. */
@@ -347,11 +364,11 @@ export async function inboxChannelStatus(userId: string): Promise<InboxChannelSt
 
       channels.push({
         provider,
-        agentId: agent.id as string,
+        agentId: agent.id,
         state,
         watching: config.watching ?? config.mail_query ?? null,
         template: readTemplate(config.enquiry_template),
-        lastRunAt: (agent.last_run as string) ?? null,
+        lastRunAt: agent.last_run,
         /*
          * Read off the config rather than off the cron: a days interval stores
          * a carrier expression that states only the time of day, so the cron
@@ -384,7 +401,9 @@ export async function inboxChannelStatus(userId: string): Promise<InboxChannelSt
      * and nothing anywhere reports an error.
      */
     const problems: InboxChannelProblem[] = [];
-    if (profile && profile.lead_autosend_enabled === false) problems.push('replies_off');
+    /* `=== false`, not falsy: `null` means no profile row, or a read that
+       failed, and neither is the owner having chosen to leave replies off. */
+    if (autosendRead.data === false) problems.push('replies_off');
     for (const row of channels) {
       for (const problem of row.problems) {
         if (!problems.includes(problem)) problems.push(problem);

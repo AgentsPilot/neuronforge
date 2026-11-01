@@ -15,6 +15,26 @@ import type {
 } from './types';
 import { STATUS_TRANSITIONS } from './types';
 
+/**
+ * Lean agent projection for the surfaces that report where a TAGGED agent
+ * stands — see `findStateByTag`.
+ */
+export interface TaggedAgentState {
+  id: string;
+  status: AgentStatus;
+  agent_config: Record<string, unknown> | null;
+  /**
+   * When the scheduled runner last CLAIMED this agent. Not `updated_at`, which
+   * every edit touches, so a channel that has never run would report having run
+   * the moment its owner renamed it. Null means it genuinely has not run.
+   *
+   * Declared here because the shared `Agent` interface does not carry it,
+   * though the column is real — `install.ts` reads it through a cast three
+   * times over.
+   */
+  last_run: string | null;
+}
+
 /** Lean agent projection for admin operator pickers (cross-user). */
 export interface AdminAgentListItem {
   id: string;
@@ -228,6 +248,53 @@ export class AgentRepository {
 
       if (error) throw error;
       return { data: data || [], error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The same agents as `findByTag`, with only the four columns a surface needs
+   * to say where each one stands.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY A SECOND TAG READ RATHER THAN NARROWING `findByTag`.
+   *
+   * `findByTag` cannot narrow: `install.ts` hands its whole `Agent` back to its
+   * own callers. And `*` is expensive HERE specifically — a mailbox channel
+   * agent carries its ~11 KB plan in BOTH `workflow_steps` and `pilot_steps`,
+   * so `inboxChannelStatus` was fetching ~22 KB per mailbox to read four small
+   * fields, on four surfaces, every dashboard load.
+   *
+   * Same shape as `getLeadAutosendEnabled` beside `getInvoiceSettings`, and
+   * `findByUserAndPlugins` beside `findAllByUser`: a caller that needs a few
+   * fields should not pay for the rest.
+   *
+   * `tags` is deliberately NOT selected. The read this replaced carried it and
+   * nothing ever looked at it.
+   *
+   * No logging, matching `findByTag`. The caller logs every failed read with
+   * the owner it was reading for, so a log here would duplicate it without
+   * adding context.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findStateByTag(
+    userId: string,
+    tag: string
+  ): Promise<AgentRepositoryResult<TaggedAgentState[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('agents')
+        .select('id, status, agent_config, last_run')
+        .eq('user_id', userId)
+        .contains('tags', [tag])
+        .is('deleted_at', null)
+        /* Oldest first, like `findByTag`: a surface that keeps the FIRST of a
+           duplicated provider keeps the one the owner has been living with. */
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      return { data: (data ?? []) as TaggedAgentState[], error: null };
     } catch (error) {
       return { data: null, error: error as Error };
     }

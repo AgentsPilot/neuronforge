@@ -88,15 +88,24 @@ function table(csv: JoinedCsv): Record<string, string>[] {
   });
 }
 
+/**
+ * The real map with every module switched on. The builder tests are about
+ * mechanics (lookups, labels, column union), not about which modules the
+ * product ships, so they run over this map unless a test passes its own. The
+ * product switches are pinned in exportModules.test.ts.
+ */
+const ALL_ON: readonly ExportModuleDefinition[] = EXPORT_MODULES.map((m) => ({ ...m, on: true }));
+
 function build(
   moduleId: ExportModuleId,
   rest: Omit<JoinedCsvInput, 'moduleId' | 'language' | 'labels'> & { labels?: JoinedCsvLabels }
 ): JoinedCsv {
-  return buildJoinedCsv({ moduleId, language: 'en', labels: KEY_ECHO_LABELS, ...rest });
+  return buildJoinedCsv({ moduleId, language: 'en', labels: KEY_ECHO_LABELS, map: ALL_ON, ...rest });
 }
 
+/** An all-on map with one module switched off. */
 function mapWithOff(id: ExportModuleId): ExportModuleDefinition[] {
-  return EXPORT_MODULES.map((m) => (m.id === id ? { ...m, on: false } : m));
+  return ALL_ON.map((m) => (m.id === id ? { ...m, on: false } : m));
 }
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -269,24 +278,28 @@ describe('T-8 service lookup (cross-module) and the client in Belongs to', () =>
   });
 });
 
-describe('T-9 a switched-off target keeps the id', () => {
+// User decision 2026-10-31 (SA Option A): a module switch is a product label,
+// not a privacy stop, so a target in a switched-off module still gives its
+// label. An excluded target keeping the id is T-10.
+describe('T-9 a target in a switched-off module still gives its label', () => {
   const input = { rowsBySection: { bookings: [BOOKING] }, lookupRowsBySection: { services: [SERVICE], clients: [DANA] } };
 
-  it('services module off (rows still passed) -> raw service_id', () => {
+  it('services module off (rows passed) -> the service name', () => {
     const [row] = table(build('bookings', { ...input, map: mapWithOff('services') }));
-    expect(row.service_id).toBe('sv1');
+    expect(row.service_id).toBe('Massage');
     expect(row.belongs_to).toBe('Dana Levi (dana@x.com)');
   });
 
-  it('clients module off -> Belongs to shows the raw contact_id', () => {
+  it('clients module off -> Belongs to still shows the client label', () => {
     const [row] = table(build('bookings', { ...input, map: mapWithOff('clients') }));
-    expect(row.belongs_to).toBe('c1');
+    expect(row.belongs_to).toBe('Dana Levi (dana@x.com)');
     expect(row.service_id).toBe('Massage');
   });
 
-  it('negative control: the real (all-on) map with the same input gives labels', () => {
-    const [row] = table(build('bookings', { ...input, map: EXPORT_MODULES }));
-    expect([row.service_id, row.belongs_to]).toEqual(['Massage', 'Dana Levi (dana@x.com)']);
+  it('negative control: with services excluded in the classification the same input keeps the raw id', () => {
+    const classification: JoinedCsvClassification = { ...CLASSIFIED, isExportableSection: (s) => s !== 'services' };
+    const [row] = table(build('bookings', { ...input, map: mapWithOff('services'), classification }));
+    expect(row.service_id).toBe('sv1');
   });
 });
 
@@ -343,8 +356,9 @@ describe('T-10 / C-4 excluded target keeps the id; own-section errors propagate'
     expect(isClassifiedExportable('services')).toBe(true);
     expect(isClassifiedExportable('account_identity')).toBe(true);
     expect(isClassifiedExportable('nope' as ExportSectionId)).toBe(false);
+    // Default classification seam; the module map plays no part (2026-10-31).
     expect(lookupTargetAvailable('services')).toBe(true);
-    expect(lookupTargetAvailable('services', mapWithOff('services'))).toBe(false);
+    expect(lookupTargetAvailable('nope' as ExportSectionId)).toBe(false);
   });
 });
 
@@ -555,12 +569,39 @@ describe('C-5 lookupSectionsFor, derived from the declared references', () => {
     account_business: [],
   };
 
-  it.each(EXPORT_MODULES.map((m) => [m.id]))('%s over the real map', (id) => {
+  it.each(ALL_ON.map((m) => [m.id]))('%s over an all-on map', (id) => {
+    expect(lookupSectionsFor(id, ALL_ON)).toEqual(EXPECTED[id]);
+  });
+
+  it('a target in a switched-off module is still asked for (2026-10-31)', () => {
+    expect(lookupSectionsFor('bookings', mapWithOff('services'))).toEqual(['clients', 'services']);
+  });
+
+  it('negative control: a target excluded in the classification is not asked for', () => {
+    const classification: JoinedCsvClassification = { ...CLASSIFIED, isExportableSection: (s) => s !== 'services' };
+    expect(lookupSectionsFor('quotes', EXPORT_MODULES, classification)).toEqual(['clients']);
+  });
+
+  // The REAL product map (Services and Bookings switched off), no ALL_ON: the
+  // shipped modules still read the service and client rows for labels.
+  it.each(['quotes', 'invoices_payments', 'activities_tasks'] as const)('%s over the real EXPORT_MODULES', (id) => {
+    expect(lookupSectionsFor(id, EXPORT_MODULES)).toEqual(EXPECTED[id]);
     expect(lookupSectionsFor(id)).toEqual(EXPECTED[id]);
   });
 
-  it('a switched-off target is not asked for', () => {
-    expect(lookupSectionsFor('bookings', mapWithOff('services'))).toEqual(['clients']);
+  it('a quotes build on the real map resolves service_id to the service name', () => {
+    expect(EXPORT_MODULES.find((m) => m.id === 'services')?.on).toBe(false);
+    const csv = buildJoinedCsv({
+      moduleId: 'quotes',
+      language: 'en',
+      labels: KEY_ECHO_LABELS,
+      map: EXPORT_MODULES,
+      rowsBySection: { quotes: [{ id: 'q1', contact_id: 'c1', service_id: 'sv1', title: 'Spring offer' }] },
+      lookupRowsBySection: { services: [SERVICE], clients: [DANA] },
+    });
+    const [row] = table(csv);
+    expect(row.service_id).toBe('Massage');
+    expect(row.belongs_to).toBe('Dana Levi (dana@x.com)');
   });
 });
 

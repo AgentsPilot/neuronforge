@@ -37,7 +37,8 @@ jest.mock('@/lib/business-os/data-export/exportModules', () => {
   const actual = jest.requireActual('@/lib/business-os/data-export/exportModules');
   return {
     ...actual,
-    EXPORT_MODULES: actual.EXPORT_MODULES.map((m: { id: string }) => (m.id === 'smart_links' ? { ...m, on: false } : m)),
+    // All on but smart_links: independent of the product switches in exportModules.ts.
+    EXPORT_MODULES: actual.EXPORT_MODULES.map((m: { id: string }) => ({ ...m, on: m.id !== 'smart_links' })),
   };
 });
 

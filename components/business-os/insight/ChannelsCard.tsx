@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, X, AlertCircle, RefreshCw, Globe, Link2, FileText, MoreHorizontal } from 'lucide-react';
 import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
-/* The leaf module, by VALUE: `inboxChannel` imports `supabaseServer`. */
+/* The leaf module, by VALUE: `inboxChannel` imports repositories. */
 import {
   PROVIDER_NAMES,
   SUPPORTED_PROVIDERS,
