@@ -25,6 +25,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 - [DO-4 Specification — github-ops skill](#do-4-specification--github-ops-skill)
 - [DO-5 Specification — claude-harness-ops and env-drift-audit skills](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills)
 - [SA Review — DO-5](#sa-review--do-5)
+- [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
 - [7. Acceptance Criteria (DO-1)](#7-acceptance-criteria-do-1)
 - [8. Out of Scope / Future Roadmap](#8-out-of-scope--future-roadmap)
@@ -46,7 +47,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-2 | `supabase-ops` skill | ✅ MERGED 2026-10-30 (PR #579). See [DO-2 implementation notes](#do-2-implementation-notes). Follow-ups FU-1 to FU-3 logged in [SA Review — DO-2](#sa-review--do-2): FU-1 ✅ MERGED 2026-10-30 (PR #584); FU-2 ⬜ (next migration that ships a checker); FU-3 ⬜ (DO-5) |
 | DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
 | DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
-| DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) 🟡 DO-5a built, SA code approved, QA passed 2026-10-31; user approved the diff, PR open with auto-merge (see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) ⬜ after 5a merges, with a short re-check. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file) awaits the user. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
+| DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) ✅ DO-5a MERGED 2026-10-31 (PR #592; see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) 🟡 spec re-checked by BA 2026-10-31 (FU-5: H10, the Q-D5-9 note, the H3 boundary, the check list §D5.2.2(g), Q-D5b-1 to Q-D5b-4); SA short pass 2026-10-31 **APPROVED WITH CHANGES** (see [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)); DO-5b built (see [DO-5b implementation notes](#do-5b-implementation-notes)); **SA code review 2026-10-31: Code Approved for QA**, with four small skill fixes (repo reads use `origin/main:./<path>` from the worktree root; `devops.md` unchanged beyond the pointer line); **QA 2026-10-31: QA passed**, with two small non-blocking items, both fixed (see [QA Report — DO-5b](#qa-report--do-5b)); **user approved the diff 2026-11-01**, PR open with auto-merge. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file): ✅ PR #593 MERGED 2026-10-31; `origin/main` shows the file untracked and the `.gitignore` line. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
 | DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | ⬜ |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
@@ -733,32 +734,42 @@ Each item says what the skill states. It reads like the other ops skills: a poin
 
 A **read-only** audit. It changes nothing and fixes nothing. Each finding becomes a change plan in a later job.
 
+*(BA re-check, FU-5, 2026-10-31.)* Re-checked against H10, the Q-D5-9 ruling, the Q-D5-1 ruling that 5b does not wait for FU-3b, the `claude-harness-ops` skill as merged (its §1 who-reads-what rule, H3), the other ops skills as merged, and the untracking of the local settings file (pending merge). What changed is marked *(BA re-check)*. The new check list is (g); the new questions are Q-D5b-1 to Q-D5b-4 in §D5.5.
+
 **(a) Expected state: three sources, by what they may hold**
 
 | Source | Tracked? | What it supplies |
 |---|---|---|
-| Repo files | Yes | Workflow files and their job names; `vercel.json` (crons, ignore command, disabled branches); `supabase/migrations/**` and checkers; `.claude/settings.json` and agent `tools:` lists; env var **names** the code reads (feature flags, `.env.example`). |
+| Repo files | Yes | Workflow files and their job names; `vercel.json` (crons, ignore command, disabled branches); `supabase/migrations/**` and checkers; `.claude/settings.json` and agent `tools:` lists; env var **names** the code reads (feature flags, `.env.example`). *(BA re-check, H10:)* the two name sources are `lib/utils/featureFlags.ts` and `.env.example`. BA confirmed both exist on `main` at this re-check; Dev confirms again at build. `.env.example` is read for names only (Q-D5b-2). `.claude/settings.local.json` is **not** an expected-state source: it is being untracked, and once that lands the expected state is "untracked" (check CH-3). *(SA-corrected:)* `.env.example` names are a main-session read (Q-D5b-2 ruling); DO reads `featureFlags.ts` only. Neither file is a complete list of the names the code reads, so V-2 checks the names these two sources hold and the full report says so; it is not a completeness check. The untrack has landed on `origin/main` as last fetched, so CH-3 applies now. |
 | Change records | Yes, by role | Each cycle workplan's `## Environment changes` section: what a recorded step said the end state is. |
-| Private inventory | **No** | Everything that is an ID, a value location or a weakness: which project holds which env var names, the expected settings of security features, the project for each role. |
+| Private inventory | **No** | Everything that is an ID, a value location or a weakness: which project holds which env var names, the expected settings of security features, the project for each role. *(BA re-check)* Also the last recorded advisor lists (`supabase-ops` §2 puts them there) and earlier full drift reports. |
 
 The skill says: an expected value that is an ID, a secret location or a security setting lives only in the private inventory. The audit reads it there and **never copies it** into tracked text or chat.
+
+*(BA re-check)* **Repo files are read as they are on `main`**, not the current branch (`git show main:<path>` or `git log`, both on DO's allowed list), and the report names the `main` commit it read. Whether local `main` is current is Q-D5b-4. *(SA-corrected, Q-D5b-4 ruling:)* "`main`" here means **`origin/main`** (`git show origin/main:<path>`, `git log -1 origin/main`), never the local `main` branch, which nothing in this repo keeps current.
+
+*(BA re-check)* **When the private inventory is not reachable.** It is untracked, so it is absent from every worktree. Its location comes from the brief (the main session reads it from the user's private memory); the skill never writes the location, and DO does not search the disk for it. When it is not reachable, every check whose expected state lives there is **not read (expected state missing)**: never "no drift", and never compared against a guess or an earlier report. The checks whose expected state is in the repo still run. Where the full report goes in that case is Q-D5b-1.
 
 **(b) Live state: pointers, not procedures**
 
 | Area | Live read | Owned by |
 |---|---|---|
-| GitHub | Repo settings, protection and rulesets, required checks against job names (the seven rules), Actions permissions, secret and variable **names** | `github-ops` |
-| Vercel | Projects by role, env var names by target, crons, production deployment against `main` | `vercel-ops` |
-| Supabase | Migrations by catalog evidence (never the ledger), advisor counts, auth settings | `supabase-ops` |
-| Harness | Settings scopes by keys and counts, DO's tool names resolve, MCP server names, worktrees and junctions | `claude-harness-ops` |
+| GitHub | Repo settings, protection and rulesets, required checks against job names (the seven rules), Actions permissions, secret and variable **names** | `github-ops` *(BA re-check: §2 and §4; the commands are in its `read-commands.md`)* |
+| Vercel | Projects by role, env var names by target, crons, production deployment against `main` | `vercel-ops` *(BA re-check, H10: §3, §4 step 5 and §6; whether the production deployment's SHA is on `main` is `github-ops` §6)* |
+| Supabase | Migrations by catalog evidence (never the ledger), advisor counts, auth settings | `supabase-ops` *(BA re-check: §2. SQL goes through the plugin `execute_sql` under `devops.md` rules (a)–(d) and the wrapper. Once FU-3b lands it goes through the read-only server, under the same rules. 5b does not wait for FU-3b (Q-D5-1 ruling). Auth settings are a user dashboard step, so they are "not read" unless the user reports them)* |
+| Harness | Settings scopes by keys and counts, DO's tool names resolve, MCP server names, worktrees and junctions | `claude-harness-ops` *(BA re-check, H3, H10: DO reads only the tracked harness files, its own loaded tools and `git worktree list`. User and managed settings, `~/.claude.json`, MCP server names and status, and every junction read are **main-session reads** (§1, §2, §6). DO reports them as "main-session check owed" and never opens those files)* |
 
 Third-party platforms join when DO-6 exists. Until then the audit lists them as "not audited".
+
+*(BA re-check)* The audit **points** to each skill by section. It never copies a command, a tool parameter or a procedure from them, and never restates `env-change-protocol` or `devops.md`. Which checks run is listed in (g).
 
 **(c) Comparison rules**
 
 - Every area reports one of: **no drift**, **drift** (with a severity), or **not read** (no access, error, retention passed). "Not read" is never "no drift" (the rule of every ops skill).
 - Names are compared, never values. An env var is "present in Production and Preview", never its value.
 - A change record that disagrees with live state is drift, even if the live state looks right: the record or the platform is wrong.
+- *(BA re-check)* The audit works **per check**, not per area. Each check in (g) reports one of the three states. "Not read" always carries its reason: no access, error, retention passed, expected state missing (the private inventory is not reachable), or main-session check owed (H3).
+- *(BA re-check)* A "main-session check owed" counts as "not read" in DO's report. It turns into a result only when the main session runs it and adds it to the full report.
 
 **(d) Severity scale** (Q-D5-9)
 
@@ -769,15 +780,53 @@ Third-party platforms join when DO-6 exists. Until then the audit lists them as 
 | **Medium** | Wrong but not harmful today | A cron in the repo not on the platform; a stale record; an unresolved tool name in an agent file |
 | **Low** | Cosmetic or informational | A leftover worktree; an unused allow rule |
 
+*(BA re-check, Q-D5-9 examples confirmed.)* Each example maps to a check in (g): a gate that cannot fail is G-1; a security feature found off is G-4, S-3 or V-5; a value-bearing permission wider than recorded is G-5 or CH-2. Each check carries a fixed **class**, the highest severity its drift can have. A single finding may be rated lower, never higher, with the reason given in the full report. A check is **Critical-class** when its class is Critical. Every area has at least one, so a "not read" anywhere can hide a Critical finding. Per the Q-D5-9 ruling, every **Critical-class check that is "not read"** is listed **first** in the chat summary, by check ID.
+
 **(e) Output**
 
 | Output | Where | Holds |
 |---|---|---|
-| Full drift report | **Untracked private docs only** | Findings by area and severity, with what to compare. A Critical finding is an open weakness, so the report is never tracked. |
-| Chat summary | DO's report | **Counts** by area and severity, plus "not read" areas. No setting names for Critical findings, no IDs, no values. |
+| Full drift report | **Untracked private docs only** | Findings by area and severity, with what to compare. A Critical finding is an open weakness, so the report is never tracked. *(BA re-check)* One dated file per run. Per check: ID, result, severity, the expected-state source, the evidence by role, and the reason for any "not read". It also records the `main` commit read and which main-session checks are owed. |
+| Chat summary | DO's report | **Counts** by area and severity, plus "not read" areas. No setting names for Critical findings, no IDs, no values. *(BA re-check)* The layout, in this order: (1) "Critical-class checks not read:" with the check IDs, or "none"; (2) one row per area (GitHub, Vercel, Supabase, Harness) with counts for Critical, High, Medium, Low, no drift and not read; (3) "Third-party: not audited"; (4) the main-session checks owed, by check ID; (5) the `main` commit read. Check IDs come from the public skill, so naming one reveals only that it was not read. A drift finding is never named in chat, only counted. The rest of the report follows `devops.md` § Report Format. *(SA-added)* A non-zero Critical or High count signals an open weakness, so the chat summary is never pasted into tracked text (`github-ops` §9). |
 | Fix plans | Per finding, a later DO change-plan job | A fix for a security finding is planned in the private docs until it lands (Q-D5-10). |
 
-**(f) When it runs:** on demand by the user or TL, and as a suggested step at the end of a DO stream. No scheduled run (a schedule would be a new pattern; Q-D5-11).
+**(f) When it runs:** on demand by the user or TL, and as a suggested step at the end of a DO stream. No scheduled run (a schedule would be a new pattern; Q-D5-11). *(BA re-check)* **On demand only.** DO never starts a run itself. A report may suggest one, for example at the end of a DO stream or after a production-tier change lands. A run covers all four areas unless the brief names fewer, and a partial run lists the other areas as "not audited". Each run compares against the expected state, never against the previous report.
+
+**(g) The checks** *(BA re-check: new)*
+
+The skill holds this list as one table. Dev may merge or split rows to fit about 150 lines, but may not lower a class or drop a check without SA. "Who reads" follows H3: **DO** means DO reads it in the run; **main session** means DO reports "main-session check owed"; **user** means a dashboard step the user reports.
+
+| ID | Check | Expected state from | Live read (pointer) | Class | Who reads |
+|---|---|---|---|---|---|
+| G-1 | Every required check protects `main` (all seven rules) | Workflow files on `main` (job `name:`, triggers, `paths:`, `if:`, `needs:`) | `github-ops` §2 Required checks, §4 | Critical (a required gate that cannot fail); High (a required name with no job) | DO |
+| G-2 | Protection and rulesets of `main`, read together | Private inventory; change records | `github-ops` §2 Branch protection and rulesets, What to report | Critical | DO; user if DO's read is refused *(SA-corrected: admin rights needed; dashboard area in `github-ops` `dashboard-settings.md`)* |
+| G-3 | Repo settings: auto-merge allowed, delete head branches, merge methods, default branch | Change records; private inventory | `github-ops` §2 Repo settings | Medium | DO |
+| G-4 | Secret scanning and push protection enabled | Private inventory | `github-ops` §2 Repo settings (an absent object is not read), §3 | Critical | DO; user if DO's read is refused *(SA-corrected, as G-2)* |
+| G-5 | Actions permissions: allowed actions, default token permission, whether Actions may approve PRs | Private inventory | `github-ops` §2 Actions | Critical | DO; user if DO's read is refused *(SA-corrected, as G-2)* |
+| G-6 | Every secret and variable name a workflow on `main` references exists in its scope | Workflow files on `main` | `github-ops` §2 Secrets and variables (names only) | High | DO |
+| V-1 | Each project by role: linked repo, production branch, framework, Node version, root directory | Private inventory (which project holds which role) | `vercel-ops` §1, §3 Projects | High | DO |
+| V-2 | Env var names by target: each name the code reads is on every target that needs it, with the Git-branch scope recorded | `lib/utils/featureFlags.ts`, `.env.example` (names); private inventory (which project and target) | `vercel-ops` §3 Env vars | High | DO (`featureFlags.ts` names, the live read); main session (`.env.example` names) *(SA-corrected, Q-D5b-2)* |
+| V-3 | Production serves `main`: the current production deployment's SHA is on `main` and holds the production aliases | `main` head | `vercel-ops` §3 Deployments, §4 step 5; SHA on `main`: `github-ops` §6 | High (Medium if the only gap is docs-only commits, `vercel-ops` §5) *(SA-corrected: "docs-only" is shown only by a CANCELED deployment with the `SKIP:` line for each later commit, `vercel-ops` §5; DO never judges it from file names)* | DO |
+| V-4 | Crons: the `vercel.json` set matches the production deployment's set, and each is enabled | `vercel.json` on `main` *(SA-corrected: at the production deployment's SHA, `vercel-ops` §6; a gap from `main` is V-3's finding, not a second one)* | `vercel-ops` §6 | Medium | DO |
+| V-5 | Domains on the right project and target, DNS valid; deployment protection as recorded | Private inventory | `vercel-ops` §3 Domains; protection: `vercel-ops` `dashboard-settings.md` | Critical | DO (domains); user (protection) |
+| S-1 | Every migration on `main` is applied, by catalog evidence | `supabase/migrations/**` on `main` and its checker, where one exists *(SA-corrected: bounded to the migrations after the last one the private inventory records as verified; one with no checker and no named objects is "not read (no checker)", never "applied")* | `supabase-ops` §2 Migration drift, Catalog evidence | High | DO |
+| S-2 | Advisors: no security or performance finding beyond the last recorded lists | Private inventory (last recorded lists) | `supabase-ops` §2 Advisors, Where advisor results go | Critical (security); Medium (performance) | DO |
+| S-3 | RLS (enabled and forced) and grants as the migrations set them | Migrations on `main` | `supabase-ops` §2 Catalog evidence | Critical | DO |
+| S-4 | Auth settings and backups as recorded | Private inventory | `supabase-ops` §2 What the tools cannot read | Critical | User |
+| S-5 | Edge functions and extensions match the repo | `supabase/functions/`, `supabase/config.toml`, migrations on `main` | `supabase-ops` §2 Extensions, functions, branches | Medium | DO |
+| CH-1 | DO's loaded tools equal the `tools:` line; exactly one `execute_sql`; no write tool *(SA-corrected: no **platform** write tool; Write, Edit and Bash are on the line by design)* | `devops.md` on `main` | DO compares its own loaded tools with the line (`claude-harness-ops` §4, §8) | Critical (a write tool, or two `execute_sql`); Medium (a name that does not resolve) | DO |
+| CH-2 | Tracked harness files: no allow rule, key, `hooks`, `mcpServers` or `permissionMode` beyond a change record; no tracked rule with a secret, a URL with an ID or a personal path | `.claude/settings.json`, `.claude/agents/*.md` on `main`; change records | `claude-harness-ops` §2, §3, §7 | Critical | DO |
+| CH-3 | The local settings file is untracked | The `.gitignore` line on `main`. Before the untrack lands: "not applicable" | `claude-harness-ops` §3 (`git ls-files` is not on DO's allowed list) | Medium | Main session *(SA-corrected: now **DO**. `git show origin/main:.claude/` lists the tree's entry names with no content and is on the allowed list; never `git show` of the local file itself. The untrack has landed on `origin/main`, so "not applicable" no longer applies)* |
+| CH-4 | No `.mcp.json`, or every ref and token in it is a `${VAR}` | Repo on `main` | `claude-harness-ops` §2, §4 | Critical | DO |
+| CH-5 | User and managed settings, MCP server names and status; once FU-3b lands, the read-only server has its three settings and H1 was re-run after any re-add (H2) | Change records; private inventory | `claude-harness-ops` §1, §2, §8 | Critical | Main session |
+| CH-6 | No leftover worktree; each worktree's `node_modules` is a junction with an intact target | Active work named in the brief | `git worktree list` (DO); junctions: `claude-harness-ops` §6 | Low | DO (list); main session (junctions) |
+
+Notes for Dev:
+- The table holds **sources and pointers only**: no expected value, no setting value, no project, no folder or path.
+- The Supabase checks are counts, booleans and catalog facts only (rule (c)); S-2's lint names go to the full report, never to chat.
+- CH-1 and CH-5 together cover H2: CH-1 sees which server name DO is bound to, and CH-5 is the only check that can see whether that server is really read-only.
+- *(SA-added)* CH-6: `git worktree list` prints absolute paths. The report gives counts only (worktrees, leftovers), never a worktree name or path (`claude-harness-ops` §7).
+- *(SA-added)* S-3: a table that the migrations leave without RLS is drift unless the private inventory records it as intended. DO does not decide that a missing policy is "on purpose".
 
 ### D5.3 Files to change
 
@@ -787,8 +836,8 @@ Third-party platforms join when DO-6 exists. Until then the audit lists them as 
 | D5-2 | `.claude/agents/devops.md` | 5a | Edited | (1) One pointer line to `claude-harness-ops` for harness reads. (2) FU-3: `tools:` swap of `execute_sql` (only after the user's server exists and names resolve; Q-D5-4). Nothing else, unless SA rules otherwise. *(SA-corrected:)* (1) also says DO never opens `~/.claude.json` or user-scope settings (H3). (2) replaces the plugin entry, never joins it, and goes in only after the H1 probe passed; otherwise it is follow-up FU-3b (H4). |
 | D5-3 | `.claude/skills/github-ops/SKILL.md` | 5a | Edited | The pointer row "DO-5's `claude-harness-ops` skill (not built yet)" loses "(not built yet)" and links the file. |
 | D5-4 | `.claude/settings.local.json`, `.gitignore` | 5a | Only if SA and the user decide so on Q-D5-2 | Untrack the file and ignore it. |
-| D5-5 | `.claude/skills/env-drift-audit/SKILL.md` | 5b | New | §D5.2.2. Target ≤ ~150 lines. |
-| D5-6 | `.claude/agents/devops.md` | 5b | Edited | One pointer line: drift reports follow `env-drift-audit`. |
+| D5-5 | `.claude/skills/env-drift-audit/SKILL.md` | 5b | New | §D5.2.2. Target ≤ ~150 lines. *(BA re-check)* SKILL.md only, no reference files: a pointer table first, then (a)–(f), the check table (g) and a closing checklist, like the other ops skills. |
+| D5-6 | `.claude/agents/devops.md` | 5b | Edited | One pointer line: drift reports follow `env-drift-audit`. *(BA re-check)* The line goes with job 2 ("Drift report") in § Your Jobs. Nothing else in `devops.md` changes: not `tools:`, not the allowed list (CH-3's `git ls-files` stays a main-session read), and not the Secret-exposure row (Q-D5b-2). |
 | D5-7 | `CLAUDE.md` | — | **Not edited** | The Common Gotchas `env-change-protocol` row already routes MCP, permission and hook changes. |
 | D5-8 | This requirement | both | Edited | Status, implementation notes, reviews. |
 
@@ -811,6 +860,17 @@ Third-party platforms join when DO-6 exists. Until then the audit lists them as 
 - [ ] It names the three expected-state sources and what each may hold; the four live areas as pointers only; the three result states (no drift, drift, not read); the severity scale; and the output table, with the full report in the private docs only.
 - [ ] It contains no read procedure owned by another skill. QA greps it for `--jq`, `filter_project_envs` and `begin read only`: 0 hits, or each hit is a pointer.
 - [ ] The finding-11 regex returns zero hits; the diff touches only the 5b files in D5.3.
+- [ ] *(BA re-check)* The skill has the check table (g). Every row names its expected-state source, its live-read pointer **by skill and section**, its class and who reads it. No row holds an expected value, a setting value, a project, a folder or a path.
+- [ ] *(BA re-check)* It states the per-check "not read" reasons, including "expected state missing" and "main-session check owed". It states that a Critical-class check that is "not read" is listed first in the chat summary, by check ID (Q-D5-9).
+- [ ] *(BA re-check)* It states that expected IDs, secret locations and security settings come only from the untracked private inventory. When that inventory is not reachable, those checks are "not read (expected state missing)", never "no drift". The skill names no location for the private docs.
+- [ ] *(BA re-check)* It states the report split: the full report goes to the untracked private docs only (per Q-D5b-1 when they are not reachable), and the chat summary follows the five-part layout in (e), with counts only.
+- [ ] *(BA re-check, H3)* The user-scope, managed, MCP-server and junction checks (CH-3, CH-5, CH-6 junctions) are "main-session check owed". *(SA-corrected: CH-5, the CH-6 junctions and the V-2 `.env.example` names; CH-3 is now DO's.)* QA greps the skill for `node -p`, `Get-Item`, `claude mcp` and `jq`: 0 hits. `.claude.json` appears only in a "never opened by DO" sentence or a pointer to `claude-harness-ops` §1.
+- [ ] *(BA re-check)* No restatement: QA greps the skill for `Snapshot the before-state`, `| **Read** |`, `gh api`, `list_deployments` and `get_advisors`: 0 hits, or each hit is a pointer.
+- [ ] *(BA re-check)* The skill does not expect `.claude/settings.local.json` in the repo: it appears only in CH-3.
+- [ ] *(BA re-check)* The `devops.md` diff is exactly the one pointer line (D5-6). `tools:` is unchanged.
+- [ ] *(BA re-check)* It states "on demand only" and "no schedule" (Q-D5-11). The skill is at most about 150 lines.
+- [ ] *(SA-added)* Repo files are read at `origin/main`, never the local `main` branch: QA greps the skill for `main:` and each hit is `origin/main:`. The staleness test counts only `identical` as current (Q-D5b-4 ruling).
+- [ ] *(SA-added)* The `.env.example` names read is a main-session check owed, with the `-E` form and the guard count from the Q-D5b-2 ruling. QA greps the skill for `grep -o '` (the BRE form): 0 hits.
 
 ### D5.5 Open questions for SA
 
@@ -836,6 +896,19 @@ Third-party platforms join when DO-6 exists. Until then the audit lists them as 
   *Suggested:* no. It stays in the private docs until the fix is verified. Afterwards the tracked record may say what changed, by role, as closed history.
 - [ ] **Q-D5-11: Scheduled drift audit?**
   *Suggested:* not in DO-5. On demand only. A scheduled run would need its own SA review (a new pattern, and an unattended session holding platform tools).
+
+**Re-check questions for DO-5b** *(BA re-check)*
+
+- [ ] **Q-D5b-1: Where does the full report go when the private docs are not reachable?** DO may write only to a cycle workplan's `## Environment changes` section and to the untracked private docs. A drift report is standalone and holds open weaknesses.
+  *Suggested:* DO writes **no** full report anywhere else: not a tracked file and not a scratch file. It returns the chat summary with "full report not written: private docs not reachable", and every private-sourced check is already "not read (expected state missing)". The main session re-runs the audit with the location in the brief.
+- [ ] **Q-D5b-2: May DO read `.env.example` for check V-2?** `devops.md` forbids printing `.env*` files (the Secret-exposure row). The file is tracked and public, and some of its lines carry a value.
+  *Suggested:* yes, **names only**: one Grep with `-o` on the pattern `^[A-Z0-9_]+=`, which returns the name and the `=` and never the value. Never Read, `cat` or `git show` of the file. If the current branch's copy differs from `main` (`git diff --stat main -- .env.example`, which prints no content), V-2's repo source is "not read". `devops.md` stays unchanged, because this form prints no value. If SA prefers, V-2 uses `lib/utils/featureFlags.ts` alone.
+  *(SA ruling: names only is compatible, but it is a main-session read; see SA Review — DO-5b.)*
+- [ ] **Q-D5b-3: Are the checks and classes in (g) right?**
+  *Suggested:* yes. Dev may merge or split rows to fit about 150 lines, but may not lower a class or drop a check without SA. SA confirms in particular: CH-3 is Medium (a tracked local file publishes future approvals, but exposes nothing today); V-3 is High, falling to Medium when the gap is docs-only commits; and S-4 and the V-5 protection setting are user dashboard steps, so they are usually "not read" and listed first.
+- [ ] **Q-D5b-4: Is local `main` current?** DO cannot `git fetch`, so the repo files it reads on `main` can be stale.
+  *Suggested:* DO takes local `main`'s head (`git log -1` on `main`) and runs the `github-ops` §6 step 2 compare read on it. `identical` means local `main` is current. Anything else (`behind` is the usual case, or a 404) means it is not: every repo-sourced check is then "not read (local `main` stale)", and the main session fetches and re-runs. The report names the commit read. (No new command: this is the existing landed-on-`main` read.)
+  *(SA ruling: accepted with one change. The ref is `origin/main`, not local `main`; see SA Review — DO-5b.)*
 
 ---
 
@@ -1153,6 +1226,11 @@ Approved. It reads the project's log store and cannot change project state, so i
 | 2026-10-31 | DO-5a code complete | Dev built the `claude-harness-ops` skill (SKILL.md only), the `devops.md` pointer line with the H3 clause, and the `github-ops` pointer-row fix, with Q-D5-1 to Q-D5-11 and H1–H9 applied. The FU-3 `tools:` swap is not in the diff (the user has not added the read-only server; the H1 probe has not run), so it is FU-3b. Q-D5-2 untouched (awaits the user). CLAUDE.md unchanged. Uncommitted, awaiting SA code review and QA. |
 | 2026-10-31 | SA code review DO-5a | CODE APPROVED. Deviation 1 (H7 creation command) kept: two workplans record `New-Item -ItemType Junction` working, the same evidence standard as the removal procedure. Deviation 2 (Q-D5-3 key names): none of the six names is backed by evidence in the repo, so SA replaced them with descriptions and a "read the key name from the settings docs" instruction. Deviation 3 (docs named, not linked) accepted. SA fixed three items: the six key names, the `jq` reads (`jq` is not installed here; replaced with tested `node -p` key and count reads), and "twice mis-quoted" (the record shows one). Finding-11 regex and personal-path greps: 0 hits. Awaiting QA. |
 | 2026-10-31 | QA DO-5a | PASSED, all 10 checks. Finding-11 regex: 0 hits over the new skill and the 643 added diff lines. Personal-path, `mcp.supabase` and worktree-name hits appear only in BA and SA text that quotes the grep patterns or names the gitignored folder, not in the skill. Cited paths and sections exist. Frontmatter parses. Restatement grep: 0/0/0. `devops.md` diff is the H3 pointer line only, with one plugin `execute_sql`. The junction steps match H5, and the property names were confirmed by a read-only `Get-Item`. Both `node -p` reads are assigned to the main session and run cleanly against the tracked settings file. FU-3 matches H1, H2 and H4, with no URL. No whole-file churn. No blocking issues; 3 non-blocking edge cases. Awaiting the user's diff review. |
+| 2026-10-31 | DO-5a merged; DO-5b BA re-check (FU-5) | DO-5a merged (PR #592). BA re-checked §D5.2.2 `env-drift-audit`, the D5-5 and D5-6 rows and the DO-5b criteria, marked *(BA re-check)*. H10 applied: the env-name sources are `lib/utils/featureFlags.ts` and `.env.example` (both confirmed to exist); junction reads are the main session's; production-against-`main` points to `vercel-ops` and `github-ops` §6. H3 applied: user-scope, managed, MCP-server and junction checks are "main-session check owed". The Supabase area reads through the plugin `execute_sql` under rules (a)–(d) until FU-3b, with no dependency on it. The local settings file is not an expected-state source (being untracked, PR #593 pending). New: check list (g) with 22 checks (G-1..G-6, V-1..V-5, S-1..S-5, CH-1..CH-6), each with its source, pointer, class and reader; Q-D5-9 examples confirmed, with Critical-class "not read" checks listed first; private inventory unreachable means "not read (expected state missing)"; repo files read on `main`; a five-part chat summary; on demand only. New questions Q-D5b-1 to Q-D5b-4. Awaiting the SA short pass. |
+| 2026-10-31 | SA short pass DO-5b | APPROVED WITH CHANGES; Dev may build. Q-D5b-1 accepted. Q-D5b-2: names only is compatible with the Secret-exposure row, but DO has no form that prints names only, and the drafted pattern without `-E` matches nothing; the `.env.example` names read is a main-session check with `grep -oE` plus a guard count. Q-D5b-3 accepted, with five row corrections. Q-D5b-4: the compare read exists and answers the question, but the ref must be `origin/main` (local `main` measured 356 commits behind here), and only `identical` counts as current. CH-3 moves to DO (the untrack has landed on `origin/main`). The skill fits in about 150 lines with no reference file. Finding-11 regex over the added lines: 0 hits. |
+| 2026-10-31 | DO-5b code complete | Dev built the `env-drift-audit` skill (SKILL.md only, 141 lines, no reference file) and the one `devops.md` pointer line under job 2, with Q-D5b-1 to Q-D5b-4 and SA findings 1–10 applied. PR #593 (untrack the local settings file) is merged, so CH-3 is DO's. Two items flagged for SA: the Git Bash rewrite of `origin/main:<dot path>` arguments, and the Grep only-matching question, which Dev could not confirm from its own tool schema. CLAUDE.md unchanged. Uncommitted, awaiting SA code review. |
+| 2026-10-31 | SA code review DO-5b | Code Approved for QA. Dot-path rewrite: the skill now reads repo files as `origin/main:./<path>` from the worktree root. That is plain `git show`, already allowed, with a root-listing self-check. `git ls-tree` and the `MSYS_NO_PATHCONV=1` prefix were rejected as allowed-list changes that are not needed. Presence comes from the folder listing. The Q-D5-10 fix-plan pointer is accepted. Grep `-o` exists, but the guard needs an invert match the Grep tool lacks, so the `.env.example` names stay a main-session check. SA re-ran the procedure as counts only: guard 0, names 4, diff-stat 0. Four small skill fixes; `devops.md` +1/−0 unchanged. Finding-11 regex: 0 hits in the skill and in the 351 added lines; no personal paths. |
+| 2026-10-31 | QA DO-5b | PASSED, 12 checks, no blocking issue. Finding-11 regex: 0 hits in the skill and in the 413 added lines across the four files. All 22 checks present, with classes equal to the spec. SA ruling 1 run live: from the root, `./.gitignore` reads (82 lines) and `./.claude/` lists 3 names; from `lib/` the same read fails "does not exist" and the root listing shows no `.github/`. `.env.example` as counts only: guard 0, names 4, BRE 0, diff-stat 0. `claude-harness-ops` fix: 5/5 lines, no churn, consistent with `origin/main`. Two non-blocking items: the `claude-harness-ops` description still opens with "the tracked local settings file", and that file's edit is outside the 5b rows of D5.3 and not yet recorded here. |
 
 ---
 
@@ -2317,3 +2395,219 @@ Reviewed in the DO-5a worktree against the DO-5 Specification §D5.2.1 (a)–(h)
 
 - [x] All acceptance criteria pass (the load test is deferred). Ready for the user's diff review.
 - [ ] Issues found
+
+---
+
+## SA Review — DO-5b (short pass)
+
+**Reviewed by SA — 2026-10-31 (FU-5)**
+**Verdict: APPROVED WITH CHANGES.** The BA re-check carries H10, the Q-D5-9 note and the H3 boundary correctly, and the check table (g) is the right shape: sources and pointers only, a fixed class per check, and a named reader for each. Two of the proposals would not have worked as drafted. The `.env.example` command matches nothing, so V-2 would have found no names and could not fail. The `main` ref is stale in practice, so most repo-sourced checks would have read old files. SA corrected both in place, plus five smaller row issues.
+
+Reviewed against SA Review — DO-5 (H3, H10, the Q-D5-9 ruling, and the Q-D5-1 ruling that 5b does not wait for FU-3b), the merged `claude-harness-ops` skill, SA Code Review — DO-5a, QA Report — DO-5a, `devops.md`, `env-change-protocol`, and the `supabase-ops`, `vercel-ops` and `github-ops` skills with their reference files. No platform call and no `claude mcp` command were made. No user-scope file was opened. Local reads only: `git` refs and counts, and the names-only test on `.env.example`, reported here as counts.
+
+### Rulings on Q-D5b-1 to Q-D5b-4
+
+**Q-D5b-1: accepted.** DO writes no full report outside the untracked private docs: no tracked file and no scratch file. The chat summary says "full report not written: private docs not reachable". This follows from `devops.md` § What you may write and the Q-D5-10 ruling. The main session re-runs the audit with the location in the brief.
+
+**Q-D5b-2: a names-only read is compatible with the rule, but it is a main-session read, and the drafted command is wrong.**
+- **Compatible:** the Secret-exposure row forbids printing the file and its values. A command whose output can only be `NAME=` prints neither. `devops.md` stays unchanged.
+- **DO has no such form today.** The Grep tool's content mode prints the whole matching line, and that line includes the value. Dev confirms at build whether the Grep tool has an only-matching option; if it does, SA revisits this ruling. A Bash `grep` on a repo file is not on DO's allowed list, because the only allowed `grep` is the `gh` log pipe. Adding it would change the allowed list, which D5-6 rules out.
+- **The drafted pattern matches nothing.** `grep -o '^[A-Z0-9_]+='` is a basic regex, in which `+` is a literal character. On the real file it returns **0** lines. A silent zero means "no names", so V-2 could never fail. The extended form, `grep -oE '^[A-Z0-9_]+='`, returns **4** lines. Each one is exactly a `NAME=` shape (0 that differ), and the longest output is the name plus `=`.
+- **Guard:** a multi-line value whose continuation line starts with capitals, digits or `_` and then `=` would leak a fragment. So the main session first counts the lines that are neither an assignment, a comment nor blank: `grep -vcE '^[A-Z0-9_]+=|^[[:space:]]*(#|$)' .env.example`, which prints only a number. Today that count is **0**, the file has no quoted values, and it has no commented-out assignments. If the count is not 0, the main session stops and V-2's `.env.example` source is "not read".
+- **So:** in DO's run, V-2 uses `lib/utils/featureFlags.ts`, read at `origin/main`. It is code, so it may be read in full. The `.env.example` names are a **main-session check owed**: the guard count, then the `-E` command, then a `git diff --stat origin/main -- .env.example` (stat only). Never Read, `cat` or `git show` of the file, by anyone.
+- **Stated limit:** the two sources hold far fewer names than the code reads. `featureFlags.ts` has 13 distinct `process.env` names and `.env.example` has 4, while `lib/`, `app/` and `components/` read about 120. V-2 checks the names those two sources hold, and the full report says it is not a completeness check. Widening the name source is a separate item, not 5b.
+
+**Q-D5b-3: accepted, with the row corrections below (findings 3–7).** The classes stand as drafted. CH-3 is Medium, V-3 is High (Medium only when the gap is shown to be docs-only), and S-4 and the V-5 protection setting are user steps that are usually "not read" and listed first. No class was lowered and no check was dropped.
+
+**Q-D5b-4: the read exists and answers the question, but on the wrong ref.**
+- `github-ops` §6 step 2 (`compare/main...<sha>` with `--jq .status`) exists. It answers "is `<sha>` the same as GitHub's `main`" exactly. `identical` means current. `behind` means an older commit of `main`, so it is stale. `ahead`, `diverged` or a 404 means "not verified". The staleness test counts **only `identical`** as current. §6 counts `behind` as "landed", which answers a different question, and the skill says so in one line.
+- **Local `main` is the wrong ref.** Measured in this worktree: local `main` is 356 commits behind `origin/main`, and the branch is ahead of it. Nothing in this repo updates local `main`, so "read on `main`" would read very old files. Reading `.env.example` at local `main` already differs from the branch. The ref is **`origin/main`**: the remote-tracking ref every worktree shares, updated by any session's fetch. `git show origin/main:<path>` and `git log -1 origin/main` are on DO's allowed list.
+- The brief from the main session should follow a fresh `git fetch`, or the run is mostly "not read (`origin/main` stale)". The skill says this in one line, aimed at the main session.
+
+### Findings
+
+1. **[Q-D5b-2, V-2, §D5.2.2(a)] The `.env.example` read: the pattern needs `-E`, and DO has no names-only form.** See the ruling. *(SA-corrected:)* the (a) row, the V-2 "Who reads" cell, and one new criterion (the skill has no BRE `grep -o '` form). — Priority: High (fixed in spec)
+2. **[Q-D5b-4, §D5.2.2(a)] `origin/main`, not local `main`; only `identical` is current.** *(SA-corrected:)* the "read as they are on `main`" paragraph, and one new criterion. — Priority: High (fixed in spec)
+3. **[CH-3, §D5.2.2(a)] The untrack has landed.** `origin/main` as last fetched has the `.gitignore` line, and the local settings file is not in its tree. So "before the untrack lands: not applicable" no longer applies, and §0 said "pending merge". CH-3 also does not need the main session: `git show origin/main:.claude/` lists the tree's entry names with no content, and it is on the allowed list. *(SA-corrected:)* the CH-3 row moves to DO, with "never `git show` of the local file itself". The (a) row is noted, the H3 criterion is amended, and the §0 row is updated (RM confirms the PR state; SA made no platform call). — Priority: Medium (fixed in spec)
+4. **[V-4] The crons are compared against what production was built from.** `vercel-ops` §6 says to compare the repo file with what production was built from, not with `main`. Against `main`, every V-3 gap would be counted a second time as V-4 drift. *(SA-corrected:)* `vercel.json` at the production deployment's SHA. — Priority: Medium (fixed in spec)
+5. **[V-3] "Docs-only gap" needs platform evidence.** DO cannot run `.github/ci/non-deploying-change.sh`, and judging docs-only from file names is the interpretation `vercel-ops` §5 rules out. *(SA-corrected:)* Medium only when each later commit has a CANCELED deployment whose build events show the `SKIP:` line. — Priority: Medium (fixed in spec)
+6. **[G-2, G-4, G-5] Critical-class checks need a reader when DO's read is refused.** The protection, `security_and_analysis` and Actions-permissions reads need admin rights (`github-ops` §2 and `read-commands.md`). An error is "not read", and these three are Critical-class. *(SA-corrected:)* "Who reads" is "DO; user if DO's read is refused", pointing to the `github-ops` `dashboard-settings.md` areas, which exist for all three. — Priority: Medium (fixed in spec)
+7. **[S-1, S-3] Bound S-1, and stop DO from judging RLS intent.** "Every migration on `main`" means re-proving the whole history in every run, and most older files have no checker. *(SA-corrected:)* S-1 covers the migrations after the last one the private inventory records as verified. One with no checker and no named objects is "not read (no checker)", never "applied". *(SA-added)* note for S-3: a table without RLS is drift unless the private inventory records it as intended. — Priority: Medium (fixed in spec)
+8. **[CH-1] "No write tool" is ambiguous.** Write, Edit and Bash are on the `tools:` line by design. *(SA-corrected:)* "no **platform** write tool". — Priority: Low (fixed in spec)
+9. **[CH-6] `git worktree list` prints absolute paths.** *(SA-added)* note: report counts only, never a worktree name or path (`claude-harness-ops` §7). — Priority: Low (fixed in spec)
+10. **[(e) chat summary] A Critical count is a weakness signal.** *(SA-added)*: the chat summary is never pasted into tracked text (`github-ops` §9). — Priority: Low (fixed in spec)
+
+**Required of Dev at build:** apply the table as corrected; confirm the Grep tool has no only-matching option (finding 1); give the `-E` command and the guard count only as a main-session check, not as a DO step. Nothing else is pending: every finding is fixed in the spec.
+
+### Checked and honoured
+
+- **Every pointer resolves to the read it claims.**
+  - `github-ops`: §2 Repo settings, Branch protection and rulesets, What to report, Required checks, Actions, and Secrets and variables; §3; §4 (the seven rules); §6 step 2; `read-commands.md`; `dashboard-settings.md`.
+  - `vercel-ops`: §1; §3 Projects, Env vars, Deployments and Domains; §4 step 5 (aliases); §5 (CANCELED and `SKIP:`); §6 (crons and enabled state); `dashboard-settings.md` (Deployment Protection).
+  - `supabase-ops`: §2 Advisors, Where advisor results go, Migration drift, Catalog evidence (`relrowsecurity` / `relforcerowsecurity`, `has_table_privilege`), Extensions, functions, branches, and What the tools cannot read (auth, backups).
+  - `claude-harness-ops`: §1, §2, §3, §4 (smoke test, `.mcp.json`), §6, §7 and §8.
+  - `lib/utils/featureFlags.ts`, `.env.example`, `supabase/functions/` and `supabase/config.toml` exist.
+- **Every Critical-class check has a reader:**
+  - G-1, S-2, S-3, CH-1, CH-2 and CH-4: DO.
+  - G-2, G-4 and G-5: DO, or the user when refused (finding 6).
+  - V-5: DO for domains, the user for protection.
+  - S-4: the user.
+  - CH-5: the main session.
+- **H3:** no check makes DO open `~/.claude.json`, user or managed settings, or a junction. CH-1 is DO's own loaded tool list, not a file. CH-5 and the CH-6 junctions are main-session checks, and now so are the `.env.example` names. The H3 criterion's grep (`node -p`, `Get-Item`, `claude mcp`, `jq`) stays.
+- **H10:** both name sources are named, and they exist. Junctions are the main session's. Production against `main` points to `vercel-ops` and `github-ops` §6.
+- **Q-D5-9:** the classes are fixed per check, and a finding may be rated lower, never higher. Critical-class "not read" checks are listed first by ID, and drift is counted, never named, in chat.
+- **Q-D5-1:** no dependency on FU-3b. Supabase reads go through the plugin `execute_sql` under rules (a)–(d) and the wrapper, and the same rules apply after FU-3b.
+- **No restatement:** the table holds pointers only. The criterion's restatement grep stays.
+- **DO-5a consistency:** "not read" is never "no drift", main-session checks owed are listed, and DO edits no harness file.
+- **Size: it fits, so no reference file is needed.** Frontmatter and the pointer table take about 15 lines, (a)–(f) about 55, the table with its header 24, the notes about 6 and the checklist about 12: about 115–140 lines. D5-5 stays "SKILL.md only". If the draft runs past about 160 lines, Dev trims prose in (a)–(f), never table rows, and asks SA before adding a reference file.
+- **`devops.md`:** exactly the one D5-6 pointer line. `tools:` and the allowed list are unchanged, and nothing in these rulings needs a change to either.
+- **Public repo:** the finding-11 regex over the added lines of `git diff`: **0** hits. The figures given (356 commits, 0/4 matches, 13, 4 and about 120 names) are counts, not IDs or values. No `.env.example` line, name or value was printed.
+
+### Approval
+
+[x] DO-5b spec approved with changes. **Dev may build** D5-5 (`.claude/skills/env-drift-audit/SKILL.md`) and D5-6 (the one `devops.md` pointer line), using §D5.2.2 and the §D5.4 criteria as corrected here, with findings 1–10 applied. SA does a code review, then QA.
+
+---
+
+## DO-5b implementation notes
+
+**By Dev — 2026-10-31.** Config/docs-only slice, no separate workplan. Nothing committed. No platform tool, no `claude mcp` command and no user-scope file was used. `.env.example` was not opened, printed or grepped: only its existence at `origin/main` was checked (`git cat-file -e`). Local `git` reads only: `origin/main` head, tree entry names and counts.
+
+### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `.claude/skills/env-drift-audit/SKILL.md` | New (141 lines) | Pointer table; §1 when it runs (f); §2 the three expected-state sources (a), the private-inventory rule, `origin/main` and the staleness test; §3 live areas as pointers (b); §4 comparison rules and the "not read" reasons (c); §5 severity (d); §6 output, the unreachable-docs case and the five-part summary (e); §7 the 22-check table (g) with the SA notes and the main-session `.env.example` procedure; §8 checklist. No reference file |
+| `.claude/agents/devops.md` | Edited (+1/−0) | One indented line under job 2: drift reports follow `env-drift-audit`. `tools:`, the allowed list, the forbidden list and the Secret-exposure row unchanged |
+| This requirement | Edited | §0 DO-5 row (DO-5b built; PR #593 merged), these notes, Change History |
+
+### Acceptance criteria (§D5.4 DO-5b, as amended by SA Review — DO-5b)
+
+| Criterion | How it is met |
+|---|---|
+| Frontmatter and triggers | `name: env-drift-audit` (matches the folder), single-line `description` in the `github-ops` format. Fires on "drift", "audit the environments", "is everything configured as expected", "what is out of sync". Names DO and the main session; no ID |
+| Sources, areas, states, severity, output | §2 (three sources and what each holds), §3 (four areas, pointers only), §4 (no drift / drift / not read), §5 (four levels, fixed class, rate lower never higher), §6 (full report in the untracked private docs only) |
+| No restated procedure | Grep of the skill: `--jq`, `filter_project_envs`, `begin read only` 0/0/0. SQL points to `devops.md` rules (a)–(d) |
+| Check table (g) | §7, all 22 rows, none merged or dropped, no class lowered. Each row has its source, a pointer by skill and section, its class and its reader. Every SA correction applied: G-2/G-4/G-5 "user if refused", V-2 split reader, V-3 Medium only with the CANCELED and `SKIP:` evidence, V-4 at the production deployment's SHA, S-1 bounded plus "not read (no checker)", S-3 intent note, CH-1 "platform write tool", CH-3 DO's, CH-6 counts only. No row holds a value, project, folder or path |
+| "Not read" reasons; Critical-class first | §4 lists the reasons: no access, error, retention passed, expected state missing, `origin/main` stale, no checker, main-session check owed. §6 part 1 lists Critical-class "not read" checks first, by ID |
+| Private inventory | §2: IDs, secret locations and security settings come only from it; its location comes from the brief and is not named; not reachable means "not read (expected state missing)", never "no drift" |
+| Report split | §6: full report in the private docs only; "full report not written: private docs not reachable" (Q-D5b-1); five-part counts-only summary; never pasted into tracked text |
+| H3 | CH-5, the CH-6 junctions and the V-2 `.env.example` names are main-session checks owed. Grep: `node -p`, `Get-Item`, `claude mcp`, `jq` 0/0/0/0. `.claude.json` appears once, in the "DO never opens" sentence of §3 |
+| No restatement | `Snapshot the before-state`, `\| **Read** \|`, `gh api`, `list_deployments`, `get_advisors`: 0/0/0/0/0 |
+| Local settings file | `settings.local.json`: 1 hit, the CH-3 row |
+| `devops.md` | `git diff --numstat`: 1/0, the one pointer line |
+| On demand only, size | §1 "On demand only" and "No schedule". 141 lines |
+| `origin/main` (SA-added) | Every `main:` hit in the skill is `origin/main:` (2 hits). §2 states the main session fetches before the brief, and only `identical` counts as current |
+| `.env.example` (SA-added) | §7: main-session check owed, guard count first, then `grep -oE`, then the stat-only diff. `grep -o '` (BRE): 0 hits |
+| Public repo | See the grep counts below |
+
+### Cited sections checked
+
+`github-ops` §2 (Repo settings, Branch protection and rulesets, What to report, Required checks, Actions, Secrets and variables), §3, §4, §6 step 2, §9, `read-commands.md`, `dashboard-settings.md`; `vercel-ops` §1, §3 (Projects, Env vars, Deployments, Domains), §4 step 5, §5, §6, `dashboard-settings.md`; `supabase-ops` §2 (Advisors, Where advisor results go, Migration drift, Catalog evidence, Extensions, functions, branches, What the tools cannot read); `claude-harness-ops` §1, §2, §3, §4, §6, §7, §8; `devops.md` rules (a)–(d), § What you may write, § Report Format. All exist and hold the read cited. At `origin/main`: `lib/utils/featureFlags.ts` and `.env.example` exist; the `.claude/` tree lists no local settings file; `.gitignore` has the ignore line.
+
+### Grep tool only-matching question (finding 1)
+
+This Dev session's own tool schema has **no Grep tool** (it holds Read, Write, Edit, Bash, Glob and web search), so the parameters could not be read from a schema. From Claude Code's Grep tool as Dev knows it (output modes for content, matching files and counts, plus context and line-number options), there is no only-matching mode; that is recall, not a schema read. The content mode prints the whole line. The ruling stands as written; only SA can change it. The skill says DO never reads `.env.example` by any tool.
+
+### Deviations for SA
+
+1. **Git Bash rewrites `origin/main:<path>` when the path starts with `.`.** Measured here: `git show origin/main:.claude/`, `origin/main:.gitignore` and `origin/main:.github/workflows/` each fail with "unknown revision", because Git Bash turns the argument into a Windows path list. A path not starting with `.` (`lib/…`, `vercel.json`, `supabase/…`) works. With `MSYS_NO_PATHCONV=1` before the command, `.claude/` lists the tree's entry names. This touches CH-3's live read as SA wrote it and the repo source of G-1, G-6, CH-2 and CH-4. It fails loudly, so it cannot produce a false "no drift". The skill says this error is "not read (error)", never "absent". It does **not** add the `MSYS_NO_PATHCONV=1` prefix, because whether that prefix is an allowed form under `devops.md` is SA's call. If it is not ruled in, those checks will usually be "not read (error)" in a DO run from Git Bash.
+2. **Fix-plan row.** The skill points to "Q-D5-10 in the DevOps requirement" for the rule that a security fix plan stays private, the same way `claude-harness-ops` points to Q-D5-2, because `env-change-protocol` does not hold that rule.
+3. **Line endings.** The new SKILL.md was written LF in the working copy, as in DO-5a (SA ruled that cosmetic). The two edited files kept CRLF: `--numstat` is the same with and without `--ignore-cr-at-eol`.
+4. **This branch is 2 commits behind `origin/main`** (the #593 merge). The diff does not touch the local settings file or `.gitignore`. RM syncs before the PR.
+
+---
+
+## SA Code Review — DO-5b
+
+**Code Review by SA — 2026-10-31**
+**Status:** ✅ Code Approved. SA made four small fixes in the skill directly; they are listed below. `devops.md` needs no further change.
+
+Reviewed in the DO-5b worktree against §D5.2.2 (a)–(g), the §D5.4 DO-5b criteria, SA Review — DO-5b (short pass) (Q-D5b-1 to Q-D5b-4, findings 1–10) and the DO-5b implementation notes. No platform call, no `claude mcp` command and no web fetch. No user-scope file was opened. Local reads only: `git` refs, tree listings and counts. The `.env.example` reads were counts only, piped to `wc -l`. No line, name or value was printed.
+
+### Rulings on Dev's flagged deviations
+
+1. **The dot-path rewrite: use `origin/main:./<path>`, with no prefix and no allowed-list change.** SA measured three forms here. A bare `git show origin/main:.gitignore` fails ("unknown revision"). `MSYS_NO_PATHCONV=1 git show origin/main:.gitignore` works (82 lines). **`git show origin/main:./.gitignore` also works (82 lines), with no prefix**: Git Bash does not rewrite an argument whose path starts with `./`, and git reads `./` as relative to the current folder. This form is plain `git show`, which is already on DO's allowed list, so neither `devops.md` nor its allowed list changes.
+   - **Rejected: `git ls-tree`.** It answers CH-3 by names only, but it is not on the allowed list (`git status|log|diff|show|branch --list|worktree list`). Adding it would be an allowed-list change, and the `./` folder listing gives the same answer: `git show origin/main:./.claude/` printed `agents/`, `settings.json`, `skills/`.
+   - **Rejected: the `MSYS_NO_PATHCONV=1` prefix.** An environment prefix is not a listed form. Ruling it in would mean an allowed-list sentence, and it is not needed.
+   - **Trap, now in the skill:** `./` is relative to the current folder. Run from `lib/`, `origin/main:./.gitignore` gave "does not exist", which a reader could take as "absent". That would be a false "no drift" for CH-4. So the skill says to run from the worktree root. It adds a self-check: a root listing (`git show origin/main:./`) without `.github/` means the command ran elsewhere. "Unknown revision", or a "does not exist" from outside the root, is "not read (error)", never "absent".
+   - **Per check:**
+
+     | Check | Need | Form |
+     |---|---|---|
+     | CH-3 | Presence only | `git show origin/main:./.claude/` (names only); the `.gitignore` line from `origin/main:./.gitignore` (tracked, public) |
+     | CH-4 | Presence, then content only if the file exists | Root listing `git show origin/main:./`. `.mcp.json` is not on `origin/main` today, so no content is read |
+     | G-1, G-6 | Workflow content | `git show origin/main:./.github/workflows/` to list, then each file as `origin/main:./.github/workflows/<file>` |
+     | CH-2 | Settings and agent file content | `origin/main:./.claude/settings.json` and `origin/main:./.claude/agents/<file>`, by key name and count where the owning skill says so |
+
+     Presence comes from the folder listing; a file's content is read only when the check needs it. All of this is DO's, and none of it moves to the main session.
+2. **Fix-plan pointer to Q-D5-10: accepted.** `env-change-protocol` holds the template and §5 "Where the record goes", but not the rule that a security fix plan stays private until verified. That rule is the Q-D5-10 ruling. Pointing to a requirement ruling follows the `claude-harness-ops` precedent for Q-D5-2, which SA accepted in DO-5a. The skill's wording, "until it is verified", matches the ruling.
+3. **Grep only-matching: DO still does not read `.env.example`. The main-session procedure stands.** The Grep tool does have `-o` in content mode. But a safe DO form also needs the guard, and the Grep tool has no invert match. The guard would become two `output_mode: count` reads compared by hand: every line, then the conforming lines. That is a new procedure for 4 names. It also leaves one parameter between DO and printing the file's values: content mode without `-o` prints whole lines. That is a print of an `.env*` file, which is on the Secret-exposure row in `devops.md`, and an exception there would be an allowed-list change. So Q-D5b-2 stands, and the skill line "DO never reads `.env.example`, by any tool" stays. Reopen only if V-2's name source is widened (the separate item in Q-D5b-2), when a DO-owned names read would be worth a new form.
+4. **Branch 2 behind `origin/main`:** noted. RM syncs. No action.
+
+### Code Review Comments
+
+1. Frontmatter: `name: env-drift-audit` matches the folder. The `description` is one line, fires on "drift", "audit the environments", "is everything configured as expected" and "what is out of sync", names DO and the main session, and holds no ID. — Pass
+2. (a)–(f) coverage: §2 (a), with the private-inventory rule, `origin/main` and the staleness test (only `identical` counts; `behind` is explained in one line). §3 (b), as pointers only. §4 (c), with all seven "not read" reasons. §5 (d), with fixed classes and "rate lower, never higher". §6 (e), with Q-D5b-1, the five-part summary and `github-ops` §9. §1 (f), "On demand only" and "No schedule". — Pass
+3. (g): all 22 rows are present (G-1..G-6, V-1..V-5, S-1..S-5, CH-1..CH-6), and every class equals the spec's. Every SA correction from findings 3–9 is applied, and the S-3 row's added source ("private inventory (intended exceptions)") matches the SA note. No row holds a value, project, folder or path. — Pass
+4. Pointers: every cited section exists and holds its read. `github-ops` §2 (Repo settings, Branch protection and rulesets, What to report, Required checks, Actions, Secrets and variables), §3, §4, §6 step 2 and §9. `vercel-ops` §1, §3 (Projects, Env vars, Deployments, Domains), §4 step 5, §5 (CANCELED and `SKIP:`) and §6 (the production deployment's set, enabled state). `supabase-ops` §2 (all six topics, and What the tools cannot read). `claude-harness-ops` §1–§4 and §6–§8. Both `dashboard-settings.md` files. — Pass
+5. §2 dot-path line: as built, it named the failure but gave no working form, so G-1, G-6, CH-2, CH-3 and CH-4 would usually be "not read (error)" from Git Bash. **SA fixed** (fixes 1–3). — Priority: High (fixed)
+6. §7 V-2 `.env.example` procedure: guard first, then `-oE`, then the stat-only diff, with stop on the first failure. SA re-ran it as counts only. Guard `0`. Names `4`, each exactly `NAME=` (0 differ). BRE form `0`, which confirms the `-E` note. Diff-stat lines `0`. — Pass
+7. Restatement and H3 greps on the skill: `--jq`, `filter_project_envs`, `begin read only`, `gh api`, `list_deployments`, `get_advisors`, `Snapshot the before-state`, `| **Read** |`, `node -p`, `Get-Item`, `claude mcp`, `jq`, `grep -o '`, `ls-tree`, `MSYS`: all 0. `settings.local.json`: 1 (the CH-3 row). `.claude.json`: 1 (the "DO never opens" sentence). Every `main:` hit is `origin/main:` (7). — Pass
+8. `devops.md`: +1/−0, the one pointer line under job 2. `tools:`, the allowed list and the Secret-exposure row are unchanged, and the rulings above need no change to them. — Pass
+9. Size: 142 lines after the fixes, inside the ~150 target. No reference file. — Pass
+10. Line endings: the new SKILL.md is LF (0 CR bytes), as in DO-5a, which SA ruled cosmetic. `devops.md` and this requirement keep CRLF (CR count equals line count). — Pass
+
+### Fixes made by SA
+
+1. SKILL.md §2: the dot-path line is replaced. Every path is written `origin/main:./<path>`, from the worktree root, with the root-listing self-check. "Unknown revision", or a "does not exist" from outside the root, is "not read (error)". A new line says presence is read from the folder listing, and content only when the check needs it.
+2. SKILL.md §2: `git show origin/main:<path>` → `git show origin/main:./<path>`.
+3. SKILL.md §7 CH-3 row: `git show origin/main:.claude/` → `git show origin/main:./.claude/` (§2).
+4. SKILL.md §8 checklist: the dot-path item now names the `./` form from the root, presence from the listing, and "not read (error), never absent".
+
+### Optimisation Suggestions
+
+- `claude-harness-ops` §2 still lists `.claude/settings.local.json` as tracked "Yes, today", and §3 still describes the tracked file. Both are stale since PR #593. Update them in a small docs PR (FU), not in 5b, so the 5b diff stays within D5.3.
+- When V-2's name source is widened (the separate item in Q-D5b-2), revisit ruling 3: a DO-owned names read becomes worth a form at that point.
+
+### Code Approved for QA: Yes
+
+---
+
+## QA Report — DO-5b
+
+**QA — 2026-10-31**
+**Test mode:** full · **Strategy:** static checks (grep, YAML parse, path, heading and sub-label existence, byte-level line-ending count, a class-by-class comparison of the check table with §D5.2.2(g), read-through), plus local read-only `git show` runs of SA ruling 1, and the `.env.example` procedure as counts only. This is a docs/config-only slice with no runtime to exercise. · **Focus:** security (public-repo, the `.env.example` boundary, the dot-path trap), schema (frontmatter) · **Skipped:** the fresh-session load test (deferred, as for DO-1, DO-3, DO-4 and DO-5a) · **Input source:** TL prompt + §D5.4 (DO-5b) as amended by SA Review — DO-5b (short pass) + SA Code Review — DO-5b. Run in the DO-5b worktree on the uncommitted changes. No platform call, no `claude mcp` command, no network call. No user-scope file was opened. No `.env.example` line, name or value was printed. QA edited nothing except this section, the §0 DO-5 row and the Change History row.
+
+### Test Coverage
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 1 | Public repo (finding-11 regex, personal paths, `mcp.supabase`, worktree names, URLs) | Pass | **Corpus:** the new SKILL.md, plus every added line of `git diff -U0` with the new file `git add -N`'d and then `git reset` (413 lines across the four files; `git status` afterwards shows the skill untracked again). **Finding-11 regex:** 0 hits in the skill, 0 in the added lines. **Skill and added lines both 0:** drive-letter backslash, `C:/Users`, `/Users/`, `/c/Users`, `mcp\.supabase`, `worktrees/`, the worktree folder name, `ENVIRONMENTS_AND`, `environment-readiness`, `https?://`, query strings, `www.`, 6+ digit runs, and the user's, a team member's and the org name |
+| 2 | Cited paths and sections exist | Pass | `test -e` OK for `env-change-protocol`, `devops.md`, the four ops skills, both `dashboard-settings.md` files, `github-ops` `read-commands.md`, `lib/utils/featureFlags.ts`, `vercel.json`, `supabase/migrations`, `supabase/functions`, `supabase/config.toml`, `.claude/settings.json`. At `origin/main`: `featureFlags.ts`, `vercel.json`, `config.toml` and `.env.example` exist (`git cat-file -e`, no content). **Sections:** `github-ops` §2 holds all six sub-labels (Repo settings, Branch protection and rulesets, What to report, Required checks, Actions, Secrets and variables), §3 security alerts, §4 the seven rules, §6 step 2 the compare read with `identical`/`behind`, §9 public-repo. `vercel-ops` §1, §3 (Projects, Env vars, Deployments, Domains), §4 step 5 (aliases), §5 (CANCELED and `SKIP:`), §6 (crons), `dashboard-settings.md` protection. `supabase-ops` §2 holds all six topics, with backups under What the tools cannot read. `claude-harness-ops` §1–§4, §6–§8. `devops.md`: rules (a)–(d) under "Supabase (plugin server only)", "What you may write" (bold label), "Report Format" |
+| 3 | Frontmatter | Pass | js-yaml (the main checkout's `node_modules`) from a scratch script: keys `name`, `description`; `name = env-drift-audit`, matching the folder; description 834 chars on one line. Fires on "drift", "audit the environments", "is everything configured as expected" and "what is out of sync" (1 each). Names DO and the main session; no ID |
+| 4 | The 22 checks | Pass | 22 rows: G-1..G-6, V-1..V-5, S-1..S-5, CH-1..CH-6, none merged or dropped. Class column compared row by row with §D5.2.2(g): 19 identical, 3 reworded with the same classes (G-1 drops "required"; V-3 folds the SA correction in; CH-1 says "platform write tool", per SA finding 8). No class lowered. Readers match the SA corrections: G-2/G-4/G-5 "DO; user if refused", V-2 split, CH-3 DO, CH-5 main session, CH-6 split, S-4 user. No row holds a value, project, folder or path |
+| 5 | No restatement or forbidden reads | Pass | 0 hits each: `Snapshot the before-state`, `\| **Read** \|`, `gh api`, `list_deployments`, `get_advisors`, `--jq`, `filter_project_envs`, `begin read only`, `node -p`, `Get-Item`, `claude mcp`, ` jq`, `grep -o '`. Extra: `ls-tree`, `MSYS`, `cat .env`, `git show origin/main:./.env` 0. `main:` 7 hits, all `origin/main:` (0 otherwise). `settings.local.json` 1 (CH-3). `.claude.json` 1 (the "DO never opens" sentence, pointing to `claude-harness-ops` §1) |
+| 6 | `devops.md` | Pass | `git diff -U0`: 1 changed line, added, under job 2 ("Drift report"); 0 removed; no `tools:` in the diff. The allowed and forbidden lists are outside the only hunk |
+| 7 | SA ruling 1, live | Pass | From the worktree root: `git show origin/main:./.gitignore \| wc -l` → 82; `git show origin/main:./.claude/` lists 3 names (`agents/`, `settings.json`, `skills/`); the root listing holds `.github/` (1). The bare form `origin/main:.gitignore` fails "ambiguous argument" (the Git Bash rewrite). **Trap, from `lib/`:** `git show origin/main:./.claude/` fails "path … does not exist in 'origin/main'", and the root listing from there has 0 `.github/` entries, so the skill's self-check catches it |
+| 8 | `.env.example` stays a main-session check | Pass | The skill tells DO "DO never reads `.env.example`, by any tool" (§7) and checklist §8 repeats it; V-2's DO reader is `featureFlags.ts` only. No content of the file is shown in the skill; its 6 mentions are the source row, V-2, the procedure and the checklist. QA ran the procedure as counts only: guard 0, names 4 (0 that differ from the `NAME=` shape), BRE form 0, diff-stat lines 0. The file was not opened |
+| 9 | "Not read" handling | Pass | §4 lists the seven reasons (no access, error, retention passed, expected state missing, `origin/main` stale, no checker, main-session check owed). §6 part 1: "Critical-class checks not read" is always first. §6: "full report not written: private docs not reachable", with no tracked or scratch fallback. Summary is counts only, no finding named, never pasted into tracked text (`github-ops` §9). §2: the private inventory's location comes from the brief and is never named; the path greps in check 1 find none |
+| 10 | `claude-harness-ops` fix | Partial (non-blocking) | `git diff -U0`: 5 changed lines (5 added, 5 removed), no churn. The §2 row ("**No** on `main`; only on an older branch"), the §3 paragraph and the done-marked untrack bullet agree with `origin/main`: its `.gitignore` has the ignore line (1 hit, line not printed) and its `.claude/` tree holds no local settings file. **But** the description still begins its topic list with "the tracked local settings file" (only the trigger phrase was changed). See Issues |
+| 11 | Line endings | Pass | `git diff --numstat` is the same with and without `--ignore-cr-at-eol`: devops 1/0, claude-harness-ops 5/5, requirement 265/12 before this report. CR count equals LF count in the three edited files (160, 159, 2572; `core.autocrlf=true`). The new SKILL.md has 0 CR bytes (LF), as in DO-5a, which SA ruled cosmetic |
+| 12 | Untouched files | Pass | `git diff --quiet HEAD` succeeds on `.gitignore`, `CLAUDE.md`, `.claude/settings.json`, `env-change-protocol`, `github-ops`, `vercel-ops` and `supabase-ops`. `git status --untracked-files=all` shows only the four files under test. The requirement's 12 removed lines are in-place BA/SA edits of the §0 DO-5 row, §D5.2.2 (a), (b), (e), (f) rows and the D5-5/D5-6 rows |
+| 13 | Fresh-session load test | Deferred | Skills load at session start. Not failed |
+
+### Issues Found
+
+- **Blocking:** none.
+- **Non-blocking (should fix before commit):**
+  1. **Stale phrase left in the `claude-harness-ops` description** — File: `.claude/skills/claude-harness-ops/SKILL.md` line 3 — Severity: Low. The topic list still reads "…approvals, the tracked local settings file, MCP servers…". The trigger later in the same line was changed to "the local", so the description now calls the file tracked once and local once. Suggest "the local settings file". Line 50 ("each worktree reads its own checked-out copy") is also slightly off now that the file is untracked on `main`; it is only true on an older branch. Optional.
+  2. **Scope: the `claude-harness-ops` edit is outside D5.3 for 5b and not recorded here** — Severity: Low (process). The DO-5b criterion says "the diff touches only the 5b files in D5.3", and SA Code Review — DO-5b's optimisation said to make this fix in a separate small docs PR. The main session made it in 5b instead, and no line in this requirement records that decision or SA's acceptance of it. Either TL/SA add one line accepting it into 5b (a D5-8-style row or a note under SA Code Review — DO-5b), or RM ships it as its own commit/PR. The content itself is correct (check 10).
+- **Noted only:** `vercel-ops` §4 step 5 and `github-ops` §6 step 2 are table rows / numbered items, not headings; they are found by text search.
+
+### Final Status
+
+- [x] All acceptance criteria pass (the load test is deferred). No High or Medium issue. Ready for the user's diff review, with the two Low items above for TL to route.
+- [ ] Issues found
+
+**TL routing of the two Low items (2026-10-31):** (1) fixed by the main session: the `claude-harness-ops` description now says "the local settings file", and its §2 line notes a new worktree has no copy. (2) Accepted into the 5b PR rather than a separate PR: the edit is 7 lines, docs-only, corrects text made stale by Q-D5-2 (PR #593), and QA has checked it.

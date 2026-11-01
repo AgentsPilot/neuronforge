@@ -1,6 +1,6 @@
 ---
 name: claude-harness-ops
-description: How to read and change the Claude Code harness in this repo safely — where settings live and which scope wins, permissions and allow rules, "Yes, and don't ask again" approvals, the tracked local settings file, MCP servers and their scopes, hooks, subagent tool lists, the read-only Supabase connection for DO, and worktrees (creating one, removing one, the shared node_modules junction). Use when the user asks about a settings file, a permission or allow rule, "don't ask again", adding or removing an MCP server, a hook, a subagent's tools list, creating or removing a worktree, node_modules missing or broken in a worktree, or the tracked .claude/settings.local.json. Used by the main session and by the DevOps (DO) agent. Prevents a worktree removal that deletes the shared node_modules, standing approvals published in a public repo, and tool-list or hook guards that silently do nothing.
+description: How to read and change the Claude Code harness in this repo safely — where settings live and which scope wins, permissions and allow rules, "Yes, and don't ask again" approvals, the local settings file, MCP servers and their scopes, hooks, subagent tool lists, the read-only Supabase connection for DO, and worktrees (creating one, removing one, the shared node_modules junction). Use when the user asks about a settings file, a permission or allow rule, "don't ask again", adding or removing an MCP server, a hook, a subagent's tools list, creating or removing a worktree, node_modules missing or broken in a worktree, or the local .claude/settings.local.json. Used by the main session and by the DevOps (DO) agent. Prevents a worktree removal that deletes the shared node_modules, standing approvals published in a public repo, and tool-list or hook guards that silently do nothing.
 ---
 
 # claude-harness-ops
@@ -32,7 +32,7 @@ This repo's operating procedure for the Claude Code harness: settings, permissio
 | Managed settings | No | `/status` → Setting sources (main session). Reported as "managed: present / absent", never its content. |
 | User settings (`~/.claude/settings.json`) | No | Main session only: keys and counts. `jq` is not installed here; use `node -p "Object.keys(require(require('os').homedir()+'/.claude/settings.json'))"` and `node -p "(require(require('os').homedir()+'/.claude/settings.json').permissions?.allow ?? []).length"`. Never print the file. |
 | `.claude/settings.json` (shared project) | Yes | Read in full; it is public. |
-| `.claude/settings.local.json` (project local) | **Yes, today** (§3) | Keys and counts first. Read entries only to check a planned change; never paste them into chat. |
+| `.claude/settings.local.json` (project local) | **No** on `main`; only on an older branch (§3) | Keys and counts first. Read entries only to check a planned change; never paste them into chat. |
 | `~/.claude.json` | No | Main session only, server **names** and status. `claude mcp list` prints each server's URL: report names and status from it, never repeat a URL. `claude mcp get` prints headers and is not used. |
 | `.mcp.json` (project MCP servers) | Would be | None exists. If one is added, every ref or token in it is a `${VAR}` (§4). |
 | Plugin servers and agents | No | Server names from the tool names (`mcp__plugin_<plugin>_<server>__<tool>`). |
@@ -47,7 +47,7 @@ This repo's operating procedure for the Claude Code harness: settings, permissio
 | Deny wins | Deny beats ask beats allow. An allow rule cannot carve an exception out of a deny. |
 | Hooks | A hook can deny a call; it never overrides a deny rule. |
 
-On Windows the local settings file sits next to `.claude/settings.json` in the directory the session started in, and each worktree reads **its own checked-out copy**.
+On Windows the local settings file sits next to `.claude/settings.json` in the directory the session started in, and each worktree reads **its own copy** (none in a new worktree, since the file is untracked on `main`).
 
 ## 3. Changing settings and permissions
 
@@ -67,11 +67,11 @@ Every harness change follows `env-change-protocol`. This table only classifies h
 - **Before-state** is the keys and counts from §2, never the entries.
 - **The probe is the behaviour.** A new deny rule is proven by a call it blocks; a new allow rule by a call that no longer prompts; a removed rule by a call that prompts again. Settings reload live, except a few keys read at start (settings docs). Agent files and tool lists load at **session start**, so a change to them is verified in a fresh session.
 
-**The tracked local settings file.** `.claude/settings.local.json` is documented as personal, yet it is tracked in this public repo. A tracked local file is treated as repository-supplied: its allow rules wait until the folder is trusted. Each "don't ask again" writes a rule into the copy on the current branch, which can ride along in a PR.
+**The local settings file.** `.claude/settings.local.json` is personal. It is untracked and ignored on `main` since Q-D5-2 (see below), but a worktree on an older branch can still carry a tracked copy, where each "don't ask again" writes a rule that can ride along in a PR.
 
-- **Before every commit:** check whether `.claude/settings.local.json` is in the diff. It is never committed by accident.
+- **Before every commit:** check whether `.claude/settings.local.json` is in the diff. It is never committed.
 - **For the main session and the user** (DO never sees a prompt): never approve "don't ask again" for a command that embeds a secret, a token, a URL with an ID, or an absolute personal path. When an approval would write a personal path, choose "Yes" (once).
-- **Untracking it is the user's decision** (Q-D5-2 in the DevOps requirement). If the user says yes: `git rm --cached .claude/settings.local.json` plus one `.gitignore` line, in its own commit or its own small PR, so it reverts alone. No history rewrite. **Back up first:** when the untrack commit reaches another checkout through a pull or merge, git **deletes** that checkout's copy. Before the PR merges, the user copies the file from the main checkout to a private location, and restores it after the main checkout pulls `main`. A worktree on an older branch keeps its copy until it merges `main`, then loses it the same way. The PR description carries this step.
+- **Untracking it** (done: the user said yes to Q-D5-2 in the DevOps requirement; kept as the procedure for any other tracked personal file): `git rm --cached .claude/settings.local.json` plus one `.gitignore` line, in its own commit or its own small PR, so it reverts alone. No history rewrite. **Back up first:** when the untrack commit reaches another checkout through a pull or merge, git **deletes** that checkout's copy. Before the PR merges, the user copies the file from the main checkout to a private location, and restores it after the main checkout pulls `main`. A worktree on an older branch keeps its copy until it merges `main`, then loses it the same way. The PR description carries this step.
 
 ## 4. MCP servers
 
