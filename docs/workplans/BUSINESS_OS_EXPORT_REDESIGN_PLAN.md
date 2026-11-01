@@ -134,7 +134,7 @@ Meaning changes of `findDeletionFacts` (MX-4, MX-7) are announced in the coordin
 | Manual prod gate | None |
 | Switches | Every module `on: true` in the map. `isModuleExportEnabled()` does not exist yet. Nothing user-visible changes; the ZIP is untouched |
 | Effort | 🟢 1.5 d |
-| Business questions | BQ-25 / BQ-27 **moved to before MX-4 switch-on** (SA Split Review); since 2026-10-27, see BQ-E6.1-2 (there is no switch-on). MX-0 is built on BA's default placement; moving a section later is a one-line change |
+| Business questions | BQ-25 / BQ-27 **moved to before MX-4 switch-on** (SA Split Review); since 2026-10-27, see BQ-E6.1-2 (there is no switch-on). **2026-10-31: BQ-27 re-answered, 5 modules on** (Clients, Activities & tasks, Quotes, Invoices & payments, Account & business details); the other 8 are `on: false`. MX-0 is built on BA's default placement; moving a section later is a one-line change |
 | Done when | The map file and its tests are on `main`; every `include` section is in exactly one module; planted bad maps fail; `npm test` green; no other file changed |
 | Workplan | [BUSINESS_OS_EXPORT_MX0_WORKPLAN.md](/docs/workplans/BUSINESS_OS_EXPORT_MX0_WORKPLAN.md) |
 
@@ -399,3 +399,4 @@ Without a claim in the coordination file first (SR-10, SR-11, B.1):
 | 2026-10-29 | E6b approved; T-Q3 moved to E6.1 (TL) | User approved the MX-3b diff and moved T-Q3 (live two-part Resend send) to MX-3.1's go-live check (c), which now also covers the repeated key, Gmail / Outlook right-to-left, Excel, and the real-database 100,000-row read time |
 | 2026-10-30 | E6.1 (MX-3.1) workplan written (EXPORT Dev) | §4.6a links [BUSINESS_OS_EXPORT_MX3_1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_EXPORT_MX3_1_WORKPLAN.md). Status line updated: E6b merged as #568 (`117979c6`); E6.1 in SA workplan review. No rule of this plan changed |
 | 2026-10-30 | E6.1 (MX-3.1) SA-approved with changes, then code complete (EXPORT Dev) | §3 frozen-interface row: the "Export data" label lives in `exportDrawerCopy.entryLabel` from MX-3.1 (SA C-7). §4.10 MX-7 list gains `csv.ts` `toCsv` and the stale `lib/repositories/index.ts` comment (SA Q-2, Q-4). §4.6a status: code complete, uncommitted |
+| 2026-10-31 | BQ-27 re-answered: 5 modules (EXPORT TL) | User: only Clients, Activities & tasks, Quotes, Invoices & payments, Account & business details are on, per the user's 2026-10-17 email; the other 8 are `on: false`. Service names still label quotes, invoices and payments (SA Option A: a lookup depends on classification only, not the module switch) |

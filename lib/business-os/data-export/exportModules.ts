@@ -13,6 +13,10 @@
 // below (`exportModuleProblems`, R-6) refuses a section that no `include`
 // descriptor backs, so a never-exported table cannot be switched on.
 //
+// Switching a module off does not hide its sections' labels in other modules'
+// CSVs (a service name still shows in a quote). To hide them, exclude the
+// section in the classification (user decision 2026-10-31).
+//
 // The switch (`on`) is a code edit and a deploy only. No helper here takes a
 // switch from a request, a query, a body or an environment variable.
 //
@@ -69,6 +73,12 @@ export interface ExportModuleDefinition {
  * move a section between modules before MX-4 switch-on (BQ-27): a one-line
  * edit that re-runs the tests.
  *
+ * 5 are on, per the user's decision of 2026-10-31 (BQ-27 re-answered; the
+ * user's 2026-10-17 email to Offir and Eyal): clients, activities_tasks,
+ * quotes, invoices_payments, account_business. The other 8 are off and each
+ * can be switched back on with a one-line edit of its `on`. The set is pinned
+ * by exportModules.test.ts, so a switch flipped by accident fails CI.
+ *
  * "הזמנות" for Bookings is the README precedent and ships as the default; it is
  * also the app's Hebrew label for the Orders screen (`nav.payments`), so the
  * word is the user's call at MX-1b's drawer copy review (MX0-8).
@@ -90,13 +100,13 @@ export const EXPORT_MODULES: readonly ExportModuleDefinition[] = [
     id: 'bookings',
     name: { en: 'Bookings', he: 'הזמנות', es: 'Reservas' },
     sections: ['bookings', 'time_off'],
-    on: true,
+    on: false,
   },
   {
     id: 'services',
     name: { en: 'Services', he: 'שירותים', es: 'Servicios' },
     sections: ['services'],
-    on: true,
+    on: false,
   },
   {
     id: 'quotes',
@@ -114,37 +124,37 @@ export const EXPORT_MODULES: readonly ExportModuleDefinition[] = [
     id: 'payment_plans',
     name: { en: 'Payment plans', he: 'תוכניות תשלום', es: 'Planes de pago' },
     sections: ['payment_plans', 'client_payment_plans', 'installments'],
-    on: true,
+    on: false,
   },
   {
     id: 'forms',
     name: { en: 'Forms', he: 'טפסים', es: 'Formularios' },
     sections: ['intake_settings', 'intake_forms'],
-    on: true,
+    on: false,
   },
   {
     id: 'email_campaigns',
     name: { en: 'Email campaigns', he: 'קמפייני אימייל', es: 'Campañas de email' },
     sections: ['email_campaigns', 'email_sequences', 'email_sequence_steps', 'email_sequence_enrollments'],
-    on: true,
+    on: false,
   },
   {
     id: 'newsletter_subscribers',
     name: { en: 'Newsletter subscribers', he: 'מנויי ניוזלטר', es: 'Suscriptores del boletín' },
     sections: ['newsletter_subscribers', 'consent_records', 'consent_settings', 'email_unsubscribes'],
-    on: true,
+    on: false,
   },
   {
     id: 'website',
     name: { en: 'Website', he: 'אתר', es: 'Sitio web' },
     sections: ['website_content', 'website_pages', 'website_blocks', 'images'],
-    on: true,
+    on: false,
   },
   {
     id: 'smart_links',
     name: { en: 'Smart links', he: 'קישורים חכמים', es: 'Enlaces inteligentes' },
     sections: ['smart_links'],
-    on: true,
+    on: false,
   },
   {
     id: 'account_business',
