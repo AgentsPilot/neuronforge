@@ -48,7 +48,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
 | DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) ✅ DO-5a MERGED 2026-10-31 (PR #592; see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) 🟡 spec re-checked by BA 2026-10-31 (FU-5: H10, the Q-D5-9 note, the H3 boundary, the check list §D5.2.2(g), Q-D5b-1 to Q-D5b-4); SA short pass 2026-10-31 **APPROVED WITH CHANGES** (see [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)); DO-5b built (see [DO-5b implementation notes](#do-5b-implementation-notes)); **SA code review 2026-10-31: Code Approved for QA**, with four small skill fixes (repo reads use `origin/main:./<path>` from the worktree root; `devops.md` unchanged beyond the pointer line); **QA 2026-10-31: QA passed**, with two small non-blocking items, both fixed (see [QA Report — DO-5b](#qa-report--do-5b)); **user approved the diff 2026-11-01**, PR open with auto-merge. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file): ✅ PR #593 MERGED 2026-10-31; `origin/main` shows the file untracked and the `.gitignore` line. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
-| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. |
+| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01; commit + PR.** |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
 
@@ -1165,6 +1165,104 @@ Third-party checks join as a fifth area, **Third-party**, one platform at a time
 
 ---
 
+## DO-6b Specification — email (third-party-ops)
+
+**By BA — 2026-11-01; SA changes 1–12 applied by Dev, 2026-11-01.** Short scoping pass, like DO-5b. Config/docs-only slice: no application code, no CI job, no CI time. It adds one reference file and one index row to `third-party-ops`, under SKILL.md §1–§4 and SA Review — DO-6 (changes 1–7 apply to every DO-6 slice: a probe has a precondition or it is "not probed", a roll overlap makes a pass "not conclusive", per-side derivation from code, no copied lists, T- rows live in the platform file).
+
+**Services live (Q-D6-2 rule):** the main session confirmed on 2026-11-01 that all three are still in use, so all three stay.
+
+### D6b.1 Context and findings from code
+
+Read in the DO-6b worktree at `origin/main` (merge of #604). Line numbers are pointers for SA; the skill names files and functions only, never line numbers.
+
+| # | Finding | Where | Consequence for `email.md` |
+|---|---|---|---|
+| E1 | **One transport, three providers, fixed order.** `sendEmail` tries Resend, then SMTP, then Gmail, then returns `provider: 'none'`. Each provider is used only when all its names are set: Resend needs the key and a prefix shape check; SMTP needs host, port, user and pass; Gmail needs user, client ID, client secret and refresh token. A partial set leaves no "skipped" line, but "Attempting to send email" carries `resendConfigured`, `smtpConfigured` and `gmailConfigured` as booleans. | `lib/notifications/emailTransport.ts`: `resendConfigured` / `smtpConfigured` / `gmailConfigured` (375–396), the chain (1033–1131) | All-or-none per provider (T-EM-3). DO reads the boolean fields. |
+| E2 | **A broken Resend key fails silently over to the next provider.** A key with the wrong shape logs one warn and skips Resend. A key with the right shape that Resend refuses logs "Resend API error" and "Resend send failed — trying next transport", then SMTP or Gmail sends it and the caller sees `sent: true`. The invalid-key line holds the vendor's key prefix, so only the substring "not a valid Resend key" is quoted. | 1039–1068 | "Mail is going out" does not prove Resend works. The probe checks which **provider** sent it. |
+| E3 | **Keyed sends never fall back.** A keyed send that fails at Resend logs "Resend keyed send failed — no fallback for a keyed send" on every deployment and stops. In production (`VERCEL_ENV === 'production'`) a keyed send with no Resend is refused (`idempotency_unsupported`). Elsewhere it goes out through SMTP or Gmail without the key, with one warn. | 885–908, 1042–1074 | In production, Resend is effectively required for keyed mail. See E9. |
+| E4 | **The sender address comes from `RESEND_FROM_EMAIL` for all three providers.** `sendEmail` sets `from` before any provider runs. So `SMTP_FROM` and `SMTP_FROM_NAME` never take effect, and on SMTP fallback mail carries the Resend-domain From through another relay, which may be refused or fail alignment. Gmail is handed that `from` as well, but the vendor overwrites From with the authenticated account unless the address is a verified send-as alias (vendor fact, confirm at use time). The `sendViaGmail` comment says the code ignores the caller's `from`, and the code does not. | 1027–1031, 688–692, 740, `resolveSender` | Gotcha split by provider. FU-D6b-b. |
+| E5 | **`platformSenderAddress()` gates many senders, fail closed.** It reads only `RESEND_FROM_EMAIL`. Fail-closed callers: the admin invitation, the friend invite, the inviter notification, the invite redemption system emails (the signup code and the existing-account notice), and the plan-cancel emails including their reminder cron. The data-export callers pass the result as `from` and are **not** gated: an unset value falls through to the transport's default. The header comment "read by nobody else" is stale. | 549–556; `lib/business-os/invites/*`; `lib/business-os/billing/planCancelEmailDeps.ts` | A missing or malformed sender address stops invite-only signup, invitations and the plan-cancel mail; logged and audited, never a failed request. Callers found at use time. |
+| E6 | **Resend webhook: one secret, fail closed, Svix format.** `RESEND_WEBHOOK_SECRET` missing → 401 and an error line, on every deployment (the header says "in production", the code checks everywhere). Bad or missing signature → 401, "Webhook signature did not verify"; same body as a missing secret, so only the log class tells them apart. A timestamp outside `MAX_AGE_SECONDS` logs "Webhook rejected: timestamp outside the replay window" before the signature line. The check accepts any one of several signatures (vendor rotation overlap). | `app/api/webhooks/resend/route.ts`: `POST`, `verify` | The 401 gives a probe that can fail; timestamp and overlap results in the probe. |
+| E7 | **Event types are derived from the route, never listed.** The acted-on set is the `toDeliveryEvent` cases that return non-null, minus those the header marks not subscribed. The `ResendEventType` union is not the list: it holds a type that returns null. Resend has one side only, so DO-6 change 5 (per side) does not apply. | route header, `toDeliveryEvent` | Derived at `origin/main` each time. The skill names no type. |
+| E8 | **Webhook outcomes, all logged by class.** Unparseable → 200, "Webhook body was not JSON". No id or type, or an unacted type → 200, no line. Unmatched message id → 200, info "No email_sends row carries this message id". Nothing new → 200, **debug** "Delivery event added nothing new". Written → 200, info "Email delivery event recorded". Write error → 500, "Could not record the delivery event". | route `POST`; `lib/business-os/emailSendStatus.ts` | At the default production log level a duplicate's line is not visible, so a pass is "200, and 0 failure classes". |
+| E9 | **The catalogue marks every `email` name optional everywhere**, while E3 and E5 make Resend and its sender address needed in production. `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` is in group `features`, so T-EM-1 does not see it. | `lib/admin/environment/catalogue.ts` group `email` | Expected names per environment come from the private inventory (FU-D6b-a). The skill names the flag in part (2). |
+| E10 | **`email_sends.provider` records which provider sent each recorded mail.** `sendgrid` is only the column's historic default: no code writes it. Only mail tied to a contact is recorded. The table also holds recipient, subject and body columns. | `lib/repositories/EmailAutomationRepository.ts`; `lib/notifications/recordEmailSend.ts` | Supporting SQL: counts by `provider` and `status`, filtered on `created_at`; no other column. |
+| E11 | **SendGrid re-check (D6.0): not a transport anywhere.** The admin messages replay route's defects are already tracked (ADMIN_BOS_CLEANUP NF-6, V-12). | — | Not configuration, so not in `email.md`. No new follow-up. |
+| E12 | **Two `GMAIL_*` readers.** `lib/plugins/google-mail/sendEmailDraft.ts` is the user's own plugin connection, not the system sender. The four `GMAIL_*` names are read by the transport (fallback) **and** by `app/api/contact/route.ts`, which builds its own Gmail transport and skips the transport's order, Resend and `email_sends`. Its callers are tracked as V-14 in `ADMIN_BOS_CLEANUP_REQUIREMENT.md`. | — | Part (2) and (5) name the contact route; T-EM-3 and T-EM-8 cover it. **Never a probe.** |
+
+### D6b.2 What `email.md` teaches (the six-part template)
+
+**(1) What must differ between environments.** One "Rule per environment" column plus a target sentence, as in `stripe.md` §1. The current setup is a private-inventory pointer. Rows: which providers have their names set (as recorded; order fixed by code; production target Resend set); which Resend account (private inventory; one endpoint receives events for every key on its account; no test/live split to rely on, confirm at use time); Resend API key (one per environment, sending-only if offered); sending domain and sender address (verified domain, never `RESEND_DEFAULT_FROM` in production); webhook endpoint and secret (per environment, stable address; no endpoint means no secret, and the route refuses); subscribed events (derived per E7); SMTP relay (all-or-none, port 465 always TLS, else `SMTP_SECURE`); Gmail system sender (all-or-none; OAuth client in DO-6c). Local: guidance only. Preview: no endpoint (Q-D6b-2 ruling).
+
+**(2) Where the code reads it:** `emailTransport.ts` (all sending names, order, `platformSenderAddress()`), the webhook route and `recordDeliveryEvent`, the contact route (second `GMAIL_*` reader), `email_sends.provider`, and the catalogue group `email`. The plan-cancel flag is ours and needs the sender address (`docs/feature_flags.md`). The existing scripts, as SA ruled: `resend-webhook-smoke.ts` local or non-production stable address, default arguments only, never production; `validate-resend.mjs` (never `--to`) and `validate-gmail.mjs` key-holder pre-checks outside every checkout for non-local values, verdict only; `generate-gmail-token.js` the rotation tool, value from terminal straight into Vercel, loopback redirect a DO-6c fact.
+
+**(3) Dashboard steps (the user),** by area name: Resend Domains (record kinds only; records are DO-6e's; DMARC is DO-6e; tracking off), API keys, Webhooks, Emails (sent log), SMTP relay console, Gmail token via the rotation tool (Google Cloud: DO-6c), Vercel via `vercel-ops` and `env-change-protocol`.
+
+**(4) Probes.** Failure classes, verbatim, for module `EmailTransport`: "Resend API error", "Resend send failed — trying next transport", "Resend keyed send failed — no fallback for a keyed send", "SMTP send failed — trying next transport", "Gmail send failed", "No email transport delivered the message (preview only)", the "not a valid Resend key" substring, and the two lines carrying `idempotency_unsupported`. "Email sent" is counted by `provider` for module `EmailTransport` only (`NotificationService` logs the same class). Classes and counts only, never a copied line.
+
+| Change | Probe | Pass | Fails when | Who |
+|---|---|---|---|---|
+| Resend key, sender address, domain | Send probe | `resendConfigured` true; "Email sent" provider `resend`; sent log from the verified domain; SPF/DKIM/DMARC pass (pass/fail only) | Provider `smtp`/`gmail`/`none`; any failure class; `sender_not_configured` | User; DO |
+| Resend key roll | Send probe after deploy Ready | As above and new key's "last used" after the probe | Same; overlap → "pass, not conclusive (overlap)" | User; DO |
+| Webhook secret | Replay probe | 200; 0 signature, 0 secret, 0 timestamp lines, outside an overlap | 401 with a signature or secret line | User; DO |
+| Subscribed events | DO derives; user reports list | All present | One missing | DO + user |
+| SMTP / Gmail | Send probe, only where that provider is the recorded first sender | Expected provider | Differs, or "relay refused" | User; DO |
+| Fallback health | DO counts | Matches recorded first provider; 0 failure classes | Any | DO |
+
+**Send probe conditions (SA change 8):** goes through `sendEmail`; gated on `platformSenderAddress()`; to an address the user owns; no money, no customer data. The admin invitation to the user's own address meets all four: its create path does not check for an existing account (confirmed in `adminInviteOps.ts`). Side effects: an invite row and its audit entries; cleanup: never open the link, revoke. No qualifying trigger → "not probed".
+
+**Replay probe (SA change 2):** precondition, an event whose type per `toDeliveryEvent` carries no `status` (derived, never named) — `recordDeliveryEvent` then writes nothing or one missing timestamp; an unmatched event is also safe; never replay a status-carrying type (always patched). Timestamp: a 401 with the timestamp line is "not probed (timestamp)" (whether the vendor re-signs a replay is confirmed at use time). Overlap: during rotation, "pass, not conclusive (overlap)". Otherwise a 200 is conclusive (every 200 is after `verify`).
+
+Supporting SQL (DO, `devops.md` rules (a)–(c)): `email_sends` counts by `provider` and by `status`, filtered on `created_at` after the change time; no other column selected or grouped. Shared by every deployment on that database: supporting only.
+
+**(5) Gotchas:** silent fallback (E2); all-or-none without a line (E1); keyed sends never fall back (E3); From by provider, SMTP vs Gmail (E4, FU-D6b-b); sender address stops invite signup, invitations and plan-cancel mail (E5); two Gmail readers — a working Resend proves nothing about contact-route mail, a broken Gmail token stops it alone (E12); no secret refuses on every deployment (E6); duplicates log at debug (E8); shared Resend account (change 10); tracking stays off (E7); authentication is not the inbox (the comment on `unsubscribeUrl`); Gmail token expiry for an unpublished OAuth app (`validate-gmail.mjs`, confirm at use time); Preview addresses change per deployment (`vercel-ops` §4). The "rotation may have no overlap" gotcha is replaced by the replay probe's overlap step.
+
+**(6) Drift checks:**
+
+| ID | Check | Expected state from | Live read | Class | Who reads |
+|---|---|---|---|---|---|
+| T-EM-1 | On each Vercel target, the `email`-group names match the recorded provider set. Local: "not read (main session / user)" | Catalogue at `origin/main`; private inventory | `vercel-ops` §3 Env vars | High | DO |
+| T-EM-2 | No `email`-group name carries `NEXT_PUBLIC_` | Catalogue | `vercel-ops` §3 (names only) | Critical | DO |
+| T-EM-3 | Each provider's names all present or all absent; the `GMAIL_*` set also serves the contact route | `emailTransport.ts`, contact route at `origin/main` | `vercel-ops` §3 (names only) | High | DO |
+| T-EM-4 | Mail goes out through the recorded first provider: 0 failure classes since the last run | Private inventory; change records | Runtime logs, module `EmailTransport`; supporting `email_sends` counts | High | DO |
+| T-EM-5 | Sending domain verified, all records verified, sender address on it, open and click tracking off | Private inventory; route header | User report (Resend Domains) | High | User |
+| T-EM-6 | Each recorded endpoint enabled, right address, subscribed to every derived type, no failing deliveries | Code at `origin/main`; private inventory | User report (Resend Webhooks) | High | User; DO (code side) |
+| T-EM-7 | Webhook health: 0 signature, 0 secret (where an endpoint is recorded), 0 "Could not record the delivery event" | Change records | Runtime logs | High | DO |
+| T-EM-8 | Gmail system sender and the contact route, where recorded in use: refresh token valid; consent-screen status per DO-6c | Private inventory | `validate-gmail.mjs` verdict (key holder); user report | Medium | User |
+
+**(7) Tiers and order.** Production tier: any key create, scope or delete; any domain or DNS change; the production endpoint and its secret; SMTP or Gmail credentials. A non-production endpoint is reversible: the user applies it after approval in chat. Order: domain verified before `RESEND_FROM_EMAIL` moves to it; a newly acted-on type subscribed before merge; key, secret or token roll set new → deploy Ready → probe → delete old; `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` on only after the send probe has passed on that deployment with a sender-gated trigger (it also turns on the reminder cron). Pointer to `env-change-protocol`; nothing restated.
+
+### D6b.3 Files to change
+
+| # | File | Action |
+|---|---|---|
+| D6b-1 | `.claude/skills/third-party-ops/email.md` | New, §D6b.2, target ≤ ~170 lines |
+| D6b-2 | `.claude/skills/third-party-ops/SKILL.md` | §5 index row → `[email.md](email.md)`. Add "Resend, SMTP, a sender address, an email delivery webhook" to the description triggers. Nothing else |
+| D6b-3 | This requirement | §0 row, these sections, notes, reviews |
+| — | `stripe.md`, `devops.md`, `env-drift-audit`, `env-change-protocol`, `CLAUDE.md` | **Not edited** |
+
+### D6b.4 Acceptance criteria
+
+- [ ] `email.md` has the six parts plus tiers/order; every file path it names exists; it states the Q-D6-2 live check by role, not by environment.
+- [ ] No copied lists: no Resend event-type name, no key or secret prefix, no line number. QA greps `email.md` for `email\.[a-z_]+` (excluding `email\.md` itself) and for the vendor's key and secret prefixes: 0 hits, or each hit is a log-message string.
+- [ ] Every quoted log string is verbatim in the cited file (`grep -cF`).
+- [ ] Each probe row says who runs it, what pass is, and what it shows when wrong. The webhook probe has its precondition, its timestamp and overlap results, and never replays a status-carrying type. No probe disables Resend to reach a fallback. The contact route is never a probe.
+- [ ] The restatement grep from §D6.4 over `email.md`: 0, or each hit is a pointer.
+- [ ] Public repo: the finding-11 regex over the added lines is 0. No domain, sender address, endpoint URL, relay host or account appears; the built-in default sender is named only as `RESEND_DEFAULT_FROM`. No line states which environment has which name.
+- [ ] The SKILL.md diff is only D6b-2; the diff touches only D6b.3 files.
+
+### D6b.5 Questions — all settled
+
+- **Q-D6b-1 (settled by SA):** the send order is fixed in code, so "which provider sends first" follows from which names are set. Production target: Resend set. Which fallbacks exist where is current state, in the private inventory. Keeping SMTP and Gmail fallbacks in production is settled in FU-D6b-b with SA.
+- **Q-D6b-2 (settled by SA):** no Resend endpoint for Preview (no stable address, deployment protection, the route correctly refuses without a secret).
+- **S-1 accepted:** FU-D6b-a (Dev, code, Low): mark `RESEND_API_KEY` and `RESEND_FROM_EMAIL` required in production in the catalogue, with its tests; `RESEND_WEBHOOK_SECRET` stays optional, raised with SA in the FU workplan.
+- **S-2 accepted, widened:** FU-D6b-b (Dev, code): decide the From for SMTP and Gmail; fix the `from` field comment, the `sendViaGmail` comment, "read by nobody else", the `NotificationService` order comments, and the catalogue role text for `SMTP_FROM`.
+- **S-3 accepted:** counts by `provider` and `status`, filtered on `created_at`.
+- **S-4 confirmed:** a status-free type replays as `duplicate` or one timestamp write; a status-carrying type always writes.
+- **S-5:** E11 already tracked (ADMIN_BOS_CLEANUP NF-6, V-12). FU-D6b-c dropped.
+
+---
+
 ## 6. Non-Functional Requirements
 
 - **Security:** no secret values printed or decrypted. No project refs, IDs, secret locations or open weaknesses in any tracked file. Production and irreversible actions are executed by the user only.
@@ -1488,6 +1586,11 @@ Approved. It reads the project's log store and cannot change project state, so i
 | 2026-11-01 | DO-6a code complete | Dev built the `third-party-ops` skill: `SKILL.md` (86 lines: pointers, scope, who does what, common rules, template, platform index, checklist) and `stripe.md` (134 lines: the seven parts plus the T-ST drift rows), with SA required changes 1–7 and Q-D6-4..12 applied. `devops.md` +1 pointer line, `tools:` unchanged; `env-drift-audit` four pointer edits (145 lines). Two spec corrections from the code: the plan resolver is `planInvoiceResolver.ts`, and `charge.refunded` is read by the boost resolver on the platform side. Changes nothing about the current Stripe setup. Uncommitted, awaiting SA code review. |
 | 2026-11-01 | DO-6a SA code review | Code Approved for QA. Every quoted log string and cited path verified in code. SA fixes: SKILL.md `devops.md` pointer names all four sections; `stripe.md` §1 no longer states Preview's current state; `env-drift-audit` §1 names the five areas. Rulings on Dev's six items; FU-D6-e logged (Stripe clients without `apiVersion`). Condition before commit: the main session corrects the T-ST-1 pointer in §D6.6 and rewords two current-state phrases there. |
 | 2026-11-01 | QA DO-6a | PASSED, 14 checks, one Medium item before commit. Every §D6.4 criterion passes; SA change 1(f): the resend probe holds (a)–(e), and all 10 quoted log or response strings are verbatim in the webhook route. Finding-11 regex 0 over the added lines (new files `git add -N`'d); vendor-prefix, URL and path greps 0; 38 cited paths exist; every cross-skill section resolves. §D6.6 already corrected. Medium: SA Code Review — DO-6a quotes the removed current-state phrases, so tracked text still states them. Low: the new files are LF. |
+| 2026-11-01 | DO-6b spec + SA short pass | BA scoping spec (email: Resend, SMTP, Gmail system sender); SA approved with changes 1–12, settled Q-D6b-1/2 (no user question), dropped FU-D6b-c (already tracked), accepted FU-D6b-a/b. |
+| 2026-11-01 | DO-6b build | `third-party-ops/email.md` new; SKILL.md index row + triggers. Awaiting SA code review and QA. |
+| 2026-11-01 | DO-6b SA code review | Code Approved for QA. Changes 1–12 pass; code claims verified. SA fixed the send probe (send-email option, non-Paid type, revoke audit entry), the replay precondition (open/click count), the smoke script's `--url`, and two short-pass wording tidies. Leak scan 0. |
+| 2026-11-01 | QA DO-6b | PASSED, 19 checks, one Medium item before commit. Every §D6b.4 criterion and SA changes 1–12 pass; all quoted log strings verbatim (`grep -cF`); replay safe-type precondition, send-probe gating and the plan-cancel order row match the code; 16 cited paths exist; leak regex 0. Medium: the requirement's SA sections describe the contact route beyond "a second `GMAIL_*` reader outside the transport". Low: webhook row timestamp caveat, §D6b.2 lags SA fixes, no Gmail trigger, contact-route wording, `email.md` LF. |
+| 2026-11-01 | DO-6b QA fixes (main session) | QA Medium fixed: three requirement passages reworded to the `email.md` description of the contact route. Low 1: webhook-secret row "Fails when" excludes the timestamp refusal. Low 3: SKILL.md trigger for a Gmail refresh token. Low 4: "contact-route mail". Low 2 (§D6b.2 lags SA code-review fixes) left: the SA Code Review section records them. |
 
 ---
 
@@ -3141,3 +3244,262 @@ Condition before commit (main session, not QA): ruling 4's §D6.6 edits.
 
 - [ ] All acceptance criteria pass — ready for commit
 - [x] Issues found — the main session must fix Issue 1 (Medium, requirement text only) before commit. Every §D6.4 criterion and SA change 1(f) pass, and the skill files themselves need no change.
+
+---
+
+## SA Review — DO-6b (short pass)
+
+**Reviewed by SA — 2026-11-01**
+**Verdict: APPROVED WITH CHANGES.** The six-part shape, the tiers, the drift rows and the public-repo criteria are right, and most code findings hold. Three things would have made the skill wrong:
+- **A second Gmail sender is missing.** The contact route reads the four `GMAIL_*` names itself and sends through Gmail directly. It skips the transport, its fallback order, Resend and `email_sends`. So E12's "the `GMAIL_*` names are only the system sender's fallback" is false.
+- **The webhook replay probe has no overlap rule and no timestamp rule.** The route accepts any of several signatures (the vendor's rotation overlap) and refuses anything signed more than 300 s ago. A pass during a rotation proves nothing, and a replay that keeps its original timestamp fails whatever the secret.
+- **The fallback count double-counts.** `NotificationService` also logs "Email sent" with a `provider` field, so counting that class without the module overstates sends.
+
+E5 also understates which mail a missing sender address stops, and FU-D6b-c duplicates items that another requirement already tracks. Required changes 1–12 below fix all of these. None needs a new decision from the user.
+
+I reviewed this in the DO-6b worktree at `origin/main` (merge of #604), against §D6.0–§D6.4, SA Review — DO-6 (spec) changes 1–7, SA Review — DO-5b (short pass) as the model, SA Code Review — DO-6a, QA Report — DO-6a, and `third-party-ops` `SKILL.md` and `stripe.md`. No platform call, no SQL and no network call were made. No `.env*` file and no private doc was opened. Local reads only: source files, `git grep origin/main`, `middleware.ts` and `package.json`.
+
+### Code claims (E1–E12)
+
+| # | Result | Correction for `email.md` |
+|---|---|---|
+| E1 | **Verified.** `resendConfigured` / `smtpConfigured` / `gmailConfigured`, fixed order, `provider: 'none'` last. | Partial sets leave no "skipped" line, but "Attempting to send email" carries `resendConfigured`, `smtpConfigured` and `gmailConfigured` as booleans. DO reads those fields, never the line. |
+| E2 | **Verified.** The three strings are as quoted. The invalid-key line holds the vendor's key prefix, so the skill quotes only the substring "not a valid Resend key". | — |
+| E3 | **Verified.** The production test is `VERCEL_ENV === 'production'`. A keyed send that fails at Resend logs "Resend keyed send failed — no fallback for a keyed send" on **every** deployment. | Add that class to the failure classes (change 6). |
+| E4 | **Verified for SMTP, wrong for Gmail.** `sendEmail` sets `from` before any transport, so `SMTP_FROM` and `SMTP_FROM_NAME` never take effect. For Gmail the code passes that `from` as well, but the vendor overwrites From with the authenticated account unless the address is a verified send-as alias (vendor fact, confirm at use time). The comment in `sendViaGmail` says the code ignores the caller's `from`, and the code does not. | Gotcha: on SMTP, fallback mail carries the Resend-domain From through another relay, which may be refused or may fail alignment. On Gmail, the recipient most likely sees the Gmail account as the sender. Both go into FU-D6b-b, along with the catalogue role text for `SMTP_FROM` ("unset uses the SMTP login name"), which is false in effect. |
+| E5 | **Understated.** `platformSenderAddress()` gates more than two senders. Fail-closed callers: the admin invitation, the friend invite, the inviter notification, the invite redemption system emails (the **signup code** and the existing-account notice), and the plan-cancel emails, including their reminder cron. The data-export callers pass the result as `from` and are **not** gated: an unset value falls through to the transport's default. The header comment "read by nobody else" is stale. | A missing or malformed sender address **stops invite-only signup**, because the code email is not sent, as well as the invites and the plan-cancel mail. The skill keeps "callers found at use time" and names the signup code as the example (change 4). |
+| E6 | **Verified.** The secret check runs on every deployment; the header says "in production". A missing secret and a bad signature both return 401 with the same body, so only the log class tells them apart. An out-of-window timestamp logs "Webhook rejected: timestamp outside the replay window" **before** "Webhook signature did not verify". | The timestamp class goes into the probe (change 2). |
+| E7 | **Verified.** The acted-on set is the `toDeliveryEvent` cases that return non-null, minus those the header marks not subscribed. The `ResendEventType` union is **not** the list: it holds a type that returns null. | One line for Dev: derive from the non-null returns, never from the union. Resend has one side only, so DO-6 change 5 (per side) does not apply. Say so in one line. |
+| E8 | **Verified**, including "debug" for duplicates. An unacted type returns 200 with no log line, and an unparseable body logs "Webhook body was not JSON". | — |
+| E9 | **Verified.** All 14 `email`-group names use the optional default. `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` is in group `features`, not `email`, so T-EM-1 does not see it. | The skill names the flag in part (2), as drafted. |
+| E10 | **Verified.** The historic default is `sendgrid`, no writer produces it, and `recordEmailSend.ts` writes `result.provider`. | See S-3 (change 9). |
+| E11 | **Verified, but already tracked.** `ADMIN_BOS_CLEANUP_REQUIREMENT.md` records the replay route's defects (V-12, NF-6), and its decision UC-2 keeps the Messages page as it is. | See S-5. |
+| E12 | **Wrong** (see the verdict). `lib/plugins/google-mail/sendEmailDraft.ts` is indeed the user's own connection. But `app/api/contact/route.ts` builds its own Gmail transport from the four `GMAIL_*` names. | Change 1. |
+| E11 (SendGrid re-check) | **Verified.** No transport. | — |
+
+### The grep gap: readers the spec missed
+
+| File | Ruling |
+|---|---|
+| `app/api/contact/route.ts` | **A second Gmail sender, outside the transport.** Add it to part (2) and part (5). A broken Gmail token stops contact-route mail even where Resend works, and a working Resend proves nothing about it. T-EM-3 (all-or-none) and T-EM-8 cover this route as well. Its callers are tracked as V-14 in `ADMIN_BOS_CLEANUP_REQUIREMENT.md`; the skill points there and opens nothing new. **Never a probe.** |
+| `lib/business-os/billing/planCancelEmail.ts`, `planCancelEmailsFlag.ts`, `lib/email/templates/plan-cancel.ts` | **The only env flag that gates sending email.** With the flag on and no sender address, the route sends nothing, audits `sender_not_configured`, and logs an `error` with `alert: true`. The flag also gates the plan-cancel reminder cron (`docs/feature_flags.md`). Order row: the flag goes on only after the send probe passes on that deployment (change 7). No other env flag gates sending (I checked the catalogue's flag rows). |
+| `lib/business-os/invites/{inviteEmail,inviteEmailPolicy,inviterNotification,redemptionDeps}.ts` | Fail-closed on the sender address. See E5. |
+| `lib/calibration/calibrationResultEmail.ts` | **Does not read `RESEND_API_KEY`.** The name appears only inside a log string. It sends through `NotificationService` and then `sendEmail`, so it follows the transport order. |
+| `lib/pilot/NotificationService.ts` | Goes through `sendEmail`. Its comments describe a two-provider order, which is stale (FU-D6b-b comment sweep). **It logs "Email sent" with `provider` too**, so DO's count must be limited to module `EmailTransport` (change 6). |
+| `lib/admin/environment/catalogue.ts`, `lib/notifications/emailTransport.ts`, `app/api/webhooks/resend/route.ts` | Covered in E1–E9. |
+| `scripts/resend-webhook-smoke.ts` (`npm run resend:smoke`) | **An existing probe. It may be used, with limits.** It signs a synthetic event with the secret in hand and invents a message id by default, so the route answers "unknown message id" and writes nothing. It proves that the **deployed** secret equals the **held** one, not that the vendor's endpoint secret equals the deployed one. **Allowed:** by the key holder, for local, or for a non-production stable address, with **default arguments only** (no `--id`, no `--type`). With a real `--id` it writes to that row, and with a status type it changes that row's status. **Never against production:** it would put the production secret in hand and send a synthetic event, which `stripe.md` §5 already forbids for the same reason. Production uses the vendor replay. The npm script reads the checkout's `.env.local`, so it is a local tool by construction. |
+| `scripts/validate-resend.mjs` | **A key-holder pre-check only, never the post-change probe, and without `--to`.** `--to` sends straight to the vendor, skipping the transport, so it proves only the key in hand. It reads `.env.local` from the working directory, falling back name by name. So for any non-local key, the holder runs it from a directory outside every checkout, with the values set in that shell only. Its output holds domain names, a key fragment and a message id: the user reports the verdict line only. It lists domains, which a sending-only key may not be allowed to do, so a 401 there can mean "correctly scoped" rather than "invalid" (vendor fact, confirm at use time). Its default-domain advice is about `RESEND_DEFAULT_FROM`, not the configured sender. |
+| `scripts/validate-gmail.mjs` | **A key-holder pre-check for T-EM-8.** It exchanges the refresh token and sends no mail. The same conditions as `validate-resend.mjs` apply: outside every checkout for non-local values, and the verdict and error code only. Its output prints the account address and fragments of the secrets. |
+| `scripts/generate-gmail-token.js` | **The rotation tool for `GMAIL_REFRESH_TOKEN`.** It prints the token to the terminal and says "add to `.env.local`". For a non-local target the value goes straight from the terminal into Vercel (`vercel-ops`, `env-change-protocol`), never into chat or a file inside a checkout. It needs a loopback redirect registered on the Gmail OAuth client, which is a DO-6c console fact. The script's own guidance is that a consent screen left in testing makes tokens expire within days (confirm at use time). That belongs in T-EM-8. |
+
+### S-4: the replay probe, confirmed in `recordDeliveryEvent`
+
+- **A replayed event whose type carries no status is safe in every case.** A delivered-type event writes `delivered_at` only when it is null, and never touches `status`. So a replay is either `duplicate` (no write) or one write of the true delivery time. `unmatched` writes nothing. There is no money and no status change, so unlike `stripe.md` no database precondition is needed. The precondition becomes: **the event's type, per `toDeliveryEvent`, returns no `status`**, derived at use time and never named in the skill.
+- **A status-carrying type always writes.** `status` and `error_message` are patched on every delivery, so the result is never `duplicate`. "Never replay a status-changing event" stands, and is now grounded.
+- **Two conditions the spec lacks** (change 2):
+  - (a) **Timestamp.** The route refuses a signature timestamp more than `MAX_AGE_SECONDS` old. If the vendor's replay keeps the original signing time, every replay fails whatever the secret. Whether a replay is re-signed at send time is a vendor fact, confirmed at use time. A 401 with "Webhook rejected: timestamp outside the replay window" in the window is **"not probed (timestamp)"**, never a secret failure.
+  - (b) **Overlap.** `verify` accepts any one signature in the header, and during the vendor's rotation both the old and the new secret sign. A pass while the old secret is still valid is **"pass, not conclusive (overlap)"** (DO-6 change 1(e)). The gotcha "the rotation may have no overlap" is replaced: check the vendor docs at use time, and with an overlap the result is not conclusive until it ends.
+- **A dashboard 200 is otherwise conclusive.** Every 200 the route returns comes after `verify`. So pass = 200, plus 0 "Webhook signature did not verify", 0 "RESEND_WEBHOOK_SECRET not configured" and 0 timestamp lines after the probe time, outside an overlap.
+
+### Rulings on S-1 to S-5 and the follow-ups
+
+- **S-1: accepted.** The expected names per environment come from the private inventory. **FU-D6b-a (Dev, code, Low):** mark `RESEND_API_KEY` and `RESEND_FROM_EMAIL` required in production, with the catalogue tests. The transport already rules that production always has Resend (its SA Q-7 note), so this records an existing decision. `RESEND_WEBHOOK_SECRET` stays optional in this FU: whether production must receive delivery events is the Q-D6b-2 target, and Dev raises it with SA in the FU workplan rather than deciding it here.
+- **S-2: accepted, widened.** It is a gotcha only in DO-6b. **FU-D6b-b (Dev, code):** decide which From SMTP and Gmail send with. Fix the comments that state a different order or sender: the `from` field comment, the `sendViaGmail` comment, "read by nobody else", and the `NotificationService` order comments. Fix the catalogue role text for `SMTP_FROM`. One FU, because these all describe the same behaviour.
+- **S-3: accepted, with one precision.** The query counts by `provider` and by `status`, and may **filter** on `created_at` after the change time. It never selects or groups by any other column. As drafted, "never another column" would forbid the time filter the row itself asks for (change 9).
+- **S-4: confirmed** (above).
+- **S-5: no new follow-up.** The replay route's defects are V-12 and NF-6 in `ADMIN_BOS_CLEANUP_REQUIREMENT.md`, under the user's decision UC-2. FU-D6b-c is dropped. The DO-6b record adds one line: "E11: already tracked (ADMIN_BOS_CLEANUP NF-6, V-12)". `email.md` does not mention the route.
+
+### Rulings on Q-D6b-1 and Q-D6b-2
+
+Both are technical, so SA settles them. Neither goes to the user.
+
+- **Q-D6b-1: settled by SA, so it is not a question.** The send order is fixed in code. Resend always goes first where its names are set, so "which provider sends first" is not a per-environment choice: it follows from which names are set. The target is already decided in code (production always has Resend, the transport's SA Q-7). Which fallbacks exist on each target is current state, recorded in the private inventory. DO-6b changes nothing. Whether to keep the SMTP and Gmail fallbacks in production at all depends on FU-D6b-b's From decision, so it is settled there, with SA, not asked now. Part (1)'s first row becomes "Which providers have their names set: as recorded; the order is fixed by code (E1); production target: Resend set (E3)".
+- **Q-D6b-2: settled by SA. No endpoint for Preview.** The reasons are technical and match the user's own Q-D6-3 direction for Stripe: Preview has no stable address, it sits behind deployment protection, and the route correctly refuses every event without a secret. Delivery tracking is checked where an endpoint is recorded, with the replay probe. Any later wish for Preview delivery events is a separate item.
+
+### Required changes
+
+1. **[E12, (2), (5), T-EM-3, T-EM-8] Add the contact route as the second `GMAIL_*` reader.** Part (2) names `app/api/contact/route.ts`: "reads the four Gmail names itself; does not use the transport, its order, Resend or `email_sends`". Gotcha: "a working Resend proves nothing about contact-route mail; a broken Gmail token stops it alone". T-EM-3 and T-EM-8 apply to it too. Never a probe. Whether it has a caller is a pointer to V-14 in `ADMIN_BOS_CLEANUP_REQUIREMENT.md`. Correct E12 in the record. — Priority: High
+2. **[(4) webhook row, (5)] Replay probe: precondition by derivation, and timestamp and overlap results.** The precondition is "an event whose type, per `toDeliveryEvent`, carries no `status`", derived at use time and never named. An unmatched event is also safe. Add "not probed (timestamp)" for the window line and "pass, not conclusive (overlap)" during a rotation (S-4 (a) and (b)). Replace the "may have no overlap" gotcha. Keep "never replay a status-carrying type". — Priority: High
+3. **[(2), (4)] The existing scripts, as ruled in the table above.** `resend-webhook-smoke.ts`: local or a non-production stable address, default arguments only, never production. `validate-resend.mjs` (no `--to`) and `validate-gmail.mjs`: key-holder pre-checks, run outside every checkout for non-local values, verdict only, and never the post-change probe. `generate-gmail-token.js`: the rotation tool, with the value going from the terminal straight into Vercel and the loopback redirect pointed to DO-6c. — Priority: High
+4. **[E5, (5)] Widen the sender-address gotcha.** "A missing or malformed `RESEND_FROM_EMAIL` stops every caller that gates on `platformSenderAddress()` (found at use time), including the invite signup code, so invite-only signup stops, as well as invitations and the plan-cancel mail. Logged and audited, never a failed request." Correct E5 in the record, including that the data-export callers are not gated. — Priority: Medium
+5. **[E4, (5)] Split the From gotcha by provider.** SMTP sends the Resend-domain From through another relay, which may be refused or fail alignment. Gmail is handed it, and the vendor shows the authenticated account unless the address is a verified alias (confirm at use time). Both are FU-D6b-b. — Priority: Medium
+6. **[(4) send probe, fallback-health row, T-EM-4] Name the failure classes and the module.** Count "Email sent" by `provider` **for module `EmailTransport` only**: `NotificationService` logs the same class. Failure classes, verbatim: "Resend API error", "Resend send failed — trying next transport", "Resend keyed send failed — no fallback for a keyed send", "SMTP send failed — trying next transport", "Gmail send failed", "No email transport delivered the message (preview only)", the "not a valid Resend key" substring, and the two `idempotency_unsupported` lines (quote the code `idempotency_unsupported` itself). The send probe's log lines hold the recipient's address: classes and counts only, never a copied line. — Priority: Medium
+7. **[(7) order] Add the plan-cancel flag row.** `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` goes on for a deployment only after the send probe has passed there with a sender-gated trigger. It also gates the reminder cron. — Priority: Medium
+8. **[(4) send probe] Fix the trigger's conditions now, and name its side effects** (DO-6 change 2). Dev picks a trigger that: goes through `sendEmail`; is gated on `platformSenderAddress()`, so that it also proves E5; goes to an address the user owns; moves no money and touches no customer's data. The admin invitation to the user's own address meets all four if Dev confirms the existing-account branch at build. Its side effects (an invite row, an audit row) are named, as is their cleanup (revoke). If no trigger meets all four, the probe is "not probed", never improvised. — Priority: Medium
+9. **[S-3, supporting SQL] Allow the time filter.** Counts by `provider` and `status`, filtered on `created_at` after the change time; no other column selected or grouped. — Priority: Low
+10. **[(1)] One Resend account per environment, as recorded, and no mode to rely on.** Add a row: "Which Resend account: private inventory. One endpoint receives events for every key on its account, so environments sharing an account share events. The route answers those 200 'unknown message id'." That Resend has no test/live split is a vendor fact, confirmed at use time. Replace part (1)'s first row as in the Q-D6b-1 ruling. — Priority: Medium
+11. **[T-EM-5] Add "open and click tracking off for the sending domain".** The route's header records it as a decision, and turning it on changes every message's links and adds a pixel. — Priority: Low
+12. **[§D6b intro, D6b.4] Public-repo wording and one criterion.** The intro's "named on Vercel" states the current setup. Use the DO-6a wording: "The main session confirmed on 2026-11-01 that all three are still in use, so all three stay." In D6b.4 the copied-list grep `email\.[a-z_]+` matches the file name `email.md` itself, so QA excludes `email\.md` before counting. Target length: ~170 lines, as for `stripe.md`. If it runs over, Dev trims prose, never probe or drift rows. — Priority: Low
+
+### Checked and honoured
+
+- **DO-6 changes 1–7:** a probe with a failed precondition is "not probed" (changes 2 and 8 here); overlap is "not conclusive" (change 2); local is "not read" in T-EM-1; per-side derivation does not apply to a one-sided vendor (E7); no copied lists; the T- rows live in `email.md`.
+- **Probe safety:** no probe moves money or changes a status. No probe needs DO to hold a secret. No probe disables Resend to reach a fallback. Every vendor fact used (replay re-signing, rotation overlap, Gmail From rewriting, key scopes, Resend modes) is marked "confirm at use time".
+- **Tiers:** every key, secret, domain, DNS and credential action is production tier. The DNS records stay with DO-6e and the Google console with DO-6c.
+- **CI time:** none. Config and docs only.
+- **Files:** D6b-1 and D6b-2 only. `stripe.md`, `devops.md`, `env-drift-audit`, `env-change-protocol` and `CLAUDE.md` are not edited.
+- **Public repo:** this review names files, functions, env var names and log classes only. It holds no domain, address, endpoint URL, key prefix, project reference or current setup.
+
+### Approval
+
+[x] DO-6b spec approved with changes. **Dev may build** D6b-1 (`.claude/skills/third-party-ops/email.md`) and D6b-2 (the `SKILL.md` index row and triggers), with changes 1–12 applied. The user does not need to be asked anything (Q-D6b-1 and Q-D6b-2 are settled above). SA does a code review, then QA.
+
+---
+
+## DO-6b implementation notes
+
+**By Dev — 2026-11-01.** Branch `feature/devops-third-party-email`, worktree at `origin/main`. Config/docs only; nothing committed.
+
+| File | Change |
+|---|---|
+| `.claude/skills/third-party-ops/email.md` | New, 131 lines: six parts plus tiers and order, T-EM-1..8, mirroring `stripe.md`'s section order and table style |
+| `.claude/skills/third-party-ops/SKILL.md` | §5 index row now points at `email.md`; description triggers gain "Resend, SMTP, a sender address, an email delivery webhook" (D6b-2 as SA-approved). CRLF preserved; 2 lines changed |
+
+| SA change | Where / how applied |
+|---|---|
+| 1 | §2 row names `app/api/contact/route.ts` as a second `GMAIL_*` reader outside the transport, with the V-14 pointer; §5 "Two Gmail readers"; T-EM-3 and T-EM-8 cover it; §4 send probe says it is never a probe |
+| 2 | §4 replay probe steps 1–5: precondition derived from `toDeliveryEvent` (no `status`), unmatched also safe, never a status-carrying type; "not probed (timestamp)"; "pass, not conclusive (overlap)"; the old "may have no overlap" gotcha removed |
+| 3 | §2 "Existing scripts" table, one row per script, with the SA limits (default args only / never production; no `--to`; outside every checkout; verdict only; token from terminal straight into Vercel; loopback redirect to DO-6c) |
+| 4 | §5 "Sender address" gotcha, naming the invite signup code via `redemptionDeps.ts`; callers found at use time |
+| 5 | §5 "From by provider", split SMTP vs Gmail, both pointed to FU-D6b-b |
+| 6 | §4 "Transport failure classes" paragraph, verbatim strings, module `EmailTransport` only for "Email sent"; "never a copied line (the send lines carry the recipient)"; T-EM-4 points at it |
+| 7 | §7 order row for `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED`, including the reminder cron |
+| 8 | §4 "The send probe": the four conditions, the admin invitation as trigger, side effects (invite row, audit entries), cleanup (revoke route), otherwise "not probed" |
+| 9 | §4 supporting SQL: counts by `provider` and `status`, filtered on `created_at`, no other column |
+| 10 | §1 row "Which Resend account" (shared events, "unknown message id", no test/live split confirm at use time); first row replaced per the Q-D6b-1 ruling; §5 "Shared account" |
+| 11 | T-EM-5 adds "open and click tracking off", expected state also from the route header |
+| 12 | Spec intro reworded in `do6b-spec-final.md`; D6b.4 grep excludes `email\.md`; file is 131 lines (under 170) |
+
+**Verification done.** Every path named in `email.md` exists (scripted check). Every quoted log string is found by `grep -cF` in its file: the transport classes in `emailTransport.ts`, the webhook classes in the route, "Email sent" also in `NotificationService.ts`. The no-existing-account check in the admin invite create path was confirmed by reading `createInviteForAdmin`. `recordDeliveryEvent` duplicate behaviour confirmed (a delivered timestamp is written only when null; a status is patched every time). The leak scan prints nothing before "scan exit 1". `email\.[a-z_]+` over `email.md`: 0 hits.
+
+**Could not verify / deviations.**
+- SA attributed the "unpublished OAuth app → token expires in 7 days" guidance to `generate-gmail-token.js`; it is actually in `scripts/validate-gmail.mjs`. `email.md` grounds it there.
+- Vendor facts (replay re-signing, rotation overlap, Gmail From rewriting, key scopes, no test/live split, domain-list refusal for a sending-only key) are not verifiable from code; each is marked "confirm at use time".
+- That a revoked, never-opened invite leaves no other side effect beyond the row and audit entries was read from the create path, not run.
+
+---
+
+## SA Code Review — DO-6b
+
+**Code Review by SA — 2026-11-01**
+**Status:** ✅ Code Approved for QA. SA made five small wording fixes directly (below). No condition before commit.
+
+Reviewed in the DO-6b worktree on the uncommitted changes, against §D6b.1–§D6b.4, SA Review — DO-6b (short pass) changes 1–12, the DO-6b implementation notes, and the shape of `stripe.md` and SKILL.md §4. No platform call, no SQL, no vendor call, no network call. No `.env*` file and no private doc was opened. Local reads only: source files, scripts, `package.json`, `git diff`, byte counts.
+
+### Code claims (spot-check)
+
+| Claim in `email.md` | Result |
+|---|---|
+| Every backticked file path exists | **Verified** (scripted `test -e`; the only non-matches are bare names such as `stripe.md` and `devops.md`, which resolve in context) |
+| `resendConfigured` / `smtpConfigured` / `gmailConfigured` / `sendEmail` / `platformSenderAddress` in `emailTransport.ts`; fixed order; "Attempting to send email" carries the three booleans | **Verified** |
+| The transport failure classes, verbatim | **Verified,** each by `grep -cF` in `emailTransport.ts`. "Two lines carrying `idempotency_unsupported`" is right: the code appears four times, but only two are log lines (the production refusal and the outside-production warn) |
+| "Email sent" also logged by `NotificationService` | **Verified:** module `NotificationService` logs it with `provider`; the transport logger is module `EmailTransport` |
+| `from` set before any provider; SMTP `SMTP_FROM` / `SMTP_FROM_NAME` never take effect; Gmail handed the same `from` | **Verified** (`resolveSender` result written into the params before the Resend branch) |
+| Webhook strings, `verify`, `toDeliveryEvent`, `MAX_AGE_SECONDS`, "DELIBERATELY NOT SUBSCRIBED", the header's "in production" vs the code's every-deployment check | **Verified.** The secret line is quoted as a substring of the full message, which is fine for a count |
+| Replay precondition vs `toDeliveryEvent` / `recordDeliveryEvent` | **Verified, one precision added** (fix 2). The status-free types are the delivered, opened and clicked cases. A delivered timestamp is written only when null; an open or click writes its timestamp and **increments its count** only when the event is newer than the stored one, so a replay of an already-recorded event is `duplicate`. A replay can write only what the first delivery failed to record. Status-carrying types patch status and error every time. `unmatched` writes nothing |
+| Send probe: admin invitation via `createInviteForAdmin` | **Verified, two gaps closed** (fix 1). The create path does not check for an existing account; the email goes through `sendInvitationEmail`, which checks `platformSenderAddress()` first (`sender_not_configured`, `sendEmail` not called) and then calls `sendEmail` unkeyed and transactional, with the recipient redacted from logs. Money: none at create; a Paid type sells a plan only on redemption, but the probe now says non-Paid. Gaps: the email is sent only when the create's `sendEmail` option is true, and the revoke route writes its own audit entry. Invitation mail has no contact, so it writes no `email_sends` row: the supporting SQL will not see the probe, which the skill already treats as supporting only |
+| Sender gotcha: `redemptionDeps.ts` gates the signup code | **Verified** (`platformSenderAddress()` then `sender_not_configured`) |
+| Scripts: smoke `--id` / `--type` / invented id / npm script reads `.env.local`; `validate-resend.mjs` `--to` and cwd `.env.local`; `validate-gmail.mjs` cwd `.env.local`; `generate-gmail-token.js` loopback redirect and prints the token | **Verified.** The smoke script needs `--url` to reach a non-production address, which "default arguments only" forbade by its letter (fix 3) |
+| The 7-day-token guidance is in `validate-gmail.mjs`, not `generate-gmail-token.js` | **Confirmed.** Dev's correction of my short-pass attribution is right; `email.md` grounds it correctly |
+| Plan-cancel flag: group `features`, gates the reminder cron, needs the sender address | **Verified** (catalogue row, `docs/feature_flags.md`). The §7 order row is right |
+| Contact route reads the four `GMAIL_*` names itself, no transport, no `email_sends` | **Verified** |
+| `recordEmailSend.ts` records only mail tied to a contact | **Verified** |
+
+### Required changes 1–12
+
+| # | Result |
+|---|---|
+| 1 | **Pass.** §2 row, §5 "Two Gmail readers", T-EM-3, T-EM-8, "never a probe". The V-14 pointer goes to the row on whether the route has a caller |
+| 2 | **Pass,** refined by fix 2. Steps 1–5 hold the derived precondition, unmatched-is-safe, timestamp and overlap results, and "never replay a status-carrying type" |
+| 3 | **Pass,** refined by fix 3 |
+| 4 | **Pass** |
+| 5 | **Pass** |
+| 6 | **Pass.** Module limit, verbatim classes, counts only |
+| 7 | **Pass** |
+| 8 | **Pass,** refined by fix 1 |
+| 9 | **Pass** |
+| 10 | **Pass.** §1 first row as the Q-D6b-1 ruling; account row; §5 "Shared account" |
+| 11 | **Pass** |
+| 12 | **Pass.** Spec intro uses the live-check wording; D6b.4 excludes `email\.md`; 131 lines |
+
+### Code Review Comments
+
+1. Shape: six parts plus tiers and order, in `stripe.md`'s order and table style; one "Rule per environment" column with a target sentence; T-EM rows in the `env-drift-audit` §7 column format. — Pass
+2. SKILL.md: index row and description triggers only (D6b-2); frontmatter still one line. — Pass
+3. Send probe left the `sendEmail` create option and the revoke's audit entry unstated. **SA fixed** (fix 1). — Medium (fixed)
+4. Replay precondition said a replay "writes one missing timestamp", which misses the open/click count. **SA fixed** (fix 2). — Low (fixed)
+5. Smoke script: "default arguments only" read literally forbade `--url`. **SA fixed** (fix 3). — Low (fixed)
+6. Wording: two phrases in my own short pass said more about the contact route than the skill needs. **SA fixed** (fixes 4, 5). — Low (fixed)
+7. No copied lists: no event-type name, no key or secret prefix, no line number in `email.md`. — Pass
+8. Public repo: the brief's regex over every added line (new file `git add -N`'d, then `git reset`), re-run after the fixes: **0**. A further grep for URLs, domains and environment-placement phrases: no real hit (the only near-hit is the SA ruling that Preview gets no endpoint, which is a target, not current state). — Pass
+9. Line endings: `email.md` is LF (new file, as in DO-6a); the two edited files keep CRLF (CR count equals LF count). — Pass
+10. CI time: none. Docs and config only. — Pass
+
+### Fixes made by SA
+
+1. `email.md` §4 send probe: the invitation is created "with the send-email option on (off, nothing is sent) and a non-Paid type"; side effects add "the revoke adds one more".
+2. `email.md` §4 replay step 1: "writes one missing timestamp" → "writes only what the first delivery failed to record (a missing timestamp, and for an open or click its count once)".
+3. `email.md` §2 smoke-script row: "default arguments only" → "default arguments only apart from `--url`".
+4. This file, SA Review — DO-6b (short pass), verdict bullet: one adjective dropped; it now reads "The contact route reads…".
+5. This file, same review, grep-gap table, contact-route row: the "never a probe" wording was narrowed (later narrowed further by the main session after QA).
+
+### Optimisation Suggestions
+
+- The send probe's "Fails when" names provider `none`, which no "Email sent" line carries; the "No email transport delivered" class already catches it. A later edit could say "no 'Email sent' line" instead. Not blocking.
+- §0's DO-6 row still reads "awaiting SA code review + QA"; the main session updates it with the QA result.
+
+### Code Approved for QA: Yes
+
+---
+
+## QA Report — DO-6b
+
+**QA — 2026-11-01**
+**Test mode:** full · **Strategy:** static checks (grep, `grep -cF` verbatim string lookup, path and link existence, YAML parse, byte-level line-ending count, `git diff --numstat` with and without `--ignore-cr-at-eol`, read-through against the code). This is a docs/config-only slice with no runtime to exercise. · **Focus:** security (public repo, current-state text, probe safety), schema (frontmatter) · **Skipped:** the fresh-session load test (deferred, as for DO-1 to DO-6a) · **Input source:** TL prompt + §D6b.4 + SA Review — DO-6b (short pass) changes 1–12 + SA Code Review — DO-6b. Run in the DO-6b worktree on the uncommitted changes. No platform call, no SQL, no vendor call, no network call. No `.env*` file and no private doc was opened. QA edited nothing except this section and one Change History row; §0's DO-6 row is left to the main session.
+
+### Test Coverage
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 1 | §D6b.4: six parts plus tiers/order; paths exist; live check by role | Pass | Headings §1–§7 in the same order and wording as `stripe.md`. Every backticked path tested with `test -e`: 16 exist, 0 missing (the only non-hit is `origin/main`, not a path). The live check is stated as a procedure ("confirm the three services are still live … a code path that runs, and the names set on Vercel"), naming no environment |
+| 2 | §D6b.4: no copied lists | Pass | `email\.[a-z_]+` over `email.md`, excluding `email\.md`: 0. The vendor's API-key prefix, its webhook-secret prefix and the signing-scheme name, line numbers (`L123`, `line 123`, `:123`): 0. The `idempotency_unsupported` code and the "not a valid Resend key" substring are log-message text, as the criterion allows |
+| 3 | §D6b.4: quoted log strings verbatim | Pass | `grep -cF` in `lib/notifications/emailTransport.ts`: "Resend API error" 2, "Resend send failed — trying next transport" 1, "Resend keyed send failed — no fallback for a keyed send" 1, "SMTP send failed — trying next transport" 1, "Gmail send failed" 1, "No email transport delivered the message (preview only)" 1, "not a valid Resend key" 1, "Attempting to send email" 1, "Email sent" 3, `idempotency_unsupported` 4, of which exactly 2 are log lines (the production refusal and the outside-production warn), "relay refused" 1 (inside the error the SMTP failure line logs). Module is `EmailTransport` (`createLogger`). `NotificationService.ts` logs "Email sent" with `provider` too. In `app/api/webhooks/resend/route.ts`: "Webhook signature did not verify" 1, "RESEND_WEBHOOK_SECRET not configured" 1 (substring of the full message), "Webhook rejected: timestamp outside the replay window" 1, "No email_sends row carries this message id" 1, "Delivery event added nothing new" 1 (a `debug` call), "Could not record the delivery event" 1, "DELIBERATELY NOT SUBSCRIBED" 1, "unknown message id" 1 |
+| 4 | §D6b.4: probe rows | Pass | All 6 rows of the probe table name who runs it, the pass and the fail. Replay probe: precondition by derivation (no `status` per `toDeliveryEvent`), unmatched is safe, timestamp → "not probed (timestamp)", overlap → "pass, not conclusive (overlap)", never a status-carrying type. "No probe breaks Resend to reach a fallback" and "the contact route … is **never** a probe" are stated. See Edge Case 1 |
+| 5 | §D6b.4: restatement grep (§D6.4 list) | Pass | `Snapshot the before-state`, `\| **Read** \|`, `begin read only`, `filter_project_envs`, `decrypt` over `email.md`: 0 |
+| 6 | §D6b.4: public repo | Pass (skill files) | The brief's regex over all added lines (`email.md` `git add -N`'d, then `git reset -q`; `git status` shows it untracked again): **0** ("scan exit 1"). Extra over the same 443 added lines: `https?://`, `localhost`, `.com`/`.io`/`.ai`, product, repo and person names, `worktrees/`, `Users/`, both private-doc names: 0. The built-in default sender is named only as `RESEND_DEFAULT_FROM`. No line states which environment has which name: the only placement phrases are the code-decided target ("production always has Resend set", from the transport's keyed-send refusal) and the SA ruling that Preview gets no endpoint (a target) |
+| 7 | §D6b.4: diff touches only D6b.3 files; SKILL.md only D6b-2 | Pass | `git status --untracked-files=all`: the two edited files and `email.md` only. SKILL.md diff: the description gains "Resend, SMTP, a sender address, an email delivery webhook" and the §5 Email row becomes `[email.md](email.md)`; nothing else. `stripe.md`, `devops.md`, `env-drift-audit`, `env-change-protocol`, `CLAUDE.md` untouched |
+| 8 | SA short-pass changes 1–12 in `email.md` | Pass | 1 §2 contact-route row (V-14 pointer), §5 "Two Gmail readers", T-EM-3, T-EM-8, "never a probe". 2 replay steps 1–5. 3 §2 scripts table with every SA limit (smoke: default arguments apart from `--url`, never production; `validate-resend.mjs` never `--to`; outside every checkout; verdict only; token terminal → Vercel; loopback redirect → DO-6c). 4 §5 "Sender address" names `redemptionDeps.ts`, callers found at use time. 5 §5 "From by provider" split, FU-D6b-b. 6 §4 failure classes, module `EmailTransport` only, counts never lines. 7 §7 plan-cancel row incl. reminder cron. 8 send probe: four conditions, trigger, side effects, cleanup, "not probed". 9 supporting SQL: `provider`/`status`, `created_at` filter, no other column. 10 §1 account row, first row per Q-D6b-1, §5 "Shared account". 11 T-EM-5 tracking off. 12 131 lines; D6b.4 excludes `email\.md` |
+| 9 | Replay-probe safe-type precondition vs code | Pass | `toDeliveryEvent`: the delivered, opened and clicked cases return no `status`; bounced, complained and failed return one; delivery-delayed and default return null. `recordDeliveryEvent` (`EmailAutomationRepository.ts`): delivered timestamp written only when null; open/click timestamp and count only when the event is newer than the stored one; `status` and `error_message` patched whenever present; empty patch → `duplicate`; no row → `unmatched`. So a replay of a status-free type writes nothing, or only what the first delivery missed, as `email.md` says |
+| 10 | Send-probe trigger gating vs code | Pass | `createInviteForAdmin` (`adminInviteOps.ts`): no existing-account check; returns before any send when `sendEmail` is false; otherwise calls `sendInvitationEmail`, which reads `deps.senderAddress()` first and records `sender_not_configured` without sending. The admin invites route wires `senderAddress: platformSenderAddress`. Audits: `BOS_INVITE_CREATED`, then `BOS_INVITE_EMAIL_SENT` or `…_NOT_SENT`; the revoke route adds `BOS_INVITE_REVOKED`. `platformSenderAddress()` reads only `RESEND_FROM_EMAIL` |
+| 11 | Plan-cancel flag order row | Pass | Catalogue: `flag('BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED', 'features', …)` with "needs the Resend sender address". `docs/feature_flags.md` 1.16.1: it also gates the reminder cron. `planCancelEmailDeps.ts` gates on `platformSenderAddress()`. §7 row matches |
+| 12 | Other code claims (sample) | Pass | `sendEmail` resolves `from` once before any transport (`resolveSender`, fallback `RESEND_DEFAULT_FROM`); the secret check runs before any `NODE_ENV`/`VERCEL_ENV` test (every deployment); `verify` accepts any one `v1,` signature; `MAX_AGE_SECONDS` exists; contact route reads all four `GMAIL_*` names and has 0 references to the transport; `email_sends.provider` default `sendgrid` only in the original migration; `validate-gmail.mjs` holds the consent-screen expiry note; `resend:smoke` uses `--env-file=.env.local`; the smoke script invents a message id with no `--id`; `generate-gmail-token.js` uses a loopback redirect and prints the token |
+| 13 | Template parity | Pass | Same intro sentence as `stripe.md` (one extra live-check line), same seven headings, one "Rule per environment" column with a target sentence, scripts table, probe table columns `Change \| Probe \| Pass \| Fails when \| Who`, drift table columns `ID \| Check \| Expected state from \| Live read (pointer) \| Class \| Who reads` (the `env-drift-audit` §7 shape), tiers paragraph plus order table. SKILL.md §5 row matches the Stripe row's style. 131 lines (≤ 170) |
+| 14 | SKILL.md frontmatter and triggers | Pass | js-yaml parse: keys `name`, `description`; description 1,010 chars on one line. The new triggers are sensible and sit next to the existing "a sending domain". See Edge Case 3 |
+| 15 | Line endings, churn | Pass | CR = LF in the requirement (3449/3449 before this report) and SKILL.md (86/86); `git ls-files --eol`: `w/crlf`. `--numstat` is the same with `--ignore-cr-at-eol` (2/2, 131/0, 307/1); the requirement's 1 removed line is the §0 DO-6 row. `email.md` is LF (0 CR), accepted as in DO-6a |
+| 16 | Relative links | Pass | `email.md` has no markdown links (pointers are backticked names). SKILL.md: `stripe.md` and `email.md` resolve. Cross-skill sections cited exist: `vercel-ops` §3 (Env vars) and §4, `env-drift-audit` §7, `devops.md` § Permission Tiers and Tool Rules (a)–(c) (as in `stripe.md`) |
+| 17 | Contact-route wording in tracked text | **Fail (Medium)** | `email.md`: clean (second `GMAIL_*` reader outside the transport, never a probe). **But** the requirement's added text says more: see Issue 1 |
+| 18 | Quotes of removed text | Pass with note | No section quotes a removed current-state or sensitive phrase. SA Code Review — DO-6b fixes 2 and 3 quote the "before" wording of two technical imprecisions; that is not the DO-6a issue class. Fix 4 describes the dropped adjective without quoting it |
+| 19 | Fresh-session load test | Deferred | Skills load at session start. Not failed |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+
+1. **The requirement describes the contact route beyond "a second `GMAIL_*` reader outside the transport"** — File: `docs/requirements/DEVOPS_AGENT_REQUIREMENT.md` — Severity: Medium.
+   - Steps to reproduce: search the added text of SA Review — DO-6b (short pass) and SA Code Review — DO-6b for the contact route.
+   - Expected: the route is described only as a second reader of the four `GMAIL_*` names that skips the transport, its order, Resend and `email_sends`, with the V-14 pointer, as `email.md` does.
+   - Actual: three passages (the short pass's E12 row, its grep-gap contact-route row, and SA Code Review — DO-6b fix 5) said more about the route than that. No value or ID was involved, so this was not High. Requirement text only; the skill files needed no change.
+   - **Fixed by the main session 2026-11-01:** all three reworded to the `email.md` description; no removed wording is quoted here.
+
+#### Edge Cases (nice to fix)
+
+1. **Webhook-secret row's "Fails when" does not reference the timestamp case** — `email.md` §4. On a stale timestamp, `verify` logs the timestamp line and the route then also logs "Webhook signature did not verify". So the row's "401 with a signature or secret line" also matches a timestamp refusal; only step 3 of the replay probe reclassifies it as "not probed (timestamp)". Optional: add "(unless the timestamp line is present: step 3)" to the row. Severity: Low.
+2. **§D6b.2 lags SA's code-review fixes** — the spec's replay paragraph still says a replay "writes nothing or one missing timestamp" (no open/click count), its scripts sentence says "default arguments only" (no `--url` exception), and its send-probe paragraph omits the send-email option and the revoke's audit entry. `email.md` is correct; the spec is the older text. Severity: Low.
+3. **No trigger for the Gmail system sender** — the SKILL.md description gains Resend, SMTP, sender address and delivery webhook, but not "a Gmail refresh token" or "the contact route's mail". A question about rotating `GMAIL_REFRESH_TOKEN` may not load the skill. Optional; the spec's D6b-2 trigger list is as approved. Severity: Low.
+4. **"contact-route mail" in `email.md` §5** — the only phrase in the skill that hints at what the route is for. It is SA's mandated gotcha wording and holds nothing sensitive; optional "contact-route mail" to match the strict rule's spirit. Severity: Low.
+5. **`email.md` is LF** — becomes CRLF on the next touch, as in DO-6a. Severity: Low.
+
+### Final Status
+
+- [ ] All acceptance criteria pass — ready for commit
+- [x] Issues found — the main session must fix Issue 1 (Medium, requirement text only) before commit. Every §D6b.4 criterion and SA changes 1–12 pass, the code claims hold, and the skill files themselves need no change.
