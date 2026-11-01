@@ -96,11 +96,34 @@ function channelAgent(config: Record<string, unknown>, overrides: Record<string,
 
 const firstChannel = async () => (await inboxChannelStatus(USER)).channels[0];
 
+it('the fixture really is the connected, healthy channel it claims to be', async () => {
+  /*
+   * Guards the fixture rather than the code. Every other test here is about
+   * schedule and window, so all of them passed just as well against a mailbox
+   * the code thought was unplugged — which is how a status no row ever holds
+   * sat in the shared `beforeEach` unnoticed. This is the one assertion that
+   * fails if it comes back.
+   */
+  agents = [channelAgent({})];
+
+  const status = await inboxChannelStatus(USER);
+
+  expect(status.channels[0].problems).toEqual([]);
+  expect(status.problems).toEqual([]);
+  expect(status.connectable).toEqual([]);
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
   agents = [];
-  /* A connected Gmail, so the channel is a real one rather than an orphan. */
-  connections = [{ plugin_name: 'google-mail', status: 'connected' }];
+  /* A connected Gmail, so the channel is a real one rather than an orphan.
+     `'active'` is the only status that counts as connected, and — with
+     `'disconnected'` — the only one the table holds. This said `'connected'`,
+     a value nothing writes and nothing reads, so every test in this file ran
+     against a mailbox the code considered unplugged: `mailbox_disconnected` on
+     every row and `connectable` always empty. The newer
+     `theChannelCountsItsLeads` suite had it right; this one was missed. */
+  connections = [{ plugin_name: 'google-mail', status: 'active' }];
 });
 
 describe('the row carries what the owner set', () => {
