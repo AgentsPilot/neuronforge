@@ -115,10 +115,14 @@ export const AUDIT_EVENTS = {
   // The owner's own data download from the V2 security settings. Distinct from
   // DATA_EXPORTED, which is the server-side GDPR export.
   USER_DATA_EXPORTED: 'USER_DATA_EXPORTED',
-  // Business OS "Download my data" (data export DE-8a registers the names; the
-  // emitters arrive in DE-8b, DE-9 and DE-10a). entityType 'user', entityId =
-  // the account, details.job_id = the business_os_data_exports row. Never the
-  // business name, a file name or any exported content.
+  // Business OS "Export data". DATA_EXPORT_REQUESTED: one row per module export
+  // request (MX-1b owner route; MX-5 the admin route). entityType 'user',
+  // entityId = the account; details.request_id (the business_os_export_requests
+  // row), details.modules (module ids), details.origin ('owner' / 'admin').
+  // Old rows from the ZIP export carry details.job_id (a business_os_data_exports
+  // row) instead. READY, FAILED, DOWNLOADED, EXPIRED and DOWNLOADED_BY_ADMIN
+  // belong to the ZIP export, retired in MX-3.1; the constants stay for old
+  // rows. Never the business name, a file name or any exported content.
   DATA_EXPORT_REQUESTED: 'DATA_EXPORT_REQUESTED',
   DATA_EXPORT_READY: 'DATA_EXPORT_READY',
   DATA_EXPORT_FAILED: 'DATA_EXPORT_FAILED',
@@ -1005,8 +1009,10 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.DATA_EXPORT_REQUESTED]: {
     severity: 'info',
     complianceFlags: ['GDPR', 'SOC2'],
-    description: 'A data export (Download my data) was started by the owner or an admin',
+    description: 'A data export was requested by the owner or an admin, for the modules chosen (the files arrive by email)',
   },
+  // READY .. DOWNLOADED_BY_ADMIN: the ZIP export, retired in MX-3.1. Kept for
+  // old rows; nothing writes them any more.
   [AUDIT_EVENTS.DATA_EXPORT_READY]: {
     severity: 'info',
     complianceFlags: ['GDPR', 'SOC2'],

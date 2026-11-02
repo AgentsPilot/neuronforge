@@ -442,7 +442,7 @@ export default function SecurityTab() {
               <div>
                 <h4 className="font-semibold text-sm text-emerald-900">Data Portability</h4>
                 <p className="text-xs text-emerald-800 mt-0.5">
-                  Your download is one zip file with your records, your files and a README that explains them.
+                  Your export arrives by email as spreadsheet (CSV) files, one for each area you choose. A large area may come in several emails. Documents and images are not included; you can download them one by one.
                 </p>
               </div>
             </div>

@@ -30,6 +30,25 @@ describe('presentOwnerAuditRow', () => {
     expect(shown).toMatchObject({ details: { credits_total: 1 }, owner_label: { en: 'Credits added' } });
   });
 
+  it.each([
+    ['DATA_EXPORT_REQUESTED', { request_id: 'q1', modules: ['clients'], origin: 'owner' }, 'Data export requested'],
+    [
+      'DATA_EXPORT_MODULE_SENT',
+      { request_id: 'q1', job_id: 'j1', module: 'clients', origin: 'owner', rows: 3, parts: 1, parts_accepted: 1 },
+      'One area of your export was sent by email',
+    ],
+    [
+      'DATA_EXPORT_MODULE_FAILED',
+      { request_id: 'q1', job_id: 'j1', module: 'clients', origin: 'owner', rows: null, parts: 0, parts_accepted: 0, failure_code: 'too_large', interrupted: false },
+      'One area of your export could not be sent',
+    ],
+  ])('export MX-4a: %s gains its label and keeps its details (SA Q-6 c, d)', (action, details, en) => {
+    expect(Object.values(AUDIT_EVENTS)).toContain(action);
+    const shown = presentOwnerAuditRow({ action, details });
+    expect(shown).toMatchObject({ action, details, owner_label: { en } });
+    expect(OWNER_NEUTRAL_EVENTS.has(action)).toBe(false);
+  });
+
   it('an unlabelled row is returned unchanged (the same object)', () => {
     const row = { id: 'r2', action: 'USER_LOGIN', details: { a: 1 } };
     expect(presentOwnerAuditRow(row)).toBe(row);

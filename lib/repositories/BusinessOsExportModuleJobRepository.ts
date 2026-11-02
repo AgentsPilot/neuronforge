@@ -18,6 +18,9 @@
 //   Resend id, claim field or error code. The history is limited by REQUEST in
 //   the request repository's listRecentForUser, never by job row
 //   (SA MX-1a code review comment 1), and parsed one row at a time.
+// - `findLatestOwnerSentAt` (MX-4a receipt facts, XC-12) filters on user_id,
+//   status `sent` and the parent request's origin `owner`, and returns one
+//   timestamp only.
 // - `claimDue` and `reapStale` are ⟨unscoped-by-design⟩: the worker claims and
 //   reaps rows of every account, the PluginConnectionRepository precedent.
 //   Every later effect of the worker is scoped to the claimed row's user_id
@@ -70,6 +73,16 @@ export const MODULE_JOB_HISTORY_COLUMNS = 'id, request_id, module, status, parts
 
 /** The most request ids one history read takes (SA MX1B-9: the request read's ceiling). */
 export const HISTORY_REQUEST_IDS_MAX = 50;
+
+/**
+ * The receipt-facts read (MX-4a, SA C-1). The embed selects a REAL column of
+ * the parent request: an embed that selects only an aggregate is silently
+ * inert under `!inner` (CRMContactRepository.ts, "THE JOIN THAT FILTERS"), so
+ * the origin filter would match every job. Exactly one foreign key joins the
+ * two tables (`business_os_export_module_jobs_request_id_fkey`), so the embed
+ * is unambiguous.
+ */
+export const MODULE_JOB_OWNER_SENT_COLUMNS = 'sent_at, business_os_export_requests!inner(origin)';
 
 const uuid = z.string().uuid();
 const timestamp = z.string().min(1).max(64);
@@ -130,6 +143,17 @@ const historyRowSchema = z.object({
   sent_at: timestamp.nullable(),
 });
 
+/**
+ * The one row the receipt-facts read takes. A sent job must carry `sent_at`
+ * (row CHECK of 20261095), and its parent must be an OWNER request: anything
+ * else fails the parse and the read is an error, never a fact (SA C-1, fail
+ * closed). Jobs to requests is many-to-one, so the embed is one object.
+ */
+const ownerSentRowSchema = z.object({
+  sent_at: timestamp,
+  business_os_export_requests: z.object({ origin: z.literal('owner') }),
+});
+
 /** One module job as the history shows it. Never a Resend id, a claim field or an error code. */
 export interface ModuleJobHistoryRow {
   id: string;
@@ -159,6 +183,8 @@ export interface ReapedModuleJob {
 /** The typed error codes callers branch on. */
 export const MODULE_JOB_ERROR = {
   INVALID_INPUT: 'invalid_input',
+  /** MX-4a: the receipt-facts read returned a row of another shape (SA C-1, fail closed). */
+  UNEXPECTED_ROW: 'unexpected_row',
 } as const;
 
 /** The most parts a job may carry (BQ-28); the SQL CHECK only bounds them by parts_total. */
@@ -300,6 +326,44 @@ export class BusinessOsExportModuleJobRepository {
     } catch (err) {
       const safe = toError(err);
       this.logger.error({ err: safe, method: 'listForRequestsOfUser', userId, requestCount: ids.length }, 'Failed to read the export history');
+      return { data: null, error: safe };
+    }
+  }
+
+  /**
+   * MX-4a (XC-12, SA ruling Q-1 / Q-2): when owner data last reached the owner
+   * by email. The newest `sent_at` of this account's jobs with status `sent`
+   * (every part accepted, row CHECK of 20261095) whose parent request is
+   * OWNER-origin; an admin-origin request never counts here. Per job, not per
+   * request: one module sent out of five counts. `sentAt: null` when there is
+   * none. Called by `BusinessOsDataExportJobRepository.findDeletionFacts` with
+   * its own client. A row that fails its parse (no `sent_at`, or an embedded
+   * origin other than `owner`) is an error, never a fact (SA C-1).
+   */
+  async findLatestOwnerSentAt(userId: string): Promise<RepositoryResult<{ sentAt: string | null }>> {
+    if (!uuid.safeParse(userId).success) {
+      return { data: null, error: coded(MODULE_JOB_ERROR.INVALID_INPUT, 'Invalid input: user id') };
+    }
+    try {
+      const { data, error } = await this.supabase
+        .from('business_os_export_module_jobs')
+        .select(MODULE_JOB_OWNER_SENT_COLUMNS)
+        .eq('user_id', userId)
+        .eq('status', 'sent')
+        .eq('business_os_export_requests.origin', 'owner')
+        .order('sent_at', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      const rows = Array.isArray(data) ? data : [];
+      if (rows.length === 0) return { data: { sentAt: null }, error: null };
+      const parsed = ownerSentRowSchema.safeParse(rows[0]);
+      if (!parsed.success) {
+        throw coded(MODULE_JOB_ERROR.UNEXPECTED_ROW, 'The newest sent owner job failed its parse');
+      }
+      return { data: { sentAt: parsed.data.sent_at }, error: null };
+    } catch (err) {
+      const safe = toError(err);
+      this.logger.error({ err: safe, method: 'findLatestOwnerSentAt', userId }, 'Failed to read the newest sent owner export job');
       return { data: null, error: safe };
     }
   }

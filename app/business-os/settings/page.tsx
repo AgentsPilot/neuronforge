@@ -1180,9 +1180,9 @@ function BusinessOSSettingsContent() {
           </div>
           )}
 
-          {/* Download my data (data export DE-9): the one shared control. It
-              owns its request, status line and notice (UI-1); the page banner
-              above no longer carries export messages. */}
+          {/* Export data (MX-3.1): the one shared control. It opens the export
+              drawer, which owns its request, history and messages (UI-1); the
+              page banner above carries no export messages. */}
           <DownloadMyDataButton variant="row" />
 
           {/* Log out.

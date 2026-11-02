@@ -23,6 +23,8 @@
 // - `listRecentForUser` (MX-1b history) filters on user_id and orders
 //   `requested_at DESC, id DESC`: a total order, and the limit counts
 //   REQUESTS, so the history never cuts one request's module lines in half.
+// - `hasAdminOriginRequest` (MX-4a receipt facts, XC-12) is a head count on
+//   user_id and origin `admin`.
 // - `markRequestedEmailSent` (MX-1b) is a compare-and-set on id + user_id +
 //   `requested_email_sent_at IS NULL`, counted with { count: 'exact' } and no
 //   `.select()` after the update (the PostgREST update + select hazard).
@@ -303,6 +305,34 @@ export class BusinessOsExportRequestRepository {
     } catch (err) {
       const safe = toError(err);
       this.logger.error({ err: safe, method: 'listRecentForUser', userId }, 'Failed to read the export requests');
+      return { data: null, error: safe };
+    }
+  }
+
+  /**
+   * MX-4a (XC-12, SA ruling R-C): whether an admin ever started an export of
+   * this account, whatever its outcome. A head count on user_id and origin
+   * `admin`; no row is read. Called by
+   * `BusinessOsDataExportJobRepository.findDeletionFacts` with its own client.
+   * A missing count is an error, never "no" (fail closed: the answer goes into
+   * a receipt that is kept for years).
+   */
+  async hasAdminOriginRequest(userId: string): Promise<RepositoryResult<boolean>> {
+    if (!uuid.safeParse(userId).success) {
+      return { data: null, error: coded(EXPORT_REQUEST_ERROR.INVALID_INPUT, 'Invalid input: user id') };
+    }
+    try {
+      const { error, count } = await this.supabase
+        .from('business_os_export_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('origin', 'admin');
+      if (error) throw error;
+      if (typeof count !== 'number') throw coded(EXPORT_REQUEST_ERROR.UNEXPECTED_RESULT, 'The admin request count came back without a count');
+      return { data: count > 0, error: null };
+    } catch (err) {
+      const safe = toError(err);
+      this.logger.error({ err: safe, method: 'hasAdminOriginRequest', userId }, 'Failed to count the admin export requests');
       return { data: null, error: safe };
     }
   }

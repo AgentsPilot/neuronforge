@@ -53,3 +53,15 @@ describe.each([
     expect(container.textContent).not.toMatch(/Export Account Data|Data exported successfully|Failed to export data|in JSON format/);
   });
 });
+
+describe('E3 /settings SecurityTab: the Data Portability line (export MX-4a, BQ-E7-1, user 2026-11-02, SA wording)', () => {
+  it('describes the module export by email, and no longer the retired zip', () => {
+    const { container } = render(<SecurityTab />);
+    expect(
+      screen.getByText(
+        'Your export arrives by email as spreadsheet (CSV) files, one for each area you choose. A large area may come in several emails. Documents and images are not included; you can download them one by one.'
+      )
+    ).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/zip file|README/);
+  });
+});

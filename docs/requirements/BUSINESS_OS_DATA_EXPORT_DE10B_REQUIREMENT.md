@@ -1,6 +1,6 @@
 # Requirement: Business OS — Delete My Account, Deletion Receipt and Pseudonymised Billing (DE-10b)
 
-> **Last Updated**: 2026-10-21
+> **Last Updated**: 2026-11-02
 
 **Created by:** BA
 **Date:** 2026-10-17 (rewritten 2026-10-18 to the user's simplified flow)
@@ -845,6 +845,22 @@ The user answered "go with the suggestions, including 6".
 | Native check owed | Hebrew and Spanish copy of the drawer, the email and the account-deleted page |
 | DE-10b.1 QA follow-ups taken | E-2 (`.invalid` refusal now reads a display-name address); I-a (the drawer's billing line does not imply live money); E-1 (the customer routes log an engine error's kind and code only, never its message) |
 
+## Export facts from the module export (EXPORT MX-4a, 2026-11-02)
+
+> Added by the EXPORT session (S-14: a section added, no DELETE section rewritten). Source: [BUSINESS_OS_EXPORT_MX4_WORKPLAN.md](/docs/workplans/BUSINESS_OS_EXPORT_MX4_WORKPLAN.md) §4.2 and its SA Workplan Review of 2026-11-01; requirement [BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md) XC-12 and §11 B.6.
+
+From MX-4a, `BusinessOsDataExportJobRepository.findDeletionFacts(userId)` also sees the module export ("Export data", files sent by email). Its signature and the `DataExportDeletionFacts` type are unchanged; only the values change. Until MX-7 removes the old ZIP table it reads both the old table and the two module export tables, all by `user_id`.
+
+| Field | Meaning from MX-4a |
+|---|---|
+| `ownerLastExportReadyAt` | The later of: the newest old owner ZIP that was ready (`ready_at`), and the newest time an owner-origin module export job was sent in full (`sent_at` of a job with status `sent`). Per job, not per request: one module sent out of five counts. It means "some owner data reached the owner at this time", not "a complete export". An export an admin started never counts here |
+| `ownerExportDownloadedAt` | A value only when an old ZIP is strictly newer than every sent owner module job. **`null` whenever a module export is the newest**, because the module export has no download: the files arrive by email. Always `null` after MX-7. Do not build on `downloaded` |
+| `adminExportExisted` | Any old admin ZIP row, or any admin-origin export request, whatever its outcome. `false` everywhere until MX-5 lets an admin start one |
+
+- An old "ready" ZIP whose file was removed with the bucket still counts: the fact recorded is that it was delivered, which stays true.
+- Errors: if any of the four reads fails, or a timestamp does not parse, the method returns `{ data: null, error }`. It never returns partial facts. The check route and the delete route already treat an error as described in their sections; neither needs a change.
+- `receiptInput.ts` and DELETE's routes are not edited by EXPORT.
+
 ## Change History
 
 | Date | Change | Details |
@@ -859,3 +875,4 @@ The user answered "go with the suggestions, including 6".
 | 2026-10-18 | DE-10b.1 code complete (Dev) | Slice status spliced in: migrations 20261080 / 20261081 written, not applied; §D amended per O-4, O-5, O-6, O-7 and SQL-4b; `.invalid` refusal moved here (O-11). Uncommitted, waiting for SA code review and QA |
 | 2026-10-21 | DE-10b.2 code complete (Dev) | Slice status spliced in: customer self-delete behind `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` (default off), pre-check + delete routes on the session user, drawer inside the existing Danger Zone surface, `/account-deleted`, confirmation email, "Deleted account {ref}" admin label, privacy paragraph draft. Uncommitted, waiting for SA code review and QA |
 | 2026-11-01 | Statement reworded (DELETE D7) | Export moved to "Export data" (MX-3.1) and documents are downloaded one by one (BQ-35), so the statement is now the lifecycle requirement's sentence plus this one's intent clause (user decision). The warning names Settings → Export data. Receipts written before keep the statement typed then. |
+| 2026-11-02 | Section added (EXPORT MX-4a, S-14) | "Export facts from the module export": what `findDeletionFacts` returns once module exports count (XC-12, B.6, SA review 2026-11-01). `ownerExportDownloadedAt` is `null` whenever a module export is the newest. No DELETE section changed |

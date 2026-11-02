@@ -274,6 +274,42 @@ describe('listRecentForUser (MX-1b history, §5 step 1)', () => {
   });
 });
 
+describe('hasAdminOriginRequest (MX-4a receipt facts, XC-12)', () => {
+  it('is a head count on user_id and origin admin; no row is read', async () => {
+    const { c, calls } = client({ data: null, error: null, count: 2 } as Result);
+    expect(await repo(c).hasAdminOriginRequest(OWNER)).toEqual({ data: true, error: null });
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_export_requests'] },
+      { method: 'select', args: ['id', { count: 'exact', head: true }] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['origin', 'admin'] },
+    ]);
+  });
+
+  it('a count of 0 is false', async () => {
+    const { c } = client({ data: null, error: null, count: 0 } as Result);
+    expect(await repo(c).hasAdminOriginRequest(OWNER)).toEqual({ data: false, error: null });
+  });
+
+  it('a missing count is an error, never "no" (fail closed)', async () => {
+    const { c } = client({ data: null, error: null, count: null } as Result);
+    expect(await repo(c).hasAdminOriginRequest(OWNER)).toEqual({
+      data: null,
+      error: expect.objectContaining({ code: EXPORT_REQUEST_ERROR.UNEXPECTED_RESULT }),
+    });
+  });
+
+  it('a bad user id is refused before any call; a DB error is { error }, never a throw', async () => {
+    const bad = client({ data: null, error: null, count: 0 } as Result);
+    expect((await repo(bad.c).hasAdminOriginRequest('nope')).error).toMatchObject({ code: EXPORT_REQUEST_ERROR.INVALID_INPUT });
+    expect(bad.calls).toEqual([]);
+    const failing = client({ data: null, error: { code: 'XX000', message: 'boom', details: 'secret row' } });
+    expect(await repo(failing.c).hasAdminOriginRequest(OWNER)).toEqual({ data: null, error: expect.objectContaining({ code: 'XX000' }) });
+    expect(JSON.stringify(logged)).toContain('hasAdminOriginRequest');
+    expect(JSON.stringify(logged)).not.toContain('secret row');
+  });
+});
+
 describe('markRequestedEmailSent (MX-1b, compare-and-set)', () => {
   it('updates only the row of this account while the column is NULL, counted exactly, with no select after the update', async () => {
     const { c, calls } = client({ error: null, count: 1 } as Result);

@@ -1,6 +1,6 @@
 # Workplan: Business OS Export — MX-1b (E5) Request route, export drawer, "Export requested" email, switch
 
-> **Last Updated**: 2026-10-27
+> **Last Updated**: 2026-11-02
 
 **Developer:** Dev (EXPORT session)
 **Step:** E5 (user's numbering) = doc slice MX-1b
@@ -883,6 +883,7 @@ Local dev uses the shared production database, and TL ruled no app run, no email
 | Commit | `88648e6c` (feature), merge of `origin/main` `f60ea30b` |
 | PR | [#544](https://github.com/AgentsPilot/neuronforge/pull/544), merge commit via auto-merge + merge queue |
 | Date | 2026-10-27 |
+| Merge commit | `1cd86f74` (PR #544 merged 2026-10-27 20:12 UTC) |
 
 ---
 
@@ -899,3 +900,4 @@ Local dev uses the shared production database, and TL ruled no app run, no email
 | 2026-10-27 | QA report (full, Jest + in-memory harnesses) | PASS for the Jest scope. 3 QA files, 65 tests (route ↔ seam round trip, real-seam probe outcomes, stacking with a started in-flight request). 286 suites, 6,297 tests: 1 failure, `oneAddressPolicy`, pre-existing on `main`. tsc: 0 errors in touched files. Guards 3/4 and the callers guard proved with real planted files. QA added its route test to the callers-guard class allow-list (SA to confirm). Edge cases E-1…E-3 (Low). Browser and screen-reader items 1–10 left for TL. No live rows, no email |
 | 2026-10-27 | SA post-QA ruling | QA's `OWNER_ROUTE_QA_TEST` callers-guard entry is accepted (class rules only). E-2: guard check 4's title is fixed by the SA (title only). Both guard suites and both route suites pass, 122 tests |
 | 2026-10-27 | Committed and PR opened (RM) | `88648e6c` on `feature/bos-export-mx1b-route-drawer`, `origin/main` merged in cleanly (`f60ea30b`), slice suites 43 / 1,055 pass; PR #544 on auto-merge |
+| 2026-11-02 | Merge commit recorded (EXPORT Dev, MX-4a carry-over) | Commit Info gains the merge commit `1cd86f74` (PR #544, merged 2026-10-27 20:12 UTC). Nothing else changed |
