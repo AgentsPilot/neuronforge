@@ -27,7 +27,7 @@ import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog';
 
 const CHECK_URL = '/api/business-os/account/deletion-check';
 const HOST_WARNING = 'This will delete all your data and cannot be undone.';
-const DRAWER_WARNING = /^Before you delete, download your data/;
+const DRAWER_WARNING = /^Before you delete, export your data/;
 const READY = { enabled: true, available: true, blockers: [], willKeepBilling: false, exportFacts: { lastReadyAt: null, downloaded: false } };
 
 const fetchMock = jest.fn();

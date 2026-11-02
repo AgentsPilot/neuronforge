@@ -40,16 +40,20 @@
 
 import type Stripe from 'stripe';
 import { createLogger } from '@/lib/logger';
-import { supabaseServer } from '@/lib/supabaseServer';
+import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
+import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
+import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { voidInvoice } from '@/lib/payments/invoiceLifecycle';
 import { cancelPlan } from '@/lib/payments/cancelPlan';
-import { isPlanStopped } from '@/lib/payments/planStatus';
 import type { StopReason } from '@/lib/business-os/cancellationReasons';
 
 const logger = createLogger({ module: 'StopBookingPlan' });
 
-/** Periods that are finished with, either way. Neither is reopened by a stop. */
-const ALREADY_CLOSED = ['paid', 'cancelled'];
+/*
+ * `ALREADY_CLOSED` used to live here. The filter it built —
+ * `not status in (paid,cancelled)` — now lives inside
+ * `findOpenPeriodsForBooking`, with the reason beside the query.
+ */
 
 export interface StopBookingPlanResult {
   ok: boolean;
@@ -99,18 +103,14 @@ export async function stopBookingPlan(input: {
    * on `user_id` too — this is the check that produces a clean refusal rather
    * than a silent no-op on someone else's booking.
    */
-  const { data: booking, error: bookingError } = await supabaseServer
-    .from('scheduling_bookings')
-    .select('id')
-    .eq('id', bookingId)
-    .eq('user_id', userId)
-    .maybeSingle();
+  const { data: ownedBookingId, error: bookingError } =
+    await schedulingBookingRepository.findOwnedId(bookingId, userId);
 
   if (bookingError) {
     log.error({ err: bookingError }, 'Could not read the booking');
     return { ...empty, error: 'Could not read the booking' };
   }
-  if (!booking) return { ...empty, error: 'Booking not found' };
+  if (!ownedBookingId) return { ...empty, error: 'Booking not found' };
 
   /*
    * A Stripe plan is stopped AT STRIPE, and `cancelPlan` is how.
@@ -120,15 +120,35 @@ export async function stopBookingPlan(input: {
    * available failures. So this branch delegates entirely, including the local
    * close, and refuses rather than half-doing it when no Stripe client is
    * available.
+   *
+   * THE LIVE-PLAN QUESTION IS ASKED IN THE QUERY, not of the answer. This used
+   * to read every plan row and then test `!isPlanStopped(status)` here;
+   * `findLiveForBooking` filters `PLAN_STOPPED_STATUSES` out instead, which is
+   * the same set, so a row coming back IS a live plan and there is nothing left
+   * to re-check. It is also what makes `maybeSingle` safe: the partial unique
+   * index `idx_plan_subs_one_live_per_booking` covers exactly the four
+   * non-stopped statuses, so at most one row can match.
+   *
+   * A FAILED READ REFUSES, and has to: "no live plan" and "could not find
+   * out whether there is one" both arrive here as the same `null`. Treating
+   * the second as the first closes the local periods and voids the invoices
+   * on a booking whose subscription keeps its schedule — the owner is shown
+   * a stopped plan while the client goes on being charged. That is the exact
+   * failure this branch exists to prevent, reached by a different road.
+   *
+   * So the error is read, as it is for every other read in this function.
+   * The owner gets a refusal they can retry, and nothing is written either
+   * way. (This was carried as FU-Q6 when the query was first routed.)
    */
-  const { data: subscription } = await supabaseServer
-    .from('payment_plan_subscriptions')
-    .select('id, status')
-    .eq('booking_id', bookingId)
-    .eq('user_id', userId)
-    .maybeSingle();
+  const { data: livePlan, error: planError } =
+    await paymentPlanSubscriptionRepository.findLiveForBooking(bookingId, userId);
 
-  if (subscription && !isPlanStopped(subscription.status as string)) {
+  if (planError) {
+    log.error({ err: planError }, 'Could not check whether this plan is billed by Stripe');
+    return { ...empty, error: "Could not check this booking's payment plan" };
+  }
+
+  if (livePlan) {
     if (!input.stripe) {
       return {
         ...empty,
@@ -137,7 +157,7 @@ export async function stopBookingPlan(input: {
     }
 
     const outcome = await cancelPlan({
-      planId: subscription.id as string,
+      planId: livePlan.id,
       userId,
       stripe: input.stripe,
       reasonCode: reason,
@@ -162,12 +182,8 @@ export async function stopBookingPlan(input: {
    * and a bulk update would leave nothing to iterate. `cancelQuoteStages` reads
    * separately for exactly this reason.
    */
-  const { data: openPeriods, error: periodsError } = await supabaseServer
-    .from('payment_plan_installments')
-    .select('id, invoice_id, installment_number')
-    .eq('booking_id', bookingId)
-    .eq('user_id', userId)
-    .not('status', 'in', `(${ALREADY_CLOSED.join(',')})`);
+  const { data: openPeriods, error: periodsError } =
+    await paymentPlanRepository.findOpenPeriodsForBooking(bookingId, userId);
 
   if (periodsError) {
     log.error({ err: periodsError }, 'Could not read the plan periods');
@@ -190,7 +206,7 @@ export async function stopBookingPlan(input: {
    */
   let voidedInvoices = 0;
   for (const period of openPeriods) {
-    const invoiceId = period.invoice_id as string | null;
+    const invoiceId = period.invoice_id;
     if (!invoiceId) continue;
 
     const { error: voidError } = await voidInvoice({ invoiceId, userId });
@@ -204,25 +220,21 @@ export async function stopBookingPlan(input: {
     voidedInvoices += 1;
   }
 
-  const stoppedAt = new Date().toISOString();
-
-  const { error: closeError } = await supabaseServer
-    .from('payment_plan_installments')
-    .update({
-      status: 'cancelled',
-      cancel_reason: reason,
-      cancel_note: note ?? null,
-      cancelled_by: 'owner',
-      cancelled_at: stoppedAt,
-      // The retry scheduler reads this; a cancelled period must not be retried.
-      next_retry_at: null,
-      updated_at: stoppedAt,
-    })
-    .in(
-      'id',
-      openPeriods.map(p => p.id as string),
-    )
-    .eq('user_id', userId);
+  /*
+   * BY THE IDS JUST READ AND VOIDED, which is why this is `cancelStagesByIds`
+   * and not the booking-scoped `cancelOpenStagesForBooking`. Re-deriving the
+   * rows from the booking here would catch a period written between the read
+   * above and this close, cancelling it with no invoice voided for it.
+   *
+   * `cancelled_by` is left to the method's `'owner'` default, and the patch —
+   * including clearing `next_retry_at` so the retry scheduler stops chasing a
+   * cancelled period — is fixed inside it.
+   */
+  const { error: closeError } = await paymentPlanRepository.cancelStagesByIds(
+    openPeriods.map(p => p.id),
+    userId,
+    { reason, note }
+  );
 
   if (closeError) {
     log.error({ err: closeError }, 'Could not close the plan periods');

@@ -4738,7 +4738,7 @@ export const en = {
     'settings.security.erasure_request_contact': 'Contact us',
     // DE-10b.2 self-delete (data export). Hebrew and Spanish need a native check.
     'settings.account_delete.title': 'Delete my account',
-    'settings.account_delete.warning': 'Before you delete, download your data from Settings → Download my data. Deleting erases your account, your business, your client records, your invoices to clients, your website, your booking pages and your files. It cannot be undone and we cannot recover anything.',
+    'settings.account_delete.warning': 'Before you delete, export your data from Settings → Export data. Deleting erases your account, your business, your client records, your invoices to clients, your website, your booking pages and your files. It cannot be undone and we cannot recover anything.',
     'settings.account_delete.what_next': 'Your account will be deleted now.',
     'settings.account_delete.billing_kept': 'We keep your payment history with us, with your personal details removed.',
     'settings.account_delete.what_we_keep': 'What we keep: our billing records without your personal details, a short deletion receipt, and the marketing consent records of your clients.',

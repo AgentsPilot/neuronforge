@@ -97,6 +97,45 @@ export class ChannelAttributionRepository {
   }
 
   /**
+   * The mailbox channel's own leads in the window, for counting per provider.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NO SOFT-DELETE FILTER, AND THAT IS THE FIX.
+   *
+   * `crm_contacts` has no `deleted_at` column — deletes are hard — and the read
+   * this replaced carried `.is('deleted_at', null)`. PostgREST rejects the
+   * WHOLE query for one unknown column (42703, verified against the live
+   * schema), the caller discarded the error and tallied the null result, so
+   * every inbox channel reported zero leads for thirty days on all four
+   * surfaces that ask. The same mistake had already emptied
+   * `findAttributedContacts` once; its note above is the record of it.
+   * ───────────────────────────────────────────────────────────────────────────
+   *
+   * Returns the marker column and nothing else: which provider each lead came
+   * through is the caller's tally, not the repository's.
+   */
+  async findLeadsByVia(
+    userId: string,
+    since: string,
+    via: string
+  ): Promise<ChannelAttributionResult<Array<{ source_metadata: Record<string, unknown> | null }>>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('crm_contacts')
+        .select('source_metadata')
+        .eq('user_id', userId)
+        .gte('created_at', since)
+        .contains('source_metadata', { via });
+
+      if (error) throw error;
+      return { data: data ?? [], error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to load leads by via marker');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Bookings and revenue produced by the given contacts, optionally within a
    * window.
    *

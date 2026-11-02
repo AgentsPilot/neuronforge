@@ -100,9 +100,9 @@ There is one statement. There is no "I don't want a copy" option. The statement 
 
 | Language | Statement |
 |---|---|
-| English | `I have downloaded my data and want my account deleted forever` |
-| Hebrew | `הורדתי את הנתונים שלי ואני רוצה למחוק את החשבון שלי לצמיתות` |
-| Spanish (draft) | `He descargado mis datos y quiero que mi cuenta se elimine para siempre` |
+| English | `I have exported my data and downloaded my documents and want my account deleted forever` |
+| Hebrew | `ייצאתי את הנתונים שלי והורדתי את המסמכים שלי ואני רוצה למחוק את החשבון שלי לצמיתות` |
+| Spanish (draft) | `He exportado mis datos y descargado mis documentos y quiero que mi cuenta se elimine para siempre` |
 
 - The Hebrew is gender-neutral as written (first-person past, and "אני רוצה" reads for both).
 - The box is right-to-left in Hebrew. A statement in any supported language is accepted, so a Hebrew user who types the English statement is not refused.
@@ -858,3 +858,4 @@ The user answered "go with the suggestions, including 6".
 | 2026-10-18 | User decisions after SA Review 2 | NBQ-1…5 suggestions accepted; invoices do not block (TL-6); no email code; personal email stays as support until Offir answers |
 | 2026-10-18 | DE-10b.1 code complete (Dev) | Slice status spliced in: migrations 20261080 / 20261081 written, not applied; §D amended per O-4, O-5, O-6, O-7 and SQL-4b; `.invalid` refusal moved here (O-11). Uncommitted, waiting for SA code review and QA |
 | 2026-10-21 | DE-10b.2 code complete (Dev) | Slice status spliced in: customer self-delete behind `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` (default off), pre-check + delete routes on the session user, drawer inside the existing Danger Zone surface, `/account-deleted`, confirmation email, "Deleted account {ref}" admin label, privacy paragraph draft. Uncommitted, waiting for SA code review and QA |
+| 2026-11-01 | Statement reworded (DELETE D7) | Export moved to "Export data" (MX-3.1) and documents are downloaded one by one (BQ-35), so the statement is now the lifecycle requirement's sentence plus this one's intent clause (user decision). The warning names Settings → Export data. Receipts written before keep the statement typed then. |

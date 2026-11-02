@@ -2641,7 +2641,7 @@ export const he = {
     'settings.security.erasure_request_contact': 'צרו קשר',
     // DE-10b.2 self-delete (data export). Hebrew and Spanish need a native check.
     'settings.account_delete.title': 'מחיקת החשבון שלי',
-    'settings.account_delete.warning': 'לפני המחיקה, הורידו את הנתונים שלכם מתוך הגדרות ← הורדת הנתונים שלי. המחיקה מוחקת את החשבון, העסק, רשומות הלקוחות, החשבוניות ללקוחות, האתר, דפי ההזמנה והקבצים שלכם. אי אפשר לבטל אותה ואנחנו לא יכולים לשחזר דבר.',
+    'settings.account_delete.warning': 'לפני המחיקה, ייצאו את הנתונים שלכם מתוך הגדרות ← ייצוא נתונים. המחיקה מוחקת את החשבון, העסק, רשומות הלקוחות, החשבוניות ללקוחות, האתר, דפי ההזמנה והקבצים שלכם. אי אפשר לבטל אותה ואנחנו לא יכולים לשחזר דבר.',
     'settings.account_delete.what_next': 'החשבון שלכם יימחק עכשיו.',
     'settings.account_delete.billing_kept': 'היסטוריית התשלומים שלכם נשמרת אצלנו, בלי הפרטים האישיים שלכם.',
     'settings.account_delete.what_we_keep': 'מה נשמר: רשומות החיוב שלנו בלי הפרטים האישיים שלכם, אישור מחיקה קצר, ורשומות ההסכמה לדיוור של הלקוחות שלכם.',

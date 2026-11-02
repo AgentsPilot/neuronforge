@@ -27,12 +27,16 @@
 export const STATEMENT_LANGUAGES = ['en', 'he', 'es'] as const;
 export type StatementLanguage = (typeof STATEMENT_LANGUAGES)[number];
 
-/** Verbatim from the requirement §3.2. No punctuation and no geresh, by design. */
+/**
+ * The deletion lifecycle requirement's sentence ("I have exported my data and
+ * downloaded my documents", BQ-35) with the intent clause of DE-10b §3.2 kept
+ * (D7, user decision 2026-11-01). No punctuation and no geresh, by design.
+ */
 export const DELETION_STATEMENTS: Readonly<Record<StatementLanguage, string>> = {
-  en: 'I have downloaded my data and want my account deleted forever',
-  he: 'הורדתי את הנתונים שלי ואני רוצה למחוק את החשבון שלי לצמיתות',
+  en: 'I have exported my data and downloaded my documents and want my account deleted forever',
+  he: 'ייצאתי את הנתונים שלי והורדתי את המסמכים שלי ואני רוצה למחוק את החשבון שלי לצמיתות',
   // Draft: needs a native check (as in DE-9).
-  es: 'He descargado mis datos y quiero que mi cuenta se elimine para siempre',
+  es: 'He exportado mis datos y descargado mis documentos y quiero que mi cuenta se elimine para siempre',
 };
 
 /** The longest statement a customer may send (the receipt column holds at most 500). */

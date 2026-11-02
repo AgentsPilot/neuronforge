@@ -4,8 +4,10 @@
  *
  * Every collaborator is mocked: the session, the throttle, both repositories,
  * the preferences read, the owner clock, the transport and the audit flush.
- * The module map is the real one with `smart_links` switched off, so a
- * switched-off module and an unknown one are both proved refused.
+ * The module map is the real one with every module switched on except
+ * `smart_links`, so a switched-off module and an unknown one are both proved
+ * refused, and the happy path does not depend on which modules the product
+ * ships (those switches are pinned in exportModules.test.ts).
  */
 
 import { NextRequest } from 'next/server';
@@ -31,7 +33,8 @@ jest.mock('@/lib/business-os/data-export/exportModules', () => {
   const actual = jest.requireActual('@/lib/business-os/data-export/exportModules');
   return {
     ...actual,
-    EXPORT_MODULES: actual.EXPORT_MODULES.map((m: { id: string }) => (m.id === 'smart_links' ? { ...m, on: false } : m)),
+    // All on but smart_links: independent of the product switches in exportModules.ts.
+    EXPORT_MODULES: actual.EXPORT_MODULES.map((m: { id: string }) => ({ ...m, on: m.id !== 'smart_links' })),
   };
 });
 

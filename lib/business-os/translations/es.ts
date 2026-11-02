@@ -4460,7 +4460,7 @@ export const es = {
     'settings.security.erasure_request_contact': 'Contáctanos',
     // DE-10b.2 self-delete: Spanish is a draft and needs a native check.
     'settings.account_delete.title': 'Eliminar mi cuenta',
-    'settings.account_delete.warning': 'Antes de eliminar, descarga tus datos desde Configuración → Descargar mis datos. Al eliminar se borran tu cuenta, tu negocio, los registros de tus clientes, tus facturas a clientes, tu sitio web, tus páginas de reserva y tus archivos. No se puede deshacer y no podemos recuperar nada.',
+    'settings.account_delete.warning': 'Antes de eliminar, exporta tus datos desde Configuración → Exportar datos. Al eliminar se borran tu cuenta, tu negocio, los registros de tus clientes, tus facturas a clientes, tu sitio web, tus páginas de reserva y tus archivos. No se puede deshacer y no podemos recuperar nada.',
     'settings.account_delete.what_next': 'Tu cuenta se eliminará ahora.',
     'settings.account_delete.billing_kept': 'Conservamos tu historial de pagos con nosotros, sin tus datos personales.',
     'settings.account_delete.what_we_keep': 'Lo que conservamos: nuestros registros de facturación sin tus datos personales, un breve comprobante de eliminación y los registros de consentimiento de marketing de tus clientes.',

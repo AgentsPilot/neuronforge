@@ -208,6 +208,52 @@ describe('the next run moves, and where to', () => {
    */
   const written = () => patch().next_run as string | undefined;
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CLOCK IS PINNED, BECAUSE THE EXPECTATIONS BELOW ARE ABSOLUTE DATES.
+   *
+   * `nextTickAfter` counts from the tick but deliberately ADVANCES PAST `now`
+   * — an agent dormant for a month must not fire a month of back-dated
+   * messages, one per pass. Its `now` defaulted to the real clock, so
+   * "ran on the 26th, now daily, so next due on the 27th" held only while the
+   * suite ran before 27 October. By 2026-11-01 the next daily slot had walked
+   * forward to 2 November — the very date the row already carried, so
+   * "brought forward" compared 2 November against itself and failed.
+   *
+   * That is the implementation being RIGHT and the test being undated. Pinning
+   * `now` is what makes these assertions mean what they say on any day.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const OWNER_OPENED_THE_DROPDOWN_AT = new Date('2026-10-26T12:00:00.000Z');
+
+  beforeAll(() => {
+    jest.useFakeTimers({
+      /* Every fakeable API EXCEPT `Date`, so the clock moves and nothing
+         else does: the awaits below keep production timing. */
+      doNotFake: [
+        'hrtime',
+        'nextTick',
+        'performance',
+        'queueMicrotask',
+        'requestAnimationFrame',
+        'cancelAnimationFrame',
+        'requestIdleCallback',
+        'cancelIdleCallback',
+        'setImmediate',
+        'clearImmediate',
+        'setInterval',
+        'clearInterval',
+        'setTimeout',
+        'clearTimeout',
+      ],
+    });
+    jest.setSystemTime(OWNER_OPENED_THE_DROPDOWN_AT);
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
   it('is counted from the last run, not from now', async () => {
     /*
      * An agent that ran on the 26th and is now daily is next due on the 27th.

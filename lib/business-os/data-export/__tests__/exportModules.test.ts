@@ -284,6 +284,22 @@ describe('export module map: helpers', () => {
   });
 });
 
+// ── The product switches on the REAL map ────────────────────────────────────
+
+describe('export module map: the shipped switches (user decision 2026-10-31)', () => {
+  it('exactly these five modules are on in the real map, in drawer order', () => {
+    // A switch flipped by accident, either way, fails here. Switching a module
+    // back on is a product decision: update this list in the same edit.
+    expect(enabledModules().map((m) => m.id)).toEqual([
+      'clients',
+      'activities_tasks',
+      'quotes',
+      'invoices_payments',
+      'account_business',
+    ]);
+  });
+});
+
 // ── T-12: schemas ───────────────────────────────────────────────────────────
 
 describe('export module map: schemas', () => {

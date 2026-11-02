@@ -46,8 +46,9 @@ import { Loader2, Mail, Check, AlertTriangle, X } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { PluginIcon } from '@/components/PluginIcon';
 import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
-/* The leaf module, by VALUE: `inboxChannel` imports `supabaseServer`, so a
-   value import from it would pull the service-role client into this bundle. */
+/* The leaf module, by VALUE: `inboxChannel` imports repositories, which are
+   server-side only, so a value import from it would pull the service-role
+   client into this bundle. */
 import {
   PROVIDER_NAMES,
   SUPPORTED_PROVIDERS,
