@@ -1,6 +1,7 @@
 'use client';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { TipGlyph } from '@/components/business-os/insight/tipMarker';
 
 // ===========================
 // Types
@@ -194,13 +195,19 @@ export function FunnelMap({
   const getTipBadge = (key: string) => tips.find((t) => t.at === key) ?? null;
 
   /*
-   * A number only where numbering means something.
+   * A number only where numbering means something — see `tipMarker`.
    *
-   * With one tip, "1" is not an index the reader can act on — it is a digit
-   * next to another digit. A single marker shows "!", which says "something to
-   * read here" without competing with the count beneath it.
+   * With one tip, "1" is not an index the reader can act on, so the marker
+   * shows a pin instead. It used to show "!", which is an alarm glyph on a
+   * signpost: it said something was wrong without saying what or where.
+   *
+   * The decision lives in `TipGlyph` because `TipsStepper` repeats this marker
+   * inside the tip's badge, and the badge only reads as a reference to the map
+   * while the two are identical. They were two copies of one ternary.
    */
-  const badgeGlyph = (tip: { n: number }) => (tips.length > 1 ? String(tip.n) : '!');
+  const badgeGlyph = (tip: { n: number }, size: number) => (
+    <TipGlyph n={tip.n} total={tips.length} size={size} />
+  );
 
   return (
     <div
@@ -377,7 +384,7 @@ export function FunnelMap({
                     animation: 'mkPop 0.4s ease-out',
                   }}
                 >
-                  {badgeGlyph(getTipBadge(station.k)!)}
+                  {badgeGlyph(getTipBadge(station.k)!, 23)}
                 </span>
               )}
             </button>
@@ -510,7 +517,7 @@ export function FunnelMap({
                       animation: 'mkPop 0.4s ease-out',
                     }}
                   >
-                    {badgeGlyph(getTipBadge(gaps[index].k)!)}
+                    {badgeGlyph(getTipBadge(gaps[index].k)!, 23)}
                   </span>
                 )}
               </button>

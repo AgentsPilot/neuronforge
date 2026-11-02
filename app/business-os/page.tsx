@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
 import { createLogger } from '@/lib/logger';
 import { notifyCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';
 import { LiveDashboard, GapView, OperationalItem, SetupItem, FunnelStats, WeeklyStats, MilestoneData, PipelineStage, ChannelPerformance } from '@/components/business-os/insight';
+import { usePluginRepair } from '@/hooks/usePluginRepair';
+import { connectionsInUse } from '@/lib/business-os/plugins/connectionsInUse';
 import { shapeFromProfile, UNKNOWN_SHAPE, type BusinessShape } from '@/lib/business-os/setup/setupGraph';
 import { ChatCommandPanel, ChatCommandPanelRef } from '@/components/business-os/ChatCommandPanel';
 import { LazyConfigurationDialog, LazySchedulingDialog } from '@/components/business-os/lazyDialogs';
@@ -171,6 +173,65 @@ function BusinessOSContent() {
    */
   const [inboxChannel, setInboxChannel] = useState<InboxChannelStatus | null>(null);
   const [inboxSetupOpen, setInboxSetupOpen] = useState(false);
+
+  /*
+   * Connections that have died, for the top of the page.
+   *
+   * No fetch of its own: `useAuth` already holds every plugin's status for the
+   * session, and an expired one is flagged there. The hook adds the repair
+   * sequence and nothing else. See `hooks/usePluginRepair`.
+   */
+  const { expired, repairing, failure: repairFailure, repair } = usePluginRepair();
+
+  /**
+   * Which of those this business actually depends on.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE HOOK'S LIST IS PLATFORM-WIDE AND MUST BE SCOPED BEFORE IT IS SHOWN.
+   *
+   * It carries every lapsed grant this user holds, from anywhere in the
+   * product — the agent wizard, the plugin tester, a workflow from last year.
+   * Shown unfiltered, an owner who reads Gmail and nothing else is told to
+   * reconnect Sheets, Slack and Drive, which teaches them the amber line is
+   * noise and the next one gets skipped with it.
+   *
+   * `connectionsInUse` answers it from facts this page already holds: the
+   * mailboxes with a lead channel on them, and the setup items that say
+   * whether calendar sync, the Meta page and the Google listing are
+   * configured. No request of its own.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const brokenConnections = useMemo(() => {
+    const completed = (id: string) => setupItems.some(item => item.id === id && item.completed);
+
+    const inUse = connectionsInUse({
+      /* Only mailboxes with a channel actually set up, so a Gmail business is
+         never told to reconnect Outlook. */
+      mailProviders: inboxChannel?.channels.map(channel => channel.provider) ?? [],
+      calendar: completed('calendar'),
+      meta: completed('meta_insights'),
+      listing: completed('google_business'),
+    });
+
+    return expired.filter(connection => inUse.has(connection.key));
+  }, [expired, setupItems, inboxChannel]);
+
+  const readinessAttention = useMemo(
+    () =>
+      brokenConnections.map(connection => ({
+        key: connection.key,
+        title: t('readiness.brokenTitle', { plugin: connection.name }),
+        /* What it COSTS, not what went wrong technically. An owner acts on
+           "your agents cannot use it", not on "the token expired". */
+        detail: t('readiness.brokenDetail', { plugin: connection.name }),
+        actionLabel: t('readiness.brokenAction'),
+        busy: repairing === connection.key,
+        error: repairFailure?.key === connection.key
+          ? t(`readiness.${repairFailure.message === 'reconnect_failed' ? 'brokenFailedConnect' : 'brokenFailedRefresh'}`)
+          : undefined,
+      })),
+    [brokenConnections, repairing, repairFailure, t]
+  );
 
   const refreshInboxChannel = useCallback(async () => {
     try {
@@ -1426,6 +1487,8 @@ function BusinessOSContent() {
             greeting={myDay.greeting}
             briefing={myDay.briefing}
             setupItems={setupItems}
+            readinessAttention={readinessAttention}
+            onRepairConnection={repair}
             setupShape={setupShape}
             channelPerformance={channelPerformance}
             onChannelsChanged={fetchDashboardData}

@@ -1,0 +1,133 @@
+[
+  {
+    "step_id": "step1",
+    "id": "step1",
+    "type": "action",
+    "name": "Read the sheet",
+    "description": "FROM ROW 2, DELIBERATELY. The owner's header row is a label, not a person, and reading it would file a contact called 'Name' whose email address is 'Email'. Skipping it in the range is simpler and surer than recognising it afterwards. The spreadsheet and the tab are the owner's, chosen at install from two dropdowns the Sheets plugin already backs: `list_spreadsheets`, and `list_sheet_names` depending on it. CAPPED AT 200 ROWS AND 26 COLUMNS, and both bounds are real. `A1:Z` is exactly what the column picker offers, so reading wider would collect values nothing can be pointed at. A business with more than 200 leads in one tab is a case this does not serve yet, which is better said than silently truncated.",
+    "plugin": "google-sheets",
+    "action": "read_range",
+    "params": {
+      "spreadsheet_id": "{{input.spreadsheet_id}}",
+      "range": "{{input.range}}!A2:Z200"
+    },
+    "output_variable": "sheet",
+    "output_schema": { "type": "object" }
+  },
+  {
+    "step_id": "step2",
+    "id": "step2",
+    "type": "transform",
+    "name": "Key each row by column letter",
+    "description": "KEYED BY LETTER, NOT BY HEADER, which is the whole reason this agent needs no model. `rows_to_objects` normally takes the first row as the header; here the headers are stated outright as A to Z, so every row becomes an object whose keys are column letters. That is what lets the next step read whichever column the owner pointed at: `{{input.email_column}}` holds `C`, and `C` is a key that exists. Keying on the owner's own header text instead would break the moment they rename it, translate it, or leave it blank — and `preserve_case` keeps `C` as `C` rather than lowercasing it out of existence.",
+    "operation": "rows_to_objects",
+    "input": "{{sheet.values}}",
+    "config": {
+      "headers": [
+        "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+        "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
+      ],
+      "preserve_case": true
+    },
+    "output_variable": "rows"
+  },
+  {
+    "step_id": "step3",
+    "id": "step3",
+    "type": "transform",
+    "name": "Put the owner's columns where the CRM expects them",
+    "description": "THE MAPPING IS THE OWNER'S ANSWER, interpolated. A transform's `config` is resolved like any other field, so `{{input.email_column}}` becomes the letter chosen on the install dialog and the map reads `{ email: 'C' }` — their column C into our `email`. NO MODEL DECIDES THIS, and that is the point. An earlier version had one work out which column held what; it could not invent an address, because the prompt forbade it, but nothing stopped it choosing the WRONG column, and the result is contacts filed under somebody else's address. That is the only failure in this agent that reaches real people, and asking removes it outright. A spreadsheet's columns are a short visible list, so asking costs one dropdown — the mailbox channel measures instead because you genuinely cannot ask somebody to describe their email format, and that reasoning does not carry across. `phone` maps from a column the owner may have left unchosen; it then maps from nothing and arrives empty, which is a blank phone number and harmless.",
+    "operation": "map",
+    "input": "{{rows}}",
+    "config": {
+      "mapping": {
+        "email": "{{input.email_column}}",
+        "first_name": "{{input.name_column}}",
+        "phone": "{{input.phone_column}}"
+      }
+    },
+    "output_variable": "people"
+  },
+  {
+    "step_id": "step4",
+    "id": "step4",
+    "type": "scatter_gather",
+    "name": "File anyone new",
+    "description": "ONE PERSON'S FAILURE MUST NOT STOP THE REST, so `continueOnError` is set: one malformed row would otherwise abort the import half way and leave the owner unable to tell which half ran. THIS LOOP IS ALSO THE IDEMPOTENCY — every person is checked against the CRM before anything is written, so reading the whole sheet again tomorrow files only what is genuinely new. No watermark, which would break the first time somebody sorts the sheet or inserts a line.",
+    "scatter": {
+      "input": "{{people}}",
+      "itemVariable": "person",
+      "steps": [
+        {
+          "step_id": "step5",
+          "id": "step5",
+          "type": "conditional",
+          "name": "Skip a row with no address",
+          "description": "A blank row, a totals line, a note in the margin: a sheet an owner keeps by hand is full of them, and the one thing every real person has is an address. Checked BEFORE the CRM is asked, so fifty blank rows below the data cost fifty comparisons rather than fifty queries. It also prevents the worse outcome — a lookup for an empty address matches nothing, so without this the next step would cheerfully create a contact with no email at all.",
+          "condition": {
+            "conditionType": "simple",
+            "field": "person.email",
+            "operator": "not_equals",
+            "value": ""
+          },
+          "steps": [
+            {
+              "step_id": "step6",
+              "id": "step6",
+              "type": "action",
+              "name": "Do we already know them?",
+              "description": "By email, because it is the one field a spreadsheet and a CRM agree on. A name matches badly across both — spelling, order, initials, two people called David — and a phone is written five ways. `limit: 1` because the question is whether any exist, not how many.",
+              "plugin": "business-os",
+              "action": "find_contacts",
+              "params": {
+                "filters": [{ "field": "email", "op": "eq", "value": "{{person.email}}" }],
+                "order_by": [{ "field": "created_at", "dir": "asc" }],
+                "limit": 1
+              },
+              "output_variable": "existing",
+              "output_schema": { "type": "object" }
+            },
+            {
+              "step_id": "step7",
+              "id": "step7",
+              "type": "conditional",
+              "name": "Only file someone we do not have",
+              "description": "`count` is guaranteed on every business-os find, so this is an integer against zero. It is what stops the second run duplicating the first. Nothing updates an existing contact on purpose: a spreadsheet is usually older than the CRM, and overwriting a corrected phone number with a stale one is worse than importing nothing.",
+              "condition": {
+                "conditionType": "simple",
+                "field": "existing.count",
+                "operator": "equals",
+                "value": 0
+              },
+              "steps": [
+                {
+                  "step_id": "step8",
+                  "id": "step8",
+                  "type": "action",
+                  "name": "File them as a contact",
+                  "description": "`create_contacts`, NEVER `capture_enquiry_contacts`, and the difference is the whole safety of this agent. Capture is the ENQUIRY door: its own header records that everything filed through it is emailed fifteen minutes later by the unanswered-enquiry chase. Pointed at two hundred old leads, that tells two hundred people their enquiry has been received. THE TAG IS LOAD-BEARING, not a label. `follow_up_new_enquiries` selects every contact with an email, no bookings and a `created_at` older than a week, which is exactly what an imported row looks like seven days on — so without the tag an import quietly arms a different agent to write to all of them, a week later, with nothing connecting cause to effect. Its find now skips this tag. STAGE IS DELIBERATELY NOT WRITTEN: the column is NOT NULL and carries the business's own default, and writing an unchosen column here would store an empty string, which is a stage that exists nowhere and matches nothing. Honouring a stage column needs the business's own `stage_key` list to map the owner's words against, and that is its own slice.",
+                  "plugin": "business-os",
+                  "action": "create_contacts",
+                  "params": {
+                    "data": {
+                      "first_name": "{{person.first_name}}",
+                      "email": "{{person.email}}",
+                      "phone": "{{person.phone}}",
+                      "notes": "Imported from the spreadsheet {{input.range}}.",
+                      "tags": ["spreadsheet-import"]
+                    }
+                  },
+                  "output_variable": "filed",
+                  "output_schema": { "type": "object" }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "continueOnError": true
+    },
+    "gather": { "operation": "collect" },
+    "output_variable": "import_results"
+  }
+]

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { resolveActingUserIdentity } from '@/lib/server/route-identity';
 import { createLogger } from '@/lib/logger';
+import { getFriendlyPluginName } from '@/lib/pilot/shadow/friendlyLanguage';
 
 const logger = createLogger({ module: 'API', service: 'PluginUserStatus' });
 
@@ -127,12 +128,15 @@ export async function GET(request: NextRequest) {
 
     // Run independent plugin queries in parallel for performance
     // getConnectedPlugins and getActiveExpiredPluginKeys are independent
-    const [connectedPlugins, activeExpiredKeys] = await Promise.all([
+    const [connectedPlugins, activeExpiredPlugins] = await Promise.all([
       // Get user's connected plugins (status display - no token refresh needed)
       pluginManager.getConnectedPlugins(userId),
       // Get plugins with expired tokens (active in DB but need refresh)
-      pluginManager.getActiveExpiredPluginKeys(userId),
+      pluginManager.getActiveExpiredPlugins(userId),
     ]);
+
+    /* Keys only, for every existing reader of `active_expired`. */
+    const activeExpiredKeys = activeExpiredPlugins.map(entry => entry.key);
 
     // Extract connected plugin keys to pass to getDisconnectedPlugins (avoid duplicate DB query)
     const connectedKeys = Object.keys(connectedPlugins);
@@ -168,6 +172,65 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    /*
+     * The expired plugins, WITH their names.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * WHY THIS IS HERE AND NOT IN THE CALLERS
+     *
+     * `active_expired` is a list of bare keys, while `connected` and
+     * `disconnected` both carry a name. So the one list whose entries are
+     * certain to be shown to a user — "reconnect this" — is the one list with
+     * nothing to show but a plugin key.
+     *
+     * Every caller then solved it locally, and there are three answers in the
+     * tree: a two-plugin hardcode in `CalendarSyncSettings`, a deprecated V1
+     * helper in `pluginRegistry`, and `getFriendlyPluginName` under
+     * `lib/pilot/shadow`. `UserProvider` gave up and set `displayName` to the
+     * key, which is how "google-mail" reaches a screen.
+     *
+     * Answering it once here, from the third of those, is what stops a fourth.
+     * `getFriendlyPluginName` is the right one of the three: it sits beside
+     * `toUserFacing`, already the platform's declared boundary for turning
+     * technical objects into words a person reads.
+     *
+     * ADDITIVE ON PURPOSE. `active_expired` keeps its exact shape and meaning,
+     * because the footer, the wizard, the tester and the connection gate all
+     * read it as a string array. This is a second view of the same list, and a
+     * caller that does not know about it is unaffected.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const refreshable = new Set(
+      activeExpiredPlugins.filter(entry => entry.canRefresh).map(entry => entry.key)
+    );
+
+    const activeExpired = activeExpiredKeys.map(key => ({
+      key,
+      /*
+       * `getFriendlyPluginName`, NOT `getPluginDisplayName`.
+       *
+       * The manager reads `plugin.displayName || plugin.label || key` from the
+       * definition, and not one definition file sets either field — so it
+       * returns the KEY for every plugin we have, and this list would have put
+       * "google-mail" in front of a customer. Measured, not assumed.
+       *
+       * `friendlyLanguage` is the module that holds the real names, beside
+       * `toUserFacing`, which is already the platform's declared boundary for
+       * turning technical objects into words a person reads.
+       */
+      name: getFriendlyPluginName(key),
+      /*
+       * WHETHER THE OWNER HAS TO DO ANYTHING, which is not the same question
+       * as whether the access token is past its hour. See
+       * `getActiveExpiredPlugins`: a Google token expires every hour by
+       * design, and one with a refresh token beside it needs nothing from the
+       * person reading the screen. Surfacing the distinction here is what lets
+       * the readiness line alert on the connections that are actually dead
+       * instead of on all of them, hourly.
+       */
+      can_refresh: refreshable.has(key),
+    }));
+
     // Format disconnected plugins
     const disconnected = Object.entries(disconnectedPlugins).map(([key, data]) => ({
       key,
@@ -186,6 +249,9 @@ export async function GET(request: NextRequest) {
       user_id: userId,
       connected,
       active_expired: activeExpiredKeys,
+      /* The same list with names. See the note above: additive, so every
+         existing reader of `active_expired` is untouched. */
+      active_expired_named: activeExpired,
       disconnected,
       summary: {
         connected_count: connected.length,

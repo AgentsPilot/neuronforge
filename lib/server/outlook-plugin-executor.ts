@@ -5,6 +5,7 @@ import { BasePluginExecutor } from './base-plugin-executor';
 import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { createLogger } from '@/lib/logger';
+import { htmlToText } from '@/lib/email/htmlToText';
 
 const logger = createLogger({ module: 'OutlookPluginExecutor', service: 'plugin-system' });
 const pluginName = 'outlook';
@@ -115,10 +116,53 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       from_address,
       subject_prefix,
       content_level = 'metadata',
+      // Added for the reply-drafting agent — see the note below.
+      within_days,
+      to_address,
     } = params;
 
     // Build OData filter
     const filter: string[] = [];
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A RELATIVE WINDOW, AND A RECIPIENT FILTER
+     *
+     * Added for the reply-drafting agent, which reads the same mailbox on
+     * either provider and could express neither of these here.
+     *
+     * `within_days` is the counterpart of Gmail's `newer_than:Nd`. The agent's
+     * scan window is derived from its own cadence, so it arrives as a NUMBER OF
+     * DAYS and nothing in the plan can turn that into a date: `{"$date":…}` is
+     * a BizQL construct that only the business-os filter compiler understands,
+     * and the pilot has no date arithmetic. Without this the only honest
+     * Outlook query was "the newest 50", which reaches back months on a quiet
+     * mailbox and re-reads the same morning's mail on a busy one.
+     *
+     * `to_address` asks "was this addressed to them", which `from_address`
+     * cannot answer and which the sent and drafts folders are entirely about —
+     * in both, the sender is the owner. It is what lets the agent see whether
+     * it has already written to somebody.
+     *
+     * Both are `$filter` for the reason the block below records: Graph refuses
+     * a messages request carrying `$search` as well.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    /*
+     * COERCED, NOT TYPE-CHECKED. The declared type is a number, and every value
+     * the pilot interpolates into a param is a STRING — `{{input.scan_days}}`
+     * arrives as "2". A `typeof === 'number'` test would reject it silently and
+     * the agent would scan the whole mailbox while reporting nothing wrong,
+     * which is the worst of the available failures.
+     */
+    const withinDays = Number(within_days);
+    if (Number.isFinite(withinDays) && withinDays > 0) {
+      const since = new Date(Date.now() - withinDays * 24 * 60 * 60 * 1000);
+      filter.push(`receivedDateTime ge ${since.toISOString()}`);
+    }
+    if (to_address) {
+      filter.push(`toRecipients/any(r:r/emailAddress/address eq ${this.odataString(to_address)})`);
+    }
 
     if (from_date) {
       filter.push(`receivedDateTime ge ${new Date(from_date).toISOString()}`);
@@ -214,6 +258,25 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       id: msg.id,
       subject: msg.subject,
       from: msg.from?.emailAddress?.address,
+      /*
+       * THE SAME FIELD NAME GMAIL USES, so one plan can read either mailbox.
+       *
+       * An alias here, and a parse there. Graph hands back a structured
+       * address, so `from` above is already bare — while Gmail reads MIME
+       * headers and returns `"Dana Levi" <dana@host>`, which is why its
+       * executor has a parser. The raw-header problem is Gmail's alone.
+       *
+       * Without the alias, `from_email` would mean "the bare address" on one
+       * provider and be undefined on the other, so a plan referencing it would
+       * work against Gmail and silently match nothing against Outlook — an
+       * agent that finds no clients and reports no error. One name, one
+       * meaning, whatever the mailbox.
+       *
+       * Lowercased for the same reason Gmail's is: this value is matched
+       * against `email_sends.to_email` and `crm_contacts.email`, and one person
+       * has to be one key.
+       */
+      from_email: (msg.from?.emailAddress?.address ?? '').toLowerCase(),
       to: msg.toRecipients?.map((r: any) => r.emailAddress.address) || [],
       received_at: msg.receivedDateTime,
       body_preview: msg.bodyPreview,
@@ -222,24 +285,74 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       cc: (msg.ccRecipients ?? []).map((r: any) => r.emailAddress?.address).filter(Boolean).join(', '),
       /*
        * Graph returns one body with a `contentType` of 'html' or 'text', never
-       * both. Reported under the matching key so a reader can tell markup from
-       * text rather than having to sniff it — the mistake that made every
-       * learned field label come back as an HTML attribute on the Gmail side.
+       * both. `html` is reported ONLY when the message really was HTML, so a
+       * reader can tell markup from text rather than having to sniff it — the
+       * mistake that made every learned field label come back as an HTML
+       * attribute on the Gmail side.
+       *
+       * `body` IS ALWAYS THE READABLE TEXT, which it was not before.
+       *
+       * It used to be present only for a plaintext message, and almost no real
+       * business email is plaintext — so a plan asking for `body` got `null`
+       * from Outlook and the full text from Gmail. For the reply-drafting agent
+       * that is not an empty field but a wrong decision: its prompt is told to
+       * escalate anything it cannot read, so every Outlook message would have
+       * been handed to the owner as unreadable while the same mailbox on Gmail
+       * answered fine. Derived with the same shared converter the send paths
+       * use, so one message cannot read two ways.
        */
       ...(msg.body?.contentType?.toLowerCase() === 'html'
-        ? { html: msg.body?.content ?? null }
+        ? { html: msg.body?.content ?? null, body: htmlToText(msg.body?.content ?? '') }
         : { body: msg.body?.content ?? null }),
     }));
 
     return {
       emails,
       email_count: emails.length,
+      /*
+       * THE NAME GMAIL USES, for the reason `from_email` above is aliased: a
+       * plan that gates on how many messages came back should read the same key
+       * whichever mailbox answered. `email_count` stays, because callers
+       * written before this one read it.
+       */
+      total_found: emails.length,
       searched_at: new Date().toISOString()
     };
   }
 
+  /**
+   * A draft, and optionally a draft that belongs to a conversation.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `reply_to_message_id` GOES THROUGH A DIFFERENT DOOR, and has to.
+   *
+   * Gmail threads a draft by handing `messages.create` a `threadId` and the
+   * `In-Reply-To` / `References` headers worked out from the original. Graph
+   * exposes none of that on `/me/messages`: there is no threading field to set,
+   * so a draft POSTed there is a new conversation whatever its subject says.
+   *
+   * What Graph has instead is `createReply`, which makes the draft FROM the
+   * original — already in the conversation, already addressed to the sender,
+   * already subjected `Re:` once, with the quoted original beneath. The owner's
+   * words go in as `comment`, which Graph places above that quote: exactly
+   * where a person writes a reply.
+   *
+   * So the two providers reach the same place by opposite routes — Gmail builds
+   * the reply and says which conversation it joins, Graph is asked for a reply
+   * to a message and fills the rest in. The AGENT sees one behaviour, which is
+   * the only thing that matters to it: supply the id and the draft lands inside
+   * the client's own thread.
+   *
+   * Absent, everything below is the plain draft it always was. No existing
+   * caller passes it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   private async createDraft(connection: any, params: any): Promise<any> {
     const { to, subject, body, cc, bcc } = params;
+
+    if (params.reply_to_message_id) {
+      return await this.createThreadedDraft(connection, params);
+    }
 
     const message = {
       subject,
@@ -262,7 +375,69 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
     return {
       message_id: response.id,
       created_at: response.createdDateTime,
-      web_link: response.webLink
+      web_link: response.webLink,
+      thread_id: response.conversationId ?? null
+    };
+  }
+
+  /**
+   * The threaded half of `create_draft` — see its header for why Graph needs
+   * its own route.
+   */
+  private async createThreadedDraft(connection: any, params: any): Promise<any> {
+    const replyTo = String(params.reply_to_message_id);
+
+    /*
+     * PLAIN TEXT INTO AN HTML BODY, which is why the newlines are converted.
+     *
+     * A model writes a reply as paragraphs separated by blank lines. Graph puts
+     * `comment` into an HTML body, where every one of those line breaks
+     * collapses and the reply arrives as a single unbroken block — correct text,
+     * unreadable letter. Escaping comes first, in that order: escape then
+     * convert, or the `<br>` we just inserted is escaped into visible markup.
+     */
+    const comment = String(params.body ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\r\n|\r|\n/g, '<br>');
+
+    /*
+     * Recipients are passed only when stated. `createReply` already addresses
+     * the sender of the original, which is almost always right and is right
+     * here; overriding it with an empty array would address nobody.
+     */
+    const message: any = {};
+    if (Array.isArray(params.to) && params.to.length > 0) {
+      message.toRecipients = params.to.map((email: string) => ({ emailAddress: { address: email } }));
+    }
+    if (Array.isArray(params.cc) && params.cc.length > 0) {
+      message.ccRecipients = params.cc.map((email: string) => ({ emailAddress: { address: email } }));
+    }
+    if (Array.isArray(params.bcc) && params.bcc.length > 0) {
+      message.bccRecipients = params.bcc.map((email: string) => ({ emailAddress: { address: email } }));
+    }
+
+    const response = await this.makeGraphRequest(
+      connection,
+      `/me/messages/${encodeURIComponent(replyTo)}/createReply`,
+      'POST',
+      Object.keys(message).length > 0 ? { message, comment } : { comment }
+    );
+
+    return {
+      message_id: response.id,
+      created_at: response.createdDateTime,
+      web_link: response.webLink,
+      thread_id: response.conversationId ?? null,
+      /*
+       * The subject Graph chose, not the one asked for. `createReply` derives
+       * it from the original, so the `subject` param is deliberately ignored on
+       * this path — reporting the ignored one back would describe a draft that
+       * does not exist.
+       */
+      subject: response.subject ?? null,
+      in_reply_to: replyTo
     };
   }
 

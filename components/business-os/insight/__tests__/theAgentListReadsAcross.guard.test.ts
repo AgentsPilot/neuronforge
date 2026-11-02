@@ -116,11 +116,53 @@ describe('one colour per state, and green belongs to running', () => {
   });
 
   it('lets blocked outrank paused', () => {
-    /* Un-pausing a blocked agent still leaves an agent that cannot run, and the
-       row has to keep saying so. */
-    const fn = card.slice(card.indexOf('function stateOf'), card.indexOf('function stateOf') + 400);
+    /*
+     * Un-pausing a blocked agent still leaves an agent that cannot run, and the
+     * row has to keep saying so.
+     *
+     * Sliced to the function's own closing brace rather than a fixed number of
+     * characters. The window was 400, and a comment growing past it made
+     * `indexOf` return -1 — which compares as "earlier than everything" and
+     * would have passed this test while the order was wrong. It failed loudly
+     * here only by luck of which side went missing first.
+     */
+    const start = card.indexOf('function stateOf');
+    const fn = card.slice(start, card.indexOf('\n}', start));
 
-    expect(fn.indexOf('blocked')).toBeLessThan(fn.indexOf("=== 'active'"));
+    expect(fn).toContain("=== 'active'");
+    expect(fn.indexOf('agent.blocked')).toBeGreaterThan(-1);
+    expect(fn.indexOf('agent.blocked')).toBeLessThan(fn.indexOf("=== 'active'"));
+  });
+
+  it('treats a stopped agent as blocked, not as running', () => {
+    /*
+     * An agent that worked until something broke is switched on and not
+     * running — which is the one thing a green bar must never claim. The cause
+     * differs from `blocked` (a requirement never met); what the owner needs to
+     * know does not.
+     */
+    const start = card.indexOf('function stateOf');
+    const fn = card.slice(start, card.indexOf('\n}', start));
+
+    expect(fn).toMatch(/agent\.blocked \|\| agent\.stopped/);
+  });
+
+  it('shows the stopped reason without translating it here', () => {
+    /*
+     * The text arrives already written for an owner: the execution layer puts a
+     * terminal failure through `toUserFacing`, the platform's one boundary
+     * between a technical issue and something a non-technical person reads.
+     *
+     * A first attempt classified the raw error in the Business OS layer, four
+     * hundred lines from the translator that already did it. Two translators
+     * drift, and it is the wrong direction besides — execution is the layer
+     * above.
+     */
+    expect(card).toMatch(/agent\.stopped\.message/);
+    expect(card).toMatch(/agent\.stopped\.whatToDo/);
+    /* No `t(...)` around it: translating a translated sentence would look up a
+       key that is really an English paragraph and render the paragraph. */
+    expect(card).not.toMatch(/t\(agent\.stopped/);
   });
 });
 

@@ -394,6 +394,9 @@ export async function GET(
             booking.meeting_status === 'held'
               ? 'That meeting has already taken place.'
               : 'That meeting has already been cancelled.',
+          /* Which of the two, so the client's page can say the right one
+             rather than mapping on the code alone. */
+          meetingStatus: booking.meeting_status ?? null,
         },
         { status: 409 }
       );
@@ -639,7 +642,20 @@ export async function GET(
      */
     const noticeHours = service?.min_notice_hours ?? 24;
 
-    if (hoursUntilBooking < noticeHours) {
+    /*
+     * ── THE WINDOW GUARDS AN HOUR THAT IS STILL COMING ──────────────────────
+     *
+     * `hoursUntilBooking < noticeHours` is true of everything in the past, so
+     * a MISSED session was refused for being "too late" to move — late by
+     * however long ago it was. The portal deliberately keeps a missed session
+     * open, and the missed-appointment email asks the client to pick another
+     * hour; this was the rule that made both impossible to honour.
+     *
+     * The notice is about disturbing an appointment somebody is still planning
+     * around. Once the hour has gone there is nothing left to disturb.
+     * ────────────────────────────────────────────────────────────────────────
+     */
+    if (hoursUntilBooking > 0 && hoursUntilBooking < noticeHours) {
       return NextResponse.json(
         {
           success: false,
@@ -873,6 +889,9 @@ export async function POST(
             booking.meeting_status === 'held'
               ? 'That meeting has already taken place.'
               : 'That meeting has already been cancelled.',
+          /* Which of the two, so the client's page can say the right one
+             rather than mapping on the code alone. */
+          meetingStatus: booking.meeting_status ?? null,
         },
         { status: 409 }
       );
@@ -885,7 +904,20 @@ export async function POST(
     const noticeHours =
       (bookingService as { min_notice_hours?: number } | null)?.min_notice_hours ?? 24;
 
-    if (hoursUntilBooking < noticeHours) {
+    /*
+     * ── THE WINDOW GUARDS AN HOUR THAT IS STILL COMING ──────────────────────
+     *
+     * `hoursUntilBooking < noticeHours` is true of everything in the past, so
+     * a MISSED session was refused for being "too late" to move — late by
+     * however long ago it was. The portal deliberately keeps a missed session
+     * open, and the missed-appointment email asks the client to pick another
+     * hour; this was the rule that made both impossible to honour.
+     *
+     * The notice is about disturbing an appointment somebody is still planning
+     * around. Once the hour has gone there is nothing left to disturb.
+     * ────────────────────────────────────────────────────────────────────────
+     */
+    if (hoursUntilBooking > 0 && hoursUntilBooking < noticeHours) {
       return NextResponse.json(
         {
           success: false,

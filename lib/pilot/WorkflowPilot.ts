@@ -1925,9 +1925,23 @@ export class WorkflowPilot {
             }
 
             case 'stop_execution': {
-              // Non-recoverable or non-repairable — throw to stop execution
+              /*
+               * Non-recoverable or non-repairable — throw to stop execution.
+               *
+               * The message used to begin "Calibration stop:". The
+               * ResumeOrchestrator that produces `decision` is initialised for
+               * any execution carrying a shadow agent, not only a calibration
+               * one, so that prefix was stamped on PRODUCTION failures too: a
+               * scheduled mailbox agent whose Gmail token expired reported
+               * "Calibration stop: Non-retryable execution error…" to a
+               * business owner who had never calibrated anything.
+               *
+               * The reason alone is true in every mode. The error CODE keeps
+               * its old value, because it is matched on elsewhere and a
+               * wording fix must not change behaviour.
+               */
               throw new ExecutionError(
-                `Calibration stop: ${decision.reason}`,
+                decision.reason,
                 stepDef.id,  // stepId parameter
                 { errorCode: output.metadata.errorCode || 'CALIBRATION_STOP' }  // details parameter
               );

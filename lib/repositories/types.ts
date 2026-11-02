@@ -171,6 +171,20 @@ export interface UpdateAgentInput {
   next_run?: string | null;
   // ROI tracking - hourly rate for this automation
   hourly_rate_usd?: number | null;
+  /* Re-pointing a Business OS automation from one provider variant to another
+     has to move all three facts together: the TAG it is found again by, the
+     GRANT the runtime hands the run, and the plan itself (via
+     `updatePilotSteps`). Moving the plan without the grant produces an agent
+     calling actions it is not entitled to. Type-only — `update` spreads input
+     directly into the Supabase update. */
+  tags?: string[] | null;
+  plugins_required?: string[] | null;
+  /* The mailbox channel writes BOTH plan columns when it re-points a channel
+     (see the note at its call site: the runtime reads the stored copy, so a
+     channel re-pointed today would otherwise still call a retired plugin).
+     `pilot_steps` had a home here and its twin did not, so that call site was
+     relying on the build ignoring type errors. Type-only. */
+  workflow_steps?: unknown;
 }
 
 export interface UpdateAgentDetailsInput {

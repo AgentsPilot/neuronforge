@@ -20,6 +20,7 @@ import { createLogger } from '@/lib/logger';
 import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { sendInvoice } from '@/lib/services/InvoiceDeliveryService';
+import { expireLapsedQuotes } from '@/lib/business-os/proposals/expireLapsedQuotes';
 
 const logger = createLogger({ module: 'AbandonedProposalInvoicesCron' });
 
@@ -56,6 +57,21 @@ async function runJob(request: NextRequest) {
   }
 
   try {
+    /*
+     * ── THE CLOCK, BEFORE THE POST ──────────────────────────────────────────
+     *
+     * A quote past its date is marked `expired` here rather than in a cron of
+     * its own: this is the proposal-lifecycle job, it already runs hourly, and
+     * a new Vercel cron is an environment change for a query that takes one
+     * statement.
+     *
+     * It must run BEFORE the sweep below reads proposals, so a lapsed quote is
+     * never considered by anything in the same pass holding the stale `sent`.
+     * Non-fatal by construction — see the module — so the invoice half below
+     * runs whatever happens here.
+     */
+    const lapsed = await expireLapsedQuotes();
+
     const cutoff = new Date(Date.now() - ABANDONED_AFTER_MINUTES * 60 * 1000).toISOString();
 
     /*
@@ -77,7 +93,7 @@ async function runJob(request: NextRequest) {
       .filter(Boolean);
 
     if (invoiceIds.length === 0) {
-      return NextResponse.json({ success: true, considered: 0, sent: 0 });
+      return NextResponse.json({ success: true, considered: 0, sent: 0, expired: lapsed.expired });
     }
 
     /*
@@ -118,9 +134,17 @@ async function runJob(request: NextRequest) {
       }
     }
 
-    requestLogger.info({ considered: abandoned?.length ?? 0, sent }, 'Abandoned proposal invoices swept');
+    requestLogger.info(
+      { considered: abandoned?.length ?? 0, sent, expired: lapsed.expired },
+      'Abandoned proposal invoices swept'
+    );
 
-    return NextResponse.json({ success: true, considered: abandoned?.length ?? 0, sent });
+    return NextResponse.json({
+      success: true,
+      considered: abandoned?.length ?? 0,
+      sent,
+      expired: lapsed.expired,
+    });
   } catch (error) {
     requestLogger.error({ err: error }, 'Abandoned invoice sweep failed');
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });

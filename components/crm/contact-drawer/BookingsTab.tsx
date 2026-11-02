@@ -7036,11 +7036,43 @@ export function BookingsTab({
                                               const held =
                                                 row.meeting_status === 'held' ||
                                                 (row.meeting_status == null && row.status === 'completed');
-                                              const off =
+                                              /*
+                                               * ── MISSED IS NOT CALLED OFF ──────────────────────
+                                               *
+                                               * `off` grouped the two, and it drives both the muted
+                                               * ink and the LINE THROUGH THE DATE — so a missed
+                                               * session was drawn exactly like a cancelled one, with
+                                               * a 14px glyph the only difference and the word itself
+                                               * only in a tooltip.
+                                               *
+                                               * On a pay-per-session package a missed hour is BILLED,
+                                               * deliberately: the slot was held and lost. The row
+                                               * therefore said two incompatible things at once — a
+                                               * struck-through date meaning "this will not happen"
+                                               * beside "₪230 · Pending" meaning "we have invoiced you
+                                               * for it". Reported from the card.
+                                               *
+                                               * `bookingStatus.ts` already states the rule this
+                                               * broke: "`no_show` IS NOT `cancelled`. One is
+                                               * unplanned and may carry a fee; the other is known in
+                                               * advance and usually does not." The client's own
+                                               * portal keeps them apart for the same reason, noting
+                                               * that drawing them alike "told a client there was
+                                               * nothing to do about the one row that needed them".
+                                               *
+                                               * So the strikethrough follows CALLED OFF only. Missed
+                                               * keeps the amber dot — something did go wrong with the
+                                               * hour — without claiming the session is finished.
+                                               */
+                                              const missed =
                                                 row.meeting_status === 'no_show' ||
+                                                (row.meeting_status == null && row.status === 'no_show');
+                                              const calledOff =
                                                 row.meeting_status === 'cancelled' ||
-                                                (row.meeting_status == null &&
-                                                  (row.status === 'cancelled' || row.status === 'no_show'));
+                                                (row.meeting_status == null && row.status === 'cancelled');
+                                              /* Both still read as "not a hour that happened" for the
+                                                 dot and the glyph; only the strikethrough narrows. */
+                                              const off = missed || calledOff;
                                               /*
                                                * ─────────────────────────────────────────────
                                                * THE MEETING'S OWN OUTCOME DECIDES ITS BADGE.
@@ -7254,10 +7286,14 @@ export function BookingsTab({
                                                        end. `title` keeps the full value one
                                                        hover away on the rare row that clips. */
                                                     title={row.start_time ? formatDate(row.start_time) : undefined}
+                                                    /* `calledOff`, not `off`: a missed hour is muted
+                                                       but NOT struck through — see the note above. */
                                                     className={`truncate px-1 py-2.5 align-middle text-[12.5px] ${
-                                                      off
+                                                      calledOff
                                                         ? 'text-[var(--v2-text-muted)] line-through'
-                                                        : 'text-[var(--v2-text-primary)]'
+                                                        : missed
+                                                          ? 'text-[var(--v2-text-muted)]'
+                                                          : 'text-[var(--v2-text-primary)]'
                                                     }`}
                                                   >
                                                     {row.start_time ? formatDate(row.start_time) : '—'}

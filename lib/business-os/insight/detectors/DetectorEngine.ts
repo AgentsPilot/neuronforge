@@ -53,6 +53,7 @@ import { WebIncompleteContentDetector } from './catalog/WebIncompleteContentDete
 import { CashArAgingDetector } from './catalog/CashArAgingDetector';
 import { CashRefundPatternDetector } from './catalog/CashRefundPatternDetector';
 import { CashPayoutBlockedDetector } from './catalog/CashPayoutBlockedDetector';
+import { AgentsStoppedDetector } from './catalog/AgentsStoppedDetector';
 
 // Phase 6: Pricing Detectors
 import { PricingIntroOfferStuckDetector } from './catalog/PricingIntroOfferStuckDetector';
@@ -169,6 +170,12 @@ export class DetectorEngine {
       new CashArAgingDetector(supabase),
       new CashRefundPatternDetector(supabase),
       new CashPayoutBlockedDetector(supabase),
+      /*
+       * An agent that stopped working is an alert, not a status. The agents
+       * list says so at the bottom of the dashboard; this puts it where the
+       * owner is actually looking.
+       */
+      new AgentsStoppedDetector(supabase),
 
       // Phase 6: Pricing
       new PricingIntroOfferStuckDetector(supabase),

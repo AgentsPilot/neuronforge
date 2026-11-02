@@ -257,9 +257,11 @@ export const en = {
     'gaps.lead.say.booking_cancelled': '{name} cancelled the appointment, and you are holding {amount}.',
     'gaps.lead.say.booking_refunded': '{name} was refunded in full, and the appointment is still in the diary.',
     'gaps.lead.say.quote_deadline_unanswered': '{name} has not answered the quote yet.',
+    'gaps.lead.say.quote_expired': "{name}'s quote has run out without an answer.",
     'gaps.lead.say.quote_unwritten': '{name} asked for a price, and nothing has been written yet.',
     'gaps.lead.say.quote_unsent': 'The quote for {name} is written and still has not been sent.',
     'gaps.lead.say.enquiry_unanswered': '{name} got in touch, and nobody has replied.',
+    'gaps.lead.say.client_reply_waiting': '{name} wrote back, and is still waiting on you.',
     'gaps.lead.say.invoice_unpaid': '{name} has not paid this invoice.',
     'gaps.lead.say.intake_outstanding': '{name} has not returned the form yet.',
     'gaps.lead.say.quote_awaiting_client': '{name} has not answered the quote yet.',
@@ -273,6 +275,7 @@ export const en = {
     'gaps.lead.why.booking_refunded': 'They will still get a reminder for it unless you cancel.',
     'gaps.lead.why.meeting_auto_completed': 'If they did not turn up, say so \u2014 a no-show is worth recording.',
     'gaps.lead.why.enquiry_unanswered': 'A reply in the first day is worth more than a perfect one later.',
+    'gaps.lead.why.client_reply_waiting': 'A draft may already be written and sitting in your mail.',
     // ── Your plan (settings + the chrome pill) ────────────────────────────
     'plan.section_title': 'Your plan',
     'plan.loading': 'Loading your plan…',
@@ -466,8 +469,10 @@ export const en = {
     'plan.invoices.status.void': 'Not charged',
     'plan.invoices.status.uncollectible': 'Unpaid',
     'gaps.kind.enquiry_unanswered': 'Waiting for a reply',
+    'gaps.kind.client_reply_waiting': 'Replied, waiting on you',
     'gaps.kind.quote_unwritten': 'Waiting for a price',
     'gaps.kind.quote_unsent': 'Quote written, not sent',
+    'gaps.kind.quote_awaiting_client': 'Quote sent, waiting on them',
     'gaps.kind.intake_outstanding': 'Form not returned',
     'gaps.kind.invoice_unpaid': 'Invoice unpaid',
     'gaps.kind.stage_awaiting_completion': 'Phase ready to bill',
@@ -475,16 +480,26 @@ export const en = {
     'gaps.kind.delivery_unconfirmed': 'Paid, not handed over',
     'gaps.kind.booking_cancelled': 'Client cancelled',
     'gaps.kind.booking_refunded': 'Refunded, still booked',
+    'gaps.kind.meeting_upcoming': 'Coming up',
     'gaps.kind.meeting_unmarked': 'Did this happen?',
     'gaps.kind.meeting_auto_completed': 'Closed off for you. Was it held?',
     'gaps.closing_at': 'closing this off at {time}',
     'gaps.kind.quote_deadline_unanswered': 'Quote running out, no answer yet',
+    'gaps.kind.quote_expired': 'Quote expired, never answered',
     'gaps.action.send_booking_link': 'Send booking link',
     'gaps.confirm.email': 'Email {name} now',
     'gaps.confirm.cancel_booking': 'Cancel and tell {name}',
     'gaps.action.write_quote': 'Write quote',
     'gaps.action.send_quote': 'Send it',
     'gaps.action.chase_quote': 'Follow up',
+    'gaps.action.answer_client': 'Answer them',
+    'gaps.action.extend_quote': 'Give it more time',
+    'gaps.extend_quote.title': 'Put this quote back on the table',
+    'gaps.extend_quote.body': 'The price lapsed, so {name} can no longer accept it. Choose a new date and the same offer stands again.',
+    'gaps.extend_quote.lapsed_on': 'It ran out on {date}.',
+    'gaps.extend_quote.field': 'Valid until',
+    'gaps.extend_quote.confirm': 'Extend',
+    'gaps.extend_quote.working': 'Extending…',
     'gaps.action.chase_intake': 'Remind them',
     'gaps.action.chase_payment': 'Chase payment',
     'gaps.action.bill_stage': 'Mark done and bill',
@@ -590,6 +605,41 @@ export const en = {
     'automation.win_back_quiet_clients.name': 'Reach out to clients who stopped coming',
     'automation.win_back_quiet_clients.description': 'Writes to clients you have not seen for a long time and invites them back. Only to people who agreed to emails.',
     'automation.win_back_quiet_clients.watches': 'Clients you have not seen for a long time',
+    'automation.draft_client_replies.name': 'Draft replies to client emails',
+    'automation.draft_client_replies.description': 'Reads replies your clients send back and leaves you a draft answer in your own mailbox. Only questions it can answer from your service list. Never emails a client.',
+    'automation.draft_client_replies.watches': 'Replies from clients you have emailed',
+    'automation.import_leads_from_sheet.name': 'Import leads from a spreadsheet',
+    'automation.import_leads_from_sheet.description': 'Reads a sheet you already keep and files anyone new as a contact. Skips people you already have, and never emails them. New contacts go to your default stage.',
+    'automation.import_leads_from_sheet.watches': 'New rows in your leads spreadsheet',
+    'automation.available_heading': 'Also available',
+    'automation.needs_plugin': 'Needs {plugin}',
+    'automation.page_range': '{from}–{to} of {total}',
+    'automation.page_previous': 'Previous page',
+    'automation.page_next': 'Next page',
+    'automation.open_settings': 'Open this agent’s settings',
+    /* The mailbox lead channel's own agent row. Named for its mailbox
+       because a business can run two of these. */
+    'inbox_channel.agent_name': 'Website enquiries from {provider}',
+    'inbox_channel.agent_description': 'Reads the enquiry emails your website form sends you and files each sender as a lead.',
+    'automation.needs_either_plugin': 'Needs {plugin}',
+    'automation.or_separator': ' or ',
+    'automation.connect_which_mailbox': 'Which mailbox should this agent read? Pick one — a connected mailbox is ready to go, the other needs connecting first.',
+    'automation.connect_plugin': 'Connect',
+    'automation.switch_on': 'Switch it on',
+    'automation.works_alongside': 'Works alongside your {name}',
+    'automation.inputs_intro': 'A couple of things it needs to know first.',
+    'automation.input_choose': 'Choose one',
+    'automation.cancel': 'Cancel',
+    'automation.connected_ok': '{plugin} is connected',
+    'automation.connect_first': 'Connect {plugin} first, then come back',
+    'automation.input_loading': 'Loading…',
+    'automation.input_waiting': 'Pick the one above first',
+    'automation.input_empty': 'Nothing to choose from here',
+    'automation.input.spreadsheet_id': 'Which spreadsheet holds your leads?',
+    'automation.input.range': 'Which tab should it read?',
+    'automation.input.email_column': 'Which column has the email address?',
+    'automation.input.name_column': 'Which column has their name?',
+    'automation.input.phone_column': 'Which column has their phone? (optional)',
     'gaps.action.send_invoice': 'Raise the invoice',
     'gaps.action.mark_delivered': 'Confirm it was handed over',
     'gaps.action.bill_stage_auto_held': 'Confirm and send invoice',
@@ -627,6 +677,7 @@ export const en = {
     'gaps.since.meeting_unmarked': '{t} since it was due to start',
     'gaps.since.meeting_auto_completed': '{t} since it was due to start',
     'gaps.since.quote_deadline_unanswered': '{t} since you sent it',
+    'gaps.since.quote_expired': 'ran out {t} ago',
     'gaps.value.owed': 'owed',
     'gaps.value.quoted': 'quoted',
     'gaps.value.to_bill': 'to bill',
@@ -683,6 +734,11 @@ export const en = {
     'insight.cash_ar_overdue.chip.oldest': 'Oldest {days} days',
     'insight.cash_ar_overdue.do_nothing': '~{amount} stays unpaid',
     'insight.cash_ar_overdue.do_nothing_detail': '~{hours} hours of manual chasing required',
+    /* One hour needs its own string. A count glued to a plural noun reads
+       wrong in English and is ungrammatical in Hebrew, which does not form a
+       plural by adding a letter — the same reason `automation.unit.*` has
+       `_one` variants. The projector picks the key from the number. */
+    'insight.cash_ar_overdue.do_nothing_detail_one': '~1 hour of manual chasing required',
     'insight.cash_ar_overdue.handle_it': 'I chase all {count} today',
     'insight.cash_ar_overdue.handle_it_detail': 'And anything {days}+ days late from now on — you do nothing',
 
@@ -716,6 +772,18 @@ export const en = {
     'insight.sales_reply_slow.handle_it': 'I can draft reply templates',
     'insight.sales_reply_slow.handle_it_detail': 'Pre-written templates for common enquiries can speed up responses',
     'insight.sales_stalled.do_nothing_detail': 'Potential loss of ~{amount} in deals, plus ~{minutes} minutes of manual follow-up',
+    /*
+     * The no-money branch, which had no copy at all.
+     *
+     * `ImpactProjector` emits this key whenever it cannot price the deals — a
+     * business with no transactions and no priced services — and no language
+     * carried the string, so the card rendered the raw key. Exactly how
+     * `journey.meta.total_bookings` once reached a dashboard.
+     *
+     * The time half is always measurable because it comes from the count, which
+     * is why the projector splits the two at all.
+     */
+    'insight.sales_stalled.do_nothing_detail_time': '~{minutes} minutes of manual follow-up',
     'insight.sales_stalled.handle_it_detail': 'Typically gets {percent}% response rate',
     'insight.generic.do_nothing_detail': 'Revenue at risk continues to grow',
     'insight.generic.handle_it': 'Take recommended action',
@@ -912,6 +980,10 @@ export const en = {
     // Before/After Projection Panel
     'insight.projection.do_nothing': 'If you do nothing',
     'insight.projection.handle_it': 'If I handle it',
+    /* Present tense, for a card whose agent is already running. "If I handle
+       it" above a line reading "I'm already handling these" is one card
+       disagreeing with itself about whether the owner has accepted yet. */
+    'insight.projection.handling_it': 'What I am doing about it',
     'insight.projection.agent_takes_over': 'I take these over and keep on top of them',
     'insight.projection.agent_on_it': 'I am on these already, and keeping on top of them',
 
@@ -1220,6 +1292,19 @@ export const en = {
     'readiness.after': 'After',
     'readiness.optionalGroup': '{count} recommended improvements',
     'readiness.doneGroup': '{count} steps completed',
+    /*
+     * A connection that was working and has died.
+     *
+     * Named after the thing to reconnect, because that is what an owner can
+     * act on. The detail says what it COSTS rather than what went wrong
+     * technically: "the token expired" is our word for our problem.
+     */
+    'readiness.brokenTitle': '{plugin} needs reconnecting',
+    'readiness.brokenDetail': 'Your agents cannot use {plugin} until you sign in again, so anything that depends on it has stopped.',
+    'readiness.brokenAction': 'Reconnect',
+    'readiness.brokenMore': '{count} more',
+    'readiness.brokenFailedRefresh': 'We could not reconnect it just now. Please try again.',
+    'readiness.brokenFailedConnect': 'Signing in did not finish. Try again, and allow the pop-up window.',
     'readiness.change': 'Change',
     'readiness.setUpNow': 'Set up now',
     'readiness.unknown': "We couldn't check your setup just now. Reload to try again.",
@@ -5035,6 +5120,7 @@ export const en = {
     'proposal.package_dates_lost': '{count} of these meetings will not be booked. Move them to a free time before you send the quote.',
     'proposal.package_dates_warned': '{count} of these meetings fall on a day you are closed or outside your hours. They will still be booked.',
     'proposal.package_date_taken': 'Something is already booked at this time, so this meeting would not be created.',
+    'proposal.package_date_checking': 'Checking this time…',
     'proposal.package_date_outside': 'Outside your working hours ({start}–{end}).',
     'proposal.package_date_past': 'This time has already passed.',
     'proposal.package_count': '{count} meetings of {minutes} minutes. The client sees every date before approving.',
