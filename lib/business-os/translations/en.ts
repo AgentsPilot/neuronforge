@@ -613,6 +613,7 @@ export const en = {
     'automation.import_leads_from_sheet.watches': 'New rows in your leads spreadsheet',
     'automation.available_heading': 'Also available',
     'automation.needs_plugin': 'Needs {plugin}',
+    'automation.next_retry': 'tries again {when}',
     'automation.page_range': '{from}–{to} of {total}',
     'automation.page_previous': 'Previous page',
     'automation.page_next': 'Next page',
