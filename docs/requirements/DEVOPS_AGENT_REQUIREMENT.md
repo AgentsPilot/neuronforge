@@ -48,7 +48,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
 | DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) ✅ DO-5a MERGED 2026-10-31 (PR #592; see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) 🟡 spec re-checked by BA 2026-10-31 (FU-5: H10, the Q-D5-9 note, the H3 boundary, the check list §D5.2.2(g), Q-D5b-1 to Q-D5b-4); SA short pass 2026-10-31 **APPROVED WITH CHANGES** (see [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)); DO-5b built (see [DO-5b implementation notes](#do-5b-implementation-notes)); **SA code review 2026-10-31: Code Approved for QA**, with four small skill fixes (repo reads use `origin/main:./<path>` from the worktree root; `devops.md` unchanged beyond the pointer line); **QA 2026-10-31: QA passed**, with two small non-blocking items, both fixed (see [QA Report — DO-5b](#qa-report--do-5b)); **user approved the diff 2026-11-01**, PR open with auto-merge. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file): ✅ PR #593 MERGED 2026-10-31; `origin/main` shows the file untracked and the `.gitignore` line. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
-| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02; commit + PR.** |
+| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; commit + PR.** |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
 
@@ -1435,6 +1435,172 @@ Rotation overlap: a client secret or API key that Google keeps valid alongside t
 
 ---
 
+## DO-6d Specification — LLM providers (third-party-ops)
+
+**By BA — 2026-11-02.** Short scoping pass, like DO-6b and DO-6c. Config/docs-only slice: no application code, no CI job, no CI time. It adds one reference file (`llm-providers.md`) and one index row to `third-party-ops`, under SKILL.md §1–§4 and SA Review — DO-6 (changes 1–7 apply to every DO-6 slice: a probe has a precondition or it is "not probed", a roll overlap makes a pass "not conclusive", derivation from code, no copied lists, T- rows live in the platform file). It also applies the lessons of [SA Review — DO-6c (short pass)](#sa-review--do-6c-short-pass) up front: every probe states its precondition, an exact pass and an exact fail; a probe that would pass on an unset value is not a probe; every side effect is named; every quoted log string is checked verbatim with its logger field.
+
+**SA changes 1–13 applied.** [SA Review — DO-6d (short pass)](#sa-review--do-6d-short-pass) changes 1–13 and its rulings on Q-D6d-1..7 are folded into this section where they correct facts, so it does not lag the review; the review stays the authority wherever the two differ. `llm-providers.md` follows the review (see [DO-6d implementation notes](#do-6d-implementation-notes)).
+
+**Services live (Q-D6-2 rule):** the main session confirms before use that each of L1–L4 still has a code path that runs, and records the result in the DO-6b form ("The main session confirmed on <date> that …", by role, no target named). L4 (Kimi) runs only when a settings row selects it (LM-5), so its live check is "a code path that runs **when selected**"; SA kept it in scope as "covered when selected" (Q-D6d-1). L5 (Mistral) has no code path and is recorded as not wired. The main session confirmed on 2026-11-02 that L1, L2 and L3 each still have a code path that runs (the factory, the orchestration routing defaults and the help bot), and that L4 runs when selected through the factory, so all four stay. Whether each one is configured is not recorded here; DO checks it at use time with the T-LLM checks.
+
+**Boundary.** DO owns the four keys, the two model-name env names, and which provider account or project each environment's key belongs to. **Which model or provider a feature uses, when it is held in a database row, is app data owned by the admin screens that edit those rows** (found at use time; for example the Business OS LLM and AIS config screens) and the runbook `docs/runbooks/BUSINESS_OS_LLM_MODEL_SETTINGS_RUNBOOK.md`; model prices (`ai_model_pricing`) belong to the model price review stream. DO reads those rows read-only for one purpose only: which providers they select (LM-5, T-LLM-4). DO never writes them.
+
+### D6d.1 Context and findings from code
+
+Taken from the main session's DO-6d inventory at `origin/main` (names and readers only; no value read, no `.env*` opened, no network), as checked by SA. Line numbers are pointers for SA; the skill names files and functions only, never line numbers. Where each value lives today is not derivable from the repo: DO finds it at run time and reports it by name and target only, in the private docs.
+
+**Four keys, two model-name names, one provider not wired.** Each key is a separate vendor account with its own bill, limits and model access. The skill treats them as four, never as "the AI key".
+
+| # | Credential | Env names | Catalogue `ai` group `expectedIn` (prod / preview / local) |
+|---|---|---|---|
+| L1 | OpenAI (chat, plus embeddings and image generation, which share the same key) | `OPENAI_API_KEY` | required / required / optional |
+| L2 | Anthropic | `ANTHROPIC_API_KEY` | required / required / optional |
+| L3 | Groq | `GROQ_API_KEY` | optional everywhere; effectively required wherever the help bot is served (LM-5) |
+| L4 | Kimi | `KIMI_API_KEY` | optional everywhere; covered when selected |
+| L5 | Mistral | none | Not wired: not a gap (LM-3) |
+| M | Model-name overrides | `OPENAI_MODEL`, `OPENAI_CHAT_MODEL` | optional everywhere; config identifiers, not secrets |
+
+| # | Finding | Where | Consequence for `llm-providers.md` |
+|---|---|---|---|
+| LM-1 | **All six names are server-side runtime names.** No `NEXT_PUBLIC_` LLM key or model name exists. The only adjacent public name is a UI feature flag, not a credential. | `lib/admin/environment/catalogue.ts` (group `ai`); `lib/utils/featureFlags.ts` | No rebuild rule applies, but a Vercel env change still needs a new deployment to take effect (`vercel-ops` §4). T-LLM-2 is Critical: a `NEXT_PUBLIC_` key would ship in the bundle. |
+| LM-2 | **The factory reads each key once per instance and keeps it.** `getProviderFactory()` holds one OpenAI, Anthropic, Kimi and Groq instance each, built with the key read at first use. An unset key throws on first use; the common clause of the message is "environment variable is not configured" (nothing past it is quoted). The factory does not log the throw: the caller's own catch logs it, under the caller's module. | `lib/ai/providerFactory.ts` (`getProvider`, ~lines 44–48, 117–202) | A rotated key takes effect only on the deployment that carries it; warm instances of an older deployment keep the old key until they recycle. So the old key is revoked only after the new deployment is Ready and probed (env-change-protocol order). The throw is described as "the call fails on that path; the caller's own log line, if any, carries it". It is **not** a counted class and has no T- row (Q-D6d-6). |
+| LM-3 | **Mistral is not wired.** `mistralProvider.ts` takes its key through its constructor; `PROVIDERS` in the factory lists openai, anthropic, kimi and groq; nothing constructs `MistralProvider`; no `MISTRAL_*` name is read. | `lib/ai/providers/mistralProvider.ts`; `lib/ai/providerFactory.ts` (`PROVIDERS`) | One line: "not wired, not a gap". When a caller wires it, that change adds the catalogue name and a row here before merge (order row). |
+| LM-4 | **Embeddings and image generation use `OPENAI_API_KEY`.** There is no separate name. `EmbeddingService` ignores its key argument and calls the factory; `GeneratedImageService` calls `getOpenAI()`. | `lib/services/EmbeddingService.ts`; `lib/services/GeneratedImageService.ts` | Revoking or mis-setting L1 breaks chat, search-by-meaning and image features together. One key, one rotation. |
+| LM-5 | **Model choice is mostly held in database rows, and a row can make an optional key required; the help bot's Groq dependency is in code.** `system_settings_config` holds the Business OS area settings (resolved by `modelSettings.ts`, 60 s cache, policy in `modelSettingsPolicy.ts`), the orchestration routing tiers (`RoutingService.ts`, with `ais_system_config`), the help bot model, and the V6 admin config (read by `lib/agentkit/v6/config/AgentGenerationConfigService.ts`, used by `V6PipelineOrchestrator`). **The help bot is not a selection:** `app/api/help-bot-v2/route.ts` constructs `GroqProvider` directly in both its model calls, and its settings rows choose the model name only. Kimi is reached only through a selection. | `lib/business-os/llm/modelSettings.ts`, `modelSettingsPolicy.ts`; `lib/orchestration/RoutingService.ts`; `app/api/help-bot-v2/route.ts`; `lib/agentkit/v6/config/AgentGenerationConfigService.ts`; `lib/agentkit/v6/pipeline/V6PipelineOrchestrator.ts` | The catalogue says L3/L4 are optional. L3 is **effectively required** wherever the help bot is served, and wherever a settings row selects Groq; L4 wherever a row selects Kimi. T-LLM-4 compares the providers that the rows select, **or that a code path constructs outside the factory** (derived from code at `origin/main`), with the keys Set on that environment's deployment (read-only SQL, provider values only, under `devops.md` rules (a)–(d)). The setting keys are derived from those files at use time, never listed. |
+| LM-6 | **The SDKs read some env names on their own.** The SDK clients read names for a base URL, an organisation, a project or an auth token when the constructor does not pass them. The catalogue does not list them and the drift guard cannot see them, because the app never reads them. Per client (settled by SA): `OpenAIProvider` passes the key only, so the OpenAI client's implicit base-URL, organisation and project names can apply; `AnthropicProvider` passes the key only, so the Anthropic client's implicit base-URL and auth-token names can apply; `KimiProvider` passes the key and an explicit base URL, so only the OpenAI organisation and project names can still apply, and they are sent to the other vendor; `GroqProvider` and `MistralProvider` use `fetch` with their own header: no SDK-implicit names. | `lib/ai/providers/openaiProvider.ts`, `anthropicProvider.ts`, `kimiProvider.ts`, `groqProvider.ts` | Gotcha plus T-LLM-3. The exact names are **confirmed in each SDK's docs at use time** for the version in `package.json`; the skill never types a list. |
+| LM-7 | **Groq is absent from the factory's availability helpers.** `isProviderAvailable`, `getAvailableProviders` and `getStatus` cover openai, anthropic and kimi; `clearInstances` does not reset the Groq instance (it has no production caller). The help bot constructs its Groq provider directly from `GROQ_API_KEY`, so an unset key there surfaces as "Groq API error: " plus the status at request time, not as "not configured". | `lib/ai/providerFactory.ts`; `app/api/help-bot-v2/route.ts`; `lib/ai/providers/groqProvider.ts` | Gotcha: an availability helper is never evidence about Groq. Code follow-up FU-D6d-a (below), stated neutrally; not skill text. |
+| LM-8 | **The usage ledger is the server-side evidence.** Each probe path named in part (4) writes one `token_usage` row per call (through `callWithTracking`), including auth and quota failures as `success = false`. The columns read are `provider`, `model_name`, `success`, `error_code`, `cost_usd`, `feature`, `created_at`. `error_code` is the error's `code`, or `UNKNOWN`: OpenAI SDK errors carry a `code`; Groq's error is a plain `Error`, so it records `UNKNOWN`; the Anthropic SDK error shape is vendor fact, confirmed at use time. There is no provider-level success or 401 log line: the ledger row is the evidence. | `lib/ai/providers/baseProvider.ts` (`callWithTracking`); `lib/analytics/aiAnalytics.ts` | The ledger probe reads counts only. **Never read:** `error_message`, `request_payload`, `response_metadata` and `user_id` are never selected, grouped, ordered or returned. Splitting an Anthropic or Groq 401 from a 429 uses the fixed Q-D6d-4 class match, in which `error_message` appears only inside a `CASE` / `WHERE` match. The OpenAI code names are vendor facts, confirmed at use time. |
+| LM-9 | **A ledger row needs the service-role key, not only the provider key.** Two cases. (a) The service-role key is set but wrong: the call succeeds, the ledger write fails, and "Failed to insert token_usage row" or "AI call tracking threw; row not written" appears (service `AIAnalyticsService`). (b) It is unset: `getAnalytics()` builds the analytics client before the provider, and the Supabase client constructor throws on an empty key, so every factory call fails before reaching the provider. | `lib/analytics/aiAnalytics.ts`; `lib/ai/providerFactory.ts` (`getAnalytics`) | (a) A missing ledger row is a fail only when both classes are 0 in the window; otherwise the probe is "not conclusive (ledger write failed)". (b) is a database-credential fault, routed to `supabase-ops`, not a provider fault. |
+| LM-10 | **A key from a project without access to a configured model.** When the configured model differs from the code default and the provider's refusal is one `isModelUnavailableError` recognises, Business OS retries once with the code default and logs "Provider rejected the configured model; retrying once with the code default" (module `BosLlmModelFallback`). A refused model is remembered for one settings-cache period, so there is at most one line per instance per period. Other paths fail the call. | `lib/business-os/llm/modelFallback.ts` | T-LLM-6 counts the class. A count > 0 after a key change points at the key's project or the setting. **0 does not prove model access** when the configured model is the code default. |
+| LM-11 | **Cost is computed in-app.** `cost_usd` and Business OS credits come from the `ai_model_pricing` table, not from the provider. A model with no pricing row records $0 and logs "No pricing found; recording $0 for this call" (module `AiPricing`, `warn`). | `lib/ai/pricing.ts`; `lib/business-os/llm/aiChargeRecorder.ts` | Two consequences. (1) A model-name change needs a pricing row first (order row; the row itself is the price review stream's). (2) **A key from the wrong organisation or project leaves the ledger and customer credits looking normal**, while the bill and the spend limit land on the other account: only the provider dashboard shows it (T-LLM-7, T-LLM-8, user tier). |
+| LM-12 | **The model-name names have their own readers.** `OPENAI_MODEL` is read twice in `app/api/orchestration/run-step/route.ts`, with different code defaults; `OPENAI_CHAT_MODEL` twice in `lib/business-os/ai-data-layer/AIDataLayerService.ts`. Each falls back to a code default when unset. | those files | Unset is valid. A set value must name a model the recorded project can use and that has a pricing row. **No functional probe** for either reader (Q-D6d-3): the row is Set / Not set, plus the user's model-availability report, plus "a pricing row exists for that model" (read-only); T-LLM-9 is the drift check. |
+| LM-13 | **Some scripts spend on a real account.** `npm run eval:chat` and `npm run bos:llm-settings` load the local env file through `scripts/env-preload.ts` and call the real provider with whatever key it holds. Many other `scripts/*.ts` read the two main keys. Unit tests set stub keys when unset (`tests/plugins/jest-setup.ts`). | `scripts/env-preload.ts`; `package.json` scripts | No DO probe runs these without the user's explicit approval naming the script and the account it will charge; they are key-holder runs (SKILL.md §2) and pre-checks at most, never the post-change probe. A green Jest run proves nothing about any key. |
+
+### D6d.2 What `llm-providers.md` teaches (the six-part template)
+
+Same intro sentence as `stripe.md`, `email.md` and `google.md`, plus the live-check line. Each part is organised by L1–L4, with L5 one line and M its own row.
+
+**(1) What must differ between environments.** One "Rule per environment" column plus a target sentence, as in `google.md` §1. The current setup (which accounts, organisations, projects or workspaces exist, which key each environment uses, where each value lives, what limits are set) is a private-inventory pointer: "Where the value lives is found at run time, reported by name and target only." Rows:
+
+| Setting | Rule per environment |
+|---|---|
+| Account, organisation, project or workspace per key | As recorded. Every key on one target belongs to the recorded account for that environment. **Recommended shape:** production keys in their own project or workspace, with their own spend limit; preview and local keys in a separate one, so a preview run cannot spend against production's limit. The skill states the shape, never whether it is in place |
+| L1, L2 keys | Set on production and preview (catalogue `required`); local optional, guidance only |
+| L3 key | Set wherever the help bot is served (the help bot constructs the Groq provider directly; its settings rows choose the model only), and wherever a settings row selects Groq |
+| L4 key | Covered when selected: set wherever a settings row selects Kimi; otherwise optional |
+| Spend limit, budget and alerts | Per project or workspace, as recorded; set by the user in the provider dashboard; never written into the repo |
+| Model-name names | Unset (code default) or a model available to the recorded project with a pricing row |
+| SDK-implicit names (LM-6) | Not set on any target unless recorded with a reason |
+| Local | Guidance only. DO reads no `.env*` file; a local key never belongs to the production project |
+
+**(2) Where the code reads it.** The LM-2 to LM-12 files, per credential, named as files and functions. Expected names per environment: the catalogue group `ai` at `origin/main`; effective requiredness for L3/L4 comes from code (a provider class constructed outside the factory) and from the settings rows (LM-5), derived at use time. The V6 admin config lives in `system_settings_config`, read by `AgentGenerationConfigService.ts`. Under "never a probe target": the deprecated V1 research strategy (`lib/plugins/strategies/chatgptResearchStrategy.ts`) and the `backups/` copies of old readers.
+
+**(3) Dashboard steps (the user),** by area name, because the consoles move (confirm at use time): per provider, **API keys** (create, name, restrict to a project where offered, revoke; last-used time where shown); **organisation / project / workspace** settings (which one the key belongs to); **Billing, limits or budgets** (spend limit, alert thresholds, current period spend); **Usage** (per day, per key or project where offered); **model access** per project where the vendor gates it. Setting the value on Vercel: `vercel-ops` and `env-change-protocol`; the value never passes through chat or a file.
+
+The user reports presence, "belongs to the recorded project: yes/no", "limit and alert set as recorded: yes/no", "usage shown for the probe window: yes/no", "model available: yes/no" and the last-updated time. Never a key, a key fragment, an organisation or project id, an amount on an invoice, or a limit value.
+
+**(4) Probes** (as ruled in Q-D6d-2). Each fails when the setting is wrong. No probe needs DO to hold a key. Every functional probe is a **real provider call: it spends real money and writes ledger rows**; it is optional, user-approved, one run, never repeated in a loop, and "not probed (declined)" if the user declines. A probe that meets deployment protection is "not probed".
+
+Ledger reads follow the Q-D6d-4 rules: the select list holds only `provider`, a derived class (or `feature`, `success`, `error_code`) and `count(*)`; the four never-read columns are never selected, grouped, ordered or returned; the Groq class is "Groq API error: " followed by the status (from our code), the Anthropic class is the status number at the start of the SDK's message (confirmed against the installed SDK at use time), and unmatched failures are "unclassified" and reported, never folded into 0. A ledger read is usable only where that environment writes to its own database, as recorded; otherwise "not conclusive (shared ledger)".
+
+| Change | Probe | Pass | Fails when | Who | Side effects |
+|---|---|---|---|---|---|
+| Any of the six names | `/admin/environment` on that deployment | Name shows Set (or Not set, for an intended unset) | Shows the other state; `required-not-set` flagged | Main session or user (admin session) | None |
+| L1 and L3: one help bot question | On that deployment, after it is Ready, signed in with a normal session (not admin), ask the floating help button on a V2 page a harmless question that is new (it must miss both the FAQ and the answer cache, and must not ask to find an agent), with the help bot's semantic search setting on, as read at use time on the help bot config screen | L3: the answer appears with the Groq source badge, and a `help_bot_v2` row with `success = true` for provider groq. L1: ≥ 1 `helpbot` row with `success = true` for provider openai, and 0 failure rows. Both `created_at` after the probe time | L3: an error answer, or a groq failure row. L1: a failure row, or 0 rows while both LM-9 classes are 0. The visible answer is not evidence for L1 (a failed lookup logs "Cache search error", module `HelpBotV2API`, and Groq still answers) | User (trigger); DO (ledger counts) | Three real provider calls (an embedding, a Groq chat call, a second embedding), ledger rows on the platform's own account, no credits charged; one shared answer-cache row holding the question and the answer (reused for later matching questions; no in-app route removes it); one support-analytics counter increment. A FAQ or Cache badge (or an agent-search answer): "not probed (answered from FAQ or cache)", never a fail |
+| L2 key | No app-side probe; `/admin/environment` Set + user dashboard read | Set, and "belongs to the recorded project: yes" | Not set, or "no" | Main session or user; user | None |
+| L4 key | As L2, where a row selects Kimi | As L2 | As L2 | As L2 | None; where no row selects it: "not probed (not selected)" |
+| Any key: traffic read (optional, never a substitute for a failing probe) | After Ready, DO counts that provider's ledger rows by `success` and class from Ready time onward | ≥ 1 success and 0 auth-class rows: "pass (from traffic)" | An auth class > 0 | DO | None; no rows: "not probed (no traffic)", never 0 |
+| Key belongs to the recorded account | After a call probe or traffic, the user opens the recorded project's usage view | Usage shown for the window (allowing the vendor's reporting delay, confirm at use time) | No usage on the recorded project | User | None |
+| Model-name name | No functional probe: Set / Not set, plus the user's "model available to the recorded project: yes/no", plus "a pricing row exists for that model" (read-only) | All three | Any one fails | Main session; user | None |
+| Key rotation | The probes above on the new deployment, then revoke the old key, then repeat them | Pass after revoke | Any failure after revoke | User; DO | As the probes used |
+
+Rotation overlap: until the old key is revoked, a pass may have used the old key (for example if the new value never reached the target), so it is "pass, not conclusive (overlap)" until the old key is revoked and the probe repeated.
+
+**(5) Gotchas,** each grounded in a repo file or marked vendor fact:
+
+- **Four keys, four accounts** (D6d.1 table): a working OpenAI path proves nothing about Anthropic, and the reverse.
+- **One OpenAI key serves chat, embeddings and images** (LM-4).
+- **The factory keeps the key it first read** (`providerFactory.ts`): a change takes effect on the next deployment; revoke the old key only after that deployment is Ready and probed. Older Preview deployments built before a rotation keep the old key and fail once it is revoked; redeploy any still needed.
+- **An unset key fails the call** (LM-2); the caller's own log line, if any, carries it; not a counted class.
+- **Groq does not depend on a selection** (LM-5): the help bot constructs it directly.
+- **A settings row can make an optional key required** (LM-5): check the key before a row selects a provider.
+- **SDK-implicit names** (LM-6): invisible to the catalogue and the guard; can re-route or re-bill calls. Per client as LM-6; the Kimi client receives only the OpenAI organisation and project names; Groq has none. Names from SDK docs at use time.
+- **Groq and the availability helpers** (LM-7): they never report Groq; an unset Groq key in the help bot shows as "Groq API error: " plus the status at request time.
+- **Wrong organisation or project looks healthy in the app** (LM-11): ledger and credits are priced in-app; only the provider dashboard shows the account the spend landed on and the limit it counts against.
+- **The ledger needs the service-role key too** (LM-9): set but wrong is "not conclusive (ledger write failed)"; unset fails every factory call and is a `supabase-ops` fault.
+- **Model access differs by project** (LM-10): a fallback line after a key change points at the key's project or the setting.
+- **Scripts spend for real** (LM-13); a green Jest run proves nothing about keys.
+- **Mistral is not wired** (LM-3): not a gap.
+- **Spend limits, budgets and alerts are dashboard facts** the user operates; never written into the repo.
+- **Deprecated readers are never probe targets.**
+
+**(6) Drift checks** (in `env-drift-audit` §7 format and under its rules):
+
+| ID | Check | Expected state from | Live read (pointer) | Class | Who reads |
+|---|---|---|---|---|---|
+| T-LLM-1 | On each **Vercel target**, the `ai` group names match the catalogue's `expectedIn` (L1, L2 set on production and preview). Local: "not read (main session / user)" | Catalogue at `origin/main`; private inventory | `vercel-ops` §3 Env vars | High | DO |
+| T-LLM-2 | No `NEXT_PUBLIC_` name on any target holds an LLM key or model name: every `NEXT_PUBLIC_` name on the target is a `NEXT_PUBLIC_` name in the catalogue, and none of the `ai` group's names appears with the prefix. Derived, not a typed list | Catalogue at `origin/main` | `vercel-ops` §3 (names only) | Critical | DO |
+| T-LLM-3 | No SDK-implicit name (LM-6) is set on any target unless recorded with a reason | SDK docs at use time; private inventory | `vercel-ops` §3 (names only) | High | DO |
+| T-LLM-4 | Every provider that a settings row selects, or that a code path constructs outside the factory (derived from code at `origin/main`), has its key Set on that environment's deployment | Code at `origin/main` (setting keys and direct constructions derived); settings rows (provider values only) | `supabase-ops` §2 read-only SQL; `/admin/environment` or `vercel-ops` §3 | High | DO |
+| T-LLM-5 | Per provider, `token_usage` failure rows since the last run, counted by `error_code` (OpenAI) or the Q-D6d-4 class (Anthropic, Groq). An auth class > 0: High. A quota or rate-limit class > 0: Medium. Unclassified > 0 reported as such. A provider with no rows in the window: "not read (no traffic)", never 0 | Change records | Read-only SQL, counts only | High / Medium | DO |
+| T-LLM-6 | 0 "Provider rejected the configured model; retrying once with the code default" (module `BosLlmModelFallback`) since the last run. 0 does not prove model access when the configured model is the code default; at most one line per instance per settings-cache period | Change records | Runtime logs | Medium | DO |
+| T-LLM-7 | Each key on each target belongs to the recorded organisation / project / workspace for that environment; preview and production separation as recorded | Private inventory | User report (API keys, project settings) | High | User |
+| T-LLM-8 | Spend limit, budget and alerts set per project as recorded; current-period spend below the alert threshold; the recorded project shows usage on the days the ledger shows traffic for that provider | Private inventory; ledger counts by day (DO) | User report (Billing, Usage) | High | User; DO |
+| T-LLM-9 | 0 "No pricing found; recording $0 for this call" (module `AiPricing`, level `warn`) since the last run; each set model-name name names a model available to the recorded project | Change records; private inventory | Runtime logs; user report | Medium | DO; User |
+| T-LLM-10 | `PROVIDERS` in `providerFactory.ts` at `origin/main` lists exactly the providers this file covers; a new one means this file needs a row before its key is set | Code at `origin/main` | Repo read | Low | DO |
+
+**(7) Tiers and order.** Pointer to `env-change-protocol`; nothing restated.
+
+**Tiers.** Any key create, rotation or revoke for a key production uses; any change of organisation, project or workspace for it; any spend limit, budget or alert change on production's project; and any production model-name change (it changes cost) are **production tier**: SA reviews the plan, the user executes. Removing a key is a hard off for every feature on that provider (every call throws), so it is production tier on any target where the catalogue, a settings row or a direct construction requires it. Changes to a key used **only** by non-production environments, as recorded, are reversible: the user applies them after the approval in chat. Where one key or project serves several environments, every change to it is production tier.
+
+| Change | When |
+|---|---|
+| A settings row will select Groq or Kimi on an environment | That key Set on that environment's deployment and probed before the row is changed |
+| A model-name value, or a row choosing a new model | Model available to the recorded project, and a pricing row present, before the change |
+| A newly wired provider (for example Mistral) | Catalogue name, key on every target the catalogue requires, and a row here, before merge |
+| Key rotation | Create new in the recorded project → set → deploy Ready → probe → revoke old **after deploy** → probe again; overlap per (4) |
+| Lowering a spend limit | After the user compares current-period spend with the new limit (calls are refused once a limit is hit: vendor fact, confirm at use time) |
+| Removing a key | Only after no settings row or code default selects that provider, no code path constructs that provider directly, and the catalogue does not require it on that target |
+
+### D6d.3 Files to change
+
+| # | File | Action |
+|---|---|---|
+| D6d-1 | `.claude/skills/third-party-ops/llm-providers.md` | New, §D6d.2, target ≤ ~175 lines (Q-D6d-7) |
+| D6d-2 | `.claude/skills/third-party-ops/SKILL.md` | §5 row "LLM providers" → `[llm-providers.md](llm-providers.md)`. Add to the description triggers: "an OpenAI, Anthropic, Groq or Kimi key, an LLM provider key, a model-name env var, an LLM spend limit or budget, provider usage or billing". Nothing else |
+| D6d-3 | This requirement | §0 row, these sections, notes, reviews |
+| — | `stripe.md`, `email.md`, `google.md`, `devops.md`, `env-drift-audit`, `env-change-protocol`, `supabase-ops`, the runbook, `CLAUDE.md` | **Not edited** |
+
+**Code follow-ups (requirement only, not skill text):**
+
+- FU-D6d-a (Low): `isProviderAvailable`, `getAvailableProviders`, `getStatus` and `clearInstances` in `providerFactory.ts` cover Groq like the other providers, with tests, or record why not.
+- FU-D6d-b (Low, widened per Q-D6d-5): the catalogue (or `/admin/environment`) flags a provider key that is unset where either a settings row selects that provider or a code path constructs that provider directly (the help bot's Groq), or records why not. The skill's T-LLM-4 stands either way.
+
+### D6d.4 Acceptance criteria
+
+- [ ] `llm-providers.md` has the six parts plus tiers/order, organised by L1–L4, with L5 one line and M one row; every file path it names exists; it states the Q-D6-2 live check by role, not by environment.
+- [ ] Each of L1–L4 has a probe row with its precondition, pass, fail, not-probed states, who runs it and its side effects, as ruled in Q-D6d-2. Every functional probe says it spends real money and writes ledger rows. No probe runs `eval:chat`, `bos:llm-settings` or any key-reading script without user approval.
+- [ ] `error_message`, `request_payload`, `response_metadata` and `user_id` are never selected, grouped, ordered or returned; `error_message` appears only inside the fixed Q-D6d-4 match. A missing row is "not conclusive" when an LM-9 class is > 0. No sentence says Groq is reached only through a selection.
+- [ ] The DB-held model choice is stated as the admin screens' and the runbook's, with T-LLM-4 the only DO read of it (provider values, read-only).
+- [ ] The SDK-implicit names are described per client, never listed; "confirm in SDK docs at use time" is present.
+- [ ] No copied lists: no setting-key list, no model name, no line number. QA greps `llm-providers.md` for the model-name constant names, the OpenAI and Anthropic model-family prefixes, the Groq-hosted and Kimi model families (derived at use time from `GROQ_MODELS` and `KIMI_MODELS`, never copied into tracked text), `bos_llm_area_`, `orchestration_routing_`, any URL scheme or vendor host, and line references: 0 hits.
+- [ ] Every quoted log string is verbatim in the cited file with its module or service name (`grep -cF`); vendor messages and error codes are marked "confirm at use time". No text past "environment variable is not configured" is quoted.
+- [ ] The restatement grep from §D6.4 over `llm-providers.md`: 0, or each hit is a pointer.
+- [ ] Public repo: the finding-11 regex over the added lines is 0. No key, key prefix or fragment, organisation, project or workspace id, base URL, domain, invoice amount, limit value or personal path. No line states which environment has which key, which project exists, whether preview and production are separated today, or what limits are set.
+- [ ] The SKILL.md diff is only D6d-2; the diff touches only D6d.3 files; `wc -l llm-providers.md` ≤ 175.
+
+### D6d.5 Questions — all settled
+
+- **Q-D6d-1 (settled by SA):** keep Kimi as "covered when selected"; its probe is "not probed (not selected)" until a row selects it, and T-LLM-4 catches a selection without a key.
+- **Q-D6d-2 (settled by SA):** L1 and L3 share one help bot question; L2 and L4 have no app-side probe (`/admin/environment` Set + user dashboard read); all four get the optional traffic read, with "not conclusive (shared ledger)" where another deployment writes to the same ledger.
+- **Q-D6d-3 (settled by SA):** no functional probe for either model-name reader; Set / Not set + availability report + pricing row present; T-LLM-9 stays.
+- **Q-D6d-4 (settled by SA):** yes, as counts only, under the two rules in part (4).
+- **Q-D6d-5 (settled by SA):** accepted as FU-D6d-b, widened to direct constructions.
+- **Q-D6d-6 (settled by SA):** the throw is not a counted class; constructor options as in LM-6.
+- **Q-D6d-7 (settled by SA):** ≤ ~175 lines; if over, trim prose, never probe or drift rows.
+
+---
+
 ## 6. Non-Functional Requirements
 
 - **Security:** no secret values printed or decrypted. No project refs, IDs, secret locations or open weaknesses in any tracked file. Production and irreversible actions are executed by the user only.
@@ -1767,6 +1933,9 @@ Approved. It reads the project's log store and cannot change project state, so i
 | 2026-11-02 | DO-6c build | `third-party-ops/google.md` new; SKILL.md index row + triggers. Awaiting SA code review and QA. |
 | 2026-11-02 | QA DO-6c | PASSED, 18 checks, no bugs. Every §D6c.4 criterion as overridden by SA changes 1–13, the public-repo regex (0) and weakness grep (4 `throttl` hits, all the "not probed (throttled)" outcome), current-state text, paths, links, verbatim strings, code claims, CRLF and length (144) checked. Four Low edge cases: two vendor messages unmarked, rate-limit detail in SA text, spec text lags SA change 1, `google.md` LF. |
 | 2026-11-02 | DO-6c QA fixes (main session) | QA Low 1: vendor messages in `google.md` (`redirect_uri_mismatch`, the invalid-client page) marked "confirm at use time". QA Low 2: the SA short-pass ruling on Q-D6c-3 no longer spells out the rate-limit bucket and budget. Lows 3 (spec text lags the SA changes; the SA section records them) and 4 (LF in the working copy; git normalises it) left as they are. |
+| 2026-11-02 | DO-6d spec + SA short pass | BA scoping spec (LLM providers: OpenAI, Anthropic, Groq, Kimi keys; the two model-name names; Mistral not wired); SA approved with changes 1–13 and settled Q-D6d-1..7 (no user question): Groq is required wherever the help bot is served, two ledger cases, never-read columns and the counts-by-class rule, help bot probe for OpenAI and Groq, no app-side probe for Anthropic and Kimi, no functional model-name probe. SA changes folded into §DO-6d. |
+| 2026-11-02 | DO-6d build | `third-party-ops/llm-providers.md` new (142 lines); SKILL.md index row + triggers. Awaiting SA code review and QA. |
+| 2026-11-02 | DO-6d SA code review + QA | SA approved for QA with two fixes (help bot probe precondition excludes agent-search questions; old LM-8 wording scrubbed). QA PASS, 20 checks (19 pass, 1 deferred), 3 Lows: Low 1 (stale status text) fixed by the main session; Low 2 (LF endings, normalised by git) and Low 3 (`InputHelp` mode not reachable from the floating button) left on purpose. |
 
 ---
 
@@ -3926,3 +4095,275 @@ None.
 - [ ] Issues found — Dev must address before commit
 
 **PASS.** Every §D6c.4 criterion, as overridden by SA changes 1–13, passes; the public-repo scan is 0 and the weakness grep's 4 hits are explained; the code claims hold. Four Low edge cases, none blocking.
+
+---
+
+## SA Review — DO-6d (short pass)
+
+**Reviewed by SA — 2026-11-02**
+**Verdict: APPROVED WITH CHANGES.** The four-key split, the boundary with the admin screens and the price review stream, the six-part shape, the probe discipline carried over from DO-6c and the public-repo criteria are right. Most code findings hold. Five things would have made the skill wrong:
+- **Groq is not reached only through a selection.** The help bot builds its Groq provider directly, on every model call, whatever the settings say. Its settings rows choose the **model name only**, never the provider. So the Groq key is effectively required wherever the help bot is served, with no row involved. LM-5, the part (1) row for L3, T-LLM-4 and the "removing a key" order row all assume otherwise.
+- **LM-9 is half right.** A service-role key that is set but wrong fails only the ledger write, as stated. An **unset** one fails the provider call itself: the factory builds its analytics client before it builds the provider, and the Supabase client constructor throws on an empty key. The two ledger lines are also under the `service` field `AIAnalyticsService`, not a `module`.
+- **The model-name probe has a pass condition that cannot fail for every reader.** "0 'No pricing found' lines after the reader's next call" does not hold up as a per-change pass condition for both readers. It stays a drift class (T-LLM-9) and leaves the probe row (change 6).
+- **The "not configured" throw is not a counted class.** It has no fixed module: each caller logs it under its own. Three of the four messages also end with a vendor console address, so the skill quotes at most the common clause and never the full text.
+- **Q-D6d-2 has an answer for two providers, not four.** The help bot covers L1 and L3 in one question. L2 and L4 have no app-side probe that meets the criteria (see the Q-D6d-2 ruling).
+
+None of this needs a decision from the user. Required changes 1–13 below fix it.
+
+I reviewed this in the DO-6d worktree at `26df15e5` (= `origin/main` at review time). I reviewed against §D6d, SA Review — DO-6 changes 1–7, SA Review — DO-6c (short pass) as the model, and `third-party-ops` `SKILL.md`, `stripe.md`, `email.md` and `google.md`. No platform call, no SQL, no vendor call and no network call were made. No `.env*` file was opened. Local reads and greps only.
+
+### Code claims (LM-1 to LM-13)
+
+| # | Result | Correction for `llm-providers.md` |
+|---|---|---|
+| D6d.1 table | **Verified.** Group `ai` holds the six names. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are `exp('R', 'R', 'O')`. `GROQ_API_KEY` and `KIMI_API_KEY` are secrets with the default (optional everywhere). The two model names are `config(..., 'identifier')`, optional. | L3's row must add the help bot dependency (change 1). |
+| LM-1 | **Verified.** No `NEXT_PUBLIC_` name containing an LLM provider or model word exists in `app/`, `lib/`, `components/` or `hooks/`. The only adjacent public name is the AI data layer UI switch in `featureFlags.ts`. | — |
+| LM-2 | **Verified, with two precisions.** Each of the four `get*Provider` methods reads its key once into a static instance and throws if it is unset. (1) The first clause "`<NAME>` environment variable is not configured." is common to all four. Anthropic, Kimi and Groq then append a "Get your API key from:" vendor address, so the quoted sentence is not the whole message. (2) The factory does not log the throw. The caller's own catch logs it, under the caller's module, so it has no fixed module. `clearInstances` has no production caller. | Quote at most "environment variable is not configured", and never the vendor address. It is **not** a counted class and has no T- row (Q-D6d-6). |
+| LM-3 | **Verified.** `PROVIDERS` lists openai, anthropic, kimi and groq. Nothing outside `mistralProvider.ts` names `MistralProvider` or a `MISTRAL_*` env name. | — |
+| LM-4 | **Verified.** `EmbeddingService` ignores its key argument and calls `ProviderFactory.getProvider(PROVIDERS.OPENAI)`. `GeneratedImageService` calls `ProviderFactory.getOpenAI()`. Both go through `callWithTracking` (`createEmbedding`, `generateImage`). | — |
+| LM-5 | **Corrected.** The Business OS area settings, the orchestration routing tiers (code defaults route all three tiers to Anthropic) and the V6 admin config are database selections. **"SA to confirm": the V6 config is stored in `system_settings_config`**, read by `lib/agentkit/v6/config/AgentGenerationConfigService.ts`, and edited from the agent generation config admin screen. **The help bot is not a selection.** `app/api/help-bot-v2/route.ts` constructs `GroqProvider` directly in both its model calls. Its settings rows name a model only. | Change 1. Groq's effective requirement comes from code (a provider class constructed outside the factory), so T-LLM-4 derives it from code as well as from rows. Kimi stays selection-only. |
+| LM-6 | **Settled ("SA to confirm").** `OpenAIProvider` passes `{ apiKey }` only. `AnthropicProvider` passes `{ apiKey }` only. `KimiProvider` passes `{ apiKey, baseURL }`. `GroqProvider` and `MistralProvider` use `fetch` with their own header, not an SDK client. | The OpenAI client's implicit base-URL, organisation and project names can apply. The Anthropic client's implicit base-URL and auth-token names can apply. On the Kimi client the base URL is explicit, so only the OpenAI organisation and project names can still apply, and they are sent to the other vendor. Groq has none. The names themselves still come from SDK docs at use time (change 4). |
+| LM-7 | **Verified.** `isProviderAvailable`, `getAvailableProviders` and `getStatus` cover openai, anthropic and kimi. `clearInstances` does not reset the Groq instance. An unset Groq key in the help bot reaches the vendor and comes back as "Groq API error: " plus the status (`groqProvider.ts`, verbatim, 1 hit). | — |
+| LM-8 | **Verified.** `callWithTracking` writes one row on success and one on failure (`success = false`, `error_code` = `error.code` or `UNKNOWN`, `cost_usd` 0). Groq's error is a plain `Error` with no `code`, so it records `UNKNOWN`. The Anthropic SDK error shape is vendor fact, so confirm at use time. Columns: `provider`, `model_name`, `success`, `error_code`, `cost_usd`, `feature`, `created_at` are the ones the insert writes and the Layer 1.1 / Slice B2 workplans verified on the live schema. **The failure row also carries `error_message`, and every row carries `request_payload` and `response_metadata`.** None of the three is ever read. | Change 3 (never-read list), change 11 (wording). |
+| LM-9 | **Corrected** (see the verdict). `getAnalytics()` calls `createClient(url, SUPABASE_SERVICE_ROLE_KEY!)`, and supabase-js throws "supabaseKey is required." on an empty key. Both ledger lines are verbatim (1 hit each in `aiAnalytics.ts`) under `createLogger({ service: 'AIAnalyticsService' })`. | Change 2. |
+| LM-10 | **Verified, with a precision.** The line is verbatim (1 hit, `lib/business-os/llm/modelFallback.ts`, module `BosLlmModelFallback`). It fires only when the configured model **differs from the code default**, and only on a refusal that `isModelUnavailableError` recognises (status plus code or param, never the message). A refused model is then remembered for one settings-cache period and is retried silently (debug only), so there is at most one line per instance per period. | T-LLM-6 > 0 points at the key's project or the setting. **0 does not prove access** when the configured model is the default. Say so (change 5). |
+| LM-11 | **Verified.** The line is verbatim (2 hits, `lib/ai/pricing.ts`, module `AiPricing`, `warn`). | T-LLM-9 names module `AiPricing` (change 5). |
+| LM-12 | **Verified.** `OPENAI_MODEL` is read twice in `app/api/orchestration/run-step/route.ts`, with **different** code defaults. `OPENAI_CHAT_MODEL` is read twice in `AIDataLayerService.ts`. | No model names in the skill. For the probe, see Q-D6d-3. |
+| LM-13 | **Verified.** `eval:chat` and `bos:llm-settings` both `--import ./scripts/env-preload.ts`. `tests/plugins/jest-setup.ts` stubs the two main keys when they are unset. | — |
+| Paths | **All exist:** the admin environment, AI cost, Business OS LLM, AIS config, help bot config and agent generation config screens, the runbook, `modelSettings.ts` (60 s cache constant), `modelSettingsPolicy.ts`, `aiChargeRecorder.ts`, `pricing.ts`, `RoutingService.ts`, `V6PipelineOrchestrator.ts`, `chatgptResearchStrategy.ts`, `backups/`, `scripts/env-preload.ts`, `tests/plugins/jest-setup.ts`. `SKILL.md` §5 has the "LLM providers \| not covered yet (DO-6d)" row. | — |
+
+### Rulings on "SA to confirm" and Q-D6d-1 to Q-D6d-7
+
+- **Q-D6d-1: yes, keep Kimi** as "covered when selected". Its probe is "not probed (not selected)" until a row selects it. T-LLM-4 catches a selection without a key. Its gotcha line is the LM-6 one: an OpenAI organisation or project name on a target reaches Kimi's vendor too.
+- **Q-D6d-2: per provider.**
+  - **L1 OpenAI and L3 Groq: one help bot question.** The help bot is the floating help button on signed-in V2 pages. It needs a normal session, not admin. Precondition: a harmless question that is new (it must miss both the FAQ and the answer cache), with the help bot's semantic search setting on, as read at use time on the help bot config screen.
+    - **What runs:** one OpenAI embedding for the cache lookup, feature `helpbot`; then one Groq chat call, feature `help_bot_v2`; then a second `helpbot` embedding to store the answer.
+    - **Ledger rows:** all go on the **platform's own account**, never a customer's. No credits are charged.
+    - **Side effects to name:** one shared answer-cache row holding the question and the bot's answer (it is reused for later matching questions, and the app has no route that removes it); one support-analytics counter increment; three real provider calls.
+    - **L3 pass:** the answer appears on that deployment with the **Groq** source badge, **and** a `help_bot_v2` row with `success = true` for provider groq, `created_at` after the probe time.
+    - **L3 fail:** an error answer, or a groq failure row.
+    - **L3 not probed:** a FAQ or Cache badge means "not probed (answered from FAQ or cache)". This must never read as a fail.
+    - **L1 pass:** ≥ 1 `helpbot` row with `success = true` for provider openai, and 0 failure rows.
+    - **L1 fail:** a failure row, or 0 rows while both LM-9 classes are 0. The user-visible answer is **not** evidence for L1, because the help bot catches a failed lookup ("Cache search error", module `HelpBotV2API`) and still answers through Groq.
+    - Optional and user-approved, one run, never in a loop. If the user declines, it is "not probed (declined)".
+  - **L2 Anthropic: no app-side probe; `/admin/environment` Set + user dashboard read.**
+    - The tracked Anthropic routes (`enhance-prompt`, `analyze-prompt-clarity`, `generate-clarification-questions`) sit in the agent-creation flow. They send large prompts, and one also writes an analytics row.
+    - The orchestration default sends agent runs to Anthropic, but a run writes execution data.
+    - Business OS calls charge a business's credits.
+    - None meets "cheap and no side effect on customer data".
+  - **L4 Kimi: no app-side probe; `/admin/environment` Set + user dashboard read** (and "not probed (not selected)" until a row selects it).
+  - **All four: an optional traffic read, added as one more row, never a substitute for a failing probe.** After the deployment is Ready, DO counts that provider's ledger rows by `success` and `error_code`, from Ready time onward. ≥ 1 success and 0 auth-class rows is "pass (from traffic)". No rows is "not probed (no traffic)", never 0.
+  - **When the traffic read can be used:** only where that environment writes to its own database, as recorded. Where another deployment writes to the same ledger, a count cannot say which deployment wrote it, and the traffic read is "not conclusive (shared ledger)". The same caveat applies to the L1 ledger read above.
+- **Q-D6d-3: no functional probe for either reader.** Neither model-name reader has a trigger that meets the Q-D6d-2 criteria. The model-name row is: Set / Not set on `/admin/environment`, **plus** the user's "model available to the recorded project: yes/no", **plus** "a pricing row exists for that model" (read in the price review stream's admin screen, read-only). T-LLM-9 stays as the drift check. The row says "no functional probe".
+- **Q-D6d-4: yes, as counts only, under two rules.**
+  1. The query's select list holds only `provider`, a derived class and `count(*)`. `error_message` appears only inside a `CASE` / `WHERE` match, and is never selected, grouped, ordered or returned.
+  2. The patterns are fixed in the skill:
+     - **Groq:** derived from our own code. The prefix "Groq API error: " followed by the status, so `401` is the auth class and `429` is the quota/rate class.
+     - **Anthropic:** the SDK's message format, so "status number at the start of the message: confirm against the installed SDK at use time".
+
+  Anything unmatched is class "other", and an "other" > 0 is reported as "unclassified failures", never folded into 0. The D6d.4 criterion becomes "`error_message` never selected or returned" (change 3).
+- **Q-D6d-5: accepted as FU-D6d-b (Low, code).** It now covers both cases: the catalogue (or `/admin/environment`) flags a provider key that is unset where either a settings row selects that provider or a code path constructs that provider directly (the help bot's Groq). Or it records why not. The skill's T-LLM-4 stands either way.
+- **Q-D6d-6: settled.** The throw is not a counted class (LM-2). It stays out of the T- rows, and the skill describes it as "the call fails on that path; the caller's own log line, if any, carries it". Constructor options are as given in LM-6 above.
+- **Q-D6d-7: ≤ ~175 lines.** The help bot preconditions add a few lines over `stripe.md`. If it runs over, Dev trims prose, never probe or drift rows.
+
+### Public-repo check
+
+- **The spec text is clean of ids, key prefixes, domains, URLs and personal paths.** It names no model and does not say which environment has which key. Env var names, repo paths and the `feature` values above are fine.
+- **Line numbers** in LM-2 (`~lines 44–48, 117–202`) are fine as SA pointers in the requirement. They must not reach `llm-providers.md`.
+- **LM-8's opening sentence must become a statement about the probe paths** (change 11). The skill states what the named probe paths write and nothing about coverage elsewhere.
+- **The model-name probe row** loses its pricing-log condition with the neutral reason "no functional probe" (Q-D6d-3). No other reason goes into tracked text.
+- **Vendor addresses:** the factory's throw messages contain vendor console addresses. Neither the requirement nor the skill may quote the messages past "environment variable is not configured" (change 4).
+- **Model-family words:** the D6d.4 grep lists the OpenAI and Anthropic model-family prefixes. The code defaults also include Groq-hosted and Kimi model families, so the grep must cover those too (change 9).
+- **The help bot probe** is described by its screen and route path, its `feature` values and its side effects. It does not name the settings key behind "semantic search on".
+- **Recorded live-check results** use the DO-6b form, by role, with no target named.
+
+### New pattern and CI time (CLAUDE.md rule 7)
+
+- **No new pattern.** It is one reference file plus one index row and triggers, under the shape DO-6b and DO-6c set. The traffic read and the counts-by-pattern query are probe variants inside the existing `devops.md` read-only SQL rules (a)–(d), not new machinery.
+- **No added CI time.** No job, workflow or test is added. The CI gates on the PR are the existing ones, unchanged.
+
+### Required changes
+
+1. **[LM-5, (1) L3 row, T-LLM-4, (7) order] Groq's code dependency.** LM-5 and the part (1) L3 row are rewritten as: "Set wherever the help bot is served (the help bot constructs the Groq provider directly; its settings rows choose the model only), and wherever a settings row selects Groq". T-LLM-4 reads: "every provider that a settings row selects, **or that a code path constructs outside the factory** (derived from code at `origin/main`), has its key Set on that environment's deployment". The "removing a key" order row adds "and no code path constructs that provider directly". Pass: no sentence in the spec or `llm-providers.md` says Groq is reached only through a selection. — Priority: High
+2. **[LM-9, part (5) gotcha] Two ledger cases.** (a) The service-role key is set but wrong: the call succeeds, the ledger write fails, and one of the two lines appears under `service` `AIAnalyticsService`. The probe is then "not conclusive (ledger write failed)". (b) It is unset: every factory call fails before reaching the provider. That is a database-credential fault, routed to `supabase-ops`, not a provider fault. Replace "module `AIAnalyticsService`" with "service `AIAnalyticsService`". Pass: both cases are stated and the field name is correct. — Priority: High
+3. **[LM-8, part (4), D6d.4] Never-read columns and the pattern count.** The never-read list is `error_message`, `request_payload`, `response_metadata` and `user_id`. The D6d.4 criterion becomes: "these four are never selected, grouped, ordered or returned; `error_message` appears only inside the fixed Q-D6d-4 match". Add the Q-D6d-4 class query rules: the Groq pattern is from code, the Anthropic pattern is confirmed at use time, and unmatched failures are "unclassified" and reported. T-LLM-5 uses those classes for Anthropic and Groq. Pass: a QA grep finds `request_payload`/`response_metadata`/`user_id`/`error_message` only in never-read or match-only text. — Priority: High
+4. **[LM-2, LM-6, Q-D6d-6] Throw text and implicit names.**
+   - The throw is described as "the call fails; the caller's own log line, if any, carries it". It has no T- row, and no text past "environment variable is not configured" is quoted.
+   - LM-6 states per client which implicit names can still apply (the table above), with the names themselves from SDK docs at use time.
+   - Groq is "no SDK-implicit names". The Kimi line says only the OpenAI organisation and project names reach it.
+
+   Pass: no vendor address in either file, and no typed list of implicit names. — Priority: Medium
+5. **[LM-10, LM-11, T-LLM-6, T-LLM-9] Precise classes.**
+   - T-LLM-6 counts module `BosLlmModelFallback` and says "0 does not prove model access when the configured model is the code default; at most one line per instance per settings-cache period".
+   - T-LLM-9 counts module `AiPricing`, level `warn`.
+   - Every quoted string carries its module or service name, checked with `grep -cF` at build.
+
+   Pass: each quoted log string has its logger field (module or service) next to it, and each `grep -cF` is ≥ 1. — Priority: Medium
+6. **[(4) model-name row, Q-D6d-3] Drop the pricing-log pass condition.** The row becomes: Set / Not set, plus the user's availability report, plus "pricing row present" (read-only), with "no functional probe". The side-effects cell is "None". Pass: the row has no "next call" condition. — Priority: Medium
+7. **[(4) probe rows, Q-D6d-2] Name the probe paths as ruled.**
+   - L1 and L3 use the help bot question, with its precondition, the three calls, the shared answer-cache row (no in-app cleanup), the analytics counter, the platform-account ledger rows, the source-badge pass for L3 and the ledger pass for L1. A FAQ or Cache badge is "not probed (answered from FAQ or cache)".
+   - L2 and L4 get "no app-side probe; `/admin/environment` Set + user dashboard read".
+   - All four get the optional traffic read, with "not conclusive (shared ledger)" where another deployment writes to the same ledger.
+
+   Pass: each of L1–L4 has a probe row with precondition, pass, fail, not-probed states and side effects. — Priority: High
+8. **[Boundary, (2)] Admin screens without a list.** Replace the two named screens with "the admin screens that edit those rows, found at use time (for example the Business OS LLM and AIS config screens)". Add to part (2) that the V6 admin config lives in `system_settings_config`, read by `AgentGenerationConfigService.ts`. Pass: no exhaustive screen list; the V6 "SA to confirm" is removed. — Priority: Low
+9. **[D6d.4 public grep] Widen the model-name grep.** It also covers the Groq-hosted and Kimi model families as the provider files' model constants name them, plus the two URL schemes and any vendor host. QA derives the family list from `GROQ_MODELS` and `KIMI_MODELS` at use time and does not copy it into tracked text. Pass: 0 hits in `llm-providers.md`. — Priority: Medium
+10. **[(1), T-LLM-4] Kimi wording** (Q-D6d-1). Kimi is "covered when selected", and its probe is "not probed (not selected)" until a row selects it. Pass: present in parts (1) and (4). — Priority: Low
+11. **[LM-8 wording] Coverage-neutral text.** LM-8's first sentence becomes "Each probe path named in part (4) writes one `token_usage` row per call (through `callWithTracking`), including auth and quota failures as `success = false`". No sentence in the requirement or the skill describes which other code paths do or do not write rows. Pass: LM-8 opens with that sentence. — Priority: Medium
+12. **[D6d.3 follow-ups] Record in the requirement, not in the skill:**
+    - FU-D6d-a (Low) as written.
+    - FU-D6d-b (Low) widened per Q-D6d-5.
+
+    Pass: both are listed in D6d.3 and absent from `llm-providers.md`. — Priority: Low
+13. **[Length] ≤ ~175 lines** (Q-D6d-7). Pass: `wc -l` ≤ 175, with no probe or drift row cut. — Priority: Low
+
+### Checked and honoured
+
+- **DO-6 changes 1–7:** every probe has a precondition or reads "not probed". A rotation overlap is "pass, not conclusive". Local is "not read". Derivation is from code (catalogue, `PROVIDERS`, direct constructions), there are no copied lists, and the T-LLM rows live in `llm-providers.md`.
+- **DO-6c lessons:** each probe has an exact pass and fail, no probe passes on an unset value (the L1 ledger fail needs the LM-9 classes at 0; the L3 pass needs the Groq badge), side effects are named, and quoted strings are verbatim with their module.
+- **Probe safety:** no probe needs DO to hold a key. Every functional probe spends real money, is user-approved and runs once. No script runs without the user naming it and the account it charges. No probe charges customer credits or writes customer data.
+- **Tiers:** any change to a key, project, limit or model name that production uses is production tier, and every change to a shared key is production tier. DB-held model choice stays the admin screens' and the runbook's. DO reads provider values only.
+
+### Approval
+
+[x] Spec approved with changes 1–13. Dev builds `llm-providers.md` and the SKILL.md index row and triggers after the main session's Q-D6-2 live check. No user decision is needed.
+
+---
+
+## DO-6d implementation notes
+
+**By Dev — 2026-11-02.** Branch `feature/devops-third-party-llm`, worktree at `origin/main` (`26df15e5`). Config/docs only; nothing committed. The SA short pass's changes 1–13 and rulings Q-D6d-1..7 override §DO-6d wherever they differ; this time they are also folded into §DO-6d where they correct facts (its header says so), so the spec does not lag the review. `llm-providers.md` follows the SA text.
+
+| File | Change |
+|---|---|
+| `.claude/skills/third-party-ops/llm-providers.md` | New, 142 lines (under ~175): a credential table L1–L5 + M and a boundary paragraph, then six parts plus tiers and order, T-LLM-1..10, mirroring `google.md`'s section order and table style. L1–L4 separate in every part; L5 one line; M its own row. No line numbers, no model name, no setting-key list. LF line endings, like `google.md` |
+| `.claude/skills/third-party-ops/SKILL.md` | §5 index row now points at `llm-providers.md`; description triggers gain an OpenAI, Anthropic, Groq or Kimi key, an LLM provider key, rotating an LLM key, a model-name env var, an LLM spend limit or budget, provider usage or billing (D6d-2). CRLF preserved; 2 lines changed |
+| This requirement | §DO-6d spec (SA changes applied), SA Review — DO-6d (short pass), these notes, two Change History rows, §0 DO-6 row. CRLF preserved |
+
+| SA change | Where / how applied |
+|---|---|
+| 1 | §1 L3 row uses the SA wording (help bot constructs Groq directly; rows choose the model only); §2 L3 row; §5 "Groq does not depend on a selection"; T-LLM-4 adds "or that a code path constructs outside the factory"; §7 "Removing a key" adds "no code path constructs it directly", and the tiers sentence adds "a direct construction". No sentence says Groq is reached only through a selection |
+| 2 | §4 ledger-write rule (set but wrong: "not conclusive (ledger write failed)"); §5 "The ledger needs the service-role key too" states both cases and routes unset to `supabase-ops`. Field is "service `AIAnalyticsService`" throughout |
+| 3 | §4 "Ledger reads": the four never-read columns never selected, grouped, ordered or returned; `error_message` only inside the fixed class match; Groq class from code, Anthropic class confirmed at use time, "other" reported as "unclassified failures". T-LLM-5 uses those classes |
+| 4 | §5 "An unset key fails the call" quotes only "environment variable is not configured", no T- row. §5 SDK-implicit gotcha states per client which kinds of names can apply, names from SDK docs at use time; Groq "no SDK-implicit names"; Kimi only the OpenAI organisation and project names. No vendor address, no typed name list |
+| 5 | T-LLM-6 module `BosLlmModelFallback` with the "0 does not prove model access…; at most one line per instance per settings-cache period" text; T-LLM-9 module `AiPricing`, level `warn`; every quoted string carries its module or service (checked below) |
+| 6 | §4 model-name row: "No functional probe", Set / Not set + availability + pricing row present; side effects "None"; no "next call" condition |
+| 7 | §4 rows: L1 and L3 one help bot question with the precondition, three calls, platform-account ledger rows, answer-cache row (no in-app removal), analytics counter, Groq-badge pass for L3, ledger pass for L1, FAQ/Cache "not probed"; L2 and L4 "No app-side probe. `/admin/environment` Set, plus the user's dashboard read"; the optional traffic read row, with the shared-ledger rule |
+| 8 | Boundary paragraph: "the admin screens that edit those rows (found at use time; for example the Business OS LLM and AIS config screens)"; §2 settings-rows row names the V6 admin config in `system_settings_config`, read by `AgentGenerationConfigService.ts` |
+| 9 | §D6d.4 grep criterion widened (Groq-hosted and Kimi families derived from `GROQ_MODELS` / `KIMI_MODELS` at use time, URL schemes, vendor hosts), without writing any family prefix into tracked text. Ran over `llm-providers.md`: 0 hits (below) |
+| 10 | §1 L4 row "Covered when selected"; §4 L4 row "not probed (not selected)"; credential table L4 "covered when selected" |
+| 11 | §DO-6d LM-8 opens "Each probe path named in part (4) writes one `token_usage` row per call (through `callWithTracking`)". `llm-providers.md` §2 ledger row names the writer only, with no claim about coverage |
+| 12 | FU-D6d-a and FU-D6d-b (widened) are in §D6d.3 and below; neither is in `llm-providers.md` |
+| 13 | `wc -l` 142 (≤ 175); no probe or drift row cut |
+
+**Code follow-ups (not in this slice).**
+
+| ID | Priority | Item |
+|---|---|---|
+| FU-D6d-a | Low | `isProviderAvailable`, `getAvailableProviders`, `getStatus` and `clearInstances` in `providerFactory.ts` cover Groq like the other providers, with tests, or record why not |
+| FU-D6d-b | Low | The catalogue (or `/admin/environment`) flags a provider key that is unset where either a settings row selects that provider or a code path constructs it directly (the help bot's Groq), or records why not. T-LLM-4 stands either way |
+
+**Public-safety edits.** In the SA short pass as recorded here, two passages were reworded so tracked text carries no model-family prefix or URL scheme: the "Model-family words" bullet names "the OpenAI and Anthropic model-family prefixes" instead of quoting them, and change 9 names "the two URL schemes" instead of writing them. Nothing else in the review was changed. In §DO-6d, the D6d.4 grep criterion is worded the same way.
+
+**Verification done.** Every path named in `llm-providers.md` exists in the worktree (scripted check; bare file names resolve to the file the row means). Quoted strings found by `grep -cF` in their files, with their logger field: "Failed to insert token_usage row" and "AI call tracking threw; row not written" (`lib/analytics/aiAnalytics.ts`, service `AIAnalyticsService`); "Provider rejected the configured model; retrying once with the code default" (`lib/business-os/llm/modelFallback.ts`, module `BosLlmModelFallback`); "No pricing found; recording $0 for this call" (`lib/ai/pricing.ts`, module `AiPricing`); "Cache search error" (`app/api/help-bot-v2/route.ts`, module `HelpBotV2API`); "Groq API error: " (`lib/ai/providers/groqProvider.ts`, thrown error text, not a log line); "environment variable is not configured" (`lib/ai/providerFactory.ts`, thrown, not logged by the factory). Function and identifier names checked: `getProviderFactory`, `getProvider`, `isProviderAvailable`, `getAvailableProviders`, `getStatus`, `getAnalytics`, `clearInstances`, `callWithTracking`, `isModelUnavailableError`, `getOpenAI`, `PROVIDERS`, `required-not-set` (`classifyEnvironment.ts`). The help bot route builds `GroqProvider` from `GROQ_API_KEY` in both model calls; its feature values `help_bot_v2` (route) and `helpbot` (`EmbeddingService.ts`) and its `Groq`, `FAQ` and `Cache` sources are as the probe row says. Both `eval:chat` and `bos:llm-settings` import `scripts/env-preload.ts`.
+
+**Could not verify / open.**
+- The Q-D6-2 live check (each of L1–L4 still has a code path that runs, Kimi when selected, and the names set on Vercel) is the main session's; it was not given to Dev; the main session recorded the dated result in the spec on 2026-11-02 (all four stay; configuration is checked at use time). `llm-providers.md` keeps L1–L4 and states the check.
+- Vendor facts (console area names, SDK-implicit env names, the Anthropic error message format, OpenAI error code names, usage reporting delay, refusal at a spend limit) are not verifiable from code; each is marked "confirm at use time".
+- `llm-providers.md` is LF; it becomes CRLF on the next touch, as `google.md` will.
+
+---
+
+## SA Code Review — DO-6d
+
+**Code Review by SA — 2026-11-02**
+**Status:** ✅ Code Approved
+
+Reviewed the uncommitted DO-6d worktree (`llm-providers.md` new, `SKILL.md` index row and triggers, this requirement) against the DO-6d spec, SA Review — DO-6d (short pass) changes 1–13 and rulings Q-D6d-1..7, and the DO-6d implementation notes. Local reads and greps only: no platform call, no SQL, no vendor call, no network call, no `.env*` file.
+
+### SA changes 1–13 and rulings Q-D6d-1..7 in `llm-providers.md`
+
+All 13 landed as ruled. Change 1: §1 L3 row, §2 L3 row, the "Groq does not depend on a selection" gotcha, T-LLM-4 ("or that a code path constructs outside the factory"), and the tiers sentence and "Removing a key" row both name a direct construction. No sentence says Groq is reached only through a selection. Change 2: both ledger cases are stated, unset goes to `supabase-ops`, and the field is service `AIAnalyticsService`. Change 3: the four never-read columns, `error_message` only inside the fixed class match, the Groq class from code, the Anthropic class confirmed at use time, and "other" reported as "unclassified failures". T-LLM-5 uses those classes. Change 4: only "environment variable is not configured" is quoted, it has no T- row, the implicit names are given per client as kinds, never as names, and no vendor address appears. Change 5: T-LLM-6 and T-LLM-9 carry their module, level and caveats. Change 6: the model-name row has "No functional probe" and no "next call" condition. Change 7: L1 and L3 share one help bot row with its precondition, pass, fail, not-probed states and side effects. L2 and L4 have no app-side probe. The traffic read is there with the shared-ledger rule. Change 8: the screens are examples found at use time, and the V6 config is in `system_settings_config`. Change 9: see the greps below. Change 10: Kimi is "covered when selected" in the table, §1 and §4. Change 11: the §2 ledger row names the writer only. Change 12: both follow-ups are in §D6d.3 and the notes, and neither is in the skill. Change 13: 142 lines, and no probe or drift row was cut. Q-D6d-1..7 are reflected as settled in §D6d.5.
+
+### Code claims checked at this tree
+
+| Claim in `llm-providers.md` | Result |
+|---|---|
+| Every named path exists (factory, five provider files, `baseProvider.ts`, embedding and image services, help bot route, both model-name readers, settings and policy, routing, V6 config and orchestrator, ledger, pricing, charge recorder, catalogue, V1 strategy, `backups/`, env preload, jest setup, model fallback, runbook) | ✅ |
+| Catalogue `ai`: OpenAI and Anthropic `exp('R', 'R', 'O')`; Groq and Kimi default; the two model names `config(..., 'identifier')`; `required-not-set` in `classifyEnvironment.ts` | ✅ |
+| Factory: one static instance per provider; the key is checked on first use with the "not configured" throw (4 hits); `getAnalytics()` builds the service-role client before each provider instance; the availability helpers and `getStatus` cover openai, anthropic and kimi only | ✅ |
+| Help bot: session required; `new GroqProvider(process.env.GROQ_API_KEY!, …)` in both model calls; settings choose the model only; FAQ, then cache (exact, then semantic when the setting is on, using an embedding), then Groq; then the answer is stored with a second embedding when semantic search is on; one analytics RPC per answer; `help_bot_v2` (route) and `helpbot` (`EmbeddingService`) feature values; attribution to the system account | ✅ |
+| Ledger: `callWithTracking` writes success and failure rows (`error_code` = `error.code` or `UNKNOWN`, `cost_usd` 0 on failure, `error_message` on failure); `request_payload` and `response_metadata` are in the insert | ✅ |
+| Groq is plain `fetch`, error "Groq API error: " plus the status; OpenAI and Anthropic clients get the key only; Kimi gets the key and an explicit base URL | ✅ |
+| Quoted strings, `grep -cF`, with their logger field: "Failed to insert token_usage row" 1 and "AI call tracking threw; row not written" 1 (service `AIAnalyticsService`); "Provider rejected the configured model; retrying once with the code default" 1 (module `BosLlmModelFallback`); "No pricing found; recording $0 for this call" 2 (module `AiPricing`, `warn`); "Cache search error" 1 (module `HelpBotV2API`); "Groq API error: " 1 (thrown text) | ✅ |
+| `OPENAI_MODEL` and `OPENAI_CHAT_MODEL` readers; `eval:chat` and `bos:llm-settings` import `scripts/env-preload.ts`; jest setup stubs the two main keys; embeddings through `getProvider(PROVIDERS.OPENAI)`, images through `getOpenAI()` | ✅ |
+
+### Probes, public repo, template
+
+- **Probes:** each one can fail. An unset OpenAI key gives 0 `helpbot` rows (the factory throws before any tracked call, and both help bot catches swallow it), so the L1 fail "0 rows while both ledger-write classes are 0" catches it. No probe needs DO to hold a key. Every functional probe is optional, user-approved, run once, and named as spending money. The cache row, the analytics counter and the platform-account ledger rows are named as side effects.
+- **Public repo:** the finding-11 regex over the added lines of all three files returns 0. The extra greps also return 0 in `llm-providers.md`: hosts and URL schemes, the Groq and Kimi model constants derived at use time from the provider files and not copied here, setting-key prefixes, the help bot setting keys, and line references. The added text states no current configuration and no open weakness. The `~lines` pointers stay in SA text only, as ruled.
+- **Template:** the same sections and order as `google.md`. `SKILL.md` changes only the description triggers and the §5 row (2/2 lines), and its working copy is still CRLF. `llm-providers.md` is LF, which is the same as `google.md` was. The stored file is LF under `core.autocrlf`.
+
+### Fixes made by SA
+
+1. `llm-providers.md` §4 help bot row and the spec's matching row. The route answers a find-an-agent question from the caller's own agents, before it looks at the FAQ, so that answer gets neither a FAQ nor a Cache badge. The precondition now says "and must not ask to find an agent". The not-probed state now covers "an agent-search answer".
+2. SA Review — DO-6d (short pass), the "LM-8's opening" bullet and change 11's pass, plus the matching notes row (change 11). Each one quoted the old LM-8 wording. They now describe that wording without quoting it, under the same scrub rule that DO-6a set.
+
+### Optimisation Suggestions
+
+- None blocking. Under `core.autocrlf`, `llm-providers.md` turns into CRLF the next time git touches it. No action is needed.
+
+### Code Approved for QA: Yes
+
+---
+
+## QA Report — DO-6d
+
+**QA — 2026-11-02**
+**Test mode:** full · **Strategy:** static checks (`test -e` on every backticked path, `grep -cF` verbatim string lookup with the logger field read from each file's `createLogger` call, read-through of the factory, help bot route, providers, ledger and catalogue against each claim, YAML parse, anchor resolution, byte-level line-ending count, `git diff --numstat` with and without `--ignore-cr-at-eol`). This is a docs/config-only slice with no runtime to exercise. · **Focus:** security (public repo, current-state text, probe safety), schema (frontmatter) · **Skipped:** the fresh-session load test (deferred, as for DO-1 to DO-6c) · **Input source:** TL prompt + §D6d.4 + SA Review — DO-6d (short pass) changes 1–13 and rulings Q-D6d-1..7 + SA Code Review — DO-6d. Run in the DO-6d worktree on the uncommitted changes. No platform call, no SQL, no vendor call, no network call; no `.env*` file opened.
+
+### Test Coverage
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 1 | §D6d.4: six parts plus tiers/order, by L1–L4, L5 one line, M one row; live check by role | Pass | Credential table L1–L5 + M, boundary paragraph, then §1–§7. L1–L4 separate in §1, §2 and §4; L5 is one row ("Not wired: not a gap"); M is its own row. The live check is a procedure ("a code path that runs (for Kimi … **when selected**), and the names set on Vercel"), naming no environment |
+| 2 | Every backticked path exists | Pass | All 25 repo paths pass `test -e`. Bare names resolve to one file each: `V6PipelineOrchestrator.ts` → `lib/agentkit/v6/pipeline/`, `modelSettingsPolicy.ts` → `lib/business-os/llm/`, `devops.md` → `.claude/agents/`; the other bare names repeat a full path given earlier in the file. `/admin/environment` → `app/admin/environment/page.tsx`. The four cited skills exist, and so do the sections cited in them: `vercel-ops` §3 Env vars, `env-drift-audit` §7, `supabase-ops` §2, `devops.md` rules (a)–(d), `SKILL.md` §2 (key holder) and §5 |
+| 3 | §D6d.4: a probe row for each of L1–L4 with precondition, pass, fail, not-probed, who, side effects; money and ledger stated; no script runs | Pass | §4 has a shared L1+L3 help bot row (precondition: Ready, normal session, a new question, not an agent search, semantic search on), L2 and L4 rows ("No app-side probe"; L4 "not probed (not selected)"), the traffic-read row ("not probed (no traffic)"), the account, model-name and rotation rows. Every row has `Who` and `Side effects`. The §4 intro says "**real provider call: it spends real money and writes ledger rows**", "not probed (declined)", and "No probe runs `eval:chat`, `bos:llm-settings` or any key-reading script" |
+| 4 | §D6d.4: the four never-read columns; `error_message` only in the class match; LM-9 "not conclusive"; no "Groq only through a selection" | Pass | `request_payload`, `response_metadata` and `user_id` appear only in the never-read sentence. `error_message` appears in that sentence, in "appears only inside the fixed class match", and in the Groq class bullet. The ledger-write rule makes a missing row "not conclusive (ledger write failed)" unless both `AIAnalyticsService` lines are 0. "only through", "reached only", "only reached" over `llm-providers.md`: 0. The Groq gotcha says the opposite |
+| 5 | §D6d.4: DB-held model choice is the admin screens' and the runbook's; T-LLM-4 the only DO read | Pass | Boundary paragraph: owned by "the admin screens that edit those rows (found at use time …)" and the runbook; "DO reads those rows read-only for one purpose: which providers they select (T-LLM-4). DO never writes them" |
+| 6 | §D6d.4: SDK-implicit names per client, never listed; "SDK docs at use time" | Pass | §5 gotcha gives kinds per client (OpenAI: base URL, organisation, project; Anthropic: base URL, auth token; Kimi: the OpenAI organisation and project only; Groq: none) and "the names themselves come from each SDK's docs at use time, for the version in `package.json`". No env name of that kind appears. Code: `new OpenAI({ apiKey })`, `new Anthropic({ apiKey })`, Kimi `new OpenAI({ apiKey, baseURL })`, Groq plain `fetch` with its own header |
+| 7 | §D6d.4: no copied lists (model constants, model families, setting-key prefixes, URL schemes, hosts, line refs) | Pass | Values of `OPENAI_MODELS`, `ANTHROPIC_MODELS`, `GROQ_MODELS` and `KIMI_MODELS` plus their family stems, derived from the provider files at use time and kept in the scratchpad only: 0 hits. The only stem hits are the provider name "Kimi" and the substring of the V1 path `chatgptResearchStrategy.ts`, neither of them a model name. The four constant names, `bos_llm_area_`, `orchestration_routing_`, `helpbot_`, URL schemes, `www.`, `.com`, `localhost`, `~line`, `:NN`: 0. Case-insensitive greps were run on a lowercased copy, because `grep -i` aborts on this file under Git Bash |
+| 8 | §D6d.4: quoted log strings verbatim with their logger field; vendor text marked; nothing quoted past "not configured" | Pass | `grep -cF`: "Failed to insert token_usage row" 1 and "AI call tracking threw; row not written" 1 (`aiAnalytics.ts`, `createLogger({ service: 'AIAnalyticsService' })`); "Provider rejected the configured model; retrying once with the code default" 1 (`modelFallback.ts`, module `BosLlmModelFallback`); "No pricing found; recording $0 for this call" 2 (`pricing.ts`, module `AiPricing`, both `logger.warn`); "Cache search error" 1 (help bot route, module `HelpBotV2API`, `log.error`); "Groq API error: " 1 (`groqProvider.ts`, thrown text); "environment variable is not configured" 4 (`providerFactory.ts`, thrown, not logged by the factory). The skill quotes nothing after that clause. Vendor facts (console areas, Anthropic message format, OpenAI code names, reporting delay, refusal at a limit) each carry "confirm at use time" |
+| 9 | §D6d.4: restatement grep (§D6.4 list) | Pass | `Snapshot the before-state`, `\| **Read** \|`, `begin read only`, `filter_project_envs`, `decrypt` over `llm-providers.md`: 0 |
+| 10 | Brief: public-repo regex over added lines | Pass | The brief's regex over all 534 added lines (`llm-providers.md` `git add -N`'d, then `git reset -q`; `git status` shows it untracked again): **0** |
+| 11 | Brief: weakness-wording grep over added lines (word list kept with the main session) | Pass | 3 hits, all the rule text that bans the class: the SKILL.md description's "open weaknesses leaking into tracked text" (an unchanged clause on a changed line) and SA Code Review's "states … no open weakness". None names a weakness |
+| 12 | No statement of the current setup | Pass | Added lines: "currently" 0; "today" 2 (§D6d.1 "where each value lives today is not derivable from the repo" and the §D6d.4 criterion), "only on" 2 (LM-2 "takes effect only on the deployment that carries it", the SA LM-10 note), "is configured" 1 ("whether each one is configured is not recorded here"), "not set" 13 (probe states and rules). All are rules, probe states or criterion text. The recorded live check names no target and records no configuration |
+| 13 | Code claims: factory | Pass | `PROVIDERS` lists openai, anthropic, kimi, groq; four static instances; each `get*Provider` throws on an unset key, then calls `getAnalytics()` (service-role `createClient`) before `new …Provider`. `isProviderAvailable` handles openai/anthropic/kimi and returns false for anything else; `getAvailableProviders` and `getStatus` cover the same three; `clearInstances` does not reset Groq. `getProviderFactory()` is exported from the same file. No `MISTRAL_*` reader and no `new MistralProvider` outside its file (one `'MISTRAL_MODELS'` string in a literals checker script) |
+| 14 | Code claims: help bot probe | Pass | `getUser()` → 401 when signed out. Order: input-help mode (only with `context.mode === 'input_help'`), agent search (`AgentSearch`), FAQ (`FAQ`), cache (exact, then semantic when the setting is on, using an embedding), then Groq (`Groq`). `new GroqProvider(process.env.GROQ_API_KEY!, …)` in both model calls, model names from settings; an unset key gives `Bearer undefined` and a vendor error, not "not configured". `feature: 'help_bot_v2'`, `userId: 'system'` (recorded against the platform account). Embeddings are `feature 'helpbot'` through `getProvider(PROVIDERS.OPENAI)`. `storeInCache` makes the second embedding when semantic search is on. `update_support_analytics` RPC once per answer. So three calls, one cache row, one counter, as the row says |
+| 15 | Code claims: ledger, catalogue, readers, scripts | Pass | `callWithTracking` failure row: `success: false`, `error_code: error.code \|\| 'UNKNOWN'`, `cost_usd: 0`, `error_message`; the insert also writes `request_payload` and `response_metadata`. Catalogue `ai`: OpenAI and Anthropic `exp('R', 'R', 'O')`, Groq and Kimi `secret(...)` with the `OPTIONAL` default, both model names `config(..., 'identifier')`. `required-not-set` is in `classifyEnvironment.ts`. `OPENAI_MODEL` is read twice in the run-step route and `OPENAI_CHAT_MODEL` twice in `AIDataLayerService.ts`. `eval:chat` and `bos:llm-settings` use `--import ./scripts/env-preload.ts`. Jest setup stubs the two main keys. `isModelUnavailableError` and the default-model guard are in `modelFallback.ts`. `BOS_LLM_SETTINGS_CACHE_MS = 60_000`. V6 config: `system_settings_config` in `AgentGenerationConfigService.ts`, imported by `V6PipelineOrchestrator.ts`. Routing reads `ais_system_config`. The V1 strategy is marked `@deprecated` |
+| 16 | SKILL.md: diff only D6d-2; §5 link; triggers; frontmatter | Pass | numstat 2/2: the description and the §5 row. `[llm-providers.md](llm-providers.md)` resolves, and all four §5 links resolve. All five §D6d.3 trigger phrases are present verbatim, plus "rotating an LLM key", which fits the slice. YAML parses: keys `name`, `description`; `name: third-party-ops`; description 1,387 chars on one line |
+| 17 | Diff touches only D6d.3 files; structure matches `google.md` | Pass | `git status`: the two edited files and `llm-providers.md`. The `##` headings are identical to `google.md` in name and order (§1–§7), and both files use the same intro, credential table and live-check line |
+| 18 | Requirement line endings, rows, anchors | Pass | CR = LF in the requirement (4317/4317 before this report) and in SKILL.md (86/86); `git ls-files --eol` gives `w/crlf`. numstat is identical with `--ignore-cr-at-eol` (390/1); the 1 removed line is the §0 DO-6 row, which now carries the DO-6d text. Change History has two DO-6d rows (spec + SA short pass, build). All 44 in-document `](#…)` anchors resolve; `#do-6d-implementation-notes`, `#sa-review--do-6d-short-pass`, the DO-6d spec heading and `#sa-code-review--do-6d` each resolve to exactly one heading |
+| 19 | Length | Pass | `wc -l llm-providers.md` = 142 (≤ ~175, Q-D6d-7). No probe or drift row cut: T-LLM-1..10 all present |
+| 20 | Fresh-session load test | Deferred | Skills load at session start. Not failed |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+
+None.
+
+#### Edge Cases (nice to fix)
+
+1. **§0 DO-6 row and the build Change History row still say "awaiting SA code review and QA"** — `docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`. SA Code Review — DO-6d approved the code, and this report passes it. The main session normally updates both at the user-approval step, as for DO-6c. Severity: Low.
+2. **`llm-providers.md` is LF** (0 CR, 142 LF, with a final newline), while `google.md` is now CRLF in this worktree. Git warns that it "will be replaced by CRLF the next time Git touches it", as `email.md` and `google.md` were. Stored as LF either way. Severity: Low.
+3. **The help bot row does not name the input-help mode** — the route also answers with source `InputHelp` when the request carries `context.mode === 'input_help'` (field-help from an agent input). The floating help button on a V2 page does not send that mode, so the probe as written cannot land there. An optional addition is "not from a field's help" in the precondition. Severity: Low.
+
+### Final Status
+
+- [x] All acceptance criteria pass — ready for commit
+- [ ] Issues found — Dev must address before commit
+
+**PASS.** Every §D6d.4 criterion passes, as do SA changes 1–13 and rulings Q-D6d-1..7. The public-repo regex over the added lines finds 0. The 3 weakness-grep hits and the current-state hits are all rule text. Every path, quoted string, logger field and code claim holds at this tree. Three Low edge cases, none blocking.
+
+---
