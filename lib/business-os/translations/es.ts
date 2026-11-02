@@ -587,6 +587,7 @@ export const es = {
     'automation.import_leads_from_sheet.watches': 'Filas nuevas en tu hoja de contactos',
     'automation.available_heading': 'También disponible',
     'automation.needs_plugin': 'Necesita {plugin}',
+    'automation.next_retry': 'lo intenta de nuevo {when}',
     'automation.page_range': '{from}–{to} de {total}',
     'automation.page_previous': 'Página anterior',
     'automation.page_next': 'Página siguiente',

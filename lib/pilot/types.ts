@@ -991,6 +991,14 @@ export interface WorkflowExecutionResult {
   error?: string;
   errorStack?: string;
   failedStep?: string;
+  /**
+   * The sentence the failing STEP recorded, as opposed to the wrapper the pilot
+   * writes around it. See the note where it is populated: `causeOfFailure` in
+   * the scheduled runner exists to report a cause an owner can act on, and
+   * nothing about the failing step left this result, so it could only ever fall
+   * back to "Non-retryable execution error at step … (unknown)".
+   */
+  failedStepError?: string;
 
   // Execution summary for calibration (aggregated metadata, NO actual client data)
   execution_summary?: CalibrationExecutionSummary;

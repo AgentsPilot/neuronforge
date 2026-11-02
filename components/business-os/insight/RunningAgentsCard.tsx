@@ -254,7 +254,7 @@ interface AvailableAgent {
    * connected none of them, which is the only moment it is a question — see
    * `connectEither` in `install.ts`.
    */
-  connectEither?: { plugin: string; automationId: string }[];
+  connectEither?: { plugin: string; automationId: string; connected: boolean }[];
 }
 
 export function RunningAgentsCard() {
@@ -481,10 +481,21 @@ export function RunningAgentsCard() {
    * "stop WHICH agent?" could answer with `business-os-automation:…` for
    * anything the catalogue did not know, which is exactly a mailbox channel.
    */
-  const removingName = agents.find(a => a.agentId === removing)?.name;
+  /*
+   * ONE NON-NULL BINDING, because the guard above does not narrow this.
+   *
+   * `if (!agents?.length && !available?.length) return null` returns only when
+   * BOTH are empty — so `agents` is still `InstalledAgent[] | null` here, and
+   * every use below was an unchecked dereference. The build tolerated it
+   * because `next.config.js` ignores type errors; a null would have thrown at
+   * the first `.find`. Bound once rather than guarded six times.
+   */
+  const installed = agents ?? [];
 
-  const running = agents.filter(a => a.status === 'active').length;
-  const pausedCount = agents.length - running;
+  const removingName = installed.find(a => a.agentId === removing)?.name;
+
+  const running = installed.filter(a => a.status === 'active').length;
+  const pausedCount = installed.length - running;
 
   /*
    * ───────────────────────────────────────────────────────────────────────────
@@ -499,9 +510,9 @@ export function RunningAgentsCard() {
    * empty table with working controls — which reads as "my agents are gone".
    * ───────────────────────────────────────────────────────────────────────────
    */
-  const pageCount = Math.max(1, Math.ceil(agents.length / AGENTS_PER_PAGE));
+  const pageCount = Math.max(1, Math.ceil(installed.length / AGENTS_PER_PAGE));
   const currentPage = Math.min(page, pageCount - 1);
-  const shown = agents.slice(
+  const shown = installed.slice(
     currentPage * AGENTS_PER_PAGE,
     currentPage * AGENTS_PER_PAGE + AGENTS_PER_PAGE
   );
@@ -917,9 +928,41 @@ export function RunningAgentsCard() {
 
                   {/* Next run — green ONLY when something is genuinely coming. */}
                   <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule }}>
+                    {/*
+                      ────────────────────────────────────────────────────────
+                      "WAITING ON YOU" ONLY WHEN IT ACTUALLY IS.
+
+                      `state` collapses two different situations into
+                      `blocked`: a plugin the owner has not connected (they ARE
+                      the blocker, and acting is the only way the agent ever
+                      works again), and an agent that FAILED and was
+                      dead-lettered — which is usually our fault, not theirs,
+                      and which is still scheduled.
+
+                      Both printed "waiting on you" in this cell. For a stopped
+                      agent that is wrong twice over: it blames the owner for a
+                      bug, and it hides the one fact they can act on — that it
+                      tries again, and when. An owner reading "waiting on you"
+                      beside a message they cannot action has been handed a
+                      dead end.
+
+                      So a stopped agent with a next run shows that run, quietly
+                      rather than in success green, since it is a retry and not
+                      a promise. The reason it stopped already has a home: the
+                      Watches column carries the sentence, and `stopped.whatToDo`
+                      sits under it when the execution layer wrote one.
+                      ────────────────────────────────────────────────────────
+                    */}
                     {state === 'running' && when(agent.nextRun) ? (
                       <span style={{ color: 'var(--v2-success)', fontWeight: 600 }}>
                         {when(agent.nextRun)}
+                      </span>
+                    ) : agent.stopped && !agent.blocked && when(agent.nextRun) ? (
+                      <span style={{ color: 'var(--v2-text-secondary)' }}>
+                        {(t('automation.next_retry') || 'tries again {when}').replace(
+                          '{when}',
+                          when(agent.nextRun) ?? ''
+                        )}
                       </span>
                     ) : (
                       <span style={{ color: 'var(--v2-text-muted)' }}>
@@ -1026,7 +1069,7 @@ export function RunningAgentsCard() {
             {(t('automation.page_range') || '{from}–{to} of {total}')
               .replace('{from}', String(currentPage * AGENTS_PER_PAGE + 1))
               .replace('{to}', String(currentPage * AGENTS_PER_PAGE + shown.length))
-              .replace('{total}', String(agents.length))}
+              .replace('{total}', String(installed.length))}
           </span>
 
           <span className="flex items-center gap-1">
@@ -1407,7 +1450,23 @@ function ScheduleEditorRow({
 
   return (
     <tr>
-      <td colSpan={7} style={{ padding: '2px 10px 14px', borderBottom: '1px solid var(--v2-border)' }}>
+      {/*
+        ────────────────────────────────────────────────────────────────────────
+        ATTACHED TO ITS ROW, NOT FLOATING UNDER IT.
+
+        The panel had `padding: 2px 10px 14px` and its own rounded, tinted
+        border, so it read as a separate card that happened to be below the
+        agent — on a dark table especially, where the gap and the second border
+        made two objects out of one. An owner expanding a row should see that
+        row open, not a new card appear.
+
+        So the inset goes: no side padding, no gap above, and the panel loses
+        its top corners and its top border. What remains is one block that
+        begins at the row and ends at the table rule — which is also why the
+        ROW's own `borderBottom` is already suppressed while it is open.
+        ────────────────────────────────────────────────────────────────────────
+      */}
+      <td colSpan={7} style={{ padding: '0 0 12px', borderBottom: '1px solid var(--v2-border)' }}>
         <div
           /*
             ────────────────────────────────────────────────────────────────────
@@ -1440,10 +1499,15 @@ function ScheduleEditorRow({
             horizontal scrollbar the moment the editor opened.
             ────────────────────────────────────────────────────────────────────
           */
-          className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-lg p-3.5"
+          className="flex flex-wrap items-center gap-x-5 gap-y-3 px-3.5 py-3"
           style={{
             background: 'color-mix(in srgb, var(--v2-primary) 5%, transparent)',
-            border: '1px solid color-mix(in srgb, var(--v2-primary) 22%, transparent)',
+            /*
+              Sides and bottom only. The top edge is where the row sits, and a
+              line there is what split one thing into two.
+            */
+            borderBottom: '1px solid color-mix(in srgb, var(--v2-primary) 22%, transparent)',
+            borderInlineStart: '2px solid var(--v2-primary)',
             position: 'sticky',
             insetInlineStart: 0,
             maxWidth: '100%',

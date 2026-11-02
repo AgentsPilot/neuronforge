@@ -1182,6 +1182,37 @@ export class WorkflowPilot {
         error: error.message,
         errorStack: error.stack,
         failedStep: failedStepId || undefined,
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * THE SENTENCE THE STEP ITSELF RECORDED, carried out with the result.
+         *
+         * `error.message` above is the wrapper the pilot wrote — "Non-retryable
+         * execution error at step …", "Scatter-gather step step2: all 2 items
+         * failed…". The useful text is one layer in, written by the plugin
+         * author for a person: "Your Gmail connection has expired. Please
+         * reconnect in Settings → Connected Apps."
+         *
+         * `causeOfFailure` in the scheduled runner exists to dig that out and
+         * could not: nothing about the failing STEP left this function, so the
+         * only string downstream ever saw was the wrapper — and that is what a
+         * business owner read on their dashboard, in English, in the middle of
+         * a Hebrew table.
+         *
+         * The step's own `metadata.error`, not its `data`: metadata is the half
+         * of StepOutput that is already persisted precisely because the
+         * response body is not, so nothing client-shaped travels with it.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        failedStepError:
+          (failedStepId && context?.stepOutputs?.get(failedStepId)?.metadata?.error) ||
+          /* A scatter reports itself failed while the real reason sits on the
+             item's own step, so fall back to any step that recorded one. */
+          (context
+            ? [...context.stepOutputs.values()].find(
+                o => o?.metadata?.success === false && o?.metadata?.error
+              )?.metadata?.error
+            : undefined) ||
+          undefined,
         // Include step details for frontend visualization
         completedStepIds: context ? context.completedSteps : [],
         failedStepIds: context ? context.failedSteps : [],
