@@ -27,6 +27,9 @@
  * divided rows, a status chip on the right, a muted line of dates under it, a
  * plain empty line, and a failed read as a line with Try again. A request an
  * admin sent carries the "Sent by AgentPilot support" tag (none before MX-5).
+ * MX-4b (H-1): a "Show older" button under the list while older requests
+ * exist; a failed older read is a line with Try again, the list kept. The
+ * "export again at" state on open (N-1) reuses the daily-limit refusal line.
  *
  * Every date is the owner's clock (`formatExportTime` with
  * `useBusinessTimezone`, UTC labelled outside a provider; C-8), wrapped in
@@ -285,6 +288,33 @@ export function ExportDrawer({ open, onOpenChange, returnFocusRef }: ExportDrawe
                 </li>
               ))}
             </ul>
+          )}
+          {/* MX-4b H-1: older pages, appended under the list; a failed read keeps the list. */}
+          {drawer.history.kind === 'ok' && drawer.history.hasMore && (
+            <div data-testid="export-history-older" className="space-y-1 pt-1">
+              {drawer.isOlderUnavailable ? (
+                <>
+                  <p data-testid="export-history-older-error" className="text-xs text-[#F97316]">
+                    {copy.historyOlderUnavailable}
+                  </p>
+                  <button type="button" onClick={() => drawer.loadOlder()} className="text-xs text-[var(--v2-primary)] hover:underline">
+                    {copy.tryAgain}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="export-history-show-older"
+                  onClick={() => drawer.loadOlder()}
+                  disabled={drawer.isLoadingOlder}
+                  aria-busy={drawer.isLoadingOlder}
+                  className="inline-flex items-center gap-2 text-xs text-[var(--v2-primary)] hover:underline disabled:opacity-50"
+                >
+                  {drawer.isLoadingOlder && <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />}
+                  {copy.historyShowOlder}
+                </button>
+              )}
+            </div>
           )}
         </section>
       </div>

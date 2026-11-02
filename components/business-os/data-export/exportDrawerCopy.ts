@@ -52,6 +52,10 @@ export interface ExportDrawerCopy {
   historyTitle: string;
   historyEmpty: string;
   historyUnavailable: string;
+  /** MX-4b H-1: the button under the history that reads the next, older page. */
+  historyShowOlder: string;
+  /** MX-4b H-1: a failed "Show older" read; the list already shown stays. */
+  historyOlderUnavailable: string;
   tryAgain: string;
   /** `{date}` */
   requestedOn: string;
@@ -89,6 +93,8 @@ export const EXPORT_DRAWER_COPY: Readonly<Record<ExportDrawerLocale, ExportDrawe
     historyTitle: 'Your exports',
     historyEmpty: 'You have not exported anything yet.',
     historyUnavailable: 'Your export history could not be loaded.',
+    historyShowOlder: 'Show older',
+    historyOlderUnavailable: 'Older exports could not be loaded.',
     tryAgain: 'Try again',
     requestedOn: 'Requested {date}',
     sentOn: 'Sent {date}',
@@ -120,6 +126,8 @@ export const EXPORT_DRAWER_COPY: Readonly<Record<ExportDrawerLocale, ExportDrawe
     historyTitle: 'הייצואים שלך',
     historyEmpty: 'עדיין לא ייצאת דבר.',
     historyUnavailable: 'לא הצלחנו לטעון את היסטוריית הייצוא.',
+    historyShowOlder: 'הצגת ייצואים קודמים',
+    historyOlderUnavailable: 'לא הצלחנו לטעון ייצואים קודמים.',
     tryAgain: 'נסו שוב',
     requestedOn: 'התבקש {date}',
     sentOn: 'נשלח {date}',
@@ -152,6 +160,8 @@ export const EXPORT_DRAWER_COPY: Readonly<Record<ExportDrawerLocale, ExportDrawe
     historyTitle: 'Tus exportaciones',
     historyEmpty: 'Todavía no has exportado nada.',
     historyUnavailable: 'No se pudo cargar tu historial de exportaciones.',
+    historyShowOlder: 'Ver anteriores',
+    historyOlderUnavailable: 'No se pudieron cargar las exportaciones anteriores.',
     tryAgain: 'Reintentar',
     requestedOn: 'Solicitado {date}',
     sentOn: 'Enviado {date}',

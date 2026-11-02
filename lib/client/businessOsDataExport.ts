@@ -49,7 +49,20 @@ export const MODULE_EXPORT_HISTORY_TIMEOUT_MS = 5_000;
 
 export type { ExportHistoryRequest };
 
-export type ModuleExportHistoryVerdict = { kind: 'ok'; requests: ExportHistoryRequest[] } | { kind: 'error' };
+/**
+ * A history page (MX-4b). `hasMore`: older requests exist ("Show older", H-1).
+ * `nextExportAt`: the owner's "export again at" hint (N-1), or null; a hint
+ * only, the POST still decides.
+ */
+export type ModuleExportHistoryVerdict =
+  | { kind: 'ok'; requests: ExportHistoryRequest[]; hasMore: boolean; nextExportAt: string | null }
+  | { kind: 'error' };
+
+/** The "Show older" cursor: the last request already shown, its time exactly as the server sent it (SA C-4). */
+export interface ModuleExportHistoryCursor {
+  requestedAt: string;
+  requestId: string;
+}
 
 export type ModuleExportRefusalCode =
   | 'in_progress'
@@ -85,6 +98,8 @@ const historyBody = z.object({
         ),
       })
     ),
+    hasMore: z.boolean(),
+    nextExportAt: z.string().min(1).nullable(),
   }),
 });
 
@@ -93,14 +108,22 @@ const startedBody = z.object({
   data: z.object({ requestId: z.string().uuid(), sentTo: z.string().min(1), requestedEmailSent: z.boolean() }),
 });
 
-/** The drawer's history read: GET, never throws. Anything but a valid 200 is `error`. */
+/**
+ * The drawer's history read: GET, never throws. Anything but a valid 200 is
+ * `error`. With `before` (MX-4b H-1) it reads the page older than that
+ * request; the time is passed through untouched (never via `Date`, SA C-4) and
+ * URL-encoded, so a `+` offset survives.
+ */
 export async function fetchModuleExportHistory(
-  options: { timeoutMs?: number } = {}
+  options: { timeoutMs?: number; before?: ModuleExportHistoryCursor } = {}
 ): Promise<ModuleExportHistoryVerdict> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? MODULE_EXPORT_HISTORY_TIMEOUT_MS);
+  const url = options.before
+    ? `${MODULE_EXPORT_URL}?${new URLSearchParams({ before: options.before.requestedAt, beforeId: options.before.requestId }).toString()}`
+    : MODULE_EXPORT_URL;
   try {
-    const response = await fetch(MODULE_EXPORT_URL, {
+    const response = await fetch(url, {
       method: 'GET',
       credentials: 'same-origin',
       cache: 'no-store',
@@ -113,7 +136,10 @@ export async function fetchModuleExportHistory(
     }
     if (response.ok) {
       const parsed = historyBody.safeParse(body);
-      if (parsed.success) return { kind: 'ok', requests: parsed.data.data.requests };
+      if (parsed.success) {
+        const { requests, hasMore, nextExportAt } = parsed.data.data;
+        return { kind: 'ok', requests, hasMore, nextExportAt };
+      }
       logger.error({ status: response.status }, 'Module export: the history answer had an unexpected shape');
       return { kind: 'error' };
     }

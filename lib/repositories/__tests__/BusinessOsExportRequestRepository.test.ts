@@ -30,8 +30,10 @@ import {
   EXPORT_REQUEST_START_FUNCTION,
   HISTORY_REQUEST_LIMIT,
   HISTORY_REQUEST_LIMIT_MAX,
+  OWNER_LIMIT_ANCHOR_COLUMNS,
 } from '../BusinessOsExportRequestRepository';
-import { START_OUTCOMES } from '@/lib/business-os/data-export/moduleExportPolicy';
+import { MODULE_EXPORT_POLICY, START_OUTCOMES } from '@/lib/business-os/data-export/moduleExportPolicy';
+import { HISTORY_PAGE_SIZE } from '@/lib/business-os/data-export/exportHistoryCursor';
 
 type Call = { method: string; args: unknown[] };
 type Result = { data?: unknown; error: unknown };
@@ -42,7 +44,7 @@ function client(...results: Result[]) {
   let next = 0;
   const take = () => results[Math.min(next++, results.length - 1)] ?? { data: null, error: null };
   const builder: Record<string, unknown> = {};
-  for (const method of ['select', 'eq', 'maybeSingle', 'order', 'limit', 'update', 'is']) {
+  for (const method of ['select', 'eq', 'maybeSingle', 'order', 'limit', 'update', 'is', 'or', 'gt', 'not', 'range']) {
     builder[method] = (...args: unknown[]) => {
       calls.push({ method, args });
       return builder;
@@ -271,6 +273,124 @@ describe('listRecentForUser (MX-1b history, §5 step 1)', () => {
     expect(bad.calls).toEqual([]);
     const failing = client({ data: null, error: { code: 'XX000', message: 'boom' } });
     expect(await repo(failing.c).listRecentForUser(OWNER)).toEqual({ data: null, error: expect.objectContaining({ code: 'XX000' }) });
+  });
+
+  it('MX-4b: the default page size is the shared HISTORY_PAGE_SIZE (20)', () => {
+    expect(HISTORY_REQUEST_LIMIT).toBe(HISTORY_PAGE_SIZE);
+    expect(HISTORY_PAGE_SIZE).toBe(20);
+  });
+
+  it('MX-4b H-1: a cursor adds ONE keyset .or() after user_id, the time quoted and byte for byte (microseconds kept, SA C-4)', async () => {
+    const micro = '2026-10-31T17:35:52.018123+00:00';
+    const { c, calls } = client({ data: [row(REQUEST)], error: null });
+    const result = await repo(c).listRecentForUser(OWNER, { limit: 21, before: { requestedAt: micro, id: REQUEST2 } });
+    expect(result.error).toBeNull();
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_export_requests'] },
+      { method: 'select', args: [EXPORT_REQUEST_HISTORY_COLUMNS] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'or', args: [`requested_at.lt."${micro}",and(requested_at.eq."${micro}",id.lt."${REQUEST2}")`] },
+      { method: 'order', args: ['requested_at', { ascending: false }] },
+      { method: 'order', args: ['id', { ascending: false }] },
+      { method: 'limit', args: [21] },
+    ]);
+  });
+
+  it('MX-4b: no cursor, no .or()', async () => {
+    const { c, calls } = client({ data: [], error: null });
+    await repo(c).listRecentForUser(OWNER, { limit: 21 });
+    expect(calls.some((call) => call.method === 'or')).toBe(false);
+  });
+
+  it.each([
+    ['a bad uuid', { requestedAt: T, id: 'nope' }],
+    ['a time that is not a timestamp', { requestedAt: 'yesterday', id: REQUEST }],
+    ['a quote in the time', { requestedAt: '2026-10-31T17:35:52Z",id.gt."0', id: REQUEST }],
+    ['a comma and parenthesis in the time', { requestedAt: '2026-10-31T17:35:52Z),or(id.gt.0', id: REQUEST }],
+    ['an over-long time', { requestedAt: `2026-10-31T17:35:52.123456+00:00${'0'.repeat(10)}`, id: REQUEST }],
+    ['seven fraction digits', { requestedAt: '2026-10-31T17:35:52.1234567+00:00', id: REQUEST }],
+    ['an extra key', { requestedAt: T, id: REQUEST, userId: ADMIN }],
+  ])('MX-4b: a cursor with %s is refused before any call', async (_label, before) => {
+    const bad = client({ data: [], error: null });
+    const result = await repo(bad.c).listRecentForUser(OWNER, { before: before as { requestedAt: string; id: string } });
+    expect(result.error).toMatchObject({ code: EXPORT_REQUEST_ERROR.INVALID_INPUT });
+    expect(bad.calls).toEqual([]);
+  });
+
+  it.each([
+    '2026-10-31T17:35:52Z',
+    '2026-10-31T17:35:52.018+00:00',
+    '2026-10-31T17:35:52.018123+00:00',
+    '2026-10-31 17:35:52.5+02',
+    '2026-10-31T17:35:52-0530',
+  ])('MX-4b: the cursor time %p is accepted as is', async (requestedAt) => {
+    const { c, calls } = client({ data: [], error: null });
+    expect((await repo(c).listRecentForUser(OWNER, { before: { requestedAt, id: REQUEST } })).error).toBeNull();
+    expect(calls.find((call) => call.method === 'or')?.args[0]).toContain(`"${requestedAt}"`);
+  });
+});
+
+describe('findOwnerLimitAnchor (MX-4b N-1, SA C-5)', () => {
+  const SINCE = '2026-11-01T12:00:00.000Z';
+  const anchorRow = (requestedAt: string, statuses: string[] = ['sent']) => ({
+    requested_at: requestedAt,
+    business_os_export_module_jobs: statuses.map((status) => ({ status })),
+  });
+
+  it('mirrors the start function: user_id, origin owner only, inside the window, a counted job, newest first, the row at OFFSET limit - 1', async () => {
+    const { c, calls } = client({ data: [anchorRow('2026-11-02T08:30:00.123456+00:00')], error: null });
+    const result = await repo(c).findOwnerLimitAnchor(OWNER, SINCE);
+    expect(result).toEqual({ data: { requestedAt: '2026-11-02T08:30:00.123456+00:00' }, error: null });
+    const offset = MODULE_EXPORT_POLICY.OWNER_DAILY_LIMIT - 1;
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_export_requests'] },
+      { method: 'select', args: [OWNER_LIMIT_ANCHOR_COLUMNS] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['origin', 'owner'] },
+      { method: 'gt', args: ['requested_at', SINCE] },
+      { method: 'not', args: ['business_os_export_module_jobs.status', 'in', '(failed,interrupted)'] },
+      { method: 'order', args: ['requested_at', { ascending: false }] },
+      { method: 'range', args: [offset, offset] },
+    ]);
+    expect(offset).toBe(1);
+    // A real column in the !inner embed (the MX-4a C-1 rule), never `*`.
+    expect(OWNER_LIMIT_ANCHOR_COLUMNS).toBe('requested_at, business_os_export_module_jobs!inner(status)');
+    // Admin-origin requests are never counted toward the owner's limit.
+    expect(calls.some((call) => call.method === 'eq' && call.args[0] === 'origin' && call.args[1] === 'admin')).toBe(false);
+  });
+
+  it('no row at the offset (one counted request, or only failed / interrupted ones) → requestedAt null', async () => {
+    const { c } = client({ data: [], error: null });
+    expect(await repo(c).findOwnerLimitAnchor(OWNER, SINCE)).toEqual({ data: { requestedAt: null }, error: null });
+  });
+
+  it.each([
+    ['only not-counted jobs in the embed (the filter did not apply)', [anchorRow('2026-11-02T08:30:00Z', ['failed', 'interrupted'])]],
+    ['no job in the embed', [anchorRow('2026-11-02T08:30:00Z', [])]],
+    ['an embed that is not an array', [{ requested_at: '2026-11-02T08:30:00Z', business_os_export_module_jobs: { status: 'sent' } }]],
+    ['a time of another shape', [anchorRow('yesterday')]],
+    ['two rows for a one-row range', [anchorRow('2026-11-02T08:30:00Z'), anchorRow('2026-11-02T07:30:00Z')]],
+  ])('fails closed on %s → unexpected_row, logged by method only', async (_label, data) => {
+    const { c } = client({ data, error: null });
+    const result = await repo(c).findOwnerLimitAnchor(OWNER, SINCE);
+    expect(result).toEqual({ data: null, error: expect.objectContaining({ code: EXPORT_REQUEST_ERROR.UNEXPECTED_ROW }) });
+    expect(JSON.stringify(logged)).toContain('findOwnerLimitAnchor');
+  });
+
+  it('a counted job beside a not-counted one is enough', async () => {
+    const { c } = client({ data: [anchorRow('2026-11-02T08:30:00Z', ['failed', 'waiting'])], error: null });
+    expect((await repo(c).findOwnerLimitAnchor(OWNER, SINCE)).data).toEqual({ requestedAt: '2026-11-02T08:30:00Z' });
+  });
+
+  it('a bad user id or window start is refused before any call; a DB error is { error }, never a throw', async () => {
+    for (const [userId, since] of [['nope', SINCE], [OWNER, 'yesterday'], [OWNER, '']]) {
+      const bad = client({ data: [], error: null });
+      expect((await repo(bad.c).findOwnerLimitAnchor(userId, since)).error).toMatchObject({ code: EXPORT_REQUEST_ERROR.INVALID_INPUT });
+      expect(bad.calls).toEqual([]);
+    }
+    const failing = client({ data: null, error: { code: 'XX000', message: 'boom', details: 'secret row' } });
+    expect(await repo(failing.c).findOwnerLimitAnchor(OWNER, SINCE)).toEqual({ data: null, error: expect.objectContaining({ code: 'XX000' }) });
+    expect(JSON.stringify(logged)).not.toContain('secret row');
   });
 });
 

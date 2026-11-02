@@ -61,7 +61,7 @@ const escape = async () =>
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockProbe.mockResolvedValue({ kind: 'ok', requests: [] });
+  mockProbe.mockResolvedValue({ kind: 'ok', requests: [], hasMore: false, nextExportAt: null });
 });
 
 it('in flight: Escape and the X close nothing; on start the status line confirms; then Escape closes only the drawer and focus returns', async () => {

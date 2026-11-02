@@ -47,6 +47,8 @@ const HISTORY = {
     requests: [
       { requestId: REQUEST, requestedAt: T, origin: 'owner', modules: [{ module: 'clients', status: 'sent', sentAt: T, emailCount: 2 }] },
     ],
+    hasMore: true,
+    nextExportAt: '2026-10-28T10:05:00.000Z',
   },
 };
 
@@ -61,9 +63,40 @@ describe('fetchModuleExportHistory (MX-3.1: ok or error)', () => {
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('200 with a valid body → ok with the history', async () => {
+  it('200 with a valid body → ok with the history, hasMore and nextExportAt (MX-4b T-15)', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, HISTORY));
-    expect(await fetchModuleExportHistory()).toEqual({ kind: 'ok', requests: HISTORY.data.requests });
+    expect(await fetchModuleExportHistory()).toEqual({
+      kind: 'ok',
+      requests: HISTORY.data.requests,
+      hasMore: true,
+      nextExportAt: '2026-10-28T10:05:00.000Z',
+    });
+    fetchMock.mockResolvedValue(jsonResponse(200, { ...HISTORY, data: { ...HISTORY.data, hasMore: false, nextExportAt: null } }));
+    expect(await fetchModuleExportHistory()).toMatchObject({ kind: 'ok', hasMore: false, nextExportAt: null });
+  });
+
+  it.each([
+    ['hasMore missing', { hasMore: undefined }],
+    ['hasMore a string', { hasMore: 'true' }],
+    ['nextExportAt missing', { nextExportAt: undefined }],
+    ['nextExportAt a number', { nextExportAt: 1730000000000 }],
+    ['nextExportAt empty', { nextExportAt: '' }],
+  ])('T-15: a 200 with %s → error', async (_label, patch) => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { ...HISTORY, data: { ...HISTORY.data, ...patch } }));
+    expect(await fetchModuleExportHistory()).toEqual({ kind: 'error' });
+  });
+
+  it('T-15: "Show older" sends the cursor as before + beforeId, the time untouched (microseconds and + kept)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, HISTORY));
+    const micro = '2026-10-31T17:35:52.018123+00:00';
+    await fetchModuleExportHistory({ before: { requestedAt: micro, requestId: REQUEST } });
+    const [url] = fetchMock.mock.calls[0];
+    expect(url.startsWith(`${MODULE_EXPORT_URL}?`)).toBe(true);
+    const params = new URLSearchParams(url.slice(MODULE_EXPORT_URL.length + 1));
+    expect([...params.keys()]).toEqual(['before', 'beforeId']);
+    expect(params.get('before')).toBe(micro);
+    expect(params.get('beforeId')).toBe(REQUEST);
+    expect(url).not.toContain('+00:00');
   });
 
   it('any 404 (ours, a page, or JSON of another shape) → error; there is no "off" any more', async () => {
