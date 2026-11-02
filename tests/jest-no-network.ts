@@ -60,6 +60,14 @@ import net from 'node:net';
 /** Where the live-API tests live. Exempt, by design. */
 const INTEGRATION_TESTS = 'tests/plugins/integration-tests/';
 
+/*
+ * The guard's OWN test opens these connections deliberately, to prove this
+ * function refuses them. It is still refused — that is what it asserts — but it
+ * is not recorded as a violation, or it would fail itself. Matched on the file
+ * name alone, so the path separator does not matter.
+ */
+const GUARDS_OWN_TEST = 'jest-no-network.guard.test';
+
 /**
  * Destinations that cannot leave this machine.
  *
@@ -132,7 +140,11 @@ function destinationOf(args: unknown[]): { host?: string; port?: number } {
 }
 
 /** Just enough of a sandbox global to find the running test's path. */
-type Sandbox = { expect?: { getState?: () => { testPath?: string } } };
+type Sandbox = {
+  expect?: { getState?: () => { testPath?: string; currentTestName?: string } };
+  /* Read and emptied by tests/jest-no-network-fail.ts, which fails the case. */
+  __blockedConnections?: Array<{ destination: string; whileRunning: string | null }>;
+};
 
 /**
  * The test file running right now, for the error message.
@@ -202,6 +214,33 @@ if (installed.__noNetworkGuard) {
 
     if (exempt || staysOnThisMachine(host)) {
       return (realConnect as (...a: unknown[]) => net.Socket).apply(this, args);
+    }
+
+    /*
+     * Recorded on the RUNNING FILE's global, for tests/jest-no-network-fail.ts
+     * to fail the case in an `afterEach`. Recording rather than throwing is
+     * deliberate, and that file says why at length: the callers here swallow a
+     * socket error by design, so a throw would become a silent fallback.
+     *
+     * `whileRunning` is null when no case is in progress — during a module
+     * import, or after the last case — which is also how a promise left
+     * floating by an EARLIER file in this worker lands here. The failure
+     * message keeps the two apart instead of blaming whoever is running.
+     */
+    if (!testPath.includes(GUARDS_OWN_TEST)) {
+      const sandbox = guarded.__currentSandbox;
+      if (sandbox) {
+        let whileRunning: string | null = null;
+        try {
+          whileRunning = sandbox.expect?.getState?.()?.currentTestName ?? null;
+        } catch {
+          /* the state is not always readable; the destination still is */
+        }
+        (sandbox.__blockedConnections ??= []).push({
+          destination: `${host}:${port ?? '?'}`,
+          whileRunning,
+        });
+      }
     }
 
     const error = Object.assign(
