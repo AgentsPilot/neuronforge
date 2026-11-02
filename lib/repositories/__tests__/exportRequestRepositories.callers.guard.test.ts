@@ -15,8 +15,11 @@
  * (`lib/business-os/data-export/moduleExportWorkerDeps.ts`, service role, every
  * effect keyed on the claimed row's user_id), to the two class rules only. The
  * worker itself (`moduleExportWorker.ts`) and its tests take the store as an
- * injected port and name neither class. MX-4 adds the receipt facts and MX-5
- * the admin route, each in its own diff here.
+ * injected port and name neither class. MX-4a added the receipt facts
+ * (`BusinessOsDataExportJobRepository.ts` `findDeletionFacts`: one read method
+ * on each class, user_id only, same client; SA Q-9 D-1) and its test, to the
+ * two class rules only: each table keeps its own repository as its only
+ * reader. MX-5 adds the admin route in its own diff here.
  *
  * Naming the class is not the only way in. A file could call one of the three
  * SQL functions by name, or query a table with `.from(...)`. So those strings
@@ -52,6 +55,9 @@ const OWNER_ROUTE_TEST = 'app/api/business-os/export-requests/__tests__/route.te
 const OWNER_ROUTE_QA_TEST = 'app/api/business-os/export-requests/__tests__/route.qa.test.ts';
 /** MX-3b: the data export worker's production wiring (cron `/api/cron/data-export-modules`). Class rules only. */
 const WORKER_DEPS = 'lib/business-os/data-export/moduleExportWorkerDeps.ts';
+/** MX-4a: the deletion receipt facts (`findDeletionFacts`, XC-12) read both new tables through their repositories. Class rules only. */
+const RECEIPT_FACTS = 'lib/repositories/BusinessOsDataExportJobRepository.ts';
+const RECEIPT_FACTS_TEST = 'lib/repositories/__tests__/BusinessOsDataExportJobRepository.test.ts';
 
 /** The SQL files of 20261095 that name every function. */
 const SQL_FILES = [MIGRATION, ROLLBACK, MIGRATION_TEST, PRECHECK, CHECKER];
@@ -67,12 +73,12 @@ const RULES: ReadonlyArray<Rule> = [
   {
     name: 'BusinessOsExportRequestRepository',
     pattern: /\bBusinessOsExportRequestRepository\b/,
-    allowed: [REQUEST_REPOSITORY, REQUEST_TEST, SELF, OWNER_ROUTE, OWNER_ROUTE_TEST, OWNER_ROUTE_QA_TEST, WORKER_DEPS],
+    allowed: [REQUEST_REPOSITORY, REQUEST_TEST, SELF, OWNER_ROUTE, OWNER_ROUTE_TEST, OWNER_ROUTE_QA_TEST, WORKER_DEPS, RECEIPT_FACTS, RECEIPT_FACTS_TEST],
   },
   {
     name: 'BusinessOsExportModuleJobRepository',
     pattern: /\bBusinessOsExportModuleJobRepository\b/,
-    allowed: [JOB_REPOSITORY, JOB_TEST, SELF, OWNER_ROUTE, OWNER_ROUTE_TEST, OWNER_ROUTE_QA_TEST, WORKER_DEPS],
+    allowed: [JOB_REPOSITORY, JOB_TEST, SELF, OWNER_ROUTE, OWNER_ROUTE_TEST, OWNER_ROUTE_QA_TEST, WORKER_DEPS, RECEIPT_FACTS, RECEIPT_FACTS_TEST],
   },
   {
     name: 'the start function name',

@@ -139,8 +139,8 @@ export function ErasureRequestContent({ state }: { state?: AccountDeletionCheckS
     return <DeleteAccountDrawer check={state.data} tr={tr} language={language} isRTL={isRTL} />;
   }
 
-  // The export is the one shared control (data export DE-9, BC-1): the same
-  // zip, copy, status line and notice as every other entry point. No own
+  // The export is the one shared control (BC-1; MX-3.1): DownloadMyDataButton
+  // opens the export drawer, the same as every other entry point. No own
   // fetch, no own message here. SA C-8: it sits on its own line as one stacked
   // block, with the "Contact us" link as a sibling and no flex-row-reverse
   // wrapper, so its logical classes are not reversed twice in Hebrew.
