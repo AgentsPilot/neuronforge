@@ -60,6 +60,10 @@ export const COUNT_NOUN: Record<string, string> = {
   task: 'tasks',
   lead_source: 'places enquiries come from',
   stripe_account: 'payment accounts',
+  /* Agents, not the clients or bookings they act on. A count of two here means
+     two agents have stopped, and says nothing about how many people were
+     waiting on what they do. */
+  agent: 'agents',
   time_slot: 'appointment slots',
   /*
    * Hours, not meetings, and not clients.

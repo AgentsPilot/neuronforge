@@ -31,6 +31,7 @@
 /** Everything currently tracked. Adding one is an entry in `GAP_DEFINITIONS`. */
 export type GapId =
   | 'enquiry_unanswered'
+  | 'client_reply_waiting'
   /**
    * A confirmed appointment coming up.
    *
@@ -122,6 +123,20 @@ export type GapId =
    */
   | 'quote_deadline_unanswered'
   /**
+   * A quote whose date has passed, still unanswered.
+   *
+   * The far side of `quote_deadline_unanswered`, which watches the deadline
+   * approach and stops matching the moment it arrives — so attention ended
+   * exactly where the problem began, and the quote fell back to
+   * `quote_awaiting_client`, which knows nothing of dates and chased it for
+   * ever. That chase could only ever fail: the client's page is the one place
+   * that checks, and it refuses them.
+   *
+   * `blocksOn: 'owner'` because there is nothing the client can now do. The
+   * price lapsed, and only the business can put it back on the table.
+   */
+  | 'quote_expired'
+  /**
    * A meeting that was held and never charged for.
    *
    * Distinct from `invoice_unpaid`, which reads `payment_invoices` and so
@@ -157,6 +172,17 @@ export type GapAction =
   | 'chase_payment'
   /** Ask a client whether they need more time or more information on a quote. */
   | 'chase_quote'
+  /* Answer a client who wrote back: open their mail and send. */
+  | 'answer_client'
+  /**
+   * Put a lapsed quote back on the table with a new date.
+   *
+   * Takes an ANSWER, so it cannot be a one-click post like its neighbours: the
+   * owner is choosing how long to hold the price for, and a button that picked
+   * that for them would be deciding the commercial question. It opens a small
+   * dialog for the date, the way `refund` opens its own for the amount.
+   */
+  | 'extend_quote'
   /**
    * Mark a phase done so it can be invoiced.
    *

@@ -19,7 +19,7 @@ import { VerdictCard } from './VerdictCard';
 import { TipsStepper, Tip } from './TipsStepper';
 import { FunnelMap, FunnelStation, FunnelGap, GhostProjection } from './FunnelMap';
 import { FunnelDrawer, type DrawerContent } from './FunnelDrawer';
-import { SystemReadiness } from './SystemReadiness';
+import { SystemReadiness, type ReadinessAttention } from './SystemReadiness';
 import { UsageCard } from '@/components/business-os/UsageCard';
 import { CHANNEL_LABELS, type ChannelRow } from './ChannelSourcesSection';
 import { ChannelsOverviewCard } from './ChannelsOverviewCard';
@@ -234,6 +234,14 @@ interface LiveDashboardProps {
    * processor — so it has to travel with the items themselves.
    */
   setupShape?: BusinessShape;
+  /**
+   * Connections that have died, for the readiness line. See
+   * `ReadinessAttention` — separate from `setupItems` because the readiness
+   * graph resolves away anything it has not declared as a step.
+   */
+  readinessAttention?: ReadinessAttention[];
+  /** Repair one dead connection, by plugin key. */
+  onRepairConnection?: (key: string) => void;
   /** Where clients came from — leads, bookings and revenue per channel. */
   channelPerformance?: ChannelPerformance;
   /** Readiness actions currently in flight, e.g. an OAuth round trip. */
@@ -348,22 +356,54 @@ function AdvisorIdleCard({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
-        <div
+        {/*
+          ───────────────────────────────────────────────────────────────────────
+          THE ADVISOR'S MARK, THE SAME ONE IT USES ONCE IT HAS SOMETHING TO SAY.
+
+          This was a saturated orange gradient circle holding a white filled
+          TICK, with a coloured glow under it. Three things wrong at once:
+
+            · a tick means DONE. This card's own words are "watching, nothing to
+              advise yet" — it has concluded nothing, and the one glyph on it
+              claimed a result;
+            · at 32px a bright filled circle beside no other colour reads as an
+              eyeball or an avatar placeholder, not as a mark that means
+              anything;
+            · the gradient plus a 0.4-opacity glow is the loudest element on a
+              dashboard whose message here is that there is nothing to look at.
+
+          `InsightAdvisorCard` had already settled all three for the loaded
+          card, and its comment is the reasoning: the gradient circle "read as a
+          decoration or an avatar placeholder", and "a 30px block of saturated
+          orange beside orange text is two loud things in one line". So the
+          tint, the rounded square, the stroked `Bot`, and no glow.
+
+          Using the SAME mark is the point. The advisor before it has anything to
+          report and the advisor reporting are one worker, and a reader should
+          not have to learn two symbols for it — which is the same argument that
+          put `Bot` on the agents card and the bookings tab.
+          ───────────────────────────────────────────────────────────────────────
+        */}
+        <span
           style={{
-            width: isSetup ? '42px' : '32px',
-            height: isSetup ? '42px' : '32px',
-            borderRadius: '50%',
-            background: 'linear-gradient(135deg, #FED7AA 0%, #FDBA74 50%, #FB923C 100%)',
+            width: isSetup ? '38px' : '30px',
+            height: isSetup ? '38px' : '30px',
+            /* A rounded square, not a circle: the circle is what made it read
+               as an eye. Matches the loaded card's 9px at its size. */
+            borderRadius: isSetup ? '11px' : '9px',
+            background: 'rgba(249,115,22,0.14)',
+            color: '#F97316',
             flexShrink: 0,
-            display: 'grid',
-            placeItems: 'center',
-            boxShadow: '0 4px 12px -4px rgba(249, 115, 22, 0.4)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
         >
-          <svg viewBox="0 0 24 24" style={{ width: isSetup ? '20px' : '16px', height: isSetup ? '20px' : '16px', fill: '#FFFFFF' }}>
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-          </svg>
-        </div>
+          <Bot
+            style={{ width: isSetup ? '20px' : '16px', height: isSetup ? '20px' : '16px' }}
+            strokeWidth={2.25}
+          />
+        </span>
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: '12px', fontWeight: 600, color: '#F97316', letterSpacing: '0.02em' }}>
@@ -438,6 +478,8 @@ export function LiveDashboard({
   greeting = 'morning',
   setupItems = [],
   setupShape = UNKNOWN_SHAPE,
+  readinessAttention = [],
+  onRepairConnection,
   channelPerformance,
   pendingActions,
   actionError,
@@ -1310,6 +1352,8 @@ export function LiveDashboard({
     <SystemReadiness
       items={readinessItems}
       shape={setupShape}
+      attention={readinessAttention}
+      onRepair={onRepairConnection}
       onAction={onAction}
       pendingActions={pendingActions}
       actionError={actionError}
@@ -2608,6 +2652,8 @@ export function LiveDashboard({
           <SystemReadiness
             items={readinessItems}
             shape={setupShape}
+            attention={readinessAttention}
+            onRepair={onRepairConnection}
             onAction={onAction}
             pendingActions={pendingActions}
             actionError={actionError}

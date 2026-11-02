@@ -316,7 +316,23 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           String(meeting.booking_id),
           user.id,
           previous,
-          { sessionStart: start, sessionEnd: end }
+          {
+            sessionStart: start,
+            sessionEnd: end,
+            /*
+             * WHICH session, so the client's link can move THIS hour.
+             *
+             * The token names the container, which on a package has no clock —
+             * so without this the portal opened its reschedule panel, asked the
+             * server to move a booking with N sessions, and showed a generic
+             * failure before the client had touched anything.
+             *
+             * The NEW attempt, not the one just superseded: the superseded row
+             * is stamped `moved` and still exists, and pointing the client at
+             * it offers slots against the hour they no longer hold.
+             */
+            sessionMeetingId: newMeetingId,
+          }
         );
 
         if (!mail.sent) {

@@ -25,7 +25,10 @@ export type AutomationAgentId =
   | 'follow_up_stalled_deals'
   | 'rebook_quiet_clients'
   | 'recover_abandoned_checkouts'
-  | 'win_back_quiet_clients';
+  | 'win_back_quiet_clients'
+  | 'draft_client_replies'
+  | 'draft_client_replies_outlook'
+  | 'import_leads_from_sheet';
 
 /**
  * How often an automation may be set to run.
@@ -153,6 +156,44 @@ export interface AutomationAgent {
   offeredFromInsight?: false;
 
   /**
+   * TWO ENTRIES, ONE JOB, ONE ROW IN FRONT OF THE OWNER.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Some agents are the same piece of work done through a different provider.
+   * Drafting replies to clients is the first: the judgement, the prompt, the
+   * four outcomes and the timeline entries are identical, and the plans differ
+   * only where Gmail and Graph force them to — a folder called `sentitems`
+   * rather than `sent`, a window in days rather than a search term, a draft
+   * made FROM a message rather than addressed with a thread id.
+   *
+   * That cannot be one catalogue entry, because `pluginsRequired` is what the
+   * runtime grants a run from: naming both mail plugins would demand the owner
+   * connect BOTH to run either. And it must not be two rows, because an owner
+   * looking at "Draft replies to client emails" twice has no way to tell which
+   * one is theirs — the names are the same, since the job is.
+   *
+   * So the catalogue holds both and the offer holds one. `variantGroup` names
+   * the choice, `variantPlugin` names the mailbox each entry speaks to, and
+   * `variantDefault` settles what to show an owner who has connected neither —
+   * which is most of them, since this is how they first meet the agent. The
+   * owner sees one row either way; which plan runs behind it follows the
+   * mailbox they actually use.
+   *
+   * Installing one takes the whole group off the list. An owner running the
+   * Gmail agent who later connects Outlook must not be offered the twin: they
+   * would then have two agents reading two mailboxes and drafting into both,
+   * which is not a configuration anybody asked for.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  variantGroup?: string;
+
+  /** The plugin that distinguishes this variant. Required with `variantGroup`. */
+  variantPlugin?: string;
+
+  /** Shown when no sibling's plugin is connected. Exactly one per group. */
+  variantDefault?: true;
+
+  /**
    * How long to keep trying, before giving up on one person.
    *
    * ───────────────────────────────────────────────────────────────────────────
@@ -174,8 +215,8 @@ export interface AutomationAgent {
    * find's own business and needs no setting.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  stopAfterChoices: number[];
-  defaultStopAfterDays: number;
+  stopAfterChoices?: number[];
+  defaultStopAfterDays?: number;
 
   /**
    * What the business must already have for this to mean anything.
@@ -205,6 +246,57 @@ export interface AutomationAgent {
    * ───────────────────────────────────────────────────────────────────────────
    */
   worksAlongside?: string;
+
+  /**
+   * What the owner must answer before this can run, beyond cadence and the
+   * stop rule.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WRITTEN ONTO THE ROW AS `input_schema`, WHICH IS A SURFACE THAT ALREADY
+   * EXISTS.
+   *
+   * The agent page reads `input_schema`, renders each field through
+   * `AgentInputFields`, resolves dynamic dropdowns from the plugin params the
+   * plan calls — including dependent ones — and saves the answers to
+   * `agent_configurations`. All of that is built and in use. The only reason a
+   * catalogue agent could never ask the owner anything was that nothing wrote
+   * this column at install.
+   *
+   * NAME EACH FIELD AFTER THE PLUGIN PARAMETER IT FILLS. The metadata lookup
+   * matches on the field name, so `spreadsheet_id` finds the `x-dynamic-options`
+   * the Sheets plugin declares on `read_range` and the owner gets a real list of
+   * their spreadsheets. A field named anything else renders as a text box and
+   * the owner is left typing an id.
+   *
+   * Absent for the six chasers, which need nothing but a schedule.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  inputSchema?: Array<{
+    name: string;
+    type: string;
+    required: boolean;
+    description?: string;
+    default?: unknown;
+    /**
+     * Where this field's dropdown gets its list, when it has one.
+     *
+     * Named here rather than looked up, because the install dialog asks BEFORE
+     * the agent exists. The usual path derives this from the agent's own plan,
+     * which is no help when the whole point is to collect answers first.
+     * `/api/plugins/fetch-options` wants only a plugin, an action and a
+     * parameter, and takes no agent id, so stating the triple is enough.
+     *
+     * `dependsOn` is what makes the tab list reload from the chosen
+     * spreadsheet: those fields' current values are sent as `dependentValues`,
+     * and the field stays disabled until they have one.
+     */
+    options?: {
+      plugin: string;
+      action: string;
+      parameter: string;
+      dependsOn?: string[];
+    };
+  }>;
 
   /** Plugins the plan calls. Written onto the agent row for the runtime. */
   pluginsRequired: string[];

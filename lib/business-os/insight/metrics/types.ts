@@ -56,7 +56,15 @@ export type ConversionMetricKey =
   /** Why declined quotes were declined, grouped by the reason the client gave. */
   | 'conversion.decline_reason'
   /** Share of ANSWERED quotes that were accepted. */
-  | 'conversion.quote_acceptance_rate';
+  | 'conversion.quote_acceptance_rate'
+  /**
+   * Scheduled agents whose runs failed until the queue gave up.
+   *
+   * Under conversion because the agent this most often catches is the mailbox
+   * channel, and a mailbox that has stopped means website enquiries are not
+   * reaching the CRM at all — the first step of every conversion there is.
+   */
+  | 'conversion.agents_stopped';
 
 // Sales metrics
 export type SalesMetricKey =

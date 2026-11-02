@@ -33,6 +33,7 @@ export { FunnelMap} from './FunnelMap';
 export type { FunnelStation, FunnelGap, GhostProjection } from './FunnelMap';
 
 export { SystemReadiness } from './SystemReadiness';
+export type { ReadinessAttention } from './SystemReadiness';
 
 export { ChannelsCard } from './ChannelsCard';
 export { ChannelsOverviewCard } from './ChannelsOverviewCard';

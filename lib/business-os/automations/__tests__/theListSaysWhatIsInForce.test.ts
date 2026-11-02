@@ -133,8 +133,23 @@ describe('an install that made no choices', () => {
         business_os_automation: { id: automation.id, stopAfterDays: null },
       });
 
+      /*
+       * BOTH SHAPES, because an agent may legitimately have no stop rule.
+       *
+       * With one, the list shows the number and the plan spends its negative.
+       * Without one — the spreadsheet importer, whose rows have no age — the
+       * list shows nothing and the plan supplies nothing, and those two must
+       * agree as strictly as the other pair. A stop rule appearing on one side
+       * only is the disagreement this whole case exists to catch, and it is
+       * MORE likely now that the field is optional, not less.
+       */
+      const expected =
+        automation.defaultStopAfterDays === undefined
+          ? `${automation.id}: list null, plan undefined`
+          : `${automation.id}: list ${automation.defaultStopAfterDays}, plan ${-automation.defaultStopAfterDays}`;
+
       expect(`${automation.id}: list ${agent.stopAfterDays}, plan ${spent.stop_after_days}`).toBe(
-        `${automation.id}: list ${automation.defaultStopAfterDays}, plan ${-automation.defaultStopAfterDays}`
+        expected
       );
     }
   });
@@ -143,7 +158,11 @@ describe('an install that made no choices', () => {
 describe('an install that did make choices', () => {
   it('keeps the owner choice and does not overwrite it with the default', async () => {
     const automation = automationById('rebook_quiet_clients')!;
-    const chosen = automation.stopAfterChoices.find(d => d !== automation.defaultStopAfterDays)!;
+    /* This agent HAS a stop rule — the field is optional on the type because
+       the spreadsheet importer has none, and a chaser picked by name here must
+       still carry one or the choice below is vacuous. */
+    expect(automation.stopAfterChoices).toBeTruthy();
+    const chosen = automation.stopAfterChoices!.find(d => d !== automation.defaultStopAfterDays)!;
 
     findScheduled.mockResolvedValue({
       data: [row({ id: 'rebook_quiet_clients', cadence: 'monthly', stopAfterDays: chosen })],

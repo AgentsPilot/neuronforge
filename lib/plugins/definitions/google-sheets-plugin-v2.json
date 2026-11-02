@@ -102,6 +102,18 @@
             ],
             "default": "ROWS",
             "description": "Whether to read data as rows or columns"
+          },
+          "column": {
+            "type": "string",
+            "description": "A single column letter. NOT read by the executor: `read_range` takes a range, and this exists so a UI can OFFER the chosen tab's columns as a dropdown, labelled with whatever the owner put in row 1. `/api/plugins/fetch-options` only serves a source named on a real parameter, so a picker needs one declared somewhere. The letter is stored rather than the header, because a header is the owner's own text and may be blank, duplicated, or renamed.",
+            "x-dynamic-options": {
+              "source": "list_columns",
+              "description": "The chosen tab's columns, as letters labelled with their header",
+              "depends_on": [
+                "spreadsheet_id",
+                "range"
+              ]
+            }
           }
         }
       },
@@ -199,7 +211,9 @@
       },
       "output_dependencies": [
         {
-          "when_param": { "include_formula_values": true },
+          "when_param": {
+            "include_formula_values": true
+          },
           "unpopulated_fields": [],
           "message": "values contain raw formula strings (e.g. '=SUM(A1:A10)') instead of calculated results when include_formula_values=true — downstream steps expecting numeric data will receive formula text"
         }

@@ -28,7 +28,8 @@ export type AutomationId =
   | 'chase_invoices'
   | 'chase_intake'
   | 'remind_about_meeting'
-  | 'auto_complete_meetings';
+  | 'auto_complete_meetings'
+  | 'chase_quotes';
 
 export interface ActionTally {
   action: string;
@@ -97,6 +98,15 @@ const AUTOMATABLE: Record<string, AutomationId> = {
   SCHEDULING_BOOKING_COMPLETED: 'auto_complete_meetings',
   LEAD_REPLY_SENT: 'reply_to_enquiries',
   LEAD_FOLLOWUP_SENT: 'reply_to_enquiries',
+  /*
+   * Automation #6. Absent until now, which made this module do the one thing
+   * its own comment above warns of: every owner who chased a quote by hand was
+   * counted as work NOTHING could take, so `chase_quotes` never appeared as
+   * covered and the ranked uncovered list named an automation that already
+   * ships. The roadmap the script header promises was wrong in a knowable
+   * direction for as long as the line was missing.
+   */
+  PROPOSAL_REMINDER_SENT: 'chase_quotes',
 };
 
 /**

@@ -33,6 +33,9 @@
 import { CADENCE_CRON, type AutomationAgent, type AutomationAgentId } from './types';
 
 import chaseOverdueInvoicesSteps from './agents/chaseOverdueInvoices.steps.json';
+import draftClientRepliesSteps from './agents/draftClientReplies.steps.json';
+import draftClientRepliesOutlookSteps from './agents/draftClientRepliesOutlook.steps.json';
+import importLeadsFromSheetSteps from './agents/importLeadsFromSheet.steps.json';
 import followUpNewEnquiriesSteps from './agents/followUpNewEnquiries.steps.json';
 import followUpStalledDealsSteps from './agents/followUpStalledDeals.steps.json';
 import rebookQuietClientsSteps from './agents/rebookQuietClients.steps.json';
@@ -347,6 +350,264 @@ export const AUTOMATION_AGENTS: AutomationAgent[] = [
     defaultStopAfterDays: 540,
     stopAfterChoices: [365, 540, 730],
     steps: winBackQuietClientsSteps,
+  },
+  {
+    id: 'draft_client_replies',
+    nameKey: 'automation.draft_client_replies.name',
+    descriptionKey: 'automation.draft_client_replies.description',
+    watchesKey: 'automation.draft_client_replies.watches',
+    /*
+     * NOTHING REPORTS THIS TREND, so the process named here is inert and the
+     * flag below is what makes that true rather than a hope.
+     *
+     * No detector concludes "a client wrote back and nobody answered", and
+     * `TRIGGERABLE_PROCESSES` holds nothing for it either: the closest entry,
+     * `draft_reply_templates`, is `eligibleForAutomation: false`, carries
+     * `entityType: 'template'`, and exists to generate a handful of REUSABLE
+     * templates for common enquiry types. That is a different job from
+     * answering one person. So this names the nearest process and is then
+     * removed from both joins, exactly as `follow_up_stalled_deals` is.
+     */
+    answersProcess: 'send_followup_nudge',
+    /*
+     * Shipped, never offered from a card, and the guard asserts it is
+     * unreachable through either join. Without it, an agent naming no detectors
+     * becomes the fallback for its whole process — which would offer "shall I
+     * draft replies to your clients" on a card about two contacts idling at
+     * `lead` who have never emailed anybody.
+     *
+     * The owner finds it in the "Also available" list instead, which exists for
+     * exactly the agents in this position: `availableAutomations` offers those
+     * and ONLY those marked `offeredFromInsight: false`, because an agent with
+     * detectors behind it is meant to arrive on a card carrying its evidence.
+     * That list is this agent's whole discovery, so it needs no card.
+     *
+     * (An earlier version of this note said the agent was installed for every
+     * business from the start, switched off. Nothing installs it: there is no
+     * seeding path in the codebase, and the list is what replaced that idea.)
+     */
+    offeredFromInsight: false,
+    /*
+     * THE FIRST ENTRY TO NAME A PLUGIN THAT IS NOT `business-os`.
+     *
+     * The catalogue's rule is that an action touching this business's own data
+     * goes through `business-os`, because that door carries tenant scoping and
+     * is the one whose writes are capped and quota'd. It was written as
+     * "business-os only", which was true by accident while all six plans were
+     * data-only chasers. Gmail is not our data layer, and on a plugin platform
+     * an agent reading a mailbox is ordinary.
+     *
+     * `plugins_required` is the column the runtime grants the run from, so it
+     * must name both plugins the plan actually calls or the run fails inside a
+     * cron where nobody is watching.
+     */
+    pluginsRequired: ['business-os', 'google-mail'],
+    /*
+     * Daily, and deliberately no faster.
+     *
+     * The owner reads a draft before anything reaches a client, so a tighter
+     * loop buys them nothing they would notice. It also keeps the cost honest:
+     * one pass over yesterday's replies, rather than re-reading the same
+     * unanswered message every few minutes.
+     *
+     * Slower is offered because a business that gets two emails a week does not
+     * want this running every morning.
+     */
+    defaultCron: CADENCE_CRON.daily,
+    cadenceChoices: ['daily', 'every_3_days', 'weekly'],
+    /*
+     * THE STOP RULE MEANS SOMETHING DIFFERENT HERE, and it is still the same
+     * sentence: stop considering anything older than this.
+     *
+     * Elsewhere it bounds how long to keep chasing one person. Here it bounds
+     * how far back the agent reads a client's history with this business when
+     * working out what their reply refers to. Fourteen days keeps the context
+     * relevant and still covers a quote sent a fortnight ago; past it, a reply
+     * is answered on its own words or handed to the owner.
+     */
+    defaultStopAfterDays: 14,
+    stopAfterChoices: [7, 14, 30],
+    /*
+     * THE GMAIL HALF OF ONE CHOICE. See `variantGroup` on the type for why the
+     * same job is two entries and one row. This one is the default because an
+     * owner who has connected no mailbox yet has to be shown something, and
+     * Gmail is the commoner of the two among small businesses.
+     */
+    variantGroup: 'draft_client_replies',
+    variantPlugin: 'google-mail',
+    variantDefault: true,
+    steps: draftClientRepliesSteps,
+  },
+  {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE OUTLOOK HALF, and nothing above the plan differs.
+     *
+     * It shares the three translation keys with the Gmail entry on purpose: the
+     * agent does the same thing, so describing it differently would invent a
+     * distinction the owner does not have. Only one of the two is ever offered,
+     * which is what makes one set of words correct for both.
+     *
+     * `pluginsRequired` is the whole reason this is a separate entry rather
+     * than a branch inside one. It is the column the runtime grants a run
+     * from, so an entry naming both mail plugins would require an owner to
+     * connect Gmail AND Outlook before either plan could run.
+     *
+     * Everything else is held equal deliberately — the same cadence choices,
+     * the same stop rule, the same meaning for it — so that a difference
+     * between the two files is always a difference Graph forced, never a
+     * decision taken twice.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    id: 'draft_client_replies_outlook',
+    nameKey: 'automation.draft_client_replies.name',
+    descriptionKey: 'automation.draft_client_replies.description',
+    watchesKey: 'automation.draft_client_replies.watches',
+    answersProcess: 'send_followup_nudge',
+    offeredFromInsight: false,
+    pluginsRequired: ['business-os', 'outlook'],
+    defaultCron: CADENCE_CRON.daily,
+    cadenceChoices: ['daily', 'every_3_days', 'weekly'],
+    defaultStopAfterDays: 14,
+    stopAfterChoices: [7, 14, 30],
+    variantGroup: 'draft_client_replies',
+    variantPlugin: 'outlook',
+    steps: draftClientRepliesOutlookSteps,
+  },
+  {
+    id: 'import_leads_from_sheet',
+    nameKey: 'automation.import_leads_from_sheet.name',
+    descriptionKey: 'automation.import_leads_from_sheet.description',
+    watchesKey: 'automation.import_leads_from_sheet.watches',
+    /* Inert, as for `draft_client_replies`: no detector reports "there are
+       leads in a spreadsheet nobody has filed", and nothing in
+       `TRIGGERABLE_PROCESSES` comes near it. Named only because the field is
+       required, and unreachable through either join because of the flag below. */
+    answersProcess: 'send_followup_nudge',
+    offeredFromInsight: false,
+    /*
+     * The plan reads a mailbox-shaped thing it does not own, so the owner's
+     * own Sheets connection is what grants it. `business-os` is the other half
+     * — the CRM lookup and the contact write both go through our own door,
+     * which is what carries tenant scoping.
+     */
+    pluginsRequired: ['business-os', 'google-sheets'],
+    /*
+     * The two the owner must answer, named after the plugin parameters they
+     * fill so the agent page finds the right dropdown for each.
+     *
+     * `spreadsheet_id` matches the Sheets parameter carrying
+     * `x-dynamic-options: { source: 'list_spreadsheets' }`, and `range` matches
+     * the one carrying `list_sheet_names` with `depends_on: ['spreadsheet_id']`.
+     * That dependency is why the tab list reloads from whichever spreadsheet
+     * was picked, and why neither needs a wizard of its own.
+     *
+     * Named differently, both would render as text boxes and the owner would
+     * be left pasting an id out of a URL.
+     */
+    inputSchema: [
+      {
+        name: 'spreadsheet_id',
+        type: 'string',
+        required: true,
+        description: 'Which spreadsheet holds your leads',
+        options: { plugin: 'google-sheets', action: 'read_range', parameter: 'spreadsheet_id' },
+      },
+      {
+        name: 'range',
+        type: 'string',
+        required: true,
+        description: 'Which tab to read',
+        /* Reloads from whichever spreadsheet was chosen, and stays disabled
+           until one is. The Sheets plugin declares the same dependency on this
+           parameter; stating it here is what lets the dialog honour it before
+           an agent exists to read that declaration from. */
+        options: {
+          plugin: 'google-sheets',
+          action: 'read_range',
+          parameter: 'range',
+          dependsOn: ['spreadsheet_id'],
+        },
+      },
+      {
+        name: 'email_column',
+        type: 'string',
+        required: true,
+        description: 'Which column holds the email address',
+        /*
+         * ASKED, NOT MEASURED, and this is the field that decides it.
+         *
+         * An earlier version had a model work out which column held what. It
+         * could not invent an address — the prompt forbade it — but nothing
+         * stopped it picking the WRONG column, and the result is contacts
+         * filed under addresses that belong to somebody else. That is the only
+         * failure in this agent that reaches real people.
+         *
+         * A spreadsheet's columns are a short, visible list, so asking costs
+         * one dropdown and removes the failure entirely. The mailbox channel
+         * measures because you cannot ask somebody to describe their email
+         * format; that reasoning does not carry across, which is what I got
+         * wrong first time.
+         */
+        options: {
+          plugin: 'google-sheets',
+          action: 'read_range',
+          parameter: 'column',
+          dependsOn: ['spreadsheet_id', 'range'],
+        },
+      },
+      {
+        name: 'name_column',
+        type: 'string',
+        required: true,
+        description: 'Which column holds their name',
+        /* Required because `create_contacts` will not accept a contact
+           without a first name. */
+        options: {
+          plugin: 'google-sheets',
+          action: 'read_range',
+          parameter: 'column',
+          dependsOn: ['spreadsheet_id', 'range'],
+        },
+      },
+      {
+        name: 'phone_column',
+        type: 'string',
+        required: false,
+        description: 'Which column holds their phone, if any',
+        options: {
+          plugin: 'google-sheets',
+          action: 'read_range',
+          parameter: 'column',
+          dependsOn: ['spreadsheet_id', 'range'],
+        },
+      },
+    ],
+    /*
+     * Daily. A lead that sits in a spreadsheet for a week is a lead the
+     * business has already half lost, and the run is cheap: one read, one
+     * model call, and a CRM lookup only for people the sheet actually holds.
+     *
+     * Slower is offered for a sheet that is really an archive rather than a
+     * live list.
+     */
+    defaultCron: CADENCE_CRON.daily,
+    cadenceChoices: ['daily', 'every_3_days', 'weekly'],
+    /*
+     * NO STOP RULE, and its absence is the honest answer rather than an
+     * omission.
+     *
+     * Everywhere else it means "stop considering anything older than this",
+     * which needs something with a date. A spreadsheet row has no age: it is
+     * the same row whether it was typed this morning or last year, so any
+     * number offered here would be a control over nothing, shown to an owner
+     * as though it did something.
+     *
+     * The field is optional for exactly this, and the guard that requires every
+     * plan to spend a stop rule now reads the declaration rather than assuming
+     * one.
+     */
+    steps: importLeadsFromSheetSteps,
   },
 ];
 

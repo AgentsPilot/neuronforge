@@ -237,6 +237,62 @@ export function nextRunAfter(cron: string, timezone: string, userId?: string): D
 }
 
 /**
+ * What actually went wrong, rather than the sentence wrapped around it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE USEFUL MESSAGE IS ONE LAYER IN.
+ *
+ * A failed plan reports itself at the top as, verbatim from a live run:
+ *
+ *   Calibration stop: Non-retryable execution error at step "Search mailbox for
+ *   unread website enquiry emails using the configured mail_query." (unknown)
+ *
+ * while the STEP that failed recorded:
+ *
+ *   Your Gmail connection has expired. Please reconnect in Settings →
+ *   Connected Apps.
+ *
+ * The plugin author already wrote the sentence an owner can act on. Taking the
+ * wrapper threw it away and handed the translator a string it does not
+ * recognise, which it passes through unchanged — so the agents list would have
+ * shown a business owner the word "Calibration" about their mailbox.
+ *
+ * Measured, not assumed: `toUserFacing` was run on both strings and returned
+ * the outer one verbatim.
+ *
+ * The deepest error wins. Falling back outward rather than inward, because a
+ * wrapper is always available and is always the least useful thing to say.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function causeOfFailure(execution: unknown): string {
+  const result = execution as {
+    error?: string;
+    message?: string;
+    error_message?: string;
+    execution_trace?: {
+      failedSteps?: string[];
+      stepExecutions?: Array<{ stepId?: string; metadata?: { success?: boolean; error?: string } }>;
+    };
+  };
+
+  const steps = result?.execution_trace?.stepExecutions ?? [];
+  const failedIds = new Set(result?.execution_trace?.failedSteps ?? []);
+
+  /* The step the plan named as failed, where it recorded a reason. */
+  const named = steps.find(
+    step => step.stepId && failedIds.has(step.stepId) && step.metadata?.error
+  );
+  if (named?.metadata?.error) return named.metadata.error;
+
+  /* Otherwise any step that recorded one: a scatter item's failure is real
+     even when the parent step is what the plan listed. */
+  const any = steps.find(step => step.metadata?.success === false && step.metadata?.error);
+  if (any?.metadata?.error) return any.metadata.error;
+
+  return result?.error_message ?? result?.error ?? result?.message ?? 'the plan reported failure';
+}
+
+/**
  * When this agent is next due, by whichever clock it was given.
  *
  * ─────────────────────────────────────────────────────────────────────────────

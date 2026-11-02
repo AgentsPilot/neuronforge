@@ -188,6 +188,8 @@ export const publicMessages: Catalogue = {
     currentAppointment: 'Current appointment',
     rescheduling: 'Rescheduling…',
     rescheduleFailed: 'Could not reschedule. Please try again.',
+    rescheduleSessionRequired:
+      'Open this from the meeting you want to move, so we know which one to change.',
     back: 'Back',
     cannotReschedule: 'Cannot Reschedule',
     /* Marks a session whose hour changed after it was booked. */
@@ -209,6 +211,8 @@ export const publicMessages: Catalogue = {
     cancelAskBusiness: 'To cancel now, please get in touch:',
     invalidLink: 'This link has expired. Ask the business for a new one.',
     notReschedulable: 'This booking is no longer open for changes.',
+    rescheduleAlreadyHeld: 'This meeting has already taken place, so there is nothing to move.',
+    rescheduleAlreadyCancelled: 'This meeting was cancelled, so there is nothing to move.',
     notCancellable: 'This booking can no longer be cancelled.',
     slotTaken: 'That time was taken while you were choosing. Pick another.',
     /** The appointment as it stands, shown beside the refusal. */
@@ -499,6 +503,8 @@ export const publicMessages: Catalogue = {
     currentAppointment: 'Cita actual',
     rescheduling: 'Reprogramando…',
     rescheduleFailed: 'No se pudo reprogramar. Inténtalo de nuevo.',
+    rescheduleSessionRequired:
+      'Ábrelo desde la sesión que quieres mover, para saber cuál cambiar.',
     back: 'Volver',
     cannotReschedule: 'No se puede reprogramar',
     movedBadge: 'Hora cambiada',
@@ -508,6 +514,8 @@ export const publicMessages: Catalogue = {
     cancelAskBusiness: 'Para cancelar ahora, ponte en contacto:',
     invalidLink: 'Este enlace ha caducado. Pide uno nuevo al negocio.',
     notReschedulable: 'Esta reserva ya no admite cambios.',
+    rescheduleAlreadyHeld: 'Esta cita ya se celebró, así que no hay nada que cambiar.',
+    rescheduleAlreadyCancelled: 'Esta cita se canceló, así que no hay nada que cambiar.',
     notCancellable: 'Esta reserva ya no se puede cancelar.',
     slotTaken: 'Ese horario se ocupó mientras elegías. Elige otro.',
     yourBookingIs: 'Tu cita',
@@ -783,6 +791,8 @@ export const publicMessages: Catalogue = {
     currentAppointment: 'המועד הנוכחי',
     rescheduling: 'משנה מועד…',
     rescheduleFailed: 'לא הצלחנו לשנות את המועד. נסו שוב.',
+    rescheduleSessionRequired:
+      'פתחו את זה מהמפגש שתרצו להעביר, כדי שנדע איזה מהם לשנות.',
     back: 'חזרה',
     cannotReschedule: 'לא ניתן לשנות מועד',
     movedBadge: 'המועד שונה',
@@ -792,6 +802,8 @@ export const publicMessages: Catalogue = {
     cancelAskBusiness: 'כדי לבטל עכשיו, אפשר ליצור קשר:',
     invalidLink: 'הקישור הזה פג. אפשר לבקש מהעסק קישור חדש.',
     notReschedulable: 'לא ניתן עוד לשנות את הפגישה הזו.',
+    rescheduleAlreadyHeld: 'הפגישה הזו כבר התקיימה, אין מה לשנות.',
+    rescheduleAlreadyCancelled: 'הפגישה הזו בוטלה, אין מה לשנות.',
     notCancellable: 'לא ניתן עוד לבטל את הפגישה הזו.',
     slotTaken: 'השעה הזו נתפסה בזמן שבחרת. אפשר לבחור אחרת.',
     yourBookingIs: 'הפגישה שלך',

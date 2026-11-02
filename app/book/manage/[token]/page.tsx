@@ -311,9 +311,27 @@ export default function BookingManagePage() {
 
   useEffect(() => {
     if (taskAutoOpened) return;
+    /*
+     * Nothing is decided until the portal has loaded.
+     *
+     * `meetings` starts empty and arrives with the rest of the booking, so a
+     * decision taken on mount would read every package as having no sessions —
+     * which is exactly the reading the reschedule gate below must not make.
+     */
+    if (loading) return;
 
     const params = new URLSearchParams(window.location.search);
     const wanted = params.get('pay') === '1' ? 'pay' : params.get('task');
+
+    /*
+     * Whether the owner has already recorded what happened.
+     *
+     * `no_show` is deliberately NOT settled: a missed appointment is
+     * unresolved and the client picking another time is the right next move,
+     * which is the same judgement the reschedule route makes.
+     */
+    const outcome = booking?.parent?.meetingStatus ?? booking?.meetingStatus ?? null;
+    const settledOutcome = outcome === 'held' || outcome === 'cancelled';
 
     /* Whether the card this asks for can actually be drawn yet. Anything else
        — a stale link, a task that no longer applies — is simply ignored, which
@@ -323,7 +341,38 @@ export default function BookingManagePage() {
       quote: Boolean(quoteToken),
       intake: Boolean(intake?.required),
       cancel: true,
-      reschedule: true,
+      /*
+       * A package needs to know WHICH hour before this panel can ask anything.
+       *
+       * Every sibling here checks that its card can actually be drawn; this one
+       * was hardcoded `true`, so a link with no `?session=` opened the panel on
+       * a package, which asked the server to move a booking with N sessions and
+       * painted a failure before the client had touched the page. The portal
+       * withholds its own Reschedule button for a package for exactly this
+       * reason (see the note on the booking-level buttons) — the auto-open path
+       * simply bypassed that gate.
+       *
+       * With no session named, the client is left on their portal with the
+       * meeting list, where each row carries its own working link.
+       */
+      reschedule:
+        (meetings.length === 0 || Boolean(params.get('session'))) &&
+        /*
+         * AND THE APPOINTMENT IS STILL MOVABLE.
+         *
+         * Every link in this gate is one a client followed from an email, and
+         * emails outlive the thing they describe. The owner marks the meeting
+         * held; the client opens last week's "change your time" link; the gate
+         * passed on shape alone, the panel loaded, the server answered 409
+         * `already_settled`, and the page painted a red failure card as the
+         * first thing the client saw.
+         *
+         * The portal already withholds its own Reschedule button once an
+         * outcome is recorded — this is the same rule for the auto-open path,
+         * which simply never asked. Ignoring the task leaves the client on
+         * their portal, which is what every other stale task here does.
+         */
+        !settledOutcome,
     };
 
     if (!wanted || !(wanted in ready)) return;
@@ -336,7 +385,21 @@ export default function BookingManagePage() {
       /* `?session=` — which hour of a package the client came to move. */
       meetingId: params.get('session'),
     });
-  }, [taskAutoOpened, payInvoiceId, quoteToken, intake?.required, token]);
+    /* `loading` and `meetings.length`: the gate above reads both, and without
+       them the effect would settle the question before the data arrived. */
+    /* The recorded outcome too: the gate above reads it, and a booking that
+       loads as settled must not auto-open the panel on the next pass. */
+  }, [
+    taskAutoOpened,
+    loading,
+    meetings.length,
+    payInvoiceId,
+    quoteToken,
+    intake?.required,
+    token,
+    booking?.meetingStatus,
+    booking?.parent?.meetingStatus,
+  ]);
 
   if (loading) return <PublicPageSpinner label={t('loading')} />;
 
@@ -398,7 +461,37 @@ export default function BookingManagePage() {
     expired: { key: 'portal.quote_expired', open: false },
   };
 
-  const chip = STATUS_CHIP[subjectStatus] ?? STATUS_CHIP.pending;
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE RECORDED OUTCOME WINS OVER THE LIFECYCLE COLUMN.
+   *
+   * A booking carries both `status` (pending → confirmed → completed) and
+   * `meeting_status` (held / no_show / cancelled), and only the second is
+   * written when the owner marks what happened: `mirrorSessionOutcome` mirrors
+   * the outcome onto the booking and leaves `status` exactly where it was.
+   *
+   * So a meeting the owner marked HELD keeps `status = 'confirmed'`, and this
+   * chip — which read `status` alone — told the client their finished
+   * appointment was confirmed, in green, under the heading "your next meeting".
+   * 45 bookings are in that state right now, plus 7 whose meeting was called
+   * off and 6 recorded as missed, all still reading "confirmed".
+   *
+   * Preferring the outcome fixes all three without touching the 88 places that
+   * read these columns server-side. `status` stays the fallback: it is the only
+   * answer for a booking nobody has marked yet, and it is what carries
+   * `cancelled` when the JOB rather than the meeting was called off.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const recordedOutcome = booking.parent?.meetingStatus ?? booking.meetingStatus;
+  const OUTCOME_CHIP: Record<string, string> = {
+    held: 'completed',
+    no_show: 'no_show',
+    cancelled: 'cancelled',
+  };
+  const chipStatus =
+    (recordedOutcome ? OUTCOME_CHIP[recordedOutcome] : undefined) ?? subjectStatus;
+
+  const chip = STATUS_CHIP[chipStatus] ?? STATUS_CHIP.pending;
   const statusTone = chip.tone;
   const statusLabel = t(chip.key);
 

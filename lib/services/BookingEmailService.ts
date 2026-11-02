@@ -2042,6 +2042,26 @@ export class BookingEmailService {
       sessionStart?: string | Date;
       /** And its end, for the duration the notice prints. */
       sessionEnd?: string | Date;
+      /**
+       * WHICH session the client is being sent to move.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * A token names a BOOKING and nothing finer, so on a package it names the
+       * container — the purchase, which has no hour of its own. The portal's
+       * reschedule panel then asks the server to move "the booking", the server
+       * answers `session_required` because a package has N of them and will not
+       * guess, and the client is shown "Could not reschedule. Please try again."
+       *
+       * They never get to choose: the link lands on `?task=reschedule`, the
+       * portal opens the panel on sight, and the panel loads its options on
+       * mount. The failure is on the page before they touch anything.
+       *
+       * So the mail carries the session beside the token. `?session=` is the
+       * portal's own parameter, already built this way by `PortalMeetings` for
+       * the rows it renders; no email had ever used it.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      sessionMeetingId?: string | null;
     /**
      * A REPEAT of mail the client already had — the owner pressing "send
      * again" on the journey.
@@ -2098,7 +2118,21 @@ export class BookingEmailService {
 
       // Generate booking management token and URLs
       const token = generateBookingToken(bookingId, clientEmail);
-      const rescheduleUrl = `${appUrl()}/book/manage/${token}/reschedule`;
+      /*
+       * Straight to the portal with the session named, rather than through
+       * `/book/manage/<token>/reschedule` — that path is a bare redirect to
+       * `?task=reschedule`, so it cannot carry one. See `sessionMeetingId`.
+       *
+       * Without a session the panel opens, asks the server to move a package
+       * without saying which hour, and shows the client a generic failure
+       * before they have touched anything. An ordinary booking has exactly one
+       * hour, so it keeps the plain path it always had.
+       */
+      const rescheduleUrl = options?.sessionMeetingId
+        ? `${appUrl()}/book/manage/${token}?task=reschedule&session=${encodeURIComponent(
+            options.sessionMeetingId
+          )}`
+        : `${appUrl()}/book/manage/${token}/reschedule`;
       const cancelUrl = `${appUrl()}/book/manage/${token}/cancel`;
 
       // Parse booking datetime

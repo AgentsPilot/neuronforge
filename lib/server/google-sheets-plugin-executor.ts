@@ -1047,6 +1047,82 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
   }
 
   // List sheet names within a specific spreadsheet for cascading dropdown
+  /**
+   * The columns of one tab, as letters, labelled with whatever the owner put
+   * in row 1.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE LETTER IS THE ANSWER, THE HEADER IS ONLY THE LABEL.
+   *
+   * A header is the owner's own text, in their own language, and may be
+   * blank, duplicated, or renamed next week. A column letter is stable, is
+   * what A1 notation already speaks, and cannot collide. So `value` is `C` and
+   * `label` is `C · Email` — the owner recognises their own words, and what
+   * gets stored is the thing that will still be true after they retitle it.
+   *
+   * This exists so a dialog can ASK which column holds what, instead of a
+   * model guessing from the contents. For an address that decides who a
+   * business emails, asked beats measured: a wrong guess files contacts under
+   * the wrong addresses and nothing downstream can tell.
+   *
+   * A column with no header is still offered, labelled by its letter alone.
+   * Sheets people leave headers off, and a column that exists is a column the
+   * owner may need to point at.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async list_columns(connection: any, options: { spreadsheet_id?: string; range?: string; page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const { spreadsheet_id, range } = options;
+
+      if (!spreadsheet_id || !range) {
+        /* Both are required and the dialog enforces it with `depends_on`;
+           reaching here means a caller asked out of order. */
+        this.logger.warn({ spreadsheet_id: !!spreadsheet_id, range: !!range }, 'list_columns called before a tab was chosen');
+        return [];
+      }
+
+      /* Row 1 only. The header row is all that is needed to label the letters,
+         and reading the sheet to offer a dropdown should not pull its contents. */
+      const url = new URL(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheet_id}/values/${encodeURIComponent(`${range}!1:1`)}`
+      );
+
+      const response = await fetch(url.toString(), {
+        headers: { 'Authorization': `Bearer ${connection.access_token}` },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Google Sheets API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const headers: string[] = (data.values && data.values[0]) || [];
+
+      /*
+       * Twenty-six, matching the `A1:Z` the import reads. Offering `AA` for a
+       * column the plan will never look at is an answer that silently imports
+       * nothing.
+       */
+      const WIDTH = 26;
+      const count = Math.max(headers.length, Math.min(WIDTH, headers.length || WIDTH));
+
+      return Array.from({ length: Math.min(count, WIDTH) }, (_, i) => {
+        const letter = String.fromCharCode(65 + i);
+        const header = (headers[i] ?? '').trim();
+        return {
+          value: letter,
+          label: header ? `${letter} · ${header}` : letter,
+          icon: '🔡',
+          group: 'Columns',
+        };
+      });
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing columns for options');
+      throw error;
+    }
+  }
+
   async list_sheet_names(connection: any, options: { spreadsheet_id?: string; page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
     try {
       const { spreadsheet_id } = options;

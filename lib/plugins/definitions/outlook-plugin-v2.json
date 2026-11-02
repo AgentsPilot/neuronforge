@@ -124,10 +124,10 @@
       "output_entity": "email",
       "input_cardinality": null,
       "output_cardinality": "collection",
-      "output_fields": ["id", "subject", "from", "to", "received_at", "body_preview", "has_attachments", "body", "html"],
+      "output_fields": ["id", "subject", "from", "from_email", "to", "received_at", "body_preview", "has_attachments", "body", "html"],
       "required_params": [],
-      "optional_params": ["query", "folder", "max_results", "from_date", "to_date", "has_attachments", "is_unread", "from_address", "subject_prefix", "content_level"],
-      "must_support": ["full_text_search", "date_filtering", "folder_filtering", "attachment_filter", "unread_filtering", "sender_filtering", "subject_prefix_filtering", "full_body_fetch"],
+      "optional_params": ["query", "folder", "max_results", "from_date", "to_date", "has_attachments", "is_unread", "from_address", "to_address", "subject_prefix", "content_level", "within_days"],
+      "must_support": ["full_text_search", "date_filtering", "folder_filtering", "attachment_filter", "unread_filtering", "sender_filtering", "recipient_filtering", "relative_date_filtering", "subject_prefix_filtering", "full_body_fetch"],
       "parameters": {
         "type": "object",
         "properties": {
@@ -168,6 +168,15 @@
             "type": "string",
             "description": "Exact sender address to match, e.g. forms@my-clinic.co.il. An exact filter, not a free-text search."
           },
+          "to_address": {
+            "type": "string",
+            "description": "Exact RECIPIENT address to match. The question `from_address` cannot ask, and the only one worth asking of the sent and drafts folders, where the sender is always the mailbox owner: use it to find what has been written TO somebody. An exact filter, not a free-text search."
+          },
+          "within_days": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Only messages received in the last N days. The counterpart of Gmail's `newer_than:Nd`, for a caller that knows a window in days rather than a date - prefer it over working out a `from_date` yourself. Given both, both apply."
+          },
           "subject_prefix": {
             "type": "string",
             "description": "Match messages whose subject STARTS WITH this text. Use the stable part of a form email's subject and never the whole of it: a subject that carries the enquirer's name would otherwise match one person and silently miss everybody after them."
@@ -176,7 +185,7 @@
             "type": "string",
             "enum": ["metadata", "full"],
             "default": "metadata",
-            "description": "'metadata' returns the 255-character preview only. 'full' also returns the complete body, as `html` or `body` depending on how the message was sent."
+            "description": "'metadata' returns the 255-character preview only. 'full' also returns the complete body: `body` is always the readable text, and `html` is present as well when the message was sent as HTML."
           }
         }
       },
@@ -248,9 +257,9 @@
       "output_entity": "email",
       "input_cardinality": "single",
       "output_cardinality": "single",
-      "output_fields": ["message_id", "created_at", "web_link"],
+      "output_fields": ["message_id", "created_at", "web_link", "thread_id", "subject", "in_reply_to"],
       "required_params": ["subject"],
-      "optional_params": ["to", "body", "cc", "bcc"],
+      "optional_params": ["to", "body", "cc", "bcc", "reply_to_message_id"],
       "must_support": ["html_body", "draft_management"],
       "parameters": {
         "type": "object",
@@ -278,6 +287,15 @@
             "type": "array",
             "items": { "type": "string" },
             "description": "BCC email addresses"
+          },
+          "reply_to_message_id": {
+            "type": "string",
+            "description": "Outlook message id this draft answers. Supply it and the draft is created FROM that message, so it sits inside the same conversation, is already addressed to its sender and is already subjected 'Re:' once, with the original quoted beneath. Omit it and the draft is a new message - right for a first approach, wrong for an answer, because an unthreaded 'Re:' arrives beside the exchange it replies to rather than in it. On this path `subject` is ignored (the conversation decides it) and `to` need not be given at all.",
+            "x-variable-mapping": {
+              "from_type": "email",
+              "field_path": "id",
+              "description": "The id of the email being replied to"
+            }
           }
         }
       },

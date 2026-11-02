@@ -85,6 +85,26 @@ export const PLUGIN_PROFILES: Readonly<Record<PluginProfileName, readonly string
      * ─────────────────────────────────────────────────────────────────────
      */
     'google-mail',
+    /*
+     * The spreadsheet half of Google, for the lead importer.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * Same story as `google-mail` above, one plugin along. A business keeping
+     * its leads in a sheet could connect Google Sheets on the old `all`
+     * profile and cannot here, so the connection row survives while nothing
+     * can load the plugin behind it: `getPluginDefinition` returns undefined,
+     * the options endpoint answers an empty dropdown, and the token refresh
+     * logs "Plugin not found in registry" and reports success. Three
+     * surfaces, each failing quietly, from one missing key.
+     *
+     * BETWEEN MAIL AND CALENDAR, because the profile must be an ordered
+     * SUBSEQUENCE of `all` and that is where it sits there. Appended at the
+     * end it reads more naturally and breaks the invariant
+     * `plugin-registry-integrity.test.ts` exists to hold — the same trap the
+     * note above records for `google-mail`.
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    'google-sheets',
     'google-calendar', // CalendarSyncService (two-way calendar sync)
     'meta-insights', // channel insights (Facebook Page + Instagram)
     'google-analytics', // channel insights (GA4)

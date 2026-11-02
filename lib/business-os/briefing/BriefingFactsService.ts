@@ -16,6 +16,7 @@ import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { paymentInvoiceRepository, ISSUED_INVOICE_STATUSES } from '@/lib/repositories/PaymentRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
+import { brokenConnections } from '@/lib/business-os/plugins/brokenConnections';
 import { findGaps } from '@/lib/business-os/gaps/findGaps';
 import type { GapId, GapResult } from '@/lib/business-os/gaps/types';
 import type { BusinessDay } from '@/lib/business-os/businessDay';
@@ -256,6 +257,30 @@ export interface BriefingFacts {
   };
 
   /**
+   * Plugin connections that have lapsed and that this business depends on.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE ONE FACT HERE THAT IS NOT ABOUT THE BUSINESS'S DAY
+   *
+   * Everything else in these facts is something that happened: an appointment,
+   * a payment, somebody who wrote in. This is the platform failing, and it is
+   * here because the briefing is the ONLY surface that reaches an owner who is
+   * not looking at the dashboard. A Gmail grant that lapses on Friday evening
+   * stops the lead channel immediately; the readiness line tells them on
+   * Monday when they next open the page, and this tells them on Saturday
+   * morning.
+   *
+   * Scoped before it arrives — only connections a configured Business OS
+   * component depends on, decided by `connectionsInUse`. An owner is never
+   * told to reconnect something this product has not used for them.
+   *
+   * It also makes the day NOT quiet. See `isQuiet`.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  connections: {
+    broken: Array<{ key: string; name: string }>;
+  };
+  /**
    * Nothing happened today worth an email.
    *
    * This flag is what stops the morning email going out, so what counts as
@@ -273,6 +298,13 @@ export interface BriefingFacts {
    * clients wrote in is the business losing both. That is the failure this
    * whole piece of work exists to fix, and suppressing the email on exactly the
    * days it matters would have reproduced it one layer up.
+   *
+   * A BROKEN CONNECTION IS THE SECOND EXCEPTION, on the same reasoning. It is
+   * not a fact about the future that will still be true tomorrow — it is the
+   * platform not working NOW, and every hour it lasts may be an enquiry that
+   * was never filed. The asymmetry is the same and sharper: one more email on a
+   * day a connection died is nothing; a quiet inbox while the lead channel is
+   * dead is the business losing clients and never being told.
    */
   isQuiet: boolean;
 }
@@ -450,9 +482,20 @@ export async function buildBriefingFacts(
     day
   );
 
-  const isQuiet = isQuietDay(appointments, money, outlook);
+  /*
+   * Read on its own, after the day's facts.
+   *
+   * Not inside the `Promise.all` above: it is the only read here that reaches
+   * the plugin manager, which loads definitions, and it already resolves to an
+   * empty list on any failure of its own. Keeping it out means a slow or
+   * broken plugin check delays nothing in the queries the briefing is really
+   * made of.
+   */
+  const connections = { broken: await brokenConnections(userId) };
 
-  return { day, appointments, money, outlook, isQuiet };
+  const isQuiet = isQuietDay(appointments, money, outlook, connections);
+
+  return { day, appointments, money, outlook, connections, isQuiet };
 }
 
 /**
@@ -469,8 +512,27 @@ export async function buildBriefingFacts(
 export function isQuietDay(
   appointments: BriefingFacts['appointments'],
   money: BriefingFacts['money'],
-  outlook: BriefingFacts['outlook']
+  outlook: BriefingFacts['outlook'],
+  /*
+   * Optional, and absent means none.
+   *
+   * Every other absent-safe default in this function reads an absent value as
+   * "nothing happened", so that a caller whose facts predate the field cannot
+   * accidentally mail somebody every day. Same here: no connection information
+   * is not evidence of a broken connection.
+   */
+  connections?: BriefingFacts['connections']
 ): boolean {
+  /*
+   * A dead connection is never a quiet day, whatever else is true.
+   *
+   * First, and as its own statement rather than another clause in the chain
+   * below, because it does not describe the day at all: a business with no
+   * appointments, no money and no enquiries still needs to hear that the thing
+   * which files its enquiries has stopped.
+   */
+  if (connections?.broken.length) return false;
+
   return (
     appointments.total === 0 &&
     appointments.cancelled.length === 0 &&

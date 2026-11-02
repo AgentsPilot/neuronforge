@@ -43,9 +43,46 @@ export interface PortalPackageMeeting {
   startTime: string | null;
   endTime: string | null;
   status: string;
+  /**
+   * What actually happened: `held`, `no_show`, `cancelled`, or null while
+   * nobody has said.
+   *
+   * `status` above cannot carry it. A session has no status of its own, so the
+   * route derives one from `settleable()`, which deliberately leaves a no-show
+   * OPEN — a missed session is unresolved and picking another time is the right
+   * next move. That makes a missed session arrive as `confirmed`, and without
+   * this field the list drew it as an ordinary upcoming hour.
+   */
+  meetingStatus: string | null;
+  /**
+   * Something already stands in for this hour, so it must not be moved again:
+   * the client would end up holding both the replacement and whatever this one
+   * moved to. Reported separately from `canModify` so the row can say WHY the
+   * action is withheld.
+   */
+  alreadyReplaced: boolean;
+  /**
+   * This session has been moved at least once — `occurrence_number > 1`, which
+   * counts ATTEMPTS at one session.
+   *
+   * Not to be confused with `occurrenceNumber` above, which carries the SESSION
+   * number (the "4" in "session 4 of 8"). The list shows only the current
+   * attempt, so without this there is no sign the hour on screen is not the one
+   * the client was originally given.
+   */
+  wasMoved: boolean;
   canModify: boolean;
   tooSoon: boolean;
   token: string;
+  /**
+   * Which session this is, for the reschedule route.
+   *
+   * A package is one booking with N meetings, so a session has no booking and
+   * therefore no token of its own: `token` names the session's CONTAINER and
+   * this says which of its hours. The route refuses a meeting that is not that
+   * booking's, so the pair is the whole of the authorisation.
+   */
+  meetingId: string;
   isCurrent: boolean;
 }
 
@@ -157,6 +194,16 @@ export interface PortalBooking extends PublicBookingSummary {
   clientName: string;
   clientEmail: string;
   status: string;
+  /**
+   * What the owner recorded as having happened: `held`, `no_show`,
+   * `cancelled`, or null while nobody has said.
+   *
+   * Separate from `status`, which is the lifecycle (pending → confirmed →
+   * completed) and is NOT updated when an outcome is marked. Anything telling
+   * the client what state their appointment is in has to prefer this one, or
+   * it reports a finished meeting as confirmed.
+   */
+  meetingStatus: string | null;
   paymentStatus: string;
   notes: string | null;
   canReschedule: boolean;
@@ -184,6 +231,8 @@ export interface PortalBooking extends PublicBookingSummary {
   parent?: {
     id: string;
     status: string;
+    /** The package's own outcome; see `meetingStatus` above. */
+    meetingStatus: string | null;
     startTime: string | null;
     endTime: string | null;
     timezone: string | null;

@@ -19,6 +19,7 @@
 
 import { createLogger } from '@/lib/logger';
 import { agentRepository } from '@/lib/repositories/AgentRepository';
+import { agentConfigurationRepository } from '@/lib/repositories/AgentConfigurationRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import {
   INBOX_CADENCE_RANGE,
@@ -43,6 +44,7 @@ import {
   STOP_RANGE,
 } from '@/lib/business-os/schedule/ranges';
 import { scheduleIntervalOf, stopAfterOf } from '@/lib/business-os/schedule/stored';
+import { supabaseServer } from '@/lib/supabaseServer';
 
 import {
   AUTOMATION_AGENT_TAG,
@@ -100,6 +102,22 @@ export interface InstalledAutomation {
   family: 'adopted' | 'mailbox' | 'own';
   /** The agent's name, in the owner's language. Never a translation key. */
   name: string;
+  /**
+   * WHAT IT DOES, in a sentence, in the owner's language.
+   *
+   * The list is seven narrow columns of facts — every, next, last, stops after
+   * — and none of them answers "what is this agent FOR". The name is three or
+   * four words and the Watches column is a noun phrase, so an owner opening an
+   * agent's settings to change how often it runs had nothing telling them what
+   * they were changing the cadence OF. It is shown at the top of the expanded
+   * settings rather than in the table, where a sentence per row would bury the
+   * numbers the table exists for.
+   *
+   * The catalogue's words for an agent we authored, the row's own column for a
+   * mailbox channel or one the owner wrote — the same chain `name` uses, so a
+   * family with no catalogue entry still says something.
+   */
+  description: string;
   /** What it watches, in the owner's language. Empty when there is nothing true to say. */
   watches: string;
   /**
@@ -162,6 +180,49 @@ export interface InstalledAutomation {
   requires: string | null;
 
   /**
+   * Required plugins this owner has no working connection to. Empty normally.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A SECOND REASON TO BE "CANNOT RUN", carried the same way as the first.
+   *
+   * `requires` is a fact about the BUSINESS — marketing sending off, no postal
+   * address. This is a fact about the OWNER'S ACCOUNT: the mailbox a mail agent
+   * reads has been revoked, has expired, or was never linked. Both end in an
+   * agent that is switched on and refused, which is the state the list already
+   * draws, so it reuses it rather than inventing a fourth word.
+   *
+   * Named rather than reduced to a boolean, because the owner's next action is
+   * to connect a specific thing and "needs a connection" sends them hunting.
+   *
+   * MISSING AND REVOKED ARE THE SAME ANSWER on purpose: the connection read
+   * filters on `status = 'active'`, so an expired token reads as absent, and
+   * the fix is identical either way.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  missingPlugins: string[];
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * IT TRIED, IT FAILED EVERY TIME, AND THE QUEUE GAVE UP.
+   *
+   * A different kind of "cannot run" from `blocked`. That one is a requirement
+   * never met — marketing sending off, no postal address — and is true before
+   * the agent ever starts. This one is an agent that WAS working and stopped.
+   *
+   * Null unless the most recent scheduled run was dead-lettered. One failure is
+   * not this: the queue retries with increasing gaps, and only once it has
+   * exhausted them has something really gone wrong. That is the moment worth
+   * interrupting an owner for.
+   *
+   * Measured on a live account: a mailbox agent failed five times on an expired
+   * Gmail token, was dead-lettered, and the list went on showing a green bar
+   * and tomorrow's run. The owner's first clue would have been enquiries
+   * quietly not arriving.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  stopped: StoppedAgent | null;
+
+  /**
    * ───────────────────────────────────────────────────────────────────────────
    * WHAT THE SCHEDULE EDITOR OPENS ON, AND WHETHER IT MAY OPEN AT ALL.
    *
@@ -194,6 +255,42 @@ export interface InstalledAutomation {
 }
 
 /**
+ * Why an agent stopped, as the EXECUTION LAYER already described it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THIS LAYER DOES NOT INTERPRET THE ERROR, AND MUST NOT START.
+ *
+ * The runner translates a terminal failure through `toUserFacing` — the
+ * platform's one boundary between a technical issue and something a
+ * non-technical owner reads — and stores the result on the run. Business OS
+ * reads that and renders it.
+ *
+ * A first attempt put the classifying here: a `classifyAgentFailure` matching
+ * on phrases like "connection has expired", four hundred lines from the
+ * translator that already does it. Two translators drift, and the one further
+ * from the runtime drifts first. It is also the wrong direction — execution is
+ * the layer above, and the management layer reading its errors to guess at
+ * meaning is the arrow this architecture spent the day removing.
+ *
+ * THREE FIELDS, NOT THE CALIBRATION MODEL. The translator also returns a
+ * severity and a category belonging to the flow it was written for, and this
+ * shape deliberately drops them: `will_auto_fix` is one of its real severities
+ * and nothing is going to auto-fix an expired mail token. Borrowing a
+ * translator is not the same as adopting its taxonomy.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface StoppedAgent {
+  /** Short clause for the row. */
+  title: string;
+  /** One or two plain sentences. */
+  message: string;
+  /** The concrete next action, where the execution layer knew one. */
+  whatToDo?: string;
+  /** When the last attempt was made. */
+  lastTriedAt: string;
+}
+
+/**
  * Every automation agent this business has installed.
  *
  * Reads the shared tag rather than the per-agent one, so a list is one query
@@ -219,6 +316,50 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
   const { automationById } = await import('./catalog');
   const { automationApplies } = await import('@/lib/business-os/gaps/automationApplies');
   const cache = new Map<string, Promise<boolean>>();
+
+  /*
+   * The dead-lettered runs, in ONE read for the whole list.
+   *
+   * Per-row would be an N+1 against a table that already carries every run
+   * this account has ever queued. The same reason `ownerDictionary` is read
+   * once above.
+   *
+   * Newest first and keyed by agent, so each agent keeps only its most recent
+   * failure: an agent that broke in March and was fixed in April must not read
+   * as broken because the March row is still there. A newer SUCCESS clears it,
+   * which is why the status filter is not applied in the query.
+   */
+  const stoppedByAgent = await deadLetteredRuns((data || []).map(a => a.id));
+
+  /*
+   * One connection read for the whole list, like the dictionary above. Per row
+   * would be an N+1 against a table every agent asks the same question of.
+   */
+  const { data: connections, error: connectionsError } = await (
+    await import('@/lib/repositories/PluginConnectionRepository')
+  ).pluginConnectionRepository.findActiveByUser(userId);
+
+  if (connectionsError) {
+    logger.warn(
+      { err: connectionsError, userId },
+      'Could not read plugin connections; reporting every agent as connected'
+    );
+  }
+
+  const connected = new Set((connections || []).map(c => c.plugin_key));
+  /*
+   * FAILS OPEN, and the direction matters more than it looks.
+   *
+   * An unreadable `plugin_connections` leaves `connected` empty, and treating
+   * empty as "nothing is connected" would mark EVERY agent on the dashboard
+   * "Cannot run · Connect gmail" the moment that table blinked — every row red
+   * over a transient read, with nothing actually wrong. The honest answer to
+   * "we could not tell" is to say nothing, which is what an empty list of
+   * missing plugins means. Same direction `missingPluginConnections` takes, for
+   * the same reason.
+   */
+  const missingFor = (plugins: string[]): string[] =>
+    connectionsError ? [] : plugins.filter(p => p !== 'business-os' && !connected.has(p));
 
   const rows = await Promise.all(
     (data || []).map(async (agent): Promise<InstalledAutomation> => {
@@ -249,9 +390,48 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
         nextRun: (agent as { next_run?: string | null }).next_run ?? null,
       };
 
+      /*
+       * ON `base`, SO EVERY FAMILY REPORTS IT.
+       *
+       * A revoked mailbox is not a problem only catalogue agents can have — the
+       * mailbox CHANNEL is the one it has actually happened to, and an agent the
+       * owner wrote themselves can call any plugin they connected. Computing it
+       * here from `plugins_required` means the answer comes from the column the
+       * runtime actually grants the run from, for all three families, rather
+       * than from a catalogue entry two of them do not have.
+       */
+      const missingPlugins = missingFor(base.plugins);
+
       /* ── adopted from an insight ───────────────────────────────────────── */
       if (adopted?.id) {
-        const id = String(adopted.id);
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * A READ THAT REPAIRS, AND THE ONLY PLACE THAT CAN.
+         *
+         * `repointToConnectedMailbox` moves a provider-variant install onto the
+         * mailbox the owner actually connected. The trigger has to live here
+         * because NOTHING ELSE RUNS when an owner's connections change: the
+         * install seam fires once and the available list never offers an agent
+         * that is already installed, so a variant agent whose mailbox went away
+         * would otherwise run against a dead connection for ever, reporting
+         * "Cannot run · connect <the mailbox they left>".
+         *
+         * Defensible as a write inside a read because it is idempotent, costs
+         * nothing in the normal case (two array lookups and no query — it
+         * returns before any write unless the install is genuinely mispointed
+         * AND a sibling mailbox is connected), and the alternative is an agent
+         * that silently does nothing. Concurrent dashboard loads converge on
+         * the same answer.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const repointed = await repointToConnectedMailbox(
+          userId,
+          agent as { id: string; agent_config?: Record<string, unknown> | null },
+          String(adopted.id),
+          connected
+        );
+
+        const id = repointed?.id ?? String(adopted.id);
         const automation = automationById(id);
 
         /*
@@ -280,17 +460,41 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
           (adopted.stopAfterDays as number | null) ?? automation?.defaultStopAfterDays ?? null;
 
         const requires = automation?.requires ?? null;
-        const blocked = requires
-          ? !(await automationApplies(userId, automation as never, cache))
-          : false;
+
+        /*
+         * RE-ASKED AFTER A REPOINT, because `missingPlugins` above was computed
+         * from the `plugins_required` column as it was READ — which the repoint
+         * has just replaced. Reporting the stale answer would tell an owner we
+         * had only now moved onto Outlook that they must connect Gmail: the
+         * exact message the repair exists to stop, surviving the repair itself.
+         *
+         * The row reports the NEW grant too (`plugins` below), because that is
+         * what the database now holds and what the next run will be given. A
+         * row describing the grant it was loaded with would be describing an
+         * agent that no longer exists.
+         */
+        const grants = repointed ? repointed.pluginsRequired : base.plugins;
+        const missing = repointed ? missingFor(grants) : missingPlugins;
+
+        /*
+         * EITHER REASON BLOCKS IT. A business requirement never met, or a
+         * plugin the plan calls with no live connection — both mean switched
+         * on and refused at the first step, which is the one thing the owner
+         * needs to know.
+         */
+        const blocked =
+          missing.length > 0 ||
+          (requires ? !(await automationApplies(userId, automation as never, cache)) : false);
 
         return {
           ...base,
+          plugins: grants,
           automationId: id,
           family: 'adopted',
           /* The catalogue's words, or the row's own name — never the raw id,
              which is what the list showed before these were resolved here. */
           name: say(automation?.nameKey) || agent.agent_name,
+          description: say(automation?.descriptionKey) || agent.description || '',
           watches: say(automation?.watchesKey),
           /* The interval first, because it is what the agent actually runs
              on. Only then the named cadence, for every install made before
@@ -304,6 +508,8 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
           stopAfterDays,
           blocked,
           requires,
+          missingPlugins: missing,
+          stopped: stoppedByAgent.get(agent.id) ?? null,
           /*
            * The stored interval, or the one its cron means.
            *
@@ -343,6 +549,9 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
           family: 'mailbox',
           /* Its own name, which setup already wrote in the owner's language. */
           name: agent.agent_name,
+          /* Likewise its own: there is no catalogue entry for a channel whose
+             subject line was measured from this owner's own mail. */
+          description: agent.description || '',
           /*
            * The mailbox and subject it watches, which setup measured from the
            * owner's own mail. Exactly the sentence the channel card shows, so
@@ -369,8 +578,13 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
             typeof mailbox.stopAfterDays === 'number'
               ? mailbox.stopAfterDays
               : INBOX_STOP_AFTER_DEFAULT,
-          blocked: false,
+          /* The mailbox channel is the family a revoked Gmail has actually
+             happened to, so `false` was the wrong constant here. No business
+             `requires` applies to it, but a dead connection very much does. */
+          blocked: missingPlugins.length > 0,
+          missingPlugins,
           requires: null,
+          stopped: stoppedByAgent.get(agent.id) ?? null,
           /* No named-cadence lookup: the channel's four were all minutes or an
              hour, and every one of those is a form `intervalFromCron` reads
              exactly. */
@@ -390,12 +604,18 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
         automationId: '',
         family: 'own',
         name: agent.agent_name,
+        /* Whatever they wrote when they built it, which may be nothing. */
+        description: agent.description || '',
         watches: '',
         scheduleWords: scheduleInWords(cron, say, interval),
         cadence: cadenceForCron(cron),
         stopAfterDays: null,
-        blocked: false,
+        /* An agent the owner wrote can call any plugin they connected, so it
+           can lose one the same way. No catalogue `requires` to check. */
+        blocked: missingPlugins.length > 0,
+        missingPlugins,
         requires: null,
+        stopped: stoppedByAgent.get(agent.id) ?? null,
         /*
          * No named-cadence lookup, and this is the case it exists to protect.
          * `0 9 * * 1` here is a Monday somebody picked, not the word "weekly" —
@@ -542,12 +762,59 @@ export function planInputs(
   const stored = (agentConfig?.business_os_automation as { stopAfterDays?: number | null } | undefined)
     ?.stopAfterDays;
 
+  /*
+   * AN AGENT MAY HAVE NO STOP RULE, and then it must not be handed one.
+   *
+   * `.includes` on an absent list throws, and `-Math.abs(undefined)` is NaN —
+   * which a filter would spend as a date offset and silently match nothing.
+   * The spreadsheet importer is the first entry with no stop rule: a row has
+   * no age, so there is nothing for a cut-off to measure.
+   */
   const days =
-    typeof stored === 'number' && automation.stopAfterChoices.includes(stored)
+    typeof stored === 'number' && (automation.stopAfterChoices ?? []).includes(stored)
       ? stored
       : automation.defaultStopAfterDays;
 
-  return { stop_after_days: -Math.abs(days) };
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * HOW FAR BACK A RUN LOOKS FOR SOMETHING NEW, IN WHOLE DAYS.
+   *
+   * A different question from the stop rule, and the two must not be confused.
+   * `stop_after_days` is how much HISTORY to consider — the owner's choice.
+   * This is how much of it is NEW since the last run, which is not a choice at
+   * all: it follows from the cadence.
+   *
+   * IT HAS TO TRACK THE CADENCE OR REPLIES FALL BETWEEN RUNS. An agent set to
+   * weekly with a two-day window never sees the five days in between, and the
+   * failure is silent — the owner gets drafts for some replies and nothing for
+   * others, with no way to tell which were missed.
+   *
+   * `+ 1` is a day of slack for a run that failed or a deploy that paused the
+   * sweep. The cost is that a reply can be seen on two consecutive runs; the
+   * plan's own `already_handled` outcome is what catches the second pass.
+   *
+   * A MINIMUM OF 2, because a provider's relative window is coarse:
+   * `newer_than:1d` is answered against calendar boundaries rather than a
+   * rolling 24 hours, so an agent running at 09:00 can miss what arrived at
+   * 23:00 the night before.
+   *
+   * Positive, unlike the stop rule. This one is spent as a provider search
+   * fragment (`newer_than:2d`), not as a date offset, and a minus sign there
+   * makes a query no mailbox will answer.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const interval = scheduleIntervalOf(agentConfig ?? undefined) ?? NAMED_CADENCE_CRON[automation.defaultCron];
+
+  const scanDays = interval
+    ? Math.max(2, Math.ceil(intervalMinutes(interval) / (60 * 24)) + 1)
+    : /* No readable schedule: two days, the same floor, rather than a guess at
+         a cadence nobody declared. */
+      2;
+
+  return {
+    ...(typeof days === 'number' ? { stop_after_days: -Math.abs(days) } : {}),
+    scan_days: scanDays,
+  };
 }
 
 /**
@@ -580,6 +847,64 @@ async function resolveName(userId: string, key: string): Promise<string> {
   }
 }
 
+/**
+ * The most recent scheduled run per agent, where that run was dead-lettered.
+ *
+ * Returns nothing for an agent whose newest run succeeded, even if an older one
+ * failed — the question is "is it broken NOW", and a later success answers it.
+ * A read that fails returns nothing at all rather than guessing: a list that
+ * wrongly reports a working agent as stopped sends an owner to fix something
+ * that is not broken.
+ */
+async function deadLetteredRuns(
+  agentIds: string[]
+): Promise<Map<string, StoppedAgent>> {
+  const out = new Map<string, StoppedAgent>();
+  if (agentIds.length === 0) return out;
+
+  const { data, error } = await supabaseServer
+    .from('agent_executions')
+    .select('agent_id, status, result, created_at')
+    .in('agent_id', agentIds)
+    .eq('execution_type', 'scheduled')
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (error) {
+    logger.error({ err: error }, 'Could not read scheduled run outcomes');
+    return out;
+  }
+
+  const seen = new Set<string>();
+
+  for (const run of data ?? []) {
+    const id = run.agent_id as string;
+    /* Newest first, so the first row for an agent is the only one that counts. */
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    if (run.status !== 'failed') continue;
+
+    /*
+     * The issue the runner wrote. Absent on a run that failed before this
+     * existed, and on one whose terminal write did not land — in which case
+     * the row says nothing rather than inventing a reason from the raw error,
+     * which is the interpreting this layer must not do.
+     */
+    const failure = (run.result as { failure?: Record<string, unknown> } | null)?.failure;
+    if (!failure || typeof failure.message !== 'string') continue;
+
+    out.set(id, {
+      title: typeof failure.title === 'string' ? failure.title : '',
+      message: failure.message,
+      whatToDo: typeof failure.what_to_do === 'string' ? failure.what_to_do : undefined,
+      lastTriedAt: run.created_at as string,
+    });
+  }
+
+  return out;
+}
+
 /** The install of one automation, if this business has it. */
 async function findInstall(userId: string, automation: AutomationAgent) {
   const { data } = await agentRepository.findByTag(userId, automationAgentTag(automation.id));
@@ -587,6 +912,188 @@ async function findInstall(userId: string, automation: AutomationAgent) {
      one, and a read is the wrong place to throw over a duplicate it could
      simply report. */
   return data?.[0] ?? null;
+}
+
+/**
+ * Point a variant install at the mailbox the owner actually has.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AN AGENT THAT DOES NOTHING IS THE PROBLEM, NOT A SECOND AGENT.
+ *
+ * Refusing the duplicate (see `findGroupInstall`) leaves one row — and one row
+ * pointed at the wrong mailbox is just as useless as two. The owner installs
+ * the Gmail agent, their Gmail connection later dies and they move the business
+ * to Outlook, and now a healthy-looking agent runs every morning against a
+ * mailbox it cannot open. The dashboard says "Cannot run · connect google-mail",
+ * which is advice to go back to the mailbox they deliberately left.
+ *
+ * There is no ambiguity to resolve here, so nothing is asked. Exactly one mail
+ * plugin is connected and exactly one agent wants a mailbox; the only sensible
+ * answer is the one the owner already chose by connecting it. Asking would be
+ * a question about plumbing put to somebody who wanted their replies drafted.
+ *
+ * ALL THREE FACTS MOVE TOGETHER, or the repair is worse than the fault:
+ *
+ *   · the plan        — the steps that call `outlook` rather than `google-mail`
+ *   · the GRANT       — `plugins_required`, which is what the runtime hands the
+ *                       run. Move the plan alone and the agent calls Outlook
+ *                       actions holding a Gmail grant, which fails inside a
+ *                       cron where nobody is watching
+ *   · the TAG         — how the install is found again. Leave it and
+ *                       `findInstall` still reports the old variant, so the next
+ *                       install would try to migrate it back
+ *
+ * Returns the automation the row now carries, or null when nothing moved.
+ * NOTHING MOVES in the two cases that look similar and are not: the installed
+ * variant's own mailbox is connected (correct already), or NO mailbox in the
+ * group is (genuinely blocked, and "connect one" is then the right message).
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function repointToConnectedMailbox(
+  userId: string,
+  agent: { id: string; agent_config?: Record<string, unknown> | null },
+  installedId: string,
+  connected: Set<string>
+): Promise<AutomationAgent | null> {
+  const { AUTOMATION_AGENTS } = await import('./catalog');
+
+  const current = AUTOMATION_AGENTS.find(a => a.id === installedId);
+  if (!current?.variantGroup || !current.variantPlugin) return null;
+
+  /* Already pointed at a mailbox the owner has. */
+  if (connected.has(current.variantPlugin)) return null;
+
+  /*
+   * An EMPTY connection set means the read failed, not that nothing is
+   * connected — `installedAutomations` logs exactly that and fails open. A
+   * migration decided from it would re-point every variant agent on the
+   * account over a transient read, so there is nothing to find here anyway:
+   * no sibling can look connected either. Stated rather than relied on.
+   */
+  if (connected.size === 0) return null;
+
+  const target = AUTOMATION_AGENTS.find(
+    a =>
+      a.variantGroup === current.variantGroup &&
+      a.id !== current.id &&
+      a.variantPlugin !== undefined &&
+      connected.has(a.variantPlugin)
+  );
+  if (!target) return null;
+
+  const config = (agent.agent_config ?? {}) as Record<string, unknown>;
+  const installedConfig = (config.business_os_automation ?? {}) as Record<string, unknown>;
+
+  const { error: planError } = await agentRepository.updatePilotSteps(
+    agent.id,
+    userId,
+    target.steps
+  );
+
+  if (planError) {
+    /*
+     * Not fatal and deliberately not partial: the grant and the tag are left
+     * alone, so the agent stays exactly the mispointed-but-coherent thing it
+     * already was and the next dashboard load tries again. Moving the grant
+     * after a failed plan write would produce the one state worse than this.
+     */
+    logger.error(
+      { err: planError, userId, agentId: agent.id, from: current.id, to: target.id },
+      'Could not move the plan to the connected mailbox; leaving the install as it was'
+    );
+    return null;
+  }
+
+  const { error } = await agentRepository.update(agent.id, userId, {
+    plugins_required: target.pluginsRequired,
+    tags: [AUTOMATION_AGENT_TAG, automationAgentTag(target.id)],
+    agent_config: {
+      ...config,
+      business_os_automation: {
+        ...installedConfig,
+        id: target.id,
+        planVersion: planVersion(target.steps),
+      },
+    },
+  });
+
+  if (error) {
+    logger.error(
+      { err: error, userId, agentId: agent.id, from: current.id, to: target.id },
+      'Moved the plan but could not move the grant and tag; the agent is mid-migration'
+    );
+    return null;
+  }
+
+  logger.info(
+    { userId, agentId: agent.id, from: current.id, to: target.id, mailbox: target.variantPlugin },
+    'Re-pointed the automation at the mailbox the owner has connected'
+  );
+
+  return target;
+}
+
+/**
+ * The install that already answers this request, counting provider variants.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * "WHAT IF THE OWNER ADDS BOTH — GMAIL AND OUTLOOK?"
+ *
+ * `installAutomation`'s own rule already answers it: two rows for one
+ * automation "would both run on the same schedule, and the owner would have no
+ * way to tell which of two identical entries to stop". The mail variants are
+ * the sharpest possible case of that, because the entries are not merely
+ * similar — they share all three translation keys, so BOTH appear in the
+ * owner's agent list under exactly the same name and the same description.
+ * Nothing on the screen distinguishes them. Stopping "the one that keeps
+ * drafting replies" becomes guesswork.
+ *
+ * `availableAutomations` already offers one of the group, so the dashboard
+ * cannot produce this. But a filtered list is a presentation, not a rule: the
+ * install takes an automation id, and a stale dialog, a second tab, or a
+ * hand-made request reaches it directly. The guard belongs at the seam that
+ * writes the row.
+ *
+ * REFRESHING IS WHY THIS RETURNS THE AUTOMATION AND NOT JUST THE ROW. An
+ * install carries a COPY of its plan, and `installAutomation` brings that copy
+ * up to date every time it is called. Handed a sibling's row with the REQUESTED
+ * automation, it would write the Outlook plan onto the Gmail agent — an agent
+ * then calling `outlook` actions with a `google-mail` grant, which fails inside
+ * a cron where nobody is watching. So the caller is told which automation the
+ * row it found actually is, and refreshes with that one.
+ *
+ * A business with two genuine mailboxes is a real case and not served here. It
+ * needs the owner to be able to tell the two agents apart, which means naming
+ * the mailbox on the row — a feature, with a name, rather than two
+ * indistinguishable entries arriving by accident.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function findGroupInstall(
+  userId: string,
+  automation: AutomationAgent
+): Promise<{ row: NonNullable<Awaited<ReturnType<typeof findInstall>>>; automation: AutomationAgent } | null> {
+  const own = await findInstall(userId, automation);
+  if (own) return { row: own, automation };
+
+  if (!automation.variantGroup) return null;
+
+  const { AUTOMATION_AGENTS } = await import('./catalog');
+  const siblings = AUTOMATION_AGENTS.filter(
+    a => a.variantGroup === automation.variantGroup && a.id !== automation.id
+  );
+
+  for (const sibling of siblings) {
+    const row = await findInstall(userId, sibling);
+    if (row) {
+      logger.info(
+        { userId, requested: automation.id, running: sibling.id, group: automation.variantGroup },
+        'Automation already installed through its other provider; returning that one'
+      );
+      return { row, automation: sibling };
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -638,6 +1145,54 @@ async function refreshPlan(
   );
 }
 
+/**
+ * Which of these plugins this owner has not got a working connection to.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE CHECK, SHARED BY INSTALL AND ACTIVATION, because they fail the same way
+ * and an owner cannot tell them apart. Switching an agent on for the first time
+ * and switching a paused one back on are the same gesture to the person doing
+ * it, so a mailbox that has since been revoked has to stop both.
+ *
+ * MISSING AND REVOKED ARE DELIBERATELY THE SAME ANSWER. `findActiveByUser`
+ * filters on `status = 'active'`, so an expired or withdrawn token does not
+ * appear and reads as absent — which is correct, because the owner's next
+ * action is identical either way: connect it. A token that expired six weeks
+ * ago is not a different problem from one that was never there, it just feels
+ * like one.
+ *
+ * `business-os` is excluded. It is an internal plugin with an executor like any
+ * other and nothing to connect, so counting it would refuse every agent on the
+ * platform.
+ *
+ * AN UNREADABLE CONNECTION TABLE RETURNS EMPTY — treated as connected.
+ * Refusing on a failed read would lock out an owner whose Gmail is perfectly
+ * well linked because a table was briefly unavailable, and tell them nothing
+ * they could act on. The cost of being wrong this way is one agent whose first
+ * run fails visibly; the other way, nothing can be switched on at all.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function missingPluginConnections(
+  userId: string,
+  pluginsRequired: string[]
+): Promise<string[]> {
+  const needsConnecting = pluginsRequired.filter(p => p !== 'business-os');
+  if (needsConnecting.length === 0) return [];
+
+  const { pluginConnectionRepository } = await import(
+    '@/lib/repositories/PluginConnectionRepository'
+  );
+  const { data: connections, error } = await pluginConnectionRepository.findActiveByUser(userId);
+
+  if (error) {
+    logger.warn({ err: error, userId }, 'Could not read plugin connections; assuming connected');
+    return [];
+  }
+
+  const connected = new Set((connections || []).map(c => c.plugin_key));
+  return needsConnecting.filter(p => !connected.has(p));
+}
+
 export type InstallOutcome =
   | { ok: true; agentId: string; alreadyInstalled: boolean }
   | { ok: false; reason: 'create_failed' };
@@ -648,6 +1203,10 @@ export type InstallOutcome =
  * Idempotent: a second install returns the first one rather than creating a
  * twin. Two rows for one automation would both run on the same schedule, and
  * the owner would have no way to tell which of two identical entries to stop.
+ *
+ * That holds ACROSS PROVIDER VARIANTS too: installing the Outlook mail agent
+ * when the Gmail one is already running returns the Gmail one, because they are
+ * one job under one name. See `findGroupInstall`.
  */
 export async function installAutomation(
   userId: string,
@@ -686,7 +1245,16 @@ export async function installAutomation(
    * because a request said so.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  schedule?: ScheduleInterval
+  schedule?: ScheduleInterval,
+  /*
+   * What the owner answered on the install dialog, for an agent that asks.
+   *
+   * Saved to `agent_configurations` rather than onto the agent row, because
+   * that is where `{{input.*}}` resolves from for every other agent on the
+   * platform and where the agent page writes when they change their mind
+   * later. One home for an owner's answers, whichever screen collected them.
+   */
+  inputValues?: Record<string, unknown>
 ): Promise<InstallOutcome> {
   /*
    * The owner's interval, moved inside what this automation offers.
@@ -700,7 +1268,14 @@ export async function installAutomation(
     ? storageFor(clampInterval(schedule, cadenceRangeOf(automation)))
     : null;
 
-  const existing = await findInstall(userId, automation);
+  /*
+   * The group, not just this id — see `findGroupInstall`. `installed` is the
+   * automation the row really is, which differs from `automation` only when a
+   * provider variant of it is already running.
+   */
+  const found = await findGroupInstall(userId, automation);
+  const existing = found?.row ?? null;
+  const installed = found?.automation ?? automation;
 
   if (existing) {
     /*
@@ -712,7 +1287,7 @@ export async function installAutomation(
      * version of the invoice chaser would have emailed the same client every
      * morning; an install made before that fix would still be doing it.
      */
-    await refreshPlan(userId, existing, automation);
+    await refreshPlan(userId, existing, installed);
 
     /* Re-installing a paused one is the owner asking for it back. */
     if (existing.status !== 'active') {
@@ -776,6 +1351,12 @@ export async function installAutomation(
      */
     next_run: new Date().toISOString(),
     plugins_required: automation.pluginsRequired,
+    /*
+     * What the agent page will ask the owner for. Empty for the six chasers.
+     * Without this column an agent that needs a spreadsheet is installed,
+     * scheduled, and has no way to ever be told which one.
+     */
+    input_schema: automation.inputSchema ?? [],
     /* Both, because the runtime reads `pilot_steps` and the older agent
        surfaces read `workflow_steps`. The channel writes both for the same
        reason. */
@@ -861,6 +1442,33 @@ export async function installAutomation(
 
     logger.error({ err: error, userId, automationId: automation.id }, 'Could not install automation');
     return { ok: false, reason: 'create_failed' };
+  }
+
+  /*
+   * The owner's answers, after the row exists because they hang off its id.
+   *
+   * NON-BLOCKING, and the direction is deliberate. The agent is created and
+   * scheduled by this point; failing the whole install over a settings write
+   * would leave them with nothing and no way to retry except pressing the same
+   * button again. A saved agent whose answers did not land is recoverable from
+   * its own page, which is the same screen they would use to change them.
+   *
+   * The schema goes with them so the configuration row can describe itself.
+   */
+  if (inputValues && Object.keys(inputValues).length > 0) {
+    const { error: valuesError } = await agentConfigurationRepository.saveInputValues(
+      agent.id as string,
+      userId,
+      inputValues,
+      { inputSchema: automation.inputSchema ?? [] }
+    );
+
+    if (valuesError) {
+      logger.error(
+        { err: valuesError, userId, automationId: automation.id, agentId: agent.id },
+        'Agent installed but its answers did not save; it will ask again on its own page'
+      );
+    }
   }
 
   logger.info({ userId, automationId: automation.id, agentId: agent.id }, 'Automation installed');
@@ -1225,4 +1833,369 @@ export async function removeAutomation(userId: string, agentId: string): Promise
   }
   logger.info({ userId, agentId }, 'Automation removed');
   return true;
+}
+
+/**
+ * What this owner could switch on, and is not running.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY A LIST OF THE UNINSTALLED IS NOT AN ADVERT
+ *
+ * Until this existed an agent could only be found if an insight card happened
+ * to fire: the advisor offered it, the owner said yes. That is fine for an
+ * agent with a trend behind it and leaves the others undiscoverable —
+ * `follow_up_stalled_deals` and `draft_client_replies` both carry
+ * `offeredFromInsight: false` precisely because no detector reports their work,
+ * so no card will ever mention them. They were shipped and unreachable.
+ *
+ * So this is the other doorway, and it is the general one: anything in the
+ * catalogue appears, with no backfill, no row for an owner who never wants it,
+ * and nothing to do when the next agent is added.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TWO FILTERS, AND THEY REFUSE FOR DIFFERENT REASONS
+ *
+ *   `automationApplies`   what the BUSINESS does. An invoicing practice that
+ *                         takes no bookings must not be offered a rebooking
+ *                         agent — not greyed out, absent. It is not a
+ *                         capability they are missing, it is not their trade.
+ *
+ *   `missingPlugins`      what the OWNER has connected. This one is shown
+ *                         rather than hidden, because it IS actionable: the
+ *                         answer is to connect Gmail, and an agent they cannot
+ *                         see is an agent they cannot work out how to get.
+ *
+ * `business-os` is excluded from that check. It is an internal plugin with an
+ * executor like any other, but nobody connects it — treating it as missing
+ * would mark every agent in the catalogue unavailable.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface AvailableAutomation {
+  automationId: string;
+  /** Already in the owner's language, like the installed rows. */
+  name: string;
+  description: string;
+  watches: string;
+  plugins: string[];
+  /** Required plugins this owner has not connected. Empty means ready to run. */
+  missingPlugins: string[];
+  cadenceChoices: string[];
+
+  /**
+   * ANY ONE OF THESE WILL DO, so the owner is asked WHICH rather than told.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE HOLE THIS CLOSES: "WHERE IS THE OUTLOOK AGENT?"
+   *
+   * A variant group is offered as one row, and which variant it is follows the
+   * mailbox the owner has connected. That is right whenever they have one. When
+   * they have NEITHER — which is how most owners first meet this agent — there
+   * was nothing to follow, so the group's default was offered and the install
+   * dialog said "connect Gmail".
+   *
+   * For an owner who runs their business on Outlook that is the wrong
+   * instruction, and the dialog gave them no way to say so: its Connect button
+   * is wired to the plugin named in `missingPlugins`. They would have to leave,
+   * find the plugins page, connect Outlook there and come back — the two-visit
+   * flow the in-dialog repair was built to end.
+   *
+   * So when nothing in the group is connected, the row stops asserting a
+   * mailbox and offers both. The owner connects the one they actually use, and
+   * `automationId` on that entry says which variant that choice means — so the
+   * answer to "which plan" is the SAME act as "connect my mailbox", asked once,
+   * at the only moment it is genuinely ambiguous.
+   *
+   * ABSENT the rest of the time, deliberately. One mailbox connected is not a
+   * question, and putting a plumbing choice in front of every owner to serve
+   * the minority who have neither is the trade this avoids.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  connectEither?: { plugin: string; automationId: string; connected: boolean }[];
+
+  /**
+   * ABSENT WHEN THE AGENT HAS NO STOP RULE, which is not every agent.
+   *
+   * The rule means one thing everywhere — stop considering anything older than
+   * this — and that needs something with a date on it. Every chaser has one:
+   * an invoice, a quote, a booking. The spreadsheet importer does not, because
+   * a row has no age, so its catalogue entry declares neither field and the
+   * install dialog must not ask a question with no answer.
+   *
+   * Optional here rather than defaulted to a number, so a surface has to decide
+   * what to do about its absence instead of rendering a stop rule the agent
+   * will never spend.
+   */
+  defaultStopAfterDays?: number;
+  stopAfterChoices?: number[];
+
+  /**
+   * The automation this one works WITH, already in the owner's language.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * BECAUSE THE ROW IS OTHERWISE INDISTINGUISHABLE FROM SOMETHING ALREADY ON.
+   *
+   * `follow_up_stalled_deals` reads "remind about quotes nobody answered",
+   * which is word for word what the `chase_quotes` toggle does — and an owner
+   * with that toggle running saw the row and reasonably asked whether the
+   * platform was offering them something they already had.
+   *
+   * They do not overlap. The toggle fires once at 72 hours and stops; the
+   * agent's find starts at day 7 and runs to 45, and its plan excludes the
+   * chaser's window on purpose. But none of that was anywhere the owner could
+   * see it, while the relationship was sitting in `worksAlongside` the whole
+   * time.
+   *
+   * Null when an agent stands alone. Resolved here rather than in the card, for
+   * the same reason every other label on this row is: the registry is read
+   * server-side, and a surface should never have to turn an id into words.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  worksAlongside: string | null;
+
+  /**
+   * What the owner must answer before this can be switched on.
+   *
+   * Empty for an agent that needs nothing but a schedule, and the card installs
+   * those with one press. A non-empty list means the press opens a dialog
+   * instead: an agent that needs a spreadsheet must be ASKED before it is
+   * created, not created and then left sitting unable to run while nothing on
+   * screen says why.
+   */
+  inputs: NonNullable<AutomationAgent['inputSchema']>;
+}
+
+/**
+ * Both mailboxes, or nothing — see `connectEither` on the row.
+ *
+ * Returns undefined for an agent with no variant group (almost all of them),
+ * and for a group that is already decided: an owner with a mailbox connected is
+ * being asked nothing, because the answer is the one they chose by connecting
+ * it. A connection read that FAILED leaves `connected` empty, which looks
+ * identical to "nothing connected" — and asking is the safe answer to that,
+ * since the dialog's own check runs against the live plugin map and will say
+ * "connected" the moment it disagrees.
+ */
+function mailboxChoiceFor(
+  automation: AutomationAgent,
+  connected: Set<string>,
+  /* Handed in rather than imported: this module reaches the catalogue through a
+     dynamic import to avoid a cycle, so a top-level import here is not
+     available and module-level mutable state to work around that would be
+     worse than a parameter. */
+  catalogue: readonly AutomationAgent[]
+): { plugin: string; automationId: string; connected: boolean }[] | undefined {
+  if (!automation.variantGroup) return undefined;
+
+  const siblings = catalogue.filter(
+    a => a.variantGroup === automation.variantGroup && a.variantPlugin !== undefined
+  );
+
+  /* A group of one is not a choice. */
+  if (siblings.length < 2) return undefined;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * OFFERED EVEN WHEN ONE IS ALREADY CONNECTED, which it was not at first.
+   *
+   * The first version returned nothing once any mailbox in the group was
+   * connected, on the reasoning that the answer was then already known. It was
+   * too strong, and it made the other plan UNREACHABLE: an owner with Gmail
+   * connected was handed the Gmail variant and given no way to say "my client
+   * correspondence goes through Outlook". The only route to the Outlook plan
+   * was to disconnect Gmail first, which nobody would guess and which breaks
+   * whatever else was using it.
+   *
+   * Found by trying to reach it: deleting the installed Gmail agent put the
+   * agent back in the list, still as Gmail, with no choice anywhere.
+   *
+   * So the choice is always offered for a group of more than one, and
+   * `connected` says which answer costs an extra step — NOT which answer is
+   * right. A second version pre-selected the connected mailbox so the owner
+   * "did not have to think about it", and that was wrong for a reason worth
+   * keeping: PLUGIN CONNECTIONS ARE SHARED ACROSS THE PLATFORM. A business may
+   * have connected Gmail for the website enquiry channel while their client
+   * correspondence runs through Outlook — being connected means this agent
+   * COULD read it, never that it should. The dialog asks, and nothing is
+   * chosen until the owner chooses it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  return siblings.map(a => ({
+    plugin: a.variantPlugin!,
+    automationId: a.id,
+    connected: connected.has(a.variantPlugin!),
+  }));
+}
+
+export async function availableAutomations(userId: string): Promise<AvailableAutomation[]> {
+  const { AUTOMATION_AGENTS } = await import('./catalog');
+  const { OPERATIONAL_AUTOMATIONS } = await import('@/lib/business-os/gaps/automations');
+  const { automationApplies } = await import('@/lib/business-os/gaps/automationApplies');
+  const { pluginConnectionRepository } = await import(
+    '@/lib/repositories/PluginConnectionRepository'
+  );
+
+  const { data: agents, error } = await agentRepository.findScheduled(userId);
+
+  if (error) {
+    /*
+     * Fails CLOSED, unlike the installed list which returns [].
+     *
+     * An unreadable agent list means we cannot tell what is already running,
+     * and offering an owner a one-click install of something they already have
+     * is how a business ends up with two agents writing to the same client.
+     */
+    logger.error({ err: error, userId }, 'Could not read installed agents; offering nothing');
+    return [];
+  }
+
+  const running = new Set<string>();
+  for (const agent of agents || []) {
+    const config = (agent.agent_config ?? {}) as Record<string, Record<string, unknown>>;
+    const id = config.business_os_automation?.id;
+    if (id) running.add(String(id));
+  }
+
+  const dictionary = await ownerDictionary(userId);
+  const say = (key: string | undefined): string => (key ? (dictionary[key] ?? key) : '');
+
+  /* One read for the whole list, for the same reason the dictionary is. */
+  const { data: connections } = await pluginConnectionRepository.findActiveByUser(userId);
+  /* `plugin_key`, which is the column `findByUserAndPlugin` filters on and the
+     value `pluginsRequired` is written in. */
+  const connected = new Set((connections || []).map(c => c.plugin_key));
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE ROW PER JOB, NOT ONE PER PROVIDER.
+   *
+   * Some agents exist twice because the same work goes through two different
+   * mailboxes — see `variantGroup` on the catalogue type for why that cannot be
+   * one entry. The owner must still see one row: two rows carrying the same
+   * name, the same description and the same Activate button is not a choice,
+   * it is a puzzle.
+   *
+   * The mailbox they have connected decides it. Connected Outlook and not
+   * Gmail, they are offered the Outlook plan; connected neither — which is how
+   * most owners first meet this agent — they are offered the group's default,
+   * and the install dialog then asks them to connect it, which is the existing
+   * behaviour for any agent needing a plugin.
+   *
+   * CONNECTED BOTH is resolved by catalogue order rather than by asking. It is
+   * a rare case, both answers are defensible, and the alternative is a question
+   * about plumbing put to somebody who wanted their replies drafted.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const variantToOffer = new Map<string, string>();
+  for (const automation of AUTOMATION_AGENTS) {
+    const group = automation.variantGroup;
+    if (!group) continue;
+
+    /*
+     * Already running one of the group → the whole group is off the list. An
+     * owner running the Gmail agent who later connects Outlook must not be
+     * offered the twin: they would end up with two agents reading two mailboxes
+     * and drafting into both. `''` is the sentinel for "offer none", which no
+     * automation id can collide with.
+     */
+    if (running.has(automation.id)) {
+      variantToOffer.set(group, '');
+      continue;
+    }
+    if (variantToOffer.get(group) === '') continue;
+
+    const chosen = variantToOffer.get(group);
+    const chosenIsConnected =
+      chosen !== undefined &&
+      AUTOMATION_AGENTS.some(
+        a => a.id === chosen && a.variantPlugin !== undefined && connected.has(a.variantPlugin)
+      );
+
+    /* A connected mailbox beats the default; the first connected one wins. */
+    if (automation.variantPlugin && connected.has(automation.variantPlugin)) {
+      if (!chosenIsConnected) variantToOffer.set(group, automation.id);
+      continue;
+    }
+
+    if (chosen === undefined && automation.variantDefault) {
+      variantToOffer.set(group, automation.id);
+    }
+  }
+
+  const rows: AvailableAutomation[] = [];
+  /*
+   * One cache for the whole list. `automationApplies` resolves a business fact
+   * per requirement ("takes bookings", "sends quotes"), and several agents share
+   * a requirement — without this, the same question is asked of the database
+   * once per agent. `as never` matches the call in `installedAutomations`: the
+   * function reads only `.requires`, which both registries spell identically,
+   * but the parameter is typed to the operational shape.
+   */
+  const applies = new Map<string, Promise<boolean>>();
+
+  for (const automation of AUTOMATION_AGENTS) {
+    if (running.has(automation.id)) continue;
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * ONLY THE AGENTS NO CARD WILL EVER OFFER.
+     *
+     * The first version of this listed everything uninstalled, and on a live
+     * account that put five agents on the dashboard with Activate buttons, of
+     * which four were not new and three were simply WAITING.
+     *
+     * An agent with detectors behind it is meant to arrive at a moment, with
+     * evidence: "four leads have gone cold, shall I follow them up?" Listing it
+     * here offers the same agent with no trigger and nothing to justify it —
+     * the same button, a far weaker offer — and it pre-empts the card entirely,
+     * because an agent switched on from a list never gets the card that would
+     * have explained it. The owner's reaction to seeing those five was the
+     * finding: it read as the platform offering things they already had.
+     *
+     * `offeredFromInsight: false` already marks exactly the agents with no such
+     * moment — no detector reports their work, so no card will ever mention
+     * them, and before this list existed they were shipped and unreachable.
+     * Those are the ones a list is FOR. The rest keep their card.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (automation.offeredFromInsight !== false) continue;
+
+    /* One of a group of provider variants, and not the one to offer here. */
+    if (automation.variantGroup && variantToOffer.get(automation.variantGroup) !== automation.id) {
+      continue;
+    }
+
+    if (!(await automationApplies(userId, automation as never, applies))) continue;
+
+    rows.push({
+      automationId: automation.id,
+      name: say(automation.nameKey),
+      description: say(automation.descriptionKey),
+      watches: say(automation.watchesKey),
+      plugins: automation.pluginsRequired,
+      missingPlugins: automation.pluginsRequired.filter(
+        p => p !== 'business-os' && !connected.has(p)
+      ),
+      cadenceChoices: automation.cadenceChoices,
+      /*
+       * Offered only while the group is undecided — see `connectEither`. Built
+       * from the catalogue in its own order, so the default comes first and the
+       * dialog lists the likelier mailbox at the top.
+       */
+      connectEither: mailboxChoiceFor(
+        automation,
+        connected,
+        AUTOMATION_AGENTS as readonly AutomationAgent[]
+      ),
+      defaultStopAfterDays: automation.defaultStopAfterDays,
+      stopAfterChoices: automation.stopAfterChoices,
+      inputs: automation.inputSchema ?? [],
+      worksAlongside: automation.worksAlongside
+        ? say(
+            OPERATIONAL_AUTOMATIONS.find(o => o.id === automation.worksAlongside)?.labelKey ?? ''
+          ) || null
+        : null,
+    });
+  }
+
+  return rows;
 }

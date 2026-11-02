@@ -385,7 +385,41 @@ export class PluginManagerV2 {
   // Get plugins with expired tokens (active but need refresh)
   // Returns plugin keys that are active in DB but have expired tokens
   async getActiveExpiredPluginKeys(userId: string): Promise<string[]> {
+    return (await this.getActiveExpiredPlugins(userId)).map(entry => entry.key);
+  }
 
+  /**
+   * Expired connections, and whether each can get itself going again.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * EXPIRED IS NOT BROKEN, AND CONFLATING THEM ALERTS EVERY HOUR.
+   *
+   * A Google access token lives exactly ONE HOUR. `isTokenValid` is
+   * `expires_at > now` and nothing more, so sixty minutes after any refresh
+   * every Google connection this platform holds leaves the `connected` list
+   * and lands here — with its refresh token still perfectly good, and the
+   * executors still refreshing it on demand without anybody noticing.
+   *
+   * Measured on a live account: a Gmail connection written at 21:44 with
+   * `expires_at` 22:44, `status: active`, a refresh token present, and the
+   * readiness card telling the owner their connection had died and they must
+   * reconnect it. Every hour. For a connection that worked.
+   *
+   * That is the specific way an alert becomes furniture: the page's own note
+   * about scoping this list warns that a false amber line "teaches them the
+   * amber line is noise and the next one gets skipped with it".
+   *
+   * So the fact a caller actually needs is not "is the access token past its
+   * hour" but "is there anything the OWNER has to do about it". A connection
+   * holding a refresh token needs nothing from them; one without it cannot
+   * recover on its own and is genuinely dead. Both are still reported here —
+   * the distinction is the caller's to use, and the footer's refresh button
+   * wants the refreshable ones too.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async getActiveExpiredPlugins(
+    userId: string
+  ): Promise<{ key: string; canRefresh: boolean }[]> {
     // Get all active connections (including expired)
     const allActive = await this.userConnections.getAllActivePlugins(userId);
 
@@ -394,11 +428,20 @@ export class PluginManagerV2 {
     const validKeys = new Set(validConnected.map(conn => conn.plugin_key));
 
     // Find plugins that are active but not in valid list (meaning expired)
-    const expiredKeys = allActive
+    return allActive
       .filter(conn => !validKeys.has(conn.plugin_key))
-      .map(conn => conn.plugin_key);
-
-    return expiredKeys;
+      .map(conn => ({
+        key: conn.plugin_key,
+        /*
+         * Presence only. Whether the grant is still honoured is a question
+         * only Google can answer, and asking costs a network round trip per
+         * connection on a status read — so a refresh token that has since
+         * been revoked still reads as refreshable here. That failure has its
+         * own surface: the refresh fails, the run dead-letters, and the agents
+         * list reports the agent as stopped with what to do about it.
+         */
+        canRefresh: Boolean((conn as { refresh_token?: string | null }).refresh_token),
+      }));
   }
 
   // Get user's executable plugins (with valid refreshed tokens - SLOW but READY)
