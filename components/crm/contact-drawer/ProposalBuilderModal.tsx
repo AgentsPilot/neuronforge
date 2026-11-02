@@ -396,6 +396,15 @@ export function ProposalBuilderModal({
   const [sessionCount, setSessionCount] = useState(6);
   /** The dates themselves: generated, then edited. This is what gets stored. */
   const [sessionDates, setSessionDates] = useState<string[]>([]);
+
+  /* The ends of the series, and the key the busy list is stamped with.
+     Declared here beside `sessionDates` because `sessionProblems` below reads
+     the key, and these are nothing but a read of that state. */
+  const seriesFrom = sessionDates[0] ?? '';
+  const seriesTo = sessionDates[sessionDates.length - 1] ?? '';
+
+  /* What the busy list would have to describe to be about these dates. */
+  const seriesKey = isPackage && seriesFrom && seriesTo ? `${seriesFrom}|${seriesTo}` : null;
   const [sessionMinutes, setSessionMinutes] = useState<number>(60);
   /**
    * Whether the length came from the version being revised.
@@ -425,6 +434,23 @@ export function ProposalBuilderModal({
    */
   const [serviceHours, setServiceHours] = useState<unknown>(null);
   const [takenSlots, setTakenSlots] = useState<Array<{ start: string; end: string }>>([]);
+  /**
+   * WHICH RANGE the slots above describe.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Picking the first meeting regenerates the whole series, so the dates change
+   * before the busy list for them has been asked for. `takenSlots` still held
+   * the PREVIOUS range, and the clash test ran against it immediately — against
+   * hours that have nothing to do with the dates now on screen. It found no
+   * overlap, naturally, and the dialog reported every date free. The real
+   * warnings appeared a round trip later, so an owner who picked a date and
+   * read the list at once saw nothing: the "does not always alert" report.
+   *
+   * Stamping the range the answer belongs to makes the mismatch visible, so a
+   * verdict is only ever drawn from slots fetched for the dates being judged.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [takenRange, setTakenRange] = useState<string | null>(null);
 
   /*
    * The proposal document.
@@ -813,6 +839,17 @@ export function ProposalBuilderModal({
          * the database constraint makes: a meeting ending exactly when this one
          * starts is not a clash.
          */
+        /*
+         * Only against a list fetched FOR THESE DATES.
+         *
+         * `checking` is not "free" — it is "not known yet", and the row says so
+         * rather than showing a clean date the next render may contradict. See
+         * `takenRange`: picking the first meeting rewrites the whole series, so
+         * there is always a moment when the dates are new and the busy list is
+         * not.
+         */
+        if (takenRange !== seriesKey) return 'checking' as const;
+
         const clash = takenSlots.some(
           slot => new Date(slot.start) < end && new Date(slot.end) > start
         );
@@ -820,7 +857,17 @@ export function ProposalBuilderModal({
 
         return null;
       }),
-    [sessionDates, timeOff, sessionMinutes, packageZone, serviceHours, takenSlots, alreadyBooked]
+    [
+      sessionDates,
+      timeOff,
+      sessionMinutes,
+      packageZone,
+      serviceHours,
+      takenSlots,
+      takenRange,
+      seriesKey,
+      alreadyBooked,
+    ]
   );
 
   /*
@@ -843,7 +890,10 @@ export function ProposalBuilderModal({
   type SessionProblem = (typeof sessionProblems)[number];
 
   const problemTone = (problem: SessionProblem): 'lost' | 'warn' | null => {
-    if (!problem || problem === 'empty') return null;
+    /* `checking` is an absence of an answer, not a finding — it must not be
+       counted or coloured, or every date would flash amber while the busy
+       list loads. It says its own quiet line beside the row instead. */
+    if (!problem || problem === 'empty' || problem === 'checking') return null;
     return problem === 'past' || problem === 'taken' ? 'lost' : 'warn';
   };
 
@@ -1026,14 +1076,17 @@ export function ProposalBuilderModal({
    * being quoted — this list is client-side, so it names them rather than
    * importing a server constant.
    */
-  const seriesFrom = sessionDates[0] ?? '';
-  const seriesTo = sessionDates[sessionDates.length - 1] ?? '';
 
   useEffect(() => {
     if (!isPackage || !seriesFrom || !seriesTo) {
       setTakenSlots([]);
+      setTakenRange(null);
       return;
     }
+
+    /* The old answer is about the old dates. Dropped before asking, so the
+       clash test has nothing stale to be confident with — see `takenRange`. */
+    setTakenRange(null);
 
     let cancelled = false;
 
@@ -1101,6 +1154,10 @@ export function ProposalBuilderModal({
               end: String(interval.end_time),
             }))
         );
+
+        /* Stamped with the dates it answers for, so a verdict is never drawn
+           from a list fetched for a different series. */
+        setTakenRange(`${seriesFrom}|${seriesTo}`);
       } catch {
         /*
          * Silent: an unreadable list loses the clash warning, not the feature.
@@ -2033,7 +2090,17 @@ export function ProposalBuilderModal({
                               that ARE open, and a taken slot says it will not
                               be booked — because acceptance would skip it.
                             */}
-                            {problem && problem !== 'empty' && (
+                            {problem === 'checking' && (
+                              /* Said, not hidden: with no answer yet, silence
+                                 would read as "this date is free" — which is
+                                 the thing that made the clash warning look
+                                 unreliable. */
+                              <p className="mt-1 ms-[1.625rem] text-xs leading-snug text-[var(--v2-text-muted)]">
+                                {t('proposal.package_date_checking')}
+                              </p>
+                            )}
+
+                            {problem && problem !== 'empty' && problem !== 'checking' && (
                               <p
                                 className={`mt-1 ms-[1.625rem] flex items-start gap-1.5 text-xs font-medium leading-snug ${
                                   tone === 'lost'

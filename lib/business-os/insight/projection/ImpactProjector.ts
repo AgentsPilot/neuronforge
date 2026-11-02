@@ -262,7 +262,19 @@ export class ImpactProjector {
         details: `${invoiceCount} invoice${invoiceCount !== 1 ? 's' : ''} remain${invoiceCount === 1 ? 's' : ''} overdue, requiring ~${Math.round(manualTimeMinutes / 60)} hour${manualTimeMinutes >= 120 ? 's' : ''} of manual follow-up`,
         detailsLine: {
           text: `${invoiceCount} invoices remain overdue, requiring ~${Math.round(manualTimeMinutes / 60)} hours of manual follow-up`,
-          key: 'insight.cash_ar_overdue.do_nothing_detail',
+          /*
+           * One hour takes its own key.
+           *
+           * The English `details` above already picks hour/hours; the
+           * TRANSLATED line did not, and rendered "~1 שעות" on a live card — a
+           * plural noun on a count of one, which Hebrew does not form by
+           * adding a letter. Same reason `automation.unit.*` carries `_one`
+           * variants, and the choice is made HERE because the key travels to
+           * the client already decided.
+           */
+          key: Math.round(manualTimeMinutes / 60) === 1
+            ? 'insight.cash_ar_overdue.do_nothing_detail_one'
+            : 'insight.cash_ar_overdue.do_nothing_detail',
           params: { hours: Math.round(manualTimeMinutes / 60) },
         },
         projectedLoss: arAmount,

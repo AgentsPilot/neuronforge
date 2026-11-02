@@ -75,9 +75,19 @@ export class PluginAPIClient {
           throw new Error(result.error || 'Failed to get user plugin status');
         }
 
+        /*
+         * Field by field, so anything the route adds has to be added here too.
+         *
+         * `active_expired_named` is the names for the expired list, and without
+         * this line it would be dropped between a route that returns it and a
+         * provider that reads it — with nothing failing, because the type makes
+         * it optional and the fallback is the plugin key. The display would
+         * simply stay wrong.
+         */
         return {
           connected: result.connected,
           active_expired: result.active_expired || [],
+          active_expired_named: result.active_expired_named || [],
           disconnected: result.disconnected,
           summary: result.summary
         };

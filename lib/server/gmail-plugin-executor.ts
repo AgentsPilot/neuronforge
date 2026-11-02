@@ -250,11 +250,60 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
   }
 
   // Create draft via Gmail API
+  /**
+   * A draft, and optionally a draft that belongs to a conversation.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `reply_to_message_id` IS THE WHOLE DIFFERENCE BETWEEN A REPLY AND A LETTER.
+   *
+   * Without it a drafted answer arrives as its own message carrying "Re:", and
+   * the client's mail client files it as a new conversation beside the one it
+   * answers. The owner sends what looks, to the person receiving it, like a
+   * stranger to the thread they wrote in.
+   *
+   * Gmail needs two things to disagree with that, and both come from the
+   * message being replied to: the `threadId`, and `In-Reply-To`/`References`
+   * headers naming the original's `Message-ID`. `users.drafts.create` takes the
+   * same `{ raw, threadId }` shape that `messages.send` does, so a threaded
+   * draft is the threaded SEND minus the sending — which is exactly what an
+   * agent that must never email a client needs.
+   *
+   * Absent, everything below is skipped and the old behaviour stands. No
+   * existing caller passes it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   private async createDraft(connection: any, parameters: any): Promise<any> {
     this.logger.debug('Creating draft via Gmail API');
 
-    // Build email message
-    const message = this.buildEmailMessage(parameters);
+    let message: string;
+    let threadId: string | undefined;
+    /*
+     * THE RESOLVED recipients AND subject, not the ones asked for.
+     *
+     * When threading, both are worked out from the original: the subject gains
+     * a "Re:" and recipients may have been defaulted to the sender. Reporting
+     * `parameters` back would describe a draft other than the one just written
+     * — a `subject` without its "Re:", and a `recipient_count` of 0 whenever
+     * the caller let the sender be inferred. Whatever reads this result (an
+     * activity line, the owner's own eyes) should see what is in the drafts
+     * folder.
+     */
+    let recipients: any = parameters.recipients || {};
+    let subject: string = parameters.content?.subject || '(no subject)';
+
+    if (parameters.reply_to_message_id) {
+      const threaded = await this.threadedReplyParts(
+        connection,
+        String(parameters.reply_to_message_id),
+        parameters
+      );
+      message = threaded.raw;
+      threadId = threaded.threadId;
+      recipients = threaded.recipients;
+      subject = threaded.subject;
+    } else {
+      message = this.buildEmailMessage(parameters);
+    }
 
     // Create draft
     const response = await fetch(`${this.gmailApisUrl}/users/me/drafts`, {
@@ -264,7 +313,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        message: { raw: message }
+        message: threadId ? { raw: message, threadId } : { raw: message }
       })
     });
 
@@ -277,15 +326,14 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     const result = await response.json();
 
     // Return formatted result
-    const recipientCount = this.countRecipients(parameters.recipients || {});
-
     return {
       draft_id: result.id,
       message_id: result.message?.id,
+      thread_id: result.message?.threadId ?? threadId ?? null,
       created_at: new Date().toISOString(),
-      recipient_count: recipientCount,
-      recipients: parameters.recipients || {},
-      subject: parameters.content?.subject || '(no subject)'
+      recipient_count: this.countRecipients(recipients),
+      recipients,
+      subject
     };
   }
 
@@ -706,24 +754,41 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
   }
 
   /**
-   * Reply within an existing thread.
-   * Fetches the target message metadata (threadId + Message-ID/References/Subject/From),
-   * builds a reply MIME with In-Reply-To/References so it CONTINUES the thread (never
-   * starts a new one), and sends via messages.send with the threadId.
-   * NOT idempotent — each call sends a new message (double-send on re-run).
+   * EVERYTHING THAT MAKES A MESSAGE PART OF A CONVERSATION, worked out once.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Threading is not one fact but four, and all four come from the message
+   * being answered: the `threadId` Gmail files it under, the original's
+   * `Message-ID` echoed back as `In-Reply-To`, the `References` chain extended
+   * by it, and a subject that says `Re:` exactly once. Get any of them wrong
+   * and the answer arrives beside the conversation instead of inside it.
+   *
+   * SHARED BY `reply_to_email` AND `create_draft` ON PURPOSE. They differ in
+   * one line — one sends the result, the other stores it — and it would be a
+   * poor bargain to copy all four facts to avoid sharing them. Two copies drift,
+   * and a drifted copy does not fail loudly: it produces a reply that looks
+   * right to whoever drafted it and lands as a stray message for whoever reads
+   * it. `reply_to_email` behaves exactly as it did; this is its own code, lifted
+   * whole and given a name.
+   *
+   * Recipients: an explicit `parameters.recipients` wins. Absent one, it answers
+   * the sender (`Reply-To` ?? `From`), and `reply_all: true` widens Cc to the
+   * original To + Cc. Self-exclusion is not performed (no profile lookup here)
+   * — a documented v1 limitation that predates this extraction.
+   * ───────────────────────────────────────────────────────────────────────────
    */
-  private async replyToThread(connection: any, parameters: any): Promise<any> {
-    const messageId: string = typeof parameters.message_id === 'string' ? parameters.message_id.trim() : '';
-    if (!messageId) {
-      throw new Error('message_id is a required parameter');
-    }
-
+  private async threadedReplyParts(
+    connection: any,
+    messageId: string,
+    parameters: any
+  ): Promise<{
+    raw: string;
+    threadId: string;
+    inReplyTo: string;
+    recipients: any;
+    subject: string;
+  }> {
     const content = parameters.content || {};
-    const hasBody = (typeof content.body === 'string' && content.body.length > 0)
-      || (typeof content.html_body === 'string' && content.html_body.length > 0);
-    if (!hasBody) {
-      throw new Error('content must include at least one of body or html_body');
-    }
 
     // (1) Fetch original message metadata to resolve threading headers.
     const metaResponse = await fetch(
@@ -738,7 +803,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!metaResponse.ok) {
       const errorData = await metaResponse.text();
-      this.logger.error({ status: metaResponse.status, errorData, messageId }, 'reply_to_email: failed to fetch original message');
+      this.logger.error({ status: metaResponse.status, errorData, messageId }, 'threading: failed to fetch the message being replied to');
       throw new Error(`Failed to fetch original message: ${metaResponse.status} - ${errorData}`);
     }
 
@@ -787,7 +852,33 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       }
     );
 
-    // (5) Send within the thread. threadId keeps the reply in the same conversation.
+    return { raw, threadId, inReplyTo: originalMessageIdHeader, recipients, subject };
+  }
+
+  /**
+   * Reply within an existing thread.
+   * Threading is resolved by `threadedReplyParts` (metadata fetch, In-Reply-To /
+   * References, recipients, subject); this sends the result with the threadId so
+   * it CONTINUES the conversation rather than starting one.
+   * NOT idempotent — each call sends a new message (double-send on re-run).
+   */
+  private async replyToThread(connection: any, parameters: any): Promise<any> {
+    const messageId: string = typeof parameters.message_id === 'string' ? parameters.message_id.trim() : '';
+    if (!messageId) {
+      throw new Error('message_id is a required parameter');
+    }
+
+    const content = parameters.content || {};
+    const hasBody = (typeof content.body === 'string' && content.body.length > 0)
+      || (typeof content.html_body === 'string' && content.html_body.length > 0);
+    if (!hasBody) {
+      throw new Error('content must include at least one of body or html_body');
+    }
+
+    const { raw, threadId, inReplyTo, recipients, subject } =
+      await this.threadedReplyParts(connection, messageId, parameters);
+
+    // Send within the thread. threadId keeps the reply in the same conversation.
     const sendResponse = await fetch(`${this.gmailApisUrl}/users/me/messages/send`, {
       method: 'POST',
       headers: {
@@ -808,7 +899,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     return {
       message_id: result.id,
       thread_id: result.threadId,
-      in_reply_to: originalMessageIdHeader,
+      in_reply_to: inReplyTo,
       recipient_count: this.countRecipients(recipients),
       subject,
       sent_at: new Date().toISOString(),
@@ -1145,6 +1236,26 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
        */
       reply_to: getHeader('Reply-To'),
       cc: getHeader('Cc'),
+      /*
+       * THE BARE ADDRESSES, beside the raw headers rather than instead of them.
+       *
+       * `From` is a header, not an address: it arrives as `"Dana Levi"
+       * <dana@host>` about as often as it arrives bare. So anything that needed
+       * to MATCH a sender — against `crm_contacts.email`, against
+       * `email_sends.to_email` — could not, and anything that needed to WRITE
+       * BACK had to hand a display name to a recipient field expecting an
+       * address.
+       *
+       * The workarounds for that are both worse than this: parse the header in
+       * every caller, or ask a model to pick the address out of the string.
+       * The second is how a draft ends up addressed to a hallucinated client,
+       * and it was the blocker for the mail receptionist agent.
+       *
+       * Raw headers are untouched — callers reading `from` for display keep
+       * exactly what they had.
+       */
+      from_email: this.parseEmailAddress(getHeader('From')),
+      reply_to_email: this.parseEmailAddress(getHeader('Reply-To')),
       date: getHeader('Date'),
       snippet: email.snippet || '', // Gmail always returns snippet regardless of format
       labels: email.labelIds || [],
@@ -1164,6 +1275,45 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     }
 
     return emailInfo;
+  }
+
+  /**
+   * The bare address out of an address header.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Handles the three shapes RFC 5322 actually delivers:
+   *
+   *   Dana Levi <dana@host>        the common one
+   *   "Levi, Dana" <dana@host>     quoted, because the display name has a comma
+   *   dana@host                    bare, no angle brackets at all
+   *
+   * ANGLE BRACKETS WIN WHEREVER THEY APPEAR, and that ordering is the whole
+   * point rather than a stylistic choice: a quoted display name is allowed to
+   * contain an @ ("admin@old-domain" <dana@host> is legal), so reaching for
+   * the first @-looking token returns the DISPLAY NAME and a draft goes to the
+   * wrong person. Taking what is inside the brackets first makes that
+   * impossible.
+   *
+   * Only the FIRST address is returned. These headers may carry a list, and
+   * every caller here wants one person to match or write to; returning a
+   * comma-joined string that looks like an address but is not would be worse
+   * than returning nothing.
+   *
+   * Returns '' rather than null for an absent or unparseable header, so a
+   * caller interpolating it into a query gets an empty match instead of the
+   * string "null" — which a search engine answers by returning everything.
+   */
+  private parseEmailAddress(header: string): string {
+    if (!header) return '';
+
+    const bracketed = header.match(/<([^<>]+)>/);
+    if (bracketed) return bracketed[1].trim().toLowerCase();
+
+    const first = header.split(',')[0].trim();
+    /* No brackets, so the whole token must itself look like an address. An
+       unquoted display name with no address ("Reception Desk") reaches here and
+       must come back empty rather than being passed on as one. */
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(first) ? first.toLowerCase() : '';
   }
 
   // Extract email body text

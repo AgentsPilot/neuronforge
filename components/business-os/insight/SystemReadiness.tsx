@@ -30,9 +30,61 @@ import { stepColor, useStepLabel } from '@/components/business-os/setup/SetupCha
  * what it is.
  */
 
+/**
+ * A connection that WAS configured and has died.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY IT BELONGS ON THIS CARD AND NOT THE OTHER TWO
+ *
+ * This card owns one question: is the platform configured end to end. An
+ * expired OAuth grant is that same question asked of something that was
+ * configured once and no longer is, which is why it goes here and not on the
+ * needs-you card — every row of THAT card is a client with a message to send,
+ * and `GapItem.contactId` is required. A dead plugin has neither.
+ *
+ * It is also not a `SetupItem`. A setup item asks for something to be done for
+ * the first time, and the graph decides whether it is compulsory; declaring
+ * this in `SETUP_STEPS` would put a permanent row in every owner's checklist
+ * for a fault most of them will never have. (And an item with an undeclared id
+ * is resolved away by the graph: it would move the counts on the strip and
+ * then never render as a row.)
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IT DOES NOT CHANGE WHETHER THE CARD IS COLLAPSED
+ *
+ * Deliberately. A business whose setup is finished keeps its one line; the line
+ * changes what it SAYS and goes amber. Forcing the chain open would push the
+ * day's work down the page to report something repaired in one click, and
+ * `ready` has to keep meaning "nothing compulsory is outstanding" or the
+ * collapse rule stops being readable.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface ReadinessAttention {
+  /** The plugin key, which is what the repair is called with. */
+  key: string;
+  /** One clause: "Gmail needs reconnecting". */
+  title: string;
+  /** Why, and what it costs. */
+  detail: string;
+  /** The button's words. */
+  actionLabel: string;
+  /** True while this one is being repaired. */
+  busy?: boolean;
+  /** Why the last attempt failed, already in the reader's language. */
+  error?: string;
+}
+
 interface SystemReadinessProps {
   items: SetupItem[];
   onAction?: (action: string) => void;
+  /**
+   * Connections that have died. See `ReadinessAttention`.
+   *
+   * Empty is the normal state, and the card then looks exactly as it did.
+   */
+  attention?: ReadinessAttention[];
+  /** Repair one, by plugin key. The hook owns the sequence. */
+  onRepair?: (key: string) => void;
   /**
    * Actions currently in flight. Most rows open a dialog instantly, but
    * connecting an external account takes an OAuth round trip — without visible
@@ -77,6 +129,8 @@ const TODO = '#F97316';
 export function SystemReadiness({
   items,
   onAction,
+  attention = [],
+  onRepair,
   pendingActions = [],
   actionError,
   shape = UNKNOWN_SHAPE,
@@ -124,6 +178,15 @@ export function SystemReadiness({
   /** What still stands between this business and taking a client. */
   const mandatoryLeft = graph.mandatoryTotal - graph.mandatoryDone;
   const ready = isReadyForClients(graph);
+  /**
+   * Dead connections, or null when there are none.
+   *
+   * Null rather than an empty array so each reader below is a plain truth
+   * test. Kept apart from `missing` on purpose: `missing` is work never
+   * started, this is work that was finished and has stopped working, and the
+   * card says different things about them.
+   */
+  const broken = attention.length > 0 ? attention : null;
   const bodyFont = isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif';
   const displayFont = isRTL ? '"Heebo", system-ui, sans-serif' : '"Space Grotesk", system-ui, sans-serif';
 
@@ -191,8 +254,14 @@ export function SystemReadiness({
           alignItems: 'center',
           gap: '10px',
           width: '100%',
-          background: 'var(--v2-surface)',
-          border: '1px solid var(--v2-border)',
+          background: broken ? `${TODO}0F` : 'var(--v2-surface)',
+          /*
+            The one visual change a fault makes to the strip. This line sits in
+            the same place at the same size on every load, and a reader who has
+            learned to skim past a green tick needs the shape to change before
+            the words get read at all.
+          */
+          border: broken ? `1px solid ${TODO}66` : '1px solid var(--v2-border)',
           borderRadius: '18px',
           padding: '12px 16px',
           fontFamily: bodyFont,
@@ -202,11 +271,26 @@ export function SystemReadiness({
           textAlign: isRTL ? 'right' : 'left',
         }}
       >
-        <Check className="h-4 w-4" style={{ color: '#10B981', flexShrink: 0 }} aria-hidden="true" />
-        <span style={{ fontWeight: 600, color: INK }}>
-          {t('readiness.ready') || 'You are ready for clients'}
+        {broken ? (
+          <AlertCircle className="h-4 w-4" style={{ color: TODO, flexShrink: 0 }} aria-hidden="true" />
+        ) : (
+          <Check className="h-4 w-4" style={{ color: '#10B981', flexShrink: 0 }} aria-hidden="true" />
+        )}
+        <span style={{ fontWeight: 600, color: INK, minWidth: 0 }}>
+          {broken ? broken[0].title : t('readiness.ready')}
         </span>
-        {done > 0 && (
+        {/*
+          A second fault is counted, never listed. One line has room for one
+          name: "Gmail needs reconnecting · 1 more" is true and openable, where
+          two names fight for the same space and neither gets read.
+        */}
+        {broken && broken.length > 1 && (
+          <span style={{ whiteSpace: 'nowrap' }}>
+            {' · '}
+            {t('readiness.brokenMore', { count: broken.length - 1 })}
+          </span>
+        )}
+        {!broken && done > 0 && (
           <span style={{ whiteSpace: 'nowrap' }}>
             {' · '}
             {t('readiness.doneGroup', { count: done })}
@@ -219,8 +303,13 @@ export function SystemReadiness({
           thing on the dashboard that still points at them.
           Finished state only: while compulsory steps remain, the count that
           matters is those, and an optional tally beside them competes with it.
+
+          Dropped while something is broken. A tally of improvements beside a
+          dead connection invites the reader to weigh one against the other,
+          and they are not comparable: one is work they could choose to do, the
+          other is the platform not working.
         */}
-        {ready && missing.length > 0 && (
+        {!broken && ready && missing.length > 0 && (
           <span style={{ whiteSpace: 'nowrap' }}>
             {' · '}
             {missing.length} {t('readiness.optional') || 'optional'}
@@ -522,6 +611,98 @@ export function SystemReadiness({
           </button>
         )}
       </div>
+
+      {/*
+        ─────────────────────────────────────────────────────────────────────────
+        BROKEN BEFORE UNCONFIGURED.
+
+        Above the blocking notice below it, which is otherwise the only thing on
+        this card that outranks a step. A connection that has DIED is more
+        urgent than one never made: the owner built on it, their clients are
+        reaching them through it, and it lapsed without anybody being told.
+
+        One row per dead connection, each with the repair. The sequence behind
+        the button is the platform's own — a silent token refresh first, a full
+        OAuth round trip only if the refresh token is dead too — and it lives in
+        `usePluginRepair`, not here.
+        ─────────────────────────────────────────────────────────────────────────
+      */}
+      {broken && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '0 0 14px' }}>
+          {broken.map(fault => (
+            <div
+              key={fault.key}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '8px',
+                padding: '9px 11px',
+                borderRadius: '10px',
+                background: `${TODO}0F`,
+                border: `1px solid ${TODO}40`,
+              }}
+            >
+              <AlertCircle
+                className="h-4 w-4"
+                style={{ color: TODO, flexShrink: 0, marginTop: '1px' }}
+                aria-hidden="true"
+              />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <span
+                  style={{
+                    display: 'block',
+                    fontFamily: bodyFont,
+                    fontSize: '12.5px',
+                    fontWeight: 600,
+                    color: INK,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {fault.title}
+                </span>
+                <span
+                  style={{
+                    display: 'block',
+                    fontFamily: bodyFont,
+                    fontSize: '11.5px',
+                    color: MUTED,
+                    lineHeight: 1.4,
+                    marginTop: '2px',
+                  }}
+                >
+                  {/* The failure replaces the explanation rather than joining
+                      it. Somebody who has just pressed the button and watched
+                      it fail does not need telling again what the problem is. */}
+                  {fault.error || fault.detail}
+                </span>
+              </div>
+              {/*
+                The dashboard's button, not a new one.
+
+                Same classes and the same primary ground as the needs-you card's
+                actions: `ap-primary-lift` is a class rather than an inline
+                shadow because, as `globals.css` records, the shadow is a colour
+                mix of the primary and loses its dark-mode form if written
+                inline. An amber button here — matching the row's own tint —
+                read as a third kind of control on a page that has one.
+
+                The ROW stays amber. The severity belongs to the finding; the
+                button is just how this dashboard says "press me".
+              */}
+              <button
+                type="button"
+                onClick={() => onRepair?.(fault.key)}
+                disabled={fault.busy}
+                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-70 disabled:cursor-default disabled:active:scale-100"
+                style={{ background: 'var(--v2-primary)', color: '#fff', fontFamily: bodyFont }}
+              >
+                {fault.busy && <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />}
+                {fault.actionLabel}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* What does not work yet, before what is unconfigured.
           Taken from how Stripe reports a restricted account: it names the

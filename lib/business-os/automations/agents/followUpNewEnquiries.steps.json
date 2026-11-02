@@ -15,6 +15,13 @@
           "value": false
         },
         {
+          "not": {
+            "field": "tags",
+            "op": "contains",
+            "value": "spreadsheet-import"
+          }
+        },
+        {
           "field": "email",
           "op": "is_not_null"
         },

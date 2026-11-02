@@ -38,6 +38,7 @@ import type { CurrencyCode } from '@/lib/business-os/LanguageContext';
 // the two would drift the first time an action was added.
 import type { GapAction } from '@/lib/business-os/gaps/types';
 import { RefundModal } from '@/components/payments/RefundModal';
+import { ExtendQuoteDialog } from './ExtendQuoteDialog';
 import { mostUrgent, tasksOf } from '@/lib/business-os/gaps/mostUrgent';
 
 export interface GapItemView {
@@ -425,6 +426,17 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
     currency: string;
     name: string;
   } | null>(null);
+  /**
+   * The lapsed quote whose extend dialog is open, if any.
+   *
+   * Held like `refunding` and for the same reason: the action needs an answer
+   * — here a new date — that a fire-and-forget POST cannot invent.
+   */
+  const [extending, setExtending] = useState<{
+    proposalId: string;
+    name: string;
+    lapsedOn: string | null;
+  } | null>(null);
 
   const setRow = (key: string, state: RowState) => setRows(prev => ({ ...prev, [key]: state }));
 
@@ -683,6 +695,26 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
         amount: typeof item.value === 'number' ? item.value : 0,
         currency: item.currency || '',
         name: item.name,
+      });
+      return;
+    }
+
+    /*
+     * Extending asks for a date, so it opens rather than posts — the same
+     * reasoning as the refund above. The owner is deciding how long to hold a
+     * price, and a button that chose for them would be answering the
+     * commercial question itself.
+     */
+    if (action === 'extend_quote') {
+      if (!item.entityId) {
+        setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
+        return;
+      }
+      setExtending({
+        proposalId: item.entityId,
+        name: item.name,
+        /* The day it lapsed, which the gap carries as `eventAt`. */
+        lapsedOn: item.eventAt ?? null,
       });
       return;
     }
@@ -1691,6 +1723,23 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
         through Stripe at all. Rendered inside the card because it portals out
         of it anyway.
       */}
+      {extending && (
+        <ExtendQuoteDialog
+          proposalId={extending.proposalId}
+          contactName={extending.name}
+          lapsedOn={extending.lapsedOn}
+          isRTL={isRTL}
+          t={t}
+          onClose={() => setExtending(null)}
+          onSuccess={() => {
+            setExtending(null);
+            /* The quote is live again, so the row has left this card. */
+            onChanged?.();
+          }}
+          onError={message => toast.error(message)}
+        />
+      )}
+
       {refunding && (
         <RefundModal
           isOpen

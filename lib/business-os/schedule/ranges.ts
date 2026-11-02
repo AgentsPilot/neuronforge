@@ -69,12 +69,26 @@ export const CADENCE_INTERVAL: Record<AutomationCadence, ScheduleInterval> = {
   monthly: { every: 30, unit: 'days' },
 };
 
-/** Just the fields a range needs, so this module does not import the catalogue. */
+/**
+ * Just the fields a range needs, so this module does not import the catalogue.
+ *
+ * THE STOP RULE IS OPTIONAL, because not every agent has one.
+ *
+ * It means the same thing wherever it appears — stop considering anything
+ * older than this — and that sentence needs something with a date in it. A
+ * chaser has one: an invoice, a quote, a booking. An agent that imports a
+ * spreadsheet does not; a row has no age, so there is nothing for a cut-off to
+ * measure and any number offered would be decoration.
+ *
+ * Made optional rather than given a meaningless default, because a default
+ * here would be shown to an owner as a real control over something it does not
+ * control.
+ */
 export interface RangeableAgent {
   cadenceChoices: AutomationCadence[];
-  stopAfterChoices: number[];
+  stopAfterChoices?: number[];
   defaultCron: string;
-  defaultStopAfterDays: number;
+  defaultStopAfterDays?: number;
 }
 
 /**

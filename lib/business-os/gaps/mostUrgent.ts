@@ -62,6 +62,11 @@ const TIER: Record<string, number> = {
   quote_deadline_unanswered: 2,
   meeting_unmarked: 3,
   enquiry_unanswered: 3,
+  /* Beside an unanswered enquiry, because it is the same thing one step on:
+     somebody wrote and is waiting. A reply from an existing client outranks
+     nothing here — it is as urgent as a stranger's first message, and the
+     draft case is already written, so clearing it costs one press. */
+  client_reply_waiting: 3,
   quote_unwritten: 3,
   quote_unsent: 3,
   booking_cancelled: 3,

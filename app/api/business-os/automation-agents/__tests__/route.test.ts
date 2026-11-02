@@ -19,6 +19,12 @@ const markAutomated = jest.fn();
 const installedAutomations = jest.fn();
 const pauseAutomation = jest.fn();
 const resumeAutomation = jest.fn();
+/*
+ * The two the plugin-connection gate added. Both default to "nothing missing"
+ * and "nothing available", so every existing case behaves as it did and only
+ * the cases that set them exercise the gate.
+ */
+const availableAutomations = jest.fn().mockResolvedValue([]);
 const removeAutomation = jest.fn();
 const automationById = jest.fn();
 const auditLog = jest.fn().mockResolvedValue(undefined);
@@ -60,6 +66,7 @@ jest.mock('@/lib/business-os/automations/install', () => ({
   pauseAutomation: (...args: unknown[]) => pauseAutomation(...args),
   resumeAutomation: (...args: unknown[]) => resumeAutomation(...args),
   removeAutomation: (...args: unknown[]) => removeAutomation(...args),
+  availableAutomations: (...args: unknown[]) => availableAutomations(...args),
 }));
 
 import { DELETE, GET, PATCH, POST } from '../route';
@@ -92,6 +99,7 @@ beforeEach(() => {
   installedAutomations.mockResolvedValue([]);
   pauseAutomation.mockResolvedValue(true);
   resumeAutomation.mockResolvedValue(true);
+  availableAutomations.mockResolvedValue([]);
   removeAutomation.mockResolvedValue(true);
   /* Applies, unless a test says otherwise: the requirement is a separate
      question from everything else this route does. */
@@ -129,6 +137,7 @@ describe('installing one', () => {
       { id: 'chase_overdue_invoices' },
       undefined,
       undefined,
+      undefined,
       undefined
     );
     expect(auditLog).toHaveBeenCalledWith(
@@ -148,7 +157,31 @@ describe('installing one', () => {
       { id: 'chase_overdue_invoices' },
       undefined,
       undefined,
+      undefined,
       undefined
+    );
+  });
+
+  it("carries the owner's answers through to the install", async () => {
+    /*
+     * An agent that needs a spreadsheet is ASKED before it is created, on the
+     * install dialog, and those answers have to reach `installAutomation` or
+     * the agent is created unable to run with nothing on screen saying why.
+     * The route must not interpret them: which questions exist is the
+     * catalogue's business.
+     */
+    await POST(post({
+      automationId: 'chase_overdue_invoices',
+      inputValues: { spreadsheet_id: 'sheet-abc', range: 'Leads' },
+    }));
+
+    expect(installAutomation).toHaveBeenCalledWith(
+      'user-1',
+      { id: 'chase_overdue_invoices' },
+      undefined,
+      undefined,
+      undefined,
+      { spreadsheet_id: 'sheet-abc', range: 'Leads' }
     );
   });
 
@@ -172,6 +205,7 @@ describe('installing one', () => {
       { id: 'chase_overdue_invoices' },
       'weekly',
       undefined,
+      undefined,
       undefined
     );
   });
@@ -190,6 +224,7 @@ describe('installing one', () => {
       { id: 'chase_overdue_invoices' },
       undefined,
       90,
+      undefined,
       undefined
     );
   });
@@ -209,7 +244,8 @@ describe('installing one', () => {
       { id: 'chase_overdue_invoices' },
       undefined,
       undefined,
-      { every: 10, unit: 'days' }
+      { every: 10, unit: 'days' },
+      undefined
     );
   });
 
@@ -250,7 +286,8 @@ describe('installing one', () => {
       expect.anything(),
       undefined,
       undefined,
-      { every: 1, unit: 'minutes' }
+      { every: 1, unit: 'minutes' },
+      undefined
     );
   });
 
@@ -326,6 +363,7 @@ describe('installing one', () => {
       'user-1',
       expect.anything(),
       'monthly',
+      undefined,
       undefined,
       undefined
     );

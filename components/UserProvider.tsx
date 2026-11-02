@@ -90,16 +90,61 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
 
       // Add active but expired plugins (need to reconnect)
       if (status.active_expired && status.active_expired.length > 0) {
+        /*
+         * The names, from the route that holds the plugin manager.
+         *
+         * This used to set `displayName` to the plugin KEY, with a comment
+         * saying so, because the expired list carried nothing else — and that
+         * is how "google-mail" reaches a screen instead of "Gmail". The route
+         * now answers `active_expired_named` from
+         * `PluginManagerV2.getPluginDisplayName`.
+         *
+         * The key remains the fallback: the route caches its response for 30
+         * seconds, so one served from before this field existed has no names
+         * in it, and behaving exactly as before is the right answer then.
+         */
+        const expiredNames = new Map(
+          (status.active_expired_named ?? []).map(entry => [entry.key, entry.name])
+        )
+
+        /*
+         * WHICH OF THESE THE OWNER HAS TO DO SOMETHING ABOUT.
+         *
+         * A Google access token expires every hour by design, so every Google
+         * connection lands in `active_expired` sixty minutes after each
+         * refresh with its refresh token still good. `is_expired` is the right
+         * answer to "is this access token usable right now" — the footer and
+         * the calendar panel both offer a refresh off the back of it — but it
+         * is the wrong basis for telling somebody their connection has died.
+         *
+         * Defaults TRUE when the route did not say: its response is cached for
+         * 30 seconds, so one served from before this field existed carries no
+         * answer, and behaving as before — not alerting — is the safer of the
+         * two. A genuinely dead connection still reaches the owner through the
+         * agent that stops.
+         */
+        const refreshable = new Map(
+          (status.active_expired_named ?? []).map(entry => [
+            entry.key,
+            (entry as { can_refresh?: boolean }).can_refresh !== false,
+          ])
+        )
+
         status.active_expired.forEach((pluginKey: string) => {
           // Only add if not already in the map (connected takes precedence)
           if (!connectedPluginsMap[pluginKey]) {
+            const shownAs = expiredNames.get(pluginKey) || pluginKey
+
             connectedPluginsMap[pluginKey] = {
               key: pluginKey,
-              name: pluginKey, // Use key as name for expired plugins
-              displayName: pluginKey,
-              label: pluginKey,
+              name: shownAs,
+              displayName: shownAs,
+              label: shownAs,
               isConnected: true,
               is_expired: true, // Mark as expired
+              /* Expired but able to recover on its own: nothing for the owner
+                 to do. See the note above. */
+              can_refresh: refreshable.get(pluginKey) !== false,
               capabilities: [],
               category: 'integration',
               icon: '',

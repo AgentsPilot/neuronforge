@@ -77,6 +77,67 @@ export function generateTimeSlots(
   const todayStr = businessDateKey(now, timezone);
   const isToday = date === todayStr;
 
+  /*
+   * ── WHAT IS BUSY *ON THIS DAY* ────────────────────────────────────────────
+   *
+   * The overlap tests below compare an appointment's HOUR AND MINUTE against
+   * the slot's, because a slot is a wall-clock time and `businessClock` answers
+   * in exactly that form. What `businessClock` does NOT answer is which day,
+   * and nothing here asked — so an appointment at 10:00 on the 25th blocked the
+   * 10:00 slot on every other date it was handed alongside.
+   *
+   * That stayed hidden while every caller passed one day's bookings. The
+   * portal's open-dates sweep passes a whole month's in one call, on the stated
+   * reasoning that "an appointment three weeks away cannot overlap" a day's own
+   * windows. It can, and did: ~38 appointments spread over a month cover
+   * 09:00-17:00 between them, so EVERY working day came back with nothing free
+   * and the client's reschedule diary greyed out the entire month.
+   *
+   * Filtered here rather than at that call site, so the assumption the callers
+   * already make is simply true, and a future caller handing over a wide list
+   * gets the right answer instead of a silent one.
+   *
+   * The comparison is an overlap on date keys, not equality: a booking that
+   * starts the previous evening and runs past midnight, or a multi-day external
+   * event straddling this date entirely, both still occupy hours of it.
+   *
+   * Each surviving row is reduced to the minutes of THIS day it takes up, which
+   * also closes a second hole in the same arithmetic. A span running from 22:00
+   * to 10:00 the next morning gave `start 1320, end 600` — a backwards range
+   * that no slot can overlap — so an appointment running into the morning left
+   * that morning entirely for sale. Clipping to the day's own edges states the
+   * span the way the comparison can actually read it.
+   *
+   * The buffer is folded in here rather than per slot: it is a property of the
+   * appointment, and the old code recomputed it for every slot of every day.
+   */
+  const busyMinutesOn = (
+    rows: { start_time: string; end_time: string }[]
+  ): { startMins: number; endMins: number }[] =>
+    rows
+      .map(row => {
+        const start = new Date(row.start_time);
+        const end = new Date(row.end_time);
+        const startKey = businessDateKey(start, timezone);
+        const endKey = businessDateKey(end, timezone);
+
+        /* `YYYY-MM-DD` sorts lexically, so string comparison is date comparison. */
+        if (startKey > date || endKey < date) return null;
+
+        const s = businessClock(start, timezone);
+        const e = businessClock(end, timezone);
+        const MIDNIGHT = 24 * 60;
+
+        return {
+          startMins: (startKey < date ? 0 : s.hour * 60 + s.minute) - bufferMinutes,
+          endMins: (endKey > date ? MIDNIGHT : e.hour * 60 + e.minute) + bufferMinutes,
+        };
+      })
+      .filter((range): range is { startMins: number; endMins: number } => range !== null);
+
+  const bookingsToday = busyMinutesOn(existingBookings);
+  const eventsToday = busyMinutesOn(externalEvents);
+
   for (const window of dayAvailability) {
     // Parse window times (HH:mm format)
     const [startHour, startMin] = window.start.split(':').map(Number);
@@ -117,23 +178,15 @@ export function generateTimeSlots(
        * block the 14:00 slot — it blocked 18:00. A client rescheduling could
        * book straight over an appointment the owner already had.
        */
-      const overlapsBooking = existingBookings.some(booking => {
-        const s = businessClock(new Date(booking.start_time), timezone);
-        const e = businessClock(new Date(booking.end_time), timezone);
-        const bookingStartMins = s.hour * 60 + s.minute - bufferMinutes;
-        const bookingEndMins = e.hour * 60 + e.minute + bufferMinutes;
-        return slotStartMins < bookingEndMins && slotEndMins > bookingStartMins;
-      });
+      const overlapsBooking = bookingsToday.some(
+        booking => slotStartMins < booking.endMins && slotEndMins > booking.startMins
+      );
 
       // Check if slot overlaps with any external calendar event
       /* Same for a Google/Outlook event: an instant, read on the business's clock. */
-      const overlapsExternal = externalEvents.some(event => {
-        const s = businessClock(new Date(event.start_time), timezone);
-        const e = businessClock(new Date(event.end_time), timezone);
-        const eventStartMins = s.hour * 60 + s.minute - bufferMinutes;
-        const eventEndMins = e.hour * 60 + e.minute + bufferMinutes;
-        return slotStartMins < eventEndMins && slotEndMins > eventStartMins;
-      });
+      const overlapsExternal = eventsToday.some(
+        event => slotStartMins < event.endMins && slotEndMins > event.startMins
+      );
 
       // Only add slot if it doesn't overlap with anything and is in the future
       if (!overlapsBooking && !overlapsExternal && !isPastSlot) {

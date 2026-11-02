@@ -212,12 +212,50 @@ export class ScheduledExecutionRepository {
    */
   async markFailed(id: string, message: string, retry: boolean): Promise<void> {
     if (!retry) {
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE LAST ATTEMPT TRANSLATES THE ERROR FOR THE OWNER.
+       *
+       * This is the execution layer's job and nobody else's. The error is
+       * written for us — "Calibration stop: Non-retryable execution error at
+       * step 'Search mailbox…'" — and a business owner cannot act on it. The
+       * sentence they CAN act on is three layers inside it.
+       *
+       * `toUserFacing` is the platform's existing boundary between a technical
+       * issue and something a non-technical owner reads, so the translation
+       * happens here, once, and Business OS is handed the result. Surfaces
+       * below this layer render the issue; they never interpret the error.
+       *
+       * THE SENTENCES ONLY, NOT CALIBRATION'S MODEL. `toUserFacing` also
+       * returns a `severity` and a `category` that belong to the calibration
+       * flow it was written for, and one of them would be a lie here:
+       * `will_auto_fix` is a real value and nothing is going to auto-fix an
+       * expired mail token. Borrowing the translator is right; adopting a
+       * taxonomy built for another purpose is not.
+       *
+       * Only on the TERMINAL path. A run that will be retried has not failed
+       * yet, and writing an owner-facing failure for an attempt that is about
+       * to succeed is how a list comes to report a working agent as broken.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const { toUserFacing } = await import('@/lib/pilot/shadow/userFacing');
+      const issue = toUserFacing(message);
+
       await this.close(id, {
         status: 'failed',
         error_message: message.slice(0, 2000),
         completed_at: new Date().toISOString(),
         claimed_by: null,
         claimed_at: null,
+        /* Alongside the raw message, never instead of it: the technical text is
+           what a developer needs and the translation is what an owner needs. */
+        result: {
+          failure: {
+            title: issue.title,
+            message: issue.message,
+            what_to_do: issue.what_to_do,
+          },
+        },
       });
       return;
     }

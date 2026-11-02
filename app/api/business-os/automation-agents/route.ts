@@ -36,6 +36,7 @@ import { automationApplies } from '@/lib/business-os/gaps/automationApplies';
 import { InsightRepository } from '@/lib/business-os/insight/repository/InsightRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import {
+  availableAutomations,
   installAutomation,
   installedAutomations,
   pauseAutomation,
@@ -128,6 +129,17 @@ const installSchema = z.object({
    * So this marks the insight and touches no agent.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /*
+   * What the owner answered on the install dialog, for an agent that asks.
+   *
+   * A loose record rather than a named shape: which questions exist is the
+   * CATALOGUE's business, and a schema here would be a second copy of it to
+   * keep in step. `installAutomation` saves them against the agent's own
+   * `input_schema`, so a value for a question this agent never asked simply
+   * has nothing reading it.
+   */
+  inputValues: z.record(z.unknown()).optional(),
+
   acknowledgeOnly: z.boolean().optional(),
 });
 
@@ -195,9 +207,26 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const installed = await installedAutomations(user.id);
+    /*
+     * Both halves, in one call.
+     *
+     * The list used to return only what was running, which made an agent
+     * discoverable ONLY through an advisor card. That left the ones with no
+     * trend behind them — `follow_up_stalled_deals`, `draft_client_replies`,
+     * both carrying `offeredFromInsight: false` — shipped and unreachable: no
+     * card would ever mention them, and they appeared nowhere until already
+     * installed.
+     *
+     * Read together rather than from two endpoints so the two cannot disagree
+     * about whether something is running, which is what decides which list an
+     * agent belongs in.
+     */
+    const [installed, available] = await Promise.all([
+      installedAutomations(user.id),
+      availableAutomations(user.id),
+    ]);
 
-    return NextResponse.json({ success: true, data: installed });
+    return NextResponse.json({ success: true, data: installed, available });
   } catch (error) {
     requestLogger.error({ err: error }, 'Could not list automation agents');
     return NextResponse.json(
@@ -337,7 +366,8 @@ export async function POST(request: NextRequest) {
       automation,
       validated.cadence,
       validated.stopAfterDays,
-      validated.schedule
+      validated.schedule,
+      validated.inputValues
     );
 
     if (!outcome.ok) {

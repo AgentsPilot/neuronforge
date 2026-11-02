@@ -35,6 +35,7 @@
  */
 
 import { readFileSync, readdirSync } from 'fs';
+import { AUTOMATION_AGENTS } from '../catalog';
 import { join } from 'path';
 
 const PLANS_DIR = join(process.cwd(), 'lib/business-os/automations/agents');
@@ -81,6 +82,31 @@ function namesEachPlanDefines(file: string): Set<string> {
       if (scatter) {
         if (typeof scatter.itemVariable === 'string') names.add(scatter.itemVariable);
         if (Array.isArray(scatter.steps)) walk(scatter.steps);
+      }
+
+      /*
+       * CONDITIONAL BRANCHES, which this walked past for as long as no plan
+       * read a variable set inside one.
+       *
+       * It descended into `scatter.steps` and stopped, so an
+       * `output_variable` declared on a step inside a conditional was invisible
+       * to the check — and the first plan to reference one was reported as
+       * naming four roots "nothing resolves", when the runtime resolves all
+       * four. Production executes a branch through `executeSingleStep` with the
+       * SAME context object (WorkflowPilot.executeStep), and the StepExecutor
+       * path registers them explicitly; its comment records that not doing so
+       * was once a bug.
+       *
+       * So this is the guard gaining coverage rather than losing it: a typo in
+       * a conditional branch was previously unreachable by this test in both
+       * directions, both as a definition and as a reference.
+       *
+       * All four spellings, because the DSL accepts all four — `steps` is the
+       * V6 compiler's then-branch, and `then`/`then_steps`/`else_steps` are the
+       * legacy and normalised forms the pilot still branches on.
+       */
+      for (const key of ['steps', 'then', 'then_steps', 'else', 'else_steps']) {
+        if (Array.isArray(step[key])) walk(step[key] as unknown[]);
       }
     }
   };
@@ -134,12 +160,27 @@ describe('every plan token resolves', () => {
     }
   });
 
-  it('every plan spends the stop rule at least once', () => {
-    /* An agent that ignores the owner's stop rule chases for ever. */
-    for (const file of readdirSync(PLANS_DIR).filter((f) => f.endsWith('.steps.json'))) {
-      const raw = readFileSync(join(PLANS_DIR, file), 'utf-8');
-      expect(`${file} uses the stop rule: ${raw.includes('{{input.stop_after_days}}')}`).toBe(
-        `${file} uses the stop rule: true`
+  it('every plan that HAS a stop rule spends it at least once', () => {
+    /*
+     * An agent that ignores the owner's stop rule chases for ever.
+     *
+     * Only the agents that have one, which is no longer all of them. The rule
+     * means the same thing everywhere — stop considering anything older than
+     * this — and that needs something with a date in it. A chaser has one: an
+     * invoice, a quote, a booking. The spreadsheet importer does not, because a
+     * row has no age, so its entry declares no stop rule and there is nothing
+     * for its plan to spend.
+     *
+     * Read straight off the CATALOGUE rather than matched by filename, so the
+     * exemption follows the declaration: declare a stop rule and ignore it and
+     * this still fails, which is the regression worth catching.
+     */
+    for (const automation of AUTOMATION_AGENTS) {
+      if (automation.defaultStopAfterDays === undefined) continue;
+
+      const spends = JSON.stringify(automation.steps).includes('{{input.stop_after_days}}');
+      expect(`${automation.id} uses the stop rule: ${spends}`).toBe(
+        `${automation.id} uses the stop rule: true`
       );
     }
   });

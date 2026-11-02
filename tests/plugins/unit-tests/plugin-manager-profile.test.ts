@@ -86,11 +86,12 @@ describe('[smoke] plugin profile: loader', () => {
     const pm = await buildManager(BUSINESS_OS);
 
     expect(pm.getAllPluginNames().sort()).toEqual([...BUSINESS_OS.pluginKeys].sort());
-    /* 12 since 2026-10-25, when `google-mail` joined for the mailbox lead
-       channel. The line above already pins the exact SET; this one is here to
-       make a silent addition to the profile a decision somebody states, since
-       the profile exists to keep the load small. */
-    expect(pm.getAllPluginNames()).toHaveLength(12);
+    /* 13 since 2026-11-01, when `google-sheets` joined for the spreadsheet
+       lead importer — the same reason `google-mail` joined on 2026-10-25, one
+       plugin along. The line above already pins the exact SET; this one is
+       here to make a silent addition to the profile a decision somebody
+       states, since the profile exists to keep the load small. */
+    expect(pm.getAllPluginNames()).toHaveLength(13);
     expect(pm.getActiveProfile()).toBe(BUSINESS_OS);
   });
 
@@ -190,9 +191,13 @@ describe('[full] plugin profile: startup logging', () => {
     expect(fields).toEqual({
       profile: 'business_os',
       loadedPluginKeys: pm.getAllPluginNames(),
-      loadedCount: 12,
+      /* 13 loaded / 15 skipped since 2026-11-01, when `google-sheets` joined
+         for the spreadsheet lead importer. The pair moves together: one key
+         crossing the line changes both, and a test that only pinned one would
+         pass while the summary line lied. */
+      loadedCount: 13,
       skippedPluginKeys: EXCLUDED,
-      skippedCount: 16,
+      skippedCount: 15,
     });
   });
 

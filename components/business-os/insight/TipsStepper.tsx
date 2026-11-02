@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { TipGlyph } from '@/components/business-os/insight/tipMarker';
 
 // ===========================
 // Types
@@ -122,7 +123,22 @@ export function TipsStepper({ tips, onSelectTip, activeIndex, pulseKey }: TipsSt
         animation: pulsing ? 'lvTipPulse 0.62s ease-out' : undefined,
       }}
     >
-      {/* Orb: .lv-orb */}
+      {/*
+        Orb: .lv-orb
+
+        It was an empty gradient circle that bobbed. Decorative, and the only
+        thing it told the reader was that something here was orange — on a card
+        whose whole job is to hand over ONE suggestion worth acting on.
+
+        A bulb says that without a word, in any of the three languages. The
+        circle stays: it is what the card is recognised by, and the marker the
+        map pins to a station is the same family of shape.
+
+        `#5A2408` because the glyph has to hold across the whole gradient, not
+        just its middle. Measured against both ends and the centre, it is the
+        only candidate that stays above 3:1 everywhere (3.49:1 at worst); white
+        falls to 1.76:1 at the light end and disappears.
+      */}
       <span
         className="lv-orb"
         style={{
@@ -133,8 +149,30 @@ export function TipsStepper({ tips, onSelectTip, activeIndex, pulseKey }: TipsSt
           flexShrink: 0,
           boxShadow: '0 0 0 4px rgba(249,115,22,0.13)',
           animation: 'lvBob 3.4s ease-in-out infinite',
+          display: 'grid',
+          placeItems: 'center',
+          color: '#5A2408',
         }}
-      />
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          focusable="false"
+          style={{ display: 'block' }}
+        >
+          {/* The glass, then the two lines of the base. */}
+          <path d="M9 18h6" />
+          <path d="M10 21.5h4" />
+          <path d="M12 2.5a6.5 6.5 0 0 0-3.8 11.8c.5.4.8 1 .8 1.6v.1h6v-.1c0-.6.3-1.2.8-1.6A6.5 6.5 0 0 0 12 2.5Z" />
+        </svg>
+      </span>
 
       {/* Tip content: .lv-tips-t */}
       <div
@@ -166,11 +204,35 @@ export function TipsStepper({ tips, onSelectTip, activeIndex, pulseKey }: TipsSt
             <span
               style={{
                 marginInlineStart: '10px',
-                padding: '1px 8px 1px 3px',
+                /*
+                 * LOGICAL padding, not physical.
+                 *
+                 * This was `1px 8px 1px 3px` — tight on the left, where the
+                 * marker sits in English. In Hebrew the flex row reverses and
+                 * the marker moves to the RIGHT, so the tight edge stayed on
+                 * the side with the text on it: the word pressed against the
+                 * border while a gap opened behind the marker. Every Hebrew
+                 * account saw a lopsided pill.
+                 */
+                paddingBlock: '2px',
+                paddingInlineStart: '3px',
+                paddingInlineEnd: '9px',
                 borderRadius: '999px',
                 background: 'rgba(249, 115, 22, 0.14)',
                 border: '1px solid rgba(249, 115, 22, 0.28)',
-                color: '#C2410C',
+                /*
+                 * Theme-aware, because the dashboard is dark.
+                 *
+                 * This was `#C2410C`, a hex picked against white. Over the
+                 * badge's own tint on the dark surface it measures 2.35:1 —
+                 * against the 4.5 a 11.5px label needs — so on every dark
+                 * account the word inside the pill was barely legible. It was
+                 * not quite right on light either, at 4.48:1.
+                 *
+                 * The platform already keeps a warning triple per theme.
+                 * Measured over this tint: 6.13:1 light, 9.77:1 dark.
+                 */
+                color: 'var(--v2-status-warning-text, #92400E)',
                 fontSize: '11.5px',
                 fontWeight: 600,
                 whiteSpace: 'nowrap',
@@ -180,12 +242,12 @@ export function TipsStepper({ tips, onSelectTip, activeIndex, pulseKey }: TipsSt
                 gap: '5px',
               }}
             >
-              {/* The same dot the map pins to that station. */}
+              {/* The same marker the map pins to that station — see `tipMarker`. */}
               <span
                 aria-hidden
                 style={{
-                  width: '15px',
-                  height: '15px',
+                  width: '16px',
+                  height: '16px',
                   borderRadius: '50%',
                   background: '#FFB24D',
                   color: '#5A3A05',
@@ -196,7 +258,7 @@ export function TipsStepper({ tips, onSelectTip, activeIndex, pulseKey }: TipsSt
                   flexShrink: 0,
                 }}
               >
-                {tips.length > 1 ? currentTip.n : '!'}
+                <TipGlyph n={currentTip.n} total={tips.length} size={16} />
               </span>
               {currentTip.about}
             </span>
