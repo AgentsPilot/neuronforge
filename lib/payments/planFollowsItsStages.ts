@@ -117,11 +117,33 @@ export async function lowerPlansForCancelledStages(
        * running balance worth keeping in step.
        * ───────────────────────────────────────────────────────────────────────
        */
-      const { data: siblings } = await db
+      const { data: siblings, error: siblingsError } = await db
         .from('payment_plan_installments')
         .select('booking_id')
         .eq('payment_plan_id', planId)
         .eq('user_id', userId);
+
+      /*
+       * A FAILED READ LEAVES THE PLAN ALONE.
+       *
+       * This read is the ONLY thing between the update below and a SHARED plan,
+       * and a failure used to defeat it silently: `siblings ?? []` is an empty
+       * set, an empty set is not `> 1`, so the guard waved through exactly the
+       * row it exists to protect. What that costs is in the comment above —
+       * every other booking of that service quoting a price the owner never
+       * set, compounding with each cancellation.
+       *
+       * Skipping leaves THIS plan overstating its total, which is the failure
+       * this module already accepts out loud ("A plan left overstating is wrong
+       * on a dashboard"). The other plans in the batch still run.
+       */
+      if (siblingsError) {
+        logger.error(
+          { err: siblingsError, planId, userId },
+          'Could not tell whether this plan is shared, so its total was left as it is'
+        );
+        continue;
+      }
 
       const bookings = new Set(
         (siblings ?? [])
@@ -137,12 +159,27 @@ export async function lowerPlansForCancelledStages(
         continue;
       }
 
-      const { data: plan } = await db
+      const { data: plan, error: planError } = await db
         .from('payment_plans')
         .select('total_amount, installment_count')
         .eq('id', planId)
         .eq('user_id', userId)
         .maybeSingle();
+
+      /*
+       * Read for the LOG, not for the control flow: `!plan` below already skips
+       * a failed read, and skipping is the safe direction here. What was missing
+       * is any way to tell "there is no such plan" from "the plan could not be
+       * read" — the first is ordinary, the second leaves a total standing that
+       * nobody meant to leave.
+       */
+      if (planError) {
+        logger.error(
+          { err: planError, planId, userId },
+          'Could not read the plan whose stages were just cancelled'
+        );
+        continue;
+      }
 
       if (!plan) continue;
 

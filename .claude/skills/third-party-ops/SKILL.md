@@ -1,6 +1,6 @@
 ---
 name: third-party-ops
-description: How to plan, check and verify settings on the external platforms this repo depends on, where DO holds no tool and the user operates the dashboard — Stripe (API keys, test or live mode, webhook endpoints and signing secrets, endpoint API version, Connect client and OAuth redirect URIs, customer portal configuration, plan prices) first, then email, Google Cloud, LLM providers, DNS, queues, messaging and plugin OAuth apps as each is covered. Use when the user asks about Stripe, a payment key, a webhook endpoint or signing secret, test or live mode, a Connect setting, a customer portal configuration, an OAuth redirect URI or client, a vendor API key, Resend, SMTP, a sender address, an email delivery webhook, a Gmail refresh token, a sending domain, a vendor dashboard, or "is the integration configured". Used by the main session and by the DevOps (DO) agent. Prevents a credential in the wrong mode or account, a probe that moves money, values passing through chat, and vendor IDs or open weaknesses leaking into tracked text.
+description: How to plan, check and verify settings on the external platforms this repo depends on, where DO holds no tool and the user operates the dashboard — Stripe (API keys, test or live mode, webhook endpoints and signing secrets, endpoint API version, Connect client and OAuth redirect URIs, customer portal configuration, plan prices) first, then email, Google Cloud, LLM providers, DNS, queues, messaging and plugin OAuth apps as each is covered. Use when the user asks about Stripe, a payment key, a webhook endpoint or signing secret, test or live mode, a Connect setting, a customer portal configuration, an OAuth redirect URI or client, a vendor API key, Resend, SMTP, a sender address, an email delivery webhook, a Gmail refresh token, a sending domain, "Continue with Google" or Google sign-in, a Google OAuth client, a redirect URI mismatch, an OAuth consent screen, Authorised JavaScript origins, a Google API key, a Places key, Custom Search, a vendor dashboard, or "is the integration configured". Used by the main session and by the DevOps (DO) agent. Prevents a credential in the wrong mode or account, a probe that moves money, values passing through chat, and vendor IDs or open weaknesses leaking into tracked text.
 ---
 
 # third-party-ops
@@ -68,7 +68,7 @@ Until a family is covered, its drift checks are **"not audited"**. Each later sl
 |---|---|
 | Stripe (platform and Connect) | [stripe.md](stripe.md) |
 | Email: Resend, SMTP, the Gmail system sender | [email.md](email.md) |
-| Google Cloud | not covered yet (DO-6c) |
+| Google Cloud: sign-in, the plugin OAuth client, Places, Custom Search | [google.md](google.md) |
 | LLM providers | not covered yet (DO-6d) |
 | Domains, registrar and DNS | not covered yet (DO-6e) |
 | Queues, AWS and small API-key providers | not covered yet (DO-6f) |

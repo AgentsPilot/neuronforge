@@ -30,6 +30,7 @@ import {
   MODULE_JOB_CLAIM_FUNCTION,
   MODULE_JOB_ERROR,
   MODULE_JOB_HISTORY_COLUMNS,
+  MODULE_JOB_OWNER_SENT_COLUMNS,
   MODULE_JOB_REAP_FUNCTION,
 } from '../BusinessOsExportModuleJobRepository';
 import { MODULE_EXPORT_POLICY } from '@/lib/business-os/data-export/moduleExportPolicy';
@@ -173,6 +174,48 @@ describe('listForRequestsOfUser (MX-1b history, §5 step 2)', () => {
     }
     const failing = client({ data: null, error: { code: 'XX000', message: 'boom' } });
     expect(await repo(failing.c).listForRequestsOfUser(OWNER, [REQUEST])).toEqual({ data: null, error: expect.objectContaining({ code: 'XX000' }) });
+  });
+});
+
+describe('findLatestOwnerSentAt (MX-4a receipt facts, XC-12; SA C-1 / C-3)', () => {
+  it('pins the select string and every filter: user_id, status sent, parent origin owner, newest first, one row', async () => {
+    const { c, calls } = client({ data: [{ sent_at: T, business_os_export_requests: { origin: 'owner' } }], error: null });
+    expect(await repo(c).findLatestOwnerSentAt(OWNER)).toEqual({ data: { sentAt: T }, error: null });
+    expect(MODULE_JOB_OWNER_SENT_COLUMNS).toBe('sent_at, business_os_export_requests!inner(origin)');
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_export_module_jobs'] },
+      { method: 'select', args: ['sent_at, business_os_export_requests!inner(origin)'] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['status', 'sent'] },
+      { method: 'eq', args: ['business_os_export_requests.origin', 'owner'] },
+      { method: 'order', args: ['sent_at', { ascending: false }] },
+      { method: 'limit', args: [1] },
+    ]);
+  });
+
+  it('no sent owner job: sentAt null, not an error', async () => {
+    const { c } = client({ data: [], error: null });
+    expect(await repo(c).findLatestOwnerSentAt(OWNER)).toEqual({ data: { sentAt: null }, error: null });
+  });
+
+  it.each([
+    ['an embedded origin of admin (the filter did not apply)', { sent_at: T, business_os_export_requests: { origin: 'admin' } }],
+    ['no embed at all', { sent_at: T }],
+    ['an embed as a list', { sent_at: T, business_os_export_requests: [{ origin: 'owner' }] }],
+    ['a sent job without sent_at', { sent_at: null, business_os_export_requests: { origin: 'owner' } }],
+  ])('fails closed on %s: an error, never a fact', async (_name, row) => {
+    const { c } = client({ data: [row], error: null });
+    expect(await repo(c).findLatestOwnerSentAt(OWNER)).toEqual({ data: null, error: expect.objectContaining({ code: MODULE_JOB_ERROR.UNEXPECTED_ROW }) });
+    expect(JSON.stringify(logged)).toContain('findLatestOwnerSentAt');
+  });
+
+  it('a bad user id is refused before any call; a DB error is { error }, never a throw', async () => {
+    const bad = client({ data: [], error: null });
+    expect((await repo(bad.c).findLatestOwnerSentAt('nope')).error).toMatchObject({ code: MODULE_JOB_ERROR.INVALID_INPUT });
+    expect(bad.calls).toEqual([]);
+    const failing = client({ data: null, error: { code: 'XX000', message: 'boom', details: 'secret row' } });
+    expect(await repo(failing.c).findLatestOwnerSentAt(OWNER)).toEqual({ data: null, error: expect.objectContaining({ code: 'XX000' }) });
+    expect(JSON.stringify(logged)).not.toContain('secret row');
   });
 });
 

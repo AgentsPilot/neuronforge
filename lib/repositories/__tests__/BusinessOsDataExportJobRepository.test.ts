@@ -475,42 +475,240 @@ describe('tenant isolation negative control', () => {
   });
 });
 
-describe('findDeletionFacts (DE-10b.1, requirement §5.1)', () => {
-  it('reads the newest delivered owner export and whether an admin prepared one, both on user_id', async () => {
-    const { c, calls } = client(
-      { data: [{ ready_at: '2026-10-10T10:00:00Z', owner_downloaded_at: '2026-10-10T10:05:00Z' }], error: null },
-      { data: null, error: null, count: 2 } as Result
-    );
+/**
+ * findDeletionFacts runs its four reads together (MX-4a), so the order in
+ * which a shared fake hands out results is not the order the queries were
+ * built in. This fake gives every `.from()` its own query record and answers
+ * each one by what it is, never by position.
+ */
+type FactsQuery = 'zipOwner' | 'zipAdmin' | 'moduleJobs' | 'adminRequests';
+type FactsAnswer = { data?: unknown; error: unknown; count?: number | null };
+type Query = { table: string; calls: Call[] };
+
+function kindOf(query: Query): FactsQuery {
+  const eqArgs = query.calls.filter((call) => call.method === 'eq').map((call) => call.args);
+  if (query.table === 'business_os_export_module_jobs') return 'moduleJobs';
+  if (query.table === 'business_os_export_requests') return 'adminRequests';
+  if (eqArgs.some(([column, value]) => column === 'requested_by_kind' && value === 'admin')) return 'zipAdmin';
+  return 'zipOwner';
+}
+
+function factsClient(answers: Partial<Record<FactsQuery, FactsAnswer>>) {
+  const queries: Query[] = [];
+  const fallback: Record<FactsQuery, FactsAnswer> = {
+    zipOwner: { data: [], error: null },
+    zipAdmin: { data: null, error: null, count: 0 },
+    moduleJobs: { data: [], error: null },
+    adminRequests: { data: null, error: null, count: 0 },
+  };
+  const c = {
+    from: (table: string) => {
+      const query: Query = { table, calls: [] };
+      queries.push(query);
+      const builder: Record<string, unknown> = {};
+      for (const method of ['select', 'eq', 'not', 'order', 'limit']) {
+        builder[method] = (...args: unknown[]) => {
+          query.calls.push({ method, args });
+          return builder;
+        };
+      }
+      builder.then = (resolve: (value: unknown) => void) => {
+        const kind = kindOf(query);
+        resolve(answers[kind] ?? fallback[kind]);
+      };
+      return builder;
+    },
+    rpc: () => {
+      throw new Error('findDeletionFacts must not call an rpc');
+    },
+  } as unknown as SupabaseClient;
+  const byKind = (kind: FactsQuery) => queries.filter((query) => kindOf(query) === kind);
+  return { c, queries, byKind };
+}
+
+const zipRow = (readyAt: string, downloadedAt: string | null) => ({ data: [{ ready_at: readyAt, owner_downloaded_at: downloadedAt }], error: null });
+const sentJob = (sentAt: string, origin: string = 'owner') => ({ data: [{ sent_at: sentAt, business_os_export_requests: { origin } }], error: null });
+const headCount = (count: number | null) => ({ data: null, error: null, count });
+const NONE = { ownerLastExportReadyAt: null, ownerExportDownloadedAt: null, adminExportExisted: false };
+
+describe('findDeletionFacts (DE-10b.1, requirement §5.1; MX-4a XC-12 / B.6)', () => {
+  it('T-8: four reads, each pinned, every one on user_id; never `*`', async () => {
+    const { c, queries, byKind } = factsClient({});
+    expect(await repo(c).findDeletionFacts(OWNER)).toEqual({ data: NONE, error: null });
+    expect(queries).toHaveLength(4);
+
+    const [zipOwner] = byKind('zipOwner');
+    expect(zipOwner.table).toBe('business_os_data_exports');
+    expect(zipOwner.calls).toEqual([
+      { method: 'select', args: ['ready_at, owner_downloaded_at'] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['requested_by_kind', 'owner'] },
+      { method: 'not', args: ['ready_at', 'is', null] },
+      { method: 'order', args: ['ready_at', { ascending: false }] },
+      { method: 'limit', args: [1] },
+    ]);
+
+    const [zipAdmin] = byKind('zipAdmin');
+    expect(zipAdmin.table).toBe('business_os_data_exports');
+    expect(zipAdmin.calls).toEqual([
+      { method: 'select', args: ['id', { count: 'exact', head: true }] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['requested_by_kind', 'admin'] },
+    ]);
+
+    // SA C-1 / C-3: the embed selects a real column, and the origin and status
+    // filters are exactly these calls.
+    const [moduleJobs] = byKind('moduleJobs');
+    expect(moduleJobs.calls).toEqual([
+      { method: 'select', args: ['sent_at, business_os_export_requests!inner(origin)'] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['status', 'sent'] },
+      { method: 'eq', args: ['business_os_export_requests.origin', 'owner'] },
+      { method: 'order', args: ['sent_at', { ascending: false }] },
+      { method: 'limit', args: [1] },
+    ]);
+
+    const [adminRequests] = byKind('adminRequests');
+    expect(adminRequests.calls).toEqual([
+      { method: 'select', args: ['id', { count: 'exact', head: true }] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['origin', 'admin'] },
+    ]);
+
+    for (const query of queries) {
+      expect({ table: query.table, star: query.calls.some((call) => call.method === 'select' && String(call.args[0]).includes('*')) }).toEqual({
+        table: query.table,
+        star: false,
+      });
+    }
+  });
+
+  it('T-1: nothing on record: nulls and false', async () => {
+    const { c } = factsClient({});
+    expect((await repo(c).findDeletionFacts(OWNER)).data).toEqual(NONE);
+  });
+
+  it('T-2: an old downloaded owner ZIP only keeps today\'s values', async () => {
+    const { c } = factsClient({ zipOwner: zipRow('2026-10-10T10:00:00Z', '2026-10-10T10:05:00Z'), zipAdmin: headCount(2) });
     expect(await repo(c).findDeletionFacts(OWNER)).toEqual({
       data: { ownerLastExportReadyAt: '2026-10-10T10:00:00Z', ownerExportDownloadedAt: '2026-10-10T10:05:00Z', adminExportExisted: true },
       error: null,
     });
-    expect(calls.filter((call) => call.method === 'from').map((call) => call.args[0])).toEqual(['business_os_data_exports', 'business_os_data_exports']);
-    expect(eqs(calls)).toEqual([
-      ['user_id', OWNER],
-      ['requested_by_kind', 'owner'],
-      ['user_id', OWNER],
-      ['requested_by_kind', 'admin'],
-    ]);
-    expect(calls).toContainEqual({ method: 'not', args: ['ready_at', 'is', null] });
-    expect(calls).toContainEqual({ method: 'order', args: ['ready_at', { ascending: false }] });
   });
 
-  it('no export at all: nulls and false', async () => {
-    const { c } = client({ data: [], error: null }, { data: null, error: null, count: 0 } as Result);
+  it('T-3: an owner module job sent only: its sent_at, and no download', async () => {
+    const { c } = factsClient({ moduleJobs: sentJob('2026-11-01T09:00:00.123456+00:00') });
     expect((await repo(c).findDeletionFacts(OWNER)).data).toEqual({
-      ownerLastExportReadyAt: null,
+      ownerLastExportReadyAt: '2026-11-01T09:00:00.123456+00:00',
       ownerExportDownloadedAt: null,
       adminExportExisted: false,
     });
   });
 
-  it('invalid id: an error without a database call; a database error is returned, never thrown', async () => {
-    const bad = client({ data: null, error: null });
-    expect((await repo(bad.c).findDeletionFacts('nope')).error).toBeInstanceOf(Error);
-    expect(bad.calls).toEqual([]);
-    const failing = client({ data: null, error: { message: 'boom', code: '57014' } });
-    expect(await repo(failing.c).findDeletionFacts(OWNER)).toEqual({ data: null, error: expect.any(Error) });
-    expect(JSON.stringify(logged)).toContain('findDeletionFacts');
+  it('T-4: both, the ZIP strictly newer: the ZIP values, download included', async () => {
+    const { c } = factsClient({ zipOwner: zipRow('2026-10-30T12:48:00+00:00', '2026-10-30T12:50:00+00:00'), moduleJobs: sentJob('2026-10-29T08:00:00+00:00') });
+    expect((await repo(c).findDeletionFacts(OWNER)).data).toEqual({
+      ownerLastExportReadyAt: '2026-10-30T12:48:00+00:00',
+      ownerExportDownloadedAt: '2026-10-30T12:50:00+00:00',
+      adminExportExisted: false,
+    });
+  });
+
+  it('T-5: both, the module job newer: its sent_at, and no download', async () => {
+    const { c } = factsClient({ zipOwner: zipRow('2026-10-30T12:48:00+00:00', '2026-10-30T12:50:00+00:00'), moduleJobs: sentJob('2026-10-31T08:00:00+00:00') });
+    expect((await repo(c).findDeletionFacts(OWNER)).data).toEqual({
+      ownerLastExportReadyAt: '2026-10-31T08:00:00+00:00',
+      ownerExportDownloadedAt: null,
+      adminExportExisted: false,
+    });
+  });
+
+  it('T-6: the same instant in two offsets is a tie, and a tie goes to the module job', async () => {
+    const { c } = factsClient({ zipOwner: zipRow('2026-11-01T12:00:00+02:00', '2026-11-01T12:01:00+02:00'), moduleJobs: sentJob('2026-11-01T10:00:00.000Z') });
+    expect((await repo(c).findDeletionFacts(OWNER)).data).toEqual({
+      ownerLastExportReadyAt: '2026-11-01T10:00:00.000Z',
+      ownerExportDownloadedAt: null,
+      adminExportExisted: false,
+    });
+  });
+
+  it('T-6: instants are compared, not text (a text compare would pick the module job here)', async () => {
+    // 09:30 at -02:00 is 11:30 UTC, later than 10:00 UTC; as text "09" < "10".
+    const { c } = factsClient({ zipOwner: zipRow('2026-11-01T09:30:00-02:00', null), moduleJobs: sentJob('2026-11-01T10:00:00+00:00') });
+    expect((await repo(c).findDeletionFacts(OWNER)).data).toEqual({
+      ownerLastExportReadyAt: '2026-11-01T09:30:00-02:00',
+      ownerExportDownloadedAt: null,
+      adminExportExisted: false,
+    });
+  });
+
+  it.each([
+    ['an old admin ZIP only', { zipAdmin: headCount(1) }, true],
+    ['an admin-origin request only', { adminRequests: headCount(1) }, true],
+    ['both', { zipAdmin: headCount(3), adminRequests: headCount(2) }, true],
+    ['neither', {}, false],
+  ] as const)('T-7: adminExportExisted with %s', async (_name, answers, expected) => {
+    const { c } = factsClient(answers);
+    expect((await repo(c).findDeletionFacts(OWNER)).data?.adminExportExisted).toBe(expected);
+  });
+
+  it('T-9: invalid id: an error without a database call', async () => {
+    const { c, queries } = factsClient({});
+    expect((await repo(c).findDeletionFacts('nope')).error).toBeInstanceOf(Error);
+    expect(queries).toEqual([]);
+  });
+
+  it.each(['zipOwner', 'zipAdmin', 'moduleJobs', 'adminRequests'] as const)(
+    'T-9: the %s read failing makes the whole call an error, never partial facts',
+    async (failing) => {
+      const { c } = factsClient({
+        zipOwner: zipRow('2026-10-10T10:00:00Z', null),
+        moduleJobs: sentJob('2026-10-31T08:00:00Z'),
+        [failing]: { data: null, error: { message: 'boom', code: '57014', details: 'secret row' } },
+      });
+      expect(await repo(c).findDeletionFacts(OWNER)).toEqual({ data: null, error: expect.any(Error) });
+      expect(JSON.stringify(logged)).toContain('findDeletionFacts');
+      expect(JSON.stringify(logged)).not.toContain('secret row');
+    }
+  );
+
+  it.each([
+    ['the old ZIP ready_at', { zipOwner: zipRow('not a time', null), moduleJobs: sentJob('2026-10-31T08:00:00Z') }],
+    ['the module job sent_at', { zipOwner: zipRow('2026-10-10T10:00:00Z', null), moduleJobs: sentJob('not a time') }],
+    ['the only value present', { moduleJobs: sentJob('not a time') }],
+  ] as const)('T-9 (SA Q-5): an unparseable timestamp in %s makes the whole call an error', async (_name, answers) => {
+    const { c } = factsClient(answers);
+    const result = await repo(c).findDeletionFacts(OWNER);
+    expect(result).toEqual({ data: null, error: expect.any(Error) });
+    expect(result.error?.message).toMatch(/^Unparseable timestamp: /);
+    // The field name is logged, never the value.
+    expect(JSON.stringify(logged)).not.toContain('not a time');
+  });
+
+  it('T-9 (SA C-1): a sent job whose embedded origin is not owner is an error, not a fact', async () => {
+    const { c } = factsClient({ moduleJobs: sentJob('2026-10-31T08:00:00Z', 'admin') });
+    expect(await repo(c).findDeletionFacts(OWNER)).toEqual({ data: null, error: expect.any(Error) });
+  });
+
+  it('T-9: an admin request count that comes back without a count is an error, never "no"', async () => {
+    const { c } = factsClient({ adminRequests: headCount(null) });
+    expect(await repo(c).findDeletionFacts(OWNER)).toEqual({ data: null, error: expect.any(Error) });
+  });
+
+  it('the shared recording client still sees user_id on every query it is handed', async () => {
+    const { c, calls } = client({ data: null, error: null });
+    await repo(c).findDeletionFacts(OWNER);
+    expect(calls.filter((call) => call.method === 'from').map((call) => call.args[0]).sort()).toEqual([
+      'business_os_data_exports',
+      'business_os_data_exports',
+      'business_os_export_module_jobs',
+      'business_os_export_requests',
+    ]);
+    expect(eqs(calls).filter(([column]) => column === 'user_id')).toEqual([
+      ['user_id', OWNER],
+      ['user_id', OWNER],
+      ['user_id', OWNER],
+      ['user_id', OWNER],
+    ]);
   });
 });

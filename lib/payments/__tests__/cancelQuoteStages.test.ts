@@ -658,6 +658,127 @@ describe('what is still held, so a caller can offer the real refund dialog', () 
   });
 });
 
+describe('a total in two currencies is not a total', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * `collectedForEmail` was one running sum over every settled stage invoice,
+   * while `collectedCurrency` kept whichever label arrived FIRST:
+   *
+   *     collectedForEmail += amount - refunded_amount
+   *     collectedCurrency ??= invoice.currency
+   *
+   * `payment_invoices.currency` is per row and nullable, so this needs no
+   * multi-currency business to reach — one stage row carrying no currency
+   * beside shekel ones is enough, and the code that needs one then supplies a
+   * default of its own. The sum goes to the client as `paidAmount`, which
+   * `generateQuoteStoppedEmail` formats in the QUOTE's currency.
+   *
+   * CLAUDE.md: never sum money across currencies.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const inTwoCurrencies = () => {
+    dbState.billedStages = [
+      { id: 'st-1', invoice_id: 'inv-1' },
+      { id: 'st-2', invoice_id: 'inv-2' },
+    ];
+    dbState.invoices = {
+      'inv-1': { id: 'inv-1', status: 'paid', amount: 600, refunded_amount: 0, currency: 'ILS' },
+      'inv-2': { id: 'inv-2', status: 'paid', amount: 150, refunded_amount: 0, currency: 'usd' },
+    };
+  };
+
+  it('reports no figure at all rather than 750 of nothing', async () => {
+    /*
+     * THE ASSERTION THAT CARRIES THE FIX. Before it, this was
+     * `collected: 750, currency: 'ILS'` — a quantity that exists in no
+     * currency, offered back through the refund dialog as shekels.
+     */
+    inTwoCurrencies();
+
+    const result = await run();
+
+    expect(result.collected).toBe(0);
+    expect(result.currency).toBeNull();
+  });
+
+  it('tells the client nothing instead of a figure in the wrong currency', async () => {
+    /*
+     * The email renders the paid line only `if (paid > 0)`, so zero here is the
+     * designed silence rather than a "Paid so far: 0" line. The alternative is
+     * the client reading a shekel total that is partly dollars.
+     */
+    inTwoCurrencies();
+
+    await run();
+
+    expect(sendStoppedEmailMock.mock.calls[0][2]).toMatchObject({ paidAmount: 0 });
+  });
+
+  it('still stops the quote, because the money is a separate decision', async () => {
+    /* The owner pressed stop. Refusing the whole thing over a reporting
+       problem would leave the stages on the books and the client chased. */
+    inTwoCurrencies();
+    dbState.closedRows = [{ id: 'st-3' }];
+
+    const result = await run();
+
+    expect(result.ok).toBe(true);
+    expect(result.stagesClosed).toBe(1);
+    expect(result.proposalStopped).toBe(true);
+  });
+
+  it('leaves an operator something to find', async () => {
+    inTwoCurrencies();
+
+    await run();
+
+    expect(loggedMessages().join(' ')).toContain('different currencies');
+  });
+
+  it('treats ILS and ils as the one currency they are', async () => {
+    /* Casing comes from whatever wrote the row. Two spellings of one currency
+       are not a mixed-currency quote, and suppressing a real total over them
+       would be its own bug. */
+    dbState.billedStages = [
+      { id: 'st-1', invoice_id: 'inv-1' },
+      { id: 'st-2', invoice_id: 'inv-2' },
+    ];
+    dbState.invoices = {
+      'inv-1': { id: 'inv-1', status: 'paid', amount: 600, refunded_amount: 0, currency: 'ILS' },
+      'inv-2': { id: 'inv-2', status: 'paid', amount: 150, refunded_amount: 0, currency: 'ils' },
+    };
+
+    const result = await run();
+
+    expect(result.collected).toBe(750);
+    /* The casing the invoice carries, not a normalised one: the caller formats
+       with this. */
+    expect(result.currency).toBe('ILS');
+  });
+
+  it('is not suppressed by a stage refunded down to nothing in another currency', async () => {
+    /*
+     * Money HELD is the test, not currencies seen. A dollar stage fully handed
+     * back leaves nothing in dollars, so the shekel total is still the one
+     * figure there is — and withholding it would cost the owner the refund
+     * dialog on money the client really is out.
+     */
+    dbState.billedStages = [
+      { id: 'st-1', invoice_id: 'inv-1' },
+      { id: 'st-2', invoice_id: 'inv-2' },
+    ];
+    dbState.invoices = {
+      'inv-1': { id: 'inv-1', status: 'paid', amount: 600, refunded_amount: 0, currency: 'ILS' },
+      'inv-2': { id: 'inv-2', status: 'refunded', amount: 150, refunded_amount: 150, currency: 'usd' },
+    };
+
+    const result = await run();
+
+    expect(result.collected).toBe(600);
+    expect(result.currency).toBe('ILS');
+  });
+});
+
 describe('telling the client', () => {
   it('emails them with the facts of the stop', async () => {
     dbState.billedStages = [{ id: 'st-1', invoice_id: 'inv-1' }];

@@ -167,6 +167,9 @@ describe('POST', () => {
       userId: USER.id,
       details: { request_id: REQUEST, modules: ['clients', 'quotes', 'website'], origin: 'owner' },
     });
+    // MX-4a A-5 (AC "no content"): exactly these keys, nothing else. The worker's
+    // SENT / FAILED keys are pinned the same way in moduleExportWorker.test.ts T-W24.
+    expect(Object.keys(entry.details).sort()).toEqual(['modules', 'origin', 'request_id']);
     expect(JSON.stringify(entry)).not.toContain(USER.email);
 
     expect(mockSendEmail).toHaveBeenCalledTimes(1);

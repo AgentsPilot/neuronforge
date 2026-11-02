@@ -36,6 +36,11 @@ import { z } from 'zod';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, type Logger } from '@/lib/logger';
 import { EXPORT_JOB_POLICY } from '@/lib/business-os/data-export/jobPolicy';
+// MX-4a receipt facts only (findDeletionFacts): each new table is read by its
+// own repository (SA Q-9 D-1). Allow-listed in
+// lib/repositories/__tests__/exportRequestRepositories.callers.guard.test.ts.
+import { BusinessOsExportModuleJobRepository } from '@/lib/repositories/BusinessOsExportModuleJobRepository';
+import { BusinessOsExportRequestRepository } from '@/lib/repositories/BusinessOsExportRequestRepository';
 import type {
   AgentRepositoryResult as RepositoryResult,
   DataExportFailureReason,
@@ -269,35 +274,73 @@ export class BusinessOsDataExportJobRepository {
   /**
    * DE-10b.1 (requirement §5.1): what our records show about the account's
    * exports, copied into the deletion receipt BEFORE the delete (the export
-   * rows are deleted with the account). The owner's newest delivered export
-   * (`ready_at` set, owner-requested) and whether they downloaded it, and
-   * whether an admin ever prepared one. Two reads, both on `user_id`.
+   * rows are deleted with the account).
+   *
+   * MX-4a (XC-12, B.6; SA workplan review 2026-11-01): the module export
+   * counts too. Until MX-7 drops the old table, four reads, all on `user_id`:
+   * O1 the newest owner ZIP with `ready_at` set and O2 a head count of admin
+   * ZIP rows (this table, unchanged), N1 the newest `sent_at` of an
+   * owner-origin module job with status `sent` and N2 whether any admin-origin
+   * request exists (each read by its own repository, SA Q-9 D-1, same client).
+   *
+   * - `ownerLastExportReadyAt`: the later of O1 `ready_at` and N1 `sent_at`,
+   *   as the database string of the winner. Per job, not per request: one
+   *   module sent out of five counts. It means "some owner data reached the
+   *   owner at this time", not "a complete export". An admin-origin send never
+   *   counts here (SA Q-2).
+   * - `ownerExportDownloadedAt`: O1's `owner_downloaded_at` only when the ZIP
+   *   is STRICTLY newer than every sent owner module job; `null` otherwise (a
+   *   tie goes to the module job: the module export has no download), and
+   *   always `null` after MX-7.
+   * - `adminExportExisted`: O2 or N2, whatever the outcome; `false` until MX-5.
+   * - The two timestamps are compared by `Date.parse`, never as text. A value
+   *   that does not parse makes the whole call an error (SA Q-5), as does any
+   *   read error: never partial facts (K-3).
    */
   async findDeletionFacts(userId: string): Promise<RepositoryResult<DataExportDeletionFacts>> {
     if (!uuid.safeParse(userId).success) return { data: null, error: invalid('user id') };
     try {
-      const owner = await this.supabase
-        .from(TABLE)
-        .select('ready_at, owner_downloaded_at')
-        .eq('user_id', userId)
-        .eq('requested_by_kind', 'owner')
-        .not('ready_at', 'is', null)
-        .order('ready_at', { ascending: false })
-        .limit(1);
+      // The delete route waits on these, so they run together. None rejects:
+      // a query resolves with its error, and both repository methods return
+      // { data, error }.
+      const [owner, admin, moduleSent, adminRequest] = await Promise.all([
+        this.supabase
+          .from(TABLE)
+          .select('ready_at, owner_downloaded_at')
+          .eq('user_id', userId)
+          .eq('requested_by_kind', 'owner')
+          .not('ready_at', 'is', null)
+          .order('ready_at', { ascending: false })
+          .limit(1),
+        this.supabase
+          .from(TABLE)
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('requested_by_kind', 'admin'),
+        new BusinessOsExportModuleJobRepository(this.supabase).findLatestOwnerSentAt(userId),
+        new BusinessOsExportRequestRepository(this.supabase).hasAdminOriginRequest(userId),
+      ]);
       if (owner.error) throw owner.error;
-      const admin = await this.supabase
-        .from(TABLE)
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .eq('requested_by_kind', 'admin');
       if (admin.error) throw admin.error;
+      if (moduleSent.error || moduleSent.data === null) throw moduleSent.error ?? new Error('No module export fact returned');
+      if (adminRequest.error || typeof adminRequest.data !== 'boolean') throw adminRequest.error ?? new Error('No admin request fact returned');
+
       const rows = (owner.data as unknown as Array<{ ready_at: string | null; owner_downloaded_at: string | null }> | null) ?? [];
-      const latest = rows[0];
+      const zip = rows[0];
+      const zipReadyAt = zip?.ready_at ?? null;
+      const moduleSentAt = moduleSent.data.sentAt;
+      const zipTime = zipReadyAt === null ? null : Date.parse(zipReadyAt);
+      const moduleTime = moduleSentAt === null ? null : Date.parse(moduleSentAt);
+      // The field name only, never the value (Q-5: fail closed).
+      if (zipTime !== null && Number.isNaN(zipTime)) throw new Error('Unparseable timestamp: data export ready_at');
+      if (moduleTime !== null && Number.isNaN(moduleTime)) throw new Error('Unparseable timestamp: module job sent_at');
+      const zipIsNewest = zipTime !== null && (moduleTime === null || zipTime > moduleTime);
+
       return {
         data: {
-          ownerLastExportReadyAt: latest?.ready_at ?? null,
-          ownerExportDownloadedAt: latest?.owner_downloaded_at ?? null,
-          adminExportExisted: (admin.count ?? 0) > 0,
+          ownerLastExportReadyAt: zipIsNewest ? zipReadyAt : moduleSentAt,
+          ownerExportDownloadedAt: zipIsNewest ? zip?.owner_downloaded_at ?? null : null,
+          adminExportExisted: (admin.count ?? 0) > 0 || adminRequest.data,
         },
         error: null,
       };
