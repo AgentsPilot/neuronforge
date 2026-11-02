@@ -48,7 +48,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
 | DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) ✅ DO-5a MERGED 2026-10-31 (PR #592; see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) 🟡 spec re-checked by BA 2026-10-31 (FU-5: H10, the Q-D5-9 note, the H3 boundary, the check list §D5.2.2(g), Q-D5b-1 to Q-D5b-4); SA short pass 2026-10-31 **APPROVED WITH CHANGES** (see [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)); DO-5b built (see [DO-5b implementation notes](#do-5b-implementation-notes)); **SA code review 2026-10-31: Code Approved for QA**, with four small skill fixes (repo reads use `origin/main:./<path>` from the worktree root; `devops.md` unchanged beyond the pointer line); **QA 2026-10-31: QA passed**, with two small non-blocking items, both fixed (see [QA Report — DO-5b](#qa-report--do-5b)); **user approved the diff 2026-11-01**, PR open with auto-merge. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file): ✅ PR #593 MERGED 2026-10-31; `origin/main` shows the file untracked and the `.gitignore` line. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
-| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01; commit + PR.** |
+| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02; commit + PR.** |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
 
@@ -1263,6 +1263,178 @@ Supporting SQL (DO, `devops.md` rules (a)–(c)): `email_sends` counts by `provi
 
 ---
 
+## DO-6c Specification — Google (third-party-ops)
+
+**By BA — 2026-11-01.** Short scoping pass, like DO-6b. Config/docs-only slice: no application code, no CI job, no CI time. It adds one reference file and one index row to `third-party-ops`, under SKILL.md §1–§4 and SA Review — DO-6 (changes 1–7 apply to every DO-6 slice: a probe has a precondition or it is "not probed", a roll overlap makes a pass "not conclusive", derivation from code, no copied lists, T- rows live in the platform file). **[SA Review — DO-6c (short pass)](#sa-review--do-6c-short-pass) changes 1–13 override this section wherever they differ; `google.md` follows them** (see [DO-6c implementation notes](#do-6c-implementation-notes)).
+
+**Services live (Q-D6-2 rule):** the main session confirmed on 2026-11-02 that each of G1–G5 still has a code path that runs, so all five stay. Whether each one is configured is not recorded here; DO checks it at use time with T-GO-1..11. G5 needs that check most: see GO-12.
+
+**Boundary with DO-6h (plugin OAuth apps).** The Google plugin client (G3) is covered here, because its client, its consent screen and its enabled APIs are managed in the Google Cloud console, like G1, G2, G4 and G5. DO-6h covers the other vendors' plugin apps and points to `google.md` for Google. SA to confirm (Q-D6c-1).
+
+### D6c.1 Context and findings from code
+
+Taken from the main session's DO-6c inventory at `origin/main` (names and readers only; no value read, no `.env*` opened). Line numbers are pointers for SA; the skill names files and functions only, never line numbers. Where the inventory does not settle a fact, the row says "SA to confirm". Where each value lives today is not derivable from the repo: DO finds it at run time and reports it by name and target only, in the private docs.
+
+**Five separate credentials, plus one cross-link.** Each has its own console page and its own failure. The skill treats them as five, never as "the Google key".
+
+| # | Credential | Env names | Kind of setting (not where it is set today) |
+|---|---|---|---|
+| G1 | App sign-in ("Continue with Google" on the main login) | none in the app env | A Google OAuth client whose id and secret are entered in Supabase Auth → Providers → Google |
+| G2 | Invite-signup Google ID token (Business OS champion invite) | `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` | An app env name, build-time. Must name the same client as the Supabase provider of G1 |
+| G3 | Plugin OAuth client (the Google plugins) and their redirect URIs | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | App env names (the public one build-time); a Google OAuth client |
+| G4 | Places address autocomplete (browser key) | `NEXT_PUBLIC_GOOGLE_PLACES_API_KEY` | An app env name, build-time; a Google API key |
+| G5 | Custom Search (research plugin web search) | `GOOGLE_SEARCH_API_KEY`, `GOOGLE_SEARCH_ENGINE_ID` | App env names; a Google API key; a Programmable Search Engine |
+| G6 | Gmail system sender | `GMAIL_*` | Covered by `email.md`. A separate OAuth client and refresh token, not G3. DO-6c only cross-links |
+
+| # | Finding | Where | Consequence for `google.md` |
+|---|---|---|---|
+| GO-1 | **G1 runs through Supabase, not the app env.** `signInWithOAuth` (PKCE) sends the browser to Supabase's Google provider; `redirectTo` is the window origin plus a path, and the browser lands on the auth callback page. With the provider off or misconfigured, Supabase rejects the provider. | `lib/client/auth-actions.ts` (`signInWithOAuth`); `app/auth/callback/page.tsx` | The Supabase half (provider settings, redirect allow list including the callback path, the nonce setting) is `supabase-ops`'s: `google.md` points there and restates none of it. The Google half is the OAuth client's authorised redirect URI, which is the callback **Supabase's provider page shows** (not an app path), per Supabase project. |
+| GO-2 | **G2 has one accessor and never falls back to the plugin client.** `googleSignInConfig.ts` is the only reader of `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`. Unset: the invite page hides the Google button and the signup route answers 404 `google_signin_not_configured`. | `lib/business-os/invites/googleSignInConfig.ts`; `app/invite/page.tsx`, `app/invite/GoogleSignupButton.tsx`, `app/invite/useGoogleIdentity.ts`; `app/api/public/invites/signup/google/route.ts` | Two probes that can fail with no secret: the button shows, and the route does not answer `google_signin_not_configured`. A gotcha: the fallback is forbidden on purpose; "set it to the plugin client id" is never the fix. |
+| GO-3 | **G2 must equal the Supabase provider's client id.** The server verifies the ID token (`OAuth2Client.verifyIdToken`, audience = this id, issuer, nonce, maximum age), then the browser calls `signInWithIdToken`, which Supabase checks against its provider's client. If the two ids differ, the route accepts a token the browser step then refuses. | `lib/business-os/invites/googleIdToken.ts`; `lib/client/auth-actions.ts` (`signInWithIdToken`) | A drift check the user reads in two dashboards and reports as "same client: yes/no", never the id. What the route has already written when the browser step fails: **SA to confirm** (it decides whether a mismatch strands a half-done signup). Whether Supabase's provider accepts more than one client id: vendor fact, confirm at use time. |
+| GO-4 | **G2 needs Authorised JavaScript origins.** The Google Identity button runs on the invite page, so each environment origin that serves that page must be an Authorised JavaScript origin on the sign-in client. | inventory; `app/invite/useGoogleIdentity.ts` | Per environment origin, stable addresses only. A Preview deployment URL changes per deployment, so the button cannot work there unless a stable address is registered (gotcha). |
+| GO-5 | **G3: the V2 plugin manager keeps a literal placeholder when a name is unset.** `processEnvironmentVariables` substitutes `${GOOGLE_CLIENT_ID}` / `${GOOGLE_CLIENT_SECRET}` in each `google-*-plugin-v2.json`; a missing name logs a warn ("Environment variable not found, keeping placeholder") and leaves the literal text in the definition. The literal reaches Google, which shows **its own** invalid-client page, not our error. | `lib/server/plugin-manager-v2.ts` (`processEnvironmentVariables`, ~line 150); `lib/plugins/definitions/google-*-plugin-v2.json` | Probe: read the `client_id` in the Google authorisation URL and check it is not a placeholder. Log evidence: the warn class, counted. The exact log string and module are quoted only after QA's `grep -cF` (SA to confirm the string). |
+| GO-6 | **G3 has two client-id names.** `GOOGLE_CLIENT_ID` (server, through the definitions) and `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (build-time). Which one builds the authorisation URL on the V2 path, and whether the two must hold the same client: **SA to confirm**. | inventory | If both are read on the live path, a drift check "both name the same client: yes/no" (user report). If only one is live, the other is noted, not checked. |
+| GO-7 | **G3 redirect URIs are per plugin and per environment origin.** Built from `NEXT_PUBLIC_APP_URL` plus `/oauth/callback/<plugin key>`, served by one dynamic route. One redirect per Google plugin definition; each must be registered on the plugin client for each environment's stable address, or Google answers `redirect_uri_mismatch`. Whether it goes through `platformOrigin()` (SKILL.md §3): **SA to confirm**. | `app/oauth/callback/[plugin]/route.ts`; the Google plugin definitions | The skill never lists the plugin keys: DO derives them at use time from the `google-*-plugin-v2.json` files at `origin/main`. A new Google plugin adds one redirect per environment before merge (order row). |
+| GO-8 | **Deprecated V1 readers exist and are never probe targets.** `lib/plugins/strategies/gmailPluginStrategy.ts`, `googleDrivePluginStrategy.ts`, `gmailDataStrategy.ts`, `lib/plugins/v2/configs/google-drive.json`, `app/oauth/[plugin]/start/route.ts` and `app/oauth/token/route.ts` (through `lib/plugins/pluginRegistry.ts`), and for G5 `lib/plugins/strategies/chatgptResearchStrategy.ts`. | CLAUDE.md § Deprecated | A probe goes through the V2 path only. A pass or failure on a V1 route says nothing about V2. The V2 start entry point to probe from: **SA to confirm** (the inventory names only the V1 start route). |
+| GO-9 | **G4 is a browser key by design.** `NEXT_PUBLIC_GOOGLE_PLACES_API_KEY` is build-inlined; the reader falls back to `''`, so an unset key shows no suggestions, silently. Its protection is the Google-side restriction (HTTP referrer + API), not secrecy. | `lib/geo/placesAutocomplete.ts`; `docs/ADDRESS_AUTOCOMPLETE_SETUP.md` | Drift check: key restricted by referrer to each environment's stable origins and by API to what the loader uses. Which Places product the loader uses (and so which API the restriction must allow): **SA to confirm** from the loader; the setup doc is a pointer, its list confirmed against code. |
+| GO-10 | **G5's key travels in a query string.** The research executor calls Google's Custom Search endpoint with the key and the engine id as URL parameters. That URL must never be logged, pasted, copied from a log, or put on a command line. | `lib/server/chatgpt-research-plugin-executor.ts` (~lines 255–271) | Evidence is counts by log class only; whether any current log line in that path carries the URL: **SA to confirm** (if one does, it is a follow-up, not in the skill). No key-holder script exists for G5; the skill forbids an ad-hoc one that puts the key in a URL on a command line (shell history). |
+| GO-11 | **Catalogue rows exist for every name.** Sign-in id in group `admin`, the plugin client in `plugins`, Search and Places in `external`. Places is marked `secret` though it ships in the bundle. | `lib/admin/environment/catalogue.ts` | T-GO rows read names from the catalogue at `origin/main`. The `secret` marking is Q-D6c-6, not a skill rule. |
+| GO-12 | **Custom Search availability (vendor fact).** Google's Custom Search JSON API documentation carries a notice about its availability; read Google's notice at use time before any G5 rotation or new project (wording per SA change 10). | vendor docs | G5 rotation is "rotate within the existing project; if the notice says new projects or keys are refused, plan the rotation with that risk named". Whether G5 stays in scope at all is the live check above and Q-D6c-5. |
+| GO-13 | **Gmail system sender (G6) is a separate OAuth client.** Its refresh token, loopback redirect and consent-screen expiry are already in `email.md` (§2 scripts, T-EM-8). | `email.md` | `google.md` cross-links; it adds only the console facts `email.md` deferred to DO-6c: the loopback redirect on that client and the consent-screen publishing status. |
+
+### D6c.2 What `google.md` teaches (the six-part template)
+
+Same intro sentence as `stripe.md` and `email.md`, plus the live-check line. Each part is organised by credential G1–G5, so a reader working on one never has to read the others.
+
+**(1) What must differ between environments.** One "Rule per environment" column plus a target sentence, as in `stripe.md` §1. The current setup (which Google Cloud projects exist, which clients and keys each environment uses, where each value lives) is a private-inventory pointer: "Where the value lives is found at run time, reported by name and target only." Rows:
+
+| Setting | Rule per environment |
+|---|---|
+| Google Cloud project per environment | As recorded. The consent screen, enabled APIs and quota are per project, so every client and key in one project shares them (vendor fact, confirm at use time) |
+| G1/G2 sign-in client | One OAuth client per Supabase project that uses it. Its redirect URI is the one Supabase's provider page shows; its Authorised JavaScript origins are the environment's stable origins that serve the invite page. `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` equals that Supabase provider's client id |
+| G2 never the plugin client | The sign-in name never holds the plugin client's id, on any target |
+| G3 plugin client | Its own OAuth client, separate from the sign-in client and from the Gmail system sender. Redirect URIs: each Google plugin's callback, exactly as the code builds it, for each environment's stable address |
+| G3 secret | Set wherever the id is set; the pair all-or-none |
+| G4 Places key | A browser key restricted by HTTP referrer (that environment's stable origins) and by API; one key per environment or one shared key, as recorded |
+| G5 Search key and engine id | A server key restricted by API to Custom Search; the engine id of the recorded search engine; the pair all-or-none |
+| Consent screen | User type, publishing status and declared scopes as recorded. Production target: published, never relying on a test-user list. Every scope the code requests is declared, and verified where Google requires it |
+| Local | Guidance only. DO reads no `.env*` file; a loopback origin or redirect is registered only on a non-production client |
+
+**(2) Where the code reads it.** The GO-1 to GO-11 files, per credential, named as files and functions. The Google plugin keys and their scopes are derived at use time from the `google-*-plugin-v2.json` definitions at `origin/main`, never listed. Expected names per environment: the catalogue (groups `admin`, `plugins`, `external`); requiredness the catalogue cannot give comes from the private inventory. Deprecated V1 readers are listed once, under "never a probe target". G6: pointer to `email.md` §2.
+
+**(3) Dashboard steps (the user),** by area name, because the console moves (confirm at use time). Newer consoles group the OAuth pages under **Google Auth Platform** (Branding, Audience, Clients, Data access, Verification centre); older ones under **APIs & Services → OAuth consent screen / Credentials**.
+
+- **OAuth consent screen / Audience:** user type, publishing status (Testing or In production), test users. **Data access / scopes:** declared scopes; **Verification centre:** verification status for sensitive or restricted scopes.
+- **Credentials / Clients:** per client, the Authorised JavaScript origins and Authorised redirect URIs; add or reset a client secret.
+- **Credentials / API keys:** per key, Application restrictions (HTTP referrers for G4) and API restrictions (G4, G5); create, rotate or delete.
+- **APIs & Services → Enabled APIs:** each API the code calls is enabled in that project; **Quotas** for Places and Custom Search.
+- **Programmable Search Engine console:** the engine exists and searches what the research plugin expects (G5).
+- **Supabase Auth → Providers → Google and URL configuration:** `supabase-ops`, not restated.
+- **Setting the value on Vercel:** `vercel-ops` and `env-change-protocol`. Every `NEXT_PUBLIC_` change needs a new build (`vercel-ops` §4).
+
+The user reports presence, status (published / testing, verified / not), "same client: yes/no", "origin or redirect registered: yes/no" and the last-updated time. Never a client id, a secret, a key, a project id, an origin, a redirect URI or an engine id.
+
+**(4) Probes.** Each fails when the setting is wrong. No probe needs DO to hold a secret, and none is run against a deprecated V1 route. Browser probes are the main session or the user (`vercel-ops` §4, "Who probes what"); log evidence is DO, from that deployment's runtime logs after the probe time, counts by class only. A probe that meets deployment protection is "not probed".
+
+| Change | Probe | Pass | Fails when | Who | Quota / side effects |
+|---|---|---|---|---|---|
+| G1 sign-in client, Supabase provider | On that deployment, click "Continue with Google" on the login page; stop at Google's account chooser | Google's account chooser loads, no error page | Supabase refuses the provider, or Google shows a client or `redirect_uri_mismatch` error | Main session or user | None. Completing sign-in is optional and only by the user, on their own existing account |
+| G2 name set and built | Open the invite page on that deployment (SA to confirm the page renders the button without a valid invite) | The Google button is shown | No button | Main session or user | None |
+| G2 route configured | A request to the signup route that carries no token (SA to confirm the config check runs before body validation and writes nothing) | Any answer other than 404 `google_signin_not_configured` | 404 `google_signin_not_configured` | Main session | None, if SA confirms; otherwise "not probed" |
+| G2 JavaScript origin | On the invite page, the Google button renders and opens Google's chooser | Chooser opens | Google shows an origin-not-allowed error (vendor message, confirm at use time) | User | None. A full invite signup is **not** a probe by default (it creates an account): SA to rule (Q-D6c-3) |
+| G2 equals Supabase's client | User compares the two dashboards | "Same client: yes" | "No" | User | None |
+| G3 client id and redirect URI | Start connecting one Google plugin from the V2 connect UI on that deployment; **stop at Google's consent page**; read the authorisation URL (address bar, or the `Location` header of the start response) | `client_id` is a real value (not a `${…}` placeholder, raw or URL-encoded) and `redirect_uri` is that deployment's stable address plus that plugin's callback path; Google shows consent, not an error | Placeholder in `client_id`; Google's invalid-client page; `redirect_uri_mismatch`; DO counts the placeholder warn class > 0 | Main session or user; DO (logs) | None. The URL holds the client id and a `state` value: report yes/no per field, never paste the URL |
+| G3 secret | Completing consent and the token exchange | The connection is recorded | Token exchange fails after consent | User only, on their own account, if they choose; otherwise "secret not probed" | Creates a plugin connection; cleanup is disconnecting it (what disconnect does on Google's side: SA to confirm) |
+| G3 per-plugin redirect | The G3 probe, once per Google plugin whose redirect changed | As above, per plugin | As above | Main session or user | None |
+| G4 Places key and restriction | On an allowed origin, type a partial address into an address field that uses the autocomplete (field found at use time) | Suggestions appear | No suggestions; the browser console shows a referrer or API-not-activated error class (vendor message, confirm at use time) | Main session or user | **Costs quota:** each suggestion request or session is billable Maps usage (pricing and free allowance: vendor docs at use time). Keep to one short query |
+| G4 restriction holds | Optional, by the user: the same field from an origin not on the referrer list | Refused | Suggestions appear | User | One billable-or-refused request |
+| G5 key and engine id | One research-plugin action that performs a web search, on that deployment | DO counts 0 search-failure classes for that window; the result shows web results | Failure class > 0, or no results | User (trigger); DO (logs) | **Costs one Custom Search query** from the daily quota, plus real LLM provider cost and usage records (SA ruling). One run, user-approved. Never repeated in a loop |
+| Consent screen | User reports publishing status, user type, scope verification | As recorded; production published | Testing in production; a code scope not declared | User; DO (code-side scope derivation) | None |
+
+Rotation overlap: a client secret or API key that Google keeps valid alongside the new one (two secrets on one client, or an old key not yet deleted) makes a pass "pass, not conclusive (overlap)" until the old one is deleted and the probe repeated. Whether Google supports two active secrets on one client: vendor docs at use time.
+
+**(5) Gotchas,** each grounded in a repo file or marked vendor fact:
+
+- **Five credentials, five failures** (D6c.1 table): a working plugin connect proves nothing about sign-in, and the reverse.
+- **G2 never falls back to the plugin client** (`googleSignInConfig.ts`). Copying the plugin id into the sign-in name is never the fix.
+- **G2 must equal Supabase's provider client** (`googleIdToken.ts`, `auth-actions.ts`): a mismatch passes the server and fails in the browser (GO-3).
+- **`NEXT_PUBLIC_` is build-time** (`vercel-ops` §4): G2, G4 and the public G3 name need a new deployment; a changed value on Vercel alone changes nothing.
+- **Placeholder, not our error** (`plugin-manager-v2.ts`): an unset G3 name shows Google's invalid-client page. Read the `client_id` in the URL and the warn count before suspecting the Google console.
+- **Redirect URIs and JavaScript origins are per environment origin**, exactly as the code builds them; Preview URLs change per deployment, so only a stable address can be registered (SKILL.md §3).
+- **G1's Google redirect is Supabase's callback**, not an app path; the app's `redirectTo` belongs to Supabase's allow list (`supabase-ops`).
+- **Consent screen in Testing:** only listed test users can consent, and refresh tokens expire within days (vendor fact, confirm at use time; the same note grounds T-EM-8 in `validate-gmail.mjs`). It is per project, so it affects every client in that project.
+- **Scopes and verification:** a sensitive or restricted scope the code adds needs declaring, and verification, before real users see consent without an unverified-app warning or a block (vendor fact). Plugin scopes are derived from the definitions at use time.
+- **Browser key protection is the restriction** (`placesAutocomplete.ts`): referrer list and API list.
+- **Search key in the URL** (`chatgpt-research-plugin-executor.ts`): never log, paste or command-line that URL; evidence is counts.
+- **Custom Search availability** (GO-12, vendor fact): read Google's notice at use time; rotate within the existing project.
+- **Deprecated V1 readers are never probe targets** (CLAUDE.md § Deprecated).
+- **G6 is not G3:** the Gmail system sender's client, token and loopback redirect are `email.md`'s.
+
+**(6) Drift checks** (in `env-drift-audit` §7 format and under its rules):
+
+| ID | Check | Expected state from | Live read (pointer) | Class | Who reads |
+|---|---|---|---|---|---|
+| T-GO-1 | On each **Vercel target**, the Google names (catalogue groups `admin`, `plugins`, `external`) match the recorded set. Local: "not read (main session / user)" | Catalogue at `origin/main`; private inventory | `vercel-ops` §3 Env vars | High | DO |
+| T-GO-2 | The only Google names with `NEXT_PUBLIC_` are `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`, `NEXT_PUBLIC_GOOGLE_CLIENT_ID` and `NEXT_PUBLIC_GOOGLE_PLACES_API_KEY`; no secret or server key carries it | Catalogue at `origin/main` | `vercel-ops` §3 (names only) | Critical | DO |
+| T-GO-3 | Pairs all-or-none on a target: `GOOGLE_CLIENT_ID` with `GOOGLE_CLIENT_SECRET` (and the public id, per GO-6); `GOOGLE_SEARCH_API_KEY` with `GOOGLE_SEARCH_ENGINE_ID` | Code at `origin/main` | `vercel-ops` §3 (names only) | High | DO |
+| T-GO-4 | 0 placeholder warns (GO-5) on each deployment since the last run | Change records | Runtime logs | High | DO |
+| T-GO-5 | The sign-in name equals the Supabase provider's client, per environment; never the plugin client | `googleSignInConfig.ts`, `googleIdToken.ts`; private inventory | User report (Google Cloud Clients; Supabase provider via `supabase-ops`) | High | User |
+| T-GO-6 | Sign-in client: Supabase's callback registered as redirect URI; each stable origin serving the invite page registered as JavaScript origin | Private inventory (addresses) | User report (Clients) | High | User |
+| T-GO-7 | Plugin client: every Google plugin's callback, derived from the definitions at `origin/main`, registered for each environment's stable address | Code at `origin/main`; private inventory | User report (Clients) | High | User; DO (code side) |
+| T-GO-8 | Consent screen per project: publishing status and user type as recorded (production target: published); every scope the code requests declared, verified where required | Code at `origin/main` (scopes derived); private inventory | User report (Audience, Data access, Verification centre) | High | User; DO (code side) |
+| T-GO-9 | Places key restricted by HTTP referrer (stable origins as recorded) and by API (as the loader requires); Search key restricted by API to Custom Search | `placesAutocomplete.ts`, the executor at `origin/main`; private inventory | User report (API keys) | High | User |
+| T-GO-10 | Every API the code calls is enabled in the recorded project, with no quota-exceeded errors since the last run | Code at `origin/main` | User report (Enabled APIs, Quotas); runtime-log counts for the search path | Medium | User; DO |
+| T-GO-11 | Custom Search still served for the recorded project, per Google's notice at use time (GO-12) | Vendor docs at use time; private inventory | User report | Medium | User |
+
+**(7) Tiers and order.** Pointer to `env-change-protocol`; nothing restated.
+
+**Tiers.** Anything on the consent screen, any scope or verification action, any API enable or disable, any client secret reset, any key create, restrict or delete, and any edit to a client or key that production uses, are **production tier**: SA reviews the plan, the user executes. Adding an origin or redirect to a client used **only** by non-production environments, as recorded, is reversible: the user applies it after the approval in chat. Where one client serves several environments, every edit to it is production tier.
+
+| Change | When |
+|---|---|
+| A new Google plugin, or a changed callback path | Its redirect registered on the plugin client for every environment's stable address before merge |
+| A scope the merging code starts to request | Declared on the consent screen (and verification started where required) before merge |
+| A new environment origin | Origins and redirects registered before it serves the invite page or plugin connect |
+| A `NEXT_PUBLIC_` Google value | Set → new build → deploy Ready → probe |
+| Client secret or API key rotation | Create new → set → deploy Ready → probe → delete old **after deploy**; overlap per (4) |
+| Tightening a key's restriction | After the probe passes on every allowed origin |
+| An origin or redirect removed | Only after no deployment builds or serves it |
+
+### D6c.3 Files to change
+
+| # | File | Action |
+|---|---|---|
+| D6c-1 | `.claude/skills/third-party-ops/google.md` | New, §D6c.2, target ≤ ~190 lines (five credentials; SA to confirm, Q-D6c-7) |
+| D6c-2 | `.claude/skills/third-party-ops/SKILL.md` | §5 row "Google Cloud" → `[google.md](google.md)`. Add to the description triggers: "Google sign-in, a Google OAuth client, an OAuth consent screen, Authorised JavaScript origins, a Google API key, Places autocomplete, Custom Search". Nothing else |
+| D6c-3 | This requirement | §0 row, these sections, notes, reviews |
+| — | `stripe.md`, `email.md`, `devops.md`, `env-drift-audit`, `env-change-protocol`, `supabase-ops`, `CLAUDE.md` | **Not edited.** `email.md`'s "DO-6c" pointers resolve to `google.md` through the index row; a link edit there is a follow-up only if SA wants one (Q-D6c-8) |
+
+### D6c.4 Acceptance criteria
+
+- [ ] `google.md` has the six parts plus tiers/order, organised by G1–G5 with G6 a cross-link; every file path it names exists; it states the Q-D6-2 live check by role, not by environment.
+- [ ] Each of G1–G5 has at least one probe row naming who runs it, the pass, what it shows when wrong, and its quota or side effects. The G4 and G5 rows say they cost quota. No probe completes consent or sign-in except by the user on their own account; no probe targets a deprecated V1 reader.
+- [ ] The G3 probe reads `client_id` and `redirect_uri` from the authorisation URL and reports yes/no only; the URL is never pasted.
+- [ ] G2's no-fallback rule and its equality with the Supabase provider's client are each stated, with their files.
+- [ ] The Supabase-side settings are a pointer to `supabase-ops`; the grep for "Skip nonce", "URL configuration" and "Redirect URLs" over `google.md` is 0, or each hit is a pointer.
+- [ ] No copied lists: no Google plugin key list, no scope string, no line number. QA greps `google.md` for `googleapis\.com/auth`, `/oauth/callback/google-` and line references: 0 hits.
+- [ ] Every quoted log string or error code is verbatim in the cited file (`grep -cF`); vendor messages are marked "confirm at use time".
+- [ ] The restatement grep from §D6.4 over `google.md`: 0, or each hit is a pointer.
+- [ ] Public repo: the finding-11 regex over the added lines is 0. No client id, key or key prefix, project id or number, engine id, origin, redirect URI with a host, domain, address or personal path. No line states which environment has which name, which project exists, or whether anything is configured today.
+- [ ] The SKILL.md diff is only D6c-2; the diff touches only D6c.3 files.
+
+### D6c.5 Open questions for SA
+
+- [ ] **Q-D6c-1** Boundary: Google's plugin client in DO-6c (`google.md`) rather than DO-6h. *Suggested:* yes; DO-6h points here for Google. (raised by: BA | status: open)
+- [ ] **Q-D6c-2** GO-6: which of `GOOGLE_CLIENT_ID` / `NEXT_PUBLIC_GOOGLE_CLIENT_ID` builds the V2 authorisation URL, must they hold the same client, and what is the V2 start entry point to probe from? *Suggested:* SA reads it at build; T-GO-3 includes the public name only if it is on the live path. (raised by: BA | status: open)
+- [ ] **Q-D6c-3** GO-3 and the G2 probes: does the signup route's config check run before body validation and write nothing (so the "not configured" probe is safe); does the invite page render the button without a valid invite; and what does the route write before the browser's `signInWithIdToken` step? *Suggested:* the two cheap probes stay if safe; a full invite signup is never a default probe. (raised by: BA | status: open)
+- [ ] **Q-D6c-4** GO-9 / GO-10: which Places product the loader uses (so the API restriction is exact), and whether any current log line in the research executor carries the search URL. *Suggested:* the restriction row says "the APIs the loader calls, read at use time"; a URL in a log is a code follow-up, not skill text. (raised by: BA | status: open)
+- [ ] **Q-D6c-5** GO-12: given Google's availability notice for Custom Search, does G5 stay in `google.md`, or does the live check drop it and a code follow-up replace the search provider? *Suggested:* keep it with T-GO-11 until the live check or a product decision drops it; a replacement is a separate item for the user. (raised by: BA | status: open)
+- [ ] **Q-D6c-6** The catalogue marks the Places key `secret` though it is a browser key. *Suggested:* a Low code follow-up to relabel it, not in the skill. (raised by: BA | status: open)
+- [ ] **Q-D6c-7** Length: five credentials push past `stripe.md`'s ~170. *Suggested:* ≤ ~190; if over, Dev trims prose, never probe or drift rows. (raised by: BA | status: open)
+- [ ] **Q-D6c-8** Is the G3 secret probe (completing consent on the user's own account) with its disconnect cleanup acceptable, and should `email.md`'s "DO-6c" pointers become links? *Suggested:* the secret probe is optional and user-only, else "secret not probed"; leave `email.md` untouched (the index resolves it). (raised by: BA | status: open)
+
+---
+
 ## 6. Non-Functional Requirements
 
 - **Security:** no secret values printed or decrypted. No project refs, IDs, secret locations or open weaknesses in any tracked file. Production and irreversible actions are executed by the user only.
@@ -1591,6 +1763,10 @@ Approved. It reads the project's log store and cannot change project state, so i
 | 2026-11-01 | DO-6b SA code review | Code Approved for QA. Changes 1–12 pass; code claims verified. SA fixed the send probe (send-email option, non-Paid type, revoke audit entry), the replay precondition (open/click count), the smoke script's `--url`, and two short-pass wording tidies. Leak scan 0. |
 | 2026-11-01 | QA DO-6b | PASSED, 19 checks, one Medium item before commit. Every §D6b.4 criterion and SA changes 1–12 pass; all quoted log strings verbatim (`grep -cF`); replay safe-type precondition, send-probe gating and the plan-cancel order row match the code; 16 cited paths exist; leak regex 0. Medium: the requirement's SA sections describe the contact route beyond "a second `GMAIL_*` reader outside the transport". Low: webhook row timestamp caveat, §D6b.2 lags SA fixes, no Gmail trigger, contact-route wording, `email.md` LF. |
 | 2026-11-01 | DO-6b QA fixes (main session) | QA Medium fixed: three requirement passages reworded to the `email.md` description of the contact route. Low 1: webhook-secret row "Fails when" excludes the timestamp refusal. Low 3: SKILL.md trigger for a Gmail refresh token. Low 4: "contact-route mail". Low 2 (§D6b.2 lags SA code-review fixes) left: the SA Code Review section records them. |
+| 2026-11-02 | DO-6c spec + SA short pass | BA scoping spec (Google: sign-in client, invite ID-token client, plugin OAuth client, Places, Custom Search; Gmail system sender cross-linked); SA approved with changes 1–13, settled Q-D6c-1..8 (no user question), accepted FU-D6c-a/b/c. |
+| 2026-11-02 | DO-6c build | `third-party-ops/google.md` new; SKILL.md index row + triggers. Awaiting SA code review and QA. |
+| 2026-11-02 | QA DO-6c | PASSED, 18 checks, no bugs. Every §D6c.4 criterion as overridden by SA changes 1–13, the public-repo regex (0) and weakness grep (4 `throttl` hits, all the "not probed (throttled)" outcome), current-state text, paths, links, verbatim strings, code claims, CRLF and length (144) checked. Four Low edge cases: two vendor messages unmarked, rate-limit detail in SA text, spec text lags SA change 1, `google.md` LF. |
+| 2026-11-02 | DO-6c QA fixes (main session) | QA Low 1: vendor messages in `google.md` (`redirect_uri_mismatch`, the invalid-client page) marked "confirm at use time". QA Low 2: the SA short-pass ruling on Q-D6c-3 no longer spells out the rate-limit bucket and budget. Lows 3 (spec text lags the SA changes; the SA section records them) and 4 (LF in the working copy; git normalises it) left as they are. |
 
 ---
 
@@ -3503,3 +3679,250 @@ Reviewed in the DO-6b worktree on the uncommitted changes, against §D6b.1–§D
 
 - [ ] All acceptance criteria pass — ready for commit
 - [x] Issues found — the main session must fix Issue 1 (Medium, requirement text only) before commit. Every §D6b.4 criterion and SA changes 1–12 pass, the code claims hold, and the skill files themselves need no change.
+
+---
+
+## SA Review — DO-6c (short pass)
+
+**Reviewed by SA — 2026-11-01**
+**Verdict: APPROVED WITH CHANGES.** The five-credential split, the boundary with DO-6h, the six-part shape, the tiers and the public-repo criteria are right. Most code findings hold. Four things would have made the skill wrong:
+- **The G3 probe reads a header that does not exist.** V2 has no start route. The browser builds the Google authorisation URL itself (`lib/client/oauth-handler.ts`, `initiateOAuth`) from the sanitised `auth_config` that `GET /api/plugins/available` serves, and opens it in a popup. There is no `Location` to read. The only start route is the deprecated V1 one.
+- **`NEXT_PUBLIC_GOOGLE_CLIENT_ID` is not on the live path.** Only the deprecated V1 strategies read it. The V2 URL takes its `client_id` from `GOOGLE_CLIENT_ID` and its `redirect_uri` from `NEXT_PUBLIC_APP_URL`, both by substitution in the definitions. Neither goes through `platformOrigin()`.
+- **The G2 page probes have an unstated precondition.** The Google button renders only in the `valid` invite state, so neither G2 page probe can run without an unredeemed invite. The route probe's pass ("any answer other than 404") would also count a 429 or a 503 as a pass.
+- **The G5 probe cannot fail on an unset key.** With either Search name unset, `performWebSearch` returns `[]` and logs nothing at `info` or above (only a debug-gated `console.warn`). "0 failure classes" then passes on a broken setup.
+
+GO-12 also states a vendor date we cannot stand behind. Required changes 1–13 below fix all of these. None needs a decision from the user.
+
+I reviewed this in the DO-6c worktree at `eb2ee76a` (merge of #605). `origin/main` has moved since then, but not in `lib/`, `app/`, `.claude/` or `docs/requirements/`. I reviewed against §D6c, SA Review — DO-6 changes 1–7, SA Review — DO-6b (short pass) as the model, and `third-party-ops` `SKILL.md`, `stripe.md` and `email.md`. No platform call, no SQL and no network call were made. No `.env*` file and no private doc was opened. Local reads only.
+
+### Code claims (GO-1 to GO-13)
+
+| # | Result | Correction for `google.md` |
+|---|---|---|
+| GO-1 | **Verified.** `signInWithGoogle` calls `signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin + redirectPath } })`, with `/auth/callback` as the default. A start failure logs "Google sign-in could not start". | Quote that class if the skill cites a log (it is a browser-side `clientLogger` line, so DO's runtime logs never see it). The Supabase half stays a pointer. |
+| GO-2 | **Verified.** There is one accessor. It is trimmed, and blank means off. The route's 404 comes **after** the rate limiter and **before** the body is read or the session is checked. | See Q-D6c-3 for the probe. |
+| GO-3 | **Verified.** On 200 the route has already claimed the invite, created the account and finalised it (`completeGoogleSignup`, the same path as `/complete`). The browser's `signInWithIdToken` runs after that. If it fails, `GoogleSignupButton.tsx` shows "account ready" and links to the normal sign-in page. | **A mismatch strands nothing half-done, but it uses up the invite.** The account is complete and password-less, and the Google identity is not linked by that step. Gotcha plus an order row (change 9). |
+| GO-4 | **Verified.** The Google Identity button runs in a popup (`ux_mode: 'popup'`) on the invite page, so the origins rule stands. Closing the popup calls nothing. | Probe precondition: change 3. |
+| GO-5 | **Verified, with two precisions.** The string "Environment variable not found, keeping placeholder" is verbatim, at `warn`, in module `PluginManager`, with a `varName` field. (1) It fires when the definitions **load** (a cold start), not per request. (2) It fires for **any** plugin's missing name. | T-GO-4 counts the class for module `PluginManager` filtered on `varName` in the Google set plus `NEXT_PUBLIC_APP_URL`. A window with no definition load is "not read (no load in window)", never 0 (change 6). |
+| GO-6 | **Settled: only `GOOGLE_CLIENT_ID` is live.** `NEXT_PUBLIC_GOOGLE_CLIENT_ID` is read only by `gmailPluginStrategy.ts` and `googleDrivePluginStrategy.ts` (V1), and by the catalogue. | No drift check pairs the two names. The public name is a V1 leftover, noted under "never a probe target" (change 2). |
+| GO-7 | **Verified, and it does not go through `platformOrigin()`.** Each `google-*-plugin-v2.json` holds `redirect_uri: "${NEXT_PUBLIC_APP_URL}/oauth/callback/<key>"`, substituted at runtime in `processEnvironmentVariables`. So the raw value lands verbatim: no trailing-slash strip, no loopback rule. The token exchange uses the same `redirect_uri`. The callback route posts its result to the opener at the **build-time** `NEXT_PUBLIC_APP_URL` origin (`app/oauth/callback/[plugin]/route.ts`), so an opener on any other origin never receives it. | Gotcha (change 5). This is the exception to SKILL.md §3's "read through `platformOrigin()`": `google.md` states it for G3 and does not edit SKILL.md. Code follow-up FU-D6c-a. |
+| GO-8 | **Verified, and one is missing.** `lib/plugins/v2/core/UniversalOAuthHandler.ts`, `UniversalPlugin.ts` and `lib/plugins/v2/registry.ts` also build a Google-style auth URL, but nothing outside that folder imports them. **The V2 entry point** is the connect UI → `PluginAPIClient.connectPlugin` → `OAuthHandler.initiateOAuth` (popup), with the definition from `GET /api/plugins/available` (session required, writes nothing). | Add the unused `lib/plugins/v2/core` handler to "never a probe target". Dev confirms at build that it is still unimported (change 2). |
+| GO-9 | **Settled.** The loader calls `AutocompleteSuggestion.fetchAutocompleteSuggestions` and, when a suggestion is picked, `fetchFields`. Both run through the Maps JavaScript loader. `docs/ADDRESS_AUTOCOMPLETE_SETUP.md` names the matching two APIs and agrees with the code. Billing is per session token. | The restriction row reads "the two APIs the loader needs: the setup doc lists them, confirmed against `placesAutocomplete.ts` at use time". The product names are vendor names, so they are confirmed at use time. The probe stops at suggestions (change 7). |
+| GO-10 | **Verified: no current log line carries the URL.** The two error lines log `{ err: response.status }` ("Google Search API failed:") and `{ err: error }` ("Web search error:"). The URL lives in a local only. **But an unset key is silent** (see the verdict). | The G5 probe is reworked (change 8). Both strings, trailing colon included, are verbatim. |
+| GO-11 | **Verified.** The groups are as stated. `NEXT_PUBLIC_GOOGLE_PLACES_API_KEY` is `secret(...)`. | Q-D6c-6. |
+| GO-12 | **External: rephrase.** No date and no "reports say". | Change 10. |
+| GO-13 | **Verified** against `email.md` (lines 22, 48, 59, 104 and 120 point to DO-6c). | — |
+
+### Rulings on "SA to confirm" and Q-D6c-1 to Q-D6c-8
+
+- **Q-D6c-1: yes.** The Google plugin client stays in `google.md`, because it is the same console, project, consent screen and API list. DO-6h points here for Google.
+- **Q-D6c-2: settled.** The live client id is `GOOGLE_CLIENT_ID` only (GO-6). The two names need not match, and no check pairs them. The entry point is the V2 connect UI (GO-8). The probe has two forms, and either one is enough:
+  - (a) **No consent, preferred.** Signed in on that deployment, the main session reads `GET /api/plugins/available` for one Google plugin and tests `auth_config.client_id` (not `${`-prefixed, raw or URL-encoded) and `auth_config.redirect_uri` (the target's recorded stable address plus that plugin's callback path, no `${`, no `//oauth`). It reports yes/no per field through a filter, and the response is never printed or pasted. This proves the substitution, not Google's acceptance.
+  - (b) **Google's acceptance.** Start a connect from the V2 UI, stop at Google's consent page, close the popup. Google shows consent rather than invalid-client or `redirect_uri_mismatch`.
+
+  T-GO-3 drops the public name (change 6).
+- **Q-D6c-3: split.**
+  - **Route probe: safe, with a precise pass.** It is a POST with no body and no cookie. The 404 check runs before the body is read, and with an empty body the route answers 400 `invalid_request` before the session lookup or any redemption step. Its only write is **one rate-limit counter increment** for the caller. Pass is **400 `invalid_request`**. Fail is 404 `google_signin_not_configured`. A 429 is "not probed (throttled)". A 503, or a deployment-protection page, is "not probed". Because `NEXT_PUBLIC_` is inlined at build into the server code as well, this probe proves the **built** value is present. So it replaces the "button shows" probe as the default "G2 name set and built" check.
+  - **Page probes (button, JavaScript origin): precondition.** They need an unredeemed invite to an address the user owns. Without one, they are "not probed (no invite)". Creating one just for the probe is allowed only as an explicit user-approved step, with its side effects named: an invite row, an audit row and an invite email to the user's own address. The cleanup is to revoke the invite. The probe opens the chooser and **closes the popup**, which per the code sends nothing.
+  - **A full invite signup is never a default probe.** It consumes the invite and creates an account.
+  - **What the route writes before `signInWithIdToken`:** everything (GO-3).
+- **Q-D6c-4: settled.** Places: GO-9. The search URL in logs: no current line (GO-10), so there is no follow-up for logging. The skill rule "never log, paste or command-line that URL" stays.
+- **Q-D6c-5: keep G5**, subject to the Q-D6-2 live check. If the main session finds no code path that runs, or no target with the pair set, G5 is dropped from `google.md`, and T-GO-11 with it. Replacing the search provider is a product item for the user, outside DO-6c.
+- **Q-D6c-6: accepted as FU-D6c-c (Low, code).** The catalogue relabels the Places key as a browser `config` identifier, with its tests, or records why `secret` is kept. It is not a skill rule.
+- **Q-D6c-7: ≤ ~190 lines accepted.** If it runs over, Dev trims prose, never probe or drift rows.
+- **Q-D6c-8: the G3 secret probe is acceptable**: optional, user-only, on the user's own Google account. Otherwise it is "secret not probed". **Cleanup is two steps.** Disconnect in the app only marks the row `disconnected` (`UserPluginConnections.disconnectPlugin` → `updateStatus`) and revokes nothing at Google. So the user also removes the app's access in their Google account's third-party access page (vendor area, confirm at use time). Side effects to name: a `plugin_connections` row and its audit. Leave `email.md` untouched, because the index row resolves its "DO-6c" pointers.
+- **G3 secret "SA to confirm" (what disconnect does on Google's side):** nothing (above).
+- **G5 cost "SA to confirm":** the probe spends real LLM provider cost and writes usage records. The row says "spends provider cost and writes usage records; one run, user-approved".
+
+### Public-repo check
+
+- **The spec text is clean.** It has no ids, refs, client ids, key prefixes, domains, addresses, endpoint URLs or personal paths, and it does not say which environment has which name. Env var names and repo paths are fine.
+- **GO-12** contains a dated vendor claim and "reports say": change 10.
+- **Line numbers** in GO-5, GO-10 and the inventory (`~line 150`, `~lines 255–271`) are fine as SA pointers in the requirement. They must not reach `google.md` (D6c.4 already checks that).
+- **Dev must not copy code comments that state the current setup** into `google.md`.
+- The "names set on Vercel" wording in the services-live line is fine here, because it is the rule. The **recorded result** must use the DO-6b form: "The main session confirmed on <date> that …", by role, with no target named.
+
+### Required changes
+
+1. **[GO-8, (4) G3 rows, D6c.4] Replace the G3 probe's "`Location` header of the start response".** Use the two forms in the Q-D6c-2 ruling: (a) the signed-in `GET /api/plugins/available` read, filtered to yes/no per field and never printed; (b) the V2 connect popup stopped at consent and closed. State that V2 has no start route and that the V1 start route is never a target. Add a D6c.4 grep: "Location" in `google.md` is 0, or the hit is "there is no start route". — Priority: High
+2. **[GO-6, GO-8, (2), (5)] Live readers for G3.** Part (2) names, for G3: `plugin-manager-v2.ts` (`processEnvironmentVariables`), the `google-*-plugin-v2.json` definitions, `lib/plugins/sanitize-plugin-definition.ts`, `app/api/plugins/available/route.ts`, `lib/client/plugin-api-client.ts` / `lib/client/oauth-handler.ts` and `app/oauth/callback/[plugin]/route.ts`. Under "never a probe target", add `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (read by V1 strategies only) and the unimported `lib/plugins/v2/core` handler (Dev confirms at build). Remove "if both are read on the live path…". — Priority: High
+3. **[(4) G2 rows] G2 probes as ruled in Q-D6c-3.** The route probe becomes the default "name set and built" check: pass 400 `invalid_request`, fail 404 `google_signin_not_configured`. A 429 is "not probed (throttled)". A 503, or a protection page, is "not probed". Its side effect is one rate-limit counter increment. The button and JavaScript-origin probes carry the precondition "an unredeemed invite to an address the user owns, else not probed (no invite)". Creating one is user-approved, with the invite row, the audit row, the email and the revoke cleanup named. The popup is closed, never completed. — Priority: High
+4. **[(4) G5 row] Make the G5 probe able to fail.** Pass: the research action returns web sources (`source_count` > 0, or sources shown) for a query certain to have results, **and** 0 "Google Search API failed:" and 0 "Web search error:" lines from that deployment after the probe time. Fail: no sources, or either class > 0. Add a gotcha: "an unset Search key or engine id is silent: the research answer comes back without web sources and no `info`-or-above log line". Side effects: one Custom Search query, plus real LLM provider cost and usage records. One run, user-approved. — Priority: High
+5. **[GO-7, (5)] G3 redirect gotchas.** (a) The redirect is the raw `NEXT_PUBLIC_APP_URL` plus the callback path, substituted at runtime. It does **not** go through `platformOrigin()`, so a trailing slash, a loopback value or an unset name lands verbatim and Google answers `redirect_uri_mismatch` (an unset name also logs the GO-5 class). (b) The callback posts its result to the build-time `NEXT_PUBLIC_APP_URL` origin, so a connect started from any other origin (for example a Preview deployment URL) completes at Google but the page never hears of it. In the G3 probe, pass is "`redirect_uri` is the **target's recorded stable address** plus the plugin's callback path", not "that deployment's address". — Priority: High
+6. **[T-GO-2, T-GO-3, T-GO-4] Drift rows.**
+   - T-GO-2: "every `NEXT_PUBLIC_` Google name on the target is a `NEXT_PUBLIC_` name in the catalogue; neither `GOOGLE_CLIENT_SECRET` nor `GOOGLE_SEARCH_API_KEY` appears with the prefix". Derived, not a typed list.
+   - T-GO-3: `GOOGLE_CLIENT_ID` with `GOOGLE_CLIENT_SECRET`, and wherever that pair is set, `NEXT_PUBLIC_APP_URL` set too. The search pair stays. The public client name is dropped.
+   - T-GO-4: count the class for module `PluginManager`, with `varName` in the Google names plus `NEXT_PUBLIC_APP_URL`. A window with no definition load is "not read (no load in window)".
+
+   — Priority: Medium
+7. **[(4) G4 rows, GO-9] Places probe limits.** Type a partial address and **stop at suggestions**: never pick one (picking calls `fetchFields`, a second billable request) and never save the form. The fields are in Business OS settings, found at use time, on the user's own business only. The restriction row is as in GO-9. The "restriction holds" probe uses an address on that deployment that is not on the referrer list, if the key is built there. Otherwise it is "not probed". — Priority: Medium
+8. **[GO-10] Record the ruling.** "No current log line carries the search URL (SA, at `eb2ee76a`)". The skill keeps only the never-log/paste/command-line rule. — Priority: Low
+9. **[(5), (7) order, GO-3] G2 equality and origins before the switch.** Gotcha: "if the sign-in name and the Supabase provider's client differ, the route still claims the invite and creates the account, and the browser step then fails. The person gets a complete, password-less account and a used invite, and is sent to the normal sign-in page" (`GoogleSignupButton.tsx`, `completeGoogleSignup`). Order row: "`NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` is set on a target only after T-GO-5 reads 'same client: yes' and T-GO-6 reads 'registered: yes' for every stable origin that serves the invite page". Add a second order row: "a changed `NEXT_PUBLIC_APP_URL`: every Google plugin's callback registered at the new address before the change, then a new build (the callback's post-message origin is build-time)". — Priority: Medium
+10. **[GO-12, (5), T-GO-11] Vendor wording.** Replace it with: "Google's Custom Search JSON API documentation carries a notice about its availability; read Google's notice at use time before any G5 rotation or new project". No date and no "reports say". The rotation rule becomes "rotate within the existing project; if the notice says new projects or keys are refused, plan the rotation with that risk named". T-GO-11 becomes "Custom Search still served for the recorded project, per Google's notice at use time". — Priority: Medium
+11. **[(4) G3 secret row] Cleanup is two steps** (Q-D6c-8): disconnect in the app, and the user removes the app's access in their own Google account (vendor area, confirm at use time). Name the `plugin_connections` row and its audit as side effects. — Priority: Medium
+12. **[(4) G1 row] Which login surface.** The "Continue with Google" button calls `signInWithGoogle` in `lib/client/auth-actions.ts`, and the button is found at use time. The start-failure line is browser-side, so DO has no runtime-log evidence for G1. Say "user or main session report only". — Priority: Low
+13. **[D6c.3 follow-ups] Record three code follow-ups in the requirement, not in the skill:**
+    - FU-D6c-a (Medium): build the G3 redirect through `platformOrigin()`, or a shared helper, on both the definition substitution and the callback's post-message origin.
+    - FU-D6c-b (Low): remove `NEXT_PUBLIC_GOOGLE_CLIENT_ID` with the V1 strategies, or record why it stays.
+    - FU-D6c-c (Low): Q-D6c-6.
+
+    `chatgpt-research-plugin-executor.ts` also has a `console.warn` and a hardcoded model (CLAUDE.md rules 3 and 5). It is not touched in this slice, so it is listed for whoever next opens that file, not converted here.
+
+    — Priority: Low
+
+### Checked and honoured
+
+- **DO-6 changes 1–7:** every probe with a precondition is "not probed" when the precondition fails (changes 3, 7). A rotation overlap is "pass, not conclusive". Local is "not read" in T-GO-1. Derivation is from code (plugin keys, scopes, callbacks). There are no copied lists, and the T-GO rows live in `google.md`.
+- **Probe safety:** no probe completes consent or sign-in except by the user on their own account. No probe sends mail unless the user approves the optional invite creation. The rate-limit increment, the Places and Search quota, and the LLM cost are each named. No probe needs DO to hold a secret, and no probe targets V1.
+- **Tiers:** every consent-screen, scope, API, secret and key action, and any edit to a client or key that production uses, is production tier. Shared clients make every edit production tier.
+- **Supabase half:** a pointer to `supabase-ops`, never restated.
+
+### Approval
+
+[x] Spec approved with changes 1–13. Dev builds `google.md` and the SKILL.md index row after the main session's Q-D6-2 live check. No user decision is needed.
+
+---
+
+## DO-6c implementation notes
+
+**By Dev — 2026-11-02.** Branch `feature/devops-third-party-google`, worktree at `origin/main` (after #605). Config/docs only; nothing committed. The SA short pass's changes 1–13 override §DO-6c wherever they differ; `google.md` follows the SA text, and §DO-6c is kept as BA wrote it apart from the public-safety edits listed below.
+
+| File | Change |
+|---|---|
+| `.claude/skills/third-party-ops/google.md` | New, 144 lines (under ~190): a credential table G1–G6, then six parts plus tiers and order, T-GO-1..11, mirroring `email.md`'s section order and table style. G1–G5 are separate rows in every part; G6 is a cross-link to `email.md`. No line numbers, no plugin key list, no scope string. LF line endings |
+| `.claude/skills/third-party-ops/SKILL.md` | §5 index row now points at `google.md`; description triggers gain "Continue with Google" or Google sign-in, a Google OAuth client, a redirect URI mismatch, an OAuth consent screen, Authorised JavaScript origins, a Google API key, a Places key, Custom Search (D6c-2). CRLF preserved; 2 lines changed |
+| This requirement | §DO-6c spec, SA Review — DO-6c (short pass), these notes, two Change History rows, §0 DO-6 row. CRLF preserved |
+
+| SA change | Where / how applied |
+|---|---|
+| 1 | §2 "V2 has no start route" paragraph; §4 G3 probe split into (a) the signed-in `GET /api/plugins/available` read, yes/no per field through a filter, never printed, and (b) the V2 connect popup stopped at consent and closed. The word "Location" does not appear in `google.md` |
+| 2 | §2 G3 row names `processEnvironmentVariables`, the `google-*-plugin-v2.json` definitions, `sanitize-plugin-definition.ts`, the available route, `connectPlugin` / `initiateOAuth` and the callback route. "Never a probe target" lists the V1 readers, `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (V1 only, never paired) and the `lib/plugins/v2/core` handler. The "if both are read on the live path" text is gone |
+| 3 | §4 G2 rows: the route probe is the default "name set and built" check (pass 400 `invalid_request`, fail 404 `google_signin_not_configured`, 429 "not probed (throttled)", 503 or protection page "not probed", one rate-limit increment). The button / JavaScript-origin row carries the unredeemed-invite precondition, the user-approved invite creation with its invite row, audit row, email and revoke cleanup, and "close the popup" |
+| 4 | §4 G5 row: pass needs web sources (`source_count` > 0 or sources shown) and 0 of each failure class; §5 "An unset Search key or engine id is silent"; side effects one Custom Search query plus LLM provider cost and usage records; one run, user-approved |
+| 5 | §5 "The G3 redirect is not built through `platformOrigin()`" (raw value; a trailing slash, loopback or unset name lands verbatim; the exception to SKILL.md §3) and "The callback answers one origin"; §4 G3 (a) pass is the target's recorded stable address. SKILL.md §3 is not edited |
+| 6 | T-GO-2 derived from the catalogue, with the secret and the search key named; T-GO-3 adds `NEXT_PUBLIC_APP_URL` and drops the public client name; T-GO-4 module `PluginManager`, `varName` filter, "not read (no load in window)" |
+| 7 | §4 G4 rows: stop at suggestions, never pick one (`fetchFields`), never save; fields in Business OS settings on the user's own business; the restriction-holds row is "not probed" without an unlisted address. §1 and §2 G4 rows per GO-9 |
+| 8 | Recorded below under "Verification done"; `google.md` keeps only the never-log/paste/command-line rule (§5) |
+| 9 | §5 "A G2 mismatch uses up the invite"; §7 order rows for setting `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` (after T-GO-5 and T-GO-6) and for a changed `NEXT_PUBLIC_APP_URL` |
+| 10 | §5 "Custom Search availability" uses the SA wording, no date; T-GO-11 "per Google's notice at use time". §DO-6c GO-12 reworded the same way |
+| 11 | §4 G3 secret row: two-step cleanup (disconnect only marks the row, then the user removes the app's access in their Google account) and the `plugin_connections` row and audit as side effects |
+| 12 | §4 G1 row: the button that calls `signInWithGoogle`, found at use time; "by report only", because "Google sign-in could not start" is a browser-side line |
+| 13 | Follow-ups below; none is in the skill |
+
+**Code follow-ups (not in this slice).**
+
+| ID | Priority | Item |
+|---|---|---|
+| FU-D6c-a | Medium | Build the G3 redirect and the callback's result origin through `platformOrigin()` (or a shared helper), both in the definition substitution and in the callback's post-message origin |
+| FU-D6c-b | Low | Remove `NEXT_PUBLIC_GOOGLE_CLIENT_ID` together with the V1 strategies, or record why it stays |
+| FU-D6c-c | Low | The catalogue relabels the Places key as a non-secret browser setting (`config`), with its tests, or records why `secret` is kept |
+
+`chatgpt-research-plugin-executor.ts` also has a `console.warn` and a hardcoded model (CLAUDE.md rules 3 and 5). It is not touched here; listed for whoever next opens that file.
+
+**Public-safety edits.** In §DO-6c: GO-12 reworded per SA change 10; the G5 probe row's open question replaced by the SA ruling's wording; a header line says the SA changes override the section. In the SA short pass as recorded here: two passages were shortened to what the skill needs.
+
+**Verification done.** Every path named in `google.md` exists in the worktree (scripted check). Quoted strings found by `grep -cF` in their files: "Google sign-in could not start" (`auth-actions.ts`), `google_signin_not_configured` and `invalid_request` (the signup route), "Environment variable not found, keeping placeholder" (`plugin-manager-v2.ts`, module `PluginManager`, field `varName`), "Google Search API failed:" and "Web search error:" (the research executor). Function names checked: `signInWithGoogle`, `signInWithGoogleIdToken`, `processEnvironmentVariables`, `connectPlugin`, `initiateOAuth`, `performWebSearch`, `completeGoogleSignup`, `fetchAutocompleteSuggestions`, `fetchFields`, `platformOrigin`. The Google definitions take `client_id` from `${GOOGLE_CLIENT_ID}` and build `redirect_uri` from `${NEXT_PUBLIC_APP_URL}`; the callback route posts to the build-time `NEXT_PUBLIC_APP_URL`. `lib/plugins/v2/core/UniversalOAuthHandler.ts` and `lib/plugins/v2/registry.ts` are imported by nothing outside `lib/plugins/v2/` except guard tests. SA change 8, recorded: no current log line carries the search URL (SA, at `eb2ee76a`).
+
+**Could not verify / open.**
+- The Q-D6-2 live check (each of G1–G5 still in use, by role) is the main session's; `google.md` keeps all five and states the check. The main session recorded its result in the spec on 2026-11-02 (all five have a running code path; configuration is checked at use time).
+- Vendor facts (console area names, the per-project consent screen, Testing-mode token expiry, two active client secrets, origin-not-allowed and referrer error messages, Custom Search availability, Places billing) are not verifiable from code; each is marked "confirm at use time".
+- `google.md` is LF; it becomes CRLF on the next touch, as `email.md` did.
+
+---
+
+---
+
+## SA Code Review — DO-6c
+
+**Code Review by SA — 2026-11-02**
+**Status:** ✅ Code Approved
+
+Reviewed the uncommitted DO-6c worktree (`google.md` new, `SKILL.md` index row and triggers, this requirement) against the DO-6c spec, SA Review — DO-6c (short pass) changes 1–13 and the DO-6c implementation notes. Local reads and greps only: no platform call, no SQL, no network call, no `.env*` file.
+
+### SA changes 1–13 in `google.md`
+
+All 13 landed as ruled. Change 1: the G3 probe is the two forms (a) and (b), §2 states that V2 has no start route, and "Location" occurs 0 times. Change 2: §2 names the live G3 readers and "never a probe target" lists the V1 readers, `NEXT_PUBLIC_GOOGLE_CLIENT_ID` and the `lib/plugins/v2/core` handler. Change 3: the G2 route probe is the default, with the exact pass, fail, throttled and not-probed states, and the invite precondition. Change 4: the G5 pass needs sources and 0 of both classes, and the silent-unset gotcha is present. Change 5: the two redirect gotchas, and (a) passes on the recorded stable address. Change 6: T-GO-2, T-GO-3 and T-GO-4 are as ruled. Change 7: the probe stops at suggestions. Change 8: the never-log rule only. Change 9: the gotcha and both order rows. Change 10: the vendor wording, with no date. Change 11: the two-step cleanup. Change 12: by report only. Change 13: the follow-ups are in the requirement only.
+
+### Code claims checked at this tree
+
+| Claim in `google.md` | Result |
+|---|---|
+| G2 route: rate limiter first, then 404 `google_signin_not_configured`, then an empty body is 400 `invalid_request` before the session lookup | ✅ Order confirmed in the route. An empty body makes `request.json()` fail, so the schema refuses it |
+| G2 rate-limit bucket (one increment, `create` budget) | ✅ |
+| G2 accessor reads only `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` with no fallback, popup button (`ux_mode: 'popup'`), `signInWithGoogleIdToken` after the route, link to sign-in on failure | ✅ |
+| G1 `signInWithGoogle` → `signInWithOAuth`, "Google sign-in could not start" | ✅ (browser-side logger) |
+| G3 `GET /api/plugins/available`: session required, serves `auth_config` through `toClientPluginInfo`, whose allow-list includes `client_id` and `redirect_uri` | ✅ Writes nothing |
+| G3 `connectPlugin` → `initiateOAuth` builds the URL from `auth_config` and opens a popup | ✅ |
+| G3 definitions: `client_id` from `${GOOGLE_CLIENT_ID}`, `redirect_uri` from `${NEXT_PUBLIC_APP_URL}` plus the callback path, substituted in `processEnvironmentVariables` | ✅ Every `google-*-plugin-v2.json` |
+| PluginManager warn: "Environment variable not found, keeping placeholder", module `PluginManager`, field `varName`, at definition load | ✅ |
+| Callback posts to the build-time `NEXT_PUBLIC_APP_URL` origin | ✅ |
+| Disconnect only updates the status and revokes nothing | ✅ |
+| G4 `fetchAutocompleteSuggestions`, `fetchFields` when a suggestion is picked, empty-key fallback | ✅ |
+| G5 `performWebSearch`: unset pair returns `[]` silently (debug-only output); `source_count`; "Google Search API failed:" and "Web search error:" verbatim, trailing colon included | ✅ |
+| Catalogue groups `admin` / `plugins` / `external` for the Google names | ✅ |
+| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` live readers: V1 strategies only (other hits are the catalogue, a guard comment and tests) | ✅ |
+| `lib/plugins/v2/core` / `registry.ts` imported only by guard tests outside the folder | ✅ |
+| Every cited path exists (V1 files, setup doc, `scripts/validate-gmail.mjs`, the T-EM-8 pointer) | ✅ |
+
+### Probes, public repo, template
+
+- **Probes:** each one can fail. Side effects are named, and the costly or writing ones are user-approved and run once (rate-limit increment, invite creation, Places quota, Search query plus LLM cost, `plugin_connections` row). Every precondition has a "not probed" state, and so do "not read (no load in window)" and "secret not probed". No probe needs DO to hold a secret, and none targets V1.
+- **Public repo:** `google.md` has no ids, client ids, key prefixes, domains, addresses, URLs, personal paths, line numbers, plugin key lists or scope strings (the copied-list greps return 0). It records no current environment setup, and the dated vendor claim is gone. The requirement diff adds no such values. The line-number pointers stay in SA text only, as ruled.
+- **Template:** the same sections and order as `email.md` and `stripe.md`. It is 144 lines, inside the ~190 allowed.
+- **SKILL.md:** only the description triggers and the §5 row changed (2/2 lines). Working copy CRLF is intact; the stored file stays LF under `core.autocrlf`.
+
+### Optimisation Suggestions
+
+- `google.md` is LF in the working copy while its siblings are CRLF there. Under `core.autocrlf` the stored files match, so no action is needed.
+
+### Code Approved for QA: Yes
+
+---
+
+## QA Report — DO-6c
+
+**QA — 2026-11-02**
+**Test mode:** full · **Strategy:** static checks (grep, `grep -cF` verbatim string lookup, path and link existence, YAML parse, byte-level line-ending count, `git diff --numstat` with and without `--ignore-cr-at-eol`, read-through against the code). This is a docs/config-only slice with no runtime to exercise. · **Focus:** security (public repo, current-state text, probe safety), schema (frontmatter) · **Skipped:** the fresh-session load test (deferred, as for DO-1 to DO-6b) · **Input source:** TL prompt + §D6c.4 + SA Review — DO-6c (short pass) changes 1–13 + SA Code Review — DO-6c. Run in the DO-6c worktree on the uncommitted changes. No platform call, no SQL, no vendor call, no network call. No `.env*` file and no private doc was opened. QA edited nothing except this section and one Change History row.
+
+### Test Coverage
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 1 | §D6c.4: six parts plus tiers/order, G1–G5 with G6 a cross-link; paths exist; live check by role | Pass | Credential table G1–G6 (G6 → `email.md`), then §1–§7 in the `email.md` order. Every backticked path tested with `test -e`: all exist; bare file names (`googleSignInConfig.ts`, `GoogleSignupButton.tsx`, the V1 strategy names, `UniversalPlugin.ts`) each resolve to the file the row means. The live check is a procedure ("a code path that runs, and the names set on Vercel"), naming no environment |
+| 2 | §D6c.4: a probe row per G1–G5 with who, pass, fail, side effects; G4 and G5 cost quota; no consent or sign-in except the user's own; no V1 target | Pass | 12 probe rows, each with `Who` and `Side effects`. G4 "**Costs quota**", G5 "**Costs one Custom Search query**" plus LLM cost. G1 sign-in and the G3 secret: user only, own account. The §4 intro and §2 "Never a probe target" exclude V1 and the unimported `lib/plugins/v2/core` handler |
+| 3 | §D6c.4 G3 probe, as overridden by SA change 1 | Pass | (a) signed-in `GET /api/plugins/available`, yes/no per field, response never printed; (b) popup stopped at consent, URL never pasted. Code: the route requires a session (`getUser`, 401) and serves `auth_config` through `toClientPluginInfo`, whose allow-list holds `client_id` and `redirect_uri`. "Location" in `google.md`: 0 |
+| 4 | §D6c.4: G2 no-fallback and equality, with files | Pass | §5 "never falls back" (`googleSignInConfig.ts`; the accessor trims, blank → null); §1 equality row; T-GO-5 cites `googleSignInConfig.ts` and `googleIdToken.ts` |
+| 5 | §D6c.4: Supabase side a pointer | Pass | "Skip nonce", "URL configuration", "Redirect URLs" over `google.md`: 0. §3 and §5 point to `supabase-ops` |
+| 6 | §D6c.4: no copied lists | Pass | `googleapis\.com/auth`, `/oauth/callback/google-`, line references (`L123`, `line 123`, `:123`, `~line`): 0. No plugin key or scope named |
+| 7 | §D6c.4: quoted strings verbatim; vendor messages marked | Pass with note | `grep -cF`: "Google sign-in could not start" 1 (`lib/client/auth-actions.ts`, the only file in `app/` and `lib/`); `google_signin_not_configured` 2 and `invalid_request` 2 (signup route); "Environment variable not found, keeping placeholder" 1 (`plugin-manager-v2.ts`, the only file), `varName` 4; "Google Search API failed:" 1, "Web search error:" 1, `source_count` 3 (research executor); `fetchAutocompleteSuggestions` 2, `fetchFields` 3. Every function name found. See Edge Case 1 |
+| 8 | §D6c.4: restatement grep (§D6.4 list) | Pass | `Snapshot the before-state`, `\| **Read** \|`, `begin read only`, `filter_project_envs`, `decrypt` over `google.md`: 0 |
+| 9 | §D6c.4 / brief: public-repo regex over added lines | Pass | The brief's regex over all 474 added lines (`google.md` `git add -N`'d, then `git reset -q`; `git status` shows it untracked again): **0**. Extra (`https?://`, `localhost`, `.com`/`.io`/`.ai`, `worktrees/`, `Users/`): 1 hit, the criterion's own grep pattern in §D6c.4 (a regex, not a URL) |
+| 10 | Brief: weakness-wording grep over the added lines (case-insensitive; word list kept with the main session) | Pass with note | 4 hits, all `throttl`: the "not probed (throttled)" outcome of the G2 route probe (`google.md` §4, the SA Q-D6c-3 ruling, SA change 3, Dev note 3). It names a rate-limit refusal as an inconclusive probe result: a control, not a weakness. See Edge Case 2 |
+| 11 | No statement of the current env setup | Pass | Grep of added lines for "is set in", "not set", "only on", "in production", "on preview", "is configured", "currently", "today", "is enabled", "is published": every hit is a rule ("production published", "registered only on a non-production client", "each API the code calls is enabled in that project"), a dashboard field name, or criterion text. The recorded live check says only that each of G1–G5 still has a code path that runs and that configuration is not recorded, by role, no target |
+| 12 | Links and cross-skill pointers | Pass | The only markdown link is `[email.md](email.md)` (resolves). `supabase-ops`, `env-change-protocol`, `vercel-ops`, `env-drift-audit` exist. Cited sections exist: `vercel-ops` §3 (Env vars row) and §4 ("Who probes what", `NEXT_PUBLIC_` build-time), `env-drift-audit` §7, `SKILL.md` §3 ("Redirect URIs come from the app address") and §5, `email.md` §2, T-EM-8 |
+| 13 | Code claims (sample) | Pass | Signup route order: rate limit → 404 → `request.json().catch` + schema → 400 → `getUser` → `completeGoogleSignup`. Every `google-*-plugin-v2.json` takes `client_id` from `${GOOGLE_CLIENT_ID}` and builds `redirect_uri` from `${NEXT_PUBLIC_APP_URL}` plus its callback path. The callback route reads `NEXT_PUBLIC_APP_URL` at module level for `postMessage`. `performWebSearch`: an unset pair → debug-gated output, `return []`. `NEXT_PUBLIC_GOOGLE_CLIENT_ID`: live readers are the two V1 strategies only (plus the catalogue and a comment). `lib/plugins/v2/core` / `registry`: outside the folder only three guard tests reference them. `disconnectPlugin` → `updateStatus` |
+| 14 | SKILL.md diff only D6c-2; diff touches only D6c.3 files | Pass | `git status --untracked-files=all`: the two edited files and `google.md`. SKILL.md 2/2 lines: the description triggers and the §5 row. The triggers add "a redirect URI mismatch" and "a Places key" beyond §D6c.3's list, both within its intent; every spec trigger is present in substance |
+| 15 | SKILL.md frontmatter | Pass | js-yaml parse: keys `name`, `description`; `name: third-party-ops`; description 1,226 chars on one line |
+| 16 | Line endings, churn | Pass | CR = LF in the requirement (3876/3876 before this report) and SKILL.md (86/86); `git ls-files --eol`: `w/crlf`. `--numstat` identical with `--ignore-cr-at-eol` (2/2, 372/1); the 1 removed requirement line is the §0 DO-6 row. `google.md` is LF throughout (0 CR, 144 LF, final newline), consistent, as `email.md` was |
+| 17 | Length | Pass | 144 lines (≤ ~190, Q-D6c-7) |
+| 18 | Fresh-session load test | Deferred | Skills load at session start. Not failed |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+
+None.
+
+#### Edge Cases (nice to fix)
+
+1. **`redirect_uri_mismatch` and the "invalid-client page" are not marked as vendor messages** — `google.md` §4 (G1 row, G3 (b) row) and §5 (the G3 redirect gotcha). §D6c.4 asks that vendor messages be marked "confirm at use time"; the origin-not-allowed and referrer messages are, these two are not. `redirect_uri_mismatch` is a Google error code, found nowhere in `app/` or `lib/`. Optional: add "(vendor message, confirm at use time)" at first use. Severity: Low.
+2. **The rate-limit bucket and budget are written out in the requirement** — the SA short pass's Q-D6c-3 ruling names the bucket key and its request-per-window figure. Both are in public code and describe a control, so nothing is exposed; `google.md` says only "one rate-limit counter increment". Optional: trim to that. Severity: Low.
+3. **§D6c.2 and §D6c.4 lag the SA short pass** — the §D6c.2 G3 probe row still reads the authorisation URL "or the `Location` header of the start response" with a "that deployment's stable address" pass, and §D6c.4 item 3 still says the probe reads the authorisation URL. SA change 1 also asked for a "Location" grep criterion in §D6c.4, which was not added (the grep itself returns 0). The section header says the SA changes override it, and `google.md` is correct. Severity: Low.
+4. **`google.md` is LF** — becomes CRLF on the next touch, as with `email.md`. Severity: Low.
+
+### Final Status
+
+- [x] All acceptance criteria pass — ready for commit
+- [ ] Issues found — Dev must address before commit
+
+**PASS.** Every §D6c.4 criterion, as overridden by SA changes 1–13, passes; the public-repo scan is 0 and the weakness grep's 4 hits are explained; the code claims hold. Four Low edge cases, none blocking.
