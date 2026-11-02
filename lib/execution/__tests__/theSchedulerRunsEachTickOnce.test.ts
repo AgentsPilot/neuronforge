@@ -827,34 +827,6 @@ describe('an agent scheduled by interval rather than by cron', () => {
    * ───────────────────────────────────────────────────────────────────────────
    */
 
-  /*
-   * ───────────────────────────────────────────────────────────────────────────
-   * THE CLOCK IS PINNED, AND IT HAS TO BE.
-   *
-   * These assert pure interval arithmetic — 29 October plus three days is 1
-   * November — but `nextRunFor` also advances past NOW, because a scheduler
-   * must never write a due date in the past. So the expected value was only
-   * correct while the real clock sat before 1 November 09:00. On 1 November it
-   * returned 4 November and three tests failed, reporting a defect in code
-   * behaving exactly as designed.
-   *
-   * Pinned just after the row's own `next_run`, which is the state these
-   * assertions describe. A date-dependent test does not fail when the code
-   * breaks, it fails when the calendar moves: noise now, and silence on the
-   * day it would have mattered.
-   * ───────────────────────────────────────────────────────────────────────────
-   */
-  beforeAll(() => {
-    /* `nextTick` and `setImmediate` left real: the runner awaits promises, and
-       faking those deadlocks the await chain rather than controlling it. */
-    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
-    jest.setSystemTime(new Date('2026-10-29T09:05:00.000Z'));
-  });
-
-  afterAll(() => {
-    jest.useRealTimers();
-  });
-
   const EVERY_THREE_DAYS = {
     agent_config: {
       business_os_automation: {

@@ -175,29 +175,6 @@ describe('the platform bounds hold on the way in', () => {
 describe('the next run moves, and where to', () => {
   /*
    * ───────────────────────────────────────────────────────────────────────────
-   * THE CLOCK IS PINNED FOR THIS BLOCK.
-   *
-   * The fixture last ran on 26 October and is next due on 2 November, and
-   * these assertions are about where a NEW cadence lands between those two.
-   * But `next_run` is also always pushed past now, so on 1 November the
-   * soonest daily 09:00 IS 2 November and "sooner than 2 November" became
-   * impossible — the test failed on the calendar, not on the code.
-   *
-   * Pinned to the morning after the last run, which is the situation the
-   * block describes: an owner changing the cadence partway through a week.
-   * ───────────────────────────────────────────────────────────────────────────
-   */
-  beforeAll(() => {
-    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
-    jest.setSystemTime(new Date('2026-10-27T10:00:00.000Z'));
-  });
-
-  afterAll(() => {
-    jest.useRealTimers();
-  });
-
-  /*
-   * ───────────────────────────────────────────────────────────────────────────
    * ASSERTED ON THE PATCH, NOT ON THE RETURN VALUE.
    *
    * The first version of these three read `outcome.nextRun`, which is computed
