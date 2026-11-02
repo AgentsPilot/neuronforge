@@ -108,3 +108,79 @@ describe('and the owner can act on what reaches them', () => {
     expect(toUserFacing(WRAPPER).message).toContain('Calibration stop');
   });
 });
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AND IT IS ACTUALLY CALLED.
+ *
+ * Everything above passed for as long as this file has existed, while
+ * `causeOfFailure` had NO CALLER anywhere in the tree. The runner took
+ * `execution.error` — the wrapper — and handed that to `markFailed`, which
+ * translates the terminal message for the owner through `toUserFacing`; an
+ * unrecognised string is passed through unchanged, so the wrapper is precisely
+ * what reached the dashboard. A live account showed its owner, in English, in
+ * the middle of a Hebrew table:
+ *
+ *     Non-retryable execution error at step "Scan the mailbox for new replies,
+ *     headers only" (unknown)
+ *
+ * A green unit test for a function nobody invokes is the worst kind of
+ * reassurance, so the wiring is asserted as well as the logic.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('the runner actually uses it', () => {
+  const { readFileSync } = require('fs') as typeof import('fs');
+  const { join } = require('path') as typeof import('path');
+
+  const RUNNER = join(process.cwd(), 'lib/execution/scheduledAgentRunner.ts');
+  const PILOT = join(process.cwd(), 'lib/pilot/WorkflowPilot.ts');
+
+  it('passes the cause to markFailed, not the raw error', () => {
+    const src = readFileSync(RUNNER, 'utf-8');
+
+    /* The call exists… */
+    expect(src).toContain('const why = causeOfFailure(execution)');
+    /* …and the old wrapper-grab is gone. */
+    expect(src).not.toMatch(/const why = \(execution as \{ error\?: string/);
+  });
+
+  it('is reached from the failure branch that reports the run', () => {
+    const src = readFileSync(RUNNER, 'utf-8');
+    const call = src.indexOf('causeOfFailure(execution)');
+    const report = src.indexOf('markFailed(run.id, why', call);
+
+    expect(call).toBeGreaterThan(-1);
+    /* The value is computed before it is reported, in the same branch. */
+    expect(report).toBeGreaterThan(call);
+  });
+
+  it('gets something to work with: the pilot carries the step cause out', () => {
+    /*
+     * The other half of the same bug. `causeOfFailure` reads the failing
+     * step's own message, and the pilot's failure return carried no step
+     * detail at all — so even once called it could only fall back outward to
+     * the wrapper it exists to avoid.
+     */
+    const src = readFileSync(PILOT, 'utf-8');
+
+    expect(src).toContain('failedStepError');
+    /* From metadata, which is the persisted half — never the response body. */
+    expect(src).toMatch(/failedStepError[\s\S]{0,400}metadata\?\.error/);
+  });
+
+  it('prefers that over every outward fallback', () => {
+    /* A run carrying both must report the step's sentence. */
+    const run = {
+      error: WRAPPER,
+      error_message: WRAPPER,
+      failedStepError: REAL,
+      execution_trace: { failedSteps: [], stepExecutions: [] },
+    };
+
+    expect(causeOfFailure(run)).toBe(REAL);
+  });
+
+  it('still falls back outward when the pilot carried nothing', () => {
+    expect(causeOfFailure({ error: WRAPPER })).toBe(WRAPPER);
+  });
+});

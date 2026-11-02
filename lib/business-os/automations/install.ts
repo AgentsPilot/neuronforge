@@ -1350,6 +1350,32 @@ export async function installAutomation(
      * comment records.
      */
     next_run: new Date().toISOString(),
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * PRODUCTION FROM BIRTH, BECAUSE WE WROTE THE PLAN.
+     *
+     * `ShadowAgent.isActive` is `!production_ready`. Left unset, every run of
+     * this agent — a committed plan, reviewed and tested in this repository —
+     * carries the full calibration apparatus a PROMPT-BUILT agent needs:
+     *
+     *   · StructuralRepairEngine, which reads the plan against the agent's
+     *     input_schema and, finding references it cannot resolve, rates them
+     *     `critical` and sets `will_persist: true` — it intends to REWRITE the
+     *     owner's stored plan;
+     *   · ResumeOrchestrator, which turns any step failure into
+     *     `stop_execution` and throws with code `CALIBRATION_STOP`.
+     *
+     * That is the right machinery for an agent a model just invented from a
+     * sentence, and the wrong machinery for one whose plan is a file in this
+     * repository with tests around it. Calibration exists to find out whether a
+     * generated plan does what was asked. There is nothing here to find out.
+     *
+     * The cost was not theoretical: a business owner's dashboard read
+     * "Calibration stop: Non-retryable execution error…" about a mailbox agent,
+     * and they had never calibrated anything.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    production_ready: true,
     plugins_required: automation.pluginsRequired,
     /*
      * What the agent page will ask the owner for. Empty for the six chasers.

@@ -887,6 +887,56 @@ export async function enableInboxChannel(input: {
      */
     tags: [INBOX_CHANNEL_TAG, providerTag],
     status: 'active',
+    /* Production from birth — this plan is committed, not generated. See the
+       long note on the same line in `install.ts`: `ShadowAgent.isActive` is
+       `!production_ready`, so leaving it unset runs a reviewed plan under the
+       calibration apparatus built for invented ones, where any step failure
+       becomes a non-retryable `CALIBRATION_STOP`. */
+    production_ready: true,
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * WHAT THE PLAN READS, DECLARED — so the repair engine stops "fixing" it.
+     *
+     * The channel never wrote an input_schema. Its values are computed fresh on
+     * every run by `inputsFor` (the window has to be recomputed each time, or
+     * it is a fixed date rather than a window), so nothing NEEDED the schema to
+     * execute — and it ran fine for weeks.
+     *
+     * What it broke is the shadow agent's structural check, which reads the
+     * schema to decide whether a `{{input.X}}` reference points at anything.
+     * Against an empty schema every reference is dangling, so a healthy plan
+     * was reported on each run as:
+     *
+     *   issue_count: 4  fixed_count: 3  will_persist: true
+     *   step1: References non-existent input fields: {{input.mail_query}}
+     *          severity: critical
+     *
+     * `will_persist` is the part that matters: the engine intends to REWRITE
+     * the owner's stored plan from that false premise. A repair that edits a
+     * working agent because a schema is missing is worse than the missing
+     * schema.
+     *
+     * Declared rather than suppressed: these four are genuinely the plan's
+     * inputs, and writing them down is the honest fix. `mail_from` and
+     * `mail_subject_prefix` are supplied too but never referenced by the plan,
+     * so they are not claimed here — a schema that over-declares is the same
+     * kind of lie in the other direction.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    input_schema: [
+      {
+        name: 'mail_query',
+        type: 'string',
+        required: true,
+        description: "The mailbox search this channel runs, measured from the owner's own enquiry mail. Recomputed every run so its `after:` bound is a window and not the date setup happened to run on.",
+      },
+      {
+        name: 'enquiry_template',
+        type: 'object',
+        required: true,
+        description: "The field labels learned from a real enquiry, so the CRM can parse the sender's name, email and message deterministically rather than guessing.",
+      },
+    ],
     ...schedulingFacts(chosen.cron),
     /*
      * `business-os`, not `crm`.

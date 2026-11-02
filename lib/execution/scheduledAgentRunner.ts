@@ -269,11 +269,20 @@ export function causeOfFailure(execution: unknown): string {
     error?: string;
     message?: string;
     error_message?: string;
+    /* What the failing STEP recorded, carried out by the pilot for exactly
+       this. Preferred over everything else below: it is the only one written
+       for a person rather than for us. */
+    failedStepError?: string;
     execution_trace?: {
       failedSteps?: string[];
       stepExecutions?: Array<{ stepId?: string; metadata?: { success?: boolean; error?: string } }>;
     };
   };
+
+  /* The pilot's own answer first — see `failedStepError` on its failure
+     return. The trace below remains for callers that hand us a persisted
+     execution row rather than the pilot's result. */
+  if (result?.failedStepError) return result.failedStepError;
 
   const steps = result?.execution_trace?.stepExecutions ?? [];
   const failedIds = new Set(result?.execution_trace?.failedSteps ?? []);
@@ -670,9 +679,35 @@ async function executeOne(
      */
     if (succeeded === false) {
       const retry = (run.retry_count ?? 0) < MAX_ATTEMPTS;
-      const why = (execution as { error?: string; message?: string })?.error
-        ?? (execution as { message?: string })?.message
-        ?? 'the plan reported failure';
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * `causeOfFailure`, WHICH WAS WRITTEN FOR THIS AND NEVER CALLED.
+       *
+       * This took `execution.error` — the OUTERMOST wrapper — and handed it
+       * down the chain. `markFailed` translates the terminal message through
+       * `toUserFacing` so a business owner gets a sentence they can act on,
+       * and the translator passes an unrecognised string through unchanged.
+       * So the wrapper is exactly what reached the dashboard, and a live
+       * account showed its owner, in the middle of an otherwise Hebrew table:
+       *
+       *   Non-retryable execution error at step "Scan the mailbox for new
+       *   replies, headers only" (unknown)
+       *
+       *   Scatter-gather step step2: all 2 items failed. First error: Scatter
+       *   item 0 failed at step step3: business-os remind_invoices failed…
+       *
+       * The sentence they CAN act on was recorded by the step itself — "Your
+       * Gmail connection has expired. Please reconnect in Settings → Connected
+       * Apps." — one layer in, and `causeOfFailure` exists precisely to dig it
+       * out. Its own header documents this Gmail case and says the measurement
+       * was done. It just had no caller, so none of it ran.
+       *
+       * Fixing it here rather than in the translator: `toUserFacing` cannot
+       * recognise a wrapper it was never given the inside of, and teaching it
+       * to parse step names out of English prose would be the wrong repair.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const why = causeOfFailure(execution);
 
       await scheduledExecutionRepository.markFailed(run.id, why, retry);
       result.failed += 1;
