@@ -249,9 +249,19 @@ export async function cancelQuoteStages(input: {
    * quoting a different total from the paperwork they are holding is worse than
    * one quoting none.
    */
-  let collectedForEmail = 0;
-  /* The currency that money is in — a business may invoice a quote in its own. */
-  let collectedCurrency: string | null = null;
+  /*
+   * Kept PER CURRENCY, and added up only once they are known to agree.
+   *
+   * `payment_invoices.currency` is a per-ROW value and it is NULLABLE, so one
+   * quote's stages can differ — including one carrying none at all — without
+   * anybody choosing that, and the paths that need a currency substitute
+   * their own default when they find none (`invoice.currency || 'USD'` in
+   * `invoiceSettlement`, `?? 'usd'` when raising at Stripe). Summing across
+   * them gave a number that is money in no currency at all, labelled with
+   * whichever invoice this loop happened to reach first. CLAUDE.md: never sum
+   * money across currencies.
+   */
+  const collectedByCurrency = new Map<string, { amount: number; label: string }>();
 
   for (const stage of billedStages ?? []) {
     if (!stage.invoice_id) continue;
@@ -278,11 +288,21 @@ export async function cancelQuoteStages(input: {
      * previously part-refunded stage does not overstate what they are out.
      */
     if (SETTLED_INVOICE_STATUSES.includes(invoice.status)) {
-      collectedForEmail +=
-        Math.max(0, Number(invoice.amount ?? 0) - Number(invoice.refunded_amount ?? 0));
       /* Typed by `findSettlementStateById`; this needed a cast while the read
          was inline and the row had no type. */
-      collectedCurrency ??= invoice.currency ?? null;
+      const label = invoice.currency ?? '';
+      /* Keyed case-insensitively, because `ILS` and `ils` are one currency. The
+         label keeps the casing the invoice carries, which is what a caller
+         formats with. */
+      const key = label.toLowerCase();
+      const held = collectedByCurrency.get(key);
+
+      collectedByCurrency.set(key, {
+        amount:
+          (held?.amount ?? 0) +
+          Math.max(0, Number(invoice.amount ?? 0) - Number(invoice.refunded_amount ?? 0)),
+        label: held?.label ?? label,
+      });
     }
 
     /*
@@ -304,6 +324,44 @@ export async function cancelQuoteStages(input: {
 
     invoicesVoided += 1;
   }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE CURRENCY, OR NO FIGURE AT ALL.
+   *
+   * `collected` has one job: it tells a caller whether to open the standard
+   * refund dialog, and it is what the client is told they have paid. A total
+   * added across currencies serves neither — it would offer back a quantity
+   * that does not exist, and `generateQuoteStoppedEmail` formats it in the
+   * QUOTE's currency, so the client would read a figure in one currency that is
+   * partly another.
+   *
+   * Reporting NOTHING is the designed fallback rather than a loss. That email
+   * prints the paid line only `if (paid > 0)`, for this very reason — "a 'Paid
+   * so far' line on a job nobody was charged for invites the client to wonder
+   * what they missed" — and a caller handed no figure opens the same dialog
+   * without a prefilled total. Every invoice is still there to be read.
+   *
+   * Only currencies money is actually HELD in count, so a stage refunded down
+   * to nothing in a second currency cannot suppress a real total.
+   *
+   * The stop itself never fails over this: taking the stages off the books is
+   * what the owner pressed, and the money is the separate decision made
+   * afterwards — the line this whole module draws.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const heldCurrencies = [...collectedByCurrency.values()].filter(c => c.amount > 0);
+
+  if (heldCurrencies.length > 1) {
+    logger.error(
+      { proposalId, userId, currencies: heldCurrencies.map(c => c.label || null) },
+      'Stage invoices of one quote are in different currencies; reporting no collected total'
+    );
+  }
+
+  const collectedForEmail = heldCurrencies.length === 1 ? heldCurrencies[0].amount : 0;
+  const collectedCurrency =
+    heldCurrencies.length === 1 ? heldCurrencies[0].label || null : null;
 
   /*
    * ───────────────────────────────────────────────────────────────────────────
