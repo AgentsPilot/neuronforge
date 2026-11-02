@@ -16,7 +16,17 @@
 //
 // GET: the export history. Requests limited and ordered by the database
 // (`requested_at DESC, id DESC`), then every job of exactly those requests,
-// joined by the pure `assembleExportHistory`. The query string is ignored.
+// joined by the pure `assembleExportHistory`. MX-4b (workplan §5, H-1, N-1;
+// SA C-4, C-5): the only query string accepted is the "Show older" keyset
+// cursor `?before=<requestedAt>&beforeId=<uuid>` (both or neither, strict:
+// any other key, a repeated key, a bad uuid or time is a 400). The account is
+// always the session's; a cursor only moves within it. The answer adds
+// `hasMore` (a page of 21 read, 20 returned) and `nextExportAt`, the owner's
+// "export again at" hint computed from the start function's own counting rule
+// (`findOwnerLimitAnchor` + `nextOwnerExportAt`), read on the first page only
+// (an older page answers `nextExportAt: null` without the read). A failed hint read is
+// `nextExportAt: null` and a warn: the history is still served, and the POST
+// stays the authority (K-8).
 //
 // There is no kick to the worker (XC-8): the MX-3 cron picks the jobs up.
 // Nothing here reads a plan, tier or lifecycle state, and nothing is imported
@@ -37,6 +47,8 @@ import type { ExportModuleId } from '@/lib/business-os/data-export/exportModules
 import { assembleExportHistory } from '@/lib/business-os/data-export/exportHistory';
 import { buildExportRequestedEmail, type ExportEmailLanguage } from '@/lib/business-os/data-export/exportRequestedEmail';
 import { ownerClock } from '@/lib/business-os/data-export/ownerClock';
+import { nextOwnerExportAt, ownerLimitWindowStart } from '@/lib/business-os/data-export/nextOwnerExportAt';
+import { HISTORY_PAGE_SIZE, historyQuerySchema } from '@/lib/business-os/data-export/exportHistoryCursor';
 import { isInvalidDomainRecipient, platformSenderAddress, sendEmail } from '@/lib/notifications/emailTransport';
 import { BusinessOsExportRequestRepository } from '@/lib/repositories/BusinessOsExportRequestRepository';
 import { BusinessOsExportModuleJobRepository } from '@/lib/repositories/BusinessOsExportModuleJobRepository';
@@ -56,6 +68,16 @@ export const REQUESTED_EMAIL_TIMEOUT_MS = 10_000;
 
 /** The body: the ticked modules and nothing else (SA C-7 of DE-8b: strict). */
 const startBody = z.object({ modules: requestedModulesSchema() }).strict();
+
+/** The query string as one object, or null when a key repeats (a repeated key is never silently collapsed). */
+function queryObject(request: NextRequest): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const [key, value] of request.nextUrl.searchParams) {
+    if (Object.prototype.hasOwnProperty.call(out, key)) return null;
+    out[key] = value;
+  }
+  return out;
+}
 
 function json(body: Record<string, unknown>, status: number): NextResponse {
   return NextResponse.json(body, { status, headers: { 'Cache-Control': NO_STORE } });
@@ -139,6 +161,31 @@ async function sendRequestedEmail(
 }
 
 /**
+ * The owner's "export again at" hint (MX-4b N-1), or null. Never throws and
+ * never fails the history: a failed read is null and one warn, so Export stays
+ * on and the POST decides (K-8). Server clock against the database's `now()`:
+ * a few seconds of skew only moves when Export comes back on.
+ */
+async function readNextExportAt(
+  requests: BusinessOsExportRequestRepository,
+  userId: string,
+  requestLogger: typeof logger
+): Promise<string | null> {
+  try {
+    const anchor = await requests.findOwnerLimitAnchor(userId, ownerLimitWindowStart(Date.now()));
+    if (anchor.error || !anchor.data) {
+      const code = (anchor.error as (Error & { code?: string }) | null)?.code ?? null;
+      requestLogger.warn({ userId, code: 'limit_anchor_unreadable', errorCode: code }, 'Export history: the limit hint could not be read');
+      return null;
+    }
+    return nextOwnerExportAt(anchor.data.requestedAt);
+  } catch (err) {
+    requestLogger.warn({ err, userId, code: 'limit_anchor_unreadable' }, 'Export history: the limit hint read threw');
+    return null;
+  }
+}
+
+/**
  * GET: the owner's export history (workplan §5). No audit: a read of the
  * owner's own status.
  */
@@ -150,30 +197,58 @@ export async function GET(request: NextRequest) {
     const user = await getUser();
     if (!user) return json({ success: false, error: 'Unauthorized' }, 401);
 
+    // MX-4b: the cursor is the only query accepted; the account is never taken from it.
+    const rawQuery = queryObject(request);
+    const query = rawQuery === null ? null : historyQuerySchema.safeParse(rawQuery);
+    if (!query || !query.success) {
+      requestLogger.info({ userId: user.id, code: 'invalid_input' }, 'Export history refused: invalid query');
+      return json(
+        {
+          success: false,
+          code: 'invalid_input',
+          error: 'Invalid input',
+          details: process.env.NODE_ENV === 'development' ? (query ? query.error.flatten() : 'A query key is repeated') : undefined,
+        },
+        400
+      );
+    }
+    const { before, beforeId } = query.data;
+    const cursor = before !== undefined && beforeId !== undefined ? { requestedAt: before, id: beforeId } : undefined;
+
     const throttle = await rateLimit(request, 'export-request-history', RATE_LIMITS.read);
     if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.read.windowSeconds);
 
-    // The query string is ignored on purpose: the only account is the session's.
-    const recent = await new BusinessOsExportRequestRepository().listRecentForUser(user.id);
+    const requestRepository = new BusinessOsExportRequestRepository();
+    // One row more than a page: its presence is `hasMore` (H-1).
+    const [recent, nextExportAt] = await Promise.all([
+      requestRepository.listRecentForUser(user.id, { limit: HISTORY_PAGE_SIZE + 1, ...(cursor ? { before: cursor } : {}) }),
+      // The hint is for the drawer's open (first page) only; an older page answers null without the read.
+      cursor ? Promise.resolve(null) : readNextExportAt(requestRepository, user.id, requestLogger),
+    ]);
     if (recent.error || !recent.data) {
       requestLogger.error({ userId: user.id, code: 'history_requests_unreadable' }, 'Export history could not be read');
       return json({ success: false, error: 'Could not read your export history. Please try again.' }, 500);
     }
+    const hasMore = recent.data.length > HISTORY_PAGE_SIZE;
+    const page = recent.data.slice(0, HISTORY_PAGE_SIZE);
     const jobs = await new BusinessOsExportModuleJobRepository().listForRequestsOfUser(
       user.id,
-      recent.data.map((r) => r.id)
+      page.map((r) => r.id)
     );
     if (jobs.error || !jobs.data) {
       requestLogger.error({ userId: user.id, code: 'history_jobs_unreadable' }, 'Export history could not be read');
       return json({ success: false, error: 'Could not read your export history. Please try again.' }, 500);
     }
 
-    const history = assembleExportHistory(recent.data, jobs.data);
+    const history = assembleExportHistory(page, jobs.data);
     if (history.anomalies > 0) {
       requestLogger.warn({ userId: user.id, anomalies: history.anomalies }, 'Export history: jobs and request modules did not match');
     }
-    requestLogger.debug({ userId: user.id, requestCount: history.requests.length }, 'Export history read');
-    return json({ success: true, data: { requests: history.requests } }, 200);
+    requestLogger.debug(
+      { userId: user.id, requestCount: history.requests.length, hasMore, isOlderPage: cursor !== undefined, isLimited: nextExportAt !== null },
+      'Export history read'
+    );
+    return json({ success: true, data: { requests: history.requests, hasMore, nextExportAt } }, 200);
   } catch (error) {
     requestLogger.error({ err: error }, 'Export history request failed');
     return json({ success: false, error: 'Internal server error', details: devDetails(error) }, 500);

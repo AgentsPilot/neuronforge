@@ -55,6 +55,8 @@ jest.mock('@/lib/repositories/BusinessOsExportRequestRepository', () => ({
       findByIdForUser: (...a: unknown[]) => mockFindById(...a),
       listRecentForUser: (...a: unknown[]) => mockListRecent(...a),
       markRequestedEmailSent: (...a: unknown[]) => mockMarkSent(...a),
+      // MX-4b N-1: under the limit, so `nextExportAt` is null.
+      findOwnerLimitAnchor: async () => ({ data: { requestedAt: null }, error: null }),
     };
   }),
 }));
@@ -137,7 +139,13 @@ beforeEach(() => {
 
 describe('QA 3: the history read against the real route (MX-3.1)', () => {
   it('history readable → ok', async () => {
-    expect(await fetchModuleExportHistory()).toEqual({ kind: 'ok', requests: [] });
+    expect(await fetchModuleExportHistory()).toEqual({ kind: 'ok', requests: [], hasMore: false, nextExportAt: null });
+  });
+
+  it('MX-4b: a "Show older" cursor from the seam reaches the repository byte for byte (microseconds and + offset kept, SA C-4)', async () => {
+    const micro = '2026-10-31T17:35:52.018123+00:00';
+    expect((await fetchModuleExportHistory({ before: { requestedAt: micro, requestId: REQUEST } })).kind).toBe('ok');
+    expect(mockListRecent).toHaveBeenCalledWith(USER.id, { limit: 21, before: { requestedAt: micro, id: REQUEST } });
   });
 
   it.each([
@@ -300,7 +308,7 @@ describe('QA 5: history through the route (tie-break, malformed, origin, empty)'
   });
 
   it('empty history → ok with no requests, and the job read is skipped-safe ([] ids)', async () => {
-    expect(await fetchModuleExportHistory()).toEqual({ kind: 'ok', requests: [] });
+    expect(await fetchModuleExportHistory()).toEqual({ kind: 'ok', requests: [], hasMore: false, nextExportAt: null });
     expect(mockListJobs).toHaveBeenCalledWith(USER.id, []);
   });
 });
