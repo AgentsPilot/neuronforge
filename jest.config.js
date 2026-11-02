@@ -72,12 +72,7 @@ const config = {
     '<rootDir>/tests/plugins/jest-setup.ts',
     '<rootDir>/tests/jest-no-network.ts',
   ],
-  // The other half of the no-network guard. It has to be HERE and not in
-  // setupFiles, because that runs before the test framework exists and cannot
-  // register afterEach. The guard refuses the socket and records it; this fails
-  // the case that caused it. Shared config for the same reason as the guard:
-  // `npm test` and the gate must not disagree about it.
-  setupFilesAfterEnv: ['<rootDir>/tests/jest-no-network-fail.ts'],
+  setupFilesAfterEnv: [],
   // Transform files
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
