@@ -81,7 +81,19 @@ interface RecoverableAttempt {
 export async function sendOneRecovery(
   attemptId: string,
   userId: string
-): Promise<{ sent: boolean; reason?: string }> {
+): Promise<{
+  sent: boolean;
+  reason?: string;
+  /**
+   * NOTHING WAS SENT AND NOTHING IS WRONG — the cooldown, or an attempt the
+   * client has since finished. Separated from a FAULT (no email on the
+   * attempt, the attempt is gone, the send itself failed) because a caller
+   * that cannot tell them apart has to treat a working guard as a broken run:
+   * `remind_invoices` did exactly that and reported a healthy daily chaser as
+   * "cannot run" on every day it had nothing new to send.
+   */
+  skipped?: true;
+}> {
   const log = logger.child({ attemptId, userId });
 
   const { data: attempt, error } = await supabaseServer
@@ -97,7 +109,9 @@ export async function sendOneRecovery(
 
   /* The check that matters most, at the last moment it can be made. */
   if (attempt.status !== 'abandoned') {
-    return { sent: false, reason: `attempt is ${attempt.status}` };
+    /* The client finished, or the attempt was cancelled. Nothing to recover
+       and nothing wrong — see `skipped` on the invoice chase outcome. */
+    return { sent: false, skipped: true, reason: `attempt is ${attempt.status}` };
   }
 
   if (!attempt.email) return { sent: false, reason: 'no email on the attempt' };
@@ -130,7 +144,9 @@ export async function sendOneRecovery(
 
   if (lastMailed && Date.parse(lastMailed) > Date.now() - ONE_PER_ADDRESS_DAYS * 86_400_000) {
     log.info({ lastMailed }, 'Recovery skipped: this attempt was mailed inside the window');
-    return { sent: false, reason: `already mailed within ${ONE_PER_ADDRESS_DAYS} days` };
+    /* THE COOLDOWN, WORKING. A recovery sweep that runs twice an hour is
+       mostly a sweep that correctly declines to mail anybody. */
+    return { sent: false, skipped: true, reason: `already mailed within ${ONE_PER_ADDRESS_DAYS} days` };
   }
 
   const sent = await deliverRecovery(attempt as RecoverableAttempt, log);

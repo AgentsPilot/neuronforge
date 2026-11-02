@@ -132,6 +132,38 @@ export async function drainInsightActions(): Promise<DrainResult> {
 interface Outcome {
   sent: boolean;
   reason?: string;
+  /**
+   * NOTHING WAS SENT AND NOTHING IS WRONG.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `sent: false` covered two completely different situations, and every caller
+   * had to treat them the same because nothing distinguished them:
+   *
+   *   a FAULT          no email address on the invoice, the invoice is gone,
+   *                    the chase history could not be read. Somebody has to do
+   *                    something.
+   *
+   *   a NO-OP          already chased inside the cooldown, not due yet, the
+   *                    client has paid. The guard worked. There is nothing to
+   *                    send and nothing to fix.
+   *
+   * Conflating them broke a live agent. `chase_overdue_invoices` found two
+   * invoices, both already chased this week, so both were correctly refused —
+   * and the run was recorded as failed, the queue dead-lettered it, and the
+   * owner's dashboard read "לא יכול לרוץ / cannot run" with
+   *
+   *   "all 2 items failed … Could not chase that invoice: already chased
+   *    within 7 days"
+   *
+   * under an agent that was behaving exactly as designed. An agent that reports
+   * itself broken for doing the right thing is worse than one that is silent,
+   * because the owner's next move is to switch it off.
+   *
+   * `reason` still says what happened either way, so a surface that wants to
+   * explain a quiet run still can.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  skipped?: true;
 }
 
 /**
@@ -171,7 +203,8 @@ async function dispatch(action: InsightAction): Promise<Outcome> {
   );
 
   if (alreadySent >= DAILY_CAP[action.kind]) {
-    return { sent: false, reason: `daily cap for ${action.kind} reached (${DAILY_CAP[action.kind]})` };
+    /* A cap we chose. Reaching it is the cap doing its job. */
+    return { sent: false, skipped: true, reason: `daily cap for ${action.kind} reached (${DAILY_CAP[action.kind]})` };
   }
 
   const ctx = await contextFor(
@@ -261,7 +294,10 @@ export async function sendInvoiceChase(
   // simply have paid — and chasing somebody for money they have already sent is
   // the worst thing this queue could do.
   if (INVOICE_SETTLED.has((invoice.status ?? '').toLowerCase())) {
-    return { sent: false, reason: `invoice is ${invoice.status}` };
+    /* Paid between queueing and sending. The guard worked — chasing somebody
+       for money they have already sent is the worst thing this queue could do,
+       so not sending IS the success. */
+    return { sent: false, skipped: true, reason: `invoice is ${invoice.status}` };
   }
 
   const to = invoice.client_email?.trim();
@@ -304,7 +340,8 @@ export async function sendInvoiceChase(
   /* Whole days, on the same footing `dueDateFromTerms` writes them, so an
      invoice falling due today is not chased at half past midnight. */
   if (dueKey >= new Date().toISOString().slice(0, 10)) {
-    return { sent: false, reason: `not due until ${dueKey}` };
+    /* Not overdue yet. Nothing to chase, nothing wrong. */
+    return { sent: false, skipped: true, reason: `not due until ${dueKey}` };
   }
 
   /*
@@ -355,7 +392,9 @@ export async function sendInvoiceChase(
   }
 
   if (alreadyChased && alreadyChased.length > 0) {
-    return { sent: false, reason: `already chased within ${CHASE_COOLDOWN_DAYS} days` };
+    /* THE COOLDOWN, WORKING. The whole point of this agent running daily is
+       that most days it finds nothing new to do. */
+    return { sent: false, skipped: true, reason: `already chased within ${CHASE_COOLDOWN_DAYS} days` };
   }
 
   const dueDate = new Date(invoice.due_date as string);

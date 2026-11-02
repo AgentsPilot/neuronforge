@@ -358,9 +358,44 @@ export class ResumeOrchestrator {
       };
     }
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * THE CAUSE, NOT JUST THE CLASSIFICATION.
+     *
+     * This said `(${classification.sub_type || 'unknown'})` and nothing else,
+     * and `sub_type` is optional — so a failure the classifier could not
+     * sub-type produced, verbatim:
+     *
+     *   Non-retryable execution error at step "Scan the mailbox for new
+     *   replies, headers only" (unknown)
+     *
+     * That string is what the queue dead-letters, what `error_message` stores,
+     * and what the owner reads on their dashboard under "cannot run". It names
+     * the step and then refuses to say what happened. An agent failed thirty
+     * times in a row on a live account with that as the only record: the plan
+     * was correct, the inputs resolved, the plugin call succeeded when made by
+     * hand with the same parameters — and none of that could be ruled out from
+     * the message, because the message carried no cause.
+     *
+     * The cause was already here. `stepOutput.metadata.error` is the step's own
+     * failure text and `errorCode` its code; both were discarded one line
+     * before this return. Appending them costs nothing and is the difference
+     * between a report and a shrug.
+     *
+     * The step's text, NOT a plugin response body: `metadata` is the half of
+     * StepOutput that is persisted precisely because `data` is not, so nothing
+     * client-shaped travels with it.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    const detail =
+      stepOutput.metadata?.error ||
+      stepOutput.metadata?.errorCode ||
+      classification.sub_type ||
+      'no cause recorded';
+
     return {
       action: 'stop_execution',
-      reason: `Non-retryable execution error at step "${stepDef.name}" (${classification.sub_type || 'unknown'})`,
+      reason: `Non-retryable execution error at step "${stepDef.name}" (${detail})`,
       repairApplied: false,
       classification,
     };

@@ -94,6 +94,17 @@ export interface CreateAgentInput {
 
   // Schema / I/O
   input_schema?: unknown[] | null;
+  /*
+   * AN AGENT WHOSE PLAN WE WROTE IS PRODUCTION FROM BIRTH.
+   *
+   * `ShadowAgent.isActive` is `!production_ready`, so an agent created without
+   * it runs every production pass under the calibration apparatus built for
+   * prompt-generated plans — a structural repair that intends to rewrite the
+   * stored plan, and an orchestrator that turns any step failure into a
+   * non-retryable `CALIBRATION_STOP`. Right for an invented plan, wrong for a
+   * committed one. Set by the catalogue installer and the mailbox channel.
+   */
+  production_ready?: boolean;
   output_schema?: unknown[] | null;
 
   // Plugins / execution
@@ -179,6 +190,10 @@ export interface UpdateAgentInput {
      directly into the Supabase update. */
   tags?: string[] | null;
   plugins_required?: string[] | null;
+  /* Both plan columns, for the mailbox channel's re-point (see the note at its
+     call site: the runtime reads the stored copy). `workflow_steps` was added
+     below for the same reason; its twin had no home here either. */
+  pilot_steps?: unknown[] | null;
   /* The mailbox channel writes BOTH plan columns when it re-points a channel
      (see the note at its call site: the runtime reads the stored copy, so a
      channel re-pointed today would otherwise still call a retired plugin).
