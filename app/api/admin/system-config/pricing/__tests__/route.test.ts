@@ -53,6 +53,16 @@ jest.mock('@/lib/repositories/AiModelPricingRepository', () => ({
 import * as routeModule from '../route';
 import { GET } from '../route';
 
+/*
+ * The audit write is non-blocking by mandate, so its failure is invisible —
+ * and in this suite it was a real request to the placeholder Supabase URL.
+ * `AuditTrailService` builds its own client with `createClient`, so mocking
+ * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
+ */
+jest.mock('@/lib/services/AuditTrailService', () =>
+  require('@/tests/helpers/silentAuditTrail')
+);
+
 const ADMIN = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'admin@example.com' };
 const ROW = {
   id: '11111111-1111-4111-8111-111111111111',

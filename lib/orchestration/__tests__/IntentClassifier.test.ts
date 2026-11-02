@@ -7,6 +7,30 @@
 import { IntentClassifier } from '../IntentClassifier';
 import type { IntentType } from '../types';
 
+/*
+ * This suite called Anthropic FOR REAL: it stubs the classifier's Supabase
+ * client but not the provider, so `classifyWithLLM` reached
+ * api.anthropic.com, and the token-usage write that follows reached Supabase.
+ *
+ * The stub THROWS, because that is what the suite already experienced: the
+ * refused connection made `chatCompletion` reject, `classifyWithLLM` caught it
+ * and fell back to the pattern check. So every expectation here still describes
+ * the fallback, unchanged — minus the request.
+ *
+ * Worth stating rather than quietly fixing: NO case in this suite exercises a
+ * successful LLM classification. Giving it one means deciding what the model
+ * should be asked and what it should answer, which is a separate change.
+ */
+jest.mock('@/lib/ai/providerFactory', () => ({
+  ProviderFactory: {
+    getProvider: () => ({
+      chatCompletion: async () => {
+        throw new Error('the LLM is not called in unit tests');
+      },
+    }),
+  },
+}));
+
 // Mock Supabase client
 const mockSupabase = {
   from: jest.fn(() => ({
