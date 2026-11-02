@@ -1797,6 +1797,83 @@ const meetingAutoCompleted: GapDefinition = {
  * so the one running out soonest belongs at the top.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * A quote whose date has passed, still unanswered.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `quote_deadline_unanswered` above watches a deadline approach and stops
+ * matching the moment it arrives — `.gte('valid_until', today)`. The quote then
+ * fell through to `quote_awaiting_client`, which filters on status alone and so
+ * chased it for ever. Every one of those chases was doomed: the client's page
+ * is the only component that checks the date, and it refuses them. Reported
+ * from My Day, with the client's refusal screenshotted beside it.
+ *
+ * This is the row that replaces the nagging. It exists because expiry is now a
+ * STATE — `expireLapsedQuotes` writes it hourly — so the quote leaves
+ * `quote_awaiting_client` of its own accord the moment it lapses, rather than
+ * by every reader learning to compare dates.
+ *
+ * The action is `extend_quote`, not another chase. Once the price has lapsed
+ * the client cannot act at all; the only move on the board is the owner's, and
+ * it is to put the offer back with a new date.
+ *
+ * No `staleAfterHours`: an expired quote is stuck the moment it expires. The
+ * three days the client was given are already spent — that is what the date
+ * meant.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const quoteExpired: GapDefinition = {
+  id: 'quote_expired',
+  blocksOn: 'owner',
+  staleAfterHours: 0,
+  action: 'extend_quote',
+  /* No `now`: this gap reads the state the sweep wrote, not the clock. That is
+     the whole point of making expiry a state — see `expireLapsedQuotes`. */
+  find: userId =>
+    safely('quote_expired', async () => {
+      const { data } = await supabaseServer
+        .from('proposals')
+        .select(
+          'id, contact_id, title, total, currency, sent_at, valid_until, contact:crm_contacts(first_name, last_name, email)'
+        )
+        .eq('user_id', userId)
+        /*
+         * The written state, not a date comparison. `expireLapsedQuotes` is
+         * what puts a quote here, and reading the status rather than the clock
+         * is what keeps this row and the client's page from ever disagreeing
+         * about whether the offer still stands.
+         */
+        .eq('status', 'expired')
+        /*
+         * Superseded quotes are excluded by their own status, so a revised
+         * price does not drag its predecessor onto the card: `supersedes_id`
+         * points the other way and the old row is stamped when the new one is
+         * sent.
+         */
+        .order('valid_until', { ascending: false })
+        .limit(50);
+
+      return (data || []).map(row => {
+        const contact = (Array.isArray(row.contact) ? row.contact[0] : row.contact) || {};
+        return {
+          contactId: row.contact_id as string,
+          name: personName(contact),
+          note: str(row.title),
+          /* The day it LAPSED, which is what the owner is being told about —
+             not the day it was sent, which is the question the chasing row
+             answered and this one no longer asks. */
+          since: str(row.valid_until)
+            ? `${row.valid_until}T23:59:59Z`
+            : (row.sent_at as string) || new Date().toISOString(),
+          eventAt: str(row.valid_until) || undefined,
+          entityId: row.id as string,
+          value: Number(row.total) || undefined,
+          currency: str(row.currency) || undefined,
+        };
+      });
+    }),
+};
+
 const quoteDeadlineUnanswered: GapDefinition = {
   id: 'quote_deadline_unanswered',
   blocksOn: 'owner',
@@ -2175,8 +2252,109 @@ const deliveryUnconfirmed: GapDefinition = {
     }),
 };
 
+/**
+ * A client wrote back, and it is still sitting with the owner.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * BOTH OUTCOMES OF THE MAIL AGENT, ON PURPOSE.
+ *
+ * A drafted reply is as much "waiting on you" as a question nobody could
+ * answer: it is written, it is in the owner's Gmail, and until they press send
+ * the client has heard nothing. Splitting the two into separate cards would
+ * say the agent's internal classification out loud, when the owner's question
+ * is the same either way — who is waiting for me?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THE AGENT CLOSES THIS AND NOT THE OWNER
+ *
+ * Every other gap here closes because the thing it watches changed in this
+ * database: an invoice was paid, a quote was sent, a meeting was marked. This
+ * one closes in GMAIL, where the owner answers, and that writes nothing here —
+ * no `email_sends` row, no activity.
+ *
+ * So the agent reports the closure itself. On a later run it reads the last
+ * thing sent to that client, concludes `already_handled`, and records
+ * `reply_handled`. That is what this find excludes, exactly as
+ * `enquiry_unanswered` excludes `ANSWERED_ACTIVITIES`.
+ *
+ * The consequence worth stating: switch the agent off and these cards stop
+ * clearing, because nothing else is watching the mailbox. The fourteen-day
+ * window is the backstop for that, and for an owner who went on holiday.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const clientReplyWaiting: GapDefinition = {
+  id: 'client_reply_waiting',
+  blocksOn: 'owner',
+  /* Stuck the moment it exists. The client wrote; the clock started then, not
+     when we noticed. */
+  staleAfterHours: 0,
+  action: 'answer_client',
+  find: (userId, now) =>
+    safely('client_reply_waiting', async () => {
+      const { data: raised } = await supabaseServer
+        .from('crm_activities')
+        .select('contact_id, title, description, activity_date, created_at')
+        .eq('user_id', userId)
+        .in('activity_type', ['reply_drafted', 'reply_needs_owner'])
+        .gte('created_at', daysAgo(now, 14))
+        .order('created_at', { ascending: true })
+        .limit(50);
+
+      const rows = (raised || []).filter(r => r.contact_id);
+      if (rows.length === 0) return [];
+
+      const contactIds = [...new Set(rows.map(r => r.contact_id as string))];
+
+      /*
+       * Answered since. Read as a set rather than per row, and NOT bounded by
+       * the fourteen days above: a closure recorded at any time settles the
+       * thread, and a window on this side would resurrect old cards.
+       */
+      const { data: closed } = await supabaseServer
+        .from('crm_activities')
+        .select('contact_id')
+        .eq('user_id', userId)
+        .in('contact_id', contactIds)
+        .eq('activity_type', 'reply_handled');
+
+      const settled = new Set((closed || []).map(r => r.contact_id as string));
+
+      const { data: people } = await supabaseServer
+        .from('crm_contacts')
+        .select('id, first_name, last_name')
+        .eq('user_id', userId)
+        .in('id', contactIds);
+
+      const named = new Map((people || []).map(p => [p.id as string, personName(p)]));
+
+      /* One card per PERSON, not per message. Three replies from one client
+         still means one person waiting, and three rows would read as three
+         problems. */
+      const seen = new Set<string>();
+
+      return rows
+        .filter(r => !settled.has(r.contact_id as string))
+        .filter(r => {
+          const id = r.contact_id as string;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        })
+        .map(r => ({
+          contactId: r.contact_id as string,
+          name: named.get(r.contact_id as string) ?? '',
+          /* What they asked, as the agent recorded it. Already written for a
+             person to read. */
+          note: str(r.description) || str(r.title),
+          since: (r.activity_date as string) || (r.created_at as string),
+          entityId: r.contact_id as string,
+        }));
+    }),
+};
+
 export const GAP_DEFINITIONS: GapDefinition[] = [
   enquiryUnanswered,
+  clientReplyWaiting,
   quoteUnwritten,
   quoteUnsent,
   intakeOutstanding,
@@ -2189,6 +2367,9 @@ export const GAP_DEFINITIONS: GapDefinition[] = [
   meetingUnmarked,
   meetingAutoCompleted,
   quoteDeadlineUnanswered,
+  /* The far side of the one above: the deadline has passed and only the owner
+     can put the price back. See `quoteExpired`. */
+  quoteExpired,
   bookingUnbilled,
   deliveryUnconfirmed,
 ];

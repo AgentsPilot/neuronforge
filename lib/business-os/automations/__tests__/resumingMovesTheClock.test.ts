@@ -110,6 +110,25 @@ describe('an agent that has run before', () => {
     expect(next.getTime() - Date.now()).toBeLessThanOrEqual(7 * 86_400_000);
   });
 
+  /*
+   * THE CLOCK IS PINNED FOR THIS ONE.
+   *
+   * It asserts interval arithmetic — 29 October plus three days is 1 November —
+   * while `nextDueOnResume` also advances past NOW, because resuming must never
+   * write a date in the past. The expectation was therefore only true while the
+   * real clock sat before 1 November 09:00; on 1 November it returned 4
+   * November and the test reported a defect in correct code.
+   */
+  describe('with the calendar held still', () => {
+    beforeAll(() => {
+      jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+      jest.setSystemTime(new Date('2026-10-29T09:05:00.000Z'));
+    });
+
+    afterAll(() => {
+      jest.useRealTimers();
+    });
+
   it('reads the stored interval in preference to the cron', async () => {
     /* A days interval carries a cron stating only the time of day. Reading
        that for the cadence would resume a three-day agent as a daily one. */
@@ -125,6 +144,7 @@ describe('an agent that has run before', () => {
 
     /* Three days after the last run, not one. */
     expect(clock()).toBe('2026-11-01T09:00:00.000Z');
+  });
   });
 });
 

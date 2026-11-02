@@ -102,13 +102,52 @@ describe.each(AUTOMATION_AGENTS.map(a => [a.id, a] as const))('%s', (_id, automa
 
   it('sorts the oldest first wherever it serves a capped list', () => {
     /*
-     * Every one of these finds is a backlog with a limit under it. Newest-first
-     * would mean the client who has waited longest is the one never reached —
-     * the opposite of what the owner was promised.
+     * A BACKLOG FIND, with a limit under it. Newest-first would mean the client
+     * who has waited longest is the one never reached — the opposite of what
+     * the owner was promised.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * WHICH FINDS THAT IS, AND WHY IT IS NOT ALL OF THEM.
+     *
+     * This applied to every find in every plan while every plan had the same
+     * shape: one find at the top choosing a queue of people, then a fan-out
+     * writing to each. In that shape there is no other kind of find, so "all of
+     * them" and "the backlog" were the same set.
+     *
+     * A find INSIDE the fan-out is a different thing. The person is already
+     * chosen; the find is gathering context about them, and `draft_client_replies`
+     * reads the last ten letters this business sent one client so the model can
+     * tell what "yes, that works" refers to. Oldest-first there does not serve
+     * anybody waiting — it hands the model the ten LEAST relevant letters in the
+     * window and drops the quote the reply is actually answering.
+     *
+     * So the rule follows the structure rather than the action name: a find that
+     * feeds the queue sorts oldest-first, a find that describes one chosen
+     * subject may sort however it reads best. Both must still sort, because an
+     * unordered capped read is arbitrary either way.
+     * ─────────────────────────────────────────────────────────────────────────
      */
+    const queueFinds: Step[] = [];
+    const collectQueueFinds = (list: Step[]): void => {
+      for (const step of list) {
+        if (typeof step.action === 'string' && step.action.startsWith('find_')) {
+          queueFinds.push(step);
+        }
+        /* Deliberately NOT descending into `scatter.steps`: anything in there
+           runs per-item and is context, not queue. */
+        for (const key of ['steps', 'then', 'then_steps', 'else', 'else_steps'] as const) {
+          const nested = (step as unknown as Record<string, unknown>)[key];
+          if (Array.isArray(nested)) collectQueueFinds(nested as Step[]);
+        }
+      }
+    };
+    collectQueueFinds(automation.steps as Step[]);
+
     for (const step of finds) {
       const sorts = step.params?.order_by ?? [];
       expect(`${step.action}:sorted`).toBe(`${step.action}:${sorts.length ? 'sorted' : 'UNSORTED'}`);
+
+      if (!queueFinds.includes(step)) continue;
       for (const sort of sorts) expect(sort.dir).toBe('asc');
     }
   });

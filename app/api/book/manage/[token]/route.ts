@@ -223,15 +223,44 @@ async function packageMeetings(
            */
           wasMoved: Number(row.occurrence_number ?? 1) > 1,
           /* A session that has already been made up is not moved again. */
+          /*
+           * ── THE NOTICE WINDOW GUARDS AN HOUR THAT IS STILL COMING ────────
+           *
+           * `hoursAway > noticeHours` was asked of every session. For one that
+           * has already passed `hoursAway` is NEGATIVE, and negative is never
+           * more than 24 — so a MISSED session could never be moved by the
+           * client, for ever.
+           *
+           * That contradicted the rest of the product out loud. `settleable`
+           * keeps `no_show` open on purpose, saying so in its own comment: a
+           * missed appointment is unresolved and the client choosing another
+           * time is exactly the right next move. The owner's drawer keeps the
+           * same row movable for the same stated reason, and the missed
+           * appointment email invites the client to pick a new hour. The one
+           * thing standing in the way was a rule written to stop last-minute
+           * changes to an appointment that had not happened yet.
+           *
+           * So the window applies only while the hour is still ahead. Once it
+           * has passed there is no notice left to give — nobody is being asked
+           * to rearrange their day — and the session is theirs to rebook.
+           */
           canModify:
             open &&
             !alreadyReplaced.has(row.id as string) &&
             hoursAway !== null &&
-            hoursAway > noticeHours,
+            (hoursAway <= 0 || hoursAway > noticeHours),
+          /*
+           * "Too soon" has a floor now, because it is a statement about an
+           * appointment that is CLOSE, not one that is over. Unbounded below,
+           * it reported `true` for a session weeks in the past — the same
+           * unbounded-negative shape this file already records as a past bug
+           * on the booking-level window.
+           */
           tooSoon:
             open &&
             !alreadyReplaced.has(row.id as string) &&
             hoursAway !== null &&
+            hoursAway > 0 &&
             hoursAway <= noticeHours,
           /*
            * THE TOKEN NAMES THE SESSION'S OWN CONTAINER, NOT THE PAGE'S.
@@ -472,7 +501,15 @@ export async function GET(
        */
       settleable(booking.meeting_status as string | null) &&
       hoursUntilBooking !== null &&
-      hoursUntilBooking > noticeHours;
+      /*
+       * The notice window, bounded below — the same correction the per-session
+       * gate above carries, for the same reason. An appointment that has
+       * already passed and that nobody has settled is unresolved, not "too
+       * late to move": there is no longer anyone's day to disturb. Left
+       * unbounded, a missed single booking refused the client the very thing
+       * its missed-appointment email asks them to do.
+       */
+      (hoursUntilBooking <= 0 || hoursUntilBooking > noticeHours);
 
     /*
      * ─────────────────────────────────────────────────────────────────────────
@@ -618,6 +655,7 @@ export async function GET(
     let parentRow: {
       id: string;
       status: string;
+      meeting_status: string | null;
       start_time: string | null;
       end_time: string | null;
       timezone: string | null;
@@ -639,7 +677,7 @@ export async function GET(
       const { data: host } = await supabaseServer
         .from('scheduling_bookings')
         .select(
-          'id, status, start_time, end_time, timezone, service:scheduling_services(service_name, duration_minutes)'
+          'id, status, meeting_status, start_time, end_time, timezone, service:scheduling_services(service_name, duration_minutes)'
         )
         .eq('id', hostId)
         .eq('user_id', booking.user_id)
@@ -650,6 +688,7 @@ export async function GET(
         parentRow = {
           id: host.id as string,
           status: host.status as string,
+          meeting_status: (host.meeting_status as string | null) ?? null,
           start_time: (host.start_time as string | null) ?? null,
           end_time: (host.end_time as string | null) ?? null,
           timezone: (host.timezone as string | null) ?? null,
@@ -1102,6 +1141,17 @@ export async function GET(
         endTime: booking.end_time,
         timezone: booking.timezone,
         status: booking.status,
+        /*
+         * WHAT ACTUALLY HAPPENED, which `status` does not say.
+         *
+         * Marking a meeting held writes `meeting_status` and leaves `status`
+         * alone, so a finished appointment stays `confirmed`. This payload sent
+         * only `status`, which meant the portal could not tell a held meeting
+         * from an upcoming one even in principle: it drew a green "confirmed"
+         * chip under "your next meeting" for a session the owner had already
+         * closed off. Selected since the notice-window work; never forwarded.
+         */
+        meetingStatus: booking.meeting_status ?? null,
         paymentStatus: booking.payment_status,
         notes: booking.notes,
         /*
@@ -1136,6 +1186,9 @@ export async function GET(
           ? {
               id: parentRow.id,
               status: parentRow.status,
+              /* The package's own outcome, for the same reason as above: a
+                 session defers to its parent, so the parent must carry it. */
+              meetingStatus: parentRow.meeting_status ?? null,
               startTime: parentRow.start_time,
               endTime: parentRow.end_time,
               timezone: parentRow.timezone,

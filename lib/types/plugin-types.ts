@@ -399,6 +399,19 @@ export interface ConnectedPluginInfo extends PluginInfo {
 export interface UserPluginStatus {
   connected: ConnectedPluginInfo[];  // ← Changed from PluginInfo[]
   active_expired: string[];  // Plugin keys with expired tokens that can be refreshed
+  /**
+   * The same expired plugins, each with the name to show a user.
+   *
+   * `active_expired` carries keys only, while `connected` and `disconnected`
+   * both carry a name — so the one list certain to be put in front of somebody
+   * ("reconnect this") was the one with nothing but a plugin key to show. The
+   * route resolves it through `PluginManagerV2.getPluginDisplayName`, which is
+   * the owner of those names.
+   *
+   * Optional because a cached response written before this field existed is
+   * still served for up to its TTL. Read it with a fallback to the key.
+   */
+  active_expired_named?: { key: string; name: string }[];
   disconnected: (PluginInfo & {
     status: string;
     reason: string;

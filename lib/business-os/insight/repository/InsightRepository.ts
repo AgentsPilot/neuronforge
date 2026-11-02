@@ -1133,6 +1133,12 @@ export class InsightRepository {
            platform not knowing the business at all. */
         cash_refund_pattern: 'high refund rate that may signal service issues. The counts are PAYMENTS (individual transactions), never customers or people — one client can account for several',
         cash_payout_blocked: 'Stripe payouts blocked - cannot receive money',
+        /* The count is AGENTS, and the model has to be told so. "2" here is two
+           pieces of automation that stopped, never two clients and never two
+           missed enquiries — those numbers are unknown and must not be implied.
+           `reason` is already written for an owner by the execution layer, so it
+           can be quoted but never reworded into a diagnosis of its own. */
+        agents_stopped: 'automation the owner switched on that has stopped working: its runs failed repeatedly and were given up on, so whatever it did is not happening. The count is AGENTS, not clients and not missed enquiries. Each entry carries the agent name and the reason it stopped, already in plain language',
         // Phase 6: Pricing
         pricing_intro_offer_stuck: 'customers using intro offers but not converting to full price',
         // MVP0: the three journey gaps
@@ -1988,9 +1994,40 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         cash_ar_aging: `${formatMoney(impact, currency)} בחשבוניות מזדקנות (60+ יום)`,
         cash_refund_pattern: `שיעור החזרים של ${value.toFixed(1)}%`,
         cash_payout_blocked: `העברות Stripe חסומות`,
+        agents_stopped: (() => {
+          const only = this.loneStoppedAgent(detection);
+          return only ? `${only} הפסיק לעבוד` : `${count} סוכנים הפסיקו לעבוד`;
+        })(),
         pricing_intro_offer_stuck: `רק ${value.toFixed(0)}% ממבצעי היכרות הומרו`,
       };
       return hebrewTitles[detection.detectorId] || `${count} בעיות זוהו`;
+    }
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * SPANISH: A LOOKUP, NOT A BRANCH.
+     *
+     * The tables here carry English and Hebrew, so a Spanish-speaking owner has
+     * always read the English one. Opening a Spanish BRANCH would make that
+     * worse rather than better: every detector with no Spanish entry would fall
+     * to a Spanish generic, and "2 problemas detectados" says strictly less
+     * than the English sentence it replaced.
+     *
+     * So Spanish is consulted and then falls THROUGH. Spanish where it exists,
+     * English where it does not, which is exactly what is on screen today.
+     * The same shape is used for the description and the recommendation.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (language === 'es') {
+      const spanishTitles: Record<string, string> = {
+        agents_stopped: (() => {
+          const only = this.loneStoppedAgent(detection);
+          return only ? `${only} ha dejado de funcionar` : `${count} agentes han dejado de funcionar`;
+        })(),
+      };
+
+      const spanish = spanishTitles[detection.detectorId];
+      if (spanish) return spanish;
     }
 
     // English titles (default)
@@ -2048,6 +2085,10 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       cash_ar_aging: `${formatMoney(impact, currency)} in Aging Invoices (60+ Days)`,
       cash_refund_pattern: `Refund Rate at ${value.toFixed(1)}%`,
       cash_payout_blocked: `Stripe Payouts Blocked`,
+      agents_stopped: (() => {
+        const only = this.loneStoppedAgent(detection);
+        return only ? `${only} Has Stopped Working` : `${count} Agents Have Stopped Working`;
+      })(),
       pricing_intro_offer_stuck: `Only ${value.toFixed(0)}% Intro Offers Converting`,
     };
 
@@ -2156,6 +2197,25 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     return language === 'he' ? entry.he : entry.en;
   }
 
+  /**
+   * The name of the one stopped agent, when there is exactly one.
+   *
+   * Naming it is most of the value of the card: "Website enquiries from Gmail
+   * has stopped" tells the owner which part of their business went quiet, and
+   * "1 agent has stopped" does not. Null past one, because a title cannot
+   * carry three names and a list belongs in the body.
+   *
+   * The name is the owner's own, in whatever language they wrote it, so it is
+   * returned unchanged for every language table.
+   */
+  private loneStoppedAgent(detection: DetectionResult): string | null {
+    const agents = detection.processParameters?.agents;
+    if (!Array.isArray(agents) || agents.length !== 1) return null;
+
+    const name = (agents[0] as { name?: unknown } | undefined)?.name;
+    return typeof name === 'string' && name.trim() ? name.trim() : null;
+  }
+
   private generateDescription(detection: DetectionResult, language: string = 'en', currency: string = 'USD'): string {
     const issueType = detection.processParameters?.issue_type as string | undefined;
     const count = detection.affectedCount || 0;
@@ -2255,9 +2315,47 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         cash_ar_aging: `חשבוניות מזדקנות מעבר ל-60 יום, מה שמקשה על הגבייה. סכום בסיכון: ${formatMoney(impact, currency)}.`,
         cash_refund_pattern: `שיעור ההחזרים שלך הוא ${value.toFixed(1)}%, מעל הסף של ${baseline.toFixed(1)}%. זה עשוי להצביע על בעיות שירות.`,
         cash_payout_blocked: `חשבון ה-Stripe שלך לא יכול לקבל העברות. זה חוסם ${formatMoney(impact, currency)} בכספים ממתינים.`,
+        agents_stopped: (() => {
+          const only = this.loneStoppedAgent(detection);
+          const leads = Number(detection.processParameters?.lead_channels_stopped) || 0;
+          const who = only ? `${only} הפסיק לעבוד` : `${count} סוכנים הפסיקו לעבוד`;
+          const quiet = only
+            ? `ההרצות שלו נכשלו שוב ושוב עד שהמערכת הפסיקה לנסות, ומאז שום דבר ממה שהוא עושה לא קורה.`
+            : `ההרצות שלהם נכשלו שוב ושוב עד שהמערכת הפסיקה לנסות, ומאז שום דבר ממה שהם עושים לא קורה.`;
+          /* Said separately, because a stopped mailbox is the one case where
+             the cost is a client who wrote in and heard nothing. */
+          const cost = leads > 0
+            ? ` פניות שמגיעות למייל לא נכנסות לרשימת הלקוחות שלך בזמן הזה.`
+            : '';
+          return `${who}. ${quiet}${cost}`;
+        })(),
         pricing_intro_offer_stuck: `רק ${value.toFixed(0)}% מלקוחות מבצע ההיכרות עוברים למחיר מלא. הכנסה חסרה: ${formatMoney(impact, currency)}.`,
       };
       return hebrewDescriptions[detection.detectorId] || `${count} פריטים זוהו שדורשים תשומת לב. השפעה משוערת: ${formatMoney(impact, currency)}.`;
+    }
+
+    /* Spanish: consulted, then falls through to English. See the title builder
+       for why this is a lookup and not a branch. */
+    if (language === 'es') {
+      const spanishDescriptions: Record<string, string> = {
+        agents_stopped: (() => {
+          const only = this.loneStoppedAgent(detection);
+          const leads = Number(detection.processParameters?.lead_channels_stopped) || 0;
+          const who = only
+            ? `${only} ha dejado de funcionar`
+            : `${count} agentes han dejado de funcionar`;
+          const quiet = only
+            ? `Sus ejecuciones fallaron una y otra vez hasta que el sistema dejó de intentarlo, así que nada de lo que hace está ocurriendo.`
+            : `Sus ejecuciones fallaron una y otra vez hasta que el sistema dejó de intentarlo, así que nada de lo que hacen está ocurriendo.`;
+          const cost = leads > 0
+            ? ` Las consultas que llegan por correo no están entrando en tu lista de clientes mientras esto siga así.`
+            : '';
+          return `${who}. ${quiet}${cost}`;
+        })(),
+      };
+
+      const spanish = spanishDescriptions[detection.detectorId];
+      if (spanish) return spanish;
     }
 
     // English descriptions (default)
@@ -2319,6 +2417,18 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       cash_ar_aging: `Invoices are aging past 60 days, making them harder to collect. Amount at risk: ${formatMoney(impact, currency)}.`,
       cash_refund_pattern: `Your refund rate is ${value.toFixed(1)}%, above the ${baseline.toFixed(1)}% threshold. This may signal service issues.`,
       cash_payout_blocked: `Your Stripe account cannot receive payouts. This is blocking ${formatMoney(impact, currency)} in pending funds.`,
+      agents_stopped: (() => {
+        const only = this.loneStoppedAgent(detection);
+        const leads = Number(detection.processParameters?.lead_channels_stopped) || 0;
+        const who = only ? `${only} has stopped working` : `${count} agents have stopped working`;
+        const quiet = only
+          ? `Its runs failed over and over until the system gave up trying, so nothing it does is happening.`
+          : `Their runs failed over and over until the system gave up trying, so nothing they do is happening.`;
+        const cost = leads > 0
+          ? ` Enquiries arriving by email are not reaching your client list while this lasts.`
+          : '';
+        return `${who}. ${quiet}${cost}`;
+      })(),
       pricing_intro_offer_stuck: `Only ${value.toFixed(0)}% of intro offer customers convert to full price. Missing upsell revenue: ${formatMoney(impact, currency)}.`,
     };
 
@@ -2455,9 +2565,30 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         cash_ar_aging: `הסלם את מאמצי הגבייה לחשבוניות מעל 60 יום. שקול להציע תוכניות תשלום.`,
         cash_refund_pattern: `בדוק את סיבות ההחזרים כדי לזהות בעיות שירות. שקול לפנות להבין חששות.`,
         cash_payout_blocked: `השלם את הגדרת חשבון ה-Stripe מיד כדי לשחרר העברות ולהתחיל לקבל כספים.`,
+        /*
+         * It points at the agents list rather than repeating the reason.
+         *
+         * The reason the execution layer stored is English, because
+         * `toUserFacing` writes one language. Pasting it into a Hebrew sentence
+         * would hand a Hebrew-speaking owner a line half in another language,
+         * which reads worse than a clear instruction about where to look. The
+         * list shows the reason beside the agent, in the one place that can
+         * also switch it back on.
+         */
+        agents_stopped: `פתח את רשימת הסוכנים בתחתית לוח הבקרה כדי לראות מה נכשל, תקן את מה שכתוב שם והפעל את הסוכן מחדש.`,
         pricing_intro_offer_stuck: `צור רצף מעקב למשתמשי מבצע היכרות. הצע תמריץ מוגבל בזמן להמרה למחיר מלא.`,
       };
       return hebrewRecommendations[detection.detectorId] || `בדוק את התובנה הזו ונקוט בפעולה לטיפול בבעיה.`;
+    }
+
+    /* Spanish: consulted, then falls through to English. See the title builder. */
+    if (language === 'es') {
+      const spanishRecommendations: Record<string, string> = {
+        agents_stopped: `Abre la lista de agentes al final del panel para ver qué ha fallado, corrige lo que indique y vuelve a activarlo.`,
+      };
+
+      const spanish = spanishRecommendations[detection.detectorId];
+      if (spanish) return spanish;
     }
 
     // English recommendations (default)
@@ -2526,6 +2657,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       cash_ar_aging: `Escalate collection efforts for invoices over 60 days. Consider offering payment plans.`,
       cash_refund_pattern: `Review refund reasons to identify service issues. Consider reaching out to understand concerns.`,
       cash_payout_blocked: `Complete your Stripe account setup immediately to unblock payouts and start receiving funds.`,
+      agents_stopped: `Open the agents list at the bottom of your dashboard to see what failed, fix what it names and switch the agent back on.`,
       pricing_intro_offer_stuck: `Create a follow-up sequence for intro offer users. Offer a limited-time incentive to convert to full price.`,
     };
 

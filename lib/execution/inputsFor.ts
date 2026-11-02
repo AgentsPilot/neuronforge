@@ -92,7 +92,33 @@ export async function inputsFor(agent: AgentForInputs): Promise<Record<string, u
      * catalogue default when the owner never chose one, which is what makes the
      * number the plan spends and the number the owner is shown the same number.
      */
-    return planInputs(automation as AutomationAgent, agent.agent_config ?? null);
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * BOTH HALVES, because a catalogue agent can now ask the owner things.
+     *
+     * This used to RETURN HERE, so a predefined agent got the stop rule and
+     * nothing else — `agent_configurations` was never read for it. That was
+     * right while every catalogue agent needed only a schedule. It stopped
+     * being right the moment one needed to know WHICH spreadsheet: the agent
+     * page would ask, save the answer where every other agent's answers live,
+     * and the run would never see it.
+     *
+     * `planInputs` last, deliberately. The owner's stored answers supply what
+     * only they can know; the catalogue supplies what is COMPUTED — the stop
+     * rule resolved against its current default, and the scan window derived
+     * from the cadence. A stale copy of either must never win over the live
+     * calculation, which is the whole reason those are resolved at run time.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const { data: stored } = await agentConfigurationRepository.getInputValues(
+      agent.id,
+      agent.user_id
+    );
+
+    return {
+      ...((stored?.input_values as Record<string, unknown> | undefined) ?? {}),
+      ...planInputs(automation as AutomationAgent, agent.agent_config ?? null),
+    };
   }
 
   /*

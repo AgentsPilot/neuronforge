@@ -1,0 +1,304 @@
+[
+  {
+    "step_id": "step1",
+    "id": "step1",
+    "type": "action",
+    "name": "Scan the mailbox for new replies, headers only",
+    "description": "THE FIRST THING THAT HAPPENS, and nothing about any client is read before it. HEADERS ONLY, AND THAT IS THE PRIVACY DESIGN, not a saving. Scanning before anyone knows who is a client means this pass sees whatever arrived — the owner's accountant, their landlord, a newsletter — so what it is allowed to fetch has to be the narrowest thing that still identifies a sender. `metadata` is exactly that: addresses, subject and a snippet, and no body. A non-client's actual words are therefore never pulled into the run at all, rather than being fetched and dropped a step later. The body is fetched in step 6, after the sender is confirmed to be somebody this business has written to. The alternative was scoping this query to known client addresses, which cannot be done without loading the client list FIRST — the order this design deliberately rejects. `{{input.scan_days}}` is the ONLY thing defining 'new', and `planInputs` derives it from the agent's own cadence rather than this file naming a number: a weekly agent with a two-day window would never see the five days in between, and would miss them silently. It carries a day of slack for a failed run, so a reply can surface on two consecutive runs; step 8's `already_handled` outcome is what catches the second pass.",
+    "plugin": "google-mail",
+    "action": "search_emails",
+    "params": {
+      "query": "newer_than:{{input.scan_days}}d",
+      "max_results": 50,
+      "include_attachments": false,
+      "content_level": "metadata",
+      "folder": "inbox"
+    },
+    "output_variable": "inbound",
+    "output_schema": { "type": "object" }
+  },
+  {
+    "step_id": "step2",
+    "id": "step2",
+    "type": "action",
+    "name": "Read the service list",
+    "description": "After the scan, so a business whose clients all stayed quiet reads nothing. Once per run rather than once per reply, because it is the same answer for everybody. This is the only business fact the agent gets beyond one client's own correspondence, and everything it refuses later traces back to that being deliberately short: a price on a published service is already public, so repeating it to the person who asked commits the owner to nothing.",
+    "plugin": "business-os",
+    "action": "find_services",
+    "params": {
+      "filters": [{ "field": "is_active", "op": "eq", "value": true }],
+      "order_by": [{ "field": "service_name", "dir": "asc" }],
+      "limit": 50
+    },
+    "output_variable": "service_list",
+    "output_schema": { "type": "object" }
+  },
+  {
+    "step_id": "step3",
+    "id": "step3",
+    "type": "scatter_gather",
+    "name": "Work each message that came in",
+    "description": "ONE PERSON'S FAILURE MUST NOT STOP THE REST, so `continueOnError` is set. A failing scatter item otherwise re-throws and aborts the whole run, and per-item failures are ordinary here: a search that rate-limits, a body the model will not classify, a draft that will not save. The loop runs over MESSAGES, so each inbound mail is considered exactly once per run however many letters the business sent that person.",
+    "scatter": {
+      "input": "{{inbound.emails}}",
+      "itemVariable": "current_reply",
+      "steps": [
+        {
+          "step_id": "step4",
+          "id": "step4",
+          "type": "action",
+          "name": "Ask what we have sent this sender",
+          "description": "THE FILTER AND THE HISTORY ARE ONE QUESTION, which is why this is a single read rather than an existence check followed by a fetch. 'What has this business sent to this address?' answers both: the rows ARE the history the model needs, and no rows means this business has never written to them, so the message is none of the agent's business. Splitting it in two would be two round trips to learn the same emptiness — a non-client has no history to load, by definition, so nothing is wasted by asking for it. Matching on `email_sends.to_email` rather than on a contact is deliberate: somebody in the CRM we have never emailed cannot be replying to us, and a reply to our own mail is the only thing this agent is for. DEPENDS ON `from_email`, which the mail executor did not return before this agent — it exposed `from` as the raw header, so `\"Dana Levi\" <dana@host>`, which matches no address column. That field is what makes scanning first possible at all.",
+          "plugin": "business-os",
+          "action": "find_emails",
+          "params": {
+            "filters": [
+              { "field": "to_email", "op": "eq", "value": "{{current_reply.from_email}}" },
+              { "field": "contact_id", "op": "is_not_null" },
+              {
+                "field": "sent_at",
+                "op": "gte",
+                "value": { "$date": "today", "offset": { "days": "{{input.stop_after_days}}" } }
+              }
+            ],
+            "order_by": [{ "field": "sent_at", "dir": "desc" }],
+            "limit": 10
+          },
+          "output_variable": "client_history",
+          "output_schema": { "type": "object" }
+        },
+        {
+          "step_id": "step5",
+          "id": "step5",
+          "type": "conditional",
+          "name": "Only go on if this is a reply to our own mail",
+          "description": "THE BOUNDARY, and the cheapest gate in the run: an integer compared to zero, before any body is fetched, before the model is called, before anything is written. `count` is guaranteed on every business-os find result. Anything from an address with no send history stops dead here and only its headers were ever read. `contact_id is_not_null` on the find above is the second half of the same guard: a NULL contact on `email_sends` means the mail went to the OWNER rather than a client (a briefing, a dispute alert), so a reply to one of those is the owner's own correspondence and must not qualify either.",
+          "condition": {
+            "conditionType": "simple",
+            "field": "client_history.count",
+            "operator": "greater_than",
+            "value": 0
+          },
+          "steps": [
+            {
+              "step_id": "step6",
+              "id": "step6",
+              "type": "action",
+              "name": "Now fetch what they actually wrote",
+              "description": "THE ONLY PLACE A BODY IS FETCHED, and it is inside the boundary gate on purpose: by here the sender is known to be somebody this business has written to, so no stranger's words are ever pulled down. Searching by sender rather than by message id because the mail plugin has no get-by-id action. That cannot fetch the 'wrong' message in any way that matters: it returns the newest mail from this person inside the same window the scan used, and the newest is what the agent wants to answer regardless of which one the scan happened to surface. Full content here, where step 1 took headers only, because a 200-character snippet truncates mid-question and the whole run exists to read what was asked.",
+              "plugin": "google-mail",
+              "action": "search_emails",
+              "params": {
+                "query": "from:{{current_reply.from_email}} newer_than:{{input.scan_days}}d",
+                "max_results": 1,
+                "include_attachments": false,
+                "content_level": "full",
+                "folder": "inbox"
+              },
+              "output_variable": "full_message",
+              "output_schema": { "type": "object" }
+            },
+            {
+              "step_id": "step7",
+              "id": "step7",
+              "type": "action",
+              "name": "What was last sent to this client from this mailbox",
+              "description": "The sent folder rather than the send log, because the thing worth knowing is whether the OWNER has already answered from their own mail client, and nothing they type in Gmail reaches `email_sends`. Only the latest is fetched: the model is asked whether it answers the reply, not to audit a thread. This exists because at a daily rhythm the owner has usually dealt with it themselves, and a drafts folder full of answers to settled questions is how an owner stops trusting this agent.",
+              "plugin": "google-mail",
+              "action": "search_emails",
+              "params": {
+                "query": "to:{{current_reply.from_email}}",
+                "max_results": 1,
+                "include_attachments": false,
+                "content_level": "snippet",
+                "folder": "sent"
+              },
+              "output_variable": "our_last_word",
+              "output_schema": { "type": "object" }
+            },
+            {
+              "step_id": "step7b",
+              "id": "step7b",
+              "type": "action",
+              "name": "Have we already drafted one for them?",
+              "description": "THE MEMORY, and it is the owner's own drafts folder rather than a table. The scan window is two days so a run that failed loses nothing, which means a reply can be seen on two consecutive mornings — and without this the second morning writes a second draft of the same answer. A draft we wrote is the record that we wrote it: it sits in `drafts` addressed to that client until the owner does something with it. SELF-CLEARING, which is why this beats a stored flag. Send the draft and it leaves `drafts` for `sent`, where step 7 finds it and the model answers `already_handled`. Discard it and the next run writes a fresh one, which is the right behaviour — the owner threw the first away.",
+              "plugin": "google-mail",
+              "action": "search_emails",
+              "params": {
+                "query": "to:{{current_reply.from_email}}",
+                "max_results": 1,
+                "include_attachments": false,
+                "content_level": "metadata",
+                "folder": "drafts"
+              },
+              "output_variable": "existing_draft",
+              "output_schema": { "type": "object" }
+            },
+            {
+              "step_id": "step7c",
+              "id": "step7c",
+              "type": "conditional",
+              "name": "Only think about it if none is waiting",
+              "description": "Gated BEFORE the model, so a second sighting of the same reply costs an integer comparison rather than a model call. `total_found` is guaranteed by the search's own output schema.",
+              "condition": {
+                "conditionType": "simple",
+                "field": "existing_draft.total_found",
+                "operator": "equals",
+                "value": 0
+              },
+              "steps": [
+            {
+              "step_id": "step8",
+              "id": "step8",
+              "type": "ai_processing",
+              "name": "Decide what becomes of this reply",
+              "description": "FOUR OUTCOMES, NOT A YES OR NO, and the two refusals are not the same refusal. An out-of-office and a client asking to move an appointment both mean 'cannot answer', but one deserves the owner's attention and the other deserves silence; collapsing them means either every bounce interrupts the owner or real escalations get swallowed in the noise. `already_handled` is the fourth, and it is a judgement rather than a date comparison on purpose: the sent header arrives as RFC 2822, which does not compare as a string, and asking whether our last message answers their question is both sturdier and more useful than asking whether it arrived afterwards. REFUSING IS THE DEFAULT. The draft reaches the owner, never the client, so a refusal costs one glance and a confident wrong answer costs a client.",
+              "prompt": "You are the front desk of a small business, drafting a reply for the OWNER to read and send. You never send anything yourself, and the client never hears from you directly.\n\nTHE MESSAGE THAT JUST ARRIVED\n  from: {{current_reply.from}}\n  subject: {{current_reply.subject}}\n  message: {{full_message.emails.0.body}}\n\nWHAT THIS BUSINESS HAS SENT THIS PERSON BEFORE (newest first)\n{{client_history.rows}}\n\nTHE LAST THING SENT TO THEM FROM THIS MAILBOX\n{{our_last_word.emails}}\n\nTHE BUSINESS'S SERVICES — the only business facts you have\n{{service_list.rows}}\n\nIf the message above is empty or missing, choose 'needs_owner' with the reason 'could not read the message' and write nothing. Never answer a message you cannot see.\n\nChoose exactly ONE outcome.\n\n'already_handled' — the last thing sent to them already answers what they are asking. Say nothing further. Choose this whenever it looks answered; a missed draft costs nothing and a duplicate one costs trust.\n\n'ignore' — this needs no reply and the owner does not need to know. Out-of-office and holiday autoresponders, bounces, delivery and read receipts, unsubscribe confirmations, calendar notifications, and plain acknowledgements that ask nothing ('thanks!', 'great', 'noted'). Nothing is shown to the owner for these.\n\n'needs_owner' — a real question or request that you must not answer. Choose this when answering would need any fact you were NOT given above. You do NOT know the diary, whether any time is free, what this person owes or has paid, what was agreed in conversation, the address, the opening hours, or anything about a specific booking. Also choose it for: asking to book, move or cancel; complaints; disputes; refunds; discounts; anything legal or medical; anything about another person's booking. And choose it whenever you are unsure. Unsure means needs_owner.\n\n'draft' — you can answer completely from what you were given. Write the reply.\n\nWHEN YOU CHOOSE 'draft', these rules are absolute:\n1. Write in the SAME LANGUAGE the person wrote in. Never translate or transliterate their name.\n2. State ONLY facts present above. Never invent or estimate a price, a duration, a date, a time, an address or a policy.\n3. Never say or imply that anything is booked, held, confirmed, reserved or paid. Never promise a time.\n4. Never apologise for something you cannot verify happened.\n5. No links, no URLs.\n6. Write as the business, first person, plainly. Three sentences at most.\n7. No greeting and no sign-off — the owner's mail carries both.\n8. Keep their subject, prefixed with 'Re: ' unless it already starts with it.\n9. Answer the WHOLE message or choose needs_owner instead. Replying about the easy half of a two-part question and silently dropping the rest reads worse than not replying.\n\nFor 'reason': one short sentence written for the OWNER, naming what was asked and what you would have needed. It is shown to them, so write it as a note to a colleague, not a log line. Leave `subject` and `body` empty unless the outcome is 'draft'.",
+              "output_schema": {
+                "type": "object",
+                "properties": {
+                  "outcome": {
+                    "type": "string",
+                    "enum": ["draft", "needs_owner", "ignore", "already_handled"]
+                  },
+                  "reason": { "type": "string" },
+                  "subject": { "type": "string" },
+                  "body": { "type": "string" }
+                },
+                "required": ["outcome", "reason"]
+              },
+              "output_variable": "decision"
+            },
+            {
+              "step_id": "step9",
+              "id": "step9",
+              "type": "conditional",
+              "name": "Draft it only when it chose to",
+              "description": "Gates on the chosen outcome rather than on a body being present. Told to refuse, a model will sometimes fill the other fields anyway out of helpfulness, and without this check that stray text would become a draft addressed to a real client. The other three outcomes write nothing: `needs_owner` and `ignore` differ only in what the owner is shown, and that surface is not built yet, so for now both survive in the run's collected output.",
+              "condition": {
+                "conditionType": "simple",
+                "field": "decision.outcome",
+                "operator": "equals",
+                "value": "draft"
+              },
+              "steps": [
+                {
+                  "step_id": "step10",
+                  "id": "step10",
+                  "type": "action",
+                  "name": "Leave the reply in the owner's drafts",
+                  "description": "`create_draft`, never `reply_to_email`. The two differ in exactly the way that matters: `reply_to_email` threads properly but SENDS, and nothing here writes to a client. Outlook settles it permanently — it has `create_draft` and no reply action at all, so drafting is the only behaviour identical on both providers. `reply_to_message_id` BUYS BACK THE THREADING WITHOUT THE SENDING: the executor takes the thread id and the In-Reply-To / References headers off the message being answered and stores the result, so the draft sits inside the client's own conversation where the owner finds it by opening that conversation. Without it the draft was a separate message carrying 'Re:', which arrives beside the exchange it answers and reads, to the client, as a stranger to the thread they wrote in. Recipients are still stated outright rather than inferred, because the person we intend to answer is the client this run is about and should not depend on which header the original happened to carry.",
+                  "plugin": "google-mail",
+                  "action": "create_draft",
+                  "params": {
+                    "reply_to_message_id": "{{current_reply.id}}",
+                    "recipients": { "to": ["{{current_reply.from_email}}"] },
+                    "content": {
+                      "subject": "{{decision.subject}}",
+                      "body": "{{decision.body}}"
+                    },
+                    "save_location": "drafts"
+                  },
+                  "output_variable": "draft_result",
+                  "output_schema": { "type": "object" }
+                },
+                {
+                  "step_id": "step11",
+                  "id": "step11",
+                  "type": "action",
+                  "name": "Say so on the client's own timeline",
+                  "description": "WITHOUT THIS THE AGENT IS INVISIBLE. A draft appears in the owner's Gmail with nothing in the platform saying where it came from, and the only record of a run lives in the execution's collected output, which nobody opens. The contact timeline is the surface an owner already reads when they ask what has happened with somebody, so the answer belongs there rather than in a screen built for this agent. `contact_id` comes from the send log read in step 4 — `email_sends` carries it, which is why that read is filtered on it being present. Non-blocking by position: the draft is already written by the time this runs, so a failure here costs the owner a line of history, not their reply.",
+                  "plugin": "business-os",
+                  "action": "create_activities",
+                  "params": {
+                    "data": {
+                      "contact_id": "{{client_history.rows.0.contact_id}}",
+                      "activity_type": "reply_drafted",
+                      "title": "{{decision.subject}}",
+                      "description": "{{decision.reason}}"
+                    }
+                  },
+                  "output_variable": "drafted_note",
+                  "output_schema": { "type": "object" }
+                }
+              ]
+            },
+            {
+              "step_id": "step12",
+              "id": "step12",
+              "type": "conditional",
+              "name": "Or hand it to the owner",
+              "description": "THE OUTCOME THAT WENT NOWHERE. The model could return four answers and the plan acted on one: a client asking something real produced a reason written for the owner, which was then thrown away. `ignore` and `already_handled` doing nothing is correct — an out-of-office needs no reply and an answered question needs no second one — but `needs_owner` is the whole escalation, and silently dropping it is worse than not classifying at all, because the owner believes the agent is watching their mail. It lands on the same timeline as a drafted reply, so one place answers both 'what did it do' and 'what does it need from me'.",
+              "condition": {
+                "conditionType": "simple",
+                "field": "decision.outcome",
+                "operator": "equals",
+                "value": "needs_owner"
+              },
+              "steps": [
+                {
+                  "step_id": "step13",
+                  "id": "step13",
+                  "type": "action",
+                  "name": "Note what they asked, and why it was left",
+                  "description": "`reason` is already written for a person: the prompt asks for one short sentence addressed to the owner, naming what was asked and what the agent would have needed. So it goes in as written rather than being rephrased here. The subject is the title, because that is what the owner will recognise in a list of client history.",
+                  "plugin": "business-os",
+                  "action": "create_activities",
+                  "params": {
+                    "data": {
+                      "contact_id": "{{client_history.rows.0.contact_id}}",
+                      "activity_type": "reply_needs_owner",
+                      "title": "{{current_reply.subject}}",
+                      "description": "{{decision.reason}}"
+                    }
+                  },
+                  "output_variable": "escalation_note",
+                  "output_schema": { "type": "object" }
+                }
+              ]
+            },
+            {
+              "step_id": "step14",
+              "id": "step14",
+              "type": "conditional",
+              "name": "Or close what the owner has already dealt with",
+              "description": "THE AGENT CLOSES ITS OWN CARD, because nothing else can. An owner answering a client does it in Gmail, which writes nothing to this platform — no send log row, no activity — so a card raised from a client's reply would sit there for ever, and a card you cannot clear is worse than never raising one. This agent is the only party that sees both sides: step 7 fetches the last thing sent to that client, and the model answers `already_handled` when it answers their question. Recording that is what lets the needs-you card stop returning them, by the same mechanism `enquiry_unanswered` already uses — a closing activity_type its find excludes.",
+              "condition": {
+                "conditionType": "simple",
+                "field": "decision.outcome",
+                "operator": "equals",
+                "value": "already_handled"
+              },
+              "steps": [
+                {
+                  "step_id": "step15",
+                  "id": "step15",
+                  "type": "action",
+                  "name": "Record that they were answered",
+                  "description": "Written every time the agent sees a settled thread, not only the first. A second row is harmless — the gap asks whether ANY exists — and the alternative is reading the timeline before writing, which costs a query per client to save a row nobody looks at twice.",
+                  "plugin": "business-os",
+                  "action": "create_activities",
+                  "params": {
+                    "data": {
+                      "contact_id": "{{client_history.rows.0.contact_id}}",
+                      "activity_type": "reply_handled",
+                      "title": "{{current_reply.subject}}",
+                      "description": "{{decision.reason}}"
+                    }
+                  },
+                  "output_variable": "handled_note",
+                  "output_schema": { "type": "object" }
+                }
+              ]
+            }
+              ]
+            }
+          ]
+        }
+      ],
+      "continueOnError": true
+    },
+    "gather": { "operation": "collect" },
+    "output_variable": "receptionist_results"
+  }
+]

@@ -58,6 +58,7 @@ const AUTOMATION_COLUMNS: Record<AutomationId, string> = {
   chase_intake: 'chase_intake_enabled',
   remind_about_meeting: 'meeting_reminder_enabled',
   auto_complete_meetings: 'auto_complete_meetings_enabled',
+  chase_quotes: 'chase_quotes_enabled',
 };
 
 async function enabledFor(userId: string): Promise<Set<AutomationId>> {

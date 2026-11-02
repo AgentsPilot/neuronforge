@@ -56,6 +56,41 @@ const SENTENCES: Record<string, Record<ActivityLocale, string>> = {
     es: 'Cita cancelada — era el {date}',
     he: 'הפגישה בוטלה — הייתה ב־{date}',
   },
+  /*
+   * The mail agent's two outcomes that are worth a line on a client's timeline.
+   *
+   * Written here rather than left to the fallback, which returns the key: an
+   * owner reading Dana's history would have seen `reply_needs_owner` sitting
+   * between "Sent them a link to book" and "Invoice paid".
+   *
+   * Both say what HAPPENED, not what the agent decided. "Drafted a reply for
+   * you" is a fact the owner can act on; "outcome: draft" is a log line.
+   */
+  /*
+   * What CLOSES the needs-you card, and the only thing that can.
+   *
+   * An owner answers a client in Gmail, which writes nothing here — no
+   * `email_sends` row, no activity. So a card raised from a client's reply
+   * would sit there for ever, and a card you cannot clear is worse than no
+   * card at all. The agent is the only party that can see both sides: on a
+   * later run it reads the thread, finds the owner's reply already in it, and
+   * records that here. The gap then stops returning the contact.
+   */
+  reply_handled: {
+    en: 'You answered them',
+    es: 'Les respondiste',
+    he: 'ענית להם',
+  },
+  reply_drafted: {
+    en: 'Drafted a reply for you to send',
+    es: 'Se redactó una respuesta para que la envíes',
+    he: 'נוסחה עבורך טיוטת תשובה',
+  },
+  reply_needs_owner: {
+    en: 'They asked something that needs you',
+    es: 'Preguntaron algo que requiere tu respuesta',
+    he: 'הם שאלו משהו שדורש אותך',
+  },
   booking_link_sent: {
     en: 'Sent them a link to book',
     es: 'Se les envió un enlace para reservar',

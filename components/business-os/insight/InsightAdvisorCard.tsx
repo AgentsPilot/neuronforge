@@ -843,7 +843,27 @@ export function InsightAdvisorCard({
          * The persistence half is still true and still worth saying, so only
          * the promise goes.
          */
-        if (!insight.eligible_for_automation) {
+        /*
+         * AND NOT WHERE THE RULE IS ALREADY SWITCHED ON.
+         *
+         * Seen on a live card: the body said "Overdue invoice collection is
+         * already handling this" and "I'm already handling these", and the
+         * footer underneath it still offered — "if it keeps happening, I can
+         * handle it permanently." An offer the owner accepted days ago, made
+         * again at the bottom of the card that reports it running.
+         *
+         * `agentAlreadyWorking` is the flag the projection line above already
+         * uses for exactly this, with exactly this reasoning: "'I'll take these
+         * over' on a card whose agent has been running since Tuesday is an
+         * offer the owner already accepted." The footer has to read it too, or
+         * the two halves of one card disagree about whether the automation
+         * exists.
+         *
+         * The persistence half stays true either way — the invoices ARE still
+         * unpaid — so the manual wording is the right thing to fall to, and it
+         * is already written. Only the promise goes.
+         */
+        if (!insight.eligible_for_automation || agentAlreadyWorking) {
           return t('insight.seen.repeated_manual')
             || 'This has been in front of you a few times now and is still open.';
         }
@@ -1253,8 +1273,20 @@ export function InsightAdvisorCard({
                * do. The advice is good; the heading was the lie.
                * ───────────────────────────────────────────────────────────────
                */
+              /*
+               * AND PRESENT TENSE WHERE IT IS ALREADY HAPPENING.
+               *
+               * The VALUE below already switches to "I'm already handling
+               * these" when the agent is installed, with that reasoning
+               * recorded on it. The heading did not, so the card read "If I
+               * handle it / I'm already handling these": a condition placed
+               * over something already true, asking the owner to decide a
+               * thing they decided days ago.
+               */
               label: canRun
-                ? t('insight.projection.handle_it') || 'If I handle it'
+                ? agentAlreadyWorking
+                  ? t('insight.projection.handling_it') || 'What I am doing about it'
+                  : t('insight.projection.handle_it') || 'If I handle it'
                 : t('insight.projection.what_to_do') || 'What to do about it',
               /*
                * ───────────────────────────────────────────────────────────────

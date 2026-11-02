@@ -24,6 +24,15 @@ jest.mock('@/lib/server/route-identity', () => ({
 
 const getConnectedPlugins = jest.fn();
 const getActiveExpiredPluginKeys = jest.fn();
+/*
+ * The route calls `getActiveExpiredPlugins`, which returns `{key, canRefresh}`
+ * entries; `getActiveExpiredPluginKeys` is now a thin wrapper over it on the
+ * manager. Mocking only the wrapper left the route calling a method the mock
+ * did not have, so every identity assertion failed on a TypeError instead of
+ * on the thing it was testing — which is how a stale mock hides whatever it
+ * was protecting.
+ */
+const getActiveExpiredPlugins = jest.fn();
 const getDisconnectedPlugins = jest.fn();
 // The refresh-token route reaches the EXTERNAL OAuth exchange through
 // pluginManager['userConnections'], not through a PluginManagerV2 method — assert on
@@ -46,6 +55,7 @@ jest.mock('@/lib/server/plugin-manager-v2', () => ({
       getActionDefinition: (p: string, a: string) => getActionDefinition(p, a),
       getConnectedPlugins: (...args: unknown[]) => getConnectedPlugins(...args),
       getActiveExpiredPluginKeys: (...args: unknown[]) => getActiveExpiredPluginKeys(...args),
+      getActiveExpiredPlugins: (...args: unknown[]) => getActiveExpiredPlugins(...args),
       getDisconnectedPlugins: (...args: unknown[]) => getDisconnectedPlugins(...args),
       userConnections: {
         getAllActivePlugins: (...args: unknown[]) => getAllActivePlugins(...args),
@@ -129,6 +139,7 @@ describe('plugin route identity hardening', () => {
     getAdditionalConfig.mockResolvedValue({});
     getConnectedPlugins.mockResolvedValue({});
     getActiveExpiredPluginKeys.mockResolvedValue([]);
+    getActiveExpiredPlugins.mockResolvedValue([]);
     getDisconnectedPlugins.mockResolvedValue({});
     getAllActivePlugins.mockResolvedValue([]);
     refreshToken.mockResolvedValue({});

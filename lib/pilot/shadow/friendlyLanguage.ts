@@ -50,6 +50,32 @@ const PLUGIN_FRIENDLY_NAMES: Record<string, string> = {
   zendesk: 'Zendesk',
   'chatgpt-research': 'AI Research',
   chatgpt_research: 'AI Research',
+  /*
+   * The Business OS half, which was missing.
+   *
+   * Every plugin key with no row here falls through to the key itself, so
+   * `outlook` and `meta-insights` reached a customer verbatim — the exact
+   * failure `PROVIDER_NAMES` records in its own comment: "'Gmail' in two of
+   * them and 'google-mail' in the third is how a plugin key ends up in front
+   * of a customer."
+   *
+   * Named as the OWNER knows the product, not as the vendor's API does:
+   * "Facebook and Instagram" rather than "Meta Insights", because the thing
+   * they connected was their Facebook page.
+   */
+  outlook: 'Outlook',
+  /*
+   * "Facebook", singular, and not "Facebook and Instagram".
+   *
+   * The pair is right where the product LISTS what is connected, which is what
+   * `setup.meta.*` says. It is wrong in a sentence: "Facebook and Instagram
+   * needs reconnecting" does not parse, and the thing being re-authorised is
+   * one Facebook login that restores both.
+   */
+  'meta-insights': 'Facebook',
+  'google-business-profile': 'Google Business Profile',
+  'google-analytics': 'Google Analytics',
+  stripe: 'Stripe',
 };
 
 // ─── Action → Friendly Description ──────────────────────────

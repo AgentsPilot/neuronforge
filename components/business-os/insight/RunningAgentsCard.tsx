@@ -22,9 +22,10 @@
  */
 
 import { Fragment, useCallback, useEffect, useState } from 'react';
-import { Bot, Check, Loader2, Pause, Pencil, Play, Trash2 } from 'lucide-react';
+import { Bot, Check, ChevronLeft, ChevronRight, Loader2, Pause, Play, Trash2 } from 'lucide-react';
 
 import { PluginIcon } from '@/components/PluginIcon';
+import { AgentInputsDialog, type AgentInput } from './AgentInputsDialog';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import {
@@ -65,6 +66,11 @@ interface InstalledAgent {
    * bundled into the browser to translate three strings.
    */
   name: string;
+  /**
+   * What it does, in a sentence. Shown at the top of the expanded settings,
+   * not in the table — see the note on the server's `description`.
+   */
+  description: string;
   watches: string;
   scheduleWords: string;
   /** What the plan reaches: the marks say what this agent touches. */
@@ -74,9 +80,18 @@ interface InstalledAgent {
   nextRun: string | null;
   cadence: AutomationCadence | null;
   stopAfterDays: number | null;
-  /** Switched on and unable to run: its `requires` is not met. */
+  /** Switched on and unable to run: a requirement unmet, or a dead connection. */
   blocked: boolean;
   requires: string | null;
+  /** Required plugins with no live connection. Empty normally. */
+  missingPlugins: string[];
+  /**
+   * It WAS working and stopped: the queue retried, exhausted its attempts and
+   * gave up. Already in the owner's words — the execution layer translates a
+   * terminal failure through `toUserFacing` and this card renders what it is
+   * handed. Nothing here interprets an error.
+   */
+  stopped: { title: string; message: string; whatToDo?: string; lastTriedAt: string } | null;
 
   /**
    * ───────────────────────────────────────────────────────────────────────────
@@ -181,18 +196,74 @@ function ownerLocale(language: string): string {
 }
 
 function stateOf(agent: InstalledAgent): AgentState {
-  /* Blocked wins over paused: an owner who un-pauses a blocked agent still has
-     an agent that cannot run, and the row has to keep saying so. */
-  if (agent.blocked) return 'blocked';
+  /*
+   * Blocked wins over paused: an owner who un-pauses a blocked agent still has
+   * an agent that cannot run, and the row has to keep saying so.
+   *
+   * A STOPPED agent is blocked too. The two differ in cause and not in what
+   * the owner needs to know: `blocked` is a requirement never met, `stopped`
+   * is an agent that worked until something broke. Either way it is switched
+   * on and not running, which is the one thing a green bar must never claim.
+   */
+  if (agent.blocked || agent.stopped) return 'blocked';
   return agent.status === 'active' ? 'running' : 'paused';
 }
+
+/**
+ * How many agents a page of the table shows.
+ *
+ * Five, because the row expands in place: an owner opening one agent's
+ * settings on a list of twenty pushed everything below it off the screen, and
+ * the table sits part-way down a dashboard that already scrolls.
+ */
+const AGENTS_PER_PAGE = 5;
 
 /** Which row is mid-request, so two presses cannot race one agent. */
 type Busy = Record<string, boolean>;
 
+/**
+ * One agent this business could switch on, and has not.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The other half of the list. Until this existed an agent was reachable ONLY
+ * through an advisor card, which left every agent with no trend behind it
+ * shipped and undiscoverable — `follow_up_stalled_deals` and
+ * `draft_client_replies` both carry `offeredFromInsight: false` precisely
+ * because no detector reports their work, so no card will ever mention them.
+ *
+ * `missingPlugins` is the one field that changes what the row DOES. Empty means
+ * one press installs it. Otherwise the press has to connect a mailbox first,
+ * and the row says which — the server decides this, because it is the only side
+ * that knows what is connected.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+interface AvailableAgent {
+  automationId: string;
+  name: string;
+  description: string;
+  watches: string;
+  plugins: string[];
+  missingPlugins: string[];
+  /** The automation this works WITH, in the owner's language. Null if none. */
+  worksAlongside: string | null;
+  /** What it must be told before it can be created. Empty for most. */
+  inputs: AgentInput[];
+  /**
+   * For an agent that exists once per provider: the providers that would do,
+   * each with the automation it means. Present only while the owner has
+   * connected none of them, which is the only moment it is a question — see
+   * `connectEither` in `install.ts`.
+   */
+  connectEither?: { plugin: string; automationId: string }[];
+}
+
 export function RunningAgentsCard() {
   const { t, isRTL, language } = useLanguage();
   const [agents, setAgents] = useState<InstalledAgent[] | null>(null);
+  const [available, setAvailable] = useState<AvailableAgent[] | null>(null);
+  const [installing, setInstalling] = useState<string | null>(null);
+  /* The agent whose questions are on screen. Null when none are. */
+  const [asking, setAsking] = useState<AvailableAgent | null>(null);
   const [busy, setBusy] = useState<Busy>({});
   /** The row being asked to confirm a removal. One at a time. */
   const [removing, setRemoving] = useState<string | null>(null);
@@ -212,6 +283,8 @@ export function RunningAgentsCard() {
    * ─────────────────────────────────────────────────────────────────────────────
    */
   const [editing, setEditing] = useState<string | null>(null);
+  /** Which page of the table is on screen. See `AGENTS_PER_PAGE`. */
+  const [page, setPage] = useState(0);
   const [draft, setDraft] = useState<{
     schedule: ScheduleInterval;
     /*
@@ -242,7 +315,12 @@ export function RunningAgentsCard() {
       const response = await fetch('/api/business-os/automation-agents');
       if (!response.ok) return;
       const body = await response.json();
-      if (body.success) setAgents(body.data as InstalledAgent[]);
+      if (body.success) {
+        setAgents(body.data as InstalledAgent[]);
+        /* `?? []` rather than leaving it null: an older server that does not
+           send this half means "nothing to offer", not "still loading". */
+        setAvailable((body.available ?? []) as AvailableAgent[]);
+      }
     } catch {
       /* Silent: an empty list and a failed read look the same to the owner,
          and neither is worth an error card on a dashboard. */
@@ -314,6 +392,54 @@ export function RunningAgentsCard() {
     [draft, load]
   );
 
+  /**
+   * One press, and what happens when it cannot be one press.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The cadence and the stop rule are NOT asked here. Every catalogue entry
+   * carries a default for both and the API treats them as optional, so pressing
+   * this installs the agent on its own defaults — which is the point of a
+   * one-click list. The owner changes either afterwards from the schedule
+   * editor on the installed row, which is the same control they would have been
+   * shown in a dialog, in the place they will look for it later.
+   *
+   * 409 IS NOT AN ERROR AND MUST NOT READ AS ONE. It means a plugin the plan
+   * calls is not connected, the server names which, and the answer is a button.
+   * Anything else is left silent, for the same reason `load` is: a failed write
+   * on a dashboard card is not worth an error panel, and the list re-reads.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const install = useCallback(
+    async (automationId: string, inputValues?: Record<string, string>) => {
+      setInstalling(automationId);
+
+      try {
+        const response = await fetch('/api/business-os/automation-agents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ automationId, ...(inputValues ? { inputValues } : {}) }),
+        });
+
+        if (response.ok) {
+          setAsking(null);
+          await load();
+          return;
+        }
+
+        if (response.status === 409) {
+          /* Re-read rather than patching the row from the response: the server
+             has just told us its view of what is connected is newer than ours,
+             and `availableAutomations` recomputes `missingPlugins` for every
+             row at once. */
+          await load();
+        }
+      } finally {
+        setInstalling(null);
+      }
+    },
+    [load]
+  );
+
   const control = useCallback(
     async (agentId: string, action: 'pause' | 'resume' | 'remove') => {
       setBusy(prev => ({ ...prev, [agentId]: true }));
@@ -336,8 +462,16 @@ export function RunningAgentsCard() {
     [load]
   );
 
-  /* Before the first read, and whenever nothing is installed. */
-  if (!agents?.length) return null;
+  /*
+   * Before the first read, and only when there is nothing to say in EITHER
+   * half.
+   *
+   * The original rule was "render nothing when nothing is installed", because a
+   * permanently empty list is an advert for a feature. Available agents remove
+   * that empty state rather than breaking the rule: the card now always has
+   * something true to show, so it is never an advert for itself.
+   */
+  if (!agents?.length && !available?.length) return null;
 
   /*
    * The agent the dialog is asking about, by name rather than by id.
@@ -351,6 +485,26 @@ export function RunningAgentsCard() {
 
   const running = agents.filter(a => a.status === 'active').length;
   const pausedCount = agents.length - running;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * FIVE AT A TIME.
+   *
+   * The counts above stay whole — "3 running, 2 paused" is a fact about the
+   * business, not about the page being looked at, and paginating it would make
+   * the heading disagree with itself every time the owner pressed Next.
+   *
+   * Clamped rather than trusted: removing an agent shortens the list under
+   * whatever page is open, and a page index that outlived its rows renders an
+   * empty table with working controls — which reads as "my agents are gone".
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const pageCount = Math.max(1, Math.ceil(agents.length / AGENTS_PER_PAGE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const shown = agents.slice(
+    currentPage * AGENTS_PER_PAGE,
+    currentPage * AGENTS_PER_PAGE + AGENTS_PER_PAGE
+  );
 
   /**
    * A date the owner can place, in their own language.
@@ -526,7 +680,7 @@ export function RunningAgentsCard() {
           </thead>
 
           <tbody>
-            {agents.map(agent => {
+            {shown.map(agent => {
               /*
                * The catalogue, for everything the row SAYS. The row holds the
                * Every string this row shows is resolved server-side, in the
@@ -550,7 +704,46 @@ export function RunningAgentsCard() {
 
               return (
                 <Fragment key={agent.agentId}>
-                <tr>
+                {/*
+                  ──────────────────────────────────────────────────────────────
+                  THE WHOLE ROW IS THE CONTROL.
+
+                  It was a pencil in the schedule cell: one small target, in one
+                  column, for the only way to reach an agent's settings. A row
+                  in a table of seven columns reads as a single thing to an
+                  owner, so the thing they press should be the row.
+
+                  `onClick` on the `<tr>` rather than a wrapping button, because
+                  a table row cannot contain one — and the cells carry real
+                  controls (pause, remove) which must NOT be hijacked. Those
+                  stop the event themselves; see `stopRowToggle` below.
+
+                  Reachable from the keyboard as well: `tabIndex` puts the row
+                  in the tab order and Enter or Space opens it, which a `<tr>`
+                  gives nobody by default. `aria-expanded` says which state it
+                  is in, and the editor that opens is the next row.
+                  ──────────────────────────────────────────────────────────────
+                */}
+                <tr
+                  onClick={() => (open ? cancelEdit() : beginEdit(agent))}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return;
+                    /* Space scrolls the page otherwise, which is the one thing
+                       an owner does not expect from pressing a row. */
+                    e.preventDefault();
+                    if (open) cancelEdit();
+                    else beginEdit(agent);
+                  }}
+                  tabIndex={0}
+                  role="button"
+                  aria-expanded={open}
+                  title={t('automation.open_settings') || 'Open this agent’s settings'}
+                  className="cursor-pointer transition-colors hover:bg-[var(--v2-surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2"
+                  style={{
+                    background: open ? 'var(--v2-surface-hover)' : undefined,
+                    outlineColor: 'var(--v2-primary)',
+                  }}
+                >
                   {/* Who */}
                   <td style={{ padding: '9px 10px', borderBottom: rowRule }}>
                     <span className="flex items-center gap-2.5">
@@ -645,70 +838,65 @@ export function RunningAgentsCard() {
                   {/* What it watches, or why it cannot run — the more useful of
                       the two, in the same place. */}
                   <td className="text-[12.5px]" style={{ padding: '9px 10px', borderBottom: rowRule, color: state === 'blocked' ? colour.fg : 'var(--v2-text-secondary)' }}>
-                    {state === 'blocked' && agent.requires
-                      ? t(`automation.requires.${agent.requires}`) || t('automation.requires.default')
-                      : agent.watches}
+                    {/*
+                      WHY IT IS NOT RUNNING, WHERE "what it watches" GOES.
+
+                      An agent that cannot run has nothing useful to say about
+                      what it watches, and the reason is the only thing the
+                      owner can act on. Two causes, one slot: a requirement
+                      never met, or a run that failed until the queue gave up.
+
+                      The stopped text is NOT translated here. It arrives
+                      already written for an owner, because the execution layer
+                      put it through the platform's own translator when it
+                      dead-lettered the run.
+                    */}
+                    {agent.stopped ? (
+                      <span className="flex flex-col gap-0.5">
+                        <span style={{ fontWeight: 600 }}>{agent.stopped.message}</span>
+                        {agent.stopped.whatToDo && (
+                          <span style={{ color: 'var(--v2-text-muted)' }}>
+                            {agent.stopped.whatToDo}
+                          </span>
+                        )}
+                      </span>
+                    ) : state === 'blocked' && agent.missingPlugins.length > 0 ? (
+                      /*
+                        A DEAD CONNECTION BEATS A BUSINESS REQUIREMENT in this
+                        slot. Both make an agent unable to run, but this one is
+                        the owner's to fix in a minute and the other may be a
+                        deliberate setting, so it is the more useful of the two
+                        to show. Named, because "needs a connection" sends them
+                        hunting through settings.
+                      */
+                      (t('automation.needs_plugin') || 'Connect {plugin} first').replace(
+                        '{plugin}',
+                        agent.missingPlugins.join(', ')
+                      )
+                    ) : state === 'blocked' && agent.requires ? (
+                      t(`automation.requires.${agent.requires}`) || t('automation.requires.default')
+                    ) : (
+                      agent.watches
+                    )}
                   </td>
 
                   {/*
-                    How often — AND the way to change it.
+                    How often.
 
-                    ────────────────────────────────────────────────────────────
-                    The value is the control. An owner looking for "how often
-                    does this run" is already looking at this cell, so putting
-                    the edit here costs no new affordance, no icon column and no
-                    menu — and it cannot be mistaken for editing a different
-                    agent, which is the risk a toolbar button carries on a
-                    seven-column table.
+                    A value, not a control. It carried the only way into an
+                    agent's settings — the words plus a pencil — and that is now
+                    the whole row, so this is back to being a cell that reports
+                    a number. The editor it used to open still opens; it is just
+                    no longer this cell's job to say so.
 
-                    A plain cell when the schedule is one an interval cannot
-                    say. Drawing a button that opens a control which can only
-                    flatten a weekday choice would be worse than showing
-                    nothing: see `schedule` on `InstalledAgent`.
-                    ────────────────────────────────────────────────────────────
+                    Words rather than a cadence key, because the mailbox channel
+                    runs on a schedule nobody chose from a list.
                   */}
                   <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule, color: 'var(--v2-text-secondary)' }}>
                     {agent.schedule ? (
-                      <button
-                        type="button"
-                        onClick={() => (open ? cancelEdit() : beginEdit(agent))}
-                        aria-expanded={open}
-                        title={t('automation.change_schedule') || 'Change this schedule'}
-                        className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 -mx-1.5 cursor-pointer transition-colors hover:bg-[var(--v2-surface-hover)]"
-                        style={{
-                          border: 'none',
-                          background: 'transparent',
-                          color: 'inherit',
-                          font: 'inherit',
-                        }}
-                      >
+                      <span className="inline-flex items-center gap-1.5">
                         {agent.scheduleWords || '—'}
-                        {/*
-                          ────────────────────────────────────────────────────
-                          ALWAYS VISIBLE, NOT ON HOVER.
-
-                          It was `opacity-0 group-hover:opacity-70`, on the
-                          reasoning that a column of pencils is noise. That
-                          reasoning was wrong about the thing that matters: an
-                          affordance nobody can see is a feature nobody knows
-                          exists, and this is the ONLY way to change a
-                          schedule. Hiding it to keep the column tidy trades a
-                          capability for an aesthetic.
-
-                          It is also invisible to touch, where there is no
-                          hover at all — so on a phone the schedule was simply
-                          not editable.
-
-                          Dimmed rather than hidden: present enough to be
-                          found, quiet enough not to compete with the words it
-                          sits beside. It brightens on hover and while open.
-                          ────────────────────────────────────────────────────
-                        */}
-                        <Pencil
-                          className="w-3 h-3 transition-opacity"
-                          style={{ opacity: open ? 0.85 : 0.45 }}
-                        />
-                      </button>
+                      </span>
                     ) : (
                       /* Words, not a cadence key: the mailbox channel runs on a
                          schedule nobody chose from a list, and this column
@@ -751,7 +939,21 @@ export function RunningAgentsCard() {
                       : '—'}
                   </td>
 
-                  <td style={{ padding: '9px 6px', borderBottom: rowRule }}>
+                  {/*
+                    THE ONE CELL THAT MUST NOT OPEN THE ROW.
+
+                    Pause and Remove are real actions, and the row around them
+                    is now a button. Without stopping the event, pressing Pause
+                    would also expand the settings underneath it, and pressing
+                    Remove would open a confirm dialog on top of a row that just
+                    expanded behind it. Stopped on the CELL rather than on each
+                    button, so a control added here later cannot forget to.
+                  */}
+                  <td
+                    onClick={e => e.stopPropagation()}
+                    onKeyDown={e => e.stopPropagation()}
+                    style={{ padding: '9px 6px', borderBottom: rowRule }}
+                  >
                     <span className="flex items-center gap-1 justify-end">
                       {working ? (
                         <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--v2-text-muted)' }} />
@@ -803,6 +1005,62 @@ export function RunningAgentsCard() {
           </tbody>
         </table>
       </div>
+
+      {/*
+        ───────────────────────────────────────────────────────────────────────
+        THE PAGER, SHOWN ONLY WHEN THERE IS MORE THAN ONE PAGE.
+
+        A "1 of 1" with two dead arrows under a list of three agents is chrome
+        that explains nothing. It appears when it has work to do.
+
+        It says the RANGE and the total, not just the page number: "6–10 of 12"
+        tells an owner where they are in their own list, where "Page 2" makes
+        them work it out. Changing page closes any open editor — the row it
+        belonged to is no longer on screen, and leaving it open would save a
+        schedule against an agent the owner can no longer see.
+        ───────────────────────────────────────────────────────────────────────
+      */}
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between gap-3 mt-3">
+          <span className="text-[12px] tabular-nums" style={{ color: 'var(--v2-text-muted)' }}>
+            {(t('automation.page_range') || '{from}–{to} of {total}')
+              .replace('{from}', String(currentPage * AGENTS_PER_PAGE + 1))
+              .replace('{to}', String(currentPage * AGENTS_PER_PAGE + shown.length))
+              .replace('{total}', String(agents.length))}
+          </span>
+
+          <span className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={currentPage === 0}
+              onClick={() => {
+                cancelEdit();
+                setPage(currentPage - 1);
+              }}
+              aria-label={t('automation.page_previous') || 'Previous page'}
+              className="p-1.5 rounded-lg transition-colors hover:bg-[var(--v2-bg)] disabled:opacity-35 disabled:hover:bg-transparent"
+              style={{ color: 'var(--v2-text-secondary)' }}
+            >
+              {/* The arrow follows the reading direction, so on Hebrew
+                  "previous" points right. */}
+              {isRTL ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+            </button>
+            <button
+              type="button"
+              disabled={currentPage >= pageCount - 1}
+              onClick={() => {
+                cancelEdit();
+                setPage(currentPage + 1);
+              }}
+              aria-label={t('automation.page_next') || 'Next page'}
+              className="p-1.5 rounded-lg transition-colors hover:bg-[var(--v2-bg)] disabled:opacity-35 disabled:hover:bg-transparent"
+              style={{ color: 'var(--v2-text-secondary)' }}
+            >
+              {isRTL ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            </button>
+          </span>
+        </div>
+      )}
 
       {/*
         ───────────────────────────────────────────────────────────────────────
@@ -860,6 +1118,223 @@ export function RunningAgentsCard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AgentInputsDialog
+        open={!!asking}
+        agentName={asking?.name ?? ''}
+        inputs={asking?.inputs ?? []}
+        plugins={asking?.plugins ?? []}
+        connectEither={asking?.connectEither}
+        /*
+         * ANY ID THIS DIALOG COULD INSTALL, not just the row's own. For an
+         * agent that exists once per provider the owner may be installing a
+         * sibling of the row they opened, and comparing against the row's id
+         * alone left Confirm enabled and un-spinnered through the whole
+         * request — a live button over an in-flight install is a double
+         * install.
+         */
+        busy={
+          !!installing &&
+          (installing === asking?.automationId ||
+            (asking?.connectEither ?? []).some(c => c.automationId === installing))
+        }
+        onCancel={() => setAsking(null)}
+        /*
+         * `chose` is the variant the owner picked by connecting a mailbox, for
+         * an agent that exists once per provider. It overrides the row's own
+         * automation, which was only ever the group's default guess — install
+         * the one they actually connected, not the one we offered.
+         */
+        onConfirm={(values, chose) =>
+          asking && install(chose ?? asking.automationId, values)
+        }
+        t={t}
+      />
+
+      {/*
+        ───────────────────────────────────────────────────────────────────────
+        WHAT THIS BUSINESS COULD SWITCH ON.
+
+        Below the ledger, not above it: the card answers "what is working for
+        me" first, and an owner scanning their running agents must not have to
+        read past an offer to get to it.
+
+        Deliberately NOT the six-column table. These rows have no last run, no
+        next run and no schedule — every one of those columns would be a dash,
+        and a table of dashes reads as broken rather than as unused.
+        ───────────────────────────────────────────────────────────────────────
+      */}
+      {available && available.length > 0 && (
+        <div className="mt-6 pt-5" style={{ borderTop: '1px solid var(--v2-border)' }}>
+          <div className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--v2-text-muted)' }}>
+            {t('automation.available_heading') || 'Also available'}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            {available.map(agent => {
+              const needsConnecting = agent.missingPlugins.length > 0;
+              /*
+               * ───────────────────────────────────────────────────────────────
+               * A CHOICE IS ALSO A REASON TO ASK, which it was not.
+               *
+               * The dialog opened only when something was unconnected or the
+               * agent had inputs. For a mail agent on an account with Gmail
+               * already connected, neither is true — nothing is missing and it
+               * asks for no inputs — so "Switch it on" installed the Gmail
+               * variant on the spot and the mailbox chooser was unreachable.
+               *
+               * That is the whole fix for "I removed the receptionist and in
+               * the available there is only the Gmail": the row is one row by
+               * design, and the choice between mailboxes lives in the dialog —
+               * which never opened.
+               * ───────────────────────────────────────────────────────────────
+               */
+              const hasAChoice = (agent.connectEither?.length ?? 0) > 1;
+
+              return (
+                <div
+                  key={agent.automationId}
+                  className="flex flex-wrap items-start gap-3 rounded-xl p-3"
+                  style={{ background: 'var(--v2-bg)', border: '1px solid var(--v2-border)' }}
+                >
+                  {/*
+                    ──────────────────────────────────────────────────────────
+                    EVERY MAILBOX IT COULD READ, not the one the row arrived as.
+
+                    `plugins` is the chosen variant's grant, so for a mail agent
+                    on an account with Gmail connected it is exactly
+                    `['business-os', 'google-mail']` — and the row painted a
+                    Gmail icon and no Outlook one. Which is precisely how this
+                    reads to an owner: "in the available there is only the
+                    Gmail". The agent does both; the row said one.
+
+                    So where a choice exists, the icons show the choice. It
+                    agrees with the "Needs Gmail or Outlook" line below and with
+                    the chooser the button opens, and all three now say the same
+                    thing.
+                    ──────────────────────────────────────────────────────────
+                  */}
+                  <div className="flex items-center gap-1.5 pt-0.5">
+                    {(hasAChoice
+                      ? [
+                          ...agent.plugins.filter(
+                            p => !agent.connectEither!.some(c => c.plugin === p)
+                          ),
+                          ...agent.connectEither!.map(c => c.plugin),
+                        ]
+                      : agent.plugins
+                    ).map(plugin => (
+                      <PluginIcon
+                        key={plugin}
+                        pluginId={plugin}
+                        className="w-[15px] h-[15px]"
+                        /* Decorative: the name sits beside it, and the same
+                           choice the installed rows above make. */
+                        alt=""
+                      />
+                    ))}
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold" style={{ color: 'var(--v2-text-primary)' }}>
+                      {agent.name}
+                    </div>
+                    <div className="text-xs mt-0.5" style={{ color: 'var(--v2-text-muted)' }}>
+                      {agent.description}
+                    </div>
+
+                    {/*
+                      The reason it cannot be switched on, where the owner is
+                      already looking. Naming the plugin matters: "needs a
+                      connection" sends them hunting through settings.
+                    */}
+                    {/*
+                      WHAT IT WORKS WITH, WHERE THE OWNER IS ALREADY READING.
+
+                      Without this the quote agent's row is word for word the
+                      toggle an owner may already have running, and the only
+                      reasonable reading is "you are offering me what I have".
+                      They do not overlap — the toggle fires once at 72 hours,
+                      this starts at day 7 — but that was visible nowhere.
+                    */}
+                    {agent.worksAlongside && (
+                      <div className="text-xs mt-1" style={{ color: 'var(--v2-text-muted)' }}>
+                        {(t('automation.works_alongside') || 'Works alongside your {name}').replace(
+                          '{name}',
+                          agent.worksAlongside
+                        )}
+                      </div>
+                    )}
+
+                    {needsConnecting && (
+                      <div className="text-xs mt-1.5 font-medium" style={{ color: 'var(--v2-status-warning-text)' }}>
+                        {/*
+                          EITHER, WHEN EITHER WILL DO. `missingPlugins` names
+                          the one provider this row happens to have arrived as
+                          — the group's default — so for an agent that reads a
+                          mailbox it would tell an Outlook business to connect
+                          Gmail, on the row, before the dialog has had a chance
+                          to ask. The row has to say the same thing the dialog
+                          is about to.
+                        */}
+                        {agent.connectEither && agent.connectEither.length > 1
+                          ? (
+                              t('automation.needs_either_plugin') ||
+                              'Connect {plugin} first'
+                            ).replace(
+                              '{plugin}',
+                              agent.connectEither
+                                .map(c => c.plugin)
+                                .join(t('automation.or_separator') || ' or ')
+                            )
+                          : (t('automation.needs_plugin') || 'Connect {plugin} first').replace(
+                              '{plugin}',
+                              agent.missingPlugins.join(', ')
+                            )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/*
+                    One control, and it says what it will do. When a plugin is
+                    missing it goes to the place that fixes that instead of
+                    installing an agent whose every run would fail in a cron.
+                  */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      agent.inputs.length > 0 || needsConnecting || hasAChoice
+                        ? setAsking(agent)
+                        : install(agent.automationId)
+                    }
+                    disabled={installing === agent.automationId}
+                    /*
+                      ONE CONTROL, ALWAYS. It used to become a link to the
+                      plugin settings when something was unconnected, which
+                      answered "I want this agent" with "go elsewhere first"
+                      and left the owner to find their own way back. Connecting
+                      now happens inside the dialog, so the press always means
+                      the same thing and the row stops branching.
+                    */
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors hover:bg-[var(--v2-bg)] disabled:opacity-60"
+                    style={{
+                      background: 'transparent',
+                      color: 'var(--v2-primary)',
+                      border: '1px solid var(--v2-primary)',
+                    }}
+                  >
+                    {installing === agent.automationId ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      t('automation.switch_on') || 'Switch it on'
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -974,6 +1449,34 @@ function ScheduleEditorRow({
             maxWidth: '100%',
           }}
         >
+          {/*
+            ──────────────────────────────────────────────────────────────────
+            WHAT THIS AGENT IS, ABOVE THE QUESTIONS ABOUT IT.
+
+            The table answers every, next, last and stops-after, and none of
+            them says what the agent is FOR. An owner who opened this panel to
+            change a cadence was adjusting the rhythm of something described
+            only by a three-word name in the column to the left.
+
+            `basis-full` so it takes the whole first line of a flex container
+            whose entire design is to keep the two questions side by side —
+            without it the sentence would compete with them for width and the
+            one-row layout the comment above defends would collapse.
+
+            Rendered only when there is something to say: an agent the owner
+            built themselves may have no description, and an empty paragraph
+            would add padding above the controls for nothing.
+            ──────────────────────────────────────────────────────────────────
+          */}
+          {agent.description && (
+            <p
+              className="basis-full text-xs m-0"
+              style={{ color: 'var(--v2-text-secondary)', lineHeight: 1.5 }}
+            >
+              {agent.description}
+            </p>
+          )}
+
           <IntervalPicker
             id={`cadence-${agent.agentId}`}
             label={t('automation.col_every') || 'Every'}

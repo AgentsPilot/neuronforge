@@ -300,12 +300,27 @@ describe('every agent is offered the same schedule', () => {
       for (const choice of agent.cadenceChoices) {
         expect(withinRange(CADENCE_INTERVAL[choice], SCHEDULE_RANGE)).toBe(true);
       }
-      for (const days of agent.stopAfterChoices) {
+      /* `?? []` because the stop rule is optional now. An agent with nothing
+         dated to bound — the spreadsheet importer, whose rows have no age —
+         declares none, and iterating undefined threw before the assertion
+         below could say anything useful. */
+      for (const days of agent.stopAfterChoices ?? []) {
         expect(withinRange({ every: days, unit: 'days' }, STOP_RANGE)).toBe(true);
       }
-      expect(
-        withinRange({ every: agent.defaultStopAfterDays, unit: 'days' }, STOP_RANGE)
-      ).toBe(true);
+      /*
+       * Only where there is a default to check. The two halves move together —
+       * an agent declaring choices but no default, or the reverse, is a real
+       * mistake — so they are asserted as a PAIR rather than each skipped
+       * independently, which would let a half-declared stop rule through.
+       */
+      expect(`${agent.id}: default ${agent.defaultStopAfterDays === undefined}, choices ${agent.stopAfterChoices === undefined}`)
+        .toBe(`${agent.id}: default ${agent.defaultStopAfterDays === undefined}, choices ${agent.defaultStopAfterDays === undefined}`);
+
+      if (agent.defaultStopAfterDays !== undefined) {
+        expect(
+          withinRange({ every: agent.defaultStopAfterDays, unit: 'days' }, STOP_RANGE)
+        ).toBe(true);
+      }
     }
   });
 

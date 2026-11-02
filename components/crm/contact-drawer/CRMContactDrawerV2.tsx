@@ -48,6 +48,9 @@ import { ClientDetailsSection } from './ClientDetailsSection';
 import type { ContactSourceMetadata } from '@/components/crm/contactSources';
 import { isContactInactive } from '@/components/crm/contactStatus';
 import type { WeeklyAvailability } from '@/components/scheduling/AvailabilityEditor';
+/* The business's real windows for a date, so a suggested session is not
+   offered on a day it is shut — see `worksOn` where the series is built. */
+import { windowsForDate } from '@/lib/scheduling/availabilityWindows';
 import { NotesSection } from './NotesSection';
 import { SessionsSection } from './SessionsSection';
 import { TasksSection } from './TasksSection';
@@ -5551,13 +5554,50 @@ export function CRMContactDrawerV2({
                    * and the field can never disagree about the rhythm — and so
                    * a monthly course keeps its anchor day.
                    */
+                  /*
+                   * ── THE SUGGESTIONS SKIP DAYS THE BUSINESS IS CLOSED ─────
+                   *
+                   * `nextInSeries` is pure arithmetic over the rhythm — it has
+                   * no idea whether the day it lands on is one the business
+                   * works. A weekly series can therefore propose a Friday to a
+                   * business that is shut on Fridays.
+                   *
+                   * Normally the slot grid would refuse that day; it disables
+                   * non-working days. But a proposed hour is pre-filled, which
+                   * makes the time step open COLLAPSED — the owner sees a tidy
+                   * summary line and confirms, and the one component that knows
+                   * about working days is never rendered against it. Nothing
+                   * downstream catches it either: `closedDayCheck` on the
+                   * server reads explicitly recorded time off, never the weekly
+                   * pattern. Reported from the card: a make-up booked onto a
+                   * closed Friday.
+                   *
+                   * So the OFFER is filtered and the choice is not. A closed
+                   * day is skipped here, the rhythm carries on from it so the
+                   * cadence is kept, and an owner who deliberately wants that
+                   * Friday can still pick it in the grid.
+                   *
+                   * Only when the pattern is known and says something: an
+                   * unloaded or empty `availability` filters nothing, which
+                   * leaves the old behaviour rather than proposing no dates at
+                   * all.
+                   */
+                  const worksOn = (local: string): boolean => {
+                    if (!availability) return true;
+                    const windows = windowsForDate(availability, local.slice(0, 10));
+                    return windows.length > 0;
+                  };
+
                   const upcoming: string[] = [];
                   let running = meetings;
 
-                  for (let i = 0; i < 6; i += 1) {
+                  /* Bounded by TRIES, not by hits: a business closed most of
+                     the week needs several steps per suggestion, and a series
+                     with no working day left must still terminate. */
+                  for (let tries = 0; tries < 60 && upcoming.length < 6; tries += 1) {
                     const next = nextInSeries(running, soldLocals);
                     if (!next) break;
-                    upcoming.push(next);
+                    if (worksOn(next)) upcoming.push(next);
                     running = [...running, next];
                   }
 

@@ -129,7 +129,13 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
    * server's English — a new code added later should read as "something went
    * wrong" in the right language, not leak an internal string.
    */
-  const rescheduleErrorText = (data: { code?: string; hours?: number; limit?: number }): string => {
+  const rescheduleErrorText = (data: {
+    code?: string;
+    hours?: number;
+    limit?: number;
+    /** Which settled state, for `already_settled`: 'held' or 'cancelled'. */
+    meetingStatus?: string | null;
+  }): string => {
     switch (data.code) {
       case 'too_late':
         return t('rescheduleTooLate', { hours: String(data.hours ?? 24) });
@@ -143,6 +149,34 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
         return t('notReschedulable');
       case 'slot_taken':
         return t('slotTaken');
+      /*
+       * A package reached here without naming one of its hours.
+       *
+       * The link should carry `?session=`, and since the reschedule notice
+       * started doing so this is unreachable from a current email. It stays as
+       * the honest answer for the ones already in inboxes, and for any future
+       * caller that forgets: "which session?" is a different problem from
+       * "something went wrong", and the old default said the second.
+       */
+      case 'session_required':
+        return t('rescheduleSessionRequired');
+      /*
+       * The meeting already happened, or was already called off.
+       *
+       * This had no case, so it fell to the default: "we could not change the
+       * date, please try again" — wrong twice over. Nothing failed, and trying
+       * again cannot ever work. A client following a reschedule link from an
+       * older email, after the owner marked the meeting held, was told to
+       * retry something the server will refuse for ever.
+       *
+       * The server distinguishes held from cancelled in its own `error`
+       * sentence; the copy keys do the same so each reads naturally in all
+       * three languages.
+       */
+      case 'already_settled':
+        return data.meetingStatus === 'cancelled'
+          ? t('rescheduleAlreadyCancelled')
+          : t('rescheduleAlreadyHeld');
       default:
         return t('rescheduleFailed');
     }

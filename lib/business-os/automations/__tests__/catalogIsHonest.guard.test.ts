@@ -57,8 +57,19 @@ describe('the automation catalogue', () => {
      * ─────────────────────────────────────────────────────────────────────────
      * AN AGENT CALLS CAPABILITIES. IT DOES NOT CONTAIN THEM.
      *
-     * Every action a plan invokes must be an action on `business-os`. Two
-     * rules in one, and both have already been broken once today:
+     * An action that touches THIS BUSINESS'S OWN DATA must go through
+     * `business-os`. Any other plugin is ordinary and allowed.
+     *
+     * This read "every action must be an action on business-os" until a mail
+     * agent arrived. That shorthand was true by accident: all six plans were
+     * data-only chasers, so there was never a legitimate external call to
+     * distinguish from an illegitimate internal one. It is the wrong rule for a
+     * plugin platform, where an agent calling Gmail, Slack or HubSpot is the
+     * normal case and not a smell.
+     *
+     * The two reasons below are both about our own data, and neither says
+     * anything about an external plugin — which is how to tell the shorthand
+     * from the rule it stood for:
      *
      *   the PLUGIN   `business-os` is the only Business OS surface the agent
      *                pipeline can see — crm, scheduling and payments carry
@@ -87,22 +98,78 @@ describe('the automation catalogue', () => {
       )
     ) as { actions: Record<string, unknown> };
 
+    /*
+     * Actions on any other plugin, by name. AgentPilot is a plugin platform and
+     * agents calling Gmail, Slack or HubSpot is the ordinary case, so the rule
+     * below cannot be "business-os or nothing" — it has to be the thing that
+     * rule was standing in for.
+     */
+    const actionsOf = (pluginName: string): Set<string> => {
+      const raw = JSON.parse(
+        readFileSync(
+          join(process.cwd(), 'lib', 'plugins', 'definitions', `${pluginName}-plugin-v2.json`),
+          'utf-8'
+        )
+      ) as { actions?: Record<string, unknown>; operations?: Record<string, unknown> };
+
+      return new Set(Object.keys(raw.actions ?? raw.operations ?? {}));
+    };
+
     const visit = (steps: Record<string, unknown>[], automationId: string): void => {
       for (const step of steps) {
         if (step.type === 'action') {
-          expect(`${automationId}:${step.action}:${step.plugin}`).toBe(
-            `${automationId}:${step.action}:business-os`
-          );
-          expect(`${automationId}:${step.action}:exists`).toBe(
-            `${automationId}:${step.action}:${
-              Object.prototype.hasOwnProperty.call(plugin.actions, String(step.action))
-                ? 'exists'
-                : 'MISSING FROM THE PLUGIN'
-            }`
-          );
+          const action = String(step.action);
+          const calledOn = String(step.plugin);
+          const isBusinessOsAction = Object.prototype.hasOwnProperty.call(plugin.actions, action);
+
+          if (isBusinessOsAction) {
+            /*
+             * THE BACK-DOOR RULE, which is all the original assertion was for.
+             *
+             * An action this business's own data layer declares must be reached
+             * through `business-os` and no other plugin, because that door is
+             * the one carrying tenant scoping and the one whose writes are
+             * capped, quota'd and dry-runnable. `crm.capture_enquiry` worked and
+             * went around it; that is the regression this guards.
+             */
+            expect(`${automationId}:${action}:${calledOn}`).toBe(
+              `${automationId}:${action}:business-os`
+            );
+          } else {
+            /*
+             * Not our data layer, so it is an external plugin and that is
+             * allowed. Two things still have to be true, and neither was
+             * checked before, because "must be business-os" made them moot:
+             *
+             *   the ACTION must exist on the plugin actually named, or the run
+             *   fails inside a cron where nobody is watching;
+             *
+             *   the PLUGIN must be declared in `pluginsRequired`, which is the
+             *   column the runtime grants the run from. A plan calling a plugin
+             *   it never asked for is an authorisation failure at run time.
+             */
+            const declared = (
+              AUTOMATION_AGENTS.find(a => a.id === automationId)?.pluginsRequired ?? []
+            ).includes(calledOn);
+
+            expect(`${automationId}:${calledOn}:declared`).toBe(
+              `${automationId}:${calledOn}:${declared ? 'declared' : 'NOT IN pluginsRequired'}`
+            );
+            expect(`${automationId}:${calledOn}.${action}:exists`).toBe(
+              `${automationId}:${calledOn}.${action}:${
+                actionsOf(calledOn).has(action) ? 'exists' : 'MISSING FROM THAT PLUGIN'
+              }`
+            );
+          }
         }
+
         const scatter = step.scatter as { steps?: Record<string, unknown>[] } | undefined;
         if (scatter?.steps) visit(scatter.steps, automationId);
+        /* Conditional branches, which this walked past for the same reason the
+           variables guard did: no plan had an action inside one. */
+        for (const key of ['steps', 'then', 'then_steps', 'else', 'else_steps']) {
+          if (Array.isArray(step[key])) visit(step[key] as Record<string, unknown>[], automationId);
+        }
       }
     };
 
@@ -411,6 +478,18 @@ describe('the automation catalogue', () => {
       /* Every detector on `chase_overdue_invoices` concludes the same thing,
          so it answers the whole process and names none. */
       chase_overdue_invoices: [],
+      /* Offered from no card either, and for a stronger reason than the quote
+         chaser's: no detector reports an unanswered client REPLY, and
+         `TRIGGERABLE_PROCESSES` has nothing for one. Naming a detector here
+         would be claiming a population it could not reach. */
+      draft_client_replies: [],
+      /* The same agent through the other mailbox. It shares its twin's reason
+         and its three translation keys, and only one of the two is ever offered
+         — see `variantGroup` in `types.ts`. */
+      draft_client_replies_outlook: [],
+      /* Same reason again: nothing detects "there are leads in a spreadsheet
+         nobody has filed", so there is no detector population to claim. */
+      import_leads_from_sheet: [],
       /* Never booked, and that is the only detector that reports them. */
       follow_up_new_enquiries: ['crm_cold_leads'],
       /* Offered from no card at all — no detector reports an unanswered quote. */

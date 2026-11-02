@@ -40,6 +40,7 @@ import { agentRepository } from '@/lib/repositories/AgentRepository';
 import { agentConfigurationRepository } from '@/lib/repositories/AgentConfigurationRepository';
 import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 import { deriveEnquiryTemplate, parseEnquiry, type EnquirySample, type EnquiryTemplate } from './enquiryTemplate';
+import { voiceFor } from '@/lib/business-os/translations/forOwner';
 import {
   INBOX_CHANNEL_TAG,
   inboxChannelTag,
@@ -851,14 +852,31 @@ export async function enableInboxChannel(input: {
     return { agentId: current.id };
   }
 
+  /* Resolved just before the create, and only on the path that creates: the
+     re-point branch above returns without touching either column, because
+     renaming an agent an owner may have renamed themselves is not this
+     function's business. */
+  const say = await voiceFor(userId);
+
   const { data: agent, error } = await agentRepository.create({
     user_id: userId,
-    /* Named for its mailbox, because a business can have two of these and
-       "Website enquiries from my mailbox" twice in an agent list tells its
-       owner nothing about which is which. */
-    agent_name: `Website enquiries from ${PROVIDER_NAMES[provider]}`,
-    description:
-      'Reads the enquiry emails your website form sends you and files each sender as a lead.',
+    /*
+     * IN THE OWNER'S LANGUAGE, and named for its mailbox.
+     *
+     * Named for the mailbox because a business can have two of these, and
+     * "Website enquiries from my mailbox" twice in an agent list tells its
+     * owner nothing about which is which. `PROVIDER_NAMES` stays untranslated
+     * on purpose — Gmail and Outlook are brand names, not words.
+     *
+     * TRANSLATED because these two columns are STORED and then rendered
+     * verbatim by the general agents list, which knows nothing about Business
+     * OS and has no key to resolve. Hardcoded English put "Website enquiries
+     * from Gmail" in the middle of an otherwise Hebrew list. The placeholder is
+     * filled by the resolver rather than concatenated here: word order differs
+     * between languages, and `'…from ' + provider` cannot be translated at all.
+     */
+    agent_name: say('inbox_channel.agent_name', { provider: PROVIDER_NAMES[provider] }),
+    description: say('inbox_channel.agent_description'),
     /*
      * BOTH markers. On tags, not the name: a renamed agent must stay findable,
      * or the next setup silently creates a second one.

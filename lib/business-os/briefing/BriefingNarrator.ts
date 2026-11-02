@@ -288,6 +288,19 @@ export function buildPrompt(
     '   longest list there is.',
     '6. Write every count as its number. "2 appointments are ready", never',
     '   "appointments are ready".',
+    /*
+     * Rule 7 earns its place because this one fact is not about the business.
+     *
+     * Everything else here is a day the owner is living. `brokenConnection` is
+     * the product having stopped, and a narrator weighing it against six
+     * appointments will tuck it in at the end or drop it as off-topic — which
+     * is the silence this fact was added to end. Hence: first line, and only
+     * when the key is present.
+     */
+    '7. If brokenConnection is present, it is the FIRST line, before anything',
+    '   about the day. Name it and say signing in again fixes it. Never',
+    '   mention it when the key is absent, and never name the mechanism — not',
+    '   "token", not "OAuth", not "expired credentials".',
     '',
     /*
      * Vocabulary is the model's job, not a lookup table's.
@@ -404,6 +417,22 @@ function toPromptShape(facts: BriefingFacts) {
       : null;
 
   const shape: Record<string, unknown> = {
+    /*
+     * What has stopped working, when something has.
+     *
+     * Named plainly and only when true, because a key that is absent cannot be
+     * narrated — the rule this whole function is built on. The model gets the
+     * plugin's own name so it says "Gmail", and the count of the others so it
+     * can mention them without being told which.
+     */
+    ...(facts.connections?.broken.length
+      ? {
+          brokenConnection: {
+            name: facts.connections.broken[0].name,
+            others: facts.connections.broken.length - 1,
+          },
+        }
+      : null),
     appointments: singleAppointment
       ? // One appointment: the appointment itself, nothing to count.
         { only: singleAppointment }
@@ -850,7 +879,37 @@ export function findUntranslatedWords(
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function buildStatements(facts: BriefingFacts, language: BriefingLanguage): string[] {
-  return [...todayStatements(facts, language), ...outlookStatements(facts, language)];
+  /*
+   * The broken connection goes FIRST, ahead of the day itself.
+   *
+   * Everything after it is something the owner can act on at their own pace. A
+   * dead lead channel is the product not working, every hour of it may be an
+   * enquiry nobody filed, and it is the one line here that stops being true
+   * the moment they deal with it.
+   */
+  return [
+    ...connectionStatements(facts, language),
+    ...todayStatements(facts, language),
+    ...outlookStatements(facts, language),
+  ];
+}
+
+/**
+ * What has stopped working, if anything has.
+ *
+ * ONE line however many are broken. Two sentences differing only in a plugin
+ * name is the shape that turned a busy day into seventeen lines, and the
+ * briefing's own `NAME_LIMIT` rule exists for exactly that: name one, count
+ * the rest.
+ */
+function connectionStatements(facts: BriefingFacts, language: BriefingLanguage): string[] {
+  /* Absent on facts built before this field existed — read as "none", like
+     every other absent-safe default in this module. */
+  const broken = facts.connections?.broken ?? [];
+  if (broken.length === 0) return [];
+
+  const phrase = FALLBACK[language] ?? FALLBACK.en;
+  return [phrase.connectionBroken(broken[0].name, broken.length - 1)];
 }
 
 /**
@@ -1271,6 +1330,14 @@ function formatAmount(amount: number, currency: string): string {
 }
 
 interface FallbackPhrases {
+  /**
+   * A connection that has lapsed, and how many others have.
+   *
+   * Names the plugin and what it costs, never the mechanism. "The OAuth token
+   * expired" is our word for our problem; the owner needs to know that the
+   * thing is not working and that signing in again fixes it.
+   */
+  connectionBroken: (name: string, others: number) => string;
   appointments: (n: number) => string;
   /**
    * The count and the first appointment in ONE sentence.
@@ -1430,6 +1497,10 @@ const hebrewAnd = (next: string) => (HEBREW_START.test(next) ? ' ו' : ' ו-');
  */
 const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
   en: {
+    connectionBroken: (name, others) =>
+      others > 0
+        ? `${name} needs reconnecting, and ${others} other connection${others === 1 ? '' : 's'} too. Until you sign in again, anything that depends on them has stopped.`
+        : `${name} needs reconnecting. Until you sign in again, anything that depends on it has stopped.`,
     appointments: n => (n === 1 ? 'You have one appointment today.' : `You have ${n} appointments today.`),
     appointmentsWithFirst: (n, name, time) =>
       `You have ${n} appointments today, the first with ${name} at ${time}.`,
@@ -1510,6 +1581,10 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       (money ? `: ${money}.` : '.'),
   },
   es: {
+    connectionBroken: (name, others) =>
+      others > 0
+        ? `Hay que volver a conectar ${name}, y ${others} conexión${others === 1 ? '' : 'es'} más. Hasta que vuelvas a iniciar sesión, todo lo que depende de ellas está detenido.`
+        : `Hay que volver a conectar ${name}. Hasta que vuelvas a iniciar sesión, todo lo que depende de ello está detenido.`,
     appointments: n => (n === 1 ? 'Tienes una cita hoy.' : `Tienes ${n} citas hoy.`),
     appointmentsWithFirst: (n, name, time) =>
       `Tienes ${n} citas hoy, la primera con ${name} a las ${time}.`,
@@ -1590,6 +1665,10 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       (money ? `: ${money}.` : '.'),
   },
   he: {
+    connectionBroken: (name, others) =>
+      others > 0
+        ? `צריך לחבר מחדש את ${name}, ועוד ${others} חיבורים. עד שתתחברו שוב, כל מה שתלוי בהם עצר.`
+        : `צריך לחבר מחדש את ${name}. עד שתתחברו שוב, כל מה שתלוי בו עצר.`,
     appointments: n => (n === 1 ? 'יש לך פגישה אחת היום.' : `יש לך ${n} פגישות היום.`),
     appointmentsWithFirst: (n, name, time) =>
       `יש לך ${n} פגישות היום, הראשונה עם ${name} בשעה ${time}.`,
@@ -1693,6 +1772,7 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
  */
 const SUBJECT_WORDS: Record<BriefingLanguage, Record<string, string[]>> = {
   en: {
+    connection: ['reconnect', 'reconnecting', 'sign in again'],
     intake: ['intake', 'form'],
     awaitingPayment: ['not paid for', 'unpaid appointment'],
     cancelled: ['cancel'],
@@ -1702,6 +1782,7 @@ const SUBJECT_WORDS: Record<BriefingLanguage, Record<string, string[]>> = {
     owed: ['owe', 'outstanding', 'debt'],
   },
   es: {
+    connection: ['volver a conectar', 'reconectar', 'iniciar sesión'],
     intake: ['formulario', 'admisión'],
     awaitingPayment: ['sin pagar', 'no ha pagado'],
     cancelled: ['cancel'],
@@ -1711,6 +1792,7 @@ const SUBJECT_WORDS: Record<BriefingLanguage, Record<string, string[]>> = {
     owed: ['debe', 'deuda', 'pendiente de pago'],
   },
   he: {
+    connection: ['לחבר מחדש', 'חיבור מחדש', 'להתחבר שוב'],
     intake: ['טופס'],
     awaitingPayment: ['לא שילם', 'טרם שילם'],
     cancelled: ['ביטל', 'בוטל', 'ביטול'],
@@ -1725,6 +1807,9 @@ const SUBJECT_WORDS: Record<BriefingLanguage, Record<string, string[]>> = {
 function subjectHasContent(subject: string, facts: BriefingFacts): boolean {
   const { appointments, money, outlook } = facts;
   switch (subject) {
+    /* The model may not tell somebody to reconnect something that is working.
+       A false alarm here sends an owner to re-authorise a live mailbox. */
+    case 'connection': return (facts.connections?.broken.length ?? 0) > 0;
     case 'intake': return appointments.awaitingIntake.length > 0;
     case 'awaitingPayment': return appointments.awaitingPayment.length > 0;
     case 'cancelled': return appointments.cancelled.length > 0;
