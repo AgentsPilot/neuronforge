@@ -928,9 +928,41 @@ export function RunningAgentsCard() {
 
                   {/* Next run — green ONLY when something is genuinely coming. */}
                   <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule }}>
+                    {/*
+                      ────────────────────────────────────────────────────────
+                      "WAITING ON YOU" ONLY WHEN IT ACTUALLY IS.
+
+                      `state` collapses two different situations into
+                      `blocked`: a plugin the owner has not connected (they ARE
+                      the blocker, and acting is the only way the agent ever
+                      works again), and an agent that FAILED and was
+                      dead-lettered — which is usually our fault, not theirs,
+                      and which is still scheduled.
+
+                      Both printed "waiting on you" in this cell. For a stopped
+                      agent that is wrong twice over: it blames the owner for a
+                      bug, and it hides the one fact they can act on — that it
+                      tries again, and when. An owner reading "waiting on you"
+                      beside a message they cannot action has been handed a
+                      dead end.
+
+                      So a stopped agent with a next run shows that run, quietly
+                      rather than in success green, since it is a retry and not
+                      a promise. The reason it stopped already has a home: the
+                      Watches column carries the sentence, and `stopped.whatToDo`
+                      sits under it when the execution layer wrote one.
+                      ────────────────────────────────────────────────────────
+                    */}
                     {state === 'running' && when(agent.nextRun) ? (
                       <span style={{ color: 'var(--v2-success)', fontWeight: 600 }}>
                         {when(agent.nextRun)}
+                      </span>
+                    ) : agent.stopped && !agent.blocked && when(agent.nextRun) ? (
+                      <span style={{ color: 'var(--v2-text-secondary)' }}>
+                        {(t('automation.next_retry') || 'tries again {when}').replace(
+                          '{when}',
+                          when(agent.nextRun) ?? ''
+                        )}
                       </span>
                     ) : (
                       <span style={{ color: 'var(--v2-text-muted)' }}>

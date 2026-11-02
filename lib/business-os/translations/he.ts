@@ -3462,6 +3462,7 @@ export const he = {
     'automation.import_leads_from_sheet.watches': 'שורות חדשות בגיליון הלידים',
     'automation.available_heading': 'זמין גם',
     'automation.needs_plugin': 'דורש {plugin}',
+    'automation.next_retry': 'ינסה שוב {when}',
     'automation.page_range': '{from}–{to} מתוך {total}',
     'automation.page_previous': 'הדף הקודם',
     'automation.page_next': 'הדף הבא',
