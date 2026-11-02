@@ -485,6 +485,23 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
 
       const outcome = await sendOneRecovery(attemptId, ctx.userId);
 
+      /*
+       * A GUARD THAT FIRED IS NOT A FAILURE — the same fix as the invoice
+       * chase below, for the same reason and found by the same test. The
+       * cooldown, or an attempt the client has since finished, means there is
+       * nothing to send and nothing wrong. Reported as data so the run still
+       * says what it decided; a real fault (no email, the attempt is gone, the
+       * send failed) still errors.
+       *
+       * BEFORE the `!outcome.sent` check, which matches a skipped outcome too.
+       */
+      if (outcome.skipped) {
+        return {
+          data: { reminded: false, skipped: true, attemptId, reason: outcome.reason ?? null },
+          error: null,
+        };
+      }
+
       if (!outcome.sent) {
         return {
           data: null,
@@ -648,6 +665,40 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
       const { sendInvoiceChase } = await import('@/lib/services/InsightActionDispatchService');
 
       const outcome = await sendInvoiceChase(invoiceId, ctx.userId);
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A GUARD THAT FIRED IS NOT A FAILURE.
+       *
+       * This returned an error for ANY `sent: false`, and that broke a live
+       * agent. `chase_overdue_invoices` runs daily and most days finds nothing
+       * new: it picked up two invoices already chased inside the seven-day
+       * cooldown, both were correctly refused, and because each refusal was an
+       * error the scatter reported "all 2 items failed", the run was recorded
+       * as failed, the queue dead-lettered it, and the dashboard told the owner
+       * the agent cannot run — quoting the cooldown message as the cause.
+       *
+       * An agent that reports itself broken for doing the right thing is worse
+       * than one that is silent, because the owner's next move is to switch it
+       * off. And it is the normal case, not an edge: a chaser that works is a
+       * chaser that mostly declines to send.
+       *
+       * `skipped` is the service's own word for "nothing to send and nothing
+       * wrong" — the cooldown, not due yet, already paid, a daily cap. A real
+       * fault (no email address, the invoice is gone) still errors, because
+       * those need somebody to act.
+       *
+       * Reported as data rather than swallowed: `chased: false` with the reason
+       * means a run's output still says what it decided and why, which is what
+       * an owner asking "it ran, so what did it do" needs.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (outcome.skipped) {
+        return {
+          data: { chased: false, skipped: true, invoiceId, reason: outcome.reason ?? null },
+          error: null,
+        };
+      }
 
       if (!outcome.sent) {
         return {
@@ -1937,6 +1988,35 @@ function resolveWriteValue(
     const resolved = resolveDateExpr(value, timezone ?? 'UTC');
     // A date-only column must not be given a full timestamp.
     return field.type === 'date' ? resolved.slice(0, 10) : resolved;
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN ARRAY, FOR A COLUMN THE CATALOGUE DECLARES AS ONE.
+   *
+   * `contacts.tags` is `type: 'string[]'` and is listed among the writable
+   * fields of `create_contacts`. The compiler had no case for it, so every
+   * write carrying tags was refused — a field the catalogue advertises as
+   * writable that could not actually be written.
+   *
+   * It failed invisibly, which is why it survived. The spreadsheet importer
+   * tags every contact it files, its scatter sets `continueOnError` so one bad
+   * row cannot abort the import, and the run therefore reported COMPLETED
+   * after failing on all 171 rows. The owner saw a healthy agent, a sensible
+   * duration, and an empty CRM.
+   *
+   * Guarded two ways rather than accepting any array. The column type has to
+   * say so — an array into a `string` or `money` column is still a mistake —
+   * and every element has to be a scalar, because an array of objects is the
+   * same `[object Object]` hazard the throw below exists to prevent, one level
+   * down.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (Array.isArray(value) && field.type === 'string[]') {
+    const bad = value.find(item => item !== null && typeof item === 'object');
+    if (bad === undefined) {
+      return value.map(item => (item === null ? item : String(item)));
+    }
   }
 
   throw new BizQLValidationError([

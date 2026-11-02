@@ -188,29 +188,86 @@ export abstract class BasePluginExecutor {
         return pluginSpecificError;
     }
 
-    // Check for common error patterns
-    if (error.message?.includes('401') || error.message?.includes('unauthorized')) {
+    /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * THE STATUS, NOT A SUBSTRING OF THE SENTENCE.
+     *
+     * These were `error.message?.includes('401')`, and a plain substring test on
+     * a free-text message is a liar. An executor builds its errors as
+     * `Gmail API error: ${status} - ${body}`, so the body travels inside the
+     * message — and a body mentioning 401 anywhere, a message id, a byte count,
+     * a timestamp, a quoted subject line, makes an unrelated failure report
+     * itself as an expired connection.
+     *
+     * That is not hypothetical. An owner spent a day being told
+     *
+     *   Your Gmail connection has expired. Please reconnect in Settings →
+     *   Connected Apps.
+     *
+     * about an agent whose Gmail connection was healthy the whole time — the
+     * refresh token was good, and ANOTHER agent was reading the same mailbox
+     * successfully on the same account. The message sent us hunting an OAuth
+     * problem that did not exist, which is worse than no message: a wrong
+     * cause is acted on, and the owner is told to reconnect something that
+     * works.
+     *
+     * `400` was the worst of them. It matched `includes('invalid')` too, so any
+     * message containing the word "invalid" — "invalid date", "invalid
+     * spreadsheet range" — became "Invalid request parameters."
+     *
+     * So the status is read from where a status actually lives: a `status` or
+     * `statusCode` field if the thrower set one, else the `NNN` that this
+     * codebase's own `… API error: NNN - …` convention puts in a known place.
+     * A number found loose in prose is not a status and no longer pretends to
+     * be one.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    const status = this.httpStatusOf(error);
+
+    if (status === 401 || /\bunauthorized\b/i.test(error.message ?? '')) {
       return commonErrors.auth_failed || 'Authentication failed. Please reconnect this plugin.';
     }
-    
-    if (error.message?.includes('403') || error.message?.includes('quota')) {
+
+    if (status === 403) {
       return commonErrors.quota_exceeded || 'Rate limit exceeded. Please try again later.';
     }
-    
-    if (error.message?.includes('400') || error.message?.includes('invalid')) {
-      return commonErrors.invalid_recipient || commonErrors.invalid_request || 'Invalid request parameters.';
-    }
-    
-    if (error.message?.includes('429')) {
+
+    if (status === 429) {
       return commonErrors.api_rate_limit || 'Too many requests. Please wait a moment and try again.';
     }
 
-    if (error.message?.includes('404')) {
+    if (status === 404) {
       return commonErrors.not_found || 'Resource not found.';
+    }
+
+    if (status === 400) {
+      return commonErrors.invalid_recipient || commonErrors.invalid_request || 'Invalid request parameters.';
     }
     
     // Default error message
     return `${this.pluginName} ${actionName} failed: ${error.message || 'Unknown error'}`;
+  }
+
+  /**
+   * The HTTP status an error actually carries, or null.
+   *
+   * Looked for in three places, narrowest first: an explicit numeric field set
+   * by whoever threw, and then the `NNN` immediately after this codebase's own
+   * `… API error: ` / `… failed: ` prefix, which every executor here builds the
+   * same way. Nothing else counts — a number loose in prose is prose.
+   */
+  private httpStatusOf(error: any): number | null {
+    const explicit = error?.status ?? error?.statusCode ?? error?.response?.status;
+    if (typeof explicit === 'number' && explicit >= 100 && explicit < 600) return explicit;
+
+    const message = typeof error?.message === 'string' ? error.message : '';
+    const framed = message.match(/(?:API error|failed):\s*(\d{3})\b/i);
+    if (framed) {
+      const code = Number(framed[1]);
+      if (code >= 100 && code < 600) return code;
+    }
+
+    return null;
   }
 
   // Hook method for plugin-specific error handling
