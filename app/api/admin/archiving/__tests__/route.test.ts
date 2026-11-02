@@ -66,6 +66,16 @@ jest.mock('@/lib/repositories/AdminUserRepository', () => ({
 // jest.mock calls are hoisted above this import, so the route loads with the fakes.
 import { GET } from '../route';
 
+/*
+ * The audit write is non-blocking by mandate, so its failure is invisible —
+ * and in this suite it was a real request to the placeholder Supabase URL.
+ * `AuditTrailService` builds its own client with `createClient`, so mocking
+ * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
+ */
+jest.mock('@/lib/services/AuditTrailService', () =>
+  require('@/tests/helpers/silentAuditTrail')
+);
+
 const ROUTE_PATH = path.join(process.cwd(), 'app/api/admin/archiving/route.ts');
 const routeSource = fs.readFileSync(ROUTE_PATH, 'utf8');
 

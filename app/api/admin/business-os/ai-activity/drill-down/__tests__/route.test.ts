@@ -64,6 +64,16 @@ jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
 
 import { GET } from '../route';
 
+/*
+ * The audit write is non-blocking by mandate, so its failure is invisible —
+ * and in this suite it was a real request to the placeholder Supabase URL.
+ * `AuditTrailService` builds its own client with `createClient`, so mocking
+ * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
+ */
+jest.mock('@/lib/services/AuditTrailService', () =>
+  require('@/tests/helpers/silentAuditTrail')
+);
+
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const OWNER = { id: '2f734ed5-3681-4049-880d-3de7b096bea3', email: 'owner@example.com' };
 const ACCOUNT = '99999999-9999-4999-8999-999999999999';

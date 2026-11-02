@@ -84,6 +84,16 @@ import { readCodeConfig } from '@/lib/business-os/entitlements/source';
 import type { SnapshotResult } from '@/lib/business-os/entitlements/EntitlementService';
 import type { BusinessOsCreditLotRow } from '@/lib/repositories/BusinessOsCreditLotRepository';
 
+/*
+ * The audit write is non-blocking by mandate, so its failure is invisible —
+ * and in this suite it was a real request to the placeholder Supabase URL.
+ * `AuditTrailService` builds its own client with `createClient`, so mocking
+ * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
+ */
+jest.mock('@/lib/services/AuditTrailService', () =>
+  require('@/tests/helpers/silentAuditTrail')
+);
+
 const ADMIN = { id: '11111111-1111-4111-8111-11111111111a', email: 'ops@example.com' };
 const OWNER = { id: '2f734ed5-3681-4049-880d-3de7b096bea3', email: 'owner@example.com' };
 // Hex letters on purpose, so an upper-cased path really differs (W11b-1 precedent).

@@ -17,6 +17,16 @@ import { NextRequest } from 'next/server';
 
 import { codeOf, LITERAL_RULES } from '@/tests/helpers/bos-llm-literal-rules';
 
+/*
+ * The audit write is non-blocking by mandate, so its failure is invisible —
+ * and in this suite it was a real request to the placeholder Supabase URL.
+ * `AuditTrailService` builds its own client with `createClient`, so mocking
+ * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
+ */
+jest.mock('@/lib/services/AuditTrailService', () =>
+  require('@/tests/helpers/silentAuditTrail')
+);
+
 const getUser = jest.fn();
 jest.mock('@/lib/auth', () => ({ getUser: () => getUser() }));
 
