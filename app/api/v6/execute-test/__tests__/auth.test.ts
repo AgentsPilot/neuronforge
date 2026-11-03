@@ -48,7 +48,7 @@ import { POST } from '@/app/api/v6/execute-test/route';
  * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
  */
 jest.mock('@/lib/services/AuditTrailService', () =>
-  require('@/tests/helpers/silentAuditTrail')
+  jest.requireActual('@/tests/helpers/silentAuditTrail')
 );
 
 const ADMIN_USER_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';

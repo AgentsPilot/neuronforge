@@ -51,7 +51,7 @@ import {
  * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
  */
 jest.mock('@/lib/services/AuditTrailService', () =>
-  require('@/tests/helpers/silentAuditTrail')
+  jest.requireActual('@/tests/helpers/silentAuditTrail')
 );
 
 /** Long enough ago that the observation window has opened. */
