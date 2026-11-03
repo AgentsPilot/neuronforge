@@ -162,6 +162,16 @@ export function countServices(services: ServiceFacts[]): ServiceCounts {
 /** What the profile still gets to say for itself. */
 export interface ShapeProfileFacts {
   online_presence_mode?: string | null;
+  /**
+   * They have a site of their own, and its enquiries reach a mailbox.
+   *
+   * Stored answers like the presence mode, and unlike it they survive a
+   * service count: nothing in a catalogue of services says whether somebody
+   * already has a website. Both nullable — "never established" is the common
+   * state, and the readiness card waits on it rather than guessing.
+   */
+  has_website?: boolean | null;
+  leads_arrive_by_email?: boolean | null;
   /** Older business-wide summaries, read only where there are no services yet. */
   payment_mode?: string | null;
   collection_method?: string | null;
@@ -185,6 +195,8 @@ export function shapeFromServices(
     payment_mode: profile.payment_mode ?? null,
     collection_method: profile.collection_method ?? null,
     online_presence_mode: profile.online_presence_mode ?? null,
+    has_website: profile.has_website ?? null,
+    leads_arrive_by_email: profile.leads_arrive_by_email ?? null,
     hasPricedServices: counts.hasPricedServices,
     plans: counts.plans,
     activeServices: counts.activeServices,

@@ -18,6 +18,8 @@
 
 import type { AutomationRequirement } from '@/lib/business-os/gaps/automations';
 
+import type { GapId } from '@/lib/business-os/gaps/types';
+
 /** Stable key. Also the agent's tag, so an install can be found again. */
 export type AutomationAgentId =
   | 'chase_overdue_invoices'
@@ -186,6 +188,28 @@ export interface AutomationAgent {
    * ───────────────────────────────────────────────────────────────────────────
    */
   variantGroup?: string;
+
+  /**
+   * THE NEEDS-YOU GAP THIS AGENT TAKES OFF THE OWNER.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The dashboard asks the owner to chase invoices; this agent chases invoices.
+   * Both at once is the product telling somebody to do a job a robot is doing,
+   * which is how a card becomes noise.
+   *
+   * Naming the gap is all that is declared here. The WINDOW — how old an item
+   * can be and still be the agent's problem — is deliberately NOT written down,
+   * because the owner can change it: "stops after" is their setting, and a
+   * number copied into this file would silently uncover everything past the old
+   * value the moment they extended it. `coverage.ts` reads it per owner, per
+   * run, from `planInputs` — the same function that hands the running plan its
+   * `stop_after_days`, so the agent and the suppression cannot disagree.
+   *
+   * Coverage also requires the agent to be ALIVE, not merely installed. See
+   * `agentCoverage`.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  coversGap?: GapId;
 
   /** The plugin that distinguishes this variant. Required with `variantGroup`. */
   variantPlugin?: string;

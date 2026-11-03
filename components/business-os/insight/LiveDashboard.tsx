@@ -992,11 +992,40 @@ export function LiveDashboard({
      * answers "can this business trade yet".
      * ───────────────────────────────────────────────────────────────────────
      */
-    const reachedByTheirOwnSite =
-      setupShape.presence === 'booking_only' || setupShape.presence === 'none';
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE GATE IS WHAT THE OWNER SAID, NOT WHAT WE WERE ASKED TO BUILD.
+     *
+     * This read `presence === 'booking_only' || presence === 'none'` — every
+     * owner who declined our website. `presence` records only what WE build,
+     * so a business keeping its own site and a business with no web presence
+     * at all share `booking_only`, and both got this item.
+     *
+     * For the second group the offer is not merely premature, it is
+     * impossible: no site, so no contact form, so no enquiry email, ever. The
+     * description told them "your website emails you when somebody fills in
+     * your contact form" about a website they do not have.
+     *
+     * Two stored answers replace it, and BOTH have to be true:
+     *
+     *   hasOwnWebsite       they have a site of their own
+     *   leadsArriveByEmail  its enquiries reach a mailbox — asked as a
+     *                       follow-up, because it does not follow: plenty of
+     *                       businesses take every enquiry by phone
+     *
+     * `=== true` on both, deliberately, because null is a real and common
+     * value meaning "never asked". Null suppresses the item, which is the
+     * recoverable direction: the option is still in the channels card for
+     * anyone who goes looking, where an agent offered to somebody it cannot
+     * serve is simply a false promise. An owner who answered no is offered
+     * the form smart link instead, which works without a mailbox.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const readsItsOwnEnquiryMail =
+      setupShape.hasOwnWebsite === true && setupShape.leadsArriveByEmail === true;
     const noMailboxAtAll = inboxChannel.channels.length === 0;
 
-    if (noMailboxAtAll && reachedByTheirOwnSite) {
+    if (noMailboxAtAll && readsItsOwnEnquiryMail) {
       return [
         ...setupItems,
         {

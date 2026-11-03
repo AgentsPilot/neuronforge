@@ -286,8 +286,112 @@ export interface StoppedAgent {
   message: string;
   /** The concrete next action, where the execution layer knew one. */
   whatToDo?: string;
+  /**
+   * WHICH OF THE FOUR THINGS AN OWNER CAN DO about this — see
+   * `failureCategoryOf`.
+   *
+   * `message` above is written for a developer, in English, by whichever layer
+   * broke: a plugin definition, the pilot's wrapper, a BizQL refusal. Shown to
+   * a business owner on a Hebrew dashboard it was unreadable AND unactionable,
+   * and translating each variant one by one would chase an open-ended set of
+   * strings that still said "Scatter-gather step step2" at the end of it.
+   *
+   * So the row carries a category and the SENTENCE is chosen from the owner's
+   * dictionary: written once per language, never assembled from whatever a
+   * plugin author typed.
+   */
+  category: FailureCategory;
   /** When the last attempt was made. */
   lastTriedAt: string;
+}
+
+
+/**
+ * What an owner should DO about a failure — four answers, not fifty messages.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE OWNER IS NOT A DEVELOPER, AND THE MESSAGE WAS WRITTEN FOR ONE.
+ *
+ * A failure arrives as whatever the layer that broke happened to say:
+ *
+ *   Your Gmail connection has expired. Please reconnect in Settings…
+ *   Scatter-gather step step2: all 2 items failed. First error: Scatter item 0…
+ *   Could not chase that invoice: already chased within 7 days
+ *   Non-retryable execution error at step "Scan the mailbox…" (unknown)
+ *
+ * All four were shown verbatim to a business owner, in English, on a Hebrew
+ * dashboard. Translating them one by one is the wrong fix twice over: the
+ * strings are open-ended — every plugin and every step type invents its own —
+ * and even translated, "Scatter-gather step step2" tells the person reading it
+ * nothing they can act on.
+ *
+ * There are only ever FOUR things an owner can do about a broken agent:
+ *
+ *   reconnect   an app has stopped accepting us. They re-authorise it.
+ *   busy        a provider is rate-limiting or refusing for now. They wait;
+ *               the agent retries on its own.
+ *   data        something the agent needed was missing or refused — an address,
+ *               a record, a permission. They fix it where they manage it.
+ *   unknown     it is our fault. They do nothing, and should be told that
+ *               rather than left to guess.
+ *
+ * So the category is resolved here and the SENTENCE is chosen from the owner's
+ * dictionary, which means it is written once per language and never assembled
+ * from whatever a plugin author typed.
+ *
+ * The technical text is not thrown away — `agent_executions.error_message`
+ * keeps it verbatim for whoever is debugging. It is simply not what a business
+ * owner is shown.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export type FailureCategory = 'reconnect' | 'busy' | 'data' | 'unknown';
+
+export function failureCategoryOf(code: string | undefined, message: string): FailureCategory {
+  const c = (code ?? '').toLowerCase();
+  const m = (message ?? '').toLowerCase();
+
+  /* The code first — it is the only structured thing we get. */
+  if (c === 'auth_failed' || c === 'insufficient_permissions') return 'reconnect';
+  if (c === 'quota_exceeded' || c === 'api_rate_limit') return 'busy';
+  if (c === 'not_found' || c === 'invalid_request' || c === 'invalid_recipient') return 'data';
+
+  /*
+   * Then the words, because most failures carry no usable code at all — the
+   * pilot's own wrapper errors and every BizQL refusal arrive as prose. Narrow
+   * phrases only: a wrong guess here sends an owner to reconnect an app that
+   * was never broken, so anything unrecognised stays `unknown`, which blames
+   * nobody and asks nothing of them.
+   */
+  if (/reconnect|connection has expired|invalid credentials|unauthorized/.test(m)) return 'reconnect';
+  if (/rate limit|too many requests|quota|try again later/.test(m)) return 'busy';
+  if (/no email address|has no due date|no longer exists|not found|missing/.test(m)) return 'data';
+
+  return 'unknown';
+}
+
+/**
+ * The failure as the OWNER reads it: one sentence, in their language.
+ *
+ * The technical text stays on the object for anyone debugging from a response
+ * body, but `message` — the field every surface renders — becomes the
+ * category's sentence. Falls back to the original only if a dictionary is
+ * missing the key, which is visible and fixable, where silently showing
+ * "Scatter-gather step step2" to a business owner was neither.
+ */
+function ownerFacingFailure(
+  stopped: StoppedAgent | undefined,
+  say: (key: string) => string
+): StoppedAgent | null {
+  if (!stopped) return null;
+
+  const key = `automation.failure.${stopped.category}`;
+  const sentence = say(key);
+
+  return {
+    ...stopped,
+    title: say('automation.failure.title') || stopped.title,
+    message: sentence && sentence !== key ? sentence : stopped.message,
+  };
 }
 
 /**
@@ -509,7 +613,7 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
           blocked,
           requires,
           missingPlugins: missing,
-          stopped: stoppedByAgent.get(agent.id) ?? null,
+          stopped: ownerFacingFailure(stoppedByAgent.get(agent.id), say),
           /*
            * The stored interval, or the one its cron means.
            *
@@ -584,7 +688,7 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
           blocked: missingPlugins.length > 0,
           missingPlugins,
           requires: null,
-          stopped: stoppedByAgent.get(agent.id) ?? null,
+          stopped: ownerFacingFailure(stoppedByAgent.get(agent.id), say),
           /* No named-cadence lookup: the channel's four were all minutes or an
              hour, and every one of those is a form `intervalFromCron` reads
              exactly. */
@@ -615,7 +719,7 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
         blocked: missingPlugins.length > 0,
         missingPlugins,
         requires: null,
-        stopped: stoppedByAgent.get(agent.id) ?? null,
+        stopped: ownerFacingFailure(stoppedByAgent.get(agent.id), say),
         /*
          * No named-cadence lookup, and this is the case it exists to protect.
          * `0 9 * * 1` here is a Monday somebody picked, not the word "weekly" —
@@ -856,7 +960,7 @@ async function resolveName(userId: string, key: string): Promise<string> {
  * wrongly reports a working agent as stopped sends an owner to fix something
  * that is not broken.
  */
-async function deadLetteredRuns(
+export async function deadLetteredRuns(
   agentIds: string[]
 ): Promise<Map<string, StoppedAgent>> {
   const out = new Map<string, StoppedAgent>();

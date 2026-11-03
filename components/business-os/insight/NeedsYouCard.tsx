@@ -31,7 +31,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Send, Check, Clock, AlertCircle, FileText, Bell, Receipt, Undo2, CalendarX } from 'lucide-react';
+import { Send, Check, Clock, AlertCircle, FileText, Bell, Receipt, Undo2, CalendarX, CalendarSearch, UserRound } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CurrencyCode } from '@/lib/business-os/LanguageContext';
 // One definition, in the registry that owns the vocabulary. Declared here too,
@@ -40,6 +40,9 @@ import type { GapAction } from '@/lib/business-os/gaps/types';
 import { RefundModal } from '@/components/payments/RefundModal';
 import { ExtendQuoteDialog } from './ExtendQuoteDialog';
 import { mostUrgent, tasksOf } from '@/lib/business-os/gaps/mostUrgent';
+/* One resolver for 'he' → 'he-IL', shared with the billing and invite copy.
+   A second mapping here would drift the first time a language is added. */
+import { localeFor } from '@/components/business-os/settings/planUpgradeCopy';
 
 export interface GapItemView {
   contactId: string;
@@ -63,6 +66,14 @@ export interface GapItemView {
    * and its button becomes a confirmation rather than a charge.
    */
   autoHeld?: boolean | null;
+  /**
+   * WHY this row exists, as a translation key. See `GapItem.contextKey`.
+   *
+   * The row states a fact; this is the clause that made the owner open the
+   * booking to understand it. A key rather than a sentence, because the gaps
+   * are built server-side and this card renders in three languages.
+   */
+  contextKey?: string | null;
   /** Which channel brought the lead. See `GapItem.via`. */
   via?: string | null;
   /** And which mailbox, where one was recorded. */
@@ -187,6 +198,31 @@ type RowState =
  * an email to your client" from "this scrolls you to a form". Marked with a
  * chevron, which is the one convention a reader does not have to be taught.
  */
+/**
+ * Gaps whose `entityId` IS a booking.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Only three definitions set `bookingId` — `stage_awaiting_completion`,
+ * `booking_unbilled` and `delivery_unconfirmed` — and none of them are the gaps
+ * most obviously about an appointment. The booking-centric ones put the booking
+ * in `entityId`, because that is what their action posts to.
+ *
+ * So "is there a booking to open" cannot be read off one field. Gating on
+ * `bookingId` alone hid the icon on exactly the rows an owner would want it on;
+ * trusting `entityId` everywhere would pass an ACTIVITY id for
+ * `meeting_auto_completed`, which reads from `crm_activities`, and a proposal id
+ * for the quote gaps — landing on a list that highlights nothing.
+ *
+ * Listed rather than inferred, for the reason `OPENS_A_SCREEN` below is: the set
+ * is small, it is a fact about each definition, and a wrong guess sends the owner
+ * somewhere that looks broken.
+ */
+const ENTITY_IS_A_BOOKING = new Set<string>([
+  'meeting_unmarked',
+  'booking_refunded',
+  'meeting_upcoming',
+]);
+
 const OPENS_A_SCREEN = new Set<string>([
   'write_quote',
   'bill_stage',
@@ -356,13 +392,20 @@ function sentenceCarriesAmount(gapId: string, t: (key: string) => string): boole
   return say !== key && say.includes('{amount}');
 }
 
-function leadQualifier(gapId: string, item: GapItemView, t: (key: string) => string): string | null {
+function leadQualifier(
+  gapId: string,
+  item: GapItemView,
+  t: (key: string) => string,
+  /* Same reason as `onDay` below: `undefined` is the BROWSER's locale, not the
+     one the owner chose, so a Hebrew card printed an English clock. */
+  language: string
+): string | null {
   if (item.planLive) return t('gaps.lead.why.plan_live');
 
   if (gapId === 'meeting_unmarked' && item.closingAt) {
     return t('gaps.lead.why.closing').replace(
       '{time}',
-      new Date(item.closingAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+      new Date(item.closingAt).toLocaleTimeString(localeFor(language), { hour: '2-digit', minute: '2-digit' })
     );
   }
 
@@ -384,7 +427,7 @@ function rowKey(gap: GapView, item: GapItemView): string {
 }
 
 export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProps) {
-  const { t, isRTL, formatCurrency } = useLanguage();
+  const { t, isRTL, formatCurrency, language } = useLanguage();
 
   /**
    * The amount in the currency THE CLIENT WAS CHARGED.
@@ -600,6 +643,43 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
    * not exist.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * Open the record this row is about: the exact booking, or the client.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * EVERY ROW LEADS SOMEWHERE. The first version only offered the door where a
+   * BOOKING could be resolved, and on a real card that was none of them: two
+   * unanswered enquiries, a cancelled appointment whose gap carries no
+   * `entityId`, and four unpaid invoices whose `entityId` is an invoice. Seven
+   * rows, no icon — an affordance that exists in the code and never on screen.
+   *
+   * So the booking is the PREFERRED destination, not the condition. Where one
+   * can be named the drawer opens on it; otherwise it opens the client, which
+   * is always knowable because `contactId` is required on every gap item. An
+   * owner asking "what is going on here" is served by either.
+   *
+   * What it will not do is pass an id that names nothing. `entityId` is
+   * whatever the action posts to — an invoice, a proposal, a payment stage —
+   * and sending one as `&booking=` matched no row and expanded nothing, which
+   * looks exactly like passing no id at all.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const bookingFor = (gapId: string, item: { bookingId?: string | null; entityId?: string | null }) =>
+    item.bookingId ?? (ENTITY_IS_A_BOOKING.has(gapId) ? item.entityId ?? null : null);
+
+  const openRecord = (
+    gapId: string,
+    item: { contactId: string; bookingId?: string | null; entityId?: string | null }
+  ) => {
+    const booking = bookingFor(gapId, item);
+    router.push(
+      booking
+        ? `/business-os/crm?contact=${item.contactId}&section=bookings` +
+            `&booking=${encodeURIComponent(booking)}`
+        : `/business-os/crm?contact=${item.contactId}`
+    );
+  };
+
   const openBooking = (item: GapItemView) => {
     /*
      * `bookingId` first, because `entityId` is not always a booking.
@@ -891,9 +971,9 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
             </p>
           )}
 
-          {leadQualifier(lead.gapId, lead.item, t) && (
+          {leadQualifier(lead.gapId, lead.item, t, language) && (
             <p className="text-[12.5px] text-[var(--v2-text-muted)] mb-3">
-              {leadQualifier(lead.gapId, lead.item, t)}
+              {leadQualifier(lead.gapId, lead.item, t, language)}
             </p>
           )}
 
@@ -913,8 +993,28 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
               const leadKey = rowKey(leadGap!, lead.item as GapItemView);
               const leadAction = actionFor(leadGap!, lead.item as GapItemView);
               const asking = rows[leadKey]?.kind === 'confirming';
+              /* The same door the list rows get. The promoted row is the one most
+                 owners ever see — the rest stay folded — so an affordance only on
+                 the list is an affordance most people never find. See
+                 `ENTITY_IS_A_BOOKING`. */
+              const leadBooking =
+                lead.item.bookingId ??
+                (ENTITY_IS_A_BOOKING.has(lead.gapId) ? lead.item.entityId : null);
               return (
                 <>
+                  <button
+                    type="button"
+                    onClick={() => openRecord(lead.gapId, lead.item)}
+                    aria-label={t(leadBooking ? 'gaps.open_booking' : 'gaps.open_contact')}
+                    title={t(leadBooking ? 'gaps.open_booking' : 'gaps.open_contact')}
+                    className="inline-flex items-center justify-center p-1.5 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-colors"
+                  >
+                    {leadBooking ? (
+                      <CalendarSearch className="w-4 h-4" aria-hidden="true" />
+                    ) : (
+                      <UserRound className="w-4 h-4" aria-hidden="true" />
+                    )}
+                  </button>
                   <button
                     type="button"
                     onClick={() => act(leadGap!, lead.item as GapItemView)}
@@ -949,8 +1049,10 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                     <button
                       type="button"
                       onClick={() => setRow(leadKey, { kind: 'idle' })}
-                      /* Sized to the button it sits beside, like the list's. */
-                      className="px-2.5 py-1.5 text-xs font-semibold rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                      /* Sized to the button it sits beside, like the list's.
+                         It said exactly that and used px-2.5 against a px-3 neighbour, so the
+                         pair sat a hair out of line on every promoted row. */
+                      className="px-3 py-1.5 text-xs font-semibold rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
                     >
                       {t('common.cancel') || 'Cancel'}
                     </button>
@@ -1053,6 +1155,9 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                 // The queued strip's own request (Send now / Cancel) lives on its own key.
                 const isQueuedWorking = rows[`queued:${item.contactId}`]?.kind === 'working';
                 const action = actionFor(gap, item);
+                /* The booking this row is about, or null when there is nothing to open.
+                   See `ENTITY_IS_A_BOOKING`. */
+                const bookingToOpen = bookingFor(gap.id, item);
                 const Icon = ACTION_ICON[action || ''] || Send;
                 /*
                  * The same action, asked as a different question.
@@ -1328,7 +1433,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                             * `gaps.waiting` is the fallback, for a gap added
                             * later with no phrase of its own yet.
                             */}
-                          <span title={startedOn(item.since)} className="truncate">
+                          <span title={startedOn(item.since, language)} className="truncate">
                             {(() => {
                               /*
                                * WHAT THE CLOCK IS COUNTING FROM, which is not
@@ -1363,10 +1468,10 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                           {/* The date itself, because the figure beside it is
                               relative and nothing else on this row can be
                               matched against the diary or the drawer. */}
-                          {onDay(item.since) && (
+                          {onDay(item.since, language) && (
                             <span className="shrink-0 text-[var(--v2-text-muted)]">
                               {' · '}
-                              <bdi>{onDay(item.since)}</bdi>
+                              <bdi>{onDay(item.since, language)}</bdi>
                             </span>
                           )}
                           {/*
@@ -1389,7 +1494,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                               <span className="text-[var(--v2-text-muted)] truncate">
                                 {t('gaps.closing_at').replace(
                                   '{time}',
-                                  new Date(item.closingAt).toLocaleTimeString(undefined, {
+                                  new Date(item.closingAt).toLocaleTimeString(localeFor(language), {
                                     hour: '2-digit',
                                     minute: '2-digit',
                                   })
@@ -1434,6 +1539,25 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                             * to be readable, and it is the last thing on the
                             * line.
                             */}
+                          {/*
+                            THE STORY, where the fact does not tell it.
+
+                            An unpaid invoice row said who, how much and how late, and the owner
+                            still had to open the booking to learn that the appointment had been
+                            MISSED and charged for. That is the sentence this adds, beside the
+                            other qualifiers rather than above them: it explains the row, it is not
+                            a second row.
+
+                            Plain muted text, not the amber `autoHeld` uses. That one is a warning —
+                            check this before you bill it — and this is context. Two colours for two
+                            jobs, or the warning stops meaning anything.
+                          */}
+                          {item.contextKey && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-[var(--v2-text-secondary)]">{t(item.contextKey)}</span>
+                            </>
+                          )}
                           {item.autoHeld && (
                             <>
                               <span aria-hidden="true">·</span>
@@ -1520,6 +1644,44 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                           </button>
                         </span>
                       )}
+
+                      {/*
+                        ── LOOK BEFORE ACTING ──────────────────────────────────────────
+
+                        Every button on this row DOES something to a client: sends a mail,
+                        bills a stage, cancels an appointment. The row says who and roughly
+                        what, and the owner's next question is often "what is actually going
+                        on here" — which until now meant leaving the dashboard, finding the
+                        contact and the booking by hand, and losing the list.
+
+                        Three actions already navigate there instead of acting (see
+                        `OPENS_A_SCREEN`), so the destination and the helper both exist. This
+                        offers the same door from EVERY row, without committing to the action
+                        beside it.
+
+                        Only on rows that HAVE a booking. A gap about a quote nobody has written
+                        has nothing to open, and an icon landing on a list that highlights nothing
+                        reads as a product failure: the owner cannot tell whether they misread the
+                        row or we did.
+
+                        `bookingToOpen` is the honest test, and it is not one field: only three
+                        definitions set `bookingId`, while the booking-centric gaps put the booking in
+                        `entityId`. See `ENTITY_IS_A_BOOKING` for why that set is listed rather than
+                        inferred.
+                      */}
+                      <button
+                        type="button"
+                        onClick={() => openRecord(gap.id, item)}
+                        aria-label={t(bookingToOpen ? 'gaps.open_booking' : 'gaps.open_contact')}
+                        title={t(bookingToOpen ? 'gaps.open_booking' : 'gaps.open_contact')}
+                        className="shrink-0 self-start inline-flex items-center justify-center p-1.5 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-surface)] transition-colors"
+                      >
+                        {bookingToOpen ? (
+                          <CalendarSearch className="w-4 h-4" aria-hidden="true" />
+                        ) : (
+                          <UserRound className="w-4 h-4" aria-hidden="true" />
+                        )}
+                      </button>
 
                       {action && state.kind !== 'confirming' && (
                         <button
@@ -1727,7 +1889,11 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
         <ExtendQuoteDialog
           proposalId={extending.proposalId}
           contactName={extending.name}
-          lapsedOn={extending.lapsedOn}
+          /* Formatted here, not in the dialog. It was passed raw, so the sentence
+             read "It ran out on 2026-10-15" — a database value in front of an
+             owner, in the wrong language. `startedOn` is this card's date voice and
+             already renders a date-only value without walking it back a day. */
+          lapsedOn={extending.lapsedOn ? startedOn(extending.lapsedOn, language) : null}
           isRTL={isRTL}
           t={t}
           onClose={() => setExtending(null)}
@@ -1802,18 +1968,60 @@ function waitedFor(since: string, t: (key: string) => string): string {
  * each one costs width that the note needs more.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-function onDay(since: string): string {
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE LANGUAGE IS PASSED IN. `undefined` IS NOT THE APP'S LOCALE.
+ *
+ * Both of these called `toLocaleDateString(undefined, …)`, and `undefined`
+ * means the RUNTIME's default — the browser's language, not the one the owner
+ * chose in this product. So a dashboard set to Hebrew rendered "· 30 Oct" in
+ * the middle of a Hebrew sentence, on any machine whose browser is English.
+ * Which is most of them, including every one these pages get tested on.
+ *
+ * Nothing failed and nothing logged: `toLocaleDateString` always returns a
+ * date, just the wrong one's words.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A DATE-ONLY VALUE HAS NO TIMEZONE, AND MUST NOT BE GIVEN ONE.
+ *
+ * `since` is a `due_date` on some gaps ("2026-10-04") and a timestamp on
+ * others. `new Date('2026-10-04')` is parsed as UTC MIDNIGHT, and rendering
+ * that in a zone behind UTC walks it back a day: an invoice due on 4 October
+ * read "3 באוק׳" for an owner whose timezone is America/New_York. The figure
+ * beside it — "29 days since it was due" — was right, so the row disagreed
+ * with itself by one day and only the date was wrong.
+ *
+ * A due date is a calendar fact, not an instant. Rendered in UTC it comes back
+ * as the day that was written down, whatever clock the reader is on. Real
+ * timestamps keep the owner's zone, which is correct for them.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+function onDay(since: string, language: string): string {
   const date = new Date(since);
   return Number.isNaN(date.getTime())
     ? ''
-    : date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    : date.toLocaleDateString(localeFor(language), {
+        day: 'numeric',
+        month: 'short',
+        ...(DATE_ONLY.test(since) ? { timeZone: 'UTC' } : null),
+      });
 }
 
-function startedOn(since: string): string {
+function startedOn(since: string, language: string): string {
   const date = new Date(since);
   return Number.isNaN(date.getTime())
     ? ''
-    : date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+    : date.toLocaleDateString(localeFor(language), {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+        /* See `onDay`: a date-only value is a calendar fact. */
+        ...(DATE_ONLY.test(since) ? { timeZone: 'UTC' } : null),
+      });
 }
 
 /** Floored at a minute: "in 0 minutes" reads as already gone. */

@@ -101,9 +101,25 @@ describe('moving the session, not its purchase', () => {
     expect(post).toContain("session ? String(session.start_time)");
   });
 
-  it('refuses a session whose outcome is already recorded', () => {
-    /* The row says what happened at an hour; moving it would lose that. */
-    expect(post).toContain('session.meeting_status !== null');
+  it('refuses a session that is SETTLED, not one that is merely marked', () => {
+    /*
+     * This asserted `session.meeting_status !== null`, which refused every
+     * outcome — and `no_show` is an outcome. So a client following the owner's
+     * own "rebook meeting" mail was shown the free slots and then refused on
+     * confirm (ClickUp 868mqzdty).
+     *
+     * The rule it pinned contradicted the GET in the same file and the owner's
+     * `meetings/[id]/reschedule`, both of which enumerate the two states that
+     * really are settled and say in as many words that a missed appointment is
+     * unresolved. The reasoning behind the old line still holds for those two:
+     * the row says what happened at an hour, and moving it would lose that.
+     * Nothing happened at a missed one.
+     *
+     * One rule now, reading whichever row owns the outcome.
+     */
+    expect(post).toContain('session ? session.meeting_status : booking.meeting_status');
+    expect(post).toContain("settledStatus === 'held' || settledStatus === 'cancelled'");
+    expect(post).not.toContain('session.meeting_status !== null');
   });
 
   it('tells the client the hour is gone rather than reporting a fault', () => {

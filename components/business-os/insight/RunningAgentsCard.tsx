@@ -91,7 +91,15 @@ interface InstalledAgent {
    * terminal failure through `toUserFacing` and this card renders what it is
    * handed. Nothing here interprets an error.
    */
-  stopped: { title: string; message: string; whatToDo?: string; lastTriedAt: string } | null;
+  stopped: {
+    title: string;
+    message: string;
+    whatToDo?: string;
+    /** Which of the four things the owner can do; the server has already
+        turned it into the sentence in `message`. */
+    category?: 'reconnect' | 'busy' | 'data' | 'unknown';
+    lastTriedAt: string;
+  } | null;
 
   /**
    * ───────────────────────────────────────────────────────────────────────────
@@ -864,6 +872,42 @@ export function RunningAgentsCard() {
                     */}
                     {agent.stopped ? (
                       <span className="flex flex-col gap-0.5">
+                        {/*
+                          ──────────────────────────────────────────────────────
+                          IN THE OWNER'S LANGUAGE WHERE WE HAVE WORDS FOR IT.
+
+                          `stopped.message` is written for a person but written
+                          in ENGLISH — it comes from a plugin definition's
+                          `common_errors`, and those carry one language. So a
+                          Hebrew dashboard showed "Your Gmail connection has
+                          expired. Please reconnect in Settings → Connected
+                          Apps." in the middle of Hebrew, which is both
+                          unreadable to the owner and the least useful moment
+                          to switch languages on them.
+
+                          The CODE is the translatable half. The English
+                          sentence stays as the fallback: for a code nobody has
+                          written words for, and for every run recorded before
+                          the code was carried. Saying it in English beats
+                          saying nothing, and beats showing a raw key.
+                          ──────────────────────────────────────────────────────
+                        */}
+                        {/*
+                          ONE SENTENCE, ALREADY IN THE OWNER'S LANGUAGE.
+
+                          The server resolves it from the failure's CATEGORY —
+                          reconnect, busy, data, ours — rather than passing
+                          down whatever the layer that broke happened to say.
+                          An owner is not a developer: "Scatter-gather step
+                          step2: all 2 items failed" is unreadable AND
+                          unactionable, and translating each variant would
+                          chase an open-ended set of strings to arrive at the
+                          same place.
+
+                          So this renders what it is given. The technical text
+                          stays on `agent_executions.error_message` for whoever
+                          is debugging.
+                        */}
                         <span style={{ fontWeight: 600 }}>{agent.stopped.message}</span>
                         {agent.stopped.whatToDo && (
                           <span style={{ color: 'var(--v2-text-muted)' }}>

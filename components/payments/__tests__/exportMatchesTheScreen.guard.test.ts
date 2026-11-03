@@ -41,6 +41,13 @@ import { dictionarySource } from '@/tests/helpers/dictionarySource';
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), 'utf8');
 
 const list = read('components/payments/MoneyList.tsx');
+/*
+ * The columns, the cells and the file moved HERE when the money page — the new
+ * design of this same screen — needed the same export. Choosing the rows stays
+ * in each caller, because they choose differently; what the file SAYS is one
+ * answer for both, and these assertions follow it to where it lives.
+ */
+const csv = read('lib/payments/moneyCsv.ts');
 const view = read('components/payments/PaymentsView.tsx');
 const route = read('app/api/payments/money/route.ts');
 const ledger = read('lib/payments/ledgerService.ts');
@@ -133,34 +140,45 @@ describe('it exports every matching row, not the page', () => {
 
 describe('the file says what the screen says', () => {
   it('names the client, in the first column', () => {
-    const header = handler.slice(handler.indexOf('const rows'), handler.indexOf('...chosen.map'));
+    const header = csv.slice(csv.indexOf('return ['), csv.indexOf('...items.map'));
 
     expect(header).toMatch(/payments\.export\.client/);
     expect(header.indexOf('export.client')).toBeLessThan(header.indexOf('export.item'));
   });
 
   it('writes the client name into the row', () => {
-    expect(handler).toMatch(/item\.contactName \?\? ''/);
+    expect(csv).toMatch(/item\.contactName \?\? ''/);
   });
 
   it('writes the date the row shows, not the raw instant', () => {
-    expect(handler).toMatch(/item\.date \? formatDate\(item\.date\) : ''/);
-    expect(handler).not.toMatch(/^\s*item\.date,$/m);
+    expect(csv).toMatch(/item\.date \? formatDate\(item\.date\) : ''/);
+    expect(csv).not.toMatch(/^\s*item\.date,$/m);
   });
 
   it('keeps the amount gross with the refund beside it', () => {
     /* The same decision as every other money surface: what was paid, then what
        came back. A net figure in one column answers neither question. */
-    expect(handler).toMatch(/item\.amount\.toFixed\(2\)/);
-    expect(handler).toMatch(/item\.refunded \? item\.refunded\.toFixed\(2\) : ''/);
+    expect(csv).toMatch(/item\.amount\.toFixed\(2\)/);
+    expect(csv).toMatch(/item\.refunded \? item\.refunded\.toFixed\(2\) : ''/);
+  });
+
+  it('and the date comes from the caller, so the cell reads as the row does', () => {
+    /* Injected rather than computed here: the module has no reader, and the
+       business's timezone is what decides which day a cell shows. */
+    expect(csv).toMatch(/formatDate: \(date: string\) => string/);
   });
 });
 
 describe('both exports go through the one serialiser', () => {
   it('the orders export does', () => {
-    expect(handler).toMatch(/toCsvFile\(rows\)/);
+    /* Through the shared module, which is the only place that serialises. A
+       caller that built its own rows would be the second implementation this
+       whole file exists to prevent. */
+    expect(handler).toMatch(/downloadMoneyCsv\(chosen, t, formatDate\)/);
+    expect(handler).not.toMatch(/const rows(:| =)/);
+    expect(csv).toMatch(/toCsvFile\(buildMoneyCsvRows\(/);
     /* The hand-rolled quoting is gone: it was valid CSV and no defence. */
-    expect(handler).not.toMatch(/replace\(\/"\/g, '""'\)/);
+    expect(csv).not.toMatch(/replace\(\/"\/g, '""'\)/);
   });
 
   it('the ledger export does', () => {

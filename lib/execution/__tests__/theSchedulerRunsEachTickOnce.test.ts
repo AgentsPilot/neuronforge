@@ -664,7 +664,10 @@ describe('a plan that fails without throwing', () => {
     const result = await runScheduledAgents();
 
     expect(markCompleted).not.toHaveBeenCalled();
-    expect(markFailed).toHaveBeenCalledWith('run-1', 'VARIABLE_RESOLUTION_ERROR', true);
+    /* The 4th argument is the provider's error CODE, which a plan that failed
+       on variable resolution never produced — only a plugin call does. It is
+       what lets the dashboard say the failure in the owner's language. */
+    expect(markFailed).toHaveBeenCalledWith('run-1', 'VARIABLE_RESOLUTION_ERROR', true, undefined);
     expect(result.failed).toBe(1);
     expect(result.ran).toBe(0);
   });
@@ -687,7 +690,7 @@ describe('a plan that fails without throwing', () => {
 
     await runScheduledAgents();
 
-    expect(markFailed).toHaveBeenCalledWith('run-1', 'the plan reported failure', false);
+    expect(markFailed).toHaveBeenCalledWith('run-1', 'the plan reported failure', false, undefined);
   });
 
   it('still treats a genuine throw as a failure', async () => {
@@ -698,6 +701,10 @@ describe('a plan that fails without throwing', () => {
 
     const result = await runScheduledAgents();
 
+    /* THREE arguments here, four in the returned-failure case above. The
+       fourth is the provider's error CODE, and a plan that THREW never reached
+       a plugin call to produce one — so this path has nothing to pass, and
+       says so by not passing it. */
     expect(markFailed).toHaveBeenCalledWith('run-1', 'the executor died', true);
     expect(result.failed).toBe(1);
   });
