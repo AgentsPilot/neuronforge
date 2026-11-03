@@ -1,0 +1,1294 @@
+'use client';
+
+/**
+ * The money page: one story, told once, in the order an owner asks it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS BESIDE THE ORDERS PAGE RATHER THAN INSIDE IT
+ *
+ * The orders page answers "show me every order and let me filter them". This
+ * answers "how is my money doing" — a different question, and the reason the
+ * first one felt overwhelming is that it was being asked to answer both.
+ *
+ * `/business-os/orders` is untouched. Nothing here imports from it, so the two
+ * can run side by side while this is judged.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE ONE IDEA: MONEY NESTS, SO DRAW IT NESTING
+ *
+ * Five figures in a row look like they should add up. They do not — what is
+ * late is PART of what is owed — and when they fail to, the reader concludes
+ * one of them is wrong. Sentences explaining that were tried and did not take.
+ *
+ * So the late amount is drawn INSIDE the owed amount, and the question cannot
+ * arise. The same bar appears again at row scale: one order splits the way the
+ * whole month splits, in the same colours, so the device is learnt once.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE PERIOD GOVERNS THE WHOLE SUMMARY
+ *
+ * Every figure in the four cards describes the window chosen above them —
+ * collected, owed, late, not yet due, and written off alike.
+ *
+ * This was once split: events followed the period and debts did not, on the
+ * reasoning that "₪3,600 is owed to you" does not become less true because the
+ * reader picked October. That reasoning holds for the SENTENCE, and it lost the
+ * argument against the SCREEN: four cards side by side, describing four
+ * different spans of time, with only a line of small print to say so. Read
+ * together — which is the only way they are read — they have to mean one thing.
+ *
+ * So the window filters the rows and `totalMoney` produces the figures, the
+ * same function the all-time summary uses. The two differ in window and in
+ * nothing else.
+ *
+ * WHAT TO WATCH: "all time" is the honest answer to "what am I owed in total",
+ * and it is one click away. Nothing here converts between currencies — the
+ * figures bucket by currency exactly as the orders strip does.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, FileSpreadsheet, Download, Plus, Receipt } from 'lucide-react';
+
+import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+/* The money icon and its green, from where every money surface reads them. */
+import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
+import { businessDayFor } from '@/lib/business-os/businessDay';
+import { itemFlow, type MoneyEntry, type MoneyItem, type MoneyTotals } from '@/lib/payments/moneyItems';
+/*
+  REUSED FROM THE ORDERS PAGE, NOT REBUILT.
+
+  This page is that page's new design, so every one of these is the same
+  component or function doing the same job: the search box with its operators,
+  the invoice composer, the accountant's export, and the one serialiser both
+  exports write their file through. A second implementation of any of them is a
+  second answer to a question the owner asks once.
+*/
+import { MoneySearchField } from '@/components/payments/MoneySearchField';
+import { InvoiceModal } from '@/components/payments/InvoiceModal';
+import { LedgerExportModal } from '@/components/payments/LedgerExportModal';
+import { downloadMoneyCsv } from '@/lib/payments/moneyCsv';
+/*
+  What the row actions DO, defined once in `lib/payments/entryActions` because
+  the orders list and the CRM drawer each having their own copy is how one of
+  them stayed broken through two fixes. Refunds never fire from a menu — they
+  open the same dialog the orders page opens.
+*/
+import { buildEntryActions } from '@/lib/payments/entryActions';
+import { RefundModal } from '@/components/payments/RefundModal';
+/*
+  The drawer's own phrasing for "payment 2 of 3", exported for exactly this and
+  already used by MoneyRow. `item.title` and `entry.description` are built on
+  the server with no reader and no language, so for a plan instalment they hold
+  the English sentence the Stripe webhook stored. `planPeriod` carries the raw
+  numbers precisely so the browser can say it in the reader's language.
+*/
+import { planPeriodText } from '@/components/payments/MoneyDetailDrawer';
+import { MoneyOrderDrawer } from './MoneyOrderDrawer';
+
+/**
+ * WHAT NESTS INSIDE A ROW, for the card and the drawer alike.
+ *
+ * A plan's SCHEDULE when there is one, not its entries. The two are not the
+ * same list: a three-instalment plan paid once has three periods and one entry,
+ * so showing entries made a package of three look like a single payment and put
+ * the other two nowhere. Entries otherwise — money that settled no plan is only
+ * ever itself.
+ *
+ * Module-level because two surfaces now draw it. Inside the card it would have
+ * to be copied into the drawer, and the two would answer "what is in this
+ * order" differently the first time either changed.
+ */
+function scheduleOf(item: MoneyItem, t: (key: string) => string): ScheduleRow[] {
+  if (item.plan) {
+    return item.plan.periods.map(period => ({
+      key: period.id,
+      label: `${t('payments.period') || 'Payment'} ${period.installmentNumber}`,
+      /* Paid: the day it arrived. Not yet: the day it is due. */
+      date: period.paidAt ?? period.dueDate ?? null,
+      dateKind: period.paidAt ? 'paid' : 'due',
+      /* A period's status is a narrower set than an entry's. `pending` has no
+         `money_status` of its own and IS money awaiting payment, which is the
+         one this page already names everywhere else. */
+      status:
+        period.status === 'paid' || period.status === 'overdue' || period.status === 'cancelled'
+          ? period.status
+          : 'awaiting_payment',
+      amount: period.amount,
+      /* `MoneyPeriod.currency` is optional and documents this exact fallback:
+         a plan need not bill in the currency of the row it sits under, but
+         when it says nothing it is billing in that one. */
+      currency: period.currency ?? item.currency,
+    }));
+  }
+
+  return item.entries.map(entry => ({
+    key: entry.key,
+    label: entry.invoiceNumber ?? planPeriodText(entry, t) ?? entry.serviceLabel ?? item.title,
+    date: entry.date,
+    dateKind: entry.dateKind,
+    status: entry.status,
+    amount: entry.amount,
+    currency: entry.currency,
+  }));
+}
+
+interface ScheduleRow {
+  key: string;
+  label: string;
+  date: string | null;
+  dateKind: string;
+  status: string;
+  amount: number;
+  currency: string;
+}
+
+/** The four states money can be in, and the one colour each gets everywhere. */
+const TONE = {
+  in: '#2DD4A7',
+  wait: '#F0B429',
+  late: '#F0654F',
+  /** Deliberately quiet. Lost money must not shout louder than earned money. */
+  lost: '#5B6880',
+} as const;
+
+type PeriodKey = 'week' | 'month' | 'year' | 'all';
+
+/**
+ * How many rows an export may carry.
+ *
+ * The same ceiling the route applies to its own reads, so asking for more
+ * cannot quietly return less. The orders page uses the same number for the
+ * same reason.
+ */
+const EXPORT_CAP = 2000;
+
+/*
+  The period figures are the SAME SHAPE as the all-time ones, because they come
+  from the same function over a windowed copy of the rows. There is no second
+  definition of collected, owed or written off, and no second answer about
+  which currency a figure is in.
+*/
+type PeriodTotals = MoneyTotals;
+
+/** `YYYY-MM-DD` for a date, in the reader's own calendar. */
+const dayKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * The window a period means.
+ *
+ * `to` is EXCLUSIVE and set to tomorrow, so today's payments are inside it —
+ * an owner checking at four in the afternoon should see the money that arrived
+ * at noon.
+ */
+function windowFor(period: PeriodKey): { from?: string; to?: string } {
+  if (period === 'all') return {};
+
+  const now = new Date();
+  const to = new Date(now);
+  to.setDate(to.getDate() + 1);
+
+  const from = new Date(now);
+  if (period === 'week') from.setDate(from.getDate() - 7);
+  if (period === 'month') from.setDate(from.getDate() - 30);
+  if (period === 'year') from.setFullYear(from.getFullYear() - 1);
+
+  return { from: dayKey(from), to: dayKey(to) };
+}
+
+export function MoneyFlowPage({
+  /** `?action=create` — open the invoice composer on arrival. */
+  openCreate = false,
+}: {
+  openCreate?: boolean;
+} = {}) {
+  const { t, language, isRTL } = useLanguage();
+
+  /*
+   * A row's currency varies per item, which the context's `formatCurrency`
+   * cannot express — it formats in the reader's chosen display currency. So the
+   * amount is formatted in the currency it IS, the same way `MoneyList` does
+   * it, rather than converted into one the money was never in.
+   */
+  const formatCurrency = useCallback(
+    (amount: number, currency: string) =>
+      new Intl.NumberFormat(language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US', {
+        style: 'currency',
+        currency: currency || 'ILS',
+      }).format(amount),
+    [language]
+  );
+
+  const [period, setPeriod] = useState<PeriodKey>('month');
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<'all' | 'paid' | 'unpaid' | 'overdue' | 'cancelled'>('all');
+  const [items, setItems] = useState<MoneyItem[]>([]);
+  const [totals, setTotals] = useState<MoneyTotals | null>(null);
+  const [periodTotals, setPeriodTotals] = useState<PeriodTotals | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+  /** Rows picked by hand, for an export of exactly those. */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  /**
+   * Which list is open, or neither.
+   *
+   * Neither, to begin with: the summary is what this page is for, and a list
+   * under it turned the page into a scroll with the answer at the top and
+   * everything else below. Both are one click from the same place.
+   */
+  const [listOpen, setListOpen] = useState<'orders' | 'loose' | null>(null);
+  /** The row opened in the drawer, which is a different gesture from expanding
+      it in place: the strip in the list answers "how far along is this", the
+      drawer answers "what happened to it". */
+  const [detail, setDetail] = useState<MoneyItem | null>(null);
+  /** The entry being refunded. Refunds open a dialog rather than firing. */
+  const [refundTarget, setRefundTarget] = useState<MoneyEntry | null>(null);
+  const [showInvoice, setShowInvoice] = useState(openCreate);
+  const [showLedgerExport, setShowLedgerExport] = useState(false);
+  /* The export is a round trip. A button that appears to do nothing is clicked
+     again, and then twice more. */
+  const [exporting, setExporting] = useState(false);
+
+  /** The business's own day, which is what the search operators parse against. */
+  const today = businessDayFor(
+    new Date(),
+    Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  ).date;
+
+  const formatDate = useCallback(
+    (date: string) =>
+      new Date(date).toLocaleDateString(
+        language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US',
+        { year: 'numeric', month: 'short', day: 'numeric' }
+      ),
+    [language]
+  );
+
+  /*
+    ONE QUERY BUILDER, AND THE PAGE WINDOW IS ITS ONLY ARGUMENT.
+
+    The list and the export ask the same question of the same route; only how
+    many rows they want differs. Two assemblies is how an export comes to
+    disagree with the screen it was taken from — the orders page learned that
+    with a file that silently held ten rows of seventy-three.
+  */
+  const queryFor = useCallback(
+    (window: { limit: number; offset: number }) => {
+      const { from, to } = windowFor(period);
+      const params = new URLSearchParams({
+        limit: String(window.limit),
+        offset: String(window.offset),
+        filter,
+        sort: 'date',
+      });
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      if (search.trim()) params.set('search', search.trim());
+      return params;
+    },
+    [period, filter, search]
+  );
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setFailed(false);
+    try {
+      const params = queryFor({ limit: 30, offset: 0 });
+
+      const response = await fetch(`/api/payments/money?${params}`, { cache: 'no-store' });
+      const body = await response.json();
+
+      if (!body?.success) {
+        setFailed(true);
+        return;
+      }
+
+      setItems(body.data.items ?? []);
+      setTotals(body.data.totals ?? null);
+      setPeriodTotals(body.data.periodTotals ?? null);
+    } catch {
+      /* Soft: a page that shows nothing and says why beats one that throws. */
+      setFailed(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [queryFor]);
+
+  /*
+    The row actions, built from the shared definitions. `refresh` is this
+    page's own loader — which is why the builder takes it rather than owning
+    one: what needs reloading after a void differs between a page and a drawer.
+  */
+  /* Through a ref: `load` is rebuilt whenever the query changes, and an action
+     set that closed over the first one would refresh the page the reader was
+     looking at ten filters ago. */
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
+  const entryActions = useMemo(
+    () => buildEntryActions({ refresh: () => loadRef.current(), t, onRefund: setRefundTarget }),
+    [t]
+  );
+
+  /* The flag can arrive AFTER mount — the assistant pushes this route with it
+     set — so the composer follows the prop rather than only seeding from it.
+     The same reason the orders page has this effect. */
+  useEffect(() => {
+    if (openCreate) setShowInvoice(true);
+  }, [openCreate]);
+
+  /* A pick made under one filter cannot be exported from another: carrying it
+     across silently is how a reader exports rows they can no longer see. */
+  useEffect(() => {
+    setSelected(new Set());
+  }, [period, filter, search]);
+
+  /**
+   * EVERY ROW THE FILTER MATCHES, not the thirty on screen.
+   *
+   * The route already holds the whole filtered set — it slices a page out of
+   * it — so this re-asks the same question without the page window. A PICKED
+   * set is different and exported as picked: those rows were chosen by hand.
+   */
+  const exportCsv = useCallback(async () => {
+    let chosen: MoneyItem[];
+
+    if (selected.size > 0) {
+      chosen = items.filter(i => selected.has(i.key));
+    } else {
+      setExporting(true);
+      try {
+        const params = queryFor({ limit: EXPORT_CAP, offset: 0 });
+        const response = await fetch(`/api/payments/money?${params}`, { cache: 'no-store' });
+        const body = await response.json();
+        if (!body?.success) throw new Error(body?.error || 'Failed to load');
+        chosen = body.data.items as MoneyItem[];
+      } catch {
+        /* Said out loud: a download that silently does not happen reads as a
+           broken button. */
+        setFailed(true);
+        return;
+      } finally {
+        setExporting(false);
+      }
+    }
+
+    // A file of nothing but column headings is indistinguishable from a failure.
+    if (chosen.length === 0) return;
+
+    downloadMoneyCsv(chosen, t, formatDate);
+  }, [selected, items, queryFor, t, formatDate]);
+
+  useEffect(() => {
+    const id = setTimeout(load, search ? 300 : 0);
+    return () => clearTimeout(id);
+  }, [load, search]);
+
+  /**
+   * One formatter, every currency present, never summed.
+   *
+   * The same rule the orders strip follows and the same reason: no rate in this
+   * platform may convert money, so two currencies are two figures.
+   */
+  /*
+    EVERY FIGURE ON THIS PAGE READS FROM ONE SET.
+
+    The period used to move the headline alone, so "collected this month" sat
+    beside "cancelled, ever" and the four cards described four different spans
+    of time without saying so. They are one summary and they move together.
+
+    `periodTotals` is the same shape as `totals` — the same function over a
+    windowed copy of the rows — so this is a swap, not a second code path. Null
+    when no window was asked for, which is "all time".
+  */
+  const shown = periodTotals ?? totals;
+
+  /**
+   * One formatter, every currency present, never summed.
+   *
+   * The same rule the orders strip follows and the same reason: no rate in this
+   * platform may convert money, so two currencies are two figures.
+   */
+  const money = useCallback(
+    (pick: (c: { collected: number; outstanding: number; refunded: number; cancelled: number; overdue: number }) => number) => {
+      if (!shown) return formatCurrency(0, 'ILS');
+      const codes = Object.keys(shown.byCurrency);
+      if (codes.length === 0) return formatCurrency(0, 'ILS');
+      return codes.map(code => formatCurrency(pick(shown.byCurrency[code]), code)).join('  ·  ');
+    },
+    [shown, formatCurrency]
+  );
+
+  /** The primary currency, for the figures drawn as a single number. */
+  const primary = useMemo(() => Object.keys(shown?.byCurrency ?? {})[0] ?? 'ILS', [shown]);
+  const asMoney = useCallback((n: number) => formatCurrency(n, primary), [formatCurrency, primary]);
+
+  const collected = shown?.collected ?? 0;
+  const outstanding = shown?.outstanding ?? 0;
+  const overdue = shown?.overdue ?? 0;
+  const notYetDue = Math.max(0, outstanding - overdue);
+  const bookValue = collected + outstanding;
+
+  const periods: { key: PeriodKey; label: string }[] = [
+    { key: 'week', label: t('reports.period_week') || 'Week' },
+    { key: 'month', label: t('reports.period_month') || 'Month' },
+    { key: 'year', label: t('reports.period_year') || 'Year' },
+    { key: 'all', label: t('reports.period_all') || 'All time' },
+  ];
+
+  /*
+    The rows, read in two passes rather than regrouped.
+
+    `kind` is the route's own word for the distinction and the grouping already
+    decided it: `booking` is work sold, `standalone` is money with no booking
+    behind it. Nothing here re-derives that — a second opinion about what an
+    order is would be exactly the drift this page must not introduce.
+  */
+  const orders = useMemo(() => items.filter(i => i.kind === 'booking'), [items]);
+  const loose = useMemo(() => items.filter(i => i.kind !== 'booking'), [items]);
+
+  const chips: { key: typeof filter; label: string; tone?: string }[] = [
+    { key: 'all', label: t('money.filter_all') || 'All' },
+    { key: 'paid', label: t('payments.collected') || 'Collected', tone: TONE.in },
+    { key: 'unpaid', label: t('payments.outstanding') || 'Outstanding', tone: TONE.wait },
+    { key: 'overdue', label: t('payments.overdue_total') || 'Overdue', tone: TONE.late },
+    { key: 'cancelled', label: t('payments.cancelled_total') || 'Cancelled', tone: TONE.lost },
+  ];
+
+  return (
+    /*
+      `PAGE_CONTAINER` rather than a width of its own: the header and the tab bar
+      above this body use the same string, and a page that picks its own number
+      makes their edges miss each other. See lib/business-os/pageContainer.ts.
+    */
+    <div className={`${PAGE_CONTAINER} w-full pb-20 pt-8`}>
+      {/* ── the one control that governs the page ───────────────────── */}
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-4">
+        {/*
+          The icon and the green the orders page has always used, from the same
+          constant, because this page IS that page — a reader who knows where
+          their money lives should not have to learn a new mark for it.
+        */}
+        <h1 className="m-0 flex items-center gap-3 text-[26px] font-extrabold tracking-tight text-[var(--v2-text-primary)]">
+          <span
+            className="grid h-10 w-10 flex-none place-items-center rounded-lg"
+            style={{ backgroundColor: 'rgba(34, 197, 139, 0.2)' }}
+          >
+            <Receipt className="h-5 w-5" style={{ color: REPORTS_COLORS.PRIMARY }} aria-hidden="true" />
+          </span>
+          {t('money.title') || 'Your money'}
+        </h1>
+
+        {/*
+          The page's own actions. The PERIOD is no longer here: it governs the
+          summary and nothing else on the page, so it now sits on the summary,
+          where what it moves is visible as it is moved.
+        */}
+        <div className="flex flex-wrap items-center gap-2">
+        {/*
+          The actions, in the order an owner reaches for them: take the money
+          out, then put a new bill in.
+
+          Two exports because they answer different questions. This one saves
+          WHAT IS ON SCREEN, so an empty view is an empty file. The ledger spans
+          its own date range and ignores this page's period, search and filter,
+          so it stays available whenever the business has any money at all.
+        */}
+          <button
+            type="button"
+            onClick={exportCsv}
+            disabled={items.length === 0 || exporting}
+            title={items.length === 0 ? t('payments.export.nothing') : undefined}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--v2-border)] bg-[var(--v2-surface)] px-3 py-2 text-[13px] font-semibold text-[var(--v2-text-secondary)] transition-colors hover:text-[var(--v2-text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Download className="h-4 w-4" aria-hidden="true" />
+            {exporting
+              ? t('payments.export.working') || 'Working…'
+              : selected.size > 0
+                ? t('payments.select.export') || 'Export selected'
+                : t('payments.export') || 'Export'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowLedgerExport(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--v2-border)] bg-[var(--v2-surface)] px-3 py-2 text-[13px] font-semibold text-[var(--v2-text-secondary)] transition-colors hover:text-[var(--v2-text-primary)]"
+            title={t('ledger.export_title')}
+          >
+            <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
+            <span className="hidden lg:inline">{t('ledger.export_title')}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowInvoice(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#2DD4A7] bg-[rgba(45,212,167,.12)] px-3.5 py-2 text-[13px] font-semibold text-[#2DD4A7] transition-colors hover:bg-[rgba(45,212,167,.2)]"
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            {t('payments.create_invoice')}
+          </button>
+        </div>
+      </div>
+
+      <p className="mb-7 text-[13.5px] leading-relaxed text-[var(--v2-text-muted)]">
+        {t('money.scope') ||
+          'The figures below describe the selected period. What is owed to you is always as of today.'}
+      </p>
+
+      {failed && (
+        <div className="mb-4 rounded-2xl border border-[var(--v2-border)] bg-[var(--v2-surface)] p-6 text-[14px] text-[var(--v2-text-secondary)]">
+          {t('money.failed') || 'Could not load your money right now. Please try again.'}
+        </div>
+      )}
+
+      {/*
+        ── THE SUMMARY, IN ONE FRAME ────────────────────────────────────
+
+        The four cards are one statement about one window, so they are drawn
+        inside one card. Loose on the page they read as four separate facts
+        that happen to be adjacent, and the period control had nowhere to
+        belong: up in the header it governed something a screen away.
+
+        Here it sits on the frame it governs, at its top outer corner — left in
+        Hebrew, right in English — so what it moves is under it as it moves.
+      */}
+      <section className="mb-4 rounded-[22px] border border-[var(--v2-border)] bg-[var(--v2-bg)] p-3 sm:p-4">
+        <div className="mb-3 flex items-center justify-end px-1">
+          <div
+            role="group"
+            aria-label={t('reports.period_label') || 'Reporting period'}
+            className="flex items-center gap-0.5 rounded-full border border-[var(--v2-border)] bg-[var(--v2-surface)] p-1"
+          >
+            {periods.map(p => (
+              <button
+                key={p.key}
+                type="button"
+                aria-pressed={period === p.key}
+                onClick={() => setPeriod(p.key)}
+                className={`rounded-full px-4 py-1.5 text-[13px] font-semibold transition-colors ${
+                  period === p.key
+                    ? 'bg-[var(--v2-surface-hover)] text-[var(--v2-text-primary)]'
+                    : 'text-[var(--v2-text-muted)] hover:text-[var(--v2-text-secondary)]'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+      {/* ── act 1: what is actually yours ───────────────────────────── */}
+      <section className="mb-3.5 rounded-[20px] border border-[var(--v2-border)] bg-[var(--v2-surface)] p-7">
+        <p className="m-0 mb-1.5 text-[13px] text-[var(--v2-text-muted)]">
+          {t('money.came_in') || 'Actually came in'}
+        </p>
+        <p className="m-0 text-[52px] font-extrabold leading-none tracking-tight text-[var(--v2-text-primary)] max-sm:text-[40px]">
+          {loading ? '—' : asMoney(collected)}
+        </p>
+        <p className="m-0 mt-2.5 text-[13.5px] leading-relaxed text-[var(--v2-text-muted)]">
+          {(t('money.of_book') || 'out of {total} of work sold').replace('{total}', asMoney(bookValue))}
+        </p>
+
+        {/*
+          THE BAR. The late part sits INSIDE the owed part, not beside it, so
+          "do these add up" cannot be asked. See the module note.
+        */}
+        {bookValue > 0 && (
+          <>
+            <div
+              className="mt-5 flex h-10 gap-0.5 overflow-hidden rounded-[10px] bg-[var(--v2-border)]"
+              role="img"
+              aria-label={`${asMoney(collected)} ${t('payments.collected') || 'collected'}, ${asMoney(outstanding)} ${t('payments.outstanding') || 'outstanding'}, ${asMoney(overdue)} ${t('payments.overdue_total') || 'overdue'}`}
+            >
+              {collected > 0 && <span style={{ flex: collected, background: TONE.in }} />}
+              {outstanding > 0 && (
+                <span className="flex min-w-0 gap-0.5" style={{ flex: outstanding }}>
+                  {notYetDue > 0 && <span style={{ flex: notYetDue, background: TONE.wait }} />}
+                  {overdue > 0 && <span style={{ flex: overdue, background: TONE.late }} />}
+                </span>
+              )}
+            </div>
+
+            <div className="mt-3.5 flex flex-wrap gap-4 text-[13px]">
+              <Key tone={TONE.in} label={t('payments.collected') || 'Collected'} value={asMoney(collected)} />
+              <Key tone={TONE.wait} label={t('payments.outstanding') || 'Still owed'} value={asMoney(outstanding)} />
+              {overdue > 0 && (
+                <Key tone={TONE.late} label={t('money.of_which_late') || 'of which late'} value={asMoney(overdue)} />
+              )}
+            </div>
+
+            <p className="mt-3 border-t border-[var(--v2-border)] pt-3 text-[13px] leading-relaxed text-[var(--v2-text-muted)]">
+              {t('money.nested_note') ||
+                'The red sits inside the yellow, not beside it: money that is late is money you are owed, so it is counted once.'}
+            </p>
+          </>
+        )}
+
+        {/*
+          The way from the figure to the rows behind it.
+
+          On the headline card rather than only above the list, because this is
+          where the reader is when the question occurs to them: they have just
+          read what came in, and the next thing they want is what made it up.
+
+          At the card's BOTTOM OUTER corner — left in Hebrew, right in English,
+          which is the same edge stated twice: the end of the line. It reads
+          after the figure and the bar, which is the order the question arrives
+          in, and it is the last thing in the card so nothing follows it.
+        */}
+        <div className="mt-5 flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              setListOpen('orders');
+              document.getElementById('money-lists')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--v2-border)] bg-[var(--v2-surface-hover)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--v2-text-primary)] transition-colors hover:border-[#2DD4A7]"
+          >
+            {t('money.see_orders') || 'See the orders behind this'}
+            <ChevronDown className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      </section>
+
+      {/* ── act 2: what is still coming ─────────────────────────────── */}
+      <div className="mb-3.5 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+        <section
+          className="rounded-2xl border p-5"
+          style={{
+            borderColor: overdue > 0 ? 'rgba(240,101,79,.45)' : 'var(--v2-border)',
+            background: overdue > 0 ? 'linear-gradient(180deg, rgba(240,101,79,.08), transparent 70%)' : 'var(--v2-surface)',
+          }}
+        >
+          <p className="m-0 mb-2 flex items-center gap-2 text-[13px] text-[var(--v2-text-muted)]">
+            <i className="h-2.5 w-2.5 flex-none rounded-[3px]" style={{ background: TONE.late }} />
+            {t('money.needs_you') || 'Needs chasing'}
+          </p>
+          <p
+            className="m-0 text-[30px] font-extrabold tracking-tight"
+            style={{ color: overdue > 0 ? TONE.late : 'var(--v2-text-primary)' }}
+          >
+            {asMoney(overdue)}
+          </p>
+          <p className="m-0 mt-2 text-[13px] leading-relaxed text-[var(--v2-text-muted)]">
+            {t('money.late_note') || 'Past its due date. Already counted in what you are owed, above.'}
+          </p>
+        </section>
+
+        <section className="rounded-2xl border border-[var(--v2-border)] bg-[var(--v2-surface)] p-5">
+          <p className="m-0 mb-2 flex items-center gap-2 text-[13px] text-[var(--v2-text-muted)]">
+            <i className="h-2.5 w-2.5 flex-none rounded-[3px]" style={{ background: TONE.wait }} />
+            {t('money.not_due_yet') || 'Not due yet'}
+          </p>
+          <p className="m-0 text-[30px] font-extrabold tracking-tight text-[var(--v2-text-primary)]">
+            {asMoney(notYetDue)}
+          </p>
+          <p className="m-0 mt-2 text-[13px] leading-relaxed text-[var(--v2-text-muted)]">
+            {t('money.not_due_note') || 'Agreed, with the date still ahead. Nothing to do about it today.'}
+          </p>
+        </section>
+      </div>
+
+      {/* ── act 3: what fell through ────────────────────────────────── */}
+      {(shown?.cancelled ?? 0) + (shown?.refunded ?? 0) > 0 && (
+        <section className="mb-8 rounded-2xl border border-[var(--v2-border)] bg-[var(--v2-surface)] px-5 py-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-4">
+            <h2 className="m-0 text-[15px] font-bold text-[var(--v2-text-primary)]">
+              {t('money.fell_through') || 'What will not arrive'}
+            </h2>
+            <span className="text-[14px] font-bold" style={{ color: TONE.lost }}>
+              {asMoney((shown?.cancelled ?? 0) + (shown?.refunded ?? 0))}
+            </span>
+          </div>
+          <div className="mt-3.5 flex flex-wrap gap-x-7 gap-y-3 text-[13.5px] text-[var(--v2-text-muted)]">
+            <div>
+              {t('payments.cancelled_total') || 'Cancelled'}
+              <b className="mt-0.5 block text-[19px] font-extrabold text-[var(--v2-text-primary)]">
+                {money(c => c.cancelled)}
+              </b>
+            </div>
+            <div>
+              {t('payments.refunded') || 'Refunded'}
+              <b className="mt-0.5 block text-[19px] font-extrabold text-[var(--v2-text-primary)]">
+                {money(c => c.refunded)}
+              </b>
+            </div>
+          </div>
+          <p className="m-0 mt-3.5 text-[12.5px] leading-relaxed text-[var(--v2-text-muted)]">
+            {t('money.fell_through_note') ||
+              'Neither is part of what your orders are worth: one never arrived, the other went back out.'}
+          </p>
+        </section>
+      )}
+      </section>
+
+      {/*
+        ── THE TWO LISTS, BEHIND TWO DOORS ──────────────────────────────
+
+        The lists used to sit open, one under the other, and the page became a
+        scroll with the story at the top and everything else below it. Two
+        things went wrong with that. The summary — which is the point of the
+        page — stopped being the whole screen. And the loose invoices, being
+        second, were reachable only by scrolling past every order, so the
+        shorter list was the harder one to find.
+
+        So neither is open until it is asked for, and both are asked for from
+        the same row, at the same distance from the top. A door states its
+        count, so what is behind it is known before it is opened.
+      */}
+      <div id="money-lists" className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <ListDoor
+          title={t('payments.view.orders') || 'Orders'}
+          blurb={t('money.orders_door') || 'Work you sold, and the money against it'}
+          count={orders.length}
+          tone={TONE.in}
+          open={listOpen === 'orders'}
+          onToggle={() => setListOpen(listOpen === 'orders' ? null : 'orders')}
+        />
+        <ListDoor
+          title={t('payments.view.standalone') || 'Invoices without an order'}
+          blurb={
+            t('money.loose_door') || 'Bills raised on their own, with no booking behind them'
+          }
+          count={loose.length}
+          tone={TONE.wait}
+          open={listOpen === 'loose'}
+          onToggle={() => setListOpen(listOpen === 'loose' ? null : 'loose')}
+        />
+      </div>
+
+      {listOpen && (
+        <div className="mt-4">
+          {/*
+            The search and the filter belong to the open list, so they appear
+            with it — and they are ONE bar, because they narrow the same rows.
+            On their own lines they read as two unrelated controls and the
+            reader has to work out that both apply.
+
+            The box takes the far edge (`ms-auto`): left in Hebrew, right in
+            English, which is the same instruction written once.
+          */}
+          <div className="mb-1 flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--v2-border)] bg-[var(--v2-surface)] px-3.5 py-3">
+            <span className="me-1 text-[12.5px] text-[var(--v2-text-muted)]">
+              {t('money.chips_scope') || 'Filters the list below only:'}
+            </span>
+            {chips.map(chip => (
+              <button
+                key={chip.key}
+                type="button"
+                aria-pressed={filter === chip.key}
+                onClick={() => setFilter(chip.key)}
+                className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
+                  filter === chip.key
+                    ? 'border-[#2DD4A7] bg-[rgba(45,212,167,.14)] text-[var(--v2-text-primary)]'
+                    : 'border-transparent bg-[var(--v2-surface-hover)] text-[var(--v2-text-muted)]'
+                }`}
+              >
+                {chip.tone && <i className="h-2 w-2 flex-none rounded-sm" style={{ background: chip.tone }} />}
+                {chip.label}
+              </button>
+            ))}
+
+            <div className="ms-auto min-w-[220px] max-w-[380px] flex-1">
+              <MoneySearchField
+                value={search}
+                onChange={setSearch}
+                today={today}
+                language={language}
+                t={t}
+                placeholder={t('money.search_placeholder') || 'Search a client, invoice or amount'}
+              />
+            </div>
+          </div>
+          <p className="mb-5 text-[12.5px] leading-relaxed text-[var(--v2-text-muted)]">
+            {t('money.chips_note') ||
+              'The figures above do not move when you filter, so there is always something to compare against. Search does narrow them, because then you are asking about one client.'}
+          </p>
+
+          {loading ? (
+            <div className="rounded-2xl border border-[var(--v2-border)] bg-[var(--v2-surface)] p-8 text-center text-[14px] text-[var(--v2-text-muted)]">
+              {t('common.loading') || 'Loading…'}
+            </div>
+          ) : (listOpen === 'orders' ? orders : loose).length === 0 ? (
+            <div className="rounded-2xl border border-[var(--v2-border)] bg-[var(--v2-surface)] p-8 text-center text-[14px] text-[var(--v2-text-muted)]">
+              {t('money.nothing_here') || 'Nothing here for this period.'}
+            </div>
+          ) : (
+            <Section
+              items={listOpen === 'orders' ? orders : loose}
+              note={
+                listOpen === 'loose'
+                  ? t('money.loose_note') ||
+                    'Money with no booking behind it: a bill raised on its own, or a sale that never became an appointment. It is yours just the same.'
+                  : undefined
+              }
+              open={open}
+              setOpen={setOpen}
+              selected={selected}
+              setSelected={setSelected}
+              onOpenDetail={setDetail}
+              formatCurrency={formatCurrency}
+              t={t}
+            />
+          )}
+
+          <p className="mt-5 text-[12.5px] leading-relaxed text-[var(--v2-text-muted)]">
+            {t('money.row_key') ||
+              'Each row is one piece of work and all the money attached to it. A package of three sessions is one row that opens to three payments, not three rows.'}
+          </p>
+        </div>
+      )}
+
+      <MoneyOrderDrawer
+        item={detail}
+        schedule={detail ? scheduleOf(detail, t) : []}
+        onClose={() => setDetail(null)}
+        formatCurrency={formatCurrency}
+        t={t}
+        isRTL={isRTL}
+        {...entryActions}
+      />
+
+      {refundTarget && (
+        <RefundModal
+          isOpen={!!refundTarget}
+          onClose={() => setRefundTarget(null)}
+          invoiceId={refundTarget.invoiceId ?? undefined}
+          transactionId={refundTarget.invoiceId ? undefined : refundTarget.transactionIds[0]}
+          originalAmount={refundTarget.amount}
+          currency={refundTarget.currency}
+          alreadyRefunded={refundTarget.refunded}
+          isRTL={isRTL}
+          onSuccess={() => {
+            setRefundTarget(null);
+            /* The figures above move with it: a refund changes what came in,
+               and leaving the summary stale would have the page disagree with
+               its own list. */
+            void load();
+          }}
+          onError={() => setFailed(true)}
+        />
+      )}
+
+      <LedgerExportModal isOpen={showLedgerExport} onClose={() => setShowLedgerExport(false)} />
+      <InvoiceModal
+        isOpen={showInvoice}
+        onClose={() => setShowInvoice(false)}
+        onSave={() => {
+          setShowInvoice(false);
+          /* The new bill is money on this page, so the figures above must move
+             with it rather than wait for a reload. */
+          void load();
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * A closed list, stating what is behind it.
+ *
+ * The count and the tone bar do the work: a reader deciding whether to open
+ * this should not have to open it to find out whether it is worth opening.
+ */
+function ListDoor({
+  title,
+  blurb,
+  count,
+  tone,
+  open,
+  onToggle,
+}: {
+  title: string;
+  blurb: string;
+  count: number;
+  tone: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      // Empty is not disabled: "0 invoices without an order" is an answer, and
+      // a door that cannot be opened leaves the reader wondering what is in it.
+      className="flex w-full items-center gap-3.5 rounded-2xl border bg-[var(--v2-surface)] p-4 text-start transition-colors hover:bg-[rgba(255,255,255,.025)]"
+      style={{ borderColor: open ? '#3B4A63' : 'var(--v2-border)' }}
+    >
+      <span className="h-9 w-1 flex-none rounded-full" style={{ background: tone }} />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline gap-2">
+          <b className="text-[15px] font-bold text-[var(--v2-text-primary)]">{title}</b>
+          <span className="rounded-full bg-[var(--v2-surface-hover)] px-2 py-0.5 text-[12px] font-semibold text-[var(--v2-text-muted)]">
+            {count}
+          </span>
+        </span>
+        <span className="mt-0.5 block text-[12.5px] text-[var(--v2-text-muted)]">{blurb}</span>
+      </span>
+      <ChevronDown
+        className={`h-4 w-4 flex-none text-[var(--v2-text-muted)] transition-transform ${open ? 'rotate-180' : ''}`}
+        aria-hidden="true"
+      />
+    </button>
+  );
+}
+
+/**
+ * One headed run of rows.
+ *
+ * A component rather than a repeated block, so the two sections cannot drift
+ * into rendering a row differently from each other.
+ */
+function Section({
+  title,
+  note,
+  count,
+  items,
+  open,
+  setOpen,
+  selected,
+  setSelected,
+  onOpenDetail,
+  formatCurrency,
+  t,
+  setApart = false,
+}: {
+  /** Optional: the door above the list already names it and counts it. */
+  title?: string;
+  note?: string;
+  count?: number;
+  items: MoneyItem[];
+  open: string | null;
+  setOpen: (key: string | null) => void;
+  selected: Set<string>;
+  setSelected: (next: Set<string>) => void;
+  /** Hand a row up to the page, which owns the drawer. */
+  onOpenDetail: (item: MoneyItem) => void;
+  formatCurrency: (amount: number, currency: string) => string;
+  t: (key: string) => string;
+  setApart?: boolean;
+}) {
+  const allPicked = items.every(i => selected.has(i.key));
+
+  /** Pick or drop this whole section, which is the only bulk gesture here. */
+  const toggleAll = () => {
+    const next = new Set(selected);
+    for (const item of items) {
+      if (allPicked) next.delete(item.key);
+      else next.add(item.key);
+    }
+    setSelected(next);
+  };
+
+  return (
+    <section className={setApart ? 'mt-9 border-t border-[var(--v2-border)] pt-7' : ''}>
+      {/*
+        The pick control leads the row — the inline-START edge, so right in
+        Hebrew and left in English. It is a mode the reader turns on before
+        working down the list, so it belongs where the list begins rather than
+        across the gutter from it.
+      */}
+      <div className="mb-2 flex flex-wrap items-baseline gap-3">
+        <button
+          type="button"
+          onClick={toggleAll}
+          className="bg-transparent text-[12.5px] font-semibold text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
+        >
+          {allPicked
+            ? t('payments.select.none') || 'Clear selection'
+            : t('money.select_many') || 'Select several'}
+        </button>
+        {title && (
+          <h3 className="m-0 ms-auto flex items-baseline gap-2 text-[15px] font-bold text-[var(--v2-text-primary)]">
+            {title}
+            <span className="rounded-full bg-[var(--v2-surface-hover)] px-2 py-0.5 text-[12px] font-semibold text-[var(--v2-text-muted)]">
+              {count}
+            </span>
+          </h3>
+        )}
+      </div>
+
+      {note && (
+        <p className="mb-3 text-[12.5px] leading-relaxed text-[var(--v2-text-muted)]">{note}</p>
+      )}
+
+      <ul
+        className={`m-0 flex list-none flex-col gap-2 p-0 ${
+          setApart
+            ? 'rounded-2xl border border-dashed border-[var(--v2-border)] bg-[var(--v2-bg)] p-3'
+            : ''
+        }`}
+      >
+        {items.map(item => (
+          <OrderCard
+            key={item.key}
+            item={item}
+            open={open === item.key}
+            onToggle={() => setOpen(open === item.key ? null : item.key)}
+            onOpenDetail={() => onOpenDetail(item)}
+            picked={selected.has(item.key)}
+            onPick={() => {
+              const next = new Set(selected);
+              if (next.has(item.key)) next.delete(item.key);
+              else next.add(item.key);
+              setSelected(next);
+            }}
+            formatCurrency={formatCurrency}
+            t={t}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** One figure in the bar's key. */
+function Key({ tone, label, value }: { tone: string; label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-[var(--v2-text-muted)]">
+      <i className="h-2.5 w-2.5 flex-none rounded-[3px]" style={{ background: tone }} />
+      {label}
+      <b className="font-bold text-[var(--v2-text-primary)]">{value}</b>
+    </span>
+  );
+}
+
+/**
+ * One order, closed to four facts and opened to the money inside it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE CONTROL, NOT THREE.
+ *
+ * The orders row offers a caret for the breakdown, the client's NAME for the
+ * CRM, and the row itself for a drawer — three affordances an owner has to
+ * learn by accident, and its own comment admits the row holds "more than a list
+ * row should ever try to hold".
+ *
+ * Here the whole head is the control, and the two destinations become labelled
+ * buttons inside, where they can say what they do. The drawer is not replaced:
+ * the payments were the reason to open it and they are here, so what remains
+ * behind "open the order" is the processor reference and the full history.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function OrderCard({
+  item,
+  open,
+  onToggle,
+  onOpenDetail,
+  picked,
+  onPick,
+  formatCurrency,
+  t,
+}: {
+  item: MoneyItem;
+  open: boolean;
+  onToggle: () => void;
+  /** Open this row in the drawer. */
+  onOpenDetail: () => void;
+  /** Chosen for an export of exactly the picked rows. */
+  picked: boolean;
+  onPick: () => void;
+  formatCurrency: (amount: number, currency: string) => string;
+  t: (key: string) => string;
+}) {
+  const flow = itemFlow(item);
+  const waiting = Math.max(0, flow.outstanding - flow.overdue);
+  const whole = flow.collected + flow.outstanding + flow.cancelled;
+
+  const amount = formatCurrency(item.amount, item.currency);
+
+  /** What this row is, in one line a reader can act on. */
+  const state = (() => {
+    if (flow.overdue > 0) {
+      return { tone: TONE.late, text: `${formatCurrency(flow.overdue, item.currency)} ${t('payments.overdue_total') || 'Overdue'}` };
+    }
+    if (flow.cancelled > 0 && flow.collected === 0) {
+      return { tone: TONE.lost, text: t('payments.cancelled_total') || 'Cancelled' };
+    }
+    if (flow.outstanding > 0) {
+      return { tone: TONE.wait, text: t('payments.awaiting_collection') || 'Still to collect' };
+    }
+    return { tone: TONE.in, text: t('payments.paid_one') || 'Paid' };
+  })();
+
+  /*
+    WHAT THIS ROW IS CALLED, AND WHY IT IS NEVER SAID TWICE.
+
+    The two lines in the header answer different questions: who this money is
+    from, and what it was for. When a row has no contact — every plan
+    instalment the processor wrote without one — both fell back to `item.title`
+    and the card printed the same string twice, one bold and one grey.
+
+    So the name leads when there is one, the description sits under it, and a
+    row with only a description shows it once.
+  */
+  const lone = item.entries.length === 1 ? item.entries[0] : null;
+  const described = (lone && planPeriodText(lone, t)) || item.title;
+  const lead = item.contactName || described;
+  const under = item.contactName ? described : null;
+
+  /*
+    WHAT NESTS INSIDE THE ROW.
+
+    A plan's SCHEDULE, when there is one, not the entries. The two are not the
+    same list: a three-instalment plan that has been paid once has three
+    periods and one entry, so showing entries made a package of three look like
+    a single payment and put the other two nowhere. The schedule is what the
+    orders page and the drawer both show for the same reason.
+
+    Entries otherwise — money that settled no plan is only ever itself.
+  */
+  const nested = scheduleOf(item, t);
+
+  return (
+    <li
+      className="overflow-hidden rounded-2xl border bg-[var(--v2-surface)]"
+      style={{
+        borderColor: open ? '#3B4A63' : 'var(--v2-border)',
+        opacity: flow.cancelled > 0 && flow.collected === 0 ? 0.72 : 1,
+      }}
+    >
+      {/*
+        The picker sits OUTSIDE the toggle, not inside it. A checkbox nested in
+        a button is invalid markup and, worse, a click on it would open the row
+        as well as pick it — so picking five rows for an export would leave five
+        rows expanded.
+
+        THE HOVER BELONGS TO THIS ROW, NOT TO THE BUTTON INSIDE IT.
+
+        It used to sit on the toggle alone, and the checkbox is its sibling —
+        so hovering lit the row everywhere except the strip under the checkbox,
+        which stayed the base colour and read as a seam down the edge of every
+        card. One element wraps both, so one tint covers both.
+      */}
+      <div className="flex items-start transition-colors hover:bg-[rgba(255,255,255,.025)]">
+        <label className="flex cursor-pointer items-center self-stretch ps-4 pt-4">
+          <input
+            type="checkbox"
+            checked={picked}
+            onChange={onPick}
+            aria-label={`${t('payments.select.chosen') || 'selected'}: ${item.contactName || item.title}`}
+            className="h-4 w-4 cursor-pointer accent-[#2DD4A7]"
+          />
+        </label>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-start gap-3 bg-transparent p-4 text-start"
+      >
+        <ChevronDown
+          className={`mt-0.5 h-4 w-4 flex-none text-[var(--v2-text-muted)] transition-transform ${open ? 'rotate-180' : ''}`}
+          aria-hidden="true"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-baseline justify-between gap-3.5">
+            <b className="text-[16px] font-bold text-[var(--v2-text-primary)]">{lead}</b>
+            <span className="whitespace-nowrap text-[16px] font-extrabold text-[var(--v2-text-primary)]">
+              {amount}
+            </span>
+          </span>
+          {under && (
+            <span className="mt-0.5 block text-[13px] text-[var(--v2-text-muted)]">{under}</span>
+          )}
+
+          {/* The hero's bar, at row scale. Same idea, same colours. */}
+          {whole > 0 && (
+            <span className="my-2.5 flex h-1.5 gap-0.5 overflow-hidden rounded-full bg-[var(--v2-border)]">
+              {flow.collected > 0 && <i style={{ flex: flow.collected, background: TONE.in }} />}
+              {flow.overdue > 0 && <i style={{ flex: flow.overdue, background: TONE.late }} />}
+              {waiting > 0 && <i style={{ flex: waiting, background: TONE.wait }} />}
+              {flow.cancelled > 0 && <i style={{ flex: flow.cancelled, background: TONE.lost }} />}
+            </span>
+          )}
+
+          <span className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--v2-text-muted)]">
+            <i className="h-2 w-2 flex-none rounded-sm" style={{ background: state.tone }} />
+            <b className="font-bold text-[var(--v2-text-primary)]">{state.text}</b>
+            {item.plan && (
+              <>
+                <span className="text-[var(--v2-text-muted)]">·</span>
+                {`${item.plan.periodsPaid}/${item.plan.installmentCount} ${t('payments.paid_lower') || 'paid'}`}
+              </>
+            )}
+          </span>
+        </span>
+      </button>
+      </div>
+
+      {open && (
+        <div className="border-t border-[var(--v2-border)] px-4 pb-4 pt-4">
+          <p className="m-0 mb-2.5 text-[12px] tracking-wide text-[var(--v2-text-muted)]">
+            {t('money.entries_title') || 'The payments in this order'}
+          </p>
+          <ol className="m-0 flex list-none flex-col gap-0.5 p-0">
+            {nested.map((row, index) => (
+              <li
+                key={row.key}
+                className="flex flex-wrap items-center gap-3 rounded-[9px] px-3 py-2.5 text-[13.5px]"
+                style={{
+                  background: row.status === 'overdue' ? 'rgba(240,101,79,.12)' : 'var(--v2-surface-hover)',
+                }}
+              >
+                <span className="grid h-[21px] w-[21px] flex-none place-items-center rounded-full bg-[var(--v2-bg)] text-[11.5px] font-bold text-[var(--v2-text-muted)]">
+                  {index + 1}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[var(--v2-text-primary)]">{row.label}</span>
+                  {/* `dateKind` says WHICH date this is — an unlabelled one is worse than none. */}
+                  <em className="mt-px block text-[12px] not-italic text-[var(--v2-text-muted)]">
+                    {t(`payments.date_${row.dateKind}`) || row.dateKind} ·{' '}
+                    {row.date ? new Date(row.date).toLocaleDateString() : '—'}
+                  </em>
+                </span>
+                <span className="whitespace-nowrap text-[12.5px] text-[var(--v2-text-muted)]">
+                  {/*
+                    `payments.money_status.*`, which is keyed by the same
+                    `MoneyStatus` union the entries carry and is what MoneyRow
+                    already uses. The older `payments.status_*` family is for
+                    transaction statuses and does not cover these eight.
+                  */}
+                  {t(`payments.money_status.${row.status}`) || row.status}
+                </span>
+                <span className="min-w-[84px] whitespace-nowrap text-end font-bold text-[var(--v2-text-primary)]">
+                  {formatCurrency(row.amount, row.currency)}
+                </span>
+              </li>
+            ))}
+          </ol>
+
+          <div className="mt-3.5 flex flex-wrap gap-2">
+            {/* Leads, because it is the one that stays on this page. */}
+            <button
+              type="button"
+              onClick={onOpenDetail}
+              className="rounded-[9px] border border-[#2DD4A7] bg-[rgba(45,212,167,.12)] px-3.5 py-2 text-[13px] font-semibold text-[#2DD4A7]"
+            >
+              {t('money.open_detail') || 'See the whole story'}
+            </button>
+            {item.bookingId && (
+              <a
+                href={`/business-os/orders?booking=${item.bookingId}`}
+                className="rounded-[9px] border border-[var(--v2-border)] bg-[var(--v2-surface-hover)] px-3.5 py-2 text-[13px] font-semibold text-[var(--v2-text-primary)]"
+              >
+                {t('money.open_order') || 'Open the order'}
+              </a>
+            )}
+            {item.contactId && (
+              <a
+                href={`/business-os/crm?contact=${item.contactId}`}
+                className="rounded-[9px] border border-[var(--v2-border)] bg-[var(--v2-surface-hover)] px-3.5 py-2 text-[13px] font-semibold text-[var(--v2-text-primary)]"
+              >
+                {t('money.open_client') || "The client's card"}
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+    </li>
+  );
+}

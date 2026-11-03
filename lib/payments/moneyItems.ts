@@ -187,6 +187,14 @@ export interface MoneyPeriod {
   /** The invoice raised for this period, once one has been. */
   invoiceId?: string | null;
   /**
+   * The day the schedule was written, which is when this money was agreed.
+   *
+   * The counterpart of `MoneyEntry.raisedAt`, and carried for the same reason:
+   * a period's `dueDate` points forward, so it cannot answer a period that ends
+   * today. Optional so a caller that has not been updated still type-checks.
+   */
+  createdAt?: string | null;
+  /**
    * How much of THIS period came back.
    *
    * The installment row does not carry it: `refunded_amount` is derived by
@@ -269,6 +277,23 @@ export interface MoneyEntry {
    * instead of translating the same sentence a second time on the server.
    */
   planPeriod?: { number: number; count: number };
+  /**
+   * The day this money was RAISED, whatever has happened to it since.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `date` answers "what is the latest thing that happened to this", so for an
+   * unpaid invoice it is the DUE date — a date in the future. That makes it the
+   * wrong field to ask a period of: money not yet due can never fall inside a
+   * window that ends today, so a card summing it reads zero however much is
+   * owed.
+   *
+   * This one never moves. A caller windowing DEBTS asks this ("what did I bill
+   * in October, and where does it stand now"); a caller windowing EVENTS asks
+   * `date` ("what arrived in October"). Both are needed, and they are not the
+   * same question.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  raisedAt?: string | null;
   dueDate: string | null;
   paidAt: string | null;
   paymentMethod: string | null;
@@ -492,6 +517,7 @@ function buildEntries(
       // happened, and `dateKind` says which it is.
       date: invoice.paid_at ?? invoice.due_date ?? invoice.created_at,
       dateKind: invoice.paid_at ? 'paid' : invoice.due_date ? 'due' : 'created',
+      raisedAt: invoice.created_at,
       invoiceId: invoice.id,
       invoiceNumber: invoice.invoice_number ?? null,
       transactionIds: settling.map(t => t.id),
@@ -534,6 +560,7 @@ function buildEntries(
       // the event the reader is looking for.
       date: t.refunded_at ?? t.paid_at ?? t.created_at,
       dateKind: t.refunded_at ? 'refunded' : t.paid_at ? 'paid' : 'created',
+      raisedAt: t.created_at,
       invoiceId: null,
       invoiceNumber: null,
       transactionIds: [t.id],

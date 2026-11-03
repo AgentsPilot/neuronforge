@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useConfigurationDialogOpen } from '@/components/business-os/ConfigurationDialogProvider';
 import { NoShowConfirmDialog } from '@/components/scheduling/NoShowConfirmDialog';
+import { ExtendQuoteDialog } from '@/components/business-os/insight/ExtendQuoteDialog';
 import { businessCollectsIntake, intakeAppliesToService } from '@/lib/business-os/intakeReach';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -1433,6 +1434,11 @@ export function buildJourneySteps(
       metadata: {
         proposalId: proposal?.id ?? null,
         proposalStatus: proposal?.status ?? 'none',
+        /* The date it runs out on, so an expired step can offer to move it and
+           the dialog can say what it is moving. The step already carried the id
+           and the status; without this the owner is asked to choose a new date
+           with no sight of the old one. */
+        proposalValidUntil: proposal?.valid_until ?? null,
         /*
          * ─────────────────────────────────────────────────────────────────
          * IS THERE ANYTHING LEFT TO STOP?
@@ -3400,6 +3406,12 @@ export function CRMContactDrawerV2({
    * sections up, and it counts towards their no-show rate. The confirmation is
    * also where the owner decides whether to invite them back.
    */
+  /* The quote whose date the owner is moving, or null. Held here rather than
+     in the tab so the dialog has one home and one refresh. */
+  const [extendingQuote, setExtendingQuote] = useState<
+    { proposalId: string; validUntil: string | null } | null
+  >(null);
+  
   const [pendingNoShowBookingId, setPendingNoShowBookingId] = useState<string | null>(null);
   /**
    * The SESSION a confirmation dialog is about, when it is one.
@@ -5427,6 +5439,11 @@ export function CRMContactDrawerV2({
 
               {/* Bookings Section - Timeline flow with cards */}
               <BookingsTab
+                /* Give an expired quote a new date, from the journey step that says it
+                   ran out. Same dialog the needs-you card opens. */
+                onExtendQuote={(proposalId, validUntil) =>
+                  setExtendingQuote({ proposalId, validUntil })
+                }
                 sessions={sessions}
                 focusBookingId={focusBookingId}
                 /*
@@ -6742,6 +6759,31 @@ export function CRMContactDrawerV2({
         No-show confirmation, and the choice of whether to invite the client
         back. Placed beside the cancellation dialog it mirrors.
       */}
+      {/*
+        The same dialog the needs-you card opens, mounted here so the drawer's
+        journey step can reach it. One extend form in the product: a second
+        would be a second place for the rules about dates to drift.
+      */}
+      {extendingQuote && (
+        <ExtendQuoteDialog
+          proposalId={extendingQuote.proposalId}
+          contactName={`${contact.first_name} ${contact.last_name || ''}`.trim()}
+          /* Already formatted by the tab, which owns the date voice this
+             drawer reads in. Never the raw column: the card learned that one
+             the hard way, printing "It ran out on 2026-10-15" at an owner. */
+          lapsedOn={extendingQuote.validUntil}
+          isRTL={isRTL}
+          t={t}
+          onClose={() => setExtendingQuote(null)}
+          onSuccess={() => {
+            setExtendingQuote(null);
+            /* The quote is live again, so the step and its badge both change. */
+            fetchSessions(contact.id, { silent: true });
+          }}
+          onError={message => toast.error(message)}
+        />
+      )}
+
       <NoShowConfirmDialog
         open={!!pendingNoShowBookingId}
         onOpenChange={open => !open && setPendingNoShowBookingId(null)}

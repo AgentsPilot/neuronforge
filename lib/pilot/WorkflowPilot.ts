@@ -1203,6 +1203,23 @@ export class WorkflowPilot {
          * response body is not, so nothing client-shaped travels with it.
          * ───────────────────────────────────────────────────────────────────
          */
+        /*
+         * THE CODE AS WELL AS THE SENTENCE, because only the code can be
+         * translated. The sentence comes from a plugin definition and those are
+         * written in English; an owner reading a Hebrew dashboard gets an
+         * English paragraph. The code — `auth_failed`, `quota_exceeded` — is a
+         * stable key a surface can look up in the owner's own language, with
+         * the English sentence kept as the fallback for codes nobody has
+         * translated yet.
+         */
+        failedStepCode:
+          (failedStepId && context?.stepOutputs?.get(failedStepId)?.metadata?.errorCode) ||
+          (context
+            ? [...context.stepOutputs.values()].find(
+                o => o?.metadata?.success === false && o?.metadata?.errorCode
+              )?.metadata?.errorCode
+            : undefined) ||
+          undefined,
         failedStepError:
           (failedStepId && context?.stepOutputs?.get(failedStepId)?.metadata?.error) ||
           /* A scatter reports itself failed while the real reason sits on the

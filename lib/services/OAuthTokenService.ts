@@ -135,6 +135,79 @@ export async function refreshAccessToken(
 }
 
 /**
+ * Why a refresh failed, which `refreshAccessToken` throws away.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TWO FAILURES THAT LOOK THE SAME AND MEAN OPPOSITE THINGS.
+ *
+ * `refreshAccessToken` answers `null` for every non-OK response, so a grant the
+ * owner revoked is indistinguishable from the provider having a bad minute.
+ * They need opposite handling:
+ *
+ *   grant_revoked   nothing we do will ever work again. The owner must
+ *                   reconnect, and the readiness line has to SAY so — this is
+ *                   the one case where silence strands them.
+ *
+ *   transient       a 5xx, a timeout, a rate limit. Telling an owner to
+ *                   reconnect over this is worse than useless: they would
+ *                   re-authorise a connection that was never broken, and learn
+ *                   that the warning means nothing.
+ *
+ * OAuth 2 names the first one for us: RFC 6749 §5.2 defines `invalid_grant` as
+ * exactly "the refresh token is invalid, expired or revoked". Anything else —
+ * including a 500 with no body we can read — is treated as transient, because
+ * the cost of being wrong in that direction is one retry, and the cost of being
+ * wrong in the other is an owner re-authorising for no reason.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export type RefreshOutcome =
+  | { ok: true; tokens: OAuthTokenResponse }
+  | { ok: false; reason: 'grant_revoked' | 'transient'; detail: string };
+
+export async function refreshAccessTokenDetailed(
+  refreshToken: string,
+  authConfig: PluginAuthConfig
+): Promise<RefreshOutcome> {
+  const params: Record<string, string> = {
+    refresh_token: refreshToken,
+    grant_type: 'refresh_token',
+  };
+  const { headers, body } = buildOAuthRequest(authConfig, params, !!authConfig.requires_pkce);
+
+  let response: Response;
+  try {
+    response = await fetch(authConfig.refresh_url, { method: 'POST', headers, body });
+  } catch (err) {
+    /* The request never reached the provider. Nothing is known about the
+       grant, so nothing is claimed about it. */
+    return { ok: false, reason: 'transient', detail: String(err).slice(0, 200) };
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    /* `invalid_grant` is the provider stating the grant itself is gone. Read
+       from the body rather than the status: Google answers 400 for both a dead
+       grant and a malformed request, and only the body separates them. */
+    const revoked = /invalid_grant/i.test(errorText);
+
+    logger.warn(
+      { status: response.status, revoked, errorText: errorText.slice(0, 300) },
+      revoked
+        ? 'Token refresh refused: the grant is gone and the owner must reconnect'
+        : 'Token refresh failed for a reason that may pass; not blaming the grant'
+    );
+
+    return {
+      ok: false,
+      reason: revoked ? 'grant_revoked' : 'transient',
+      detail: errorText.slice(0, 200),
+    };
+  }
+
+  return { ok: true, tokens: (await response.json()) as OAuthTokenResponse };
+}
+
+/**
  * Fetches the user profile from the OAuth provider's profile endpoint.
  *
  * @param accessToken - The access token to use for the profile request

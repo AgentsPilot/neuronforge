@@ -45,6 +45,9 @@ import winBackQuietClientsSteps from './agents/winBackQuietClients.steps.json';
 export const AUTOMATION_AGENTS: AutomationAgent[] = [
   {
     id: 'chase_overdue_invoices',
+    /* Takes the Needs-you row that asks the owner to chase payment off them while it is working. No window here on
+       purpose: the owner's own "stops after" decides it — see `coversGap`. */
+    coversGap: 'invoice_unpaid',
     nameKey: 'automation.chase_overdue_invoices.name',
     descriptionKey: 'automation.chase_overdue_invoices.description',
     watchesKey: 'automation.chase_overdue_invoices.watches',
@@ -186,6 +189,9 @@ export const AUTOMATION_AGENTS: AutomationAgent[] = [
   },
   {
     id: 'follow_up_stalled_deals',
+    /* Takes the Needs-you row that asks the owner to chase a quote off them while it is working. No window here on
+       purpose: the owner's own "stops after" decides it — see `coversGap`. */
+    coversGap: 'quote_awaiting_client',
     nameKey: 'automation.follow_up_stalled_deals.name',
     descriptionKey: 'automation.follow_up_stalled_deals.description',
     watchesKey: 'automation.follow_up_stalled_deals.watches',

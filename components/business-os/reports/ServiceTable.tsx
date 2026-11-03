@@ -58,6 +58,16 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
   const ordered = [...services].sort((a, b) => b.revenue - a.revenue);
   const widest = Math.max(1, ...ordered.map(s => s.revenue));
 
+  /* Summed from the rows the reader can see, so the total and the breakdown
+     cannot disagree. `lost` stays null when no row knows it — see the row. */
+  const totals = {
+    count: ordered.reduce((sum, s) => sum + s.count, 0),
+    revenue: ordered.reduce((sum, s) => sum + s.revenue, 0),
+    lost: ordered.some(s => typeof s.lost === 'number')
+      ? ordered.reduce((sum, s) => sum + (s.lost ?? 0), 0)
+      : null,
+  };
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse min-w-[420px]">
@@ -90,6 +100,45 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
           </tr>
         </thead>
         <tbody>
+          {/*
+            THE TOTALS LEAD, THEY DO NOT TRAIL.
+            ───────────────────────────────────────────────────────────────
+            A sum at the foot of a table is found by scrolling past every row,
+            which is the wrong way round: "how much altogether" is the question
+            asked FIRST and the rows are the breakdown of the answer.
+
+            Summed from the rows on screen, so the reader can check it by
+            adding the column up. A figure fetched separately could differ from
+            the rows beneath it, and that is exactly the kind of disagreement
+            this table has already produced once.
+
+            `lost` is OPTIONAL: an older stored summary has no such field, and
+            a missing one means "not known", not zero. So the cell prints a
+            dash unless at least one row actually carries the figure, rather
+            than inventing a confident 0.
+          */}
+          <tr className="border-b-2 border-[var(--v2-border)] bg-[var(--v2-bg)]">
+            <td className="px-[18px] py-[11px] text-sm font-bold text-[var(--v2-text-primary)]">
+              {t('reports.col_total') || 'Total'}
+            </td>
+            <td className="px-[18px] py-[11px] text-end text-sm font-bold tabular-nums text-[var(--v2-text-primary)] whitespace-nowrap">
+              {totals.count}
+            </td>
+            <td className="px-[18px] py-[11px] text-end text-sm font-bold tabular-nums text-[var(--v2-text-primary)] whitespace-nowrap">
+              {money(totals.revenue)}
+            </td>
+            <td
+              className="px-[18px] py-[11px] text-end text-sm font-bold tabular-nums whitespace-nowrap"
+              style={
+                totals.lost !== null && totals.lost > 0
+                  ? { color: REPORTS_COLORS.WARNING }
+                  : { color: 'var(--v2-text-muted)' }
+              }
+            >
+              {totals.lost === null ? '—' : money(totals.lost)}
+            </td>
+          </tr>
+
           {ordered.map(row => (
             <tr
               key={row.service_id || row.service_name}

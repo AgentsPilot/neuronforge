@@ -121,8 +121,55 @@ export abstract class BasePluginExecutor {
 
       const connection = resolution.connection;
 
-      // Step 3: Execute the specific action (implemented by subclass)
-      const result = await this.executeSpecificAction(connection, actionName, parameters);
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * Step 3. THE PROVIDER IS THE AUTHORITY ON WHETHER A TOKEN IS GOOD.
+       *
+       * `getConnection` refreshes only when `expires_at` is within five
+       * minutes. That treats our stored expiry as proof, and it is a HINT: a
+       * token can die before it expires — revoked, superseded, the grant
+       * changed — and Google then answers 401 while our column still says
+       * valid for another half hour.
+       *
+       * Measured on a live account: `expires_at` 19:40, the clock 19:14, and
+       * every Gmail call returning
+       *
+       *   401 "Request had invalid authentication credentials"
+       *
+       * with `tokeninfo` on the stored token answering `invalid_token`. The
+       * refresh token was healthy the whole time — Google issued a new access
+       * token on demand — but nothing asked it to, because the expiry had not
+       * arrived. The connection was stranded until the clock passed 19:40, and
+       * every agent run in that window reported "Your Gmail connection has
+       * expired. Please reconnect in Settings" to an owner whose connection
+       * was one API call away from working.
+       *
+       * So a 401 is taken as what it is — the provider saying this token is no
+       * good — and answered the only way that helps: refresh once, retry once.
+       *
+       * ONCE, deliberately. A second 401 after a fresh token means the GRANT is
+       * gone, not the token, and that is the case where the owner really must
+       * reconnect. Looping would turn a genuine revocation into a retry storm
+       * against Google.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      let result: any;
+      try {
+        result = await this.executeSpecificAction(connection, actionName, parameters);
+      } catch (firstError: any) {
+        const refreshed =
+          this.httpStatusOf(firstError) === 401
+            ? await this.refreshAfterRejection(connection, pluginDefinition)
+            : null;
+
+        if (!refreshed) throw firstError;
+
+        this.logger.info(
+          { actionName, pluginKey: this.pluginName },
+          'Provider rejected a token our expiry still called valid; refreshed and retrying once'
+        );
+        result = await this.executeSpecificAction(refreshed, actionName, parameters);
+      }
 
       // Step 4: Format success response using output guidance
       const outputGuidance = this.pluginManager.getOutputGuidance(this.pluginName, actionName);
@@ -246,6 +293,33 @@ export abstract class BasePluginExecutor {
     
     // Default error message
     return `${this.pluginName} ${actionName} failed: ${error.message || 'Unknown error'}`;
+  }
+
+  /**
+   * A new connection after the provider rejected the one we had, or null.
+   *
+   * Never throws: a failed refresh means the original error is the honest one
+   * to report, and that error already carries the provider's own words.
+   * `null` is also returned for a plugin with no refresh token and for a
+   * system/platform-key connection, neither of which can be refreshed.
+   */
+  private async refreshAfterRejection(
+    connection: any,
+    pluginDefinition: any
+  ): Promise<any | null> {
+    try {
+      if (!connection?.refresh_token) return null;
+      const authConfig = pluginDefinition?.plugin?.auth_config;
+      if (!authConfig) return null;
+
+      return await this.userConnections.refreshToken(connection, authConfig);
+    } catch (err) {
+      this.logger.warn(
+        { err, pluginKey: this.pluginName },
+        'Could not refresh after a provider rejection; reporting the original failure'
+      );
+      return null;
+    }
   }
 
   /**

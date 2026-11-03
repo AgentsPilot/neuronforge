@@ -314,7 +314,27 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const all = await findGaps(user.id, { named: NAMED_PER_GAP });
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * WHAT AN AGENT IS ALREADY DOING IS NOT THE OWNER'S ERRAND.
+     *
+     * This is the owner-facing read — the Needs-you cards and the advisor's
+     * "three invoices are past due, shall I chase them?" — so it asks for
+     * agent-covered items to be left out. Both audiences want the same answer:
+     * a row telling somebody to chase an invoice a robot is chasing is noise,
+     * and offering to switch a chaser ON for work already covered is the same
+     * noise wearing a different hat.
+     *
+     * The automation SWEEP does not pass this and must never start:
+     * `LeadResponseDispatchService` builds its queue from `findGaps`, so
+     * hiding items there would starve the chaser of the work this flag claims
+     * it is doing. See `hideWhatAgentsHandle`.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const all = await findGaps(user.id, {
+      named: NAMED_PER_GAP,
+      hideWhatAgentsHandle: true,
+    });
     const mine = ownerGaps(all);
 
     /*
@@ -592,6 +612,8 @@ export async function GET(request: NextRequest) {
            * paid is a freed hour to refill. One gap, two moves, and the amount
            * is what tells them apart.
            */
+          /* The one-clause story behind the row, as a key the card translates. */
+          contextKey: item.contextKey ?? null,
           value: item.value ?? null,
           currency: item.currency ?? null,
           /*

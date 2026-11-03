@@ -147,7 +147,8 @@ describe('the runner actually uses it', () => {
   it('is reached from the failure branch that reports the run', () => {
     const src = readFileSync(RUNNER, 'utf-8');
     const call = src.indexOf('causeOfFailure(execution)');
-    const report = src.indexOf('markFailed(run.id, why', call);
+    /* The call is multi-line now that the error code travels with it. */
+    const report = src.indexOf('markFailed(', call);
 
     expect(call).toBeGreaterThan(-1);
     /* The value is computed before it is reported, in the same branch. */

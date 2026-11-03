@@ -263,6 +263,12 @@ export interface BusinessProfile {
   tools: string[] | null;
   payment_mode: string | null;
   online_presence_mode: string | null;
+  /* They have a site of their own, and its enquiries reach a mailbox. Neither
+     is derivable from `online_presence_mode`, which records only what WE build:
+     a business keeping its own site and one with no web presence at all both
+     carry `booking_only`. NULL on both means never established. */
+  has_website: boolean | null;
+  leads_arrive_by_email: boolean | null;
   needs_stripe_connect: boolean | null;
   extracted_data: Record<string, unknown> | null;
 
@@ -391,6 +397,8 @@ export interface BusinessProfileInsert {
   tools?: string[] | null;
   payment_mode?: string | null;
   online_presence_mode?: string | null;
+  has_website?: boolean | null;
+  leads_arrive_by_email?: boolean | null;
   needs_stripe_connect?: boolean | null;
   extracted_data?: Record<string, unknown> | null;
   invoice_company_name?: string | null;

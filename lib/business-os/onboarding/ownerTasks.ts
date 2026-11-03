@@ -98,14 +98,32 @@ export interface OwnerTaskInput {
   collectionMethod?: 'card_online' | 'invoice' | 'in_person' | 'mixed' | 'none' | null;
   needsIntake?: boolean;
   /**
-   * They said they already have a website, so the enquiries it emails them are
-   * the channel to set up rather than a site to build.
+   * They said they already have a website, so there is a site to read from
+   * rather than one to build.
    *
    * Comes from the `client_acquisition` chip, not from `online_presence_mode`:
    * that mode records only what WE build, and a business keeping its own site
    * shares `booking_only` with one that has no presence at all.
    */
   hasOwnWebsite?: boolean;
+  /**
+   * The enquiries from that site reach a mailbox.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THE MAILBOX TASK HANGS ON THIS AND NOT ON `hasOwnWebsite`.
+   *
+   * The task is "connect the mailbox we will read your enquiries from". It
+   * used to be owed by anyone who said they had a site, on the reasoning that
+   * a site emails its owner — which is simply not true of every business. A
+   * practice taking every enquiry by phone was handed a task it could not
+   * complete and would never want to.
+   *
+   * So the two facts are asked separately now, and this is the one the task
+   * depends on. Undefined or false means the task is not owed; the form smart
+   * link is what that owner is offered instead.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  leadsArriveByEmail?: boolean;
 }
 
 interface Copy {
@@ -279,8 +297,12 @@ export function ownerTasks(input: OwnerTaskInput, language: OwnerTaskLanguage): 
   if (input.needsIntake) owed.push('intake');
   /* After the money and the form, before the catalogue: it is the only task
      that brings people IN rather than preparing what happens once they are
-     here, and it depends on nothing above it. */
-  if (input.hasOwnWebsite) owed.push('mailbox');
+     here, and it depends on nothing above it.
+
+     BOTH answers, because the task is to connect a mailbox: a site whose
+     enquiries never reach one leaves nothing for this task to do. See
+     `leadsArriveByEmail`. */
+  if (input.hasOwnWebsite && input.leadsArriveByEmail) owed.push('mailbox');
   if (hasServices) owed.push('services');
 
   /*

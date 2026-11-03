@@ -18,11 +18,24 @@
  *   an ABSENT figure prints a dash too. A summary stored before this existed
  *   has no such field, and "we did not measure it" must not render as "nothing
  *   was lost" — the same discipline `healthRowsNeverInventsAZero` keeps.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EVERY ASSERTION IS SCOPED TO ONE ROW, AND HAS TO BE
+ *
+ * The table grew a totals row above the services. These fixtures are a single
+ * service, so its total IS its own figure, and every `screen.getByText` here
+ * matched twice and threw — five failures against a component doing exactly
+ * what it should.
+ *
+ * Scoping is not a workaround for that. This file's subject is what is shown
+ * AGAINST A SERVICE, and a query that accepts a match anywhere on screen was
+ * never asserting that: the dash tests in particular would have passed on the
+ * totals row alone, with the service's own cell saying anything at all.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import '@testing-library/jest-dom';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 
 jest.mock('@/lib/business-os/LanguageContext', () => {
   const { translations } = jest.requireActual('@/lib/business-os/LanguageContext');
@@ -48,19 +61,34 @@ const row = (over: Partial<ServiceRow> = {}): ServiceRow => ({
   ...over,
 });
 
+/**
+ * The row drawn for one service, by the name in its first cell.
+ *
+ * Named rather than indexed: a row found by position would silently become the
+ * totals row the moment anything is inserted above it, and the assertion would
+ * keep passing while testing the wrong thing.
+ */
+const serviceRow = (name = 'Deep tissue massage') => {
+  const cell = screen.getByText(name);
+  const tr = cell.closest('tr');
+
+  expect(tr).not.toBeNull();
+  return within(tr as HTMLElement);
+};
+
 describe('the lost column', () => {
   it('shows what was written off against a service', () => {
     render(<ServiceTable services={[row({ lost: 4166.66 })]} money={money} />);
 
-    expect(screen.getByText('ILS 9000')).toBeInTheDocument();
-    expect(screen.getByText('ILS 4166.66')).toBeInTheDocument();
+    expect(serviceRow().getByText('ILS 9000')).toBeInTheDocument();
+    expect(serviceRow().getByText('ILS 4166.66')).toBeInTheDocument();
   });
 
   it('prints a dash when nothing was lost, never a zero', () => {
     render(<ServiceTable services={[row({ lost: 0 })]} money={money} />);
 
-    expect(screen.getByText('—')).toBeInTheDocument();
-    expect(screen.queryByText('ILS 0')).not.toBeInTheDocument();
+    expect(serviceRow().getByText('—')).toBeInTheDocument();
+    expect(serviceRow().queryByText('ILS 0')).not.toBeInTheDocument();
   });
 
   it('prints a dash when the figure is absent entirely', () => {
@@ -68,7 +96,7 @@ describe('the lost column', () => {
        same as nothing having been lost. */
     render(<ServiceTable services={[row()]} money={money} />);
 
-    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(serviceRow().getByText('—')).toBeInTheDocument();
   });
 
   it('heads the column, so the number is not a mystery', () => {
@@ -85,7 +113,7 @@ describe('the lost column', () => {
        cancellations reads "1", not "4". */
     render(<ServiceTable services={[row({ count: 1, lost: 3000 })]} money={money} />);
 
-    expect(screen.getByText('1')).toBeInTheDocument();
+    expect(serviceRow().getByText('1')).toBeInTheDocument();
   });
 
   it('still renders a service that only ever lost money', () => {
@@ -99,6 +127,48 @@ describe('the lost column', () => {
     );
 
     expect(screen.getByText('Quotation offering')).toBeInTheDocument();
-    expect(screen.getByText('ILS 2000')).toBeInTheDocument();
+    expect(serviceRow('Quotation offering').getByText('ILS 2000')).toBeInTheDocument();
+  });
+
+  it('sums the column above the rows, from the rows themselves', () => {
+    /*
+     * The totals row that made every query above ambiguous, asserted rather
+     * than merely worked around — otherwise the scoping reads as a trick to
+     * silence a failure instead of what it is.
+     *
+     * Two services, so the total is a sum and not a copy of one row: the
+     * single-service fixtures elsewhere in this file cannot tell those apart.
+     */
+    render(
+      <ServiceTable
+        services={[
+          row({ service_id: 'a', service_name: 'One', revenue: 100, count: 1, lost: 10 }),
+          row({ service_id: 'b', service_name: 'Two', revenue: 200, count: 2, lost: 5 }),
+        ]}
+        money={money}
+      />
+    );
+
+    const totals = within(screen.getByText('Total').closest('tr') as HTMLElement);
+
+    expect(totals.getByText('3')).toBeInTheDocument();
+    expect(totals.getByText('ILS 300')).toBeInTheDocument();
+    expect(totals.getByText('ILS 15')).toBeInTheDocument();
+  });
+
+  it('prints a dash for the total when no row knows what was lost', () => {
+    /* The same rule as a service row, at the foot of the column: an older
+       stored summary carries no figure, and a confident 0 would be a claim
+       nobody made. */
+    render(
+      <ServiceTable
+        services={[row({ service_id: 'a', service_name: 'One' }), row({ service_id: 'b', service_name: 'Two' })]}
+        money={money}
+      />
+    );
+
+    const totals = within(screen.getByText('Total').closest('tr') as HTMLElement);
+
+    expect(totals.getByText('—')).toBeInTheDocument();
   });
 });

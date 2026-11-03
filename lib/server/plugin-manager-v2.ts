@@ -427,9 +427,22 @@ export class PluginManagerV2 {
     const validConnected = await this.userConnections.getConnectedPlugins(userId);
     const validKeys = new Set(validConnected.map(conn => conn.plugin_key));
 
+    /*
+     * A GRANT THE PROVIDER HAS REFUSED IS EXPIRED, whatever the clock says.
+     *
+     * `expires_at` can sit comfortably in the future while the grant behind it
+     * is gone — revoked in the owner's Google account, or lapsed. Such a
+     * connection passed `isTokenValid`, stayed off this list, and so never
+     * reached the readiness line: the owner's agents failed and no surface
+     * said why. `refresh_failed_at` is written by `refreshToken` when the
+     * provider answers `invalid_grant`, and it is the only proof that exists.
+     */
+    const refusedGrant = (conn: { settings?: unknown }) =>
+      Boolean((conn.settings as { refresh_failed_at?: string } | null)?.refresh_failed_at);
+
     // Find plugins that are active but not in valid list (meaning expired)
     return allActive
-      .filter(conn => !validKeys.has(conn.plugin_key))
+      .filter(conn => !validKeys.has(conn.plugin_key) || refusedGrant(conn))
       .map(conn => ({
         key: conn.plugin_key,
         /*
@@ -440,7 +453,16 @@ export class PluginManagerV2 {
          * own surface: the refresh fails, the run dead-letters, and the agents
          * list reports the agent as stopped with what to do about it.
          */
-        canRefresh: Boolean((conn as { refresh_token?: string | null }).refresh_token),
+        /*
+         * PRESENCE WAS NEVER PROOF. A refresh token exists on a revoked grant
+         * too, and `canRefresh: true` is what kept readiness silent while the
+         * owner's agents failed. Once the provider has actually refused it,
+         * the answer is no — and the readiness line asks the owner to
+         * reconnect, which is now the only thing that helps.
+         */
+        canRefresh:
+          Boolean((conn as { refresh_token?: string | null }).refresh_token) &&
+          !refusedGrant(conn),
       }));
   }
 

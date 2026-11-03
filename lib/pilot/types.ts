@@ -999,6 +999,8 @@ export interface WorkflowExecutionResult {
    * back to "Non-retryable execution error at step … (unknown)".
    */
   failedStepError?: string;
+  /** The failing step's error CODE — the half that can be translated. */
+  failedStepCode?: string;
 
   // Execution summary for calibration (aggregated metadata, NO actual client data)
   execution_summary?: CalibrationExecutionSummary;

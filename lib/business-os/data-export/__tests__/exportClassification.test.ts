@@ -807,6 +807,9 @@ const DE3_PINS: Record<string, { section: string; columns: string[]; excluded: s
       'id',
       'vertical', 'sub_vertical', 'company_name', 'company_size', 'clients_per_week', 'revenue_tier', 'description', 'services',
       'pain_points', 'goals', 'tools', 'payment_mode', 'online_presence_mode', 'primary_crm', 'primary_calendar', 'primary_payment',
+      /* 20261105_own_site_and_lead_arrival. Their own answers about being
+         findable already, which `online_presence_mode` cannot carry. */
+      'has_website', 'leads_arrive_by_email',
       'phone', 'email', 'address', 'address_parts', 'address_id', 'invoice_address_id',
       'website_url', 'landing_pages', 'logo_url', 'show_logo_on_smart_links', 'theme', 'template_id', 'subdomain', 'user_code',
       'scheduling_availability', 'process_steps', 'language', 'currency',
@@ -930,7 +933,11 @@ const DE3_LIVE_TABLES: Record<string, string> = {
     'invoice_tax_rate invoice_tax_label daily_briefing_email_enabled invoice_payment_terms_days subdomain ' +
     'lead_alert_email_enabled lead_autosend_enabled chase_invoices_enabled chase_intake_enabled automations_declined currency ' +
     'meeting_reminder_enabled meeting_reminder_hours_before meeting_reminder_notify_client meeting_reminder_notify_owner ' +
-    'address_parts address_id invoice_address_id auto_complete_meetings_enabled chase_quotes_enabled',
+    'address_parts address_id invoice_address_id auto_complete_meetings_enabled chase_quotes_enabled ' +
+    /* 20261105_own_site_and_lead_arrival: the two facts `online_presence_mode`
+       cannot carry, since it records only what WE build. Appended, which is
+       where ALTER TABLE ... ADD COLUMN puts them. */
+    'has_website leads_arrive_by_email',
   business_addresses: 'id user_id parts label is_default created_at updated_at',
 };
 const DE3_LIVE_COLUMNS: LiveColumn[] = Object.entries(DE3_LIVE_TABLES).flatMap(([table_name, names]) =>
@@ -1045,7 +1052,7 @@ describe('DE-3 the declared lists match the live columns (T-0 Q1, workplan §10.
   it('the inline live set is the measured state: Q2 counts', () => {
     const counts: Record<string, number> = {};
     for (const c of DE3_LIVE_COLUMNS) counts[c.table_name] = (counts[c.table_name] ?? 0) + 1;
-    expect(counts).toEqual({ profiles: 18, user_preferences: 23, notification_settings: 24, business_profiles: 85, business_addresses: 7 });
+    expect(counts).toEqual({ profiles: 18, user_preferences: 23, notification_settings: 24, business_profiles: 87, business_addresses: 7 });
   });
 
   it('no drift and nothing missing; columns + excludedColumns = the live set, exactly', () => {

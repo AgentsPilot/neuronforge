@@ -708,11 +708,22 @@ export class StepExecutor {
             action: (step as any).action || step.type,
             data: null,
             metadata: {
+              /*
+               * `errorCode` below reads `details.error` FIRST, deliberately.
+               *
+               * A failed plugin result is rethrown as `ExecutionError`, whose
+               * `.code` is always `EXECUTION_ERROR`; the plugin's real code —
+               * `auth_failed`, `quota_exceeded` — travels in `details.error`.
+               * Reading `.code` alone labelled every plugin failure
+               * identically, so the owner-facing layer that turns a code into
+               * a sentence in their own language could never match one, and
+               * every failure stayed in English.
+               */
               success: false,
               executedAt: new Date().toISOString(),
               executionTime,
               error: error.message,
-              errorCode: error.code,
+              errorCode: (error as any)?.details?.error || error.code,
               failure_category: classification.category,
               // @ts-ignore - adding custom fields for batch calibration
               failed: true,
@@ -766,7 +777,7 @@ export class StepExecutor {
           stepId: step.id,
           stepType: step.type,
           error: error.message,
-          errorCode: error.code,
+          errorCode: (error as any)?.details?.error || error.code,
           executionTime,
         },
         severity: 'warning',
@@ -783,7 +794,7 @@ export class StepExecutor {
           executedAt: new Date().toISOString(),
           executionTime,
           error: error.message,
-          errorCode: error.code,
+          errorCode: (error as any)?.details?.error || error.code,
         },
       };
     }

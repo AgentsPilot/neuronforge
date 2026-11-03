@@ -406,6 +406,11 @@ const BUSINESS_PROFILES_EXPORT: TableExportClassification = {
     'id',
     'vertical', 'sub_vertical', 'company_name', 'company_size', 'clients_per_week', 'revenue_tier', 'description', 'services',
     'pain_points', 'goals', 'tools', 'payment_mode', 'online_presence_mode', 'primary_crm', 'primary_calendar', 'primary_payment',
+    /* What the owner told us about being findable already, which
+       `online_presence_mode` cannot carry: it records only what WE build, so a
+       business keeping its own site and one with no presence at all share
+       `booking_only`. Their own answers, so they go out with the rest. */
+    'has_website', 'leads_arrive_by_email',
     'phone', 'email', 'address', 'address_parts', 'address_id', 'invoice_address_id',
     'website_url', 'landing_pages', 'logo_url', 'show_logo_on_smart_links', 'theme', 'template_id', 'subdomain', 'user_code',
     'scheduling_availability', 'process_steps', 'language', 'currency',

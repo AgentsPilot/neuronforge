@@ -20,6 +20,7 @@ import { PLAN_STOPPED_STATUSES } from '@/lib/payments/planStatus';
 /* The milestone rule. Its own module so the gaps layer does not pull the email
    stack in to ask one arithmetic question — see the note there. */
 import { chaserCanStillReach } from '@/lib/payments/overdueMilestones';
+import { coveredByAgent } from './coverage';
 
 const logger = createLogger({ service: 'BusinessGaps' });
 
@@ -36,6 +37,25 @@ const ANSWERED_ACTIVITIES = ['booking_link_sent', 'booking_link_chase'];
  * gap discards rows AFTER the query, so a narrow window can hide a real debt.
  */
 const CANCELLED_SCAN_LIMIT = 200;
+
+/**
+ * How many whole days past its due date an invoice is.
+ *
+ * `NaN` when there is no readable due date — which every caller must treat as
+ * "cannot place this in time", never as zero. An invoice with no due date is
+ * not a debt anybody is late on, and `invoice_no_due_date` is the card that
+ * asks the owner to supply one.
+ *
+ * Whole days, because that is how the milestone chaser counts and how the
+ * agent's stop rule is written; a part-day difference between the two would
+ * uncover an invoice for a few hours a day.
+ */
+function invoiceAgeDays(dueDate: string | null, nowMs: number): number {
+  if (!dueDate) return NaN;
+  const due = new Date(dueDate).getTime();
+  if (!Number.isFinite(due)) return NaN;
+  return Math.floor((nowMs - due) / 86_400_000);
+}
 
 /**
  * How long a client gets to rebook on their own before the owner is asked to
@@ -424,7 +444,7 @@ const quoteAwaitingClient: GapDefinition = {
     safely('quote_awaiting_client', async () => {
       const { data } = await supabaseServer
         .from('proposals')
-        .select('id, contact_id, title, total, currency, sent_at, contact:crm_contacts(first_name, last_name, email)')
+        .select('id, contact_id, status, title, total, currency, sent_at, contact:crm_contacts(first_name, last_name, email)')
         .eq('user_id', userId)
         .in('status', ['sent', 'viewed'])
         .lt('sent_at', hoursAgo(now, 72))
@@ -439,6 +459,13 @@ const quoteAwaitingClient: GapDefinition = {
           note: str(row.title),
           since: (row.sent_at as string) || new Date().toISOString(),
           entityId: row.id as string,
+          /* Opened or not. The gap already filters on `status in (sent, viewed)`
+             and threw the answer away; chasing someone who has not opened it is a
+             different message from chasing someone who read it and went quiet. */
+          contextKey:
+            row.status === 'viewed'
+              ? 'gaps.context.quote_viewed'
+              : 'gaps.context.quote_unopened',
           value: Number(row.total) || undefined,
           currency: str(row.currency) || undefined,
         };
@@ -497,11 +524,14 @@ const invoiceUnpaid: GapDefinition = {
   blocksOn: 'client',
   staleAfterHours: 0,
   action: 'chase_payment',
-  find: (userId, now) =>
+  find: (userId, now, coverage) =>
     safely('invoice_unpaid', async () => {
       const { data } = await supabaseServer
         .from('payment_invoices')
-        .select('id, contact_id, amount, currency, due_date, created_at, client_name')
+        /* `booking_id` so the card can open the appointment this invoice is FOR.
+           The invoice id is what the chase posts to, which is a different
+           question from what the owner wants to look at. */
+        .select('id, contact_id, amount, currency, due_date, created_at, client_name, booking_id')
         .eq('user_id', userId)
         .in('status', ISSUED)
         .order('due_date', { ascending: true })
@@ -622,6 +652,33 @@ const invoiceUnpaid: GapDefinition = {
         /* Something is still coming. The robot has it. */
         if (queued.has(id)) continue;
 
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * AND THE AGENT, WHICH PICKS UP WHERE THE MILESTONE CHASER STOPS.
+         *
+         * `chased` means one `payment_reminders` row went out. For the
+         * MILESTONE chaser that really does mean finished: it schedules its
+         * whole round as `pending` up front, so the branch below is only
+         * reached once nothing is left.
+         *
+         * `chase_overdue_invoices` does not work that way. It sends one chase
+         * at a time, records it the same way, and comes back after its
+         * cooldown for as long as the owner's stop rule allows. Falling
+         * through to `chased` therefore marked an invoice SPENT the moment the
+         * agent chased it — so the agent chasing was what raised the card
+         * telling the owner to chase. Measured on a live account with both
+         * running.
+         *
+         * Checked before `chased` because the agent's round outlives the
+         * chaser's: days 1–7 belong to the milestones, 7 to the owner's stop
+         * rule belong to the agent, and only after that is it the owner's
+         * problem again. `coveredByAgent` reads that far edge from the owner's
+         * own setting, so extending the agent extends this in the same action.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const overdueDays = invoiceAgeDays(row.due_date as string | null, nowMs);
+        if (coveredByAgent(coverage, 'invoice_unpaid', overdueDays)) continue;
+
         /* It has been chased and there is no more chasing coming. */
         if (chased.has(id)) {
           spent.add(id);
@@ -647,18 +704,71 @@ const invoiceUnpaid: GapDefinition = {
          * the same hole seen from the other side.
          * ─────────────────────────────────────────────────────────────────────
          */
-        const due = row.due_date ? new Date(row.due_date as string).getTime() : NaN;
-        if (!Number.isFinite(due)) continue;
-        const daysOverdue = Math.floor((nowMs - due) / 86_400_000);
+        const daysOverdue = overdueDays;
+        if (!Number.isFinite(daysOverdue)) continue;
         if (daysOverdue <= 0) continue;
         if (!chaserCanStillReach(daysOverdue, milestones)) spent.add(id);
       }
+
+      /*
+       * ── THE STORY BEHIND THE INVOICE ────────────────────────────────────────
+       *
+       * "Ofir has not paid, ₪300, 36 days late" is a fact, and the owner's next
+       * move was to open the booking to learn WHY it exists — on the row that
+       * prompted this, the appointment had been missed and charged for. That is
+       * the one clause the list was making them go and find.
+       *
+       * One extra read, over booking ids already in hand, and only when there are
+       * any. A missing story costs a line; it must never cost the card.
+       */
+      const outcomeByBooking = new Map<string, string>();
+      const bookingIds = [
+        ...new Set(owing.map(row => row.booking_id as string | null).filter(Boolean)),
+      ] as string[];
+
+      if (bookingIds.length) {
+        const { data: booked } = await supabaseServer
+          .from('scheduling_bookings')
+          .select('id, meeting_status')
+          .eq('user_id', userId)
+          .in('id', bookingIds);
+
+        for (const booking of booked || []) {
+          const outcome = booking.meeting_status as string | null;
+          if (outcome) outcomeByBooking.set(booking.id as string, outcome);
+        }
+      }
+
+      /*
+       * ALL THREE OUTCOMES, INCLUDING `held`.
+       *
+       * This left `held` out on the reasoning that an appointment happening and
+       * being billed is the ordinary case, and a line that never varies is one
+       * readers stop seeing. Measured on the live card, that was wrong: of four
+       * invoice rows carrying a booking, two were missed, one was held and one
+       * had no outcome recorded. It varies, and `held` is precisely what tells
+       * the owner this is an ordinary unpaid invoice rather than one of the two
+       * beside it that are not.
+       *
+       * A row with no outcome yet still gets nothing — there is no story, and
+       * saying "nobody has marked it" would describe a different gap.
+       */
+      const CONTEXT_FOR: Record<string, string> = {
+        held: 'gaps.context.invoice_held',
+        no_show: 'gaps.context.invoice_no_show',
+        cancelled: 'gaps.context.invoice_cancelled',
+      };
 
       return owing.map(row => ({
         contactId: row.contact_id as string,
         name: str(row.client_name) || 'Someone',
         since: (row.due_date as string) || (row.created_at as string),
         entityId: row.id as string,
+        /* The appointment this invoice is for, where there is one. Absent on an
+           invoice raised on its own, and the card then opens the client. */
+        bookingId: (row.booking_id as string | null) ?? undefined,
+        contextKey:
+          CONTEXT_FOR[outcomeByBooking.get(row.booking_id as string) ?? ''] ?? undefined,
         value: Number(row.amount) || undefined,
         currency: str(row.currency) || undefined,
         chaserDone: spent.has(row.id as string) || undefined,
@@ -1092,6 +1202,21 @@ const bookingCancelled: GapDefinition = {
             note: str(service?.service_name),
             since: (row.updated_at as string) || (row.created_at as string),
             entityId: row.id as string,
+            /* The row IS a booking — this reads `scheduling_bookings`. The id was
+               already in hand and simply never put on the item, so the card had
+               nothing to open. */
+            bookingId: row.id as string,
+            /* WHO called it off. The row offers a refund button and never said
+               whether the client dropped out or the owner did, which is the first
+               thing that decides what to do about it. Already selected; it was
+               simply never passed on. `system` is left without a line: an
+               automation cancelling is not a story about either party. */
+            contextKey:
+              row.cancelled_by === 'client'
+                ? 'gaps.context.cancelled_by_client'
+                : row.cancelled_by === 'owner'
+                  ? 'gaps.context.cancelled_by_owner'
+                  : undefined,
             value: held?.amount,
             currency: held?.currency,
             planLive: livePlanBookings.has(row.id as string) || undefined,
@@ -1834,7 +1959,7 @@ const quoteExpired: GapDefinition = {
       const { data } = await supabaseServer
         .from('proposals')
         .select(
-          'id, contact_id, title, total, currency, sent_at, valid_until, contact:crm_contacts(first_name, last_name, email)'
+          'id, contact_id, title, total, currency, sent_at, viewed_at, valid_until, contact:crm_contacts(first_name, last_name, email)'
         )
         .eq('user_id', userId)
         /*
@@ -1867,6 +1992,12 @@ const quoteExpired: GapDefinition = {
             : (row.sent_at as string) || new Date().toISOString(),
           eventAt: str(row.valid_until) || undefined,
           entityId: row.id as string,
+          /* An expired quote's `status` is always `expired`, so it cannot say
+             this — `viewed_at` can. Whether they ever looked decides if an
+             extension is worth offering. */
+          contextKey: row.viewed_at
+            ? 'gaps.context.quote_viewed'
+            : 'gaps.context.quote_unopened',
           value: Number(row.total) || undefined,
           currency: str(row.currency) || undefined,
         };
@@ -1884,7 +2015,7 @@ const quoteDeadlineUnanswered: GapDefinition = {
     safely('quote_deadline_unanswered', async () => {
       const { data } = await supabaseServer
         .from('proposals')
-        .select('id, contact_id, title, total, currency, sent_at, valid_until, contact:crm_contacts(first_name, last_name, email)')
+        .select('id, contact_id, status, title, total, currency, sent_at, valid_until, contact:crm_contacts(first_name, last_name, email)')
         .eq('user_id', userId)
         .in('status', ['sent', 'viewed'])
         .lt('sent_at', hoursAgo(now, 72))
@@ -1923,6 +2054,13 @@ const quoteDeadlineUnanswered: GapDefinition = {
            */
           eventAt: str(row.valid_until) || undefined,
           entityId: row.id as string,
+          /* Opened or not. "They read it and said nothing" is a different
+             conversation from "it never got looked at", and the deadline row
+             offered the same chase for both. */
+          contextKey:
+            row.status === 'viewed'
+              ? 'gaps.context.quote_viewed'
+              : 'gaps.context.quote_unopened',
           value: Number(row.total) || undefined,
           currency: str(row.currency) || undefined,
         };

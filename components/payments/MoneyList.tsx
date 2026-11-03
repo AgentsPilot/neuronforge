@@ -11,7 +11,7 @@ import { MoneyRow } from './MoneyRow';
 import type { MoneyCurrencyTotals, MoneyEntry, MoneyItem, MoneyTotals } from '@/lib/payments/moneyItems';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { buildEntryActions } from '@/lib/payments/entryActions';
-import { toCsvFile } from '@/lib/payments/csv';
+import { downloadMoneyCsv } from '@/lib/payments/moneyCsv';
 import { parseMoneySearch } from '@/lib/payments/moneySearchTerms';
 import { MoneyDetailDrawer } from './MoneyDetailDrawer';
 import { RefundModal } from './RefundModal';
@@ -601,47 +601,10 @@ export function MoneyList({
 
     setExportCutAt(isCut ? chosen.length : null);
 
-    const rows: (string | number | null)[][] = [
-      [
-        /* The client leads, as the row on screen does. The old file opened with
-           the service name and never named the person at all, which is the
-           column an owner reconciling a bank statement actually needs. */
-        t('payments.export.client') || 'Client',
-        t('payments.export.item') || 'Item',
-        t('payments.export.method') || 'How',
-        t('payments.export.status') || 'Status',
-        t('payments.export.amount') || 'Amount',
-        t('payments.export.refunded_amount') || 'Refunded',
-        t('payments.export.currency') || 'Currency',
-        t('payments.export.date') || 'Date',
-      ],
-      ...chosen.map(item => [
-        item.contactName ?? '',
-        item.title,
-        item.method,
-        item.status,
-        item.amount.toFixed(2),
-        item.refunded ? item.refunded.toFixed(2) : '',
-        item.currency,
-        /* The date the ROW shows, not the raw instant. This exported
-           `item.date` whole, so a cell read `2026-10-14T09:00:00.000Z` — a
-           timestamp in UTC, for a row whose date on screen is the business's
-           own and may be the day before or after. */
-        item.date ? formatDate(item.date) : '',
-      ]),
-    ];
-
-    const url = URL.createObjectURL(
-      /* `toCsvFile` quotes, keeps the BOM Excel needs for Hebrew, and
-         neutralises a cell a spreadsheet would EVALUATE — every name in here
-         was typed into a public form. See `lib/payments/csv`. */
-      new Blob([toCsvFile(rows)], { type: 'text/csv;charset=utf-8;' })
-    );
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `money-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    /* The columns, the cells and the file itself live in `lib/payments/moneyCsv`
+       because the money page exports the same money. Two implementations of
+       "what are the columns" is two answers to a question that has one. */
+    downloadMoneyCsv(chosen, t, formatDate);
   };
 
 

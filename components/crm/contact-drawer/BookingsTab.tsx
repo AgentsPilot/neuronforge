@@ -377,6 +377,14 @@ interface BookingsTabProps {
     currency: string;
     label: string;
   }) => void;
+  /**
+   * Give an expired quote a new date.
+   *
+   * Offered on the journey's quote step and nowhere else: a live quote has
+   * nothing to extend. The drawer owns the dialog, so this tab stays a
+   * renderer and there is one extend form in the product, not two.
+   */
+  onExtendQuote?: (proposalId: string, validUntil: string | null) => void;
   onOpenProposalBuilder?: (
     bookingId: string,
     context: { supersedesId: string | null; declineReason: string | null; declineNote: string | null }
@@ -714,6 +722,7 @@ export function BookingsTab({
   onCompleteStage,
   onRefundStage,
   onOpenProposalBuilder,
+  onExtendQuote,
   onStopQuote,
   onViewProposal,
   onSendInvoice,
@@ -4840,7 +4849,54 @@ export function BookingsTab({
                                                          owner. */
                                                       .join(': ')
                                                   : step.metadata?.proposalStatus === 'expired'
-                                                    ? t('crm.proposal.expired')
+                                                    ? (
+                                                        <>
+                                                          {/*
+                                                            ── WHAT IT RAN OUT ON, AND THE WAY BACK ────────────────
+                                                    
+                                                            The line said only that it expired, so the owner's next two
+                                                            questions — when, and can I still move it — both meant
+                                                            leaving this view. The needs-you card could answer them, but
+                                                            only while it still surfaced this quote.
+                                                    
+                                                            Inside the status line rather than beside it: the span is a
+                                                            grid cell with `break-words`, so on a phone the date and the
+                                                            button wrap under the sentence instead of forcing the row
+                                                            wider. A sibling of the span would have landed in the next
+                                                            grid column.
+                                                    
+                                                            `formatShortDate` is this tab's own date voice, so it reads
+                                                            the same as every other date around it.
+                                                          */}
+                                                          {t('crm.proposal.expired')}
+                                                          {step.metadata?.proposalValidUntil ? (
+                                                            <> · {formatShortDate(String(step.metadata.proposalValidUntil), { withYear: true })}</>
+                                                          ) : null}
+                                                          {step.metadata?.proposalId && onExtendQuote ? (
+                                                            <button
+                                                              type="button"
+                                                              onClick={() =>
+                                                                onExtendQuote(
+                                                                  String(step.metadata?.proposalId),
+                                                                  /* Formatted here: this tab owns the date voice,
+                                                                     and the dialog should never see a raw column. */
+                                                                  step.metadata?.proposalValidUntil
+                                                                    ? formatShortDate(
+                                                                        String(step.metadata.proposalValidUntil),
+                                                                        { withYear: true }
+                                                                      )
+                                                                    : null
+                                                                )
+                                                              }
+                                                              /* 28px tall and 12px of side padding: a real tap target on a
+                                                                 phone, where `py-0.5` would have been about twenty. */
+                                                              className="ms-2 align-middle inline-flex items-center min-h-[28px] px-3 py-1 text-[11px] font-semibold rounded-md text-[var(--v2-primary)] hover:bg-[var(--v2-bg)] active:scale-[0.97] transition-all"
+                                                            >
+                                                              {t('gaps.action.extend_quote')}
+                                                            </button>
+                                                          ) : null}
+                                                        </>
+                                                      )
                                                     : step.metadata?.proposalStatus === 'viewed'
                                                       ? t('crm.proposal.viewed')
                                                       : step.metadata?.waitingOn === 'owner'
