@@ -41,11 +41,19 @@ export async function resolveBusinessShape(userId: string): Promise<BusinessShap
   }
 
   const profile = profileResult.data as
-    | { online_presence_mode?: string | null; payment_mode?: string | null; collection_method?: string | null }
+    | {
+        online_presence_mode?: string | null;
+        has_website?: boolean | null;
+        leads_arrive_by_email?: boolean | null;
+        payment_mode?: string | null;
+        collection_method?: string | null;
+      }
     | null;
 
   return shapeFromServices(servicesResult.data || [], {
     online_presence_mode: profile?.online_presence_mode ?? null,
+    has_website: profile?.has_website ?? null,
+    leads_arrive_by_email: profile?.leads_arrive_by_email ?? null,
     payment_mode: profile?.payment_mode ?? null,
     collection_method: profile?.collection_method ?? null,
   });

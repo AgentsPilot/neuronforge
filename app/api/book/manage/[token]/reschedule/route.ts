@@ -384,19 +384,35 @@ export async function GET(
      *
      * `no_show` passes deliberately — a missed appointment is unresolved, and
      * the client picking another time is the right next move.
+     *
+     * ── AND THE SESSION'S OWN OUTCOME, FOR THE SAME REASON ───────────────
+     *
+     * GET read the PURCHASE's status only, so on a package it offered a full
+     * calendar for a meeting already held or called off, and POST refused the
+     * confirm. The client picked a time before being told it could not be had.
+     *
+     * That is the shape of the no-show bug this guard was already written
+     * against, reached by the other two statuses: the comment above calls
+     * hiding the control a courtesy and refusing the write the guard, and the
+     * courtesy was simply missing for sessions. POST is still the guard.
      */
-    if (booking.meeting_status === 'held' || booking.meeting_status === 'cancelled') {
+    const settledStatus = (session ? session.meeting_status : booking.meeting_status) as
+      | string
+      | null
+      | undefined;
+
+    if (settledStatus === 'held' || settledStatus === 'cancelled') {
       return NextResponse.json(
         {
           success: false,
           code: 'already_settled',
           error:
-            booking.meeting_status === 'held'
+            settledStatus === 'held'
               ? 'That meeting has already taken place.'
               : 'That meeting has already been cancelled.',
           /* Which of the two, so the client's page can say the right one
              rather than mapping on the code alone. */
-          meetingStatus: booking.meeting_status ?? null,
+          meetingStatus: settledStatus ?? null,
         },
         { status: 409 }
       );
@@ -847,17 +863,6 @@ export async function POST(
     const now = new Date();
     const hoursUntilBooking = (currentStartTime.getTime() - now.getTime()) / (1000 * 60 * 60);
 
-    /*
-     * A session with an outcome already on record is not moved — the row says
-     * what happened at an hour, and rewriting it would lose that.
-     */
-    if (session && session.meeting_status !== null) {
-      return NextResponse.json(
-        { success: false, code: 'not_reschedulable', error: 'This booking cannot be rescheduled' },
-        { status: 400 }
-      );
-    }
-
     if (booking.status !== 'confirmed') {
       return NextResponse.json(
         { success: false, code: 'not_reschedulable', error: 'This booking cannot be rescheduled' },
@@ -879,19 +884,48 @@ export async function POST(
      *
      * `no_show` passes deliberately — a missed appointment is unresolved, and
      * the client picking another time is the right next move.
+     * ── AND THE SESSION'S OWN OUTCOME IS THE ONE THAT COUNTS ─────────────
+     *
+     * This read `booking.meeting_status` only, and a SECOND guard above it
+     * refused a session on `session.meeting_status !== null` — every outcome,
+     * `no_show` included. That rule ran first and short-circuited this one, so
+     * on a package the client was told "This booking is no longer open for
+     * changes" about a meeting the product had just invited them to rebook.
+     *
+     * Reported from a pay-as-you-go quotation: the owner marks a meeting
+     * missed, picks "rebook meeting", the client gets the mail, opens the link,
+     * is shown every free slot (GET has no session guard), picks one, and the
+     * confirm is refused. Packages only, because the old rule was gated on
+     * `session` being present at all.
+     *
+     * It also contradicted the two rules that agree with each other: the GET
+     * above, and the owner's own `meetings/[id]/reschedule`, which says "A
+     * MISSED session is deliberately not here — nobody decided anything, and
+     * another attempt at it is the ordinary next move."
+     *
+     * One rule now, reading whichever row owns the outcome. Two copies of a
+     * rule are what let these drift apart.
      */
-    if (booking.meeting_status === 'held' || booking.meeting_status === 'cancelled') {
+    /* `sessionOf` returns `Record<string, unknown>`, so the session's value is
+       `unknown` and cannot be compared to a literal without this. Narrowed once
+       here rather than cast at each of the three uses below. */
+    const settledStatus = (session ? session.meeting_status : booking.meeting_status) as
+      | string
+      | null
+      | undefined;
+
+    if (settledStatus === 'held' || settledStatus === 'cancelled') {
       return NextResponse.json(
         {
           success: false,
           code: 'already_settled',
           error:
-            booking.meeting_status === 'held'
+            settledStatus === 'held'
               ? 'That meeting has already taken place.'
               : 'That meeting has already been cancelled.',
           /* Which of the two, so the client's page can say the right one
              rather than mapping on the code alone. */
-          meetingStatus: booking.meeting_status ?? null,
+          meetingStatus: settledStatus ?? null,
         },
         { status: 409 }
       );

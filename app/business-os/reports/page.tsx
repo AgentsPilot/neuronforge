@@ -4,17 +4,14 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Band } from '@/components/business-os/reports/Band';
 import { VerdictLine } from '@/components/business-os/reports/VerdictLine';
-import { MoneyFigures } from '@/components/business-os/reports/MoneyFigures';
-import { FinancialDetail } from '@/components/business-os/reports/FinancialDetail';
 import { HealthRows } from '@/components/business-os/reports/HealthRows';
 import { ChannelTable } from '@/components/business-os/reports/ChannelTable';
 import { ServiceTable, type ServiceRow } from '@/components/business-os/reports/ServiceTable';
 import { ClientCounts } from '@/components/business-os/reports/ClientCounts';
 import { CHANNEL_LABELS, type ChannelRow } from '@/components/business-os/insight/ChannelSourcesSection';
-import { BarChart3, Download, ChevronRight } from 'lucide-react';
+import { BarChart3 } from 'lucide-react';
 import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
-import { LedgerExportModal } from '@/components/payments/LedgerExportModal';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
 import type { HealthMeasures } from '@/hooks/useInsights';
@@ -111,12 +108,11 @@ const logger = createLogger({ module: 'ReportsPage' });
 /** What `formatCurrency` knows how to render; anything else uses the default. */
 const SUPPORTED_CURRENCIES: CurrencyCode[] = ['USD', 'EUR', 'ILS', 'GBP'];
 
-const REPORT_PERIODS: { value: ReportPeriod; key: string; fallback: string }[] = [
-  { value: 'week', key: 'reports.period_week', fallback: 'Week' },
-  { value: 'month', key: 'reports.period_month', fallback: 'Month' },
-  { value: 'year', key: 'reports.period_year', fallback: 'Year' },
-  { value: 'all', key: 'reports.period_all', fallback: 'All time' }
-];
+/*
+  The four windows this page used to offer. The selector is gone and the window
+  is fixed at a month; the list is kept because the labels are still live copy —
+  the money page's own period control renders exactly these keys.
+*/
 
 /** Bands 1 and 3, as little of the insights payload as the route will return. */
 interface HealthState {
@@ -217,8 +213,13 @@ export default function ReportsPage() {
 
   const [loading, setLoading] = useState(true);
   // Reporting window. 'month' matches what this page showed before the filter existed.
-  const [period, setPeriod] = useState<ReportPeriod>('month');
-  const [showLedgerExport, setShowLedgerExport] = useState(false);
+  /*
+    Fixed, since the selector was removed. A constant rather than state the
+    page never sets: every band still passes it to its route, so the window is
+    one named value here instead of four scattered literals, and restoring the
+    control is putting a `useState` back around this line.
+  */
+  const period: ReportPeriod = 'month';
   // Switching period refetches in the background: the numbers on screen stay put
   // and fade slightly instead of the page collapsing into the full-page spinner.
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -229,7 +230,6 @@ export default function ReportsPage() {
    * Collapsed by default and remembered for the session only. An owner who
    * opens it once is usually reconciling, which is a sitting, not a preference.
    */
-  const [showDetail, setShowDetail] = useState(false);
 
   const [payments, setPayments] = useState<PaymentStats | null>(null);
   const [services, setServices] = useState<ServiceRow[]>([]);
@@ -436,24 +436,6 @@ export default function ReportsPage() {
     router.replace(`/business-os/orders${query ? `?${query}` : ''}`);
   }, [searchParams, router]);
 
-  /*
-   * The period the ledger dialog opens on.
-   *
-   * Mirrors the stats API's rolling windows (7/30/365 days, "all" = no start),
-   * so the file starts out matching the figures it was launched from. The user
-   * can change it there — the dialog owns the period from that point on.
-   */
-  const ledgerDefaults = (): { from: string; to: string } => {
-    const PERIOD_DAYS: Record<string, number> = { week: 7, month: 30, year: 365 };
-    const iso = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const days = PERIOD_DAYS[period];
-    return {
-      from: days ? iso(new Date(Date.now() - days * 86400_000)) : '2000-01-01',
-      to: iso(new Date()),
-    };
-  };
-
   const isRTL = language === 'he';
 
   /*
@@ -510,47 +492,20 @@ export default function ReportsPage() {
         ) : (
           <div className="max-w-7xl mx-auto flex flex-col gap-4">
 
-            {/* Reporting window, and the file that window makes. */}
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div
-                className="inline-flex items-center gap-0.5 p-1 border border-[var(--v2-border)] bg-[var(--v2-surface)]"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                role="group"
-                aria-label={t('reports.period_label') || 'Reporting period'}
-              >
-                {REPORT_PERIODS.map(({ value, key, fallback }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setPeriod(value)}
-                    disabled={isRefreshing && period !== value}
-                    aria-pressed={period === value}
-                    className={`px-3 py-1.5 text-sm font-medium transition-all border disabled:cursor-default ${
-                      period === value
-                        ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
-                        : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
-                    }`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {t(key) || fallback}
-                  </button>
-                ))}
-              </div>
+            {/*
+              THE WINDOW BAR IS GONE: BOTH THE PERIOD SELECTOR AND THE LEDGER
+              EXPORT THAT SAT BESIDE IT.
+              ───────────────────────────────────────────────────────────────
+              The period control is removed, not the period: every band below
+              still asks the routes for a window, and `period` is now the
+              constant `'month'` — the value the page already opened on, so
+              what this page says is what it has always said on arrival.
 
-              {/* The accountant's copy of the window above.
-                  Server-side and unpaginated, and it lists refunds as their own
-                  dated rows — the one thing an on-screen export cannot do, since
-                  folding a refund into the sale's row dates it to the sale. */}
-              <button
-                type="button"
-                onClick={() => setShowLedgerExport(true)}
-                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                <Download className="w-4 h-4" />
-                {t('reports.export_ledger')}
-              </button>
-            </div>
+              The ledger export moved with the money it describes. It is still
+              reachable, from `/business-os/money`, which is now the one screen
+              that owns money — so there is one answer to "how do I get this to
+              my accountant" rather than two buttons on two pages.
+            */}
 
             {/* Figures stay on screen while the new window loads, dimmed so it's
                 clear they're the previous period's. */}
@@ -575,66 +530,28 @@ export default function ReportsPage() {
                 unavailable={health.measures?.unavailable ?? 0}
               />
 
-              {/* ── BAND 2 · money ─────────────────────────────────────── */}
-              {payments && (
-                <Band name={t('reports.band_money')} question={t('reports.q_money')}>
-                  <MoneyFigures
-                    collected={payments.gross_revenue_30d}
-                    refunded={payments.refunds_amount_30d}
-                    fees={payments.processor_fees_30d}
-                    banked={payments.banked_revenue_30d}
-                    feesUnknown={payments.processor_fees_unknown}
-                    owed={payments.revenue_owed_30d}
-                    pendingInvoices={payments.pending_invoices}
-                    overdueInvoices={payments.invoices_overdue}
-                    pendingInstallments={payments.plan_pending_count}
-                    writtenOff={payments.lost_potential_amount}
-                    writtenOffCount={payments.lost_potential_count}
-                    writtenOffInvoices={payments.lost_potential_invoice_count}
-                    writtenOffPlanPeriods={payments.lost_potential_plan_count}
-                    money={money}
-                    onOpenOrders={() => router.push('/business-os/orders')}
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() => setShowDetail(v => !v)}
-                    aria-expanded={showDetail}
-                    aria-controls="reports-financial-detail"
-                    className="w-full flex items-center gap-1.5 px-[18px] py-3 text-sm font-semibold text-start bg-[var(--v2-bg)] border-t border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
-                  >
-                    <ChevronRight
-                      className={`w-3.5 h-3.5 transition-transform ${showDetail ? 'rotate-90' : ''}`}
-                    />
-                    {t('reports.financial_detail')}
-                  </button>
-
-                  {showDetail && (
-                    <div id="reports-financial-detail">
-                      <FinancialDetail
-                        charged={payments.charged_transactions_30d}
-                        failed={payments.failed_transactions_30d}
-                        invoicesPaid={payments.invoices_paid_30d}
-                        invoicesSent={payments.invoices_sent_30d}
-                        overdueAmount={payments.invoices_overdue_amount}
-                        overdueCount={payments.invoices_overdue}
-                        overdueInvoiceCount={payments.invoices_overdue_invoice_count}
-                        overduePlanCount={payments.invoices_overdue_plan_count}
-                        refunded={payments.refunds_amount_30d}
-                        gross={payments.gross_revenue_30d}
-                        refundFeesKept={payments.refund_fees_kept_30d}
-                        averageInvoice={payments.average_invoice_amount}
-                        plansPaid={payments.source_plans_paid}
-                        plansOutstanding={payments.source_plans_outstanding}
-                        quoted={payments.open_proposals_amount}
-                        quotedCount={payments.open_proposals_count}
-                        ordered={payments.booked_value_period}
-                        money={money}
-                      />
-                    </div>
-                  )}
-                </Band>
-              )}
+              {/*
+               * ── BAND 2 · money — REMOVED ──────────────────────────────
+               *
+               * The money band lived here: `MoneyFigures` over the stats
+               * route's `*_30d` fields, with `FinancialDetail` folded beneath
+               * it.
+               *
+               * It is gone because `/business-os/money` now answers the same
+               * question, and the two did not agree. They counted a payment by
+               * different dates — the stats route windows transactions by
+               * `created_at` and invoices by `paid_at`, while the money page
+               * uses `paid_at` for both — so the same period produced two
+               * revenue figures with nothing on either screen to say why.
+               *
+               * One screen owns money now. The stats route still computes these
+               * fields: the weekly narrative, the insight detectors and
+               * `lateMoneyAgreesWithTheOrdersPage` read them, so removing them
+               * is a separate job from removing this band.
+               *
+               * `payments` is still fetched — the multi-currency notice below
+               * and the page's currency both read it.
+               */}
 
               {/*
                * Say so when the totals are adding unlike things.
@@ -731,12 +648,6 @@ export default function ReportsPage() {
         )}
       </div>
 
-      <LedgerExportModal
-        isOpen={showLedgerExport}
-        onClose={() => setShowLedgerExport(false)}
-        defaultFrom={ledgerDefaults().from}
-        defaultTo={ledgerDefaults().to}
-      />
     </div>
   );
 }

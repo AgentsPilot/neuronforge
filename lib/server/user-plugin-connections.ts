@@ -5,7 +5,7 @@ import { PluginAuthConfig, UserConnection, ConnectionStatus } from '@/lib/types/
 import { createLogger } from '@/lib/logger';
 import { PluginConnectionRepository, pluginConnectionRepository } from '@/lib/repositories';
 import type { UpsertPluginConnectionInput } from '@/lib/repositories/types';
-import { exchangeCodeForTokens, refreshAccessToken, fetchUserProfile, calculateExpiresAt } from '@/lib/services/OAuthTokenService';
+import { exchangeCodeForTokens, refreshAccessToken, refreshAccessTokenDetailed, fetchUserProfile, calculateExpiresAt } from '@/lib/services/OAuthTokenService';
 import { AuditTrail } from '@/lib/services/AuditTrailService';
 import type { AuditLogInput } from '@/lib/audit/types';
 
@@ -16,6 +16,15 @@ const logger = createLogger({ module: 'UserPluginConnections', service: 'plugin-
 const globalForUserConnections = globalThis as unknown as {
   userConnectionsInstance: UserPluginConnections | null;
 };
+
+/** The same settings with the dead-grant mark removed. */
+function withoutRefreshFailure(settings: unknown): Record<string, unknown> {
+  const { refresh_failed_at, refresh_failed_detail, ...rest } = (settings ??
+    {}) as Record<string, unknown>;
+  void refresh_failed_at;
+  void refresh_failed_detail;
+  return rest;
+}
 
 export class UserPluginConnections {
   private repository: PluginConnectionRepository;
@@ -352,17 +361,43 @@ export class UserPluginConnections {
 
     try {
       // Refresh token via OAuthTokenService
-      const tokens = await refreshAccessToken(connection.refresh_token, authConfig);
+      const outcome = await refreshAccessTokenDetailed(connection.refresh_token, authConfig);
 
-      if (!tokens) {
-        // Expected lifecycle event (token expired/revoked) — handled by returning
-        // null + prompting reconnect. WARN, with the likely cause folded in.
+      if (!outcome.ok) {
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * A DEAD GRANT IS RECORDED, SO A SURFACE CAN SAY SO.
+         *
+         * Returning null told the caller "no token" and told the OWNER
+         * nothing. The readiness line decides what to warn about from
+         * `can_refresh`, which was computed from a refresh token merely
+         * EXISTING — so a grant the owner had revoked still read as
+         * refreshable, readiness stayed quiet, and their agents failed in
+         * silence with no way to discover why.
+         *
+         * Presence is not proof. The one thing that proves a grant is gone is
+         * the provider refusing it, which is what we have here, so it is
+         * written down: `settings.refresh_failed_at`. Nothing else can know
+         * this — it is not derivable from any column.
+         *
+         * Only for `grant_revoked`. A transient failure marks nothing, because
+         * telling an owner to re-authorise over a provider's bad minute
+         * teaches them the warning means nothing.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        if (outcome.reason === 'grant_revoked') {
+          await this.recordRefreshFailure(connection, outcome.detail);
+        }
+
         logger.warn({
           pluginKey: connection.plugin_key,
+          reason: outcome.reason,
           commonCauses: 'refresh token expired (Google ~6mo), token revoked, or OAuth credentials changed'
-        }, 'Token refresh failed - user needs to reconnect in Settings');
+        }, 'Token refresh failed');
         return null;
       }
+
+      const tokens = outcome.tokens;
 
       const expiresAt = calculateExpiresAt(tokens.expires_in);
 
@@ -378,7 +413,9 @@ export class UserPluginConnections {
         username: connection.username || '',
         email: connection.email || null,
         profile_data: connection.profile_data || null,
-        settings: connection.settings || {},
+        /* A successful refresh clears the dead-grant mark — whatever the owner
+           did to fix it worked, and the readiness line must stop warning. */
+        settings: withoutRefreshFailure(connection.settings),
         status: 'active'
       };
 
@@ -607,6 +644,43 @@ export class UserPluginConnections {
   }
 
   // Private helper methods
+
+  /**
+   * Write down that the provider refused this grant.
+   *
+   * On `settings` rather than a new column: no migration, and the fact belongs
+   * WITH the connection it describes. Best-effort — a connection we could not
+   * annotate is still a connection that failed, and the caller reports that
+   * either way.
+   */
+  private async recordRefreshFailure(connection: UserConnection, detail: string): Promise<void> {
+    try {
+      const settings = (connection.settings ?? {}) as Record<string, unknown>;
+      await this.repository.upsert({
+        user_id: connection.user_id,
+        plugin_key: connection.plugin_key,
+        plugin_name: connection.plugin_name,
+        access_token: connection.access_token,
+        refresh_token: connection.refresh_token,
+        expires_at: connection.expires_at,
+        scope: connection.scope || null,
+        username: connection.username || '',
+        email: connection.email || null,
+        profile_data: connection.profile_data || null,
+        settings: {
+          ...settings,
+          refresh_failed_at: new Date().toISOString(),
+          refresh_failed_detail: detail,
+        },
+        status: 'active',
+      } as never);
+    } catch (err) {
+      logger.warn(
+        { err, pluginKey: connection.plugin_key },
+        'Could not record the refresh failure; the connection is still reported as failed'
+      );
+    }
+  }
 
   // Check if token is still valid
   public isTokenValid(expiresAt: string | null): boolean {

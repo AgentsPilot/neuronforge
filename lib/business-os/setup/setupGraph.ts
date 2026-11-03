@@ -72,6 +72,24 @@ export interface BusinessShape {
   /** What the chat agreed about being findable online. */
   presence: PresenceMode | null;
   /**
+   * They have a website of their own, whoever built it.
+   *
+   * NOT derivable from `presence`, which records only what WE build: a business
+   * keeping its own site and one with no web presence at all both carry
+   * `booking_only`. Null means never established, and must be read as "do not
+   * offer" rather than false — the dashboard waits on it instead of guessing.
+   */
+  hasOwnWebsite: boolean | null;
+  /**
+   * Enquiries from that site reach a mailbox we could read.
+   *
+   * Its own fact because it does not follow from having a site: an owner can
+   * take every enquiry by phone. It is the one thing that decides whether the
+   * agent which reads enquiry email can work at all, so null suppresses that
+   * offer rather than risking it.
+   */
+  leadsArriveByEmail: boolean | null;
+  /**
    * Payment plans defined on services — "3 monthly payments of ₪200".
    *
    * Says nothing about how the instalments are collected: each one can be
@@ -113,6 +131,8 @@ export const UNKNOWN_SHAPE: BusinessShape = {
   collectsOnline: null,
   invoices: null,
   presence: null,
+  hasOwnWebsite: null,
+  leadsArriveByEmail: null,
   plans: null,
 };
 
@@ -804,6 +824,11 @@ export function shapeFromProfile(profile: {
   payment_mode?: string | null;
   collection_method?: string | null;
   online_presence_mode?: string | null;
+  /* The two answers `online_presence_mode` cannot carry — see `BusinessShape`.
+     Both stay nullable all the way through: "never established" is the common
+     state and the graph is built to wait on it. */
+  has_website?: boolean | null;
+  leads_arrive_by_email?: boolean | null;
   hasPricedServices?: boolean | null;
   /** Payment plans defined on services, as the dashboard counted them. */
   plans?: PlanKind | null;
@@ -873,6 +898,10 @@ export function shapeFromProfile(profile: {
     collectsOnline: collectsOnlineNow,
     invoices: invoicesNow,
     presence,
+    /* Passed through, never inferred from `presence`: the whole reason these
+       two columns exist is that the mode collapses the distinction. */
+    hasOwnWebsite: profile.has_website ?? null,
+    leadsArriveByEmail: profile.leads_arrive_by_email ?? null,
     plans: profile.plans ?? null,
   };
 }

@@ -159,6 +159,21 @@ export type OnboardingStep =
   | 'service_details'  // Follow-up when user didn't provide specific service details
   | 'payment_collection'  // How does the money reach you? (decides Stripe vs bank details)
   | 'client_acquisition'  // Q4: How do clients find you? (determines website need)
+  /**
+   * Q4b, asked ONLY of an owner who said they already have a website: do the
+   * enquiries from it land in a mailbox?
+   *
+   * A follow-up rather than a chip on Q4, for the same reason `service_details`
+   * is a step of its own: it is a question only some owners have an answer to.
+   * With no site of their own there is no site's mail to read, so they never
+   * see it and the interview is no longer for them.
+   *
+   * What it decides is which offer the dashboard makes them — the agent that
+   * reads enquiry email, or the form smart link to share with clients. One of
+   * those cannot work without a mailbox, which is why the answer has to be
+   * theirs rather than inferred.
+   */
+  | 'lead_arrival'
   | 'client_tracking'     // Q5: How do you track clients? (determines CRM need)
   | 'preview'
   | 'preview_adjustment'
@@ -233,6 +248,9 @@ export const ONBOARDING_STEPS = new Set<OnboardingStep>([
   // conversation when it is missing.
   'payment_collection',
   'client_acquisition',
+  // Asked only where the owner said they already have a website — see the
+  // step's own note. Every other answer goes straight to the plan.
+  'lead_arrival',
   // No longer asked either — CRM is not a choice. Six tables carry a NOT NULL
   // foreign key to `crm_contacts`, so a booking cannot be written without a
   // contact, and the pipeline is now seeded for every business. The answer
@@ -1530,8 +1548,23 @@ export class OnboardingConversationManager {
         logger.info({ clientAcquisition }, 'Client acquisition extracted');
 
         /*
-         * The last question. Q5 — "how do you track clients today?" — used to
-         * follow, and it decided whether the business got a CRM at all.
+         * ONE FOLLOW-UP, AND ONLY FOR AN OWNER WITH A SITE OF THEIR OWN.
+         *
+         * Whether that site's enquiries reach a mailbox decides which offer the
+         * dashboard makes them, and it does not follow from having a site: a
+         * business can take every enquiry by phone. So it is asked, once, of
+         * the people who have an answer — and of nobody else, because for an
+         * owner taking a website from us the question is about a site that does
+         * not exist yet.
+         */
+        if (clientAcquisition.has_website === true) {
+          updatedState.currentStep = 'lead_arrival';
+          break;
+        }
+
+        /*
+         * Otherwise the last question. Q5 — "how do you track clients today?" —
+         * used to follow, and it decided whether the business got a CRM at all.
          *
          * It cannot decide that any more, because CRM is structural: contacts
          * are a NOT NULL foreign key on bookings, invoices, proposals, tasks
@@ -1545,6 +1578,41 @@ export class OnboardingConversationManager {
         this.finalizeConfiguration(updatedState);
         updatedState.currentStep = 'preview';
         break;
+
+      /*
+       * Q4b. The answer decides an OFFER, never a build: nothing here creates
+       * anything, and both answers lead to the same plan screen.
+       *
+       *   yes → the dashboard offers the agent that reads enquiry email
+       *   no  → it offers the form smart link to share with clients instead
+       *
+       * A reply that reads as neither is recorded as `null` rather than guessed
+       * at. Null suppresses both offers, which is the recoverable failure: an
+       * owner who is not offered something can still find it in the channels
+       * card, where an owner offered an agent that cannot work for them is
+       * simply misled.
+       */
+      case 'lead_arrival': {
+        const arrival = this.extractLeadArrival(message, updatedState.language);
+        const acquisition = updatedState.collectedData.clientAcquisition ?? {};
+
+        acquisition.leads_arrive_by_email = arrival;
+        /* The agent reads a mailbox, so only a yes can grant it. */
+        acquisition.needs_inbox_channel = arrival === true;
+        if (arrival === true) {
+          acquisition.acquisition_channels = [
+            ...(acquisition.acquisition_channels ?? []).filter(c => c !== 'inbox_enquiries'),
+            'inbox_enquiries',
+          ];
+        }
+
+        updatedState.collectedData.clientAcquisition = acquisition;
+        logger.info({ leadsArriveByEmail: arrival }, 'Lead arrival answered');
+
+        this.finalizeConfiguration(updatedState);
+        updatedState.currentStep = 'preview';
+        break;
+      }
 
       /*
        * Retired. Reachable only by a conversation that was already standing
@@ -2998,17 +3066,23 @@ export class OnboardingConversationManager {
      * and a keyword parser reports nothing when it misreads.
      *
      * So it is matched on the half the build-a-site chip does not share — the
-     * enquiries-by-email half — and its text is then REMOVED from the string
-     * before the website test runs, so its own "website" cannot satisfy it.
+     * HAVING of one, "already have" / "כבר יש לי" / "ya tengo" — and its text
+     * is then REMOVED from the string before the website test runs, so its own
+     * "website" cannot satisfy it.
+     *
+     * It used to match the enquiries-by-email half of the chip as well, because
+     * the chip used to promise it: "I already have a website: read the
+     * enquiries it emails me". That wording asked the owner to commit to two
+     * facts in one tick, and an owner whose enquiries come by phone could not
+     * tick it — so we lost the fact we were actually asking for. The chip now
+     * says only "I already have a website", and whether the enquiries arrive by
+     * email is a question of its own, asked next and only of these owners.
      * ─────────────────────────────────────────────────────────────────────────
      */
     const hasOwnWebsite =
       lowerMsg.includes('already have') ||
-      lowerMsg.includes('enquiries it emails') ||
       lowerMsg.includes('כבר יש לי') ||
-      lowerMsg.includes('שמגיעות למייל') ||
-      lowerMsg.includes('ya tengo') ||
-      lowerMsg.includes('llegan a mi correo');
+      lowerMsg.includes('ya tengo');
 
     /*
      * The website test reads the message WITHOUT that option's text.
@@ -3052,10 +3126,16 @@ export class OnboardingConversationManager {
       lowerMsg.includes('לחבר') ||
       lowerMsg.includes('conectar');
 
-    // Build acquisition channels array
+    /*
+     * Build acquisition channels array.
+     *
+     * `inbox_enquiries` is deliberately NOT pushed here even when they have
+     * their own site. It is a mailbox channel, and whether their enquiries
+     * reach a mailbox is the follow-up question — asked next, of these owners
+     * only. The follow-up adds it when the answer is yes.
+     */
     const channels: string[] = [];
     if (needsWebsite) channels.push('website');
-    if (hasOwnWebsite) channels.push('inbox_enquiries');
     if (needsChannels) channels.push('channel_insights');
 
     const result: ClientAcquisitionExtraction = {
@@ -3082,10 +3162,14 @@ export class OnboardingConversationManager {
       // answer.
       needs_website: needsWebsite,
       needs_channel_insights: needsChannels,
-      /* The mailbox lead channel: their form already emails them, and we read
-         that mailbox. Granted as a capability at build time; the connection
-         itself is an owner task, never an OAuth popup mid-conversation. */
-      needs_inbox_channel: hasOwnWebsite,
+      /*
+       * Both left for the follow-up, which is the only thing that can answer
+       * them. The chip says they HAVE a site; it no longer claims the site
+       * emails them, and the agent this grants reads a mailbox. Granting it on
+       * the chip alone is what offered the agent to owners it could not serve.
+       */
+      leads_arrive_by_email: null,
+      needs_inbox_channel: false,
     };
 
     logger.info({ result, messageLength: message.length }, 'Extracted client acquisition from multi-select');
@@ -3871,6 +3955,51 @@ export class OnboardingConversationManager {
   }
 
   /**
+   * Q4b: do the enquiries from their own site reach a mailbox?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NULL IS A REAL ANSWER HERE, AND THE SAFE ONE.
+   *
+   * Unlike `isConfirmation`, neither direction of this question is destructive —
+   * nothing is built either way — so there is no asymmetry forcing a default.
+   * What each answer does is pick an OFFER on the dashboard:
+   *
+   *   true   the agent that reads enquiry email
+   *   false  the form smart link, to share with clients directly
+   *   null   neither, until we know
+   *
+   * Guessing `false` would quietly hide an agent from an owner it suits;
+   * guessing `true` would offer an owner an agent that reads a mailbox their
+   * leads never reach. Null does neither, and the channels card still carries
+   * the option for anyone who goes looking. So an unparseable reply returns
+   * null rather than a direction.
+   *
+   * Negation is read FIRST, for the reason `isConfirmation` documents at
+   * length: every "no" chip here opens with a word the affirmative test would
+   * otherwise have to avoid, and `containsWholeWord` is Unicode-aware where
+   * `\b` cannot bound Hebrew.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private extractLeadArrival(message: string, language: Language): boolean | null {
+    const lowerMsg = message.toLowerCase();
+
+    /* "No, they reach me another way" and its two translations. */
+    if (NEGATORS.some(word => containsWholeWord(lowerMsg, word))) return false;
+
+    const yesPatterns: Record<Language, string[]> = {
+      en: ['yes', 'yeah', 'yep', 'email', 'inbox', 'mail'],
+      he: ['כן', 'למייל', 'מייל', 'אימייל', 'דואר'],
+      es: ['sí', 'si', 'correo', 'email'],
+    };
+
+    const patterns = yesPatterns[language] || yesPatterns.en;
+    if (patterns.some(word => containsWholeWord(lowerMsg, word))) return true;
+
+    /* Neither. Say so rather than picking one. */
+    return null;
+  }
+
+  /**
    * Get next response based on current state
    */
   private async getNextResponse(
@@ -4193,6 +4322,18 @@ export class OnboardingConversationManager {
         };
       }
 
+      /*
+       * Q4b, reached only from the branch in `processUserMessage` that saw
+       * `has_website === true`. Single-select, unlike the question before it:
+       * these two answers are exclusive, and a multi-select that can be
+       * answered "both" has no reading.
+       */
+      case 'lead_arrival':
+        return {
+          response: responses.lead_arrival_prompt,
+          suggestions: responses.lead_arrival_options,
+        };
+
       case 'preview':
         // Visual preview card handles the display - just return minimal message
         // The UI shows the visual preview card with all details
@@ -4292,8 +4433,14 @@ export class OnboardingConversationManager {
         website_consequence: 'אני מניח שתרצו שנבנה לכם אתר.',
         client_acquisition_options: [
           'שאבנה לך אתר מקצועי',
-          'כבר יש לי אתר: לקרוא ממנו את הפניות שמגיעות למייל',
+          'כבר יש לי אתר',
           'לחבר פייסבוק, אינסטגרם או גוגל: לראות מאיפה מגיעים הלקוחות',
+        ],
+        /* See the English copy. */
+        lead_arrival_prompt: 'וכשמישהו פונה דרך האתר שלך, זה מגיע אליך למייל?',
+        lead_arrival_options: [
+          'כן, הפניות מגיעות למייל שלי',
+          'לא, הן מגיעות אליי בדרך אחרת',
         ],
         default_company: 'העסק שלך',
         preview_options: ['כן, בואו נתחיל!', 'אני רוצה לשנות משהו'],
@@ -4360,8 +4507,14 @@ export class OnboardingConversationManager {
         website_consequence: 'imagino que querrás que te construyamos una web.',
         client_acquisition_options: [
           'Que te construya un sitio web profesional',
-          'Ya tengo un sitio: leer las consultas que llegan a mi correo',
+          'Ya tengo un sitio web',
           'Conectar Facebook, Instagram o Google: ver de dónde vienen tus clientes',
+        ],
+        /* See the English copy. */
+        lead_arrival_prompt: 'Y cuando alguien consulta desde tu sitio, ¿te llega por correo?',
+        lead_arrival_options: [
+          'Sí, las consultas llegan a mi correo',
+          'No, me llegan de otra forma',
         ],
         default_company: 'tu negocio',
         preview_options: ['Sí, ¡comencemos!', 'Quiero cambiar algo'],
@@ -4473,8 +4626,18 @@ export class OnboardingConversationManager {
       website_consequence: 'I take it you want a website built.',
       client_acquisition_options: [
         'Build me a professional website',
-        'I already have a website: read the enquiries it emails me',
+        'I already have a website',
         'Connect Facebook, Instagram or Google: see where clients come from',
+      ],
+      /*
+       * Q4b. Worded for an owner who has never thought about it, so neither
+       * answer sounds like the right one: "another way" is as ordinary a way to
+       * run a business as email, and the offer that follows a no is a real one.
+       */
+      lead_arrival_prompt: 'And when somebody enquires through your site, does it reach you by email?',
+      lead_arrival_options: [
+        'Yes, enquiries land in my email',
+        'No, they reach me another way',
       ],
       default_company: 'your business',
       preview_options: ["Yes, let's get started!", 'I want to change something'],

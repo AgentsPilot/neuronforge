@@ -186,11 +186,30 @@ export interface ClientAcquisitionExtraction {
    */
   needs_channel_insights?: boolean;
   /**
-   * They already have a website, and want the enquiries it emails them read.
+   * Enquiries from their own site land in a mailbox we could read.
    *
-   * The one answer that can settle `has_website`: declining our website says
-   * nothing about owning one, which is why that field was a permanent `null`
-   * before this chip existed.
+   * ───────────────────────────────────────────────────────────────────────────
+   * ITS OWN QUESTION, BECAUSE IT DOES NOT FOLLOW FROM `has_website`.
+   *
+   * One chip used to carry both facts — "I already have a website: read the
+   * enquiries it emails me" — and an owner whose enquiries come by phone, by
+   * WhatsApp or through a portal could not tick it. So we lost the fact we were
+   * really asking for, because it was bundled with a promise they could not
+   * make.
+   *
+   * Asked as a follow-up, and ONLY where `has_website` is true: with no site of
+   * their own there is no site's mail to read, and the question would be
+   * nonsense. Null is the common answer and means never established.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  leads_arrive_by_email?: boolean | null;
+  /**
+   * They want the enquiries their own site emails them read.
+   *
+   * TRUE only where `has_website` AND `leads_arrive_by_email` are both true —
+   * the agent reads a mailbox, so an owner whose leads never reach one cannot
+   * be served by it however much they might want to be. Set by the follow-up
+   * step, not by the chip, for exactly that reason.
    */
   needs_inbox_channel?: boolean;
 }
@@ -266,6 +285,15 @@ export interface InferredConfiguration {
    * indistinguishable. Null means "not established", not "no".
    */
   has_website?: boolean | null;
+  /**
+   * Enquiries from their own site land in a mailbox.
+   *
+   * Asked as a follow-up and only where `has_website` is true. Null means never
+   * established, which the dashboard reads as "offer neither yet" rather than
+   * picking one — see the column comment in
+   * `supabase/migrations/20261105_own_site_and_lead_arrival.sql`.
+   */
+  leads_arrive_by_email?: boolean | null;
 
   // Payment Configuration
   payment_mode: PaymentMode;
@@ -658,6 +686,9 @@ export class OnboardingConfigurationService {
       /* Carried through so the build can tell a business that kept its own site
          from one with no presence at all; both share a presence mode. */
       has_website: extracted.clientAcquisition?.has_website ?? null,
+      /* The follow-up's answer. Carried for the same reason as the line above:
+         `online_presence_mode` cannot hold either fact. */
+      leads_arrive_by_email: extracted.clientAcquisition?.leads_arrive_by_email ?? null,
 
       // Payment
       payment_mode: paymentMode,
@@ -1121,16 +1152,21 @@ export class OnboardingConfigurationService {
     }
 
     /*
-     * The mailbox lead channel, for a business that keeps its own site.
+     * The mailbox lead channel, for a business that keeps its own site AND
+     * takes its enquiries by email.
      *
      * Its own capability for the same reason `channel_insights` has one: it is
      * the only thing that can answer "did this person say they already have a
      * website?", which is what the build's owner-task list needs to know.
+     *
+     * `needs_inbox_channel` is now true only where the follow-up question was
+     * answered yes, so the reason given below is something the owner actually
+     * said rather than something inferred from having a site at all.
      */
     if (data.clientAcquisition?.needs_inbox_channel) {
       addCapability(
         'inbox_enquiries',
-        'You already have a website and want the enquiries it emails you read'
+        'Enquiries from your own website reach you by email'
       );
     }
 

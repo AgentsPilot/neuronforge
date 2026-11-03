@@ -413,13 +413,17 @@ describe('what the one list actually decides', () => {
       const tasks = ownerTasks(
         /* EVERY key, which is what this asserts — so the input has to ask for
            every one of them. `hasOwnWebsite` joined the list on 2026-10-26
-           with the mailbox lead channel. */
+           with the mailbox lead channel, and `leadsArriveByEmail` on
+           2026-11-03 when the two facts were split apart: the task is to
+           connect a MAILBOX, so a site whose enquiries never reach one leaves
+           it nothing to do. Both are needed to ask for `mailbox` now. */
         {
           serviceCount: 1,
           sellsScheduled: true,
           collectionMethod: 'mixed',
           needsIntake: true,
           hasOwnWebsite: true,
+          leadsArriveByEmail: true,
         },
         language
       );

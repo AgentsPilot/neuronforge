@@ -234,6 +234,10 @@ interface PreviewData {
     online_presence_mode?: 'full_website' | 'booking_only' | 'website_only' | 'none';
     /** They told us they already have a site. Null means "not established". */
     has_website?: boolean | null;
+    /** And whether that site's enquiries reach a mailbox — the follow-up, asked
+     *  only of those owners. Null means "not established", and nothing may be
+     *  promised about a mailbox on a null. */
+    leads_arrive_by_email?: boolean | null;
     /** How money actually arrives — the answer that decides whether Stripe is needed at all. */
     collection_method?: 'card_online' | 'invoice' | 'in_person' | 'mixed' | 'none';
     /*
@@ -1484,11 +1488,31 @@ export default function OnboardingChatPage() {
      * have no website reads as though we had not listened.
      */
     if (configuration?.has_website === true) {
+      /*
+       * The second half of this line is a PROMISE, so it is made only where the
+       * owner said their enquiries actually arrive by email.
+       *
+       * It used to be made to everyone with a site of their own, which is where
+       * the bundled chip led: "I'll read the enquiries it emails you", said to a
+       * practice that takes every enquiry by phone. The follow-up question
+       * exists to stop exactly that, and this is the first place its answer is
+       * visible to the owner.
+       */
+      if (configuration?.leads_arrive_by_email === true) {
+        return selectedLanguage === 'he'
+          ? 'לינק להזמנות להדביק באתר שלך, ואקרא משם את הפניות שמגיעות למייל.'
+          : selectedLanguage === 'es'
+            ? 'Un enlace de reserva para pegar en tu sitio, y leeré las consultas que llegan a tu correo.'
+            : "A booking link to paste into your own site, and I'll read the enquiries it emails you.";
+      }
+
+      /* Their site, their link, and a form they can send anyone. No claim about
+         a mailbox we have been told not to expect. */
       return selectedLanguage === 'he'
-        ? 'לינק להזמנות להדביק באתר שלך, ואקרא משם את הפניות שמגיעות למייל.'
+        ? 'לינק להזמנות להדביק באתר שלך, וטופס פנייה שאפשר לשלוח לכל אחד.'
         : selectedLanguage === 'es'
-          ? 'Un enlace de reserva para pegar en tu sitio, y leeré las consultas que llegan a tu correo.'
-          : "A booking link to paste into your own site, and I'll read the enquiries it emails you.";
+          ? 'Un enlace de reserva para pegar en tu sitio, y un formulario de contacto para enviar a quien quieras.'
+          : 'A booking link to paste into your own site, and a contact form you can send to anyone.';
     }
 
     return selectedLanguage === 'he'

@@ -158,8 +158,22 @@ describe('the tile stops calling plan stages invoices', () => {
     expect(code).toContain('invoices_overdue_plan_count:');
   });
 
-  it('the page passes it on', () => {
+  it('the page passes it on, whenever the page still renders the tile', () => {
+    /*
+     * The reports page no longer has a money band: `/business-os/money` owns
+     * money now, and the two disagreed — the stats route windows transactions
+     * by `created_at` where the money page uses `paid_at`.
+     *
+     * So this is conditional rather than deleted. The split still has to reach
+     * the tile from WHEREVER the tile is rendered, and the day somebody puts
+     * `FinancialDetail` back — on this page or another — dropping these two
+     * props is exactly the regression this file exists to catch. Asserting
+     * them unconditionally would instead have forced a dead reference to be
+     * kept alive to keep a test green.
+     */
     const page = readFileSync(join(process.cwd(), 'app/business-os/reports/page.tsx'), 'utf8');
+
+    if (!page.includes('<FinancialDetail')) return;
 
     expect(page).toContain('overdueInvoiceCount={payments.invoices_overdue_invoice_count}');
     expect(page).toContain('overduePlanCount={payments.invoices_overdue_plan_count}');

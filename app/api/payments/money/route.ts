@@ -73,6 +73,31 @@ const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(GROUPING_CAP).default(20),
   offset: z.coerce.number().int().min(0).default(0),
   contact_id: z.string().uuid().optional(),
+  /**
+   * The window the EVENT figures describe. `YYYY-MM-DD`, inclusive of `from`
+   * and exclusive of `to`.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS OPTIONAL, AND WHY IT ONLY TOUCHES SOME FIGURES
+   *
+   * This route had no period at all: the orders page has always described ALL
+   * TIME, while the reports page describes a selected week, month or year. The
+   * two could never agree, and nothing on either screen said so. Omitted, the
+   * behaviour is exactly what it was, so the orders page is untouched.
+   *
+   * It governs only what HAPPENED in the window — money collected, refunded or
+   * written off. It deliberately does NOT touch what is owed: a debt is not an
+   * event with a date, it is a state that is true now. "₪3,600 is owed to you"
+   * does not become less true because you asked about October, and a figure
+   * that shrank when the reader changed the period would be describing the
+   * reader's question rather than the business.
+   *
+   * `periodTotals` carries the first kind, `totals` the second. A caller that
+   * asks for neither gets today's behaviour in both.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   filter: z
     .enum(['all', 'unpaid', 'overdue', 'paid', 'refunded', 'plans', 'draft', 'cancelled'])
     .default('all'),
@@ -188,6 +213,8 @@ export async function GET(request: NextRequest) {
       limit: url.searchParams.get('limit') ?? undefined,
       offset: url.searchParams.get('offset') ?? undefined,
       contact_id: url.searchParams.get('contact_id') ?? undefined,
+      from: url.searchParams.get('from') ?? undefined,
+      to: url.searchParams.get('to') ?? undefined,
       filter: url.searchParams.get('filter') ?? undefined,
       search: url.searchParams.get('search') ?? undefined,
       // Was missing, so `sort` always fell back to its default: the dropdown
@@ -202,7 +229,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid query' }, { status: 400 });
     }
 
-    const { limit, offset, contact_id, filter, search, sort, kind, method } = parsed.data;
+    const { limit, offset, contact_id, filter, search, sort, kind, method, from, to } = parsed.data;
 
     /*
      * No overdue refresh here any more — the daily payment-reminders cron does
@@ -358,7 +385,10 @@ export async function GET(request: NextRequest) {
         // `currency` rides along so the totals card can keep an installment in
         // its own bucket: a plan need not bill in the currency of the booking
         // its row is grouped under.
-        .select('id, payment_plan_id, booking_id, installment_number, amount, currency, due_date, status, paid_at, transaction_id, trigger, invoice_id')
+        // `created_at` rides along so a period can be placed in a window by
+        // when it was AGREED. Its due date points forward and cannot answer a
+        // period that ends today — see `MoneyEntry.raisedAt`.
+        .select('id, payment_plan_id, booking_id, installment_number, amount, currency, due_date, status, paid_at, transaction_id, trigger, invoice_id, created_at')
         .eq('user_id', user.id)
         .in('booking_id', bookingIds)
         .order('installment_number');
@@ -396,6 +426,7 @@ export async function GET(request: NextRequest) {
            */
           trigger: row.trigger,
           invoiceId: row.invoice_id,
+          createdAt: row.created_at ?? null,
           /* So the schedule can say WHICH period a refund came off, which a
              single total on the row above can never answer.
 
@@ -625,6 +656,132 @@ export async function GET(request: NextRequest) {
      */
     const totals = totalMoney(searched);
 
+    /*
+     * WHAT HAPPENED IN THE WINDOW, beside what is true now.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `totals` above is a STATE: what is owed, what is late, as of today. A
+     * period cannot narrow it without lying — money owed to you does not stop
+     * being owed because the reader picked October.
+     *
+     * These are EVENTS: money that arrived, was given back, or was written off,
+     * each on a date. Those do belong to a window, and they are the figures the
+     * reports page has always shown — so asking for the same window here is
+     * what finally lets the two screens agree.
+     *
+     * Matched on the ENTRY, not the item. An item's `date` is a fallback chain
+     * (`paid_at ?? due_date ?? created_at`, and a booking's own start time),
+     * which means it answers a different question per row; `dateKind` on each
+     * entry says exactly which date it carries, which is the whole reason that
+     * field exists.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const periodTotals = (() => {
+      if (!from && !to) return null;
+
+      const inWindow = (iso: string | null | undefined) => {
+        if (!iso) return false;
+        const day = iso.slice(0, 10);
+        if (from && day < from) return false;
+        if (to && day >= to) return false;
+        return true;
+      };
+
+      /*
+       * THE WINDOW IS APPLIED TO THE ROWS, AND `totalMoney` DOES THE REST.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * This used to add up the figures by hand here. Two things were wrong
+       * with that, and both are the kind that look right on one account:
+       *
+       *   IT SUMMED ACROSS CURRENCIES. Every amount went into one number, which
+       *   the page then printed under the primary currency's symbol — so one
+       *   dollar payment would have inflated a shekel figure. The platform's
+       *   rule is that money is never summed across currencies, and the
+       *   all-time figures beside it obey it because they come from
+       *   `totalMoney`, which buckets by currency.
+       *
+       *   IT WAS A SECOND IMPLEMENTATION of what collected, owed and written
+       *   off mean. `totalMoney` knows that late money is a SUBSET of owed, that
+       *   a plan's unbilled periods are owed though they are not entries, and
+       *   that a stopped plan's remaining phases are written off.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * AND IT IS APPLIED TWICE, BECAUSE A DEBT AND AN EVENT CARRY DIFFERENT
+       * DATES.
+       *
+       * An EVENT happened: money arrived, went back, was written off. Its date
+       * is behind us, and `entry.date` is it.
+       *
+       * A DEBT has not happened. Its only date points FORWARD — the day it
+       * falls due — so asking a window that ends today whether a debt is inside
+       * it can only ever answer no. Measured on one account, that made "not due
+       * yet" read ₪0 under every period but all-time while ₪500 was genuinely
+       * outstanding, and it dropped the OLDEST overdue money from a short
+       * window, which is the debt most worth chasing.
+       *
+       * So debts are placed by when they were RAISED — the day the bill was
+       * written or the schedule agreed — and whether they are late is still
+       * judged against today, by `totalMoney` itself. The period chooses WHICH
+       * money you are looking at; it never changes what is true about it now.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const windowBy = (
+        entryDate: (entry: MoneyItem['entries'][number]) => string | null | undefined,
+        periodDate: (period: MoneyPlan['periods'][number]) => string | null | undefined
+      ) =>
+        searched.map(item => ({
+          ...item,
+          entries: item.entries.filter(entry => inWindow(entryDate(entry))),
+          ...(item.plan
+            ? {
+                plan: {
+                  ...item.plan,
+                  periods: item.plan.periods.filter(period => inWindow(periodDate(period))),
+                },
+              }
+            : {}),
+        }));
+
+      /** What happened in the window. */
+      const events = totalMoney(windowBy(e => e.date, p => p.paidAt));
+      /** What was billed in the window, judged as it stands today. */
+      const debts = totalMoney(
+        windowBy(
+          e => e.raisedAt ?? e.date,
+          /* The day the schedule was agreed; its own date if an older plan
+             carries none, which at least keeps it in one window rather than
+             dropping it out of every one. */
+          p => p.createdAt ?? p.dueDate
+        )
+      );
+
+      /* Each figure from the pass that owns it, per currency as well as in
+         total, so the buckets cannot disagree with the headline. */
+      const byCurrency: typeof events.byCurrency = {};
+      for (const code of new Set([
+        ...Object.keys(events.byCurrency),
+        ...Object.keys(debts.byCurrency),
+      ])) {
+        byCurrency[code] = {
+          collected: events.byCurrency[code]?.collected ?? 0,
+          refunded: events.byCurrency[code]?.refunded ?? 0,
+          cancelled: events.byCurrency[code]?.cancelled ?? 0,
+          outstanding: debts.byCurrency[code]?.outstanding ?? 0,
+          overdue: debts.byCurrency[code]?.overdue ?? 0,
+        };
+      }
+
+      return {
+        collected: events.collected,
+        refunded: events.refunded,
+        cancelled: events.cancelled,
+        outstanding: debts.outstanding,
+        overdue: debts.overdue,
+        byCurrency,
+      };
+    })();
+
     return NextResponse.json({
       success: true,
       data: {
@@ -632,6 +789,15 @@ export async function GET(request: NextRequest) {
         /** Rows matching BOTH search and filter — what paginates. */
         total: filtered.length,
         totals,
+        /**
+         * The window's EVENTS, or null when none was asked for.
+         *
+         * Separate from `totals` on purpose — see the note where it is built.
+         * One is what happened in a period, the other is what is true now, and
+         * a page that printed them as one list of five would be back where the
+         * orders strip started.
+         */
+        periodTotals,
         /** Rows behind `totals`, so the strip can count what it is summing. */
         summaryCount: searched.length,
         truncated,

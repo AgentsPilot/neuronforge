@@ -43,6 +43,17 @@ export interface MoneySummaryCell {
   /** Already formatted, and already per-currency. */
   value: string;
   subtitle: string;
+  /**
+   * What this figure means against its neighbours, printed IN the cell.
+   *
+   * The subtitle says what the cell is in three words. This says how it sits
+   * beside the other four, which is the part a reader cannot deduce from five
+   * amounts in a row — and the part that made them read as contradictory.
+   *
+   * It wraps. Unlike the subtitle it is never truncated: a clipped explanation
+   * is worse than none, because the reader cannot tell it was clipped.
+   */
+  explain: string;
   color: string;
   /**
    * Omitted when there is nothing of this kind to look at. Safe to test
@@ -111,6 +122,7 @@ export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, order
       subtitle: `${orderCount} ${
         orderCount === 1 ? t('payments.item') || 'order' : t('payments.entries') || 'orders'
       }`,
+      explain: t('payments.explain.collected') || 'Money already in. Not counted again below.',
       color: REPORTS_COLORS.PRIMARY,
       onSelect: select('paid', totals.collected > 0),
       active: activeFilter === 'paid',
@@ -146,6 +158,7 @@ export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, order
             : // Owed in full and every bit of it late — saying "still to
               // collect" here would hide the only fact that matters.
               t('payments.all_of_it_late') || 'All of it is late',
+      explain: t('payments.explain.outstanding') || 'Everything still owed, late part included.',
       color: REPORTS_COLORS.WARNING,
       onSelect: select('unpaid', totals.outstanding > 0),
       active: activeFilter === 'unpaid',
@@ -158,6 +171,7 @@ export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, order
         totals.overdue > 0
           ? t('payments.overdue_subtitle') || 'Past its due date'
           : t('payments.nothing_overdue') || 'Nothing late',
+      explain: t('payments.explain.overdue') || 'Part of Outstanding, not added to it.',
       color: REPORTS_COLORS.DANGER,
       onSelect: select('overdue', totals.overdue > 0),
       active: activeFilter === 'overdue',
@@ -175,6 +189,7 @@ export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, order
       label: t('payments.cancelled_total') || 'Cancelled',
       value: money(c => c.cancelled),
       subtitle: t('payments.cancelled_subtitle') || 'Asked for, never arriving',
+      explain: t('payments.explain.cancelled') || 'Outside the order value.',
       color: REPORTS_COLORS.LOST,
       onSelect: select('cancelled', true),
       active: activeFilter === 'cancelled',
@@ -187,6 +202,7 @@ export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, order
       label: t('payments.refunded') || 'Refunded',
       value: money(c => c.refunded),
       subtitle: t('payments.returned_to_clients') || 'Returned to clients',
+      explain: t('payments.explain.refunded') || 'Outside the order value.',
       color: REPORTS_COLORS.UNATTRIBUTED,
       onSelect: select('refunded', true),
       active: activeFilter === 'refunded',
@@ -312,6 +328,17 @@ export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, order
               </span>
               <span className="block truncate text-[11px] text-[var(--v2-text-muted)]">
                 {cell.subtitle}
+              </span>
+              {/*
+                WRAPS. Never truncated, unlike the subtitle above it.
+
+                A clipped explanation is worse than none: the reader cannot tell
+                it was clipped, so they read half a sentence as the whole of it.
+                The subtitle can afford `truncate` because it is three words and
+                the figure above already carries the meaning; this cannot.
+              */}
+              <span className="mt-1.5 block text-[11px] leading-snug text-[var(--v2-text-muted)]">
+                {cell.explain}
               </span>
             </Tag>
           );

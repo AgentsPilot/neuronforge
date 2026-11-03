@@ -11,6 +11,7 @@
 
 import { GAP_DEFINITIONS } from './definitions';
 import type { GapId, GapResult } from './types';
+import { agentCoverage, NO_COVERAGE } from './coverage';
 
 /** How many of each are named. The count is always the truth about how many. */
 const NAMED = 3;
@@ -24,6 +25,26 @@ export interface FindGapsOptions {
   now?: Date;
   /** How many items to name per gap. */
   named?: number;
+
+  /**
+   * HIDE WHAT A LIVING AGENT IS ALREADY DOING. Owner-facing surfaces only.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * OFF BY DEFAULT, AND THAT DEFAULT IS LOAD-BEARING.
+   *
+   * `LeadResponseDispatchService` builds the automation queue FROM this
+   * function — it asks for an automation's own `gapId` and schedules a send for
+   * each item it gets back. Suppressing those items would starve the chaser of
+   * the very work the suppression claims it is doing: the card would go quiet,
+   * the robot would stop being given anything, and nobody would chase anyone.
+   *
+   * So the sweep, the detectors and anything else that reads gaps as WORK keep
+   * seeing everything, unchanged. Only a surface that reads gaps as ERRANDS
+   * FOR A PERSON asks for this, because only there is "a robot has it" a reason
+   * to stay quiet.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  hideWhatAgentsHandle?: boolean;
 }
 
 /**
@@ -49,9 +70,24 @@ export async function findGaps(
     return true;
   });
 
+  /*
+   * WHAT THE OWNER'S AGENTS ARE ALREADY HANDLING, read once for the whole pass.
+   *
+   * Only when the caller asked — see `hideWhatAgentsHandle`, which the
+   * automation sweep deliberately never sets. Read here rather than inside
+   * each `find` so one dashboard costs two queries instead of two per gap, and
+   * so every gap in a pass agrees about what is covered exactly as they already
+   * agree about `now`.
+   *
+   * Fails open twice over: not asked for, nothing is covered; asked for and
+   * unreadable, `agentCoverage` returns an empty map, which also covers
+   * nothing. Both ways the cards appear.
+   */
+  const coverage = options.hideWhatAgentsHandle ? await agentCoverage(userId) : NO_COVERAGE;
+
   const results = await Promise.all(
     wanted.map(async definition => {
-      const found = await definition.find(userId, now);
+      const found = await definition.find(userId, now, coverage);
 
       /*
        * The staleness window is applied HERE rather than inside each query.

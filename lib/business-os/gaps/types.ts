@@ -1,3 +1,4 @@
+import type { AgentCoverage } from './coverage';
 /**
  * Work that started and stopped.
  *
@@ -277,6 +278,25 @@ export interface GapItem {
   value?: number;
   currency?: string;
   /**
+   * WHY this row exists, in one clause, where the fact alone does not say.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A row states a fact: "Ofir has not paid the invoice, ₪300, 36 days past
+   * due." True, and it leaves out what the owner actually needs — that the
+   * appointment was MISSED and charged for. They opened the booking to find
+   * that out, which is the errand this card exists to save.
+   *
+   * A KEY, never a sentence. Gaps are built server-side and the card renders in
+   * three languages, so a string composed here would be English on a Hebrew
+   * dashboard — the defect the briefing's `toUserFacing` lines already have.
+   * The card puts it through `t()` like every other word on it.
+   *
+   * Absent where the fact speaks for itself: an unanswered enquiry needs no
+   * explaining, and a line restating the one above it is noise.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  contextKey?: string;
+  /**
    * Which session of a package this row is about.
    *
    * ───────────────────────────────────────────────────────────────────────────
@@ -406,8 +426,16 @@ export interface GapDefinition {
 
   action: GapAction;
 
-  /** Find them. Always scoped to this owner; never throws. */
-  find(userId: string, now: Date): Promise<GapItem[]>;
+  /**
+   * Find them. Always scoped to this owner; never throws.
+   *
+   * `coverage` says what this owner's living agents are currently taking care
+   * of, read once per pass. A gap whose work an agent is doing right now must
+   * leave it out — the dashboard telling somebody to chase an invoice a robot
+   * is chasing is how the card becomes noise. Most gaps have no agent and
+   * ignore the argument entirely.
+   */
+  find(userId: string, now: Date, coverage: AgentCoverage): Promise<GapItem[]>;
 }
 
 /** A gap and what is currently in it. */

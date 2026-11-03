@@ -452,6 +452,8 @@ export const COLUMN_LABELS_BY_KEY: Readonly<Record<string, LabelText>> = {
   tools: L('Tools', 'כלים', 'Herramientas'),
   payment_mode: L('Payment mode', 'אופן התשלום', 'Modo de pago'),
   online_presence_mode: L('Online presence', 'נוכחות ברשת', 'Presencia en línea'),
+  has_website: L('Has own website', 'יש אתר משלו', 'Tiene su propia web'),
+  leads_arrive_by_email: L('Enquiries arrive by email', 'פניות מגיעות למייל', 'Las consultas llegan por correo'),
   primary_crm: L('Main CRM', 'מערכת ה־CRM הראשית', 'CRM principal'),
   primary_calendar: L('Main calendar', 'היומן הראשי', 'Calendario principal'),
   primary_payment: L('Main payment tool', 'כלי התשלום הראשי', 'Herramienta de pago principal'),
