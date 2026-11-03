@@ -48,7 +48,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
 | DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) ✅ DO-5a MERGED 2026-10-31 (PR #592; see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) 🟡 spec re-checked by BA 2026-10-31 (FU-5: H10, the Q-D5-9 note, the H3 boundary, the check list §D5.2.2(g), Q-D5b-1 to Q-D5b-4); SA short pass 2026-10-31 **APPROVED WITH CHANGES** (see [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)); DO-5b built (see [DO-5b implementation notes](#do-5b-implementation-notes)); **SA code review 2026-10-31: Code Approved for QA**, with four small skill fixes (repo reads use `origin/main:./<path>` from the worktree root; `devops.md` unchanged beyond the pointer line); **QA 2026-10-31: QA passed**, with two small non-blocking items, both fixed (see [QA Report — DO-5b](#qa-report--do-5b)); **user approved the diff 2026-11-01**, PR open with auto-merge. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file): ✅ PR #593 MERGED 2026-10-31; `origin/main` shows the file untracked and the `.gitignore` line. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
-| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; commit + PR.** |
+| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; MERGED (#614). DO-6e (domains and app addresses, narrowed by the user) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6e implementation notes](#do-6e-implementation-notes)); SA code review approved with three fixes; QA 19 checks, two Mediums and a Low fixed by the main session; user approved the diff 2026-11-03; commit + PR.** |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
 
@@ -1886,6 +1886,177 @@ Approved. It reads the project's log store and cannot change project state, so i
 
 ---
 
+## DO-6e Specification — Domains and addresses (third-party-ops)
+
+SA changes 1–20 applied (see [SA Review — DO-6e (short pass)](#sa-review--do-6e-short-pass))
+
+**By BA — 2026-11-03.** Short scoping pass, like DO-6b to DO-6d. A config and docs slice: no application code, no CI job, no CI time. It adds one reference file and one index row to `third-party-ops`, under SKILL.md §1–§4 and SA Review — DO-6 (changes 1–7: a probe has a precondition or it is "not probed", a roll overlap makes a pass "not conclusive", derivation from code, no copied lists, T- rows live in the platform file). It also carries one §3 sentence correction, which the DO-6e SA pass rules as the §1–§4 SA pass for that sentence (Q-D6e-5). It applies the DO-6c and DO-6d lessons up front: every probe states its precondition, an exact pass, an exact fail and its side effects; a probe that passes on an unset value is not a probe; every quoted log string is checked verbatim with its module.
+
+**Scope, as narrowed by the user (2026-11-03).** Two parts:
+
+1. **The three address names now:** `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_MARKETING_URL`, `NEXT_PUBLIC_PUBLIC_SITE_HOST`. What each controls, the build-time rule, how Preview overrides the app address while the redirect builders do not, and the tie to vendor redirect registrations and the Supabase Auth URL configuration.
+2. **A checklist for attaching a custom domain.** Registrar and DNS detail beyond that checklist waits until a domain is recorded in the private inventory. Until then, the registrar and DNS drift rows are **"not audited"**.
+
+**Services live (Q-D6-2 rule).** Before build, the main session confirms by role that each of A1–A3 still has a code path that runs, and records the result in the DO-6b form ("The main session confirmed on <date> that …", no target named). A3 runs only when it is set (D6e.1 AD-4), so its check is "a code path that runs **when set**". Registrar and DNS: "not audited" until a domain is recorded. The main session confirmed on 2026-11-03 that A1 and A2 each still have a code path that runs (`platformOrigin()` and `marketingOrigin()`, both with live callers), and that A3 has a code path that runs when set (`publicSiteHost()`, read by `middleware.ts`), so all three stay. Whether each one is set is not recorded here; DO checks it at use time with the T-AD checks.
+
+**Boundary.** DO owns the three names, which stable address each environment uses (by role, private), the domain attachments on Vercel (read through `vercel-ops`), and the checklist below. **DNS ownership matches `email.md` §3:** each vendor's file names the records that vendor needs and checks their verification (the sending-domain records: `email.md`). `domains.md` owns publishing every vendor's records at the zone's DNS host, recording each record's owner (T-AD-8), and DMARC as the domain-owner record. It names no record value. `email.md` is not edited. Redirect URIs are registered per `stripe.md` (DO-6a) and `google.md` (DO-6c); this file points to those rules and never restates them. The Supabase Site URL and redirect list are a `supabase-ops` §2 dashboard row. A business's chosen prefix is app data; DO never writes it.
+
+### D6e.1 Context and findings from code
+
+Taken from the code at the worktree's `origin/main` base. Names and readers only: no value read, no `.env*` opened, no network. The skill names files and functions only.
+
+| # | Name | Catalogue group `addresses`, `expectedIn` (prod / preview / local) | Controls |
+|---|---|---|---|
+| A1 | `NEXT_PUBLIC_APP_URL` | required / required / required | This app's own origin: links the app sends out (emails, payment returns, plugin sign-in redirects) |
+| A2 | `NEXT_PUBLIC_MARKETING_URL` | optional everywhere | The separate marketing application's origin, which holds the login and signup pages |
+| A3 | `NEXT_PUBLIC_PUBLIC_SITE_HOST` | optional everywhere | The host whose one-label subdomains serve each business's public pages |
+
+| # | Finding | Where | Consequence for the file |
+|---|---|---|---|
+| AD-1 | **All three are build-time.** They are `NEXT_PUBLIC_` names, inlined at build into the server bundle, the browser bundle and middleware (edge). One precision: `processEnvironmentVariables` reads `process.env[varName]` dynamically on the server, so for the plugin definitions A1 is read at run time, not inlined. An unset A1 leaves the `${…}` placeholder and logs "Environment variable not found, keeping placeholder" (module `PluginManager`). | `lib/utils/origins.ts` (header); `middleware.ts`; `lib/server/plugin-manager-v2.ts` | On Vercel either way a change needs a new deployment of what serves it (`vercel-ops` §4). Saving the variable changes nothing on a running deployment. `/admin/environment` reports the deployment it is served from. The placeholder count is DO's server-side evidence (T-AD-1). |
+| AD-2 | **`platformOrigin()` does not simply return A1.** In order: rule 0, in a browser served from a real host, the served origin wins when A1 is unset or a loopback. Rule 1, a loopback A1 is refused on Vercel. Rule 2, **on a Preview the deployment's own host outranks A1**. Then A1. Then, on Vercel production, the project's stable production host; on other Vercel environments, the deployment host, then the stable production host. Then the code fallback. Off Vercel, the development or production code fallback, chosen by `NODE_ENV`. | `platformOrigin`, `vercelEnv`, `browserOrigin` in `lib/utils/origins.ts` | On Preview, A1 is ignored by every caller of `platformOrigin()`/`platformUrl()`. The code fallback constants are named by role only ("the code fallback"), never quoted. |
+| AD-3 | **The redirect builders read A1 directly, on purpose.** A redirect has to match the vendor's registration, so `lib/utils/__tests__/oneAddressPolicy.guard.test.ts` lists these files as exceptions (`ALLOWED`, `OAUTH_FILES`). The readers: the connect route's redirect fallback when the definition has none; the plugin definitions' `${…}` placeholders (`processEnvironmentVariables`, per `google.md` §2); the OAuth callback page's target origin when it posts to the opener; `platformEmailLogoUrl` (logo shown only when A1 is set and https); and the deprecated V1 strategies, which the guard also lists. `UniversalOAuthHandler` is **not live**: it is reachable only through `lib/plugins/v2/registry.ts`, which the deprecated V1 registry imports and never uses. | `app/api/v2/plugins/connect/route.ts` (`POST`); `lib/server/plugin-manager-v2.ts`; `app/oauth/callback/[plugin]/route.ts` (`APP_URL`, `buildPostMessageResponse`); `lib/email/platformBranding.ts` (`platformEmailLogoUrl`) | **The failure depends on the origin the user browses from, not on the target.** A plugin connection completes only when the opener page is on the address A1 names and that address is registered with the vendor. Started from any other origin (for example a per-deployment Preview host), the callback's message goes to a target origin that is not the opener's, and the browser drops it. On a Preview browsed at the stable address A1 names, with that address registered, it completes. `google.md` §5 already has the gotcha "The callback answers one origin"; `domains.md` points to it. The live openers (`lib/client/oauth-handler.ts`, the Inbox channel dialog, `useChannelConnect`, the Stripe Connect wizard) each have their own "closed" and "timed out" texts. `domains.md` does not list `UniversalOAuthHandler` as a reader. |
+| AD-4 | **A3 decides the public address shape.** Unset means the path form: `{platform origin}/site/{prefix}`. Set means `{prefix}.{A3}` with https, and A3 then **outranks the platform origin** for every address a business shows or shares. A local-only host (loopback or a loopback-resolving test domain) is refused outside development. | `publicSiteHost`, `isLocalOnlyHost`, `publicSiteUrl`, `publicSiteDisplayHost`, `publicSiteSuffix` in `lib/utils/origins.ts` | Setting A3 before a wildcard host is attached and valid makes every address the dashboard hands out resolve nowhere, on a deployment whose A1 is correct. Order row. Preview gets the path form unless a stable preview wildcard is recorded. |
+| AD-5 | **The subdomain rewrite runs only when A3 is set,** the host header ends with `.{A3}`, the prefix is one label and the prefix is not reserved. Middleware then rewrites to the `/site/{prefix}` route. The apex itself (host equal to A3) falls through to the platform, as does anything else. | `middleware.ts` (`middleware`, "A BUSINESS'S PUBLIC PAGES") | The rewrite probe needs a wildcard host as its precondition. Without one it is "not probed (no wildcard host)". |
+| AD-6 | **The reserved list is what keeps a business off the platform's own hostname.** The platform and the marketing site are siblings of the business pages on one apex, so their first labels must be in `RESERVED_PREFIXES`. Middleware, the subdomain check route, the website pages route, `businessSubdomain.ts` and `resolveBusinessByPrefix.ts` import the one list. | `lib/business-os/reservedPrefixes.ts` (`RESERVED_PREFIXES`, `isReservedPrefix`, `validatePrefix`) | Drift check T-AD-4. The recorded first labels of the platform and marketing hosts, where they are subdomains, are checked against the list, derived at use time. A host at the apex has no label to reserve. The skill names no label. |
+| AD-7 | **`marketingOrigin()` has no loopback or preview rule.** It returns A2, or a code fallback chosen by `NODE_ENV`. Sign-out and every login link cross to it. | `marketingOrigin`, `marketingUrl` in `lib/utils/origins.ts` | A loopback A2 on a deployed target sends users to an address only the builder's machine can reach. Probe P-AD-3. Code follow-up FU-D6e-c. The marketing application is a separate Vercel project; the names it reads are not derivable here (Q-D6e-4). |
+| AD-8 | **Browser-side detection depends on a project setting.** In the browser, rule 2 needs the `NEXT_PUBLIC_` copies of Vercel's system variables, and those exist only when the project exposes system variables. Without them, a browser on a Preview with a real A1 configured uses A1 while the server uses the deployment host. | `lib/utils/origins.ts` (comment on `browserOrigin`) | Gotcha, plus a user dashboard check (T-AD-9). `vercel-ops/dashboard-settings.md` does not list the setting: T-AD-9 stays in `domains.md`, and FU-D6e-d adds it there later. |
+| AD-9 | **Mail already sent keeps pointing at the old host.** The email logo URL is fixed at send time, and the code requires the image to keep answering on that host. | `lib/email/platformBranding.ts` (header) | Moving A1 never retires the old host while sent mail may still be read. Order row. |
+
+### D6e.2 What the file teaches (the six-part template)
+
+The file is `.claude/skills/third-party-ops/domains.md` (Q-D6e-1). It opens with the same intro sentence as `email.md` and `google.md`, plus the live-check line. It is organised by A1–A3, then the checklist for attaching a custom domain. Target length: about 130–160 lines, at most about 180 (trim prose, never a probe or drift row).
+
+**(1) What must differ between environments.** The **current** setup (which stable address each environment uses, which domains are attached to which project, the registrar, the zone's DNS host and records) is a private-inventory pointer, checked at use time and reported by role.
+
+| Setting | Rule per environment |
+|---|---|
+| A1 | Set on every target (catalogue). Production: the recorded stable address of the web app project. Preview: the recorded stable preview address, registered with each vendor whose Preview connection is wanted; **never production's address** (a connection started on a Preview would then complete on production, which runs production's code and writes to production's data). Never a loopback on a deployed target. Local: guidance only |
+| A2 | Unset (code fallback) or the recorded stable address of the marketing project. Never a loopback on a deployed target. Names read by the marketing app: not derivable here |
+| A3 | Production: set only once a wildcard host for it is attached to the web app project with valid config and a certificate. Preview: unset (path form) unless a stable preview wildcard is recorded. Local: optional, a loopback-resolving test host (named in `origins.ts`, never here) |
+| Domain attachment | Each recorded domain attached to the project it serves (web app or marketing, by role), to the right target, with a valid certificate. The wildcard host is on the web app project |
+| Sibling labels | When the platform or marketing host is a subdomain of A3, its first label is reserved (AD-6). A host at the apex has no label to reserve, and the rewrite already lets it through |
+| System-variable exposure | Per project, as recorded (AD-8) |
+| Vendor redirects, Supabase Auth URLs | Registered for each environment's stable A1 address, per `stripe.md`, `google.md` and `supabase-ops` §2 |
+
+**(2) Where the code reads it.** The AD-1 to AD-9 files, named as files and functions, with AD-2's order stated exactly. Expected names come from the catalogue group `addresses` at `origin/main`. **Reader derivation (Q-D6e-3), a reader search, never a name search:** `git grep -l -F` for A1's literal name at `origin/main` over `app/`, `lib/` (definitions included), `components/`, `hooks/` and `middleware.ts`; file names only; tests excluded; a hit only in a comment is not a reader; cross-check against the guard's `ALLOWED` and `OAUTH_FILES` lists; a reader in neither list and not on a redirect line is a finding, as is any A2 or A3 reader outside `origins.ts` and `middleware.ts`. The `SKILL.md` §1 rule ("never searches the code for names") stands unedited. The skill holds no reader list beyond the AD-3 examples.
+
+**(3) Dashboard steps (the user),** by area name, confirmed at use time. **Vercel:** project Domains (attach, wildcard, target, config status, certificate), on each project; the system-variable exposure setting in the project's Environment Variables settings; env values per `vercel-ops`. **Registrar:** nameservers, auto-renew, expiry date, transfer lock, registrant contact. **The zone's DNS host:** records, each with its recorded owner. **Supabase:** Authentication, URL Configuration, including the marketing app's entries, by role. **Each vendor's redirect, origin and webhook lists:** per its file. The user reports attached yes/no, config valid yes/no, certificate valid yes/no, "matches the recorded address: yes/no", "on/off as recorded: yes/no", auto-renew on yes/no, lock on yes/no, days to expiry above the recorded threshold yes/no, and the last-updated time. Never a domain, a host, a record value or a registrar account detail.
+
+**(4) Probes.** Each fails when the setting is wrong and moves no money. Each runs on the deployment named per `vercel-ops` §4, after it is Ready. A 401/403 from deployment protection is "not probed". No probe completes an OAuth connection.
+
+| ID | Change | Probe | Pass | Fails when | Who | Precondition and side effects |
+|---|---|---|---|---|---|---|
+| P-AD-1 | Any of A1–A3 | `/admin/environment` on that deployment | Name shows Set, or Not set where intended; no `required-not-set`. Proves presence, never the value; correctness comes from P-AD-2 to P-AD-8 | The other state | Main session or user | Admin session. None |
+| P-AD-2 | A1, A3 | The public booking address the dashboard shows for a business the user owns (`publicSiteDisplayHost`) | Production: the recorded shape (`{prefix}.{A3}` when set, else `{stable A1}/site/{prefix}`). Preview: that deployment's per-deployment host, path form, not an alias the user browses | A loopback, another deployment's host, the code fallback host, or the subdomain shape where no wildcard is recorded. A1's address on Preview is the AD-8 failure (T-AD-9), not an A1 failure | User (browser), yes/no | A business the user owns with a prefix, else "not probed (no business)". None (read only) |
+| P-AD-3 | A2 | Sign out on that deployment | Lands on the recorded marketing address, with a valid certificate | A loopback, a certificate warning, or an unrecorded host | User | Signed in on that deployment. Ends the user's session |
+| P-AD-4 | A1 direct readers | Plugin connect cancelled at consent, with a control (below) | The surface's "failed" text from the address under test | Its "closed" text while the control shows "failed", or a redirect-mismatch page | User; DO (logs) | Below |
+| P-AD-5 | A1 email logo | The `email.md` send probe on that deployment | The received platform email shows the logo image | Text wordmark, or a broken image, while A1 is set and https. On Preview, a broken image because deployment protection covers A1's host is "not probed (protected host)" | User; DO per `email.md` | As `email.md` (invite row, audit entries, revoke) |
+| P-AD-6 | A3, wildcard host | Open `{prefix}.{A3}` for a published business the user owns, then `{reserved label}.{A3}` | The business's page with the address bar unchanged; the reserved label serves the platform, not a site | Platform page for the business, or a site served on a reserved label | User | Wildcard host attached and A3 set, else "not probed (no wildcard host)". One page view recorded in that business's visitor stats (`PageViewTracker`, `app/site/[subdomain]/page.tsx`) |
+| P-AD-7 | Domain attach | `list_project_domains`, `get_domain_config`; production: deployment aliases (`vercel-ops` §4 step 5) | Each recorded domain attached to the right project and target; config valid; aliases include it | Missing, on the other project, misconfigured, or not aliased | DO | With no domain recorded: "not read (no domain recorded)". None |
+| P-AD-8 | Supabase Auth URLs | Sign in through an in-app sign-in surface on that deployment that returns to the served origin (`lib/client/auth-actions.ts` builds `redirectTo` from `window.location.origin`), found at use time. The Google half: `google.md`'s G1 probe, completed by the user on their own existing account | Returns to the same origin, signed in | Lands on another origin (Supabase's fallback to the Site URL when the origin is not allowed: vendor fact, confirm at use time), or Supabase's redirect error | User | An in-app sign-in surface, else "not probed (no in-app sign-in surface)"; the login pages themselves live in the marketing app (Q-D6e-4). A session, plus any sign-in records |
+
+**P-AD-4 in full.** Surface named at use time; suggested: the Inbox channel mailbox connect (a Google plugin through the connect route, client per `google.md`). It quotes that surface's texts verbatim, which are the code defaults of translated strings in `components/business-os/leads/InboxChannelSetupDialog.tsx`, each checked with `grep -cF` ≥ 1 at build: "failed" = "That mailbox could not be connected. Try again."; "closed" = "The sign-in window closed before it finished." On a vendor error the callback returns before `handleOAuthCallback`, so it writes nothing (confirmed by SA). That a cancel on the consent screen returns `access_denied` rather than closing the popup is a vendor fact, confirmed at use time.
+
+- **Control:** the same probe, run from A1's address. The "failed" text there shows that the message mechanism works.
+- **Pass:** the "failed" text from the address under test.
+- **Fail:** the "closed" text from the address under test while the control shows "failed", or a redirect-mismatch page.
+- **Not conclusive:** the control also shows "closed" (the popup lost its opener, or the vendor behaves differently).
+- **Not probed:** no client registered for this address (`google.md`); no stable preview address recorded ("not probed (no stable preview address)"); the popup closed by hand; no cancel offered.
+- **By design:** run from a per-deployment Preview host it fails, because the callback answers one origin (`google.md` §5). A code fact, not drift.
+- **Side effects:** a connect log line ("Initiating plugin OAuth connection", module `PluginConnectAPI`) and a callback provider-error line ("OAuth error from provider", module `OAuthCallbackAPI`), which carries the vendor's error description. If the user consents by mistake, a plugin connection is written, and the user disconnects it.
+
+**(5) Gotchas,** each grounded in a repo file:
+
+- **Build-time, all three** (AD-1): saving is not deploying, and older Previews keep their old value. An unset A1 keeps the definitions' placeholder and logs the `PluginManager` placeholder line.
+- **Preview A1 and the direct readers** (AD-2, AD-3): a pointer to `google.md` §5 "The callback answers one origin", plus the rule that Preview's A1 never names production's address.
+- **A3 outranks a correct A1** (AD-4): set A3 early and every shared address breaks.
+- **Path-form links keep working** after A3 is set, as long as the platform host serves `/site/{prefix}`. Retire nothing that businesses may already have printed.
+- **The reserved list guards the platform's hostname** (AD-6); the apex needs no label.
+- **A2 has no loopback refusal** (AD-7).
+- **System-variable exposure changes browser behaviour** (AD-8), and it is project-wide.
+- **Sent mail pins the old host** (AD-9).
+- **A certificate on an unserved host can lapse unseen.** `origins.ts` records a past sign-out landing on an expired-certificate warning (past tense, no host named, nothing said about which fallback host is served today). A host the code falls back to must actually be served.
+- **A DNS record left pointing at a removed target is a takeover risk.** Remove the record in the same change as the attachment (vendor fact, confirm at use time).
+- **Moving the nameservers moves every record in the zone,** email records included.
+
+**(6) Drift checks** (in `env-drift-audit` §7 format, under its rules):
+
+| ID | Check | Expected state from | Live read | Class | Who |
+|---|---|---|---|---|---|
+| T-AD-1 | On each Vercel target of the web app project, the `addresses` names match `expectedIn` (A1 on all three) | Catalogue at `origin/main` | `vercel-ops` §3 (names only); runtime logs: 0 "Environment variable not found, keeping placeholder" (module `PluginManager`) with `varName` A1, on that deployment after Ready; no definition load in the window is "not read" | High | DO |
+| T-AD-2 | No deployed target hands out a loopback or local-only address (P-AD-2, P-AD-3) | `origins.ts` rules | User report | High | User / main session |
+| T-AD-3 | A3 is set on a target only where a wildcard host for it is attached and valid | Private inventory | `vercel-ops` §3 + P-AD-7; user "matches the recorded address: yes/no" | High | DO; User |
+| T-AD-4 | The recorded platform and marketing first labels, for subdomain hosts only, are in `RESERVED_PREFIXES` at `origin/main` | Code at `origin/main`; private inventory | Repo read | Medium | DO |
+| T-AD-5 | Each recorded domain is attached to the right project and target, config and certificate valid, production aliases include it | Private inventory | P-AD-7 | High | DO |
+| T-AD-6 | Vendor redirect lists and the Supabase Auth URLs (the marketing app's entries included, by role) name each environment's stable A1 address. Pointer to the T- rows of `stripe.md` and `google.md`; the Supabase row is new here | Private inventory | User report | High | User |
+| T-AD-7 | Registrar: auto-renew on, expiry beyond the recorded threshold, transfer lock on, registrant contact reachable | Private inventory | User report | High | User. "Not audited" until a domain is recorded |
+| T-AD-8 | Every record in the zone has a recorded owner (web app, marketing, email per `email.md`, DMARC as domain owner), and none points at a removed target | Private inventory | User report | High | User. "Not audited" until a domain is recorded |
+| T-AD-9 | Each project's system-variable exposure is on/off as recorded | Private inventory | User report (project Environment Variables settings), "on/off as recorded: yes/no" | Medium | User |
+
+**(7) Tiers, order, and the checklist for attaching a custom domain.** Pointer to `env-change-protocol`; nothing restated there.
+
+**Tiers.** These are **production tier** (SA reviews the plan, the user executes): any change to production's A1, A2 or A3; any domain attach or detach on either project; any DNS record; any nameserver change; any registrar setting; the system-variable exposure setting on either project (it is project-wide); the Supabase Site URL or redirect list; and any vendor redirect registration production uses. A Preview-only A1 or A3 change is reversible, and the user applies it after the approval in chat.
+
+**Attaching a custom domain** (each step gates the next):
+
+0. **Zone move, when the plan includes a wildcard host.** Whether the wildcard needs the zone's nameservers moved to Vercel is a vendor fact, confirmed at use time. If it does, every existing record in the zone (email included) is recreated at the new DNS host and checked against the private inventory **before** the nameservers change; the email vendor's domain verification and P-AD-5 are re-run after the change. Production tier. Its undo (switching back) is slow because of DNS propagation.
+1. Attach the domain, and the wildcard host if business subdomains are wanted, to the right project in Vercel (`vercel-ops`; the user executes).
+2. Publish at the zone's DNS host the records Vercel shows for each attached host, and on a zone move carry every recorded record, email included; their contents come from each vendor's file. Record each record's owner (T-AD-8).
+3. Config valid and certificate issued (P-AD-7). Production: the aliases include it.
+4. Confirm the platform and marketing first labels are reserved (T-AD-4). If not, a code change merges first.
+5. **Add** every inbound address for the new address, keeping the old ones until step 8: redirect URIs (`stripe.md`, `google.md`, later DO-6g and DO-6h), webhook endpoints (`stripe.md`, `email.md`), `google.md`'s JavaScript origins and authorised domains, the Supabase Auth URLs, and queue callback targets (DO-6f, "not audited" until covered).
+6. Set A1 (and A2, A3 as planned) on the target, then rebuild (AD-1).
+7. Run P-AD-1 to P-AD-8 on the new deployment.
+8. Only then remove old registrations. Keep the old host answering while sent mail and shared links may still use it (AD-9).
+9. Registrar: auto-renew on, transfer lock on, contact checked (T-AD-7). Record it in the private inventory, and change T-AD-7 and T-AD-8 from "not audited".
+
+| Change | When |
+|---|---|
+| A3 set | After the wildcard host is valid (step 3), never before |
+| A1 moves | New inbound addresses registered (step 5) before the rebuild; old ones removed after the probes |
+| Nameservers move | After every existing record is recreated and checked (step 0) |
+| A domain removed | After no address name, vendor registration or sent link needs it; DNS record removed in the same change |
+
+### D6e.3 Files to change
+
+| # | File | Action |
+|---|---|---|
+| D6e-1 | `.claude/skills/third-party-ops/domains.md` | New, §D6e.2, target about 130–160 lines (at most about 180) |
+| D6e-2 | `.claude/skills/third-party-ops/SKILL.md` | Three edits and nothing else: (a) the §5 row becomes "Domains, app addresses, registrar and DNS" → `[domains.md](domains.md)` (Q-D6e-1); (b) the description triggers gain "an app address, `NEXT_PUBLIC_APP_URL`, the marketing address, the public-site host, a business subdomain, a custom domain, DNS, a registrar, domain renewal"; (c) the §3 "Redirect URIs come from the app address" sentence takes the exact text of the Q-D6e-5 ruling |
+| D6e-3 | This requirement | §0 row, these sections, notes, reviews |
+| — | `stripe.md`, `email.md`, `google.md`, `llm-providers.md`, `vercel-ops`, `supabase-ops`, `env-drift-audit`, `env-change-protocol`, `devops.md`, `CLAUDE.md` | **Not edited** |
+
+**Follow-ups (requirement only, not skill text; stated neutrally):**
+
+- FU-D6e-a (Low): the OAuth callback posts to its own request origin, and the connect route refuses with an error when A1 is unset instead of building an "undefined" redirect. The redirect stays on A1 by design.
+- FU-D6e-b (Low): remove `UniversalOAuthHandler`, `UniversalPlugin` and the unused `universalPlugins` import, and their guard-list entries.
+- FU-D6e-c (Low): `marketingOrigin()` refuses a loopback on a deployed build, like `platformOrigin()` rule 1.
+- FU-D6e-d (Low, docs): add the system-variable exposure setting to `vercel-ops/dashboard-settings.md` in a later `vercel-ops` pass.
+
+### D6e.4 Acceptance criteria
+
+- [ ] `domains.md` has the six parts plus tiers, order and the checklist for attaching a custom domain (step 0 for the zone move, then steps 1–9). It is organised by A1–A3. Every file path it names exists. It states the Q-D6-2 live check by role, and states T-AD-7 and T-AD-8 as "not audited until a domain is recorded". `wc -l` ≤ 180.
+- [ ] Each probe names who runs it, its pass, what it shows when wrong, its precondition and its side effects. P-AD-4 has its control, pass, fail, not-conclusive and not-probed states. P-AD-6 is "not probed (no wildcard host)" without its precondition. No probe completes an OAuth connection or moves money.
+- [ ] AD-2's rule order and AD-3's direct readers are stated, with the failure framed by the origin the user browses from, the readers derived at use time and not listed beyond the examples, and the never-production rule for Preview's A1 present.
+- [ ] Vendor redirect and email DNS rules are pointers to `stripe.md`, `google.md`, `email.md` and `supabase-ops`, not restated; the DNS boundary matches `email.md` §3. The restatement grep from §D6.4 over `domains.md` returns 0, or each hit is a pointer.
+- [ ] Every quoted string is verbatim in the cited live file or module (`grep -cF` ≥ 1). No quoted string comes from a file without a live caller.
+- [ ] **Public repo:** the finding-11 regex over the added lines returns 0. QA also greps `domains.md` for `vercel\.app`, `\.vercel\.`, `agents?pilot\.[a-z]`, `localhost:`, `\.(ai|com|io|site|me|net|org)\b` outside file paths, `lvh`, `localtest` and line references: 0 hits. No domain, host, example business subdomain, project or team ID, URL, registrar name, record value, or statement of what is attached, set or missing today.
+- [ ] The SKILL.md diff is only D6e-2 (its three edits). The diff touches only the D6e.3 files.
+
+### D6e.5 Open questions for SA
+
+- [x] **Q-D6e-1** File name. **Ruled:** `domains.md`; index row label "Domains, app addresses, registrar and DNS". (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-2** What Preview's A1 holds. **Ruled:** the recorded stable preview address, registered with each vendor whose Preview connection is wanted; never production's address. With no stable preview address recorded, P-AD-4 on Preview is "not probed (no stable preview address)", not an expected fail. Run from a per-deployment host it fails by design, stated as a code fact with a pointer to `google.md`. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-3** Code search for direct reads of A1. **Ruled:** yes, narrowly, as a reader search, never a name search, with the procedure in §D6e.2 (2). `SKILL.md` §1 stands unedited. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-4** The marketing app's own env names. **Ruled:** agreed, not covered; the file covers A2 and the marketing project's domain attachment and certificate, and records "names read by the marketing app: not derivable here". Its Supabase redirect entries are named in T-AD-6 by role. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-5** The §3 redirect-URI sentence. **Ruled:** fold it in; this pass is the §1–§4 SA pass for that one sentence. New text: "Each environment's stable address (`NEXT_PUBLIC_APP_URL`; the redirect builders read it directly, on purpose, not through `platformOrigin()`: see `domains.md`) plus the redirect exactly as the code builds it is registered with the vendor, per environment." The rest of the bullet is unchanged. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-6** P-AD-4's callback and cancel behaviour. **Ruled:** confirmed in part. The callback writes nothing on a vendor error and logs one line with the vendor's error and description. That a cancel returns `access_denied` is a vendor fact confirmed at use time. Surface: a Google plugin through the connect route, suggested the Inbox channel mailbox connect, chosen at use time. Run with a control. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-7** `vercel-ops/dashboard-settings.md` coverage of system-variable exposure. **Ruled:** not covered there. T-AD-9 stays in `domains.md` as a user dashboard step; FU-D6e-d. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-8** FU-D6e-a class. **Ruled:** Low, not Medium. A connection from A1's address completes; browsing from another origin is fixed by configuration. The remaining code defect is the unset-A1 case. (raised by: BA | status: resolved by SA)
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -1936,6 +2107,9 @@ Approved. It reads the project's log store and cannot change project state, so i
 | 2026-11-02 | DO-6d spec + SA short pass | BA scoping spec (LLM providers: OpenAI, Anthropic, Groq, Kimi keys; the two model-name names; Mistral not wired); SA approved with changes 1–13 and settled Q-D6d-1..7 (no user question): Groq is required wherever the help bot is served, two ledger cases, never-read columns and the counts-by-class rule, help bot probe for OpenAI and Groq, no app-side probe for Anthropic and Kimi, no functional model-name probe. SA changes folded into §DO-6d. |
 | 2026-11-02 | DO-6d build | `third-party-ops/llm-providers.md` new (142 lines); SKILL.md index row + triggers. Awaiting SA code review and QA. |
 | 2026-11-02 | DO-6d SA code review + QA | SA approved for QA with two fixes (help bot probe precondition excludes agent-search questions; old LM-8 wording scrubbed). QA PASS, 20 checks (19 pass, 1 deferred), 3 Lows: Low 1 (stale status text) fixed by the main session; Low 2 (LF endings, normalised by git) and Low 3 (`InputHelp` mode not reachable from the floating button) left on purpose. |
+| 2026-11-03 | DO-6e spec + SA short pass | After a live check, the user narrowed DO-6e to the three app address names plus a checklist for attaching a custom domain. BA spec (AD-1..9, P-AD-1..8, T-AD-1..9); SA approved with 20 changes and ruled Q-D6e-1..8, including the one-sentence SKILL.md §3 correction. |
+| 2026-11-03 | DO-6e build | `domains.md` (137 lines) + SKILL.md §3 sentence, §5 row and triggers; spec with SA changes 1–20 applied; services-live check recorded; follow-ups FU-D6e-a..d. |
+| 2026-11-03 | DO-6e SA code review + QA | SA approved with three text fixes. QA: 19 checks, failed only the read-through for current-configuration wording (two Mediums: a Change History sentence and quotes of removed phrases in the SA sections). Main session applied SA fixes 1–3 and QA Medium 1–2; finding-11 regex and the read-through re-run clean. Low 2 accepted; Low 3 (sync with main) done at commit. |
 
 ---
 
@@ -4367,3 +4541,273 @@ None.
 **PASS.** Every §D6d.4 criterion passes, as do SA changes 1–13 and rulings Q-D6d-1..7. The public-repo regex over the added lines finds 0. The 3 weakness-grep hits and the current-state hits are all rule text. Every path, quoted string, logger field and code claim holds at this tree. Three Low edge cases, none blocking.
 
 ---
+
+---
+
+## SA Review — DO-6e (short pass)
+
+**Reviewed by SA — 2026-11-03**
+**Verdict: APPROVED WITH CHANGES.** The narrowed scope is right: the three address names, plus a checklist for attaching a custom domain, with registrar and DNS rows "not audited" until a domain is recorded. The boundary, the six-part shape, the probe discipline carried over from DO-6c and DO-6d, and the public-repo criteria are also right. AD-1, AD-4 to AD-7 and AD-9 hold as written. Five things would have made the skill wrong:
+
+- **The raw-reader failure depends on the origin the user is browsing from, not on the target.** A plugin connection fails whenever the opener page is not on the address A1 names. It succeeds on a Preview when the user browses the stable address A1 names and that address is registered with the vendor. Reading A1 directly for a redirect is deliberate: `lib/utils/__tests__/oneAddressPolicy.guard.test.ts` lists the OAuth files as exceptions, because a redirect has to match the vendor's registration. AD-3, Q-D6e-2, Q-D6e-8 and FU-D6e-a all assume the opposite.
+- **P-AD-4's quoted strings come from code with no live caller.** "Authorization window was closed" and "Authorization timeout" are both in `UniversalOAuthHandler.ts`. That handler is reached only through an import that the deprecated V1 registry never uses. The live openers have different texts, and each one has its own.
+- **The DNS boundary contradicts `email.md`.** `email.md` §3 already says the sending-domain records are published under DO-6e and that DMARC is a domain-owner record for DO-6e. The spec gives them back to `email.md`, so as written, neither file would own publishing them.
+- **The checklist does not cover moving the zone.** For a wildcard host, Vercel may require its own nameservers (vendor fact, confirm at use time). Moving the nameservers moves every record in the zone, the email records included.
+- **P-AD-6 and P-AD-8 are not fully specified.** P-AD-6 writes a page view it does not declare. P-AD-8 names a sign-in "on that deployment", but the login pages live in the marketing app.
+
+None of this needs a decision from the user. Required changes 1–20 below fix it.
+
+I reviewed this in the DO-6e worktree at `7c0b328b` (= `origin/main` at review time). I reviewed it against §D6e, SA Review — DO-6 changes 1–7, the DO-6c and DO-6d short passes, `third-party-ops` `SKILL.md`, `stripe.md`, `email.md`, `google.md` and `llm-providers.md`, `vercel-ops` `SKILL.md` and `dashboard-settings.md`, and `supabase-ops` `SKILL.md`. No platform call, no SQL, no vendor call and no network call was made, and no `.env*` file was opened. Local reads and `git grep` at `origin/main` only.
+
+### Code claims (catalogue table, AD-1 to AD-9)
+
+| # | Result | Correction for `domains.md` |
+|---|---|---|
+| Catalogue table | **Verified.** Group `addresses` holds the three names. A1 is `exp('R', 'R', 'R')`. A2 and A3 use the `config` default, which is optional everywhere. | — |
+| AD-1 | **Verified, with one precision.** The `origins.ts` and `middleware.ts` reads are literal and inlined. `processEnvironmentVariables` in `plugin-manager-v2.ts` reads `process.env[varName]` dynamically on the server, so for the definitions the value is read at run time, not inlined. On Vercel either way a new deployment is needed (`vercel-ops` §4), so the consequence stands. An unset A1 leaves the `${…}` placeholder in the definition and logs "Environment variable not found, keeping placeholder" (module `PluginManager`, 1 hit). | Change 13. |
+| AD-2 | **Verified, with a precision.** After A1: on Vercel production, the project's stable production host. On other Vercel environments, the deployment host, then the stable production host. Then the code fallback. Off Vercel, the development or production code fallback, chosen by `NODE_ENV`. | Change 14. |
+| AD-3 | **Corrected.** The readers are right: the connect route's fallback, the definition placeholders, the callback's `APP_URL` target origin, `platformEmailLogoUrl`, and the deprecated V1 strategies, which the guard also lists. **The consequence is wrong.** The connection fails when the opener's origin differs from A1's address. That covers a per-deployment Preview host, but it does not cover the stable address A1 names on Preview. The live openers (`lib/client/oauth-handler.ts`, the Inbox channel dialog, `useChannelConnect`, the Stripe Connect wizard) each have their own "closed" and "timed out" texts. **"SA to confirm" `UniversalOAuthHandler`: not live.** It is reachable only through `lib/plugins/v2/registry.ts`, which `lib/plugins/pluginRegistry.ts` (deprecated V1) imports and never uses. | Changes 1, 2, 4. `google.md` §5 already has the gotcha "The callback answers one origin". `domains.md` points to it and does not restate it. |
+| AD-4 | **Verified.** A3 outranks the platform origin in `publicSiteUrl`, `publicSiteDisplayHost` and `publicSiteSuffix`. `isLocalOnlyHost` refuses a local-only host outside development. Hosts are https, except local-only hosts. | — |
+| AD-5 | **Verified.** The rewrite runs only when A3 is set, the host header ends with `.{A3}`, the prefix is one label and the prefix is not reserved. The apex itself (host equal to A3) falls through to the platform. | Change 15 (apex). |
+| AD-6 | **Verified.** The list is imported by `middleware.ts`, the subdomain check route, the website pages route, `businessSubdomain.ts` and `resolveBusinessByPrefix.ts`. | — |
+| AD-7 | **Verified.** `marketingOrigin()` is A2 or the code fallback, chosen by `NODE_ENV`, with no loopback rule. | — |
+| AD-8 | **Verified.** The `browserOrigin` comment names the setting. **"SA to confirm": `vercel-ops/dashboard-settings.md` does not list it** (Q-D6e-7). | Change 18. |
+| AD-9 | **Verified.** The module header requires the image to keep answering on the host it was sent from. | — |
+| Quoted strings | **Fail as cited.** Both strings are verbatim, but only in `UniversalOAuthHandler.ts`, which has no live caller. | Change 2. |
+
+### Rulings on "SA to confirm" and Q-D6e-1 to Q-D6e-8
+
+- **Q-D6e-1: `domains.md`.** Change the index row label to "Domains, app addresses, registrar and DNS" so that a search for the address names finds it.
+- **Q-D6e-2: Preview's A1 holds the recorded stable preview address, registered with each vendor whose Preview connection is wanted. It never names production's address.** With production's address in Preview's A1, a connection started on a Preview completes on production, which runs production's code and writes to production's data. If no stable preview address is recorded, P-AD-4 on Preview is "not probed (no stable preview address)". It is not an "expected fail". Run from A1's address, P-AD-4 on Preview can pass today. Run from a per-deployment host, it fails by design, and the file says so as a code fact, with a pointer to `google.md`.
+- **Q-D6e-3: yes, narrowly, as a reader search, never a name search.** The procedure:
+  - `git grep -l -F` for the literal name at `origin/main`, over `app/`, `lib/` (definitions included), `components/`, `hooks/` and `middleware.ts`.
+  - File names only. Tests are excluded. A hit that is only in a comment is not a reader: several files mention A1 in a comment only.
+  - Cross-check the hits against the guard's `ALLOWED` and `OAUTH_FILES` lists in `oneAddressPolicy.guard.test.ts`.
+  - A reader in neither list and not on a redirect line is a finding, reported in the requirement. The same goes for any A2 or A3 reader outside `origins.ts` and `middleware.ts`.
+
+  `domains.md` states this exception in part (2). The §1 rule ("never searches the code for names") stands unedited.
+- **Q-D6e-4: agreed.** The file covers A2, and the marketing project's domain attachment and certificate. It records "names read by the marketing app: not derivable here". That app's Supabase redirect entries are named as part of T-AD-6, by role.
+- **Q-D6e-5: yes, fold it in. This pass is the §1–§4 SA pass for that one sentence.** The §3 bullet becomes: "Each environment's stable address (`NEXT_PUBLIC_APP_URL`; the redirect builders read it directly, on purpose, not through `platformOrigin()`: see `domains.md`) plus the redirect exactly as the code builds it is registered with the vendor, per environment." The rest of the bullet is unchanged. Nothing else in §1–§4 changes.
+- **Q-D6e-6: confirmed in part.**
+  - **Confirmed:** on a vendor error the callback returns before `handleOAuthCallback`, so it writes nothing. It logs one line with the vendor's error and description.
+  - **Vendor fact, confirm at use time:** that a cancel on Google's consent screen returns `access_denied` to the callback rather than closing the popup.
+  - **Surface:** a Google plugin connected through the connect route. The suggested surface is the Inbox channel mailbox connect, chosen at use time. Its "failed" and "closed" texts are distinct in its own file.
+  - Run it with a control (change 3).
+- **Q-D6e-7: not covered there.** T-AD-9 stays in `domains.md` as a user dashboard step. The area is the project's Environment Variables settings, confirmed at use time. `vercel-ops` is not edited in this slice: FU-D6e-d.
+- **Q-D6e-8: Low, not Medium.** A connection from A1's address completes. What fails is browsing from another origin, and the fix for that is configuration (browse and register the stable address), not code. The code defect left is narrower: an unset A1 produces an empty target origin, and the connect fallback produces a literal "undefined" in the redirect. The catalogue already makes A1 required everywhere.
+
+### Probe check (can fail, no money, durable writes declared, precondition becomes "not probed")
+
+| ID | Can fail | Money | Durable writes | Precondition → not probed | Ruling |
+|---|---|---|---|---|---|
+| P-AD-1 | Yes, for presence | None | None | Admin session; protection 401/403 | Presence only (change 12) |
+| P-AD-2 | Yes | None | None | **Missing:** a business with a prefix | Change 8 |
+| P-AD-3 | Yes | None | Ends the session (declared) | **Missing:** signed in on that deployment | Add the precondition (change 8) |
+| P-AD-4 | Yes, once paired | None | **Undeclared:** two log lines; a connection if the user consents by mistake | Partly | Changes 2, 3 |
+| P-AD-5 | Yes | None | As `email.md` (declared by pointer) | As `email.md` | Change 9 |
+| P-AD-6 | Yes | None | **Undeclared:** a page view in that business's visitor stats | Declared | Change 10 |
+| P-AD-7 | Yes | None | None | Declared | OK |
+| P-AD-8 | Yes, once rewritten | None | A session, plus any sign-in records | **Missing** | Change 11 |
+
+### Public-repo check
+
+- **Above the PRIVATE heading, the spec names no domain, host, ID, URL, registrar or record value.** Env var names, repo paths, function names and vendor names by role are fine.
+- **One phrase states current configuration by implication.** The checklist's title implied current configuration. Reword it to "a checklist for attaching a custom domain" in the requirement and in `domains.md`. The conditional "not audited until a domain is recorded" is a rule, not a state, and may stay.
+- **The past expired-certificate gotcha** paraphrases a comment that is already in tracked code. Keep it in the past tense, name no host, and never say which code fallback host is or is not served today.
+- **FU-D6e-a, FU-D6e-b and FU-D6e-c are neutral robustness follow-ups,** not security weaknesses, and may stay in the requirement as worded after change 19. None exposes data or lets one user act on another user's data.
+- **The public grep in D6e.4** also covers the product's domain-name stems in domain form (`agents?pilot\.` followed by a TLD) and `\.vercel\.`, besides the listed patterns (change 20).
+
+### New pattern and CI time (CLAUDE.md rule 7)
+
+- **No new pattern.** The slice adds one reference file, one index row with its triggers, and one ruled sentence in §3, under the DO-6b to DO-6d shape. The reader search is a read-only `git grep` with a stated scope, not new machinery.
+- **No added CI time.** No job, workflow or test is added.
+
+### Required changes
+
+1. **[AD-3, part (1) A1 row, gotcha 2, Q-D6e-2] Reframe the raw-reader failure by origin.** A connection completes only when the opener is on A1's address and that address is registered. Reading A1 directly for a redirect is deliberate (the guard test's OAuth exception). Part (1) Preview A1 becomes "the recorded stable preview address; never production's address". Gotcha 2 becomes a pointer to `google.md` "The callback answers one origin", plus the A1-on-Preview rule. Pass: no sentence says Preview connections fail as such, and the never-production rule is present. — Priority: High
+2. **[P-AD-4, D6e.4 quoted strings] Live surface, live strings.** Remove both `UniversalOAuthHandler` strings. P-AD-4 names its surface at use time (suggested: the Inbox channel mailbox connect, a Google plugin through the connect route). It quotes that surface's "failed" and "closed" texts verbatim, with the file next to them, each checked with `grep -cF` ≥ 1 at build. Where the text is translated, quote the code default and say so. Pass: no quoted string from a file without a live caller. — Priority: High
+3. **[P-AD-4] Pair with a control, and declare everything.**
+   - **Control:** the same probe, run from A1's address. The "failed" text there shows that the message mechanism works.
+   - **Pass:** the "failed" text from the address under test.
+   - **Fail:** the "closed" text from the address under test, while the control shows "failed", or a redirect-mismatch page.
+   - **Not conclusive:** the control also shows "closed" (the popup lost its opener, or the vendor behaves differently).
+   - **Not probed:** no client registered for this address (`google.md`); the popup closed by hand; no cancel offered.
+   - **Side effects:** a connect log line and a callback provider-error log line, which carries the vendor's error description. If the user consents by mistake, a plugin connection is written, and the user disconnects it.
+
+   Pass: all five states and the side effects are present. — Priority: High
+4. **[AD-3, FU-D6e-b] `UniversalOAuthHandler` settled as not live.** AD-3 drops "SA to confirm". FU-D6e-b becomes "remove the handler, `UniversalPlugin` and the unused `universalPlugins` import, and their guard-list entries". The `supabaseClient` point goes, because the code is removed. `domains.md` does not list it as a reader. Pass: no "SA to confirm" left on it. — Priority: Medium
+5. **[Boundary, checklist step 2] Align DNS ownership with `email.md` §3.**
+   - `email.md` names which records the email vendor needs and checks their verification.
+   - `domains.md` owns publishing every vendor's records at the zone's DNS host, recording each record's owner (T-AD-8), and DMARC as the domain-owner record. It names no record value.
+   - Step 2 is rewritten from "email records … are not touched here" to "publish, and on a zone move carry, every recorded record, email included; their contents come from each vendor's file".
+   - `email.md` is not edited.
+
+   Pass: the boundary sentence and step 2 match `email.md` §3. — Priority: High
+6. **[Checklist, tiers, rollback] Moving the zone.** Add a step before step 1, for the case where the plan includes a wildcard host. Whether the wildcard needs the zone's nameservers moved to Vercel is a vendor fact, confirmed at use time.
+   - If it does, every existing record in the zone (email included) is recreated at the new DNS host and checked against the private inventory **before** the nameservers change.
+   - Then the email vendor's domain verification and P-AD-5 are re-run after the change.
+   - The nameserver change is production tier.
+   - Its undo (switch back) is slow because of DNS propagation, and the step says so explicitly.
+
+   Pass: the step, its tier and its undo are present. — Priority: High
+7. **[Checklist step 5] Every inbound address, not only redirects.** Step 5 also covers:
+   - the webhook endpoints, per `stripe.md` and `email.md`;
+   - `google.md`'s JavaScript origins and authorised domains;
+   - queue callback targets (DO-6f, "not audited" until covered).
+
+   Each one is added for the new address and kept for the old one until step 8. Pass: step 5 names each family by pointer. — Priority: Medium
+8. **[P-AD-2, P-AD-3] Preconditions and the Preview reading.**
+   - **P-AD-2:** precondition, a business the user owns that has a prefix; otherwise "not probed (no business)". On Preview, the pass is that deployment's per-deployment host, not an alias the user browses. If the display shows A1's address on Preview, that is the AD-8 failure (T-AD-9), not an A1 failure.
+   - **P-AD-3:** precondition, signed in on that deployment.
+
+   Pass: both preconditions and the AD-8 reading are present. — Priority: Medium
+9. **[P-AD-5] A broken image is a fail too.** The fail cell adds "a broken image". On Preview, a broken image because deployment protection covers A1's host is "not probed (protected host)". Pass: present. — Priority: Low
+10. **[P-AD-6] Declare the page view.** The side effects become "one page view recorded in that business's visitor stats (`PageViewTracker`, `app/site/[subdomain]/page.tsx`)". Pass: present. — Priority: Medium
+11. **[P-AD-8] Rewrite the sign-in probe.**
+    - **Precondition:** an in-app sign-in surface on that deployment that returns to the served origin. `lib/client/auth-actions.ts` builds `redirectTo` from `window.location.origin`. The surface is found at use time; otherwise "not probed (no in-app sign-in surface)". The login pages themselves live in the marketing app (Q-D6e-4).
+    - **Google half:** a pointer to `google.md`'s G1 probe, completed by the user on their own existing account.
+    - **Fail:** landing on another origin, which is Supabase's fallback to the Site URL when the origin is not allowed (vendor fact, confirm at use time), or Supabase's redirect error.
+    - **Side effects:** a session, plus any sign-in records.
+
+    Pass: the precondition, the pointer and the side effects are present. — Priority: Medium
+12. **[P-AD-1] Presence only.** Add "proves presence, never the value; correctness comes from P-AD-2 to P-AD-8". Pass: present. — Priority: Low
+13. **[AD-1, T-AD-1] Runtime read of the definitions.** Add the dynamic-read precision. Add the unset-A1 log line as DO's server-side evidence: count of "Environment variable not found, keeping placeholder", module `PluginManager`, filtered to the A1 name, on that deployment, after Ready. This goes as an extra live-read column in T-AD-1, or as a gotcha. Pass: the string is verbatim with its module. — Priority: Low
+14. **[AD-2 in part (2)] State the fallback order exactly** as given in the code-claims table. The code fallback constants stay unquoted. Pass: present. — Priority: Low
+15. **[T-AD-4, part (1) sibling labels] The apex case.** A host at the apex itself has no label to reserve, and the rewrite already excludes it (host equal to A3 falls through). T-AD-4 checks first labels of subdomain hosts only. Pass: present. — Priority: Low
+16. **[Part (2)] Reader derivation** as ruled in Q-D6e-3: scope, comment hits excluded, cross-check against the guard's lists, a stray reader reported as a finding. Pass: present, with no reader list beyond the AD-3 examples. — Priority: Medium
+17. **[D6e-2] SKILL.md edits:**
+    - the §5 row, with the new label (Q-D6e-1);
+    - the description triggers;
+    - the one §3 sentence in the exact text of the Q-D6e-5 ruling.
+
+    The SKILL.md diff contains these three edits and nothing else. D6e.4's "SKILL.md diff is only D6e-2" stands with the D6e-2 row updated to include them. — Priority: Medium
+18. **[T-AD-9, Q-D6e-7] T-AD-9 stays here** as a user dashboard step: the project's Environment Variables settings area, confirmed at use time, reported as "on/off as recorded: yes/no". Add FU-D6e-d (Low, docs): add the setting to `vercel-ops/dashboard-settings.md` in a later `vercel-ops` pass. — Priority: Low
+19. **[D6e.3 follow-ups] Record them in the requirement, never in the skill:**
+    - FU-D6e-a (**Low**): the callback posts to its own request origin, and the connect route refuses with an error when A1 is unset, instead of building an "undefined" redirect. The redirect stays on A1 by design.
+    - FU-D6e-b per change 4.
+    - FU-D6e-c as written.
+    - FU-D6e-d per change 18.
+
+    Pass: all four are in D6e.3 and absent from `domains.md`. — Priority: Low
+20. **[Tiers, public grep, length]**
+    - **Production tier also includes:** the system-variable exposure setting on either project (it is project-wide) and any nameserver change.
+    - **Wording:** the checklist title becomes "attaching a custom domain".
+    - **Grep:** the D6e.4 grep adds `agents?pilot\.[a-z]` and `\.vercel\.`.
+    - **Length:** ≤ ~180 lines. If it runs over, trim prose, never a probe or drift row.
+
+    Pass: `wc -l` ≤ 180, and grep 0. — Priority: Low
+
+### Checked and honoured
+
+- **DO-6 changes 1–7:** after changes 3, 8 and 11, every probe has a precondition or reads "not probed". Local is guidance only. Derivation is from the catalogue and from code, there are no copied lists, and the T-AD rows live in `domains.md`.
+- **DO-6c and DO-6d lessons:** after the changes, each probe has an exact pass and fail, none passes on an unset value, side effects are declared, and quoted strings are verbatim with their file or module.
+- **Probe safety:** no probe moves money, needs a secret in hand or completes an OAuth connection. Every probe of a deployment is made by the main session or the user, under `vercel-ops` §4.
+- **Tiers:** every production, domain, DNS, registrar, Supabase URL and vendor registration change is production tier, executed by the user. A Preview-only A1 or A3 change is reversible.
+
+### Approval
+
+[x] Spec approved with changes 1–20. Dev builds `domains.md` and the three SKILL.md edits after the main session's Q-D6-2 live check. No user decision is needed.
+
+---
+
+## DO-6e implementation notes
+
+**By Dev — 2026-11-03.** Built in the DO-6e worktree on `feature/devops-third-party-dns`, at base `7c0b328b`. Docs and skill only: no application code, no CI change. Nothing committed.
+
+### What was built
+
+| File | Change |
+|---|---|
+| `.claude/skills/third-party-ops/domains.md` | New, 137 lines. Intro and live-check line in the sibling form; the A1–A3 table; the boundary paragraph; §1–§6 of the template; §7 tiers, the checklist for attaching a custom domain (step 0 for the zone move, then steps 1–9) and the order table |
+| `.claude/skills/third-party-ops/SKILL.md` | Three edits only: the description triggers; the §3 "Redirect URIs come from the app address" sentence in the exact text of the Q-D6e-5 ruling; the §5 row "Domains, app addresses, registrar and DNS" → `[domains.md](domains.md)`. Line endings preserved; the diff is 3 lines changed |
+
+Checks run at build:
+
+- Every quoted string is verbatim in its file (`grep -cF` = 1 each): the two Inbox channel dialog texts in `components/business-os/leads/InboxChannelSetupDialog.tsx`; "Initiating plugin OAuth connection" (module `PluginConnectAPI`); "OAuth error from provider" (module `OAuthCallbackAPI`); "Environment variable not found, keeping placeholder" (module `PluginManager`); "A BUSINESS'S PUBLIC PAGES" in `middleware.ts`.
+- Every file path named in `domains.md` exists at the base.
+- The public-repo scan over the added lines returns only `[a-z]{20}` hits, each a code identifier (`InboxChannelSetupDialog`, `processEnvironmentVariables`, `publicSiteDisplayHost`, `platformEmailLogoUrl`). The QA grep (including `agents?pilot\.[a-z]`, `\.vercel\.`, the `me` top-level label, and line references) returns 0.
+
+### SA changes applied with a judgement call
+
+- **Change 6 (zone move step):** added as **step 0**, so the existing step numbers (and change 7's "until step 8") stay valid. The checklist is therefore "step 0, then steps 1–9" rather than ten renumbered steps.
+- **Change 3 (P-AD-4):** the five states and side effects did not fit a table cell, so the table row points to a block under the table, in the form `email.md` uses for its replay probe. The connect log line is named as "Initiating plugin OAuth connection", the first `info` line the route logs for every connect.
+- **Change 13 (placeholder line):** applied both ways: a live-read clause in T-AD-1 (with "no definition load in the window is not read", as T-GO-4 has) and a clause in the first gotcha.
+- **Q-D6e-3 (stray reader is a finding):** the ruling says "reported in the requirement". In the skill text, which applies at every future run, it reads "reported in the private docs", per `SKILL.md` §3 ("Findings from a run go to the private docs only"). For this slice's own build no stray reader was looked for beyond the SA review's cross-check.
+- **Change 4 (`UniversalOAuthHandler` not live):** `domains.md` does not name it at all (`google.md` §2 already lists it as never a probe target). The not-live ruling and FU-D6e-b live in the requirement only.
+- **Change 18 (T-AD-9):** worded per project ("each project's system-variable exposure"), since change 20 makes the setting production tier on either project.
+
+### Left out, with reason
+
+- **The SA review's PRIVATE items** (all six) and both spec PRIVATE bullets: not in any tracked file or in `do6e-spec-applied.md`, per the public-repo rule.
+- **The "SA to confirm" and line-number pointers** of the original spec: removed from the applied spec, because each is now ruled.
+- The main session inserted the applied spec, the SA review and these notes into this requirement, and recorded the Q-D6-2 live check in the spec's services-live paragraph.
+
+---
+
+## SA Code Review — DO-6e
+
+**Code Review by SA — 2026-11-03**
+**Status:** 🔄 Fix Required (three small text fixes, no re-review needed)
+
+Reviewed the uncommitted diff in the DO-6e worktree against `origin/main` (`7c0b328b`): the new `.claude/skills/third-party-ops/domains.md` (137 lines), the `SKILL.md` diff (3 lines), and the requirement sections added (§0 DO-6 row, DO-6e Specification, two Change History rows dated 2026-11-03, SA Review — DO-6e (short pass), DO-6e implementation notes). Local reads and `grep` only; no platform, vendor or network call; no `.env*` opened.
+
+### Results
+
+| # | Check | Result |
+|---|---|---|
+| 1 | SA short-pass changes 1–20 and rulings Q-D6e-1..8 | **All applied**, in the spec and in `domains.md`. Change 6 as step 0 (keeps change 7's "until step 8" valid) and P-AD-4's states in a block under the table are accepted judgement calls. The Q-D6e-3 destination "the private docs" in the skill, instead of "the requirement", is **endorsed**: it follows `SKILL.md` §3 ("Findings from a run go to the private docs only") and supersedes the ruling's wording for future runs. None of the short pass's private items appears in any tracked file |
+| 2 | Code claims in `domains.md` | **All verified** at the worktree with `grep -cF` ≥ 1: every file path exists; every function named exists in its cited file; both Inbox channel dialog texts are the code defaults of translated strings; "Initiating plugin OAuth connection" (`PluginConnectAPI`), "OAuth error from provider" (`OAuthCallbackAPI`), "Environment variable not found, keeping placeholder" (`PluginManager`, logged with `varName`), "A BUSINESS'S PUBLIC PAGES"; the callback's vendor-error return comes before `handleOAuthCallback`; `PageViewTracker` is rendered by the public site page; `redirectTo` is built from `window.location.origin`; `required-not-set` is a classifier state; the catalogue rows match the A1–A3 table |
+| 3 | `SKILL.md` | The §3 sentence is the exact Q-D6e-5 text, rest of the bullet unchanged. The §5 row label and the trigger list follow the sibling style. No other change |
+| 4 | Public repo | The pattern grep over every added line returns 0. No domain, host, URL, ID, registrar or DNS-host name, record value or security weakness. **One exception:** the first 2026-11-03 Change History row states current configuration (fix 1) |
+| 5 | Probes | Each can fail, moves no money, declares its writes (session end, log lines, page view, invite row, accidental connection) and turns a failed precondition into "not probed" / "not read". P-AD-4 has its control and all five states. No probe completes an OAuth connection |
+
+### Code Review Comments
+
+1. `docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`, Change History row "DO-6e spec + SA short pass" — its first sentence implied current configuration, the same class the short pass removed from the checklist wording. Replace that sentence with "After a live check, the user narrowed DO-6e to the three app address names plus a checklist for attaching a custom domain." — Priority: Medium
+2. `docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`, DO-6e implementation notes, "Left out, with reason" — the last two bullets are stale: the requirement has now been edited, and the spec already carries the main session's dated services-live line. Replace them with one bullet: "The main session inserted the applied spec, the SA review and these notes into this requirement, and recorded the Q-D6-2 live check in the spec's services-live paragraph." — Priority: Low
+3. `docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`, between the SA short pass's Approval and "## DO-6e implementation notes" — two consecutive `---` separators; delete one. — Priority: Low
+
+### Optimisation Suggestions
+
+- None blocking. `domains.md` is 137 lines, inside the 180-line ceiling.
+
+### Code Approved for QA: Yes, with fixes 1–3
+
+Fixes 1–3 are text only and need no SA re-review; QA confirms them, re-running the public grep over the added lines after fix 1.
+
+---
+
+## QA Report — DO-6e
+
+**QA — 2026-11-03.** Test mode: full. Strategy: static checks (grep, `test -e`, diff placement) on a docs-and-skill slice; no app code to run. Base `7c0b328b`.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `domains.md` has the six SKILL.md §4 parts, then tiers, the checklist (step 0, steps 1–9) and the order table; organised by A1–A3; 137 lines (limit 180) | Pass |
+| 2 | Live check stated by role; T-AD-7 and T-AD-8 "not audited" until a domain is recorded; the dated services-live line is in the spec | Pass |
+| 3 | Every file path in `domains.md` exists (14 repo paths plus sibling skill files) | Pass |
+| 4 | Every code symbol named exists in the file cited (19 symbols) | Pass |
+| 5 | Every quoted log and UI string is verbatim in the module stated (`git grep -cF` = 1 each) | Pass |
+| 6 | Catalogue table matches `catalogue.ts` (group `addresses`, A1 required everywhere, A2 and A3 optional) | Pass |
+| 7 | Probes: who, pass, fail, precondition and side effects; P-AD-4's control and states; no probe completes an OAuth connection or moves money | Pass |
+| 8 | AD-2 fallback order; readers derived, not listed; Preview's A1 never production's | Pass |
+| 9 | DNS and redirect rules are pointers; the boundary matches `email.md` §3 | Pass |
+| 10 | Restatement grep from §D6.4 over `domains.md` | Pass (0 hits) |
+| 11 | Extra `domains.md` greps from D6e.4 (hosts, platform suffixes, ports, line references) | Pass (0 hits) |
+| 12 | Finding-11 regex over all added lines | Pass (0 hits) |
+| 13 | Broad regex over added lines | Pass (code identifiers and the D6e.4 pattern list only) |
+| 14 | SKILL.md diff: description triggers, the §3 sentence (exact Q-D6e-5 text) and the §5 row only; line endings unchanged | Pass |
+| 15 | Requirement diff: additions in the expected places; the only removed line is the §0 DO-6 row being replaced | Pass |
+| 16 | Added internal anchors resolve (9) | Pass |
+| 17 | Read-through: no statement of current configuration in added text | Fail, then fixed (Medium 1–2) |
+| 18 | No security-weakness wording; FU-D6e-a..d are neutral follow-ups | Pass |
+| 19 | `domains.md` line endings (LF on disk; stored as LF like its siblings) | Pass (note) |
+
+**Findings.**
+- **Medium 1:** the first 2026-11-03 Change History row implied current configuration (same as SA code review fix 1). Fixed by the main session.
+- **Medium 2:** the SA short pass and the SA code review quoted the removed phrases, so the statement stayed in tracked text. Fixed by the main session: both now describe the class without quoting.
+- **Low 1:** SA code review fixes 2 and 3 were unapplied when QA read the file. Fixed by the main session.
+- **Low 2:** two §5 gotchas (the zone move and an unowned domain still named) are vendor or checklist facts rather than repo-file facts; both are marked as vendor facts. Accepted as is.
+- **Low 3:** `origin/main` moved past the base; sync before the PR. Not a defect in the slice.
+
+**Verdict:** FAIL on the read-through (check 17) as first run; PASS after the main session applied Medium 1–2 and Low 1. Re-run of check 12 and the read-through: see the Change History row for 2026-11-03 "DO-6e SA code review + QA".
