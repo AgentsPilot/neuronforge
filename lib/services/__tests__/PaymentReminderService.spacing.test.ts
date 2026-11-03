@@ -30,6 +30,20 @@ jest.mock('@/lib/logger', () => ({
 
 import { PaymentReminderService } from '../PaymentReminderService';
 
+/*
+ * `emitPaymentEvent` writes `payment_events` through its own Supabase client,
+ * and in this suite that write left the machine. The caller ignores the result
+ * (`await emitPaymentEvent(...)`, nothing read), so the failed shape it already
+ * got is kept here — minus the request.
+ */
+jest.mock('@/lib/services/PaymentEventService', () => ({
+  ...jest.requireActual('@/lib/services/PaymentEventService'),
+  emitPaymentEvent: async () => ({
+    data: null,
+    error: new Error('payment events are not written in unit tests'),
+  }),
+}));
+
 const DAY = 86_400_000;
 const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * DAY).toISOString();
 

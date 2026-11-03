@@ -51,6 +51,19 @@ import {
 import { bosLlmAreaKey, bosLlmSettingsCallNames } from '../modelSettingsPolicy';
 import { SEEDED_ROWS } from '../__fixtures__/seededRows';
 
+/*
+ * The image price table is read from the DB on first use, and in this suite
+ * that read left the machine. A failed read yields the EMPTY map — the module
+ * says so: "empty before the first success, which prices every image from the
+ * in-code fallback" — so an empty map is exactly what these cases already saw,
+ * minus the request. The pure helpers stay real.
+ */
+jest.mock('@/lib/ai/imagePricing', () => ({
+  ...jest.requireActual('@/lib/ai/imagePricing'),
+  loadImagePrices: async () => new Map<string, number>(),
+  loadImagePricesWithin: async () => new Map<string, number>(),
+}));
+
 const ROOT = path.resolve(__dirname, '../../../..');
 const MIGRATION = path.join(ROOT, 'supabase/migrations/20261003_seed_bos_llm_area_settings.sql');
 const sql = fs.readFileSync(MIGRATION, 'utf8');

@@ -34,6 +34,17 @@ import { onboardingConfigurationService, type ExtractedData } from '../Onboardin
 import { moneyMoves, collectsOnline, takesAppointments, shapeFromProfile } from '@/lib/business-os/setup/setupGraph';
 import { shapeFromServices } from '@/lib/business-os/businessShape';
 
+/*
+ * Two reads reached the network from here: the active price list
+ * (`AiModelPricingRepository`) and the BOS LLM area settings
+ * (`SystemConfigRepository.getByKeys`). Both go through `supabaseServer` and
+ * both wrap the call in try/catch returning `{ data: null, error }`, so an
+ * unusable client reproduces exactly what these cases already got — through the
+ * repositories' own error handling rather than a hand-written result — minus the
+ * request. This is the house idiom; 265 suites use it.
+ */
+jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
+
 /**
  * Recording, not throwing.
  *
