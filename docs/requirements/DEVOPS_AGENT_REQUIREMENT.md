@@ -4513,7 +4513,7 @@ I reviewed this in the DO-6c worktree at `eb2ee76a` (merge of #605). `origin/mai
 12. **[(4) G1 row] Which login surface.** The "Continue with Google" button calls `signInWithGoogle` in `lib/client/auth-actions.ts`, and the button is found at use time. The start-failure line is browser-side, so DO has no runtime-log evidence for G1. Say "user or main session report only". — Priority: Low
 13. **[D6c.3 follow-ups] Record three code follow-ups in the requirement, not in the skill:**
     - FU-D6c-a (Medium): build the G3 redirect through `platformOrigin()`, or a shared helper, on both the definition substitution and the callback's post-message origin.
-    - FU-D6c-b (Low): remove `NEXT_PUBLIC_GOOGLE_CLIENT_ID` with the V1 strategies, or record why it stays.
+    - FU-D6c-b (Low): ✅ CLOSED by G-2 of GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md — both readers deleted with the V1 strategies and the catalogue entry removed. G-3 removes the variable from Vercel.
     - FU-D6c-c (Low): Q-D6c-6.
 
     `chatgpt-research-plugin-executor.ts` also has a `console.warn` and a hardcoded model (CLAUDE.md rules 3 and 5). It is not touched in this slice, so it is listed for whoever next opens that file, not converted here.
@@ -4564,7 +4564,7 @@ I reviewed this in the DO-6c worktree at `eb2ee76a` (merge of #605). `origin/mai
 | ID | Priority | Item |
 |---|---|---|
 | FU-D6c-a | Medium | Build the G3 redirect and the callback's result origin through `platformOrigin()` (or a shared helper), both in the definition substitution and in the callback's post-message origin |
-| FU-D6c-b | Low | Remove `NEXT_PUBLIC_GOOGLE_CLIENT_ID` together with the V1 strategies, or record why it stays |
+| FU-D6c-b | Low | ✅ CLOSED by G-2 (GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md) — readers and catalogue entry gone; G-3 removes the Vercel variable |
 | FU-D6c-c | Low | The catalogue relabels the Places key as a non-secret browser setting (`config`), with its tests, or records why `secret` is kept |
 
 `chatgpt-research-plugin-executor.ts` also has a `console.warn` and a hardcoded model (CLAUDE.md rules 3 and 5). It is not touched here; listed for whoever next opens that file.

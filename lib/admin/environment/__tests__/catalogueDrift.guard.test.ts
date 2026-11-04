@@ -41,7 +41,17 @@ const SOURCE_EXT = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const TEST_FILE = /\.(?:test|spec)\.[^./]+$/;
 const SKIPPED_DIRS = new Set(['node_modules', '.next', '__tests__', '__mocks__']);
 const PLUGIN_DEFINITIONS_DIR = 'lib/plugins/definitions';
-const PLUGIN_CONFIGS_DIR = 'lib/plugins/v2/configs';
+// RESIDUAL GAP, removed on purpose: nothing now scans lib/plugins/definitions/*.json
+// for `…EnvVar`-style fields. That is correct today because no code reads such a
+// field — plugin-manager-v2.ts substitutes `${VAR}` placeholders only — but if a
+// future definition schema introduces one, G3-1a will not see it and the scanner
+// that would have is gone. Removed, not lost.
+//
+// There is no second JSON read path any more: G-2 deleted lib/plugins/v2/configs
+// with the rest of the dead universal-plugin tree
+// (GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md section 12). This guard now
+// scans plugin DEFINITIONS only, and the `…EnvVar` scanner that the configs
+// needed went with them.
 
 /** Is this repository-relative (posix) path a deployed source file the guard scans? */
 function isScannedPath(rel: string): boolean {
@@ -226,15 +236,6 @@ function scanPluginDefinition(text: string): string[] {
   return out;
 }
 
-/** Names a plugin config points at through a `…EnvVar` field. */
-function scanPluginConfig(text: string): string[] {
-  const out: string[] = [];
-  for (const m of text.matchAll(/"[A-Za-z]*EnvVar"\s*:\s*"([^"]*)"/g)) {
-    if (VALID_NAME.test(m[1])) out.push(m[1]);
-  }
-  return out;
-}
-
 /**
  * E3-3: matches the bytes, never decodes a file that cannot contain a read.
  * The second and third needles admit `const { env } = process` (QA §6.3 edge 3).
@@ -320,12 +321,6 @@ const PINNED_SITES: readonly PinnedSite[] = [
     why: 'Checks a list of names for presence; each name in that list is also read literally elsewhere.',
   },
   {
-    file: 'lib/plugins/v2/core/UniversalOAuthHandler.ts',
-    kind: 'computed',
-    count: 2,
-    why: 'Reads the client id and secret named by a plugin config; the guard reads those names from the config JSON.',
-  },
-  {
     file: 'lib/server/plugin-manager-v2.ts',
     kind: 'computed',
     count: 1,
@@ -355,7 +350,6 @@ interface TreeScan {
   readers: Map<string, string>;
   unresolved: UnresolvedSite[];
   definitionFiles: number;
-  configFiles: number;
 }
 
 function scanTree(): TreeScan {
@@ -394,9 +388,7 @@ function scanTree(): TreeScan {
   const jsonIn = (dirRel: string) =>
     fs.readdirSync(path.join(REPO_ROOT, dirRel)).filter((f) => f.endsWith('.json')).map((f) => `${dirRel}/${f}`);
   const definitions = jsonIn(PLUGIN_DEFINITIONS_DIR);
-  const configs = jsonIn(PLUGIN_CONFIGS_DIR);
   for (const rel of definitions) for (const name of scanPluginDefinition(readRepoFile(rel) ?? '')) note(name, rel);
-  for (const rel of configs) for (const name of scanPluginConfig(readRepoFile(rel) ?? '')) note(name, rel);
 
   return {
     filesScanned: files.length,
@@ -404,7 +396,6 @@ function scanTree(): TreeScan {
     readers,
     unresolved,
     definitionFiles: definitions.length,
-    configFiles: configs.length,
   };
 }
 
@@ -449,16 +440,12 @@ describe('environment catalogue drift guard (EC-3)', () => {
       expect(tree.filesScanned).toBeGreaterThanOrEqual(1000);
       expect(tree.literalNames.size).toBeGreaterThanOrEqual(50);
       expect(tree.definitionFiles).toBeGreaterThanOrEqual(20);
-      expect(tree.configFiles).toBeGreaterThanOrEqual(1);
     });
 
-    it('G3-1e the two JSON read paths still read the environment as the guard assumes', () => {
+    it('G3-1e the JSON read path still reads the environment as the guard assumes', () => {
       const manager = stripComments(readRepoFile('lib/server/plugin-manager-v2.ts') ?? '');
       expect(manager).toContain('/\\$\\{([^}]+)\\}/g');
       expect(manager).toMatch(/process\.env\[varName\]/);
-      const oauth = stripComments(readRepoFile('lib/plugins/v2/core/UniversalOAuthHandler.ts') ?? '');
-      expect(oauth).toMatch(/process\.env\[this\.config\.oauth\.clientIdEnvVar\]/);
-      expect(oauth).toMatch(/process\.env\[this\.config\.oauth\.clientSecretEnvVar\]/);
     });
 
     it('G3-1f unresolved computed reads and whole-object uses match the pinned list (E3-1)', () => {
@@ -550,14 +537,10 @@ describe('environment catalogue drift guard (EC-3)', () => {
       expect(member.unresolved.map((s) => s.kind)).toEqual(['computed']);
     });
 
-    it('N-11 plugin JSON: placeholders and EnvVar fields are reads; a non-name placeholder is skipped', () => {
+    it('N-11 plugin JSON: a placeholder is a read; a non-name placeholder is skipped', () => {
       expect(scanPluginDefinition('{"a":"${FAKE_PLACEHOLDER}","b":"${amount/100}","c":"x ${ FAKE_SPACED } y"}')).toEqual([
         'FAKE_PLACEHOLDER',
         'FAKE_SPACED',
-      ]);
-      expect(scanPluginConfig('{"oauth":{"clientIdEnvVar": "FAKE_CLIENT_ID","clientSecretEnvVar":"FAKE_CLIENT_SECRET"}}')).toEqual([
-        'FAKE_CLIENT_ID',
-        'FAKE_CLIENT_SECRET',
       ]);
     });
 

@@ -76,10 +76,13 @@ const NAME_ONLY_LISTINGS = ['lib/admin/environment/catalogue.ts'];
 const isOAuthRedirect = (line: string) => /redirect_uri|redirectUri|oauth\/callback/i.test(line);
 
 const OAUTH_FILES = [
-  'lib/plugins/strategies/gmailPluginStrategy.ts',
-  'lib/plugins/strategies/googleDrivePluginStrategy.ts',
+  // gmailPluginStrategy.ts, googleDrivePluginStrategy.ts and
+  // lib/plugins/v2/core/UniversalOAuthHandler.ts were removed from this list when
+  // G-2 deleted them (GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md §12). The
+  // list is an exemption set used without an existence assertion, so a stale entry
+  // would not redden this suite — it would quietly exempt a future file of the same
+  // name. It shrinks only on purpose.
   'lib/plugins/strategies/slackPluginStrategy.ts',
-  'lib/plugins/v2/core/UniversalOAuthHandler.ts',
   'app/oauth/callback/[plugin]/route.ts',
 ];
 
