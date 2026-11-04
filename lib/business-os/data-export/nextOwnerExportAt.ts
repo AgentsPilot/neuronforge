@@ -29,6 +29,18 @@ export function ownerLimitAnchorOffset(policy: OwnerLimitPolicy = MODULE_EXPORT_
   return policy.OWNER_DAILY_LIMIT - 1;
 }
 
+/** The admin's limit per owner (MX-5): a plain number, as `OwnerLimitPolicy`. */
+export type AdminLimitPolicy = { readonly ADMIN_DAILY_LIMIT_PER_OWNER: number };
+
+/**
+ * The start function's `OFFSET (v_limit - 1)` for an admin request (MX-5,
+ * workplan §4.3). The SQL counts `req.origin = p_origin`, so the admin's sends
+ * to one owner are anchored apart from the owner's own (BQ-30a).
+ */
+export function adminLimitAnchorOffset(policy: AdminLimitPolicy = MODULE_EXPORT_POLICY): number {
+  return policy.ADMIN_DAILY_LIMIT_PER_OWNER - 1;
+}
+
 /** The start function's `now() - interval '24 hours'`, as an ISO string, from the caller's clock. */
 export function ownerLimitWindowStart(nowMs: number, policy: OwnerLimitPolicy = MODULE_EXPORT_POLICY): string {
   return new Date(nowMs - policy.DAILY_WINDOW_HOURS * HOUR_MS).toISOString();

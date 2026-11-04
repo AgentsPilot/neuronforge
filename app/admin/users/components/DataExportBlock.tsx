@@ -2,34 +2,61 @@
 
 /**
  * The "Data export" section of the Businesses drawer (data export DE-10a;
- * export redesign MX-3.1, workplan §8; BQ-E6.1-1 answered 2026-10-27).
+ * export redesign MX-3.1, workplan §8; MX-5 "Send export to owner", workplan
+ * §4.8; SA-Q6, SA-Q10).
  *
- * MX-3.1 removed the admin ZIP (prepare, list and audited download) together
- * with the owner's ZIP. The user accepted the gap until MX-5, which brings
- * "Send export to owner". Until then this box stays where it is, above the
- * danger area, and says so in one line. It sends no request and reads nothing.
+ * MX-5: one purpose line and one button that opens the send dialog. The box
+ * itself SENDS NOTHING and READS NOTHING when the drawer opens (workplan
+ * E-20): DELETE's drawer pin tests fix the exact list of requests one drawer
+ * opening makes. The dialog (`DataExportSendDialog`) reads only when the admin
+ * opens it.
  *
- * `accountId` stays in the props because `BusinessDetail.tsx` mounts the box
- * as `<DataExportBlock key={user.id} accountId={user.id} />` (S-6, not edited
- * here). MX-5 uses it again for the owner the export is sent to.
+ * `accountId` comes from `BusinessDetail.tsx`, which mounts the box as
+ * `<DataExportBlock key={user.id} accountId={user.id} />` (S-6, not edited
+ * here): the owner the export is sent to.
  */
 
+import { useRef, useState } from 'react';
+
+import { Button } from '@/components/ui/button';
+
 import { DATA_EXPORT_COPY } from '../dataExportCopy';
-import { DrawerBox } from './DrawerBox';
+import { DataExportSendDialog } from './DataExportSendDialog';
+import { DrawerBox, PURPOSE_LINE } from './DrawerBox';
 
 interface Props {
-  /** The account the drawer is open on. Unused until MX-5 ("Send export to owner"). */
+  /** The account the drawer is open on: the owner the export is sent to. */
   accountId: string;
 }
 
-export function DataExportBlock(_props: Props) {
+export function DataExportBlock({ accountId }: Props) {
+  const [isOpen, setIsOpen] = useState(false);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
+
+  // Focus goes back to the opener on close (the dialog is opened by state, not a Radix trigger).
+  function onCloseAutoFocus(event: Event) {
+    event.preventDefault();
+    openerRef.current?.focus();
+  }
+
   return (
     <DrawerBox section="export" title={DATA_EXPORT_COPY.title} testId="drawer-section-export">
       <div data-testid="data-export-block" className="space-y-2">
-        <p data-testid="data-export-placeholder" className="text-sm text-slate-400">
-          {DATA_EXPORT_COPY.placeholder}
+        <p data-testid="data-export-purpose" className={PURPOSE_LINE}>
+          {DATA_EXPORT_COPY.purpose}
         </p>
+        <Button
+          ref={openerRef}
+          type="button"
+          variant="outline"
+          size="sm"
+          data-testid="data-export-send-open"
+          onClick={() => setIsOpen(true)}
+        >
+          {DATA_EXPORT_COPY.open}
+        </Button>
       </div>
+      <DataExportSendDialog open={isOpen} onOpenChange={setIsOpen} accountId={accountId} onCloseAutoFocus={onCloseAutoFocus} />
     </DrawerBox>
   );
 }

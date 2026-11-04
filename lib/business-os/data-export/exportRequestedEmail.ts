@@ -9,6 +9,10 @@
 // It lists the modules by name and says the parts arrive "within a few
 // minutes" (the cron-only worker, XC-8).
 //
+// MX-5: the admin "Send export to owner" route sends the same email with
+// `origin: 'admin'`, in support's voice (BQ-E8-1, SA M-2). The owner's text
+// is unchanged.
+//
 // It names nothing about the business: no business name, no owner name, no
 // email address except the support contact, no row count and no file name
 // (requirement §12). Every interpolated value is HTML-escaped.
@@ -31,6 +35,13 @@ export interface ExportRequestedEmailInput {
   timezone: string;
   /** `ownerClock().isSet`: false labels the time "UTC". */
   isTimezoneSet: boolean;
+  /**
+   * Who started the export (MX-5, BQ-E8-1). `'owner'` (the default) is the
+   * owner's own email, unchanged. `'admin'` swaps every line written in the
+   * owner's voice for support's (SA M-2): the subject, `requested`,
+   * `listHeading` and `notYou`.
+   */
+  origin?: 'owner' | 'admin';
 }
 
 export interface ExportRequestedEmail {
@@ -85,6 +96,44 @@ export const EXPORT_REQUESTED_EMAIL_COPY: Readonly<Record<ExportEmailLanguage, C
   },
 };
 
+/** The lines an admin send replaces (MX-5, SA M-2). The rest of `Copy` reads the same for both. */
+type AdminVoiceKey = 'subject' | 'requested' | 'listHeading' | 'notYou';
+
+/**
+ * MX-5 (BQ-E8-1, answered 2026-11-04): support sent the export, so the owner
+ * is never told they asked for it or chose its parts. Same placeholders as the
+ * owner lines. English for the user's review; Hebrew and Spanish are drafts
+ * for native review, like the rest of this email.
+ */
+export const EXPORT_REQUESTED_EMAIL_ADMIN_COPY: Readonly<Record<ExportEmailLanguage, Pick<Copy, AdminVoiceKey>>> = {
+  en: {
+    subject: 'AgentPilot support has started an export of your data',
+    requested: 'AgentPilot support started an export of your AgentPilot data on {date} at {time}.',
+    listHeading: 'The parts included:',
+    notYou: 'If you did not expect this, contact us at {support}.',
+  },
+  // Draft: needs a native check.
+  he: {
+    subject: 'התמיכה של AgentPilot התחילה ייצוא של הנתונים שלך',
+    requested: 'התמיכה של AgentPilot התחילה ייצוא של נתוני ה-AgentPilot שלך בתאריך {date} בשעה {time}.',
+    listHeading: 'החלקים הכלולים:',
+    notYou: 'אם לא ציפית לזה, כתבו לנו לכתובת {support}.',
+  },
+  // Draft: needs a native check.
+  es: {
+    subject: 'El soporte de AgentPilot ha iniciado una exportación de tus datos',
+    requested: 'El soporte de AgentPilot inició una exportación de tus datos de AgentPilot el {date} a las {time}.',
+    listHeading: 'Las partes incluidas:',
+    notYou: 'Si no esperabas esto, escríbenos a {support}.',
+  },
+};
+
+/** The copy of one email: the owner's, or the owner's with support's lines in place (MX-5). */
+function copyFor(language: ExportEmailLanguage, origin: 'owner' | 'admin'): Copy {
+  const owner = EXPORT_REQUESTED_EMAIL_COPY[language];
+  return origin === 'admin' ? { ...owner, ...EXPORT_REQUESTED_EMAIL_ADMIN_COPY[language] } : owner;
+}
+
 /** First-strong isolate / pop directional isolate (SA CR-4), for the plain-text part. */
 const FSI = '⁨';
 const PDI = '⁩';
@@ -115,7 +164,7 @@ function moduleName(id: string, language: ExportEmailLanguage): string {
 }
 
 export function buildExportRequestedEmail(input: ExportRequestedEmailInput): ExportRequestedEmail {
-  const copy = EXPORT_REQUESTED_EMAIL_COPY[input.language];
+  const copy = copyFor(input.language, input.origin ?? 'owner');
   const { date, time } = formatRequestedAt(input);
   const names = input.modules.map((id) => moduleName(id, input.language));
   const isRtl = input.language === 'he';

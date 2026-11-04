@@ -261,6 +261,8 @@ import * as testAccountCleanupDelete from '../test-account-cleanup/delete/route'
 import * as boostReconcile from '../business-os/credits/boost/reconcile/route';
 // Plan payments P-8b.3c (2026-10-29): run the plan reconcile pass now (gated from birth).
 import * as planReconcile from '../business-os/billing/reconcile/route';
+// Export MX-5 (2026-11-04): "Send export to owner", GET and POST (gated from birth).
+import * as userExportSends from '../users/[id]/export-sends/route';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
@@ -473,6 +475,28 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   // the handler and answers 200, never 401/403.
   { name: 'POST /api/admin/business-os/billing/reconcile', call: () => planReconcile.POST(req('/api/admin/business-os/billing/reconcile', 'POST', {})) },
 
+  // ── Export MX-5 (2026-11-04) ────────────────────────────────────────────
+  // "Send export to owner": sends one owner their own module export, by email
+  // to the owner's login address. Nothing (the path id, the body, the
+  // throttle, the identity read, the start function, the audit row, the
+  // email) may happen before the gate. The admin case reaches the handler: the
+  // GET gets a 500 from the fake client (no auth admin API), the POST a 400
+  // for the empty body, never a 401/403.
+  {
+    name: 'GET /api/admin/users/[id]/export-sends',
+    call: () =>
+      userExportSends.GET(req('/api/admin/users/00000000-0000-4000-8000-000000000000/export-sends', 'GET'), {
+        params: { id: '00000000-0000-4000-8000-000000000000' },
+      }),
+  },
+  {
+    name: 'POST /api/admin/users/[id]/export-sends',
+    call: () =>
+      userExportSends.POST(req('/api/admin/users/00000000-0000-4000-8000-000000000000/export-sends', 'POST', {}), {
+        params: { id: '00000000-0000-4000-8000-000000000000' },
+      }),
+  },
+
 ];
 
 beforeEach(() => {
@@ -519,10 +543,12 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  = 69
     //  - 3  deleted with their routes (export MX-3.1, 2026-10-30): the admin
     //       data-exports GET, POST and the download POST (BQ-E6.1-1)
-    //  = 66, which is every admin handler now on the canonical gate EXCEPT the
+    //  = 66
+    //  + 2  `users/[id]/export-sends#GET`, `#POST` (export MX-5), gated from birth
+    //  = 68, which is every admin handler now on the canonical gate EXCEPT the
     // 3 category-A system-config routes (covered by their own suites) and the 6
     // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
-    expect(CASES).toHaveLength(66);
+    expect(CASES).toHaveLength(68);
   });
 
   describe.each(CASES)('$name', ({ call }) => {

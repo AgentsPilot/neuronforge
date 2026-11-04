@@ -92,6 +92,14 @@ const ALLOWED = new Set(
     // The address goes to the transport only (recipient redacted in logs, C-3),
     // never a log or audit row. The worker test replaces the deps.
     'lib/business-os/data-export/moduleExportWorkerDeps.ts',
+    // Export MX-5 ("Send export to owner"): the admin route reads ONE owner's
+    // login email with `findUserIdentity`, keyed on the id from the
+    // admin-gated route path (never request data), to refuse a closed or
+    // email-less login before anything is written and to send that owner the
+    // "Export requested" email. The address goes to the transport only, never
+    // a log, an audit row or a response. Its test replaces the instance.
+    'app/api/admin/users/[id]/export-sends/route.ts',
+    'app/api/admin/users/[id]/export-sends/__tests__/route.test.ts',
   ].map((file) => file.split('/').join(sep))
 );
 

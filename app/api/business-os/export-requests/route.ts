@@ -43,16 +43,17 @@ import { logAndFlush } from '@/lib/audit/boundedAuditFlush';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { RATE_LIMITS, rateLimit, tooManyRequests } from '@/lib/security/rateLimit';
 import { requestedModulesSchema } from '@/lib/business-os/data-export/exportModuleSchema';
-import type { ExportModuleId } from '@/lib/business-os/data-export/exportModules';
 import { assembleExportHistory } from '@/lib/business-os/data-export/exportHistory';
-import { buildExportRequestedEmail, type ExportEmailLanguage } from '@/lib/business-os/data-export/exportRequestedEmail';
-import { ownerClock } from '@/lib/business-os/data-export/ownerClock';
+import {
+  EXPORT_REQUESTED_EMAIL_TIMEOUT_MS,
+  sendExportRequestedEmail,
+  type ExportRequestedEmailOutcome,
+} from '@/lib/business-os/data-export/exportRequestedSend';
 import { nextOwnerExportAt, ownerLimitWindowStart } from '@/lib/business-os/data-export/nextOwnerExportAt';
 import { HISTORY_PAGE_SIZE, historyQuerySchema } from '@/lib/business-os/data-export/exportHistoryCursor';
-import { isInvalidDomainRecipient, platformSenderAddress, sendEmail } from '@/lib/notifications/emailTransport';
+import { isInvalidDomainRecipient } from '@/lib/notifications/emailTransport';
 import { BusinessOsExportRequestRepository } from '@/lib/repositories/BusinessOsExportRequestRepository';
 import { BusinessOsExportModuleJobRepository } from '@/lib/repositories/BusinessOsExportModuleJobRepository';
-import { userPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
 
 const logger = createLogger({ module: 'BusinessOsExportRequestsAPI' });
 
@@ -63,8 +64,12 @@ export const maxDuration = 30;
 
 const NO_STORE = 'no-store, no-cache, must-revalidate';
 
-/** The "Export requested" email gets this long before the route answers anyway (C-7). */
-export const REQUESTED_EMAIL_TIMEOUT_MS = 10_000;
+/**
+ * The "Export requested" email gets this long before the route answers anyway
+ * (C-7). MX-5 (SA-Q3 b): the guard and the send moved to
+ * `lib/business-os/data-export/exportRequestedSend.ts`; same value, re-exported.
+ */
+export const REQUESTED_EMAIL_TIMEOUT_MS = EXPORT_REQUESTED_EMAIL_TIMEOUT_MS;
 
 /** The body: the ticked modules and nothing else (SA C-7 of DE-8b: strict). */
 const startBody = z.object({ modules: requestedModulesSchema() }).strict();
@@ -96,67 +101,6 @@ async function readBody(request: NextRequest): Promise<{ ok: true; value: unknow
     return { ok: true, value: JSON.parse(text) };
   } catch {
     return { ok: false };
-  }
-}
-
-type EmailOutcome = 'sent' | 'email_failed' | 'email_timeout';
-
-/**
- * The one "Export requested" email. Never throws. The 10 s guard does not
- * cancel the send (C-7): a send that loses the race may still arrive while
- * `requested_email_sent_at` stays NULL, so the outcome says `email_timeout`,
- * not `email_failed`.
- */
-async function sendRequestedEmail(
-  args: { userId: string; requestId: string; to: string; modules: ExportModuleId[] },
-  requestLogger: typeof logger
-): Promise<EmailOutcome> {
-  const requests = new BusinessOsExportRequestRepository();
-
-  const [language, clock, stored] = await Promise.all([
-    userPreferencesRepository.findPreferredLanguage(args.userId).then(
-      (result): ExportEmailLanguage => {
-        if (result.error) requestLogger.warn({ userId: args.userId, code: 'language_unreadable' }, 'Export requested email: language unreadable, sent in English');
-        // `SupportedLanguage` is the same three-language union, so no cast is needed (SA CR-5).
-        return result.data ?? 'en';
-      },
-      (): ExportEmailLanguage => 'en'
-    ),
-    ownerClock(args.userId, requestLogger),
-    // The database time of the request, not this server's clock.
-    requests.findByIdForUser(args.requestId, args.userId),
-  ]);
-  let requestedAt = new Date();
-  if (stored.data) requestedAt = new Date(stored.data.requested_at);
-  else requestLogger.warn({ requestId: args.requestId, code: 'requested_at_unreadable' }, 'Export requested email: request time unreadable, server time used');
-
-  const email = buildExportRequestedEmail({
-    language,
-    modules: args.modules,
-    requestedAt,
-    timezone: clock.timezone,
-    isTimezoneSet: clock.isSet,
-  });
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<'timeout'>((resolve) => {
-    timer = setTimeout(() => resolve('timeout'), REQUESTED_EMAIL_TIMEOUT_MS);
-  });
-  try {
-    const send = sendEmail({
-      kind: 'transactional',
-      to: [args.to],
-      from: platformSenderAddress(),
-      subject: email.subject,
-      html: email.html,
-      text: email.text,
-      redactRecipientInLogs: true,
-    }).catch(() => ({ sent: false as const, provider: 'none' as const }));
-    const result = await Promise.race([send, timeout]);
-    if (result === 'timeout') return 'email_timeout';
-    return result.sent ? 'sent' : 'email_failed';
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 
@@ -331,13 +275,11 @@ export async function POST(request: NextRequest) {
     );
 
     // D-6 / C-7: best effort; the request stands either way.
-    let emailOutcome: EmailOutcome;
-    try {
-      emailOutcome = await sendRequestedEmail({ userId: user.id, requestId, to, modules }, requestLogger);
-    } catch (err) {
-      requestLogger.warn({ err, requestId }, 'Export requested email threw');
-      emailOutcome = 'email_failed';
-    }
+    // MX-5 (SA-Q3): the shared send, which never throws.
+    const emailOutcome: ExportRequestedEmailOutcome = await sendExportRequestedEmail(
+      { userId: user.id, requestId, to, modules, origin: 'owner' },
+      requestLogger
+    );
     let requestedEmailSent = false;
     if (emailOutcome === 'sent') {
       requestedEmailSent = true;

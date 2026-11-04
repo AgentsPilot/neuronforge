@@ -1,6 +1,6 @@
 # Business OS Data Export — Contents and Delivery
 
-> **Last Updated**: 2026-11-02
+> **Last Updated**: 2026-11-04
 
 ## Overview
 
@@ -59,6 +59,7 @@ The ZIP export ("Download my data": one zip with `data.json`, a README, the CSVs
 | `lib/repositories/BusinessOsExportRequestRepository.ts` · `BusinessOsExportModuleJobRepository.ts` | The two export tables: start, history reads, claim, reap and the compare-and-set job writes |
 | `supabase/migrations/20261095_business_os_export_requests.sql` | The two tables, the start function `business_os_export_request_start` and the claim / reap functions (the limits are SQL literals here) |
 | `app/api/business-os/export-requests/route.ts` | Owner: `POST` start an export, `GET` the history |
+| `app/api/admin/users/[id]/export-sends/route.ts` | Admin (MX-5): `POST` sends one owner their export to the owner's login email, `GET` the send dialog's state and support's last 10 sends |
 | `app/api/cron/data-export-modules/route.ts` | The worker cron, `*/5 * * * *` (`vercel.json`) |
 | `lib/client/businessOsDataExport.ts` | The browser seam: the only client file that names the route |
 | `components/business-os/data-export/` | The entry button (`DownloadMyDataButton`, `ModuleExportEntry`), the drawer (`ExportDrawer`, `useExportDrawer`, `exportDrawerCopy`) |
@@ -1067,7 +1068,7 @@ The account is always the session's; never a body, query or header value. Nothin
 |---|---|
 | One at a time | No new request while any job of a request **of the same origin** is `waiting` or `working` → `in_progress` |
 | Per day | `OWNER_DAILY_LIMIT` **2** owner requests per rolling `DAILY_WINDOW_HOURS` **24**. A request counts when at least one of its jobs is **not** `failed` / `interrupted` (`MODULE_JOB_NOT_COUNTED`); a request whose every module failed does not count. Refused → `daily_limit` with `retryAt` = the counted request at offset `limit − 1`, newest first, + 24 h |
-| Admin | `ADMIN_DAILY_LIMIT_PER_OWNER` 2 per owner per 24 h, counted apart from the owner's own (XC-20). No admin route exists yet (MX-5) |
+| Admin | `ADMIN_DAILY_LIMIT_PER_OWNER` 2 per owner per 24 h, counted apart from the owner's own (XC-20). Support starts it from the admin Businesses drawer ("Send export to owner", MX-5): the emails go to the owner's login email, never to the admin |
 | Request size | 1 to `MAX_MODULES_PER_REQUEST` 32 module ids, each matching `CODE_SHAPE`, no duplicates (a sanity ceiling; the route allows at most the 13 of the map, and only those that are on) |
 | Rows written | One `business_os_export_requests` row (origin `owner`, the modules array) and one `business_os_export_module_jobs` row per module, status `waiting` |
 
@@ -1210,3 +1211,4 @@ Owner labels (en): "Data export requested", "One area of your export was sent by
 |---|---|---|
 | 2026-10-17 | Created | Generated from the code on `origin/main` (DE-1 … DE-9) and the DE-10a admin additions on `origin/feature/data-export-de10a`: zip layout, file name, CSV, `data.json`, README, all 39 sections, all 118 excluded tables, files, ceilings, delivery, change cheat-sheet |
 | 2026-11-02 | Rewritten for the module export (export MX-4b) | Written from the code after MX-3.1 retired the ZIP (#574): the 13 modules and their switches (5 on), the module CSV, lookups independent of the switch (SA Option A, #596), every section by module (re-checked one by one against the descriptors), all 126 excluded tables (8 new since the last version), files not exported, parts and sizes, delivery, audit, how to change it. ZIP-only sections removed; the ZIP-era page is commit `4a6c22f8`. The flags-and-spreadsheet requirement (`BUSINESS_OS_DATA_EXPORT_FLAGS_AND_SPREADSHEET_REQUIREMENT.md`) is **superseded** by the export redesign (MX-0 module map, no Excel, BQ-25); it was never committed in this repo |
+| 2026-11-04 | Export MX-5: "Send export to owner" | The admin route `users/[id]/export-sends` added to the file list, and the admin limit row says who starts it: support, from the Businesses drawer; the files go to the owner's login email, never to the admin. Nothing in the export's contents changed |
