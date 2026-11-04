@@ -48,7 +48,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
 | DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) ✅ DO-5a MERGED 2026-10-31 (PR #592; see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) 🟡 spec re-checked by BA 2026-10-31 (FU-5: H10, the Q-D5-9 note, the H3 boundary, the check list §D5.2.2(g), Q-D5b-1 to Q-D5b-4); SA short pass 2026-10-31 **APPROVED WITH CHANGES** (see [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)); DO-5b built (see [DO-5b implementation notes](#do-5b-implementation-notes)); **SA code review 2026-10-31: Code Approved for QA**, with four small skill fixes (repo reads use `origin/main:./<path>` from the worktree root; `devops.md` unchanged beyond the pointer line); **QA 2026-10-31: QA passed**, with two small non-blocking items, both fixed (see [QA Report — DO-5b](#qa-report--do-5b)); **user approved the diff 2026-11-01**, PR open with auto-merge. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file): ✅ PR #593 MERGED 2026-10-31; `origin/main` shows the file untracked and the `.gitignore` line. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
-| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; MERGED (#614). DO-6e (domains and app addresses, narrowed by the user) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6e implementation notes](#do-6e-implementation-notes)); SA code review approved with three fixes; QA 19 checks, two Mediums and a Low fixed by the main session; user approved the diff 2026-11-03; merged (#616). DO-6f (queues, AWS and small API-key providers) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6f implementation notes](#do-6f-implementation-notes)); SA code review approved with five fixes; QA 25 checks, one Medium and three Lows; all fixes applied by the main session; user approved the diff 2026-11-04; commit + PR.** |
+| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; MERGED (#614). DO-6e (domains and app addresses, narrowed by the user) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6e implementation notes](#do-6e-implementation-notes)); SA code review approved with three fixes; QA 19 checks, two Mediums and a Low fixed by the main session; user approved the diff 2026-11-03; merged (#616). DO-6f (queues, AWS and small API-key providers) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6f implementation notes](#do-6f-implementation-notes)); SA code review approved with five fixes; QA 25 checks, one Medium and three Lows; all fixes applied by the main session; user approved the diff 2026-11-04; merged (#620). DO-6g (messaging apps: Meta and Slack) spec + SA short pass approved with changes; built 2026-11-04 (see [DO-6g implementation notes](#do-6g-implementation-notes)); SA code review approved with eight fixes; QA 24 checks, one High, one Medium and four Lows; all fixes applied by the main session; user approved the diff 2026-11-04; commit + PR.** |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
 
@@ -2253,6 +2253,211 @@ All answered by SA Review — DO-6f (2026-11-03).
 
 ---
 
+## DO-6g Specification — Messaging apps: Meta and Slack (third-party-ops)
+
+**By BA — 2026-11-04; SA changes 1–12 and rulings Q-D6g-1 to Q-D6g-9 applied 2026-11-04.** A short scoping pass, in the same form as DO-6b to DO-6f. This is a config and docs slice: no application code, no CI job and no added CI time. It adds one reference file and one index row to `third-party-ops`, under SKILL.md §1–§4 and SA Review — DO-6 (changes 1–7). It applies the DO-6c to DO-6f lessons from the start:
+- every probe states its precondition, an exact pass, an exact fail and its side effects;
+- a probe that passes on an unset value is not a probe;
+- every quoted log string is checked verbatim, with its module;
+- no quoted string comes from code that has no live caller (QK-2 rule).
+
+**Scope (DO-6 row).** Two vendors, five tags:
+- **WA-W**, the WhatsApp webhook: the verify token and the webhook subscription in the Meta dashboard, covered in full;
+- **MA**, the Meta app behind `META_ADS_*`: one client for the Meta Insights and Meta Ads plugins, covered in full for Meta Insights;
+- **WA-O**, the WhatsApp Business OAuth client and its login configuration, covered as "not in use" (MS-1, Q-D6g-1);
+- **SL**, the Slack V2 app (client, redirect URI, scopes), covered as "not in use" (MS-1, Q-D6g-1);
+- **SL-V1**, the deprecated Slack V1 names, including the two tunnel names: one "deprecated, never probed" row that names its readers (SA change 2). No check is designed for V1 beyond the catalogue's own presence rule (CLAUDE.md, Deprecated; Q-D6g-9).
+
+**Services live (Q-D6-2 rule).** The main session confirmed on 2026-11-04, from code, that the active plugin profile (`lib/server/plugin-profile.ts`) loads Meta Insights and does not load Slack, WhatsApp Business or Meta Ads (MS-1), so those three are recorded as not in use (SA change 11). The WhatsApp webhook route is deployed and answers on its own, without the plugin (MS-4). No target is named. Whether each name is set is not recorded here: DO checks that at use time with the T-MS checks.
+
+**Boundary.**
+- **DO owns:** the eleven env names in §D6g.1; which Meta app and which Slack app each environment uses (by role, private); and the Meta and Slack app settings as dashboard reads.
+- **The stable address is A1 policy,** owned by `domains.md` (AD-2, AD-3). This file points to it for redirect URIs and the webhook callback, and never restates it.
+- **DO-6h owns** every other vendor's plugin OAuth app (Airtable, Discord, Dropbox, HubSpot, LinkedIn, Microsoft, Notion, Salesforce). This file owns every Meta app and every Slack app.
+- **App data is not DO's:** stored connections, channel connections, Page tokens and synced metrics. DO never writes or deletes them.
+
+### D6g.1 Context and findings from code
+
+Taken from the code at the worktree's `origin/main` base (`0eb3949e`). Names and readers only: no value was read, no `.env*` file was opened and no network call was made.
+
+| # | Service | Names (catalogue group `plugins`; `expectedIn` prod / preview / local) | Readers |
+|---|---|---|---|
+| WA-W | WhatsApp webhook | `WHATSAPP_VERIFY_TOKEN` (optional everywhere) | `GET` in `app/api/plugins/webhooks/whatsapp-business/route.ts` (module `WhatsAppWebhook`), read per request |
+| MA | Meta app: Meta Insights (loaded), Meta Ads (not loaded) | `META_ADS_CLIENT_ID`, `META_ADS_CLIENT_SECRET` (optional everywhere) | `${…}` placeholders in `meta-insights-plugin-v2.json` and `meta-ads-plugin-v2.json`, filled by `processEnvironmentVariables` in `lib/server/plugin-manager-v2.ts`; the connect route `app/api/v2/plugins/connect/route.ts`; the callback `app/oauth/callback/[plugin]/route.ts`; `exchangeCodeForTokens` in `lib/services/OAuthTokenService.ts`. Live surface: the channels card (`components/business-os/insight/ChannelsCard.tsx` through `hooks/useChannelConnect.ts`), then `app/api/business-os/channel-insights/connect/route.ts` |
+| WA-O | WhatsApp Business OAuth client and login configuration | `WHATSAPP_CLIENT_ID`, `WHATSAPP_CLIENT_SECRET`, `WHATSAPP_CONFIG_ID` (optional everywhere) | `whatsapp-business-plugin-v2.json`. **Not in use:** outside the active profile (MS-1) |
+| SL | Slack V2 app | `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` (optional everywhere) | `slack-plugin-v2.json`. **Not in use:** no plugin in the active profile reads them (MS-1). The deprecated V1 strategy also reads the Slack secret name (SL-V1) |
+| SL-V1 | Slack V1 (deprecated) | `NEXT_PUBLIC_SLACK_CLIENT_ID` (optional everywhere); `NGROK_SLACK_REDIRECT_URI`, `NEXT_PUBLIC_NGROK_SLACK_REDIRECT_URI` (forbidden / forbidden / optional) | `lib/plugins/strategies/slackPluginStrategy.ts` and `slackDataStrategy.ts`, through `lib/plugins/pluginRegistry.ts`, which deployed routes import. The strategy reads `NEXT_PUBLIC_SLACK_CLIENT_ID`, the tunnel names and `SLACK_CLIENT_SECRET`. Never a probe target |
+
+| # | Finding | Where | Consequence for the file |
+|---|---|---|---|
+| MS-1 | **Three of the four plugins are not loaded.** The active profile is a hardcoded constant (`ACTIVE_PLUGIN_PROFILE`). Of these plugins it lists only `meta-insights`. A plugin outside it is never read or env-substituted. Its connect answers 404 "Plugin not found", and its callback answers "Plugin configuration not found". The executor refuses it with "Plugin not enabled in active profile" (module `PluginExecuter`, `warn`) before any executor runs, and a stored connection for it cannot run. | `lib/server/plugin-profile.ts`; `lib/server/plugin-manager-v2.ts` (`loadCorePlugins`); `getNotEnabledMessage` in `lib/server/plugin-executer-v2.ts` | WA-O, SL and the Meta Ads half of MA are "not in use" rows: no probe, no quoted string from their executors. T-MS-11 is a Low code check on the profile. FU-D6g-a goes to TL. |
+| MS-2 | **An unset MA name is not refused by our code.** `processEnvironmentVariables` keeps the literal `${…}` text and logs "Environment variable not found, keeping placeholder" (module `PluginManager`, `warn`, `varName`) once per instance load (each cold start). An empty value is treated like an unset one. The literal placeholder is truthy, so the check `if (!authConfig.client_id \|\| !authConfig.client_secret)` in `handleOAuthCallback` never fires for an unset name, and the connect route's `authConfig.redirect_uri \|\|` fallback never fires either: an unset A1 leaves `${NEXT_PUBLIC_APP_URL}` in the redirect (P-MS-2 catches it). An unset ID shows as a vendor error at the dialog, and an unset secret shows only at the token exchange. Names of plugins outside the profile log nothing, because their definitions are never read. A load is shown by "Plugin manager initialized" (module `PluginManager`, `info`, with `loadedPluginKeys` and `skippedPluginKeys`), logged once per instance at the end of `initializeWithCorePlugins` (SA change 1). | `plugin-manager-v2.ts`; `lib/server/user-plugin-connections.ts`; the connect route | The placeholder count is the drift read (T-MS-4), with the load marker as its denominator. No marker line in the window is "not read (no load in window)", never 0. |
+| MS-3 | **The live connect builds its URL on the server and sends five parameters:** `client_id`, `redirect_uri`, `response_type`, `scope` and `state`. The browser builder (`lib/client/oauth-handler.ts`) also sends `user_scope`. It reads only the client-safe allow-list (`CLIENT_SAFE_AUTH_CONFIG_FIELDS`), which has no `additional_params`. So neither builder sends the definition's `additional_params`, where `WHATSAPP_CONFIG_ID` goes. The egress test seeds `WHATSAPP_CONFIG_ID` with a sentinel value that must never appear in a response (SA change 9). | `app/api/v2/plugins/connect/route.ts`; `lib/plugins/sanitize-plugin-definition.ts`; `lib/testing/plugin-secret-matcher.ts` | The WA-O row says the configuration ID is substituted but not sent (reader search at use time). FU-D6g-a, reachable option. |
+| MS-4 | **The webhook verification fails closed.** An unset or empty token logs "WHATSAPP_VERIFY_TOKEN is not set - refusing webhook verification" (`error`) and answers 403 "Forbidden". A wrong token or mode logs "Webhook verification failed - invalid token" (`warn`) with the same 403. A match logs "Webhook verified successfully" (`info`) and echoes `hub.challenge` with 200. Every request first logs "Webhook verification request received" (`info`). All are in module `WhatsAppWebhook`. The response cannot tell unset from wrong, by design (route comment), but the log lines can. The callback path is the definition's `webhook_config.endpoint_path`. | `app/api/plugins/webhooks/whatsapp-business/route.ts`, its `__tests__/route.test.ts`; `whatsapp-business-plugin-v2.json` (`webhook_config`) | P-MS-5 tells the two apart by log line; a probe with a made-up token logs two lines (received, invalid token) (SA change 6). The token is read per request, so a change needs a new deployment, and it is not a `NEXT_PUBLIC_` name, so nothing is inlined (`vercel-ops` §4; SA optimisation 2). |
+| MS-5 | **One Meta client serves two plugins.** Both Meta definitions name `META_ADS_*`. Each has its own callback path, and only the loaded one needs registering. Neither definition has a `refresh_url`, so a Meta connection has no refresh path. When its stored expiry nears, `getConnection` logs "Smart Refresh: No refresh token available - user needs to reconnect" (module `UserPluginConnections`), and the owner reconnects. The client secret is used only at the code exchange. | Both Meta definitions; `getConnection`, `handleOAuthCallback` in `user-plugin-connections.ts` | A secret change affects only new connects and reconnects on our side. Whether Meta keeps existing tokens valid after a secret reset is a vendor fact, confirm at use time. Until it is confirmed once on a non-production app and recorded, plan a reset as a cut-over that may force every connection to reconnect (SA change 10, Q-D6g-7). |
+| MS-6 | **One scope the app cannot grant fails the whole dialog.** The Meta Insights definition's `_scope_note` records this ("Invalid Scopes"): a scope is listed only once the app dashboard offers it. | `meta-insights-plugin-v2.json` (`_scope_note`) | A scope added to a loaded Meta definition is confirmed available before merge (§7). Scopes are derived from the definitions at use time, and this file lists none. |
+| MS-7 | **The Graph API version is pinned in two places per loaded plugin:** in the definition's dialog, token and profile addresses, and in the executor's version constant. All four must agree. | The Meta Insights definition; `lib/server/meta-insights-plugin-executor.ts` (`GRAPH_VERSION`) | T-MS-7 checks, for each **loaded** Meta plugin, that the four agree and that Meta still supports the version (SA change 4, Q-D6g-8). A Meta plugin outside the profile is covered by T-MS-11 only. The file names no version. FU-D6g-c. |
+| MS-8 | **The token exchange reports a failure by status.** It logs "Token exchange failed" (module `OAuthTokenService`, `error`, with `status`). A 2xx with no token throws "No access token received". The callback then logs "OAuth callback failed" (module `OAuthCallbackAPI`, with `plugin`). A vendor error at the dialog logs "OAuth error from provider", and nothing is stored. A success logs "OAuth callback successful". Every callback first logs "OAuth callback received" (module `OAuthCallbackAPI`, with `plugin`). "OAuth callback failed" is logged by the callback's `catch`, so it covers every throw after the definition is found, including "Failed to fetch profile" (module `OAuthTokenService`) and the connection save: it is not specific to the secret (SA change 5). | `OAuthTokenService.ts`; `app/oauth/callback/[plugin]/route.ts` | Evidence for P-MS-3 and P-MS-4 and T-MS-10. It is counted by class, and the logged error text is never read out. "OAuth callback received" is the traffic denominator. |
+| MS-9 | **Slack, for the record (not in use):** the profile read uses the user token, the user scope is sent only by the browser builder (MS-3), and the live connect route does not send it. | `handleOAuthCallback`; `oauth-handler.ts`; connect route | Not in the file beyond the SL row. FU-D6g-a, reachable option. |
+
+### D6g.2 What the file teaches (the six-part template)
+
+The file is `.claude/skills/third-party-ops/messaging.md` (Q-D6g-2). It opens with the same intro sentence as its siblings, then the live-check line, the WA-W / MA / WA-O / SL / SL-V1 table and the boundary paragraph. Target length: about 120–160 lines, at most about 180. If it runs long, trim prose, never a probe or drift row.
+
+**ID prefix: `MS`** (probes P-MS-n, drift checks T-MS-n, findings MS-n). Service tags: WA-W, MA, WA-O, SL, SL-V1.
+
+**(1) What must differ between environments.** The **current** setup is a private-inventory pointer, checked at use time and reported by role:
+- which Meta app each environment's MA names and WA names belong to, and whether one app serves both;
+- which environment the WhatsApp webhook subscription points at;
+- which Slack app, if any.
+
+| Setting | Rule per environment |
+|---|---|
+| Meta app per environment | `META_ADS_CLIENT_ID` and `META_ADS_CLIENT_SECRET` on a target come from **one** recorded app, set together or not at all, and with A1 set. Where one app serves several environments or both name families, every change to it is a change to all of them |
+| MA redirect URIs | Each **loaded** Meta plugin's callback, exactly as its definition builds it, at each environment's stable A1 address (`domains.md`). Only a stable address can be registered. A callback for a plugin outside the profile is registered only if recorded |
+| Meta app mode and permissions | Production's app is live, not in development mode, and every scope the loaded Meta definitions request is available at the access level the recorded audience needs (vendor terms, confirm at use time). Development mode admits only users with a role on the app |
+| WA-W token | Set on the target the recorded webhook subscription points at. Elsewhere unset is safe: the route refuses (MS-4). With no receiving environment recorded, it is expected unset on every target (SA change 7). Never the same value as any other secret |
+| WA-W subscription | One recorded receiving environment per Meta app, or none recorded (SA change 7): the callback is the stable A1 address plus the definition's `webhook_config.endpoint_path`, with the fields the definition implies subscribed. One callback per app (vendor fact, confirm at use time) |
+| WA-O, SL names | No plugin in the active profile reads them (MS-1). The deprecated V1 strategy also reads the Slack secret name (SL-V1). Whether they stay set is FU-D6g-a's decision |
+| SL-V1 names | The two tunnel names never on a deployed target (catalogue: forbidden on production and preview). `NEXT_PUBLIC_SLACK_CLIENT_ID` not set unless recorded |
+
+"Local" is guidance for whoever runs the app locally. DO reads no `.env*` file, so local is never a DO check. A loopback or tunnel redirect is registered only on a non-production app.
+
+**(2) Where the code reads it.** The D6g.1 readers and MS-1 to MS-9, named as files and functions only. Expected names come from the catalogue group `plugins` at `origin/main`, filtered to these eleven names. Callback paths, scopes and the webhook path are derived from the definitions at use time. Which plugins are loaded is read from `lib/server/plugin-profile.ts`. The file holds no list of either. **Never a probe target:** the SL-V1 files and routes, the Slack and WhatsApp executors (outside the profile), `backups/` and `archive/` copies.
+
+**(3) Dashboard steps (the user)**, by area name, confirmed at use time:
+- **Meta for Developers, App Dashboard** (each recorded app):
+  - Basic settings: app ID present, app secret (reset), app mode, privacy policy and data-deletion fields as recorded.
+  - The Facebook Login (or Login for Business) settings: valid OAuth redirect URIs, strict redirect matching on; for WA-O, the login configuration.
+  - App Review or permissions: each derived scope's access level.
+  - The WhatsApp configuration's webhook: callback address host matches the recorded address yes/no, subscribed fields, "Verify and save".
+- **Slack app management** (not in use): OAuth and Permissions redirect URLs and scopes; Basic Information credentials.
+- **Vercel:** env values per `vercel-ops` and `env-change-protocol`. The value never passes through chat or a file.
+
+The user reports the following:
+- presence;
+- "same app as recorded: yes/no", "registered: yes/no", "matches the recorded address: yes/no";
+- app mode;
+- "scope available: yes/no" per derived scope;
+- the subscribed fields by name;
+- the last verification and last-updated time.
+
+The user never reports an app ID, a secret, a verify token, a configuration ID, a business-account or phone-number identifier, a redirect URI, a callback address or a Page.
+
+**(4) Probes.** Each one fails when the setting is wrong. None sends a message, posts to a channel, touches an ad account or spends money, and none prints a value or runs in a loop. Each runs on the deployment named per `vercel-ops` §4, after it is Ready. A 401 from deployment protection, or any answer that is not the route's own, is "not probed (protected host)". WA-O, SL and SL-V1 have no probe: "not probed (no live path)" (MS-1).
+
+| ID | Change | Probe | Pass | Fails when | Who | Precondition and side effects |
+|---|---|---|---|---|---|---|
+| P-MS-1 | Any of the eleven names | `/admin/environment` on that deployment | Set, or Not set where intended; no `should-not-be-set` for the tunnel names. Presence only | The other state | Main session or user | Admin session. None |
+| P-MS-2 | MA names substituted | Signed in on that deployment, POST `/api/v2/plugins/connect` with `plugin_key` `meta-insights`, and test the returned `authUrl` through a filter that prints yes/no only | No `${` (raw or URL-encoded) anywhere; the `redirect_uri` parameter is the target's recorded stable address plus the definition's callback path, with no `//oauth` | Either test fails | Main session | None written. "Initiating plugin OAuth connection" and "OAuth URL generated" (module `PluginConnectAPI`). The response holds the client ID and a `state` value: never printed or pasted. Proves substitution, not Meta's acceptance, and not the secret |
+| P-MS-3 | MA client, redirect URI, mode, scopes | On the environment's stable A1 address (`domains.md`), never a per-deployment host, start the Facebook and Instagram connect on the dashboard channels card; stop at Meta's dialog; cancel. The callback returns there, and posts only to that origin (gotcha 10) | Meta's dialog loads for the app (user yes/no), with no error page | Meta shows an invalid-app, blocked-redirect or "Invalid Scopes" page (vendor messages, confirm at use time); DO counts the placeholder line (T-MS-4) > 0 | User; DO (logs, on the deployment that serves that address, named per `vercel-ops` §4) | A Business OS owner session on that address, else "not probed (no surface)". A pass by a user with a role on the app does not prove a user without a role can connect: P-MS-8 reads the mode. Logs only; on a cancel the callback stores nothing ("OAuth error from provider", module `OAuthCallbackAPI`). If the user consents by mistake, see P-MS-4's cleanup |
+| P-MS-4 | MA secret | Optional, user-approved, once: P-MS-3 completed on the user's own Facebook account, from the environment's stable A1 address (`domains.md`), never a per-deployment host | "OAuth callback successful" ≥ 1 and "OAuth callback failed" = 0 for `plugin` `meta-insights` after the probe time | Any "OAuth callback failed" ≥ 1, or "OAuth callback received" ≥ 1 with "OAuth callback successful" = 0, for `plugin` `meta-insights` after the probe time. With "Token exchange failed" ≥ 1 (module `OAuthTokenService`), suspect the secret or the redirect. Without it, record the failure class and stop: it is not a credential fault. No "OAuth callback received" line at all is "not conclusive (callback did not arrive)" | User (trigger); DO (log counts, on the deployment that serves that address, named per `vercel-ops` §4) | P-MS-3 passed. Writes a connection row (or reconnects the user's own one) and its audit entry. If a Page is found: channel connection rows, the channels capability turned on, an audit entry and a background sync of Graph reads ("Channel insights connected", module `ChannelConnectAPI`). Cleanup: disconnect on the card, then remove the app in the user's Facebook settings (vendor area, confirm at use time) |
+| P-MS-5 | WA-W token present on the target | GET the webhook path with `hub.mode=subscribe`, a `hub.verify_token` made up for the probe (never the real one) and any `hub.challenge` | 403 "Forbidden", and in the logs **of the deployment probed**, from the probe time, "Webhook verification failed - invalid token" ≥ 1 and 0 "WHATSAPP_VERIFY_TOKEN is not set - refusing webhook verification" | The not-set line ≥ 1 in that window, from this or any other request. A 200 means the made-up string is the token: stop and rotate | Main session or user (HTTP); DO (logs) | Route reachable, else "not probed (protected host)". Two log lines (received, invalid token). Nothing written. Proves presence, not that it matches Meta's copy |
+| P-MS-6 | WA-W token matches; callback address | Optional, user-approved, once: "Verify and save" on the recorded app's webhook, with the recorded callback and the token typed by the user into the dashboard directly (it never passes through chat) | Meta accepts it, and "Webhook verified successfully" ≥ 1 on that deployment at the time | Meta reports a verification failure, with "Webhook verification failed - invalid token" or the not-set line ≥ 1; or no request line at all (the callback points elsewhere) | User (dashboard); DO (logs) | A receiving environment is recorded, P-MS-5 passed, and the token or the callback just changed; else "not probed (no receiving environment recorded)" or "not probed (nothing changed)". A dashboard save on the app: production tier on production's app. Nothing written in the app |
+| P-MS-7 | WA-W subscription | User reads the webhook configuration | Callback host matches the recorded address yes; subscribed fields as derived yes | Any "no" | User | None |
+| P-MS-8 | Meta app settings | User reads Basic settings, Login settings and permissions for the recorded app | Mode as recorded (production: live); every loaded plugin's callback registered for each stable address yes; strict matching on yes; each derived scope available yes | Any "no" | User; DO derives the callbacks and scopes | None |
+| P-MS-9 | Rotation (MA secret, WA-W token) | The probes above on the new deployment, in the §7 order | Pass after the change | Any failure after it | User; DO | As the probes used. A Meta secret reset is a cut-over (vendor fact, confirm at use time): there is no old secret to retire |
+
+**(5) Gotchas**, each grounded in a repo file:
+- **Three plugins are not loaded** (MS-1). A stored connection for one of them cannot run, and its connect answers 404. Never read a Slack, WhatsApp or Meta Ads failure as a credential fault.
+- **Unset is not refused by our code** (MS-2). It surfaces as a vendor error page, or at the token exchange. The placeholder line is logged once per instance load (each cold start), not per request.
+- **The configuration ID is substituted but not sent** (MS-3). Setting it changes nothing at `origin/main`.
+- **One client, two plugins** (MS-5): a secret change touches both Meta plugins, and every environment that shares the app.
+- **No refresh path for Meta** (MS-5): expiry means a reconnect by the owner, not drift.
+- **One unavailable scope fails the whole dialog** (MS-6).
+- **The Graph version is pinned in two places** for each loaded Meta plugin (MS-7), and Meta retires versions on its own schedule (vendor fact).
+- **The verify token is only checked when Meta verifies** (MS-4; that Meta sends it only on "Verify and save" is a vendor fact). A wrong token breaks nothing until the next verification.
+- **One webhook callback per app** (vendor fact, confirm at use time): two environments on one app cannot both receive.
+- **The callback answers one origin** (`google.md` §5 applies to every plugin through the same callback route).
+- **Development mode admits only role users** (vendor fact): a passing connect by an admin of the app proves nothing about customers.
+
+**(6) Drift checks** (in the `env-drift-audit` §7 format, under its rules):
+
+| ID | Check | Expected state from | Live read | Class | Who reads |
+|---|---|---|---|---|---|
+| T-MS-1 | On each **Vercel target** of the web app project, the eleven names match the recorded intent. Local: "not read (main session / user)" | Catalogue at `origin/main`; private inventory | `vercel-ops` §3 (names only) | High | DO |
+| T-MS-2 | The two tunnel names are absent on production and preview (catalogue: forbidden) | Catalogue at `origin/main` | `vercel-ops` §3; P-MS-1 | Medium | DO |
+| T-MS-3 | `META_ADS_CLIENT_ID` with `META_ADS_CLIENT_SECRET`, and wherever that pair is set, `NEXT_PUBLIC_APP_URL` too | Code at `origin/main` | `vercel-ops` §3 (names only) | High | DO |
+| T-MS-4 | On each deployment since the last run: "Plugin manager initialized" (module `PluginManager`, `info`) ≥ 1, its `loadedPluginKeys` includes `meta-insights`, **and** 0 "Environment variable not found, keeping placeholder" with `varName` among the MA names or `NEXT_PUBLIC_APP_URL`. No marker line: "not read (no load in window)", never 0 | Change records | Runtime logs | High | DO |
+| T-MS-5 | Meta app: every callback of a loaded Meta plugin, derived from the definitions and the profile at `origin/main`, registered for each environment's stable address; strict matching on | Code at `origin/main`; private inventory | User report (P-MS-8) | High | User; DO (code side) |
+| T-MS-6 | Meta app mode as recorded (production: live); every scope the loaded Meta definitions request available at the recorded access level; privacy and data-deletion fields set as recorded | Code at `origin/main` (scopes derived); private inventory | User report (P-MS-8) | High | User; DO (code side) |
+| T-MS-7 | Each **loaded** Meta definition's dialog, token and profile addresses, and its executor's version constant, pin the same Graph version, and Meta's changelog lists that version as supported beyond the recorded threshold | Code at `origin/main`; vendor docs at use time | Repo read; vendor changelog | Medium | DO (code); main session (vendor docs) |
+| T-MS-8 | WA-W: the token set on the recorded receiving target, and P-MS-5 passing there. No receiving environment recorded: the token unset on every target, and "not read (no receiving environment recorded)" for the P-MS-5 half | Private inventory; code at `origin/main` (MS-4) | `vercel-ops` §3; P-MS-5 | High | DO; main session |
+| T-MS-9 | WA-W subscription: callback host matches the recorded address; subscribed fields as derived; last verification after the last token change. No receiving environment recorded: "not read (no receiving environment recorded)" | Private inventory; definition at `origin/main` | User report (P-MS-7) | High | User |
+| T-MS-10 | "WHATSAPP_VERIFY_TOKEN is not set - refusing webhook verification", "Webhook verification failed - invalid token" (module `WhatsAppWebhook`), and "OAuth callback failed" for `plugin` `meta-insights` (module `OAuthCallbackAPI`), counted since the last run. More than the recorded probes is Medium. Denominators: "Webhook verification request received" = 0 is "not read (no traffic)" for the webhook strings; "OAuth callback received" (module `OAuthCallbackAPI`, `plugin` `meta-insights`) = 0 is "not read (no traffic)" for the callback string | Change records | Runtime logs | Medium | DO |
+| T-MS-11 | `slack`, `whatsapp-business` and `meta-ads` are still outside the active profile, and `meta-insights` still inside it (`lib/server/plugin-profile.ts`). A change means this file needs probe rows before merge. Cross-check at runtime from the same "Plugin manager initialized" line (`loadedPluginKeys`, `skippedPluginKeys`) (SA optimisation 1) | Code at `origin/main`; runtime logs | Repo read; runtime logs | Low | DO |
+| T-MS-12 | The WA-O, SL and SL-V1 names are not set on any target unless recorded with a reason | Private inventory | `vercel-ops` §3 | Low | DO |
+
+**(7) Tiers and order against the deploy.** This section points to `env-change-protocol` and restates nothing.
+
+**Tiers.** These are **production tier** (SA reviews the plan, the user executes):
+- on a Meta app production uses: any secret reset, any redirect URI added or removed, any change to the mode, permissions, login configuration, privacy or data-deletion fields, and any change to the webhook callback, its fields or a "Verify and save";
+- a change to production's verify token;
+- creating a new app for production (it changes the client ID);
+- the same on a Slack app production uses;
+- removing any of these names from production.
+
+A change to an app used **only** by non-production environments, as recorded, is reversible: the user applies it after the approval in chat. Where one app serves several environments, every change to it is production tier.
+
+| Change | When |
+|---|---|
+| Meta app secret reset | Whether Meta keeps existing tokens valid after a reset is a vendor fact, confirm at use time. Until it is confirmed once on a non-production app and recorded, plan it as a cut-over that may force every connection of that app to reconnect (Q-D6g-7): reset → set the secret on every target that shares the app at once → deploy Ready → P-MS-2, P-MS-3, then P-MS-4 if approved. New connects fail until the deploy is Ready |
+| Verify token rotation | Set the new token on the receiving target → deploy Ready → P-MS-5 → "Verify and save" with the new token (P-MS-6). Nothing to retire: Meta checks the token only at verification (vendor fact) |
+| A new or changed callback path, or a new environment | Its redirect registered on the app for every stable address before merge, or before that environment serves the connect |
+| A scope a loaded Meta definition starts to request | Available on the app (and approved where Meta requires) before merge (MS-6) |
+| App address moves (`domains.md` §7) | In step 5: add the new redirect URIs; switch the webhook callback only after the new address is Ready and serves the route (one callback per app, vendor fact, confirm at use time, so there is no overlap); then P-MS-6. Remove the old redirect URIs in step 8 |
+| A new Meta or Slack app (client ID change) | Every existing connection of the plugins on it must reconnect: an owner-facing change, planned and announced as such |
+| A plugin added to the active profile | This file gains its probe rows and its redirects are registered before merge (T-MS-11) |
+| Removing WA-O, SL or SL-V1 names | After FU-D6g-a decides |
+
+### D6g.3 Files to change
+
+| # | File | Action |
+|---|---|---|
+| D6g-1 | `.claude/skills/third-party-ops/messaging.md` | New, per §D6g.2. Target about 120–160 lines, at most about 180 |
+| D6g-2 | `.claude/skills/third-party-ops/SKILL.md` | Two edits and nothing else. (a) The §5 row becomes "Messaging and Meta apps: the WhatsApp webhook, the Meta app (Meta Insights, Meta Ads), Slack" → `[messaging.md](messaging.md)`. (b) The description triggers gain "WhatsApp, a WhatsApp webhook, a webhook verify token, a Meta or Facebook app, a Meta app secret, Facebook Login, a login configuration, Meta Insights, Meta Ads, connecting Facebook or Instagram, a Graph API version, App Review or app mode, Slack, a Slack app or client secret, a Slack redirect URL, a tunnel redirect", inserted before "a vendor dashboard" |
+| D6g-3 | `.claude/skills/third-party-ops/domains.md` | Q-D6g-6 (SA change 12): in §7 step 5, `later DO-6g and DO-6h` → `` `messaging.md`, later DO-6h ``, so the parenthesis reads ``(`stripe.md`, `google.md`, `messaging.md`, later DO-6h)``. The "webhook endpoints" phrase is not changed: this file's "App address moves" row owns the webhook switch. Nothing else |
+| D6g-4 | This requirement | §0 row, these sections, notes, reviews |
+| — | `stripe.md`, `email.md`, `google.md`, `llm-providers.md`, `queues-and-keys.md`, `vercel-ops`, `supabase-ops`, `env-drift-audit`, `env-change-protocol`, `devops.md`, `CLAUDE.md`, `lib/admin/environment/catalogue.ts`, all application code | **Not edited** |
+
+**Follow-ups.** These go in the requirement only, never in the skill text (the skill names FU IDs as pointers only), and are stated neutrally:
+- **FU-D6g-a** (decision for TL and the user; SA review required either way): the three plugins outside the active profile (Slack, WhatsApp Business, Meta Ads), with their names and the WhatsApp webhook route.
+  - **Remove option, in this order:** record and then clear the dashboard registrations; remove the route and the definitions with their catalogue entries in one PR; then remove the names from every target. The Slack names are removed from targets only after both the V2 definition and the V1 strategy's reads are gone.
+  - **Reachable option:** adding a plugin to the profile needs SA review and this file's probe rows. For WhatsApp, the configuration ID has to be sent (MS-3), which widens the client-safe allow-list or changes the connect route. For Slack, the live connect route has to send the user scope (MS-9).
+- **FU-D6g-b** (Low, Dev): make the catalogue's `WHATSAPP_CONFIG_ID` role text match the code (substituted, not sent), unless FU-D6g-a settles it first.
+- **FU-D6g-c** (Low, Dev): a guard test that each Meta definition's addresses and its executor pin the same Graph version, in the shape of the Stripe API-version guard.
+- **FU-D6g-d** (Low, Dev): convert the `console.*` calls in `lib/server/slack-plugin-executor.ts` and `lib/server/whatsapp-business-plugin-executor.ts` to Pino (CLAUDE.md § Logging), unless FU-D6g-a removes them first.
+
+### D6g.4 Acceptance criteria
+
+- [ ] `messaging.md` has the six parts, plus tiers and order. It is organised by WA-W, MA, WA-O, SL and SL-V1. Every file path it names exists at the base. It states the live check by role and the MS-1 result (WA-O and SL "not in use", Meta Ads not loaded, SL-V1 deprecated). `wc -l` ≤ 180.
+- [ ] Each probe names who runs it, its pass, what it shows when wrong, its precondition and its side effects. None sends a message, posts to a channel, touches an ad account, needs DO to hold a key, or prints a value. P-MS-4 and P-MS-6 are marked optional and user-approved. P-MS-5 uses a made-up token and treats a 200 as a stop.
+- [ ] Redirect URIs and the webhook callback are pointers to `domains.md` (AD-2, AD-3), not restated. The restatement grep from §D6.4 over the new file returns 0, or each hit is a pointer.
+- [ ] Every quoted string from tracked code is verbatim in its cited file (`grep -cF` ≥ 1), with its module. Every vendor message is marked "confirm at use time". No string from the Slack, WhatsApp or Meta Ads executors, the SL-V1 files or the V1 routes is quoted.
+- [ ] No sentence presents WA-O, SL or Meta Ads as live, and no probe or drift row targets them beyond T-MS-11 and T-MS-12.
+- [ ] **Public repo:** the finding-11 regex over the added lines returns 0. QA also greps the new file for each of these, and gets 0 hits:
+  - `facebook\.com`, `graph\.`, `slack\.com`;
+  - `ngrok[-.]`, `vercel\.app`, `agents?pilot\.[a-z]`, `localhost:`, `https?://`;
+  - `v[0-9]+\.[0-9]` (a Graph version);
+  - line references.
+
+  The file holds no app, client, configuration, business-account, phone-number or Page identifier, no version number, no URL, and no statement of what is set, missing or open today. A read-through finds no hint of an open weakness.
+- [ ] The SKILL.md diff is only D6g-2. The `domains.md` diff is only D6g-3. The diff touches only the D6g.3 files.
+
+### D6g.5 Open questions for SA
+
+- [x] **Q-D6g-1: Coverage of the plugins outside the profile.** (MS-1) **SA: agreed. Ship now.** WA-W and MA (Meta Insights) are covered in full. WA-O, SL and the Meta Ads half each get one "not in use" row, with no probe, no quoted executor string, a §1 rule that only points to FU-D6g-a, and T-MS-11 at Low. SL's "not in use" means "outside the active profile"; the SL-V1 row records that the deprecated V1 code reads `SLACK_CLIENT_SECRET` too (change 2). WA-W is covered in full, but "no receiving environment recorded" is a valid record, because no loaded plugin uses the webhook (change 7). The main session confirmed from code that the active profile loads Meta Insights only, and records Slack, WhatsApp Business and Meta Ads as not in use; it confirms the wording with the user first (change 11). (raised by: BA | status: resolved)
+- [x] **Q-D6g-2: File name, prefix and tags.** **SA: agreed.** `messaging.md`, prefix `MS`, tags WA-W, MA, WA-O, SL and SL-V1, with the index label and triggers as in D6g-2. "Before 'a vendor dashboard'" is a unique anchor in the current description. (raised by: BA | status: resolved)
+- [x] **Q-D6g-3: Is the verify token in scope?** **SA: yes.** The verify token's other copy lives in the vendor's dashboard. It is a third-party setting, not one of our own shared secrets (Q-D6-11). (raised by: BA | status: resolved)
+- [x] **Q-D6g-4: The dashboard "Verify and save" probe (P-MS-6).** **SA: allowed, optional and user-run.** Its precondition is that a receiving environment is recorded **and** the token or the callback just changed. Otherwise it is "not probed (nothing changed)" or "not probed (no receiving environment recorded)". It is production tier on production's app. The user types the token into the dashboard directly, so it never passes through chat. (raised by: BA | status: resolved)
+- [x] **Q-D6g-5: Completing a Meta connect (P-MS-4).** **SA: allowed, optional and user-approved,** on the user's own account, with the writes and the two-step cleanup declared as written. It must start from the environment's stable address (change 3), and its fail wording is corrected (change 5). (raised by: BA | status: resolved)
+- [x] **Q-D6g-6: The `domains.md` §7 step 5 edit.** **SA: the redirect phrase only. Drop the webhook phrase.** Step 5 says "**Add** … keeping the old ones until step 8", which WA-W cannot do if the app holds one callback, so listing `messaging.md` under "webhook endpoints" would teach the wrong order. The redirect phrase already sends the operator to `messaging.md`, and its "App address moves" row owns the webhook switch. The exact edit is `later DO-6g and DO-6h` → `` `messaging.md`, later DO-6h ``. Nothing else in `domains.md` changes (change 12). (raised by: BA | status: resolved)
+- [x] **Q-D6g-7: Does a Meta app secret reset invalidate existing connections?** **SA: agreed.** Plan a reset as "may force every connection of that app to reconnect" until it has been confirmed once on a non-production app and recorded. In the file this is a vendor fact, "confirm at use time" (change 10). (raised by: BA | status: resolved)
+- [x] **Q-D6g-8: The Graph version check.** **SA: agreed at Medium, scoped to the loaded Meta plugins** (change 4). The definition pins the version in three addresses (dialog, token and profile), and the executor pins it in its constant. All four must agree. FU-D6g-c is the code guard. The file names no version. (raised by: BA | status: resolved)
+- [x] **Q-D6g-9: The tunnel names.** **SA: agreed.** T-MS-2 is a catalogue presence check, and SL-V1 stays the only V1 content. This satisfies CLAUDE.md "Deprecated — Do Not Use or Extend": V1 is recorded, never probed, never extended. (raised by: BA | status: resolved)
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -2309,6 +2514,9 @@ All answered by SA Review — DO-6f (2026-11-03).
 | 2026-11-03 | DO-6f spec + SA short pass | BA spec for queues, AWS and small API-key providers; SA approved with 13 changes (5 High, 6 Medium, 2 Low) and ruled Q-D6f-1 to Q-D6f-8. No code path reaches the QStash publisher, so QStash coverage is narrowed to the receiver, its signing keys and schedules; the Q-D6-2 record is corrected. |
 | 2026-11-03 | DO-6f build | New `queues-and-keys.md` (128 lines), SKILL.md §5 row and triggers, one phrase in `domains.md` §7 step 5; spec with SA changes 1–13 applied. See [DO-6f implementation notes](#do-6f-implementation-notes). |
 | 2026-11-03 | DO-6f SA code review + QA | SA approved with five text fixes: P-QK-3 now tells a key mismatch from a match by the receiver's log line (the SDK answers a bad signature with 500, not 403), plus wording fixes. QA: 25 checks; one Medium (review and notes wording) and three Lows, all fixed by the main session; re-run clean. |
+| 2026-11-04 | DO-6g spec + SA short pass | BA spec for messaging apps (Meta, Slack); SA approved with 12 changes and ruled Q-D6g-1 to Q-D6g-9. The active plugin profile loads Meta Insights only, so the WhatsApp Business OAuth client, Slack and Meta Ads are recorded as not in use; the WhatsApp webhook verification and the Meta Insights app are covered in full. |
+| 2026-11-04 | DO-6g build | New `messaging.md`, SKILL.md §5 row and triggers, one phrase in `domains.md` §7 step 5; spec with SA changes 1–12 applied. See [DO-6g implementation notes](#do-6g-implementation-notes). |
+| 2026-11-04 | DO-6g SA code review + QA | SA approved with eight text fixes: P-MS-4 now fails on a callback received with no success line, the Services live line takes the sibling form, plus wording fixes. QA: 24 checks; one High, one Medium and four Lows, all text, all applied by the main session; final verdict PASS. |
 
 ---
 
@@ -5348,3 +5556,297 @@ Fixes 1–5 are text only and need no SA re-review if applied verbatim. QA confi
 **PASS WITH CHANGES.** All 7 D6f.4 criteria pass, two of them partially (Lows 1–2). Every path, string, symbol, ID, anchor, line-ending and diff-placement check passes. Medium 1 (check 18) must be fixed before commit. It is text only, in the requirement, with no change to the skill file. Lows 1 and 2 are one phrase each in `queues-and-keys.md`. Lows 3 and 4 are optional. After the fixes, re-run the read-through and the finding-11 grep.
 
 **After the fixes (main session, 2026-11-03):** Medium 1 and Lows 1, 3 and 4 applied; Low 2 superseded by SA fix 1. Re-run: `grep -F "invalid signature"` over `queues-and-keys.md` returns 0; `git grep -cF "Error processing job"` on the receiver route returns 1; the finding-11 regex over the added lines hits only the D6f.4 pattern lists; the read-through for current-configuration wording and for hints is clean. **Verdict after fixes: PASS.**
+
+---
+
+## SA Review — DO-6g (short pass)
+
+**Reviewed by SA — 2026-11-04**
+**Verdict: APPROVED WITH CHANGES.** The scope, the five tags, the `MS` prefix, the boundary with DO-6h and `domains.md`, the "not in use" treatment of WA-O, SL and the Meta Ads half, and the public-repo criteria are right. Every quoted string is verbatim in its cited file with the stated module. MS-1 to MS-6, MS-8 and MS-9 hold as written, with the small precisions below. Four things would have made the skill wrong:
+
+- **T-MS-4 reads 0 whether the config is right or there was no load.** This is the P-QK-3 trap again. The spec says "no definition load in window: not read", but it gives DO no line that shows a load happened. A clean load logs nothing at `warn`. The positive marker exists: "Plugin manager initialized" (module `PluginManager`, `info`, with `loadedPluginKeys`), logged once per instance at the end of `initializeWithCorePlugins`. T-MS-10 has the same gap for its "no traffic" state.
+- **The SL-V1 reader claim is wrong in two ways.** `lib/plugins/pluginRegistry.ts` is imported by more than the two V1 OAuth routes: `app/api/plugin-connections/disconnect/route.ts`, `app/api/generate-agent/route.ts` and `lib/intelligence/execution/PluginCoordinator.ts` import it too. Also, `slackPluginStrategy.ts` reads `SLACK_CLIENT_SECRET` (and `NEXT_PUBLIC_APP_URL`) at module scope, not only the V1 names. So for SL, "not in use" holds only for the active plugin profile. The deprecated V1 code, which is deployed, reads the Slack secret name too.
+- **P-MS-3 and P-MS-4 run "on that deployment", but the callback does not come back there.** The redirect is the stable A1 address (`domains.md` AD-3). A connect started from a per-deployment host finishes on the deployment that serves A1, and that page posts its result only to the A1 origin (`google.md` §5, which the spec already cites as a gotcha). The probe has to start from the environment's stable address, and DO reads the callback lines on the deployment that serves it.
+- **T-MS-7 targets Meta Ads,** but the spec's own acceptance criterion says no drift row targets it apart from T-MS-11 and T-MS-12.
+
+None of this needs a decision from the user. Required changes 1–12 below fix it. FU-D6g-a stays a decision for TL and the user, as the spec proposes.
+
+I reviewed this in the DO-6g worktree at `0eb3949e` (= `origin/main`), against §D6g, SA Review — DO-6 changes 1–7, the DO-6f short pass, and the `third-party-ops` files `SKILL.md`, `domains.md`, `google.md` and `queues-and-keys.md`. I made no platform call, ran no SQL, made no vendor or network call and opened no `.env*` file. I used local reads and `git grep` at `origin/main` only.
+
+### Code claims (D6g.1 table, MS-1 to MS-9)
+
+| # | Result | Correction for `messaging.md` |
+|---|---|---|
+| Names and catalogue | **Verified.** All eleven names are in group `plugins`. The nine non-tunnel names default to `OPTIONAL`, and the two tunnel names are `exp('X', 'X', 'O')`. `NEXT_PUBLIC_APP_URL` is `exp('R', 'R', 'R')`. | — |
+| WA-W readers | **Verified.** `GET` in the webhook route (module `WhatsAppWebhook`) reads the token per request. The route test exists. `webhook_config.endpoint_path` is in the WhatsApp definition. | — |
+| MA readers | **Verified.** Both Meta definitions use `${META_ADS_CLIENT_ID}`, `${META_ADS_CLIENT_SECRET}` and `${NEXT_PUBLIC_APP_URL}/oauth/callback/<key>`. The live path is `useChannelConnect` → `POST /api/v2/plugins/connect` (`plugin_key` `meta-insights`) → popup → callback, then `POST /api/business-os/channel-insights/connect`. | — |
+| SL-V1 readers | **Wrong.** The registry has three more importers than the spec says (see above). The V1 strategy reads `SLACK_CLIENT_SECRET` at module scope. | Change 2 |
+| MS-1 | **Verified.** `ACTIVE_PLUGIN_PROFILE = 'business_os'` lists `meta-insights` and not `slack`, `whatsapp-business` or `meta-ads`. The loader reads only profile keys. The connect route answers 404 `Plugin not found`. The callback posts `Plugin configuration not found`. `execute()` and `fetchDynamicOptions()` log "Plugin not enabled in active profile" (module `PluginExecuter`, `warn`) before any executor is built. | — |
+| MS-2 | **Verified.** `!envValue` keeps the literal `${…}`, so an empty value is treated like an unset one, and it logs `warn` with `varName`. The literal placeholder is truthy, so the `!authConfig.client_id \|\| !authConfig.client_secret` check in `handleOAuthCallback` never fires on an unset name. The connect route's `authConfig.redirect_uri \|\|` fallback never fires either, so an unset A1 leaves `${NEXT_PUBLIC_APP_URL}` in the redirect. P-MS-2 catches that. **Precision:** the line is logged once per **instance** load (each cold start of each function instance), not once per deployment. | Change 1 |
+| MS-3 | **Verified for Meta:** the route sends five parameters, and the Google `access_type` and `prompt` apply only to `oauth2_google`. `CLIENT_SAFE_AUTH_CONFIG_FIELDS` has no `additional_params`, and the browser builder adds `user_scope` and PKCE only. **Wording is wrong:** `plugin-secret-matcher.ts` seeds `WHATSAPP_CONFIG_ID` with a **value sentinel** that must never appear in a response. It is not one of the forbidden key names. | Change 9 |
+| MS-4 | **Verified,** all four strings verbatim and at the stated levels. A probe with a made-up token logs **two** lines (received, invalid token), not three. | Change 6 |
+| MS-5 | **Verified.** Neither Meta definition has `refresh_url`. `getConnection` logs the Smart Refresh `warn` and returns null when there is no refresh token. The secret is used only in `exchangeCodeForTokens` (and in refresh, which Meta never reaches). | Change 10 (wording) |
+| MS-6 | **Verified.** "Invalid Scopes" is in `_scope_note`. | — |
+| MS-7 | **Verified for Meta Insights:** the definition's dialog, token and profile addresses, and `GRAPH_VERSION` in its executor. The Meta Ads executor's constant is named `API_VERSION`, but that is out of scope (change 4). | Change 4 |
+| MS-8 | **Verified,** with the modules as stated. "OAuth callback failed" is logged by the callback's `catch`, so it covers every throw after the definition is found, including "Failed to fetch profile" (module `OAuthTokenService`) and the connection save. It is not specific to the secret. | Change 5 |
+| MS-9 | **Verified.** The profile token is `tokens.authed_user?.access_token \|\| tokens.access_token`. Only `oauth-handler.ts` sends `user_scope`. | — |
+
+### Rulings on Q-D6g-1 to Q-D6g-9
+
+- **Q-D6g-1: agreed. Ship now.** WA-W and MA (Meta Insights) are covered in full. WA-O, SL and the Meta Ads half each get one "not in use" row, with no probe, no quoted executor string, a §1 rule that only points to FU-D6g-a, and T-MS-11 at Low. Two precisions:
+  - SL's "not in use" means "outside the active profile". The SL-V1 row records that the deprecated V1 code reads `SLACK_CLIENT_SECRET` too (change 2).
+  - WA-W is covered in full, but "no receiving environment recorded" is a valid record, because no loaded plugin uses the webhook (change 7).
+
+  The main session records the result in the DO-6f change 12 form, by role, and confirms the wording with the user first.
+- **Q-D6g-2: agreed.** `messaging.md`, prefix `MS`, tags WA-W, MA, WA-O, SL and SL-V1, with the index label and triggers as in D6g-2. "Before 'a vendor dashboard'" is a unique anchor in the current description.
+- **Q-D6g-3: yes.** The verify token's other copy lives in the vendor's dashboard. It is a third-party setting, not one of our own shared secrets (Q-D6-11).
+- **Q-D6g-4: allowed, optional and user-run.** Its precondition is that a receiving environment is recorded **and** the token or the callback just changed. Otherwise it is "not probed (nothing changed)" or "not probed (no receiving environment recorded)". It is production tier on production's app. The user types the token into the dashboard directly, so it never passes through chat.
+- **Q-D6g-5: allowed, optional and user-approved,** on the user's own account, with the writes and the two-step cleanup declared as written. It must start from the environment's stable address (change 3), and its fail wording is corrected (change 5).
+- **Q-D6g-6: the redirect phrase only. Drop the webhook phrase.** Step 5 says "**Add** … keeping the old ones until step 8". WA-W cannot do that if the app holds one callback, which is the spec's own §7 row ("switch … only after the new address is Ready"). So listing `messaging.md` under "webhook endpoints" would teach the wrong order. The redirect phrase already sends the operator to `messaging.md`, and its "App address moves" row owns the webhook switch. The exact edit in `domains.md` §7 step 5 is `later DO-6g and DO-6h` → `` `messaging.md`, later DO-6h `` (so the parenthesis reads ``(`stripe.md`, `google.md`, `messaging.md`, later DO-6h)``). Nothing else in `domains.md` changes. This pass is the ruling.
+- **Q-D6g-7: agreed.** Plan a reset as "may force every connection of that app to reconnect" until it has been confirmed once on a non-production app and recorded. In the file this is a vendor fact, "confirm at use time" (change 10).
+- **Q-D6g-8: agreed at Medium, scoped to the loaded Meta plugins** (change 4). The definition pins the version in three addresses (dialog, token and profile), and the executor pins it in its constant. All four must agree. FU-D6g-c is the code guard. The file names no version.
+- **Q-D6g-9: agreed.** T-MS-2 is a catalogue presence check, and SL-V1 stays the only V1 content. This satisfies CLAUDE.md "Deprecated — Do Not Use or Extend": V1 is recorded, never probed, never extended.
+
+### Probe check (can fail, no money, no message, no value printed, precondition becomes "not probed")
+
+| ID | Can fail | Sends / spends | Durable writes | Precondition → not probed | Ruling |
+|---|---|---|---|---|---|
+| P-MS-1 | Yes, for presence | None | None | Admin session | OK (`should-not-be-set` is the page's real code) |
+| P-MS-2 | Yes: a placeholder survives URL encoding as `%24%7B`, and a wrong A1 fails the `redirect_uri` test | None | None | Signed-in session | OK. Add that it does not prove the secret |
+| P-MS-3 | Yes (vendor page) | None | None on cancel | Owner session | Change 3 (origin) |
+| P-MS-4 | Yes | Graph reads only (Page scopes, no ads scope) | Declared | Declared | Changes 3, 5 |
+| P-MS-5 | Yes, by log line only. The HTTP 403 is the same either way, by design | None | None | Protected host | Change 6 (line count, same-deployment read) |
+| P-MS-6 | Yes | None | Vendor-side save only | Add "no receiving environment recorded" | Change 7 |
+| P-MS-7, P-MS-8 | Yes (user yes/no) | None | None | — | OK |
+| P-MS-9 | As the probes it uses | — | — | — | OK |
+
+### Public-repo check
+
+- No identifier, host, URL, version number, scope list or current-configuration statement appears in the text to be tracked. "As recorded" and "recorded intent" are rules, not states.
+- MS-5 and Q-D6g-1 use the neutral DO-6f change 12 form (changes 10 and 11).
+- A read-through finds no hint of an open weakness (D6g.4).
+
+### New pattern and CI time (CLAUDE.md rule 7)
+
+- **No new pattern:** one reference file, one index row with triggers, and one ruled phrase in `domains.md`, in the DO-6b to DO-6f shape.
+- **No added CI time:** no job, workflow or test. FU-D6g-c is a later Dev slice.
+
+### Required changes
+
+1. **[MS-2, T-MS-4, gotcha 2] A load marker, so 0 means something.**
+   - **T-MS-4 pass:** "Plugin manager initialized" (module `PluginManager`, `info`) is ≥ 1 on that deployment in the window, its `loadedPluginKeys` includes `meta-insights`, **and** 0 "Environment variable not found, keeping placeholder" with `varName` among the MA names or `NEXT_PUBLIC_APP_URL`.
+   - **No marker line:** "not read (no load in window)", never 0.
+   - **MS-2 and gotcha:** "once per instance load (each cold start)".
+
+   Pass: present. — Priority: High
+2. **[D6g.1 SL-V1 and SL rows, (1) "WA-O, SL names" row, T-MS-12, FU-D6g-a] V1 readers stated correctly.**
+   - **SL-V1 readers:** "`lib/plugins/strategies/slackPluginStrategy.ts` and `slackDataStrategy.ts`, through `lib/plugins/pluginRegistry.ts`, which deployed routes import. The strategy reads `NEXT_PUBLIC_SLACK_CLIENT_ID`, the tunnel names and `SLACK_CLIENT_SECRET`".
+   - **SL row and (1):** "No plugin in the active profile reads them (MS-1). The deprecated V1 strategy also reads the Slack secret name (SL-V1)."
+   - **FU-D6g-a remove option:** the Slack names are removed from targets only after both the V2 definition and the V1 strategy's reads are gone. Stated neutrally.
+
+   Still no probe and no quoted string from V1. Pass: the SL-V1 row reads as above, and the V1 secret read is named. — Priority: High
+3. **[P-MS-3, P-MS-4, Q-D6g-5] Start from the stable address.**
+   - **Probe column:** "on the environment's stable A1 address (`domains.md`), never a per-deployment host. The callback returns there, and posts only to that origin (gotcha 10)."
+   - **Who:** DO reads the callback lines on the deployment that serves that address. Name that deployment per `vercel-ops` §4.
+
+   Pass: present. — Priority: High
+4. **[MS-7, T-MS-7, gotcha 7, Q-D6g-8] Scope to loaded plugins.**
+   - **T-MS-7:** "each **loaded** Meta definition's dialog, token and profile addresses, and its executor's version constant, pin the same Graph version …".
+   - **Meta Ads:** a Meta plugin outside the profile is covered by T-MS-11 only.
+
+   Pass: T-MS-7 does not name Meta Ads, and the acceptance line about Meta Ads holds. — Priority: Medium
+5. **[P-MS-4, MS-8] Fail wording.**
+   - **Fail:** any "OAuth callback failed" ≥ 1 for `plugin` `meta-insights` after the probe time.
+   - **Attribution:** with "Token exchange failed" ≥ 1 (module `OAuthTokenService`), suspect the secret or the redirect. Without it, record the failure class and stop: it is not a credential fault.
+   - **Not conclusive:** no "OAuth callback received" line at all is "not conclusive (callback did not arrive)".
+
+   Pass: present. — Priority: Medium
+6. **[P-MS-5] Precision.** "Two log lines", not three. The pass and the fail read the logs **of the deployment probed**, from the probe time. A not-set line from any other request in that window still fails it. Pass: present. — Priority: Low
+7. **[(1) WA-W rows, P-MS-6, T-MS-8, T-MS-9, Q-D6g-4] "None recorded" is a valid state.**
+   - **(1) subscription row:** "one recorded receiving environment per Meta app, or none recorded".
+   - **With none recorded:** the token is expected unset on every target, and T-MS-8, T-MS-9 and P-MS-6 read "not read / not probed (no receiving environment recorded)".
+   - **"One callback per app":** in §1, gotcha 9 and the §7 row, write "vendor fact, confirm at use time".
+
+   Pass: present. — Priority: Medium
+8. **[T-MS-10] Denominators.** "No traffic" needs a marker. For the webhook strings, "Webhook verification request received" = 0 is "not read (no traffic)". For the callback string, "OAuth callback received" (module `OAuthCallbackAPI`, `plugin` `meta-insights`) = 0 is "not read (no traffic)". Pass: present. — Priority: Medium
+9. **[MS-3] Egress helper wording.** "The egress test seeds `WHATSAPP_CONFIG_ID` with a sentinel value that must never appear in a response" (`lib/testing/plugin-secret-matcher.ts`). Pass: present. — Priority: Low
+10. **[MS-5, (7) secret-reset row, Q-D6g-7] Vendor fact, not an open item.** "Whether Meta keeps existing tokens valid after a secret reset is a vendor fact, confirm at use time. Until it is confirmed once on a non-production app and recorded, plan a reset as a cut-over that may force every connection to reconnect." Pass: present. — Priority: Low
+11. **[Q-D6g-1 text, Services live line] Neutral record wording.** Use the DO-6f change 12 form, for example: "The main session confirmed from code that the active profile loads Meta Insights only, and records Slack, WhatsApp Business and Meta Ads as not in use." The main session confirms it with the user first. Pass: present before commit. — Priority: Low
+12. **[D6g-3, Q-D6g-6, D6g.4] One phrase in `domains.md`.** Make only the redirect-URI edit ruled above. Drop the "webhook endpoints" edit. The acceptance line "the `domains.md` diff is only D6g-3" stays, with D6g-3 reduced to that one phrase. Pass: `git diff` on `domains.md` is that one phrase. — Priority: Medium
+
+### Optimisation suggestions (non-blocking)
+
+- T-MS-11 can also be cross-checked at runtime from the same "Plugin manager initialized" line (`loadedPluginKeys`, `skippedPluginKeys`), which costs nothing once change 1 is in.
+- MS-4's "a change needs a redeploy only to reach the function, not a rebuild": say "a new deployment, and not a `NEXT_PUBLIC_` name, so nothing is inlined" (`vercel-ops` §4 wording).
+- T-MS-3's A1 clause is already covered by A1 being required everywhere. Keep it, because it is cheap, or point to `domains.md` T-AD-1.
+
+### Approval
+
+[x] Specification approved, conditional on changes 1–12. Proceed to the file once they are applied. No second SA pass is needed if QA confirms each "Pass" line.
+
+---
+
+## DO-6g implementation notes
+
+**By Dev — 2026-11-04.** Worktree `.claude/worktrees/do6g-messaging`, branch `feature/devops-third-party-messaging`, base `0eb3949e` (= `origin/main`). Nothing committed or stashed. No `.env*` file opened, no network or platform call.
+
+### What was built
+
+| File | Change | Lines |
+|---|---|---|
+| `.claude/skills/third-party-ops/messaging.md` | New. Intro, live-check line, WA-W / MA / WA-O / SL / SL-V1 table, boundary; §1–§6 of the template; §7 tiers and order. LF line endings | 122 |
+| `.claude/skills/third-party-ops/SKILL.md` | D6g-2 only: the §5 row now reads "Messaging and Meta apps: the WhatsApp webhook, the Meta app (Meta Insights, Meta Ads), Slack" → `[messaging.md](messaging.md)`; the description gains the D6g-2 triggers, inserted before "a vendor dashboard" | 86 (unchanged count; 2 lines changed) |
+| `.claude/skills/third-party-ops/domains.md` | D6g-3 only (SA change 12): §7 step 5 `later DO-6g and DO-6h` → `` `messaging.md`, later DO-6h `` | 137 (unchanged count; 1 line changed) |
+
+`git diff --numstat`: SKILL.md 2/2, domains.md 1/1, messaging.md 122/0. The two edited files keep their CRLF working-tree endings (index is LF, `core.autocrlf=true`), so the diff is exactly the edited lines.
+
+**Verbatim checks** (`git grep -cF` at `origin/main`, each ≥ 1 in its cited file, module from that file's `createLogger`):
+- `app/api/plugins/webhooks/whatsapp-business/route.ts` (module `WhatsAppWebhook`): "Webhook verification request received", "WHATSAPP_VERIFY_TOKEN is not set - refusing webhook verification", "Webhook verification failed - invalid token", "Webhook verified successfully", "Forbidden"; the "cannot tell the two apart" route comment.
+- `lib/server/plugin-manager-v2.ts` (module `PluginManager`): "Environment variable not found, keeping placeholder" (`warn`, `varName`), "Plugin manager initialized" (`info`, `loadedPluginKeys`, `skippedPluginKeys`); `processEnvironmentVariables`, `loadCorePlugins`, `initializeWithCorePlugins`.
+- `lib/server/plugin-executer-v2.ts` (module `PluginExecuter`): "Plugin not enabled in active profile"; `getNotEnabledMessage`.
+- `app/api/v2/plugins/connect/route.ts` (module `PluginConnectAPI`): "Plugin not found", "Initiating plugin OAuth connection", "OAuth URL generated"; `authUrl`, `plugin_key`.
+- `app/oauth/callback/[plugin]/route.ts` (module `OAuthCallbackAPI`, child logger with `plugin`): "OAuth callback received", "OAuth error from provider", "OAuth callback failed", "OAuth callback successful", "Plugin configuration not found".
+- `lib/services/OAuthTokenService.ts` (module `OAuthTokenService`): "Token exchange failed" (`error`, `status`), "No access token received", "Failed to fetch profile"; `exchangeCodeForTokens`.
+- `lib/server/user-plugin-connections.ts` (module `UserPluginConnections`): "Smart Refresh: No refresh token available - user needs to reconnect"; `handleOAuthCallback`, `getConnection`, `!authConfig.client_id || !authConfig.client_secret`.
+- `app/api/business-os/channel-insights/connect/route.ts` (module `ChannelConnectAPI`): "Channel insights connected".
+- Symbols: `ACTIVE_PLUGIN_PROFILE` and `meta-insights` (`plugin-profile.ts`); `CLIENT_SAFE_AUTH_CONFIG_FIELDS` (`sanitize-plugin-definition.ts`, no `additional_params`); `user_scope` (`oauth-handler.ts`); `WHATSAPP_CONFIG_ID` (`plugin-secret-matcher.ts`); `GRAPH_VERSION` (`meta-insights-plugin-executor.ts`); `_scope_note`, "Invalid Scopes" (Meta Insights definition, no `refresh_url`); `webhook_config`, `endpoint_path` (WhatsApp definition); `SLACK_CLIENT_SECRET`, `NEXT_PUBLIC_SLACK_CLIENT_ID`, `NGROK_SLACK_REDIRECT_URI` (`slackPluginStrategy.ts`); `useChannelConnect` (`ChannelsCard.tsx`); `should-not-be-set` (`lib/admin/environment`).
+
+Vendor messages and labels ("Invalid Scopes" pages, invalid-app and blocked-redirect pages, "Verify and save", the one-callback-per-app rule, secret-reset behaviour) are marked "vendor fact" or "confirm at use time". Every path named in the file exists at the base, including `app/api/plugins/webhooks/whatsapp-business/__tests__/route.test.ts`, and `/admin/environment` is served by `app/admin/environment/page.tsx`. No string from the Slack, WhatsApp or Meta Ads executors, the SL-V1 files or the V1 routes is quoted.
+
+### SA changes 1–12 → where they land
+
+| SA item | Where in `messaging.md` (or elsewhere) |
+|---|---|
+| 1. Load marker | §2 MS-2 ("Plugin manager initialized", once per instance; "once per instance load (each cold start)"); §5 gotcha 2; §6 T-MS-4 pass and "not read (no load in window)", never 0 |
+| 2. V1 readers | Service table SL-V1 row ("which deployed routes import"; the strategy reads `NEXT_PUBLIC_SLACK_CLIENT_ID`, the tunnel names and `SLACK_CLIENT_SECRET`); SL row and §1 "WA-O, SL names" row. FU-D6g-a remove-option sentence in the applied spec only |
+| 3. Stable address | §4 P-MS-3 and P-MS-4 Probe column; Who column names the deployment that serves the address, per `vercel-ops` §4; precondition "on that address" |
+| 4. Loaded plugins only | §2 MS-7 (four pins, Meta Insights); §5 gotcha 7; §6 T-MS-7 "each **loaded** Meta definition". No drift row names Meta Ads apart from T-MS-11 |
+| 5. P-MS-4 fail wording | §4 P-MS-4 Fails when (any "OAuth callback failed"; attribution with and without "Token exchange failed"; "not conclusive (callback did not arrive)"); §2 MS-8 states the `catch` scope |
+| 6. P-MS-5 precision | §4 P-MS-5 pass and fail read the probed deployment's logs from the probe time; "Two log lines" |
+| 7. None recorded | §1 WA-W token and subscription rows; §4 P-MS-6 precondition; §6 T-MS-8 and T-MS-9; "vendor fact, confirm at use time" in §1, gotcha 9 and the §7 address-move row |
+| 8. Denominators | §6 T-MS-10, both "not read (no traffic)" markers |
+| 9. Egress helper | §2 MS-3, sentinel-value wording |
+| 10. Secret reset | §7 "Meta app secret reset" row; applied spec MS-5 |
+| 11. Neutral record wording | Applied spec only: "Services live" line and Q-D6g-1, in the DO-6f change 12 form; for the main session to confirm with the user |
+| 12. One `domains.md` phrase | `domains.md` §7 step 5, the redirect phrase only; applied spec D6g-3 reworded to match |
+
+### Rulings Q-D6g-1 to Q-D6g-9 → where they land
+
+| Ruling | Where |
+|---|---|
+| Q-D6g-1 | Live-check line; WA-O, SL and the Meta Ads half as "not in use" rows with no probe; §1 rules point to FU-D6g-a; T-MS-11 Low |
+| Q-D6g-2 | File name, `MS` prefix, five tags; SKILL.md §5 label and triggers as D6g-2 |
+| Q-D6g-3 | WA-W covered in §1, §3, §4 (P-MS-5, P-MS-6, P-MS-7), §6 (T-MS-8, T-MS-9, T-MS-10), §7 |
+| Q-D6g-4 | §4 P-MS-6: optional, user-run, recorded receiving environment and a just-made change, token typed into the dashboard directly; production tier in §7 |
+| Q-D6g-5 | §4 P-MS-4: optional, user-approved, own account, writes and two-step cleanup declared, stable address |
+| Q-D6g-6 | `domains.md` one phrase; §7 "App address moves" row owns the webhook switch |
+| Q-D6g-7 | §7 secret-reset row, as a vendor fact |
+| Q-D6g-8 | §6 T-MS-7 at Medium, loaded plugins, four pins; no version named |
+| Q-D6g-9 | T-MS-2 a catalogue presence check; SL-V1 row "Recorded, never probed, never extended" |
+
+### Deviations from the applied spec
+
+- **§2 numbering.** §2 carries MS-1 to MS-8. The applied spec keeps MS-9 (the Slack user scope) out of the file; the SL row records only that Slack is not in use.
+- **Gotchas are numbered** 1–11 (siblings use bullets), so P-MS-3's ruled "(gotcha 10)" resolves to a row.
+- **Gotcha 10** carries `google.md` §5's consequence in one clause ("completes at Meta, but the page never hears of it"), so the stable-address rule in P-MS-3 has its reason next to it.
+- **SA optimisations 1 and 2 adopted:** T-MS-11 also reads `loadedPluginKeys` and `skippedPluginKeys` from the load marker; MS-4 says "a new deployment, and not a `NEXT_PUBLIC_` name, so nothing is inlined". Optimisation 3: T-MS-3 kept as written.
+- **"Derive, never list"** paragraph points to the reader search in `domains.md` §2, in the `queues-and-keys.md` form.
+- **Length:** 122 lines, within the 120–160 target and the ≤ 180 cap. No probe or drift row was trimmed.
+- **`docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`**: Dev did not edit it; the main session added the applied spec, the SA review and these notes.
+
+### Checks run
+
+- Host, project-ID, team-ID, vendor-host, tunnel, loopback and version grep over the added lines of the three repo files: **0 hits**.
+- D6g.4 public grep over the new file (`facebook\.com`, `graph\.`, `slack\.com`, `ngrok[-.]`, `vercel\.app`, `agents?pilot\.[a-z]`, `localhost:`, `https?://`, `v[0-9]+\.[0-9]`, line references): **0 hits**.
+- Every double-quoted string in the new file checked against `origin/main`: each code string found in its cited file; the rest are this skill's own status labels, a CLAUDE.md heading or vendor labels marked as such.
+- Every file path in the new file exists at `origin/main`.
+- `git diff --numstat` touches only the three D6g.3 files; line endings: `messaging.md` LF, `SKILL.md` and `domains.md` CRLF in the working tree (unchanged).
+
+---
+
+## SA Code Review — DO-6g
+
+**Code Review by SA — 2026-11-04**
+**Status:** 🔄 Fix Required (one High wording fix in the requirement, one Medium wording fix, five Low text fixes; no re-review needed if applied as written). The skill files need two one-phrase edits only.
+
+I reviewed the uncommitted diff in the DO-6g worktree against base `0eb3949e` (= `origin/main`). The diff covers:
+- the new `.claude/skills/third-party-ops/messaging.md` (122 lines);
+- the `SKILL.md` diff (2 lines) and the `domains.md` diff (1 line);
+- the requirement additions: the §0 DO-6 row, the DO-6g Specification, two Change History rows, SA Review — DO-6g (short pass) and DO-6g implementation notes.
+
+I used local reads and `git grep` at the base only. I made no platform, vendor or network call and opened no `.env*` file.
+
+### Results
+
+| # | Check | Result |
+|---|---|---|
+| 1 | SA short-pass changes 1–12 and rulings Q-D6g-1..9 | **All applied**, in the spec and in `messaging.md`. Change 2's FU-D6g-a sentence and change 11 are in the requirement only, as ruled. §D6.6 Q-D6-2 needs no correction: it makes no claim about the messaging services. SA optimisations 1 and 2 were adopted. |
+| 2 | Code claims | **Verified at the base** with `git grep -cF` ≥ 1, each in its cited file and module, at the stated level. This covers all four `WhatsAppWebhook` strings and "Forbidden", and the two `PluginManager` lines with `varName`, `loadedPluginKeys` and `skippedPluginKeys`. It also covers "Plugin not enabled in active profile" (`PluginExecuter`); the `PluginConnectAPI`, `OAuthCallbackAPI`, `OAuthTokenService`, `UserPluginConnections` and `ChannelConnectAPI` strings; and every named symbol. Neither Meta definition has `refresh_url`. The Meta Insights definition pins the version in its dialog, token and profile addresses, and its executor in `GRAPH_VERSION`. Every path exists, including `hooks/useChannelConnect.ts` (which posts to the connect route), the route test, `backups/` and `archive/`. No string is quoted from the Slack, WhatsApp or Meta Ads executors, the V1 files or the V1 routes |
+| 3 | Probes can fail | **Yes.** P-MS-5 tells unset from wrong by log line on the deployment probed. Its own "invalid token" line is the denominator, so an unset token cannot pass. T-MS-4 has the load marker as its denominator, and `loadedPluginKeys` also catches a definition that failed validation. T-MS-10 has both "no traffic" markers. P-MS-2 catches a surviving placeholder (raw or encoded) and a trailing-slash A1. P-MS-4 leaves one outcome unclassified (fix 3) |
+| 4 | Probe safety | No probe sends a message, posts to Slack, touches an ad account, spends money or prints a value, and none needs DO to hold a key. P-MS-4 declares its writes and its two-step cleanup. P-MS-6 is a vendor-side save only, and it is gated |
+| 5 | Boundaries | `domains.md` is pointed to, never restated (AD-2, AD-3, §2 reader search, §7). Its diff is exactly the ruled phrase. DO-6h owns every other vendor's OAuth app. App data is not DO's. `google.md` §5 is cited for the one-origin callback and says so |
+| 6 | Deprecated V1 | Recorded, never probed, never extended. The only V1 content is the SL-V1 row, the §1 rule and T-MS-2 / T-MS-12 |
+| 7 | Consistency with siblings | The §5 label and the triggers are exactly D6g-2, inserted before "a vendor dashboard". The six parts plus tiers and order follow the sibling layout. The numbered gotchas are an accepted deviation, so that "(gotcha 10)" resolves. LF in the new file, as in the siblings |
+| 8 | Public repo | `messaging.md`, `SKILL.md` and `domains.md` are clean: no ID, host, URL, Graph version or current-configuration statement. Grep hits in the requirement are only in the D6g.4 pattern lists. The requirement text needs fixes 1, 2 and 7, and fix 8 is recommended. Fix 4 aligns one probe phrase with `google.md` |
+
+
+### Code Review Comments
+
+1. **Requirement, SA short pass, public-repo check.** One bullet reworded to the plain rule (D6g.4). — Priority: High
+2. **Spec, "Services live" line.** Rewritten in the sibling form, "The main session confirmed on 2026-11-04, from code, …", without a user-confirmation clause; the user's approval is recorded in §0 and Change History at commit. — Priority: Medium
+3. **P-MS-4 "Fails when"** (`messaging.md` and spec): a callback received with no success line now counts as a fail. — Priority: Low
+4. **P-MS-2** (`messaging.md` and spec): the `state` wording aligned with `google.md` G3. — Priority: Low
+5. **Implementation notes, §2 numbering bullet:** corrected. — Priority: Low
+6. **Implementation notes:** requirement bullet and the `/admin/environment` path wording corrected. — Priority: Low
+7. **Change History, DO-6g spec row:** "the WhatsApp Business OAuth client". — Priority: Low
+8. **SA short pass:** reworded phrases are no longer quoted (recommended). — Priority: Low
+
+### Code Approved for QA: Yes, with fixes 1–8
+
+All eight are text only and were applied by the main session.
+
+---
+
+## QA Report — DO-6g
+
+**QA — 2026-11-04.** Test mode: full. Strategy: static checks (`test -e`, `git grep -cF` at `HEAD`, ID, anchor, line-ending, separator and diff-placement checks) on a docs-and-skill slice. There is no app code to run. Base `0eb3949e` (`HEAD`). `origin/main` has since moved to `27f13ab7` (PR #621), which touches none of the four files. No repo file edited, nothing stashed or committed, no `.env*` opened, no network call. The added-lines corpus was built with `git add -N` on the new file, `git diff -U0 | grep '^+'` (538 lines), then `git reset -q`; `git status --porcelain` was the same before and after.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | D6g.4 criterion 1: `messaging.md` has the intro sentence, the live-check line, the WA-W / MA / WA-O / SL / SL-V1 table, the boundary, §1–§6 and §7 tiers and order. The live check is by role, with the MS-1 result (WA-O and SL not in use, Meta Ads not loaded, SL-V1 deprecated). 122 lines (cap 180) | Pass |
+| 2 | Every path the new file names exists (`test -e`): the 19 full repo paths (webhook route, connect route, callback route, channel-insights connect route, `ChannelsCard.tsx`, `useChannelConnect.ts`, `oauth-handler.ts`, the meta-insights definition, `pluginRegistry.ts`, `sanitize-plugin-definition.ts`, `slackPluginStrategy.ts`, the meta-insights executor, `plugin-executer-v2.ts`, `plugin-manager-v2.ts`, `plugin-profile.ts`, `user-plugin-connections.ts`, `OAuthTokenService.ts`, `plugin-secret-matcher.ts`, `backups/`, `archive/`). The 8 short names each resolve to one file (`meta-ads-plugin-v2.json`, `whatsapp-business-plugin-v2.json`, `slack-plugin-v2.json`, `slackDataStrategy.ts`, the webhook `__tests__/route.test.ts`, and so on). Pages `/admin/environment` (`app/admin/environment/page.tsx`) and `/api/v2/plugins/connect` exist. Also the paths cited in the requirement: the three extra registry importers and the two executors in FU-D6g-d | Pass |
+| 3 | Every quoted code string is verbatim in its cited file (`git grep -cF` ≥ 1), with the right module and level: 5 webhook strings (module `WhatsAppWebhook`; info, error, warn, info, plus the two `'Forbidden'` 403s); "Environment variable not found, keeping placeholder" (`warn`, `varName`) and "Plugin manager initialized" (`info`, `loadedPluginKeys`, `skippedPluginKeys`), module `PluginManager`; "Plugin not enabled in active profile" (`warn`, `PluginExecuter`); "Plugin not found" (404), "Initiating plugin OAuth connection", "OAuth URL generated" (`PluginConnectAPI`); the 5 callback strings (`OAuthCallbackAPI`, child logger with `plugin`); "Token exchange failed" (`error`, `status`), "No access token received", "Failed to fetch profile" (`OAuthTokenService`); the Smart Refresh line (`UserPluginConnections`); "Channel insights connected" (`ChannelConnectAPI`); "Invalid Scopes" (`_scope_note`); the two `authConfig` expressions; the route comment "cannot tell the two apart" | Pass |
+| 4 | Every named symbol exists: `processEnvironmentVariables`, `loadCorePlugins`, `initializeWithCorePlugins`, `getNotEnabledMessage`, `ACTIVE_PLUGIN_PROFILE`, `CLIENT_SAFE_AUTH_CONFIG_FIELDS` (no `additional_params` in that file), `user_scope`, `exchangeCodeForTokens`, `handleOAuthCallback`, `getConnection`, `GRAPH_VERSION`, `webhook_config`, `endpoint_path`, `useChannelConnect`, `should-not-be-set`. Neither Meta definition has `refresh_url`. The sentinel is in `plugin-secret-matcher.ts`. The catalogue rows match §D6g.1 (eleven names in `plugins`, tunnels `exp('X', 'X', 'O')`). SA-review symbols also hold: `execute()` and `fetchDynamicOptions()`, the `authed_user` token expression, the Meta Ads `API_VERSION` | Pass |
+| 5 | No quoted string comes from the Slack, WhatsApp or Meta Ads executors, the SL-V1 files or the V1 routes. "OAuth URL generated", "Token exchange failed" and "OAuth callback failed" also appear in V1 strategy files as substrings. The file always gives the live module next to them, so a count by module is unambiguous | Pass (note) |
+| 6 | IDs unique and contiguous in the file: MS-1..8, P-MS-1..9, T-MS-1..12, each defined once. Every cited ID is defined. FU pointer `FU-D6g-a` only. In the requirement, MS-1..9, FU-D6g-a..d, Q-D6g-1..9 and SA changes 1–12 are all defined. MS-9 is defined only in the spec, by design (D6g.1: "Not in the file beyond the SL row"). One dangling reference: SA change 11 cites "D6g.6 record", and there is no §D6g.6 (Medium 1 h) | Pass with one dangling reference |
+| 7 | Cross-references resolve: `SKILL.md` §5 (live rule), `domains.md` AD-2, AD-3, §2 (reader search), §7 step 5; `google.md` §5 (callback answers one origin); `env-drift-audit` §7; `vercel-ops` §3 for names-only reads; gotcha 10 resolves to "The callback answers one origin". **One wrong section:** MS-4's "a new deployment … nothing is inlined (`vercel-ops` §3)". That rule is in `vercel-ops` §4, not §3 (Low 1) | Pass with Low 1 |
+| 8 | Anchors added to the requirement: 10 distinct, all resolve (including `#do-6g-implementation-notes`). The SKILL.md row link to `messaging.md` resolves. The new file has no links | Pass |
+| 9 | SKILL.md diff: the old file with the D6g-2 triggers inserted before the first "a vendor dashboard", and the §5 row replaced, equals the new file byte for byte (after CR normalisation). numstat 2/2. "a vendor dashboard" occurs twice in the file, and the first one is in the description, so the anchor is right. The description grows from 1801 to 2119 characters | Pass |
+| 10 | `domains.md` diff: the old file with `later DO-6g and DO-6h` → `` `messaging.md`, later DO-6h `` equals the new file exactly. numstat 1/1. "webhook endpoints" unchanged, as Q-D6g-6 ruled | Pass |
+| 11 | Only the D6g.3 files change: SKILL.md, `domains.md`, the requirement, and the new `messaging.md`. No other skill still says "not covered yet (DO-6g)" | Pass |
+| 12 | Line endings: the requirement has CRLF on all 5762 lines, SKILL.md on 86/86, `domains.md` on 137/137. numstat is the same with `--ignore-cr-at-eol`. `messaging.md` is LF on disk (122 LF, 0 CRLF). Git normalises it on add (`i/lf`, like its siblings). Same as DO-6e and DO-6f at this stage | Pass (note) |
+| 13 | Separator doubling (`---`, blank, `---`): two pairs in the requirement, at lines 4580 and 4949. Both are pre-existing (the base has them at 4373 and 4742; the offset is +207). None is in the added text. The spec section matches `do6g-spec-applied.md` exactly, plus its closing separator | Pass |
+| 14 | Restatement grep from §D6.4 over the new file | Pass (0 hits) |
+| 15 | D6g.4 public grep over the new file (`facebook\.com`, `graph\.`, `slack\.com`, `ngrok[-.]`, `vercel\.app`, `agents?pilot\.[a-z]`, `localhost:`, `https?://`, `v[0-9]+\.[0-9]`, line references) | Pass (0 hits). The only numbers in the file are HTTP statuses |
+| 16 | Finding-11 regex over all 538 added lines | 1 hit: `prj_` inside the quoted grep pattern in the DO-6g implementation notes, Checks run. It is pattern text, not an ID (Low 4, optional) |
+| 17 | Broad grep over the added lines: hosts, URLs, `prj_`, `team_`, vendor key prefixes (`sk_`, `pk_`, `whsec_`, `xox`, `EAA`, `AKIA`), Graph versions, `ngrok`, `localhost:`, ports, 12+ digit runs, personal paths and names. The hits are only the pattern lists in D6g.4 and Checks run, and the catalogue env names `NGROK_SLACK_REDIRECT_URI` and `NEXT_PUBLIC_NGROK_SLACK_REDIRECT_URI`. "graph." matched only "paragraph." | Pass |
+| 18 | D6g.4 criterion 2 (probes): each one names who runs it, a pass, a fail, a precondition and side effects. None sends, posts, touches an ad account, needs DO to hold a key or prints a value. P-MS-4 and P-MS-6 say "Optional, user-approved, once". P-MS-5 uses a made-up token, and a 200 means stop | Pass |
+| 19 | D6g.4 criterion 3 (pointers): redirect URIs and the webhook callback point to `domains.md` and the stable A1 address. No host or path is restated, and callback paths are "derived from the definitions" | Pass |
+| 20 | D6g.4 criterion 4: strings are verbatim with their modules (checks 3 and 5). Vendor pages are marked "vendor messages, confirm at use time"; one callback per app, the secret reset and P-MS-9 are marked "vendor fact, confirm at use time" | Pass |
+| 21 | D6g.4 criterion 5: no sentence presents WA-O, SL or Meta Ads as live. Only T-MS-11 and T-MS-12 target them by name. P-MS-1 and T-MS-1 read the presence of all eleven names, as the applied spec defines them, and that is not a target on the service | Pass |
+| 22 | D6g.4 criterion 6 (public repo): the file holds no identifier, version, URL or current state | Pass for the file. See check 24 for the requirement |
+| 23 | Read-through of `messaging.md` for current configuration and open weaknesses | Pass. "Answers on its own, without the plugin" is the code fact that puts WA-W in scope. "Privacy and data-deletion fields as recorded" is a neutral dashboard read |
+| 24 | Read-through of every added sentence in the requirement (§0 row, spec, SA review, implementation notes, Change History) | **Fail, then Pass after fixes.** High 1 and Medium 1 in the SA short-pass text; Lows 2–3 in the implementation notes |
+
+### Findings
+
+- **High 1:** one SA short-pass bullet reworded to the plain rule (same fix as SA code review fix 1).
+- **Medium 1:** the SA short pass no longer quotes replaced phrases; change 11's reference now points at the Services live line (there is no §D6g.6).
+- **Low 1:** `vercel-ops` §4, not §3, for "nothing is inlined" (`messaging.md`, spec, notes).
+- **Low 2:** implementation note on §2 numbering corrected.
+- **Low 3:** implementation note on the requirement corrected.
+- **Low 4 (optional, applied):** the grep pattern in Checks run is no longer quoted.
+
+### Verdict
+
+**PASS WITH CHANGES.** Every D6g.4 criterion and every path, string, symbol, ID, anchor, line-ending, separator and diff-placement check passes. High 1, Medium 1 and Lows 1–4 were applied by the main session; the re-run read-through and finding-11 grep are clean. **Final verdict after fixes: PASS.**
