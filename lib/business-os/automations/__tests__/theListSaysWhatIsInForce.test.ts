@@ -54,6 +54,26 @@ jest.mock('@/lib/business-os/gaps/automationApplies', () => ({
   automationApplies: jest.fn().mockResolvedValue(true),
 }));
 
+/*
+ * `installedAutomations` reads `agent_executions` through `supabaseServer`
+ * DIRECTLY (install.ts:865) rather than through a repository, so there is no
+ * repository seam to stub, and that read sits OUTSIDE both of the file's try
+ * blocks, so a bare `supabaseServer: {}` would throw rather than fail soft.
+ * In this suite the read was a real request to the placeholder Supabase URL.
+ * An unconfigured fake answers it the way a healthy empty table does, and
+ * `deadLetteredRuns` turns that into the same empty map the failed read
+ * produced -- so no case here changes. See tests/jest-no-network.ts.
+ *
+ * It also serves `plugin_connections`, which this suite does not stub either.
+ * That read failing made `missingFor` take its documented fail-open branch;
+ * a successful empty read makes it filter instead, which is equivalent here
+ * because these rows carry no `plugins_required`, so the list it filters is
+ * empty either way.
+ */
+jest.mock('@/lib/supabaseServer', () => ({
+  supabaseServer: jest.requireActual('@/tests/helpers/fakePostgrest').createFakeSupabase().client,
+}));
+
 import { installedAutomations } from '../install';
 import { automationById } from '../catalog';
 import { CADENCE_CRON } from '../types';

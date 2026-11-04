@@ -24,7 +24,7 @@ import { codeOf, LITERAL_RULES } from '@/tests/helpers/bos-llm-literal-rules';
  * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
  */
 jest.mock('@/lib/services/AuditTrailService', () =>
-  require('@/tests/helpers/silentAuditTrail')
+  jest.requireActual('@/tests/helpers/silentAuditTrail')
 );
 
 const getUser = jest.fn();

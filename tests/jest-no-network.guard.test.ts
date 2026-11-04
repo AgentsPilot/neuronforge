@@ -7,6 +7,10 @@
  */
 
 import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { blankStringLiterals, stripComments } from '@/tests/helpers/source-scan';
 
 /** Attempt one connection and report how it ended, without throwing. */
 function attempt(options: net.NetConnectOpts): Promise<{
@@ -102,6 +106,67 @@ describe('the Jest no-network guard', () => {
     expect(first.connected).toBe(false);
     expect(second.connected).toBe(false);
     expect(second.error?.message).toContain('Blocked a network connection to example.org:80');
+  });
+
+  /**
+   * The refusal COUNT is what the gate holds to a ceiling (G8 in
+   * .github/ci/jest-gate-check.mjs), and one property of the recorder decides
+   * whether that ceiling can be trusted at all: the record directory has to be
+   * read on EVERY refusal, never captured once when the guard installs.
+   *
+   * Hoisting that read to module scope would read as a harmless tidy-up and
+   * would silently stop the counting partway through every worker. Measured
+   * 2026-11-04: the guard installs ONCE per worker, from whichever test file
+   * ran first, and `jest-environment-node` gives every test file its own
+   * `process` — including its own `process.env`, which it EMPTIES at teardown
+   * (probed directly: the installing file's env object has 0 keys once that
+   * file has finished). A captured directory would therefore come from an
+   * object that no longer holds anything, so every refusal after the first
+   * file in the worker would go unrecorded and the total would read LOW — the
+   * direction that makes a ceiling pass when it should fail.
+   *
+   * ── Why a source scan and not a behavioural test ──────────────────────────
+   * The guard reads the PROCESS environment, and a test file's `process.env`
+   * is a private copy, so a test cannot switch recording on or off for the
+   * installed closure at all. That is measured, not assumed: the first version
+   * of this case set `NO_NETWORK_RECORD_DIR` and
+   * `NO_NETWORK_RECORD_GUARDS_OWN_TEST` from here and asserted its own records
+   * — which passed only when this file happened to install the guard, i.e.
+   * when run alone, and failed on CI where it does not. The override works
+   * when set from OUTSIDE the run, which is the only place it can be set.
+   *
+   * Recording is proven end to end where it genuinely can be: G8 requires an
+   * `alive-*` proof-of-life from every shard and prints the real destinations
+   * it recorded, and `npm run test:leaks -- <path>` drives the same path with
+   * the environment set by the parent process.
+   *
+   * A scan pins the shape, not the behaviour. It is the honest half of the
+   * proof, and it is the half that catches the regression described above.
+   */
+  it('reads the record directory on every refusal, not once at install', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'jest-no-network.ts'), 'utf8');
+    /* Comments discuss these names constantly; blank the literals too, so no
+       mention inside a string can satisfy an assertion below (D-Q1). */
+    const scaffold = blankStringLiterals(stripComments(source));
+
+    const guardedAt = scaffold.indexOf('const guarded = function');
+    expect(guardedAt).toBeGreaterThan(0);
+
+    const beforeTheClosureExists = scaffold.slice(0, guardedAt);
+    const insideAndAfter = scaffold.slice(guardedAt);
+
+    /* Read per refusal... */
+    expect(insideAndAfter).toContain('process.env.NO_NETWORK_RECORD_DIR');
+    /* ...and never read into a variable before the closure that uses it. */
+    expect(beforeTheClosureExists).not.toContain('process.env.NO_NETWORK_RECORD_DIR');
+
+    /*
+     * The exemption is decided per refusal for the same reason, and so is its
+     * override — a captured `counts` would freeze the first file's answer for
+     * every file after it.
+     */
+    expect(insideAndAfter).toContain('testPath.includes(GUARDS_OWN_TEST)');
+    expect(insideAndAfter).toContain('process.env[RECORD_GUARDS_OWN_TEST]');
   });
 
   it('leaves loopback alone, so a test can reach a server it started itself', async () => {

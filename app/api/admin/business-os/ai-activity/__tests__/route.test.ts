@@ -68,7 +68,7 @@ import { GET } from '../route';
  * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
  */
 jest.mock('@/lib/services/AuditTrailService', () =>
-  require('@/tests/helpers/silentAuditTrail')
+  jest.requireActual('@/tests/helpers/silentAuditTrail')
 );
 
 /** The exact words the Activity tab shows (QA E-2), as written in route.ts. */
