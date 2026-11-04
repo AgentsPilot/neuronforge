@@ -302,6 +302,34 @@ describe('listRecentForUser (MX-1b history, §5 step 1)', () => {
     expect(calls.some((call) => call.method === 'or')).toBe(false);
   });
 
+  it('MX-5 T-R1: without origin there is no origin filter (every origin, as before)', async () => {
+    const { c, calls } = client({ data: [], error: null });
+    await repo(c).listRecentForUser(OWNER, { limit: 10 });
+    expect(calls.some((call) => call.method === 'eq' && call.args[0] === 'origin')).toBe(false);
+  });
+
+  it('MX-5 T-R2: origin admin adds ONE origin filter right after user_id', async () => {
+    const { c, calls } = client({ data: [row(REQUEST, { origin: 'admin' })], error: null });
+    const result = await repo(c).listRecentForUser(OWNER, { limit: 10, origin: 'admin' });
+    expect(result.data?.map((r) => r.origin)).toEqual(['admin']);
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_export_requests'] },
+      { method: 'select', args: [EXPORT_REQUEST_HISTORY_COLUMNS] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['origin', 'admin'] },
+      { method: 'order', args: ['requested_at', { ascending: false }] },
+      { method: 'order', args: ['id', { ascending: false }] },
+      { method: 'limit', args: [10] },
+    ]);
+  });
+
+  it('MX-5 T-R2: an unknown origin is refused before any call', async () => {
+    const bad = client({ data: [], error: null });
+    const result = await repo(bad.c).listRecentForUser(OWNER, { origin: 'robot' as unknown as 'admin' });
+    expect(result.error).toMatchObject({ code: EXPORT_REQUEST_ERROR.INVALID_INPUT });
+    expect(bad.calls).toEqual([]);
+  });
+
   it.each([
     ['a bad uuid', { requestedAt: T, id: 'nope' }],
     ['a time that is not a timestamp', { requestedAt: 'yesterday', id: REQUEST }],
@@ -391,6 +419,46 @@ describe('findOwnerLimitAnchor (MX-4b N-1, SA C-5)', () => {
     const failing = client({ data: null, error: { code: 'XX000', message: 'boom', details: 'secret row' } });
     expect(await repo(failing.c).findOwnerLimitAnchor(OWNER, SINCE)).toEqual({ data: null, error: expect.objectContaining({ code: 'XX000' }) });
     expect(JSON.stringify(logged)).not.toContain('secret row');
+  });
+});
+
+describe('findAdminLimitAnchor (MX-5, workplan §4.3; SA S-3)', () => {
+  const SINCE = '2026-11-01T12:00:00.000Z';
+
+  it('T-R3: the same read on origin admin, at OFFSET ADMIN_DAILY_LIMIT_PER_OWNER - 1', async () => {
+    const { c, calls } = client({ data: [{ requested_at: '2026-11-02T08:30:00Z', business_os_export_module_jobs: [{ status: 'sent' }] }], error: null });
+    const result = await repo(c).findAdminLimitAnchor(OWNER, SINCE);
+    expect(result).toEqual({ data: { requestedAt: '2026-11-02T08:30:00Z' }, error: null });
+    const offset = MODULE_EXPORT_POLICY.ADMIN_DAILY_LIMIT_PER_OWNER - 1;
+    expect(offset).toBe(1);
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_export_requests'] },
+      { method: 'select', args: [OWNER_LIMIT_ANCHOR_COLUMNS] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['origin', 'admin'] },
+      { method: 'gt', args: ['requested_at', SINCE] },
+      { method: 'not', args: ['business_os_export_module_jobs.status', 'in', '(failed,interrupted)'] },
+      { method: 'order', args: ['requested_at', { ascending: false }] },
+      { method: 'range', args: [offset, offset] },
+    ]);
+    // Owner-origin requests never count toward the admin's limit.
+    expect(calls.some((call) => call.method === 'eq' && call.args[0] === 'origin' && call.args[1] === 'owner')).toBe(false);
+  });
+
+  it('S-3: a failed admin read logs its own method name, not the owner one', async () => {
+    const { c } = client({ data: null, error: { code: 'XX000', message: 'boom' } });
+    expect((await repo(c).findAdminLimitAnchor(OWNER, SINCE)).error).toMatchObject({ code: 'XX000' });
+    const methods = logged.map((args) => (args[0] as Record<string, unknown>).method);
+    expect(methods).toContain('findAdminLimitAnchor');
+    expect(methods).not.toContain('findOwnerLimitAnchor');
+  });
+
+  it('a bad user id or window start is refused before any call', async () => {
+    for (const [userId, since] of [['nope', SINCE], [OWNER, 'yesterday']]) {
+      const bad = client({ data: [], error: null });
+      expect((await repo(bad.c).findAdminLimitAnchor(userId, since)).error).toMatchObject({ code: EXPORT_REQUEST_ERROR.INVALID_INPUT });
+      expect(bad.calls).toEqual([]);
+    }
   });
 });
 

@@ -9,10 +9,19 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { MODULE_EXPORT_POLICY } from '@/lib/business-os/data-export/moduleExportPolicy';
 import {
+  adminLimitAnchorOffset,
   nextOwnerExportAt,
   ownerLimitAnchorOffset,
   ownerLimitWindowStart,
 } from '@/lib/business-os/data-export/nextOwnerExportAt';
+
+describe('adminLimitAnchorOffset (MX-5 T-R5)', () => {
+  it('is ADMIN_DAILY_LIMIT_PER_OWNER - 1 = 1, and follows the policy', () => {
+    expect(adminLimitAnchorOffset()).toBe(MODULE_EXPORT_POLICY.ADMIN_DAILY_LIMIT_PER_OWNER - 1);
+    expect(adminLimitAnchorOffset()).toBe(1);
+    expect(adminLimitAnchorOffset({ ADMIN_DAILY_LIMIT_PER_OWNER: 3 })).toBe(2);
+  });
+});
 
 describe('ownerLimitAnchorOffset (T-14: the OFFSET pin)', () => {
   it('is OWNER_DAILY_LIMIT - 1: the limit-th newest counted request is the anchor', () => {

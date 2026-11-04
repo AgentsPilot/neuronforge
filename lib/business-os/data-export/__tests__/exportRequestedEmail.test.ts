@@ -3,7 +3,12 @@
  * Real Intl, so a format that throws or a zone that is ignored fails here.
  */
 
-import { buildExportRequestedEmail, EXPORT_REQUESTED_EMAIL_COPY, formatRequestedAt } from '../exportRequestedEmail';
+import {
+  buildExportRequestedEmail,
+  EXPORT_REQUESTED_EMAIL_ADMIN_COPY,
+  EXPORT_REQUESTED_EMAIL_COPY,
+  formatRequestedAt,
+} from '../exportRequestedEmail';
 import { EXPORT_MODULES } from '../exportModules';
 import { PLACEHOLDER_ERASURE_CONTACT } from '@/lib/business-os/supportContact';
 
@@ -85,5 +90,89 @@ describe('buildExportRequestedEmail', () => {
 
   it('never says "delivered" in any language (XC-9)', () => {
     expect(JSON.stringify(EXPORT_REQUESTED_EMAIL_COPY)).not.toMatch(/deliver|נמסר|entregad/i);
+    expect(JSON.stringify(EXPORT_REQUESTED_EMAIL_ADMIN_COPY)).not.toMatch(/deliver|נמסר|entregad/i);
+  });
+});
+
+describe('the admin wording (MX-5, BQ-E8-1; SA M-2)', () => {
+  const LANGUAGES = ['en', 'he', 'es'] as const;
+
+  it.each(LANGUAGES)('T-E1 %s: origin absent and origin owner give the same email, byte for byte', (language) => {
+    expect(buildExportRequestedEmail({ ...base, language, origin: 'owner' })).toEqual(buildExportRequestedEmail({ ...base, language }));
+  });
+
+  it('T-E1: the owner English is pinned word for word', () => {
+    const email = buildExportRequestedEmail({ ...base, language: 'en' });
+    expect(email.subject).toBe('Your data export has started');
+    expect(email.text.startsWith('You asked for an export of your AgentPilot data on 27 October 2026 at 12:05.')).toBe(true);
+    expect(email.text).toContain('The parts you chose:');
+    expect(email.text).toContain(`If you did not ask for this, contact us at ${PLACEHOLDER_ERASURE_CONTACT}.`);
+  });
+
+  it.each(LANGUAGES)('T-E2 %s: support voice in the subject, the first line, the list heading and the "not you" line', (language) => {
+    const admin = EXPORT_REQUESTED_EMAIL_ADMIN_COPY[language];
+    const owner = EXPORT_REQUESTED_EMAIL_COPY[language];
+    const email = buildExportRequestedEmail({ ...base, language, origin: 'admin' });
+    expect(email.subject).toBe(admin.subject);
+    expect(email.text).toContain(admin.listHeading);
+    expect(email.text).not.toContain(owner.listHeading);
+    expect(email.text).toContain(admin.notYou.replace('{support}', PLACEHOLDER_ERASURE_CONTACT));
+    expect(email.text).not.toContain(owner.notYou.replace('{support}', PLACEHOLDER_ERASURE_CONTACT));
+    // The lines that read the same for both are kept.
+    expect(email.text).toContain(owner.arrives);
+    expect(email.text).toContain(owner.filesNotIncluded);
+    for (const id of base.modules) expect(email.html).toContain(`<li>${nameOf(id, language)}</li>`);
+    expect(email.html).toContain(`mailto:${PLACEHOLDER_ERASURE_CONTACT}`);
+  });
+
+  it('T-E2: no owner-voiced phrase survives in the admin email, in any language', () => {
+    const ownerVoice: Record<(typeof LANGUAGES)[number], string[]> = {
+      en: ['You asked', 'you chose', 'did not ask'],
+      he: ['ביקשת', 'שבחרת'],
+      es: ['Pediste', 'elegiste', 'no lo pediste'],
+    };
+    for (const language of LANGUAGES) {
+      const email = buildExportRequestedEmail({ ...base, language, origin: 'admin' });
+      for (const phrase of ownerVoice[language]) {
+        const needle = phrase.toLowerCase();
+        expect({ language, phrase, inText: email.text.toLowerCase().includes(needle) }).toEqual({ language, phrase, inText: false });
+        expect({ language, phrase, inHtml: email.html.toLowerCase().includes(needle) }).toEqual({ language, phrase, inHtml: false });
+        expect({ language, phrase, inSubject: email.subject.toLowerCase().includes(needle) }).toEqual({ language, phrase, inSubject: false });
+      }
+    }
+  });
+
+  it('T-E2: the admin first line in English, with the owner clock', () => {
+    const email = buildExportRequestedEmail({ ...base, language: 'en', origin: 'admin' });
+    expect(email.text.startsWith('AgentPilot support started an export of your AgentPilot data on 27 October 2026 at 12:05.')).toBe(true);
+  });
+
+  it('T-E2: Hebrew keeps its isolates and rtl in the admin wording', () => {
+    const email = buildExportRequestedEmail({ ...base, language: 'he', origin: 'admin', isTimezoneSet: false });
+    const { date, time } = formatRequestedAt({ ...base, language: 'he', isTimezoneSet: false });
+    expect(email.html).toMatch(/^<div dir="rtl" lang="he"/);
+    expect(email.html).toContain(`<bdi>${date}</bdi>`);
+    expect(email.text).toContain(`⁨${time}⁩`);
+  });
+
+  it('T-E3: the admin email carries no address but the support contact, and no script', () => {
+    for (const language of LANGUAGES) {
+      const email = buildExportRequestedEmail({ ...base, language, origin: 'admin' });
+      const addresses = (`${email.html} ${email.text}`.match(/[\w.+-]+@[\w.-]+/g) ?? []).map((a) => a.replace(/\.$/, ''));
+      expect(new Set(addresses)).toEqual(new Set([PLACEHOLDER_ERASURE_CONTACT]));
+      expect(email.html).not.toMatch(/<script/i);
+    }
+  });
+
+  it('the admin lines hold the same placeholders as the owner lines they replace', () => {
+    const holes = (text: string) => (text.match(/\{\w+\}/g) ?? []).sort();
+    for (const language of LANGUAGES) {
+      const admin = EXPORT_REQUESTED_EMAIL_ADMIN_COPY[language];
+      const owner = EXPORT_REQUESTED_EMAIL_COPY[language];
+      for (const key of Object.keys(admin) as Array<keyof typeof admin>) {
+        expect(admin[key].length).toBeGreaterThan(0);
+        expect({ language, key, holes: holes(admin[key]) }).toEqual({ language, key, holes: holes(owner[key]) });
+      }
+    }
   });
 });
