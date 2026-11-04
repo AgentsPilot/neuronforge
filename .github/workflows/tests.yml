@@ -127,10 +127,33 @@ jobs:
 
       # Runs bare: no `|| true`, no continue-on-error. A failing test fails
       # this job, and through it the verdict.
+      #
+      # NO_NETWORK_RECORD_DIR turns on the refusal recorder in
+      # tests/jest-no-network.ts, which G8 holds to a ceiling. Absolute,
+      # because a worker is under no obligation to run in the repo root; and
+      # under gate-out/, so the existing upload carries it with no new artifact.
+      #
+      # The marker is written BEFORE jest and says this shard was recording. A
+      # shard that wrote none recorded none, and G8 fails closed on that rather
+      # than reading it as zero refusals — the same rule the result files
+      # already follow. It also carries ALLOW_TEST_NETWORK, which would disable
+      # the guard outright and is the one way to defeat G8 silently.
+      #
+      # It is load-bearing twice over: upload-artifact prunes empty
+      # directories, so on a shard with no refusals the marker is the only
+      # thing keeping its directory — and therefore the evidence that it ran —
+      # in the artifact at all. The guard writes its own `alive-*` proof that
+      # it really recorded; the marker alone cannot prove that.
       - name: Run the gate (shard ${{ matrix.shard }}/${{ strategy.job-total }})
         if: steps.scope.outputs.skip != 'true'
+        env:
+          NO_NETWORK_RECORD_DIR: ${{ github.workspace }}/gate-out/no-network/shard-${{ matrix.shard }}
         run: |
-          mkdir -p gate-out
+          mkdir -p gate-out "$NO_NETWORK_RECORD_DIR"
+          printf '{"shard":%s,"allowTestNetwork":%s}\n' \
+            '${{ matrix.shard }}' \
+            "$([ "${ALLOW_TEST_NETWORK:-}" = '1' ] && echo true || echo false)" \
+            > "$NO_NETWORK_RECORD_DIR/present.json"
           npm run test:gate -- --maxWorkers=4 \
             --shard=${{ matrix.shard }}/${{ strategy.job-total }} \
             --json --outputFile=gate-out/gate-results-${{ matrix.shard }}-of-${{ strategy.job-total }}.json
