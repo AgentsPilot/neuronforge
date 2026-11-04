@@ -99,14 +99,18 @@ const GUARDS_OWN_TEST = 'jest-no-network.guard.test';
 /*
  * Lifts the exemption above, and nothing else.
  *
- * It exists so the guard's own test can prove the recorder works END TO END on
- * its own refusals, which it otherwise cannot: it is the one file exempt from
- * recording. The alternative was to impersonate a non-exempt file by swapping
- * `__currentSandbox`, and that was measured to be worse than the problem — a
- * socket inherited from an earlier file in the worker, opening inside the
- * impersonation window, was charged to the fake identity and written to the
- * REAL record directory in two runs out of three, putting phantom counts into
- * the number the gate ratchets on.
+ * SET IT IN THE ENVIRONMENT, not from a test. A test file cannot set it: Jest
+ * gives each file its own `process.env` copy, while this closure reads the
+ * process environment, so an assignment made inside a case is invisible here.
+ * Measured the hard way — the guard's own test once set it and asserted its
+ * own records, and passed only when it happened to install the guard (i.e.
+ * when run alone), failing on CI where another file installs it first.
+ *
+ * Used for diagnosing this file by hand, where it does work, because the
+ * parent process sets it:
+ *
+ *     NO_NETWORK_RECORD_GUARDS_OWN_TEST=1 NO_NETWORK_RECORD_DIR=/tmp/x \
+ *       npx jest --runTestsByPath tests/jest-no-network.guard.test.ts
  *
  * It never changes whether a connection is refused, only whether a refusal is
  * counted, so it cannot let a test reach the network.
@@ -421,11 +425,16 @@ if (installed.__noNetworkGuard) {
     }
 
     /*
-     * Counted, when a run asked to count. Read from the environment on every
-     * refusal rather than captured at install time, because this closure
-     * belongs to whichever file installed it and the env var is set for the
-     * whole run — and because the guard's own test flips it to prove both
-     * states.
+     * Counted, when a run asked to count. Read from the environment on EVERY
+     * refusal, never captured at install time — and that is load-bearing, not
+     * style. This closure belongs to whichever test file ran first in the
+     * worker, and `jest-environment-node` gives every file its own `process`
+     * object and EMPTIES its `process.env` at teardown (measured: 0 keys once
+     * that file has finished). A value captured at install would therefore be
+     * read back off a dead object, nothing would be recorded after the first
+     * file, and the gate's total would read LOW — the direction that makes a
+     * ceiling pass when it should fail. Pinned by a source scan in
+     * tests/jest-no-network.guard.test.ts.
      */
     const recordDir = process.env.NO_NETWORK_RECORD_DIR;
     const counts =
