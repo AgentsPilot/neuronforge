@@ -48,7 +48,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
 | DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) ✅ DO-5a MERGED 2026-10-31 (PR #592; see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) 🟡 spec re-checked by BA 2026-10-31 (FU-5: H10, the Q-D5-9 note, the H3 boundary, the check list §D5.2.2(g), Q-D5b-1 to Q-D5b-4); SA short pass 2026-10-31 **APPROVED WITH CHANGES** (see [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)); DO-5b built (see [DO-5b implementation notes](#do-5b-implementation-notes)); **SA code review 2026-10-31: Code Approved for QA**, with four small skill fixes (repo reads use `origin/main:./<path>` from the worktree root; `devops.md` unchanged beyond the pointer line); **QA 2026-10-31: QA passed**, with two small non-blocking items, both fixed (see [QA Report — DO-5b](#qa-report--do-5b)); **user approved the diff 2026-11-01**, PR open with auto-merge. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file): ✅ PR #593 MERGED 2026-10-31; `origin/main` shows the file untracked and the `.gitignore` line. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
-| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; MERGED (#614). DO-6e (domains and app addresses, narrowed by the user) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6e implementation notes](#do-6e-implementation-notes)); SA code review approved with three fixes; QA 19 checks, two Mediums and a Low fixed by the main session; user approved the diff 2026-11-03; commit + PR.** |
+| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; MERGED (#614). DO-6e (domains and app addresses, narrowed by the user) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6e implementation notes](#do-6e-implementation-notes)); SA code review approved with three fixes; QA 19 checks, two Mediums and a Low fixed by the main session; user approved the diff 2026-11-03; merged (#616). DO-6f (queues, AWS and small API-key providers) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6f implementation notes](#do-6f-implementation-notes)); SA code review approved with five fixes; QA 25 checks, one Medium and three Lows; all fixes applied by the main session; user approved the diff 2026-11-04; commit + PR.** |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
 
@@ -1160,7 +1160,7 @@ Third-party checks join as a fifth area, **Third-party**, one platform at a time
 | Q | Decision |
 |---|---|
 | Q-D6-1 | Target: production live, Preview and local test. DO-6a records the **current** setup as found and changes nothing; the per-environment key mode is checked by T-ST-3 and the checkout probe. What the live check found is recorded privately, not here. Any change is a later decision by the user. |
-| Q-D6-2 | Order accepted. The user asked to confirm every service is still in use. The main session checked QStash (the one the user doubted): it is still in use, so it stays in DO-6f. **Each later slice starts by confirming its services are live** (a code path that runs, and the names set on Vercel) and drops any that are not. |
+| Q-D6-2 | Order accepted. The user asked to confirm every service is still in use. The main session checked QStash (the one the user doubted): it is still in use, so it stays in DO-6f. *Corrected 2026-11-03 (DO-6f, QK-2): that check was incomplete. The receiver route is still deployed, but no code path reaches the publisher; QStash stays in DO-6f, narrowed to the receiver, its signing keys, schedules and dead-letter queue.* **Each later slice starts by confirming its services are live** (a code path that runs, and the names set on Vercel) and drops any that are not. |
 | Q-D6-3 | The user does not want Preview's payment setup changed now. DO-6a records Preview as it is; no slice in DO-6 changes Preview's Stripe setup. |
 
 ---
@@ -2057,6 +2057,202 @@ The file is `.claude/skills/third-party-ops/domains.md` (Q-D6e-1). It opens with
 
 ---
 
+## DO-6f Specification — Queues, AWS and small API-key providers (third-party-ops)
+
+**By BA — 2026-11-03; SA changes 1–13 and rulings Q-D6f-1 to Q-D6f-8 applied 2026-11-03.** A short scoping pass, in the same form as DO-6b to DO-6e. This is a config and docs slice: no application code, no CI job and no added CI time. It adds one reference file and one index row to `third-party-ops`, under SKILL.md §1–§4 and SA Review — DO-6 (changes 1–7: every probe has a precondition or reads "not probed", a roll overlap makes a pass "not conclusive", everything is derived from code, nothing is copied as a list, and the T- rows live in the platform file). It also applies the DO-6c to DO-6e lessons from the start:
+- every probe states its precondition, an exact pass, an exact fail and its side effects;
+- a probe that passes on an unset value is not a probe;
+- every quoted log string is checked verbatim, with its module;
+- no quoted string comes from code that has no live caller.
+
+**Scope (DO-6 row).** Four services, five tags:
+- **QS-R**, the QStash receiver: the current and next signing keys (with their rotation), the schedules and the dead-letter queue;
+- **QS-P**, the QStash publisher: the token, the URL and the callback address per environment, covered as "not in use" (Q-D6f-1);
+- **TX**, the AWS Textract credential and region;
+- **PX**, Pexels;
+- **FX**, the two FX-rate providers, covered as "not in use" (Q-D6f-5).
+
+**Services live (Q-D6-2 rule).** The main session confirmed on 2026-11-03 that the QStash receiver is still deployed, so it stays in DO-6f. DO-6f found that the publisher is not reached (QK-2). TX and PX have a code path that runs; FX has none (QK-12). No target is named. Whether each name is set is not recorded here: DO checks that at use time with the T-QK checks.
+
+**Boundary.**
+- **DO owns:** the eight env names in §D6f.1; which account each environment's QStash and AWS credentials belong to, and which IAM principal holds the AWS key (by role, private); and the QStash schedules and dead-letter queue as dashboard reads.
+- **The callback address is A1 policy:** `platformOrigin()`, owned by `domains.md`. This file points to it, for schedules only, and never restates it.
+- **Our own shared secrets stay out (Q-D6-11):** the cron secret, the agent-run webhook secret, and the scheduler's own switch. The QStash signing keys are third-party, so they are in.
+- **App data is not DO's:** exchange rates and the admin rate sync. The rate sync uses a keyless public feed, so it has no third-party credential in this slice.
+
+### D6f.1 Context and findings from code
+
+Taken from the code at the worktree's `origin/main` base (`4c389406`). Names and readers only: no value was read, no `.env*` file was opened and no network call was made. The installed QStash SDK (2.8.4) was read from the shared `node_modules`, only to confirm what the receiver wrapper and the client do.
+
+| # | Service | Names (catalogue group, `expectedIn` prod / preview / local) | Readers |
+|---|---|---|---|
+| QS-R | Upstash QStash receiver | `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY` (`jobs`, optional everywhere, `consumedBy: sdk`) | `app/api/cron/process-queue/route.ts` (`POST`, wrapped in `verifySignatureAppRouter`) |
+| QS-P | Upstash QStash publisher | `QSTASH_TOKEN`, `QSTASH_URL` (`jobs`, optional everywhere) | `lib/queues/qstashQueue.ts` (`addManualExecution`, `addScheduledExecution`, `cancelJobsForAgent`), gated by the "QUEUE-BASED EXECUTION PATH" branch of `app/api/run-agent/route.ts`. **Not reached** (QK-2) |
+| TX | AWS Textract: document text extraction | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` (`external`, optional everywhere, each with the catalogue's AWS caveat) | `lib/extraction/TextractClient.ts`, called from `tryTextract` in `lib/extraction/DeterministicExtractor.ts`. Two live entry points: `extract_structured_data` in `lib/server/document-extractor-plugin-executor.ts`, and `executeDeterministicExtraction` in `lib/pilot/StepExecutor.ts` (step type `deterministic_extraction`) |
+| PX | Pexels: stock photographs for generated sites | `PEXELS_API_KEY` (`external`, optional everywhere) | `imageForSection`, `imagesForSection` in `lib/services/StockImageService.ts`, called from the website generation paths (callers derived at use time) |
+| FX | Two exchange-rate providers | `EXCHANGE_RATE_API_KEY`, `FIXER_API_KEY` (`external`, optional everywhere) | `fetchFromExchangeRateApi`, `fetchFromFixerIo` in `lib/services/CurrencyService.ts`, reached only through `updateRatesFromApi`, which has no caller |
+
+| # | Finding | Where | Consequence for the file |
+|---|---|---|---|
+| QK-1 | **The queue branch would fall back silently.** It runs only on a deployed target (not a development server) with both `QSTASH_URL` and `QSTASH_TOKEN` set; otherwise it logs a warn line and runs the agent inline. The branch is not reached (QK-2), so its lines are not evidence and are not quoted. | `app/api/run-agent/route.ts` | Described without a quoted string. |
+| QK-2 | **The publisher is not reached (confirmed by SA, Q-D6f-1).** The branch sits after the unified execution path. That path runs the Workflow Pilot, or AgentKit when the pilot did not run (`shouldExecute`), and the `if (executionResult)` block returns in every branch. The queue branch is reached only if an executor resolves to a falsy value, which neither one's type allows. `addManualExecution` has one caller, inside that branch. `addScheduledExecution` is called only through `agentQueue.add`, and `agentQueue` has no importer. `cancelJobsForAgent` has no caller. The receiver imports only a type from the module. The scheduler (`app/api/run-scheduled-agents/route.ts`) states in its header that it no longer dispatches through QStash. | `app/api/run-agent/route.ts` (the "UNIFIED EXECUTION PATH" and "QUEUE-BASED EXECUTION PATH" blocks); `lib/queues/qstashQueue.ts`; `app/api/run-scheduled-agents/route.ts` (header) | QS-P is one "not in use" row: no probe, no quoted string. P-QK-4 is deleted. T-QK-5 is a Low code-reachability check. FU-D6f-a goes to TL as a decision for the user. |
+| QK-3 | **A missing signing key fails the build.** In the installed SDK, `verifySignatureAppRouter` throws when the wrapper is created if either key is missing. The wrapper is created at module scope, and `next build` evaluates route modules while collecting page data, so a deployment missing either key never becomes Ready (`.github/workflows/build.yml` sets placeholder keys for CI's build for this reason). Once loaded, the wrapper answers a request without a signature header with 403 "`Upstash-Signature` header is missing", before it reads the body. A signature that does not verify makes the SDK's `Receiver.verify` throw `SignatureError`, which the wrapper does not catch, so the answer is a 500 before the handler runs, not a 403. Both are SDK behaviour, not tracked code: confirm them against the installed version at use time. The handler parses the body first; when that fails it logs "Error processing job" (unstructured, QK-6) and answers 500. | `app/api/cron/process-queue/route.ts`; `.github/workflows/build.yml`; the SDK's Next.js entry | Both signing keys are required on every Vercel target while the receiver route exists (Q-D6f-4). P-QK-2 proves the 403 path on a Ready deployment, can fail, and writes nothing. |
+| QK-4 | **The callback address is chosen when a message is published, and schedules keep theirs.** `getBaseUrl()` returns `platformOrigin()`, and messages are sent to that address plus `/api/cron/process-queue`. On a Preview this is the deployment's own host (`domains.md` AD-2). A schedule stores its destination in QStash and keeps it after the app address moves; `agents.qstash_schedule_id` records the link. Nothing at `origin/main` creates or deletes a schedule (QK-2 reader result), so any schedule found in the console is a leftover, and it still delivers to the receiver. | `lib/queues/qstashQueue.ts` (`getBaseUrl`, header comment) | Pointer to `domains.md`; fills in `domains.md` §7 step 5 (Q-D6f-6). T-QK-4 is High for any unrecorded schedule and adds a read-only count of `qstash_schedule_id`. |
+| QK-5 | **The token is read when the client is first used.** The client is built with the token only. In the installed version (2.8.4), the client reads `QSTASH_URL` from the environment itself as its base address (SDK fact, confirm at use time). The path is not reached (QK-2), so its error strings are not quoted. | `getQStashClient` in `lib/queues/qstashQueue.ts` | T-QK-3 derives SDK-implicit names from the installed version at use time and lists none. FU-D6f-e also gives `QSTASH_URL` `consumedBy: sdk`. |
+| QK-6 | **The QStash files log through `console.*`.** `qstashQueue.ts` makes 9 such calls and `process-queue/route.ts` makes 16. Their lines are not structured Pino records. `run-agent`, `TextractClient`, `DeterministicExtractor`, `StockImageService`, `CurrencyService` and the extractor executor have 0. | Both files | The receiver's evidence is the console's delivery status, never a log count. Converting them is FU-D6f-d. |
+| QK-7 | **Textract is enabled only when all three AWS names are present,** `AWS_REGION` included. The client's region fallback is unreachable. The catalogue's role text for `AWS_REGION` ("unset uses a default region") does not match the code. | `TextractClient` constructor and `analyzeDocument` | The file states the code's behaviour. FU-D6f-c. The default region is never quoted. |
+| QK-8 | **"Set" does not prove the AWS credential is configured, and neither does "set by the project".** The catalogue's AWS caveat says the Vercel runtime may set these names itself, and Vercel's docs describe such runtime values as unusable as AWS credentials (vendor fact). Whether a project-set `AWS_*` value reaches the function, or a runtime value shadows it, is also a vendor fact, confirmed at use time. | `catalogue.ts` (`AWS_CAVEAT`); `TextractClient.isAvailable` | `/admin/environment` cannot settle presence for TX. T-QK-6 reads project env names only; a correct credential is shown only by P-QK-5 on that target. If the vendor reserves these names, the remedy is a code rename (FU-D6f-f). |
+| QK-9 | **Textract failures are swallowed.** `analyzeDocument` logs "Textract analysis failed" (module `TextractClient`, `error`) and returns empty. For a PDF, the extractor goes on without Textract ("DeterministicExtractor: Textract fallback failed, attempting LLM with PDF text only", module `DeterministicExtractor`). For an image, it throws "OCR extraction failed - check AWS Textract configuration"; `extract()` catches it, logs "DeterministicExtractor: Extraction failed" (module `DeterministicExtractor`, `error`, message in `err`), and returns a failure result, so it never surfaces as a response error. With `use_ai: true` the executor sets `ocrFallback: false`, and an image throws "Image extraction requires OCR - enable ocr_fallback" instead: not a credential fault. One extraction may call Textract twice. Whether a multi-page document is accepted is a vendor fact. | `TextractClient.analyzeDocument`; `DeterministicExtractor` (`handleImage`, `tryTextract`, `extract`) | P-QK-5 takes its evidence from logs only, with `use_ai` unset, and declares up to two billed calls. T-QK-8 counts the failure line. |
+| QK-10 | **Textract is called with the key passed explicitly,** and the code calls only `AnalyzeDocument` (forms and tables). `@aws-sdk/client-textract` is the only `@aws-sdk/*` dependency. | `TextractClient.analyzeDocument`; `package.json` | Least privilege is derived from code, re-derived at use time. |
+| QK-11 | **Pexels degrades silently.** With the key unset, `imageForSection` logs "No PEXELS_API_KEY; section will have no image" (service `StockImageService`, `debug`) and returns null. `imagesForSection` returns an empty list and logs nothing. A refused single-image search logs "Stock library refused the search" (`warn`, with `status`); a refused gallery search (`findPhotos`) logs nothing. A photograph that is used is copied into the business's storage bucket and media library ("Adopted a photograph for a section", `info`); one already in the library is reused through `findBySourceRef` without an adopt line. | `lib/services/StockImageService.ts` | Evidence is the warn line by `status` plus the adopt line (P-QK-7, T-QK-10), with a "not conclusive" state when both are 0. |
+| QK-12 | **The FX-rate keys have no live caller.** `updateRatesFromApi` has no caller in `app/`, `lib/`, `components/` or `hooks/`. The file's header calls it "UNWIRED" and says it must not be wired again, because the only writer of the rate table is the admin route through `ExchangeRatesRepository`. The file is loaded in the browser (`components/settings/CurrencySelector.tsx`, `'use client'`), where a non-`NEXT_PUBLIC_` name is never available. The admin rate sync (`app/api/admin/exchange-rates/sync/route.ts`) reads a keyless public feed (`lib/admin/exchangeRates/ecbFeed.ts`). | `lib/services/CurrencyService.ts` (header) | One "not in use" row, no probe, T-QK-11 at Low; FU-D6f-b (Q-D6f-5). |
+
+### D6f.2 What the file teaches (the six-part template)
+
+The file is `.claude/skills/third-party-ops/queues-and-keys.md` (Q-D6f-2). It opens with the same intro sentence as its siblings, then the live-check line, the QS-R / QS-P / TX / PX / FX table and the boundary paragraph. Target length: about 130–170 lines, at most about 180. If it runs long, trim prose, never a probe or drift row.
+
+**ID prefix: `QK`** (probes P-QK-n, drift checks T-QK-n, findings QK-n). One prefix per file, as the siblings use (`ST`, `GO`, `LLM`, `AD`). "QA" is avoided because it reads as the Quality Assurance agent. Service tags are QS-R, QS-P, TX, PX and FX, because `domains.md` already uses A1–A3. P-QK-4 is retired (publisher not reached); the other IDs keep their numbers so this spec, the SA review and the file cite the same rows.
+
+**(1) What must differ between environments.** The **current** setup is a private-inventory pointer, checked at use time and reported by role: which QStash account each environment uses; which AWS account and IAM principal hold the Textract key; which region; which targets carry a Pexels key; and any recorded QStash schedules.
+
+| Setting | Rule per environment |
+|---|---|
+| QStash account | Token, URL and both signing keys on a target come from **one** recorded account. Keys from another account fail every signed delivery (QK-3). The signing keys are per account, so every target that shares an account rolls together. Kept because it decides whether a future publisher's messages verify |
+| QS-R signing keys | Required on every Vercel target while the receiver route exists. Without either one, the build fails (QK-3) |
+| QS-P token and URL | No live path reads them (QK-2). Whether they stay set is FU-D6f-a's decision |
+| QS-R schedules | None, unless recorded with their destination. A recorded schedule's destination is a stable address that serves the receiver and that QStash can reach from the public internet; a Preview host behind deployment protection refuses it unless a bypass is recorded (vendor fact, confirm at use time) |
+| TX names | All three, or none. Set by the **project** on each target where OCR extraction is wanted, and never left to runtime-injected values (QK-8). The region is one where the vendor offers Textract (vendor fact). Production and non-production keys come from separate IAM principals where recorded. This file states that shape, never whether it is in place |
+| TX IAM principal | Recorded by role. Its policy grants only the Textract action(s) the code calls (QK-10). Never a root or administrator credential; no console sign-in; key age within the recorded rotation period |
+| PX key | Optional per target. Unset means generated sites have no stock photographs (QK-11): a product choice, recorded per environment |
+| FX names | Not set on any target unless recorded with a reason (QK-12) |
+
+"Local" is guidance for whoever runs the app locally. DO reads no `.env*` file, so local is never a DO check.
+
+**(2) Where the code reads it.** The D6f.1 readers and findings, named as files and functions only. Expected names come from the catalogue groups `jobs` and `external` at `origin/main`, filtered to these eight names. The callers of `addManualExecution`, `addScheduledExecution`, `cancelJobsForAgent`, `imageForSection` and `updateRatesFromApi` are derived at use time by the reader-search procedure of `domains.md` §2. The file holds no caller list. **Never a probe target:** `backups/` and `archive/` copies.
+
+**(3) Dashboard steps (the user)**, by area name, confirmed at use time:
+- **Upstash console, QStash:** the signing-keys area (roll); Schedules (count, destination host matches the recorded address yes/no, delete); Logs or Events (delivery status for a message); the dead-letter queue (count, delete); usage and plan limits. The token area belongs to QS-P (not in use).
+- **AWS console, IAM:** the user or role holding the key; attached policies (Textract-only yes/no); access keys (count, age, last used and its service); console sign-in off yes/no.
+- **AWS Billing:** a budget and alert for Textract spend, as recorded.
+- **Pexels:** the API key page; the rate limit shown.
+- **Vercel:** env values per `vercel-ops` and `env-change-protocol`. The value never passes through chat or a file.
+
+The user reports presence, "same account as recorded: yes/no", "policy Textract-only: yes/no", "last used service is Textract: yes/no", "key age within the recorded period: yes/no", "schedule count as recorded: yes/no", "dead-letter count", "delivery status code" and the last-updated time. The user never reports a token, a key or a key fragment, a signing key, an account or principal identifier, an ARN, a schedule or message identifier, a destination URL or an amount.
+
+**(4) Probes.** Each one fails when the setting is wrong. None enqueues an agent run, none needs DO to hold a key, none prints a value, and none is run in a loop. Each runs on the deployment named per `vercel-ops` §4, after it is Ready. A 401 from deployment protection is "not probed (protected host)". Where a probe calls a paid vendor API, it is optional, user-approved and run once; a declined probe is "not probed (declined)".
+
+| ID | Change | Probe | Pass | Fails when | Who | Precondition and side effects |
+|---|---|---|---|---|---|---|
+| P-QK-1 | Any of the eight names | `/admin/environment` on that deployment | Shows Set, or Not set where intended. Proves presence only. **For TX it proves nothing (QK-8)**: use `vercel-ops` §3 (project env names) instead | The other state | Main session or user | Admin session. None |
+| P-QK-2 | QS-R signing keys; the receiver | POST to that deployment's `/api/cron/process-queue` with **no body and no signature header** | 403 with "`Upstash-Signature` header is missing" (SDK text, confirmed at use time) | Any other answer is a fail: record the status and stop | Main session or user (HTTP; DO has no HTTP probe) | Deployment reachable without protection, else "not probed (protected host)". A protection 401 is told apart from the SDK's 403 by status and body. One request log line. Nothing is written: the SDK refuses the request before the handler reads the body |
+| P-QK-3 | QS-R keys match the account | Optional, user-approved, once. In the Upstash console, publish one message with a **zero-byte body** to that deployment's receiver address, with retries set to 0 where offered. Never `{}` or any JSON: a body that parses as JSON is processed as a job | Delivery status 500, and the target's runtime logs show the receiver's "Error processing job" line at the delivery time: the handler ran and could not parse the empty body (QK-3) | A 500 with no "Error processing job" line and a `SignatureError` in the runtime logs (SDK text, confirm at use time): the keys on the target are not the publishing account's current or next key. Any other status, a 2xx included: stop and report to the main session | User (console); DO (runtime logs) | P-QK-2 passed, and a roll or key change was just made, or a schedule is recorded; otherwise "not probed (nothing signs to this receiver)". Retries 0 where offered; otherwise up to the vendor's default retry count plus one deliveries, each billed (vendor pricing, confirm at use time), each with one unstructured receiver error line (QK-6), and a dead-letter entry that the user deletes. No row is written, no agent runs |
+| P-QK-5 | TX names, region, key | Optional, user-approved, once. A single-page image in plain base64 (no data-URL prefix) showing one known printed word, sent through a surface that runs `extract_structured_data` as the signed-in user, with one field, an explicit image `mime_type` and `use_ai` left unset. Suggested surface: the plugin tester on `/test-plugins-v2`, which runs it through `POST /api/plugins/execute`; `document-extractor` is a system plugin with a platform key, so no connection is needed | "Textract analysis complete" ≥ 1 and "Textract analysis failed" = 0 (module `TextractClient`), and no "DeterministicExtractor: Extraction failed" (module `DeterministicExtractor`), after the probe time | "Textract analysis failed" ≥ 1; or "DeterministicExtractor: Extraction failed" whose error carries "OCR extraction failed - check AWS Textract configuration" while "Textract analysis complete" = 0 | User (trigger); DO (log counts) | TX names set by the project on that target (`vercel-ops` §3), else "not probed (not set)". Tester not served on the target: "not probed (no surface)". Up to **two** billed Textract calls (QK-9; vendor pricing, confirm at use time); log lines. Nothing written for a run by the signed-in user (an admin act-as run is audited: never use it) |
+| P-QK-6 | TX IAM scope and key age | User reads IAM for the recorded principal | Policy Textract-only yes; last-used service Textract yes; key age within the recorded period yes; console sign-in off yes | Any "no" | User | None |
+| P-QK-7 | PX key | Traffic read: DO counts "Adopted a photograph for a section" and "Stock library refused the search" by `status` (service `StockImageService`) since Ready. Optional: the user illustrates one section that is not yet illustrated, for a business they own, through a generation surface found at use time | ≥ 1 adopt line and 0 refused lines | A refused line with an authorisation status (401 or 403). A rate status (429) is "not conclusive (rate limited)" | DO; user (optional trigger) | No traffic: "not probed (no traffic)". 0 adopt and 0 refused lines: "not conclusive (no new search, or gallery only)", because reused photographs log no adopt line and a refused gallery search logs nothing. The optional trigger spends LLM calls and credits on the user's own account, writes page content, and copies one photograph into that business's bucket and media library. User-approved, once |
+| P-QK-8 | Key rotation (QS-R signing keys, TX key, PX key) | The probes above on the new deployment, then retire the old credential, then repeat them | Pass after the old credential is retired | Any failure after retiring it | User; DO | As the probes used. Overlap per §(5). Where the vendor offers no overlap (vendor fact), it is a cut-over: probe once after Ready |
+
+**The P-QK-5 response is not evidence:** a failure result is returned and the executor fills defaults. Not conclusive: "Textract analysis complete" ≥ 1 but the OCR error appears is "not conclusive (no readable text)"; "Image extraction requires OCR - enable ocr_fallback" is "not conclusive (OCR off)".
+
+P-QK-4 is deleted (Q-D6f-1). QS-P and FX have no probe: "not probed (no live path)" (QK-2, QK-12).
+
+**(5) Gotchas**, each grounded in a repo file:
+- **The publisher is not reached** (QK-2): a `use_queue: true` request runs inline. Never read it as proof that QStash ran.
+- **The signing keys are a build dependency** (QK-3): without either key, `next build` fails while collecting page data. The SDK's error names the missing key (SDK text, confirm at use time).
+- **Signing keys are account-wide, and a roll is ordered** (vendor fact, confirm at use time). After a roll, the old next key becomes current and a new next key is created. Set current = the old next and next = the new next on **every** target that shares the account, and redeploy. Roll again only after that redeploy is Ready and P-QK-3 passes. Until the redeploy, a P-QK-3 pass is "not conclusive (overlap)".
+- **Leftover schedules still deliver** (QK-4): nothing in the code creates or cancels one, and moving the app address does not move them. Pointer to `domains.md` §7 step 5.
+- **The QStash files log through `console.*`** (QK-6): the receiver's evidence is the console's delivery status, never a log count.
+- **Unset `AWS_REGION` disables Textract** (QK-7). The catalogue's role text says otherwise (FU-D6f-c).
+- **Runtime-injected AWS names** (QK-8): "Set" on `/admin/environment`, and even "set by the project", is not evidence. P-QK-5 is.
+- **Textract errors degrade instead of failing** (QK-9). PDFs fall back without it, images return a failure result. A multi-page document can fail for a reason that is not the credential.
+- **Textract costs money per page** (`DeterministicExtractor.ts` header) and can be called twice per extraction (QK-9).
+- **Pexels unset or refused is silent** (QK-11). The unset line is debug level, and a refused gallery search logs nothing.
+- **The FX keys do nothing** (QK-12). Setting them changes nothing, and the code forbids wiring them again.
+
+**(6) Drift checks** (in the `env-drift-audit` §7 format, under its rules):
+
+| ID | Check | Expected state from | Live read | Class | Who reads |
+|---|---|---|---|---|---|
+| T-QK-1 | On each **Vercel target** of the web app project, the eight names match the recorded intent. Catalogue `expectedIn` is optional for all eight, so the private inventory sets which are wanted where. Local: "not read (main session / user)" | Catalogue at `origin/main`; private inventory | `vercel-ops` §3 (names only) | High | DO |
+| T-QK-2 | Both signing keys present on every Vercel target, and P-QK-2 passing there | Code at `origin/main` (QK-3) | `vercel-ops` §3; P-QK-2 | High | DO; main session |
+| T-QK-3 | Token, URL and both keys on one target belong to the recorded account. No SDK-implicit QStash name, derived from the installed version at use time, is set unless recorded. The file lists none | Private inventory; SDK docs at use time | User report ("same account as recorded"); `vercel-ops` §3 | High | User; DO |
+| T-QK-4 | QStash schedules: count and destinations as recorded (none by default); any unrecorded schedule is High, because it delivers to the receiver, which runs that agent. Dead-letter count since the last run. Second read: the main session, read-only under `supabase-ops`, counts `agents` rows with a non-null `qstash_schedule_id`: count only, no identifiers, 0 unless recorded | Private inventory; code at `origin/main` (QK-4) | User report (Schedules, dead-letter queue); `supabase-ops` §2 read-only SQL | High | User; main session |
+| T-QK-5 | The `run-agent` queue branch still follows the unified path's returns, and `addManualExecution`, `addScheduledExecution` and `cancelJobsForAgent` still have no live caller (reader search). A live caller means this file needs publisher probe rows before merge | Code at `origin/main` | Repo read | Low | DO |
+| T-QK-6 | TX: all three names set by the project, or none, on each target, matching the recorded intent. Names only: a correct credential is shown only by P-QK-5 on that target | Private inventory | `vercel-ops` §3 (project env names) | High | DO |
+| T-QK-7 | TX IAM: the key belongs to the recorded principal; the policy is Textract-only; the last-used service is Textract; key age within the recorded period; no second active key outside a recorded rotation; console sign-in off | Private inventory; code at `origin/main` (QK-10) | User report (IAM) | High | User |
+| T-QK-8 | "Textract analysis failed" (module `TextractClient`) count since the last run. > 0 is Medium, and High if it is every call. No calls: "not read (no traffic)" | Change records | Runtime logs | Medium | DO |
+| T-QK-9 | An AWS budget and alert for Textract spend, set as recorded | Private inventory | User report (Billing) | Medium | User |
+| T-QK-10 | "Stock library refused the search" (service `StockImageService`) count by `status` since the last run. An authorisation status > 0 is High; a rate status > 0 is Medium. 0 adopt and 0 refused: "not conclusive (no new search, or gallery only)". No traffic: "not read (no traffic)" | Change records | Runtime logs | Medium | DO |
+| T-QK-11 | The FX names are not set on any target unless recorded, and `updateRatesFromApi` still has no caller at `origin/main` (reader search). A new caller means this file needs a probe row before merge | Code at `origin/main`; private inventory | `vercel-ops` §3; repo read | Low | DO |
+
+**(7) Tiers and order against the deploy.** This section points to `env-change-protocol` and restates nothing.
+
+**Tiers.** These are **production tier** (SA reviews the plan, the user executes):
+- a QStash token reset, or a signing-key roll, on an account that production uses (both are account-wide);
+- deleting or creating a schedule on that account;
+- removing a signing key from production;
+- creating, rotating, deactivating or deleting the AWS key production uses;
+- any change to its IAM policy, or to production's region;
+- a change to production's Pexels key;
+- removing any of these names from production.
+
+A change to a credential or account used **only** by non-production environments, as recorded, is reversible: the user applies it after the approval in chat. Where one account serves several environments, every change to it is production tier.
+
+| Change | When |
+|---|---|
+| Signing-key roll | Both keys already on every target that shares the account → roll → set current and next on every such target → deploy Ready → P-QK-2 and P-QK-3 → only then any further roll |
+| QStash token reset | No live path reads it (QK-2); production tier only because the account is shared; no probe |
+| Removing a signing key from a target | Only after FU-D6f-a removes the receiver route. Before that, the target's next deploy fails (QK-3). Production tier on production |
+| AWS key rotation | Create the second key on the recorded principal → set all three names → deploy Ready → P-QK-5 → **deactivate** the old key → P-QK-5 again → delete it after the recorded wait (two keys per principal and deactivation are vendor facts, confirm at use time) |
+| IAM policy narrowed | After P-QK-5 passes on the current policy. Then P-QK-5 again |
+| App address moves (`domains.md` §7) | Recorded schedules recreated for the new address in step 5. The old host keeps serving the receiver until the old schedules are deleted and in-flight retries have drained |
+| Removing a TX or PX name from a target | Only after no live path on that target needs it, as recorded |
+| FX names removed | At any time (no live path). The code removal is FU-D6f-b |
+
+### D6f.3 Files to change
+
+| # | File | Action |
+|---|---|---|
+| D6f-1 | `.claude/skills/third-party-ops/queues-and-keys.md` | New, per §D6f.2. Target about 130–170 lines, at most about 180 |
+| D6f-2 | `.claude/skills/third-party-ops/SKILL.md` | Two edits and nothing else. (a) The §5 row becomes "Queues, AWS and small API-key providers: QStash, AWS Textract, Pexels, exchange-rate keys" → `[queues-and-keys.md](queues-and-keys.md)`. (b) The description triggers gain "QStash or Upstash, a queue token, a QStash signing key, rolling signing keys, the queue callback, `/api/cron/process-queue`, a QStash schedule, AWS, an AWS access key, IAM, Textract, OCR, document extraction, Pexels, stock photos, an exchange-rate API key" |
+| D6f-3 | `.claude/skills/third-party-ops/domains.md` | Ruled yes (Q-D6f-6): in §7 step 5, replace "queue callback targets (DO-6f, "not audited" until covered)" with "queue schedules and callback targets (`queues-and-keys.md`)". Nothing else |
+| D6f-4 | This requirement | §0 row, these sections, notes, reviews; the §D6.6 Q-D6-2 record corrected (SA change 12) |
+| — | `stripe.md`, `email.md`, `google.md`, `llm-providers.md`, `vercel-ops`, `supabase-ops`, `env-drift-audit`, `env-change-protocol`, `devops.md`, `CLAUDE.md`, `lib/admin/environment/catalogue.ts`, all application code | **Not edited** |
+
+**Follow-ups.** These go in the requirement only, never in the skill text (the skill names FU IDs as pointers only), and are stated neutrally:
+- **FU-D6f-a** (decision for TL and the user; SA review required either way): the QStash queue path.
+  - **Remove option, in this order:** confirm in the console that no schedules exist, deleting any after recording them; remove the publisher and the receiver route; then remove the four names from every target. The keys go last, because the build needs them while the route exists. The schedule column goes in its own migration.
+  - **Reachable option:** the receiver runs a different executor than a direct run (the scheduler's header already says so); that difference is part of the decision.
+- **FU-D6f-b** (Low, Dev): remove `updateRatesFromApi`, `fetchFromExchangeRateApi` and `fetchFromFixerIo`, and the two catalogue entries, in one PR. The drift guard fails if an entry is left with no reader.
+- **FU-D6f-c** (Low, Dev): make the catalogue's `AWS_REGION` role text match the code (an unset region disables Textract), or let the constructor accept an unset region. Pick one; the other stays as it is.
+- **FU-D6f-d** (Low, Dev): convert `lib/queues/qstashQueue.ts` and `app/api/cron/process-queue/route.ts` to Pino (CLAUDE.md § Logging), unless FU-D6f-a removes them first.
+- **FU-D6f-e** (Low, Dev): align the signing keys' catalogue `expectedIn` with QK-3 (required wherever the receiver route exists), and give `QSTASH_URL` `consumedBy: sdk` (QK-5), unless FU-D6f-a removes them.
+- **FU-D6f-f** (Low, Dev, only if confirmed): if the vendor reserves the `AWS_*` names so that a project-set value does not reach the function (QK-8), rename the three names the code reads, with their catalogue entries, in one PR.
+
+### D6f.4 Acceptance criteria
+
+- [ ] `queues-and-keys.md` has the six parts, plus tiers and order. It is organised by QS-R, QS-P, TX, PX and FX. Every file path it names exists at the base. It states the Q-D6-2 live check by role, the QK-2 result as ruled under Q-D6f-1 (QS-P "not in use"), and FX as "not in use". `wc -l` ≤ 180.
+- [ ] Each probe names who runs it, its pass, what it shows when wrong, its precondition and its side effects. None enqueues an agent run, needs DO to hold a key, or prints a value. P-QK-3, P-QK-5 and P-QK-7's optional trigger are marked optional and user-approved, and declare their billed calls. P-QK-4 does not exist. P-QK-3 requires a zero-byte body and treats a 2xx as a fail.
+- [ ] The callback address is a pointer to `domains.md` AD-2, not restated. The restatement grep from §D6.4 over the new file returns 0, or each hit is a pointer.
+- [ ] Every quoted string from tracked code is verbatim in its cited file (`grep -cF` ≥ 1), with its module or service. Every SDK string is marked "SDK text, confirm at use time". No quoted string comes from a file without a live caller: `grep -nF` over the new file for "QStash queue unavailable", "Manual execution queued", "Failed to queue agent job", "Failed to queue agent execution" and "QSTASH_TOKEN environment variable is not set" returns 0.
+- [ ] No sentence says the receiver route returns 500 or "goes down" for a missing key. The readers row says only "wrapped in `verifySignatureAppRouter`" (SA change 3).
+- [ ] **Public repo:** the finding-11 regex over the added lines returns 0. QA also greps the new file for `vercel\.app`, `\.vercel\.`, `agents?pilot\.[a-z]`, `upstash\.io`, `amazonaws`, `pexels\.com`, `arn:`, `AKIA`, `us-[a-z]+-[0-9]`, `localhost:`, `https?://` and line references: 0 hits. The file holds no account, principal, schedule or message identifier, no region value, no URL, no key prefix, and no statement of what is set, missing or open today.
+- [ ] The SKILL.md diff is only D6f-2. The `domains.md` diff is only D6f-3. The diff touches only the D6f.3 files.
+
+### D6f.5 Open questions for SA
+
+All answered by SA Review — DO-6f (2026-11-03).
+
+- [x] **Q-D6f-1: Is the QStash publisher reached?** (QK-2) **SA: no.** Ship the QStash coverage now, narrowed to QS-R in full; QS-P is one "not in use" row with no probe, no quoted string and no environment rule beyond FU-D6f-a; the account rule stays in (1); P-QK-4 deleted; T-QK-5 a Low code check; the callback address a pointer for schedules only; the main session corrects its Q-D6-2 record. (raised by: BA | status: resolved)
+- [x] **Q-D6f-2: File name and prefix.** **SA: agreed.** `queues-and-keys.md`, prefix `QK`, tags QS-R, QS-P, TX, PX, FX. (raised by: BA | status: resolved)
+- [x] **Q-D6f-3: The console-published signed probe (P-QK-3).** **SA: allowed, optional, user-run, and only when there is something to check** (after a roll or key change, or while a schedule is recorded; otherwise "not probed (nothing signs to this receiver)"), with a zero-byte body. (raised by: BA | status: resolved)
+- [x] **Q-D6f-4: Are the signing keys required?** (QK-3) **SA: required, and it surfaces at build.** "Required on every Vercel target while the receiver route exists. Without either one, the build fails." Catalogue not edited (FU-D6f-e). P-QK-2 still runs. (raised by: BA | status: resolved)
+- [x] **Q-D6f-5: How to treat the FX-rate providers.** **SA: agreed as suggested.** (raised by: BA | status: resolved)
+- [x] **Q-D6f-6: The pointer in `domains.md` §7 step 5.** **SA: yes**, the one phrase as D6f-3 words it; nothing else in `domains.md` changes. (raised by: BA | status: resolved)
+- [x] **Q-D6f-7: A billed Textract probe.** **SA: allowed, surface confirmed:** `document-extractor` is a system plugin with a platform key and needs no connection; the plugin tester runs it through `POST /api/plugins/execute`, which writes no row for a run by the signed-in user; up to two billed calls, a single-page image, `use_ai` unset, evidence from logs only; no tester on the target is "not probed (no surface)". (raised by: BA | status: resolved)
+- [x] **Q-D6f-8: A Pexels probe.** **SA: agreed.** A traffic read is the probe; one generation is optional and user-approved, with its LLM spend and media writes declared; plus the "not conclusive" state. (raised by: BA | status: resolved)
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -2110,6 +2306,9 @@ The file is `.claude/skills/third-party-ops/domains.md` (Q-D6e-1). It opens with
 | 2026-11-03 | DO-6e spec + SA short pass | After a live check, the user narrowed DO-6e to the three app address names plus a checklist for attaching a custom domain. BA spec (AD-1..9, P-AD-1..8, T-AD-1..9); SA approved with 20 changes and ruled Q-D6e-1..8, including the one-sentence SKILL.md §3 correction. |
 | 2026-11-03 | DO-6e build | `domains.md` (137 lines) + SKILL.md §3 sentence, §5 row and triggers; spec with SA changes 1–20 applied; services-live check recorded; follow-ups FU-D6e-a..d. |
 | 2026-11-03 | DO-6e SA code review + QA | SA approved with three text fixes. QA: 19 checks, failed only the read-through for current-configuration wording (two Mediums: a Change History sentence and quotes of removed phrases in the SA sections). Main session applied SA fixes 1–3 and QA Medium 1–2; finding-11 regex and the read-through re-run clean. Low 2 accepted; Low 3 (sync with main) done at commit. |
+| 2026-11-03 | DO-6f spec + SA short pass | BA spec for queues, AWS and small API-key providers; SA approved with 13 changes (5 High, 6 Medium, 2 Low) and ruled Q-D6f-1 to Q-D6f-8. No code path reaches the QStash publisher, so QStash coverage is narrowed to the receiver, its signing keys and schedules; the Q-D6-2 record is corrected. |
+| 2026-11-03 | DO-6f build | New `queues-and-keys.md` (128 lines), SKILL.md §5 row and triggers, one phrase in `domains.md` §7 step 5; spec with SA changes 1–13 applied. See [DO-6f implementation notes](#do-6f-implementation-notes). |
+| 2026-11-03 | DO-6f SA code review + QA | SA approved with five text fixes: P-QK-3 now tells a key mismatch from a match by the receiver's log line (the SDK answers a bad signature with 500, not 403), plus wording fixes. QA: 25 checks; one Medium (review and notes wording) and three Lows, all fixed by the main session; re-run clean. |
 
 ---
 
@@ -4811,3 +5010,341 @@ Fixes 1–3 are text only and need no SA re-review; QA confirms them, re-running
 - **Low 3:** `origin/main` moved past the base; sync before the PR. Not a defect in the slice.
 
 **Verdict:** FAIL on the read-through (check 17) as first run; PASS after the main session applied Medium 1–2 and Low 1. Re-run of check 12 and the read-through: see the Change History row for 2026-11-03 "DO-6e SA code review + QA".
+
+---
+
+## SA Review — DO-6f (short pass)
+
+**Reviewed by SA — 2026-11-03**
+**Verdict: APPROVED WITH CHANGES.** The scope, the four-service split, the `QK` prefix, the boundary (callback address is `domains.md`'s, our own shared secrets out, FX as "not in use") and the public-repo criteria are right. QK-6, QK-7, QK-9 to QK-12 hold as written, with small precisions below. Four things would have made the skill wrong:
+
+- **QK-2 is confirmed: the QStash publisher is not reached.** The file must not teach probes, drift reads or quoted strings for a branch that never runs. The spec's own rule ("no quoted string comes from code that has no live caller") already forbids every run-agent queue string it quotes.
+- **A missing signing key fails the build, not the route.** The SDK wrapper throws when it is created, and `next build` evaluates route modules while collecting page data (`.github/workflows/build.yml` says exactly this, and sets placeholder signing keys for that reason). So a deployment with a missing key never becomes Ready. P-QK-2's "a 500 means a signing key is missing" can never be observed.
+- **P-QK-3 is safe only with a zero-byte body.** An empty body makes the handler's JSON parse throw before anything is written. A body that parses as JSON (even `{}`) goes into the job processor, which writes. The spec says "empty body", but it does not forbid the alternatives or explain why.
+- **P-QK-5 reads the response as evidence, and the response is not evidence.** The image-path error "OCR extraction failed …" is caught inside `extract()`, logged as "DeterministicExtractor: Extraction failed", and returned as a failure result. The executor then fills defaults. Also, `use_ai: true` switches OCR off, and that error is not a credential fault.
+
+None of this needs a decision from the user. Required changes 1–13 below fix it. FU-D6f-a stays a decision for TL and the user, as the spec proposes.
+
+I reviewed this in the DO-6f worktree at `4c389406` (= `origin/main`). I reviewed it against §D6f, SA Review — DO-6 changes 1–7, the DO-6c to DO-6e short passes, `third-party-ops` `SKILL.md` and `domains.md`, and the installed `@upstash/qstash` **2.8.4** (read only, from the shared `node_modules`). No platform call, no SQL, no vendor call and no network call was made, and no `.env*` file was opened. Local reads and `git grep` at `origin/main` only.
+
+### Code claims (QS / TX / PX / FX table, QK-1 to QK-12)
+
+| # | Result | Correction for `queues-and-keys.md` |
+|---|---|---|
+| Names and catalogue | **Verified.** All eight are optional everywhere: `secret()` and `config()` default to `OPTIONAL`, and the two signing keys carry `consumedBy: sdk`. `@aws-sdk/client-textract` is the only `@aws-sdk/*` dependency. | — |
+| Readers, TX | **Verified, and the "Dev confirms" point is settled.** `lib/pilot/StepExecutor.ts` reaches the extractor through `executeDeterministicExtraction` (step type `deterministic_extraction`). It is a second live entry point. | Change 11 |
+| QK-1 | **Code is verified, but it is in the unreached branch** (QK-2). Its warn string cannot be quoted in the file. | Change 1 |
+| QK-2 | **Confirmed.** `shouldExecute` starts true. The pilot path either sets `executionResult` (typed `Promise<WorkflowExecutionResult>`), returns 500, or falls through to AgentKit on "disabled". AgentKit either sets `executionResult` (typed `Promise<AgentKitExecutionResult>`) or returns 500. The `if (executionResult)` block returns in every branch: the normal return, the logging-failure return, or a rethrow. So `if (use_queue)` is reached only if an executor resolves to a falsy value, which neither one's type allows. `addManualExecution` has one caller, inside that branch. `addScheduledExecution` is called only by `agentQueue.add` in the same module, and `agentQueue` has no importer. `cancelJobsForAgent` has no caller. The receiver imports only a type from the module. The scheduler's header says it no longer dispatches through QStash. | Change 1 (Q-D6f-1) |
+| QK-3 | **Corrected.** In 2.8.4, `verifySignatureAppRouter` throws "currentSigningKey is required, …" or "nextSigningKey is required, …" **when the wrapper is created**. That happens at module evaluation, because `POST` is built at module scope. `next build` evaluates route modules while collecting page data, so a missing key fails the **build**. Once loaded, the wrapper answers a request with no signature header with 403 "`Upstash-Signature` header is missing", and does so before it reads the body. A signature that does not verify gets 403 "invalid signature". Both 403 strings are present in the ESM and CJS builds. | Changes 2, 3, 4 |
+| QK-4 | **Verified.** The callback address is `platformOrigin()` plus the receiver path, and on a Preview it is the deployment's host (`domains.md` AD-2). The schedule link is the `agents.qstash_schedule_id` column. **Add:** nothing at `origin/main` creates or deletes a schedule (no live caller of `addScheduledExecution` or `cancelJobsForAgent`). Any schedule found in the console is therefore a leftover, and it still delivers to the receiver. | Change 6 |
+| QK-5 | **The text is verified, but it is in the unreached path.** **SDK point settled for 2.8.4:** the client reads `QSTASH_URL` from the environment as its base address (the app never passes it), plus `UPSTASH_DISABLE_TELEMETRY`. Keep "confirm for the installed version at use time". | Changes 1, 10 |
+| QK-6 | **Verified:** 9 and 16 lines with `console.*`. `run-agent`, `TextractClient`, `DeterministicExtractor`, `StockImageService`, `CurrencyService` and the extractor executor have 0. | — |
+| QK-7 | **Verified.** The constructor requires all three names, so the region fallback inside `analyzeDocument` is unreachable. | — |
+| QK-8 | **Verified as a catalogue fact.** Also unsettled: whether a **project-set** `AWS_*` value reaches the function, or a runtime value shadows it, is a vendor fact. So "set by the project" is not proof either. | Change 8 |
+| QK-9 | **Verified, all strings verbatim with their modules**: "Textract analysis failed" and "Textract analysis complete" (`TextractClient`); "DeterministicExtractor: Textract fallback failed, attempting LLM with PDF text only" (`DeterministicExtractor`); the thrown "OCR extraction failed - check AWS Textract configuration". **Precision:** that throw is caught in `extract()`, logged as "DeterministicExtractor: Extraction failed" (`DeterministicExtractor`, `error`, message in `err`), and returned as a failure result. It never surfaces as a response error. With `use_ai: true` the executor sets `ocrFallback: false`, and an image throws "Image extraction requires OCR - enable ocr_fallback" instead. | Change 7 |
+| QK-10 | **Verified.** Credentials are passed explicitly, and only `AnalyzeDocumentCommand` with `FORMS` and `TABLES` is used. | — |
+| QK-11 | **Verified, all three strings verbatim** (service `StockImageService`; debug, warn with `status`, info). **Precision:** a photograph already in the business's media library is reused through `findBySourceRef` without an adopt line, and the gallery search's refusal (`findPhotos`) logs nothing. | Change 9 |
+| QK-12 | **Verified.** `updateRatesFromApi` has no caller, the header says "UNWIRED" and "must NOT be wired again", and `CurrencySelector.tsx` is `'use client'` and imports the service. | — |
+
+### Rulings on Q-D6f-1 to Q-D6f-8
+
+- **Q-D6f-1: the publisher is not reached. Ship the QStash coverage now, narrowed to the receiver, the signing keys, and the schedules and dead-letter queue.** Do not wait for FU-D6f-a. The receiver is deployed, it answers the public internet, its keys are a build dependency of every deployment (change 2), and any leftover schedule still delivers to it. In the file:
+  - Split QS into **QS-R** (receiver: the two signing keys, the schedules, the dead-letter queue), covered in full, and **QS-P** (publisher: token, URL, callback address).
+  - QS-P is one row: "not in use: the publisher is not reached by a live path at `origin/main` (QK-2)". It has no probe, no quoted string and no environment rule beyond "whether to keep these is FU-D6f-a's decision". The account rule (token, URL and keys from one account) stays in (1), because it decides whether a future publisher's messages verify.
+  - P-QK-4 is deleted. T-QK-5 becomes a Low code check in the T-QK-11 form (change 1).
+  - The callback address stays a pointer to `domains.md`, for the schedules only.
+  - The main session corrects its Q-D6-2 record (change 12).
+- **Q-D6f-2: agreed.** `queues-and-keys.md`, prefix `QK`, service tags QS-R, QS-P, TX, PX and FX. Index label as in D6f-2.
+- **Q-D6f-3: allowed, optional, user-run, and only when there is something to check.** Run it after a roll or a key change, or while a schedule is recorded. Otherwise "not probed (nothing signs to this receiver)". It needs a **zero-byte** body (change 5).
+- **Q-D6f-4: required, and it surfaces at build.** The file says "both signing keys are required on every Vercel target while the receiver route exists. Without either one, the build fails (QK-3)". (change 3). The catalogue is not edited (FU-D6f-e). P-QK-2 still runs, to prove the 403 path on a Ready deployment.
+- **Q-D6f-5: agreed as suggested.** One "not in use" row, no probe, T-QK-11 at Low, and FU-D6f-b removes the fetchers and both catalogue entries together.
+- **Q-D6f-6: yes.** One phrase in `domains.md` §7 step 5, as D6f-3 words it. This pass is the ruling. Nothing else in `domains.md` changes.
+- **Q-D6f-7: allowed, and the surface is confirmed.**
+  - `document-extractor` is `isSystem` with `auth_type: platform_key`, so the access resolver gives it a virtual connection, and no connection is needed.
+  - The plugin tester runs it through `POST /api/plugins/execute`, which writes no row for a run by the signed-in user. Only an admin act-as run is audited.
+  - Up to two billed calls, a single-page image, `use_ai` left unset, and the evidence from logs only (change 7).
+  - Whether the tester page is served on the target deployment is found at use time. Otherwise "not probed (no surface)".
+- **Q-D6f-8: agreed. The probe is a traffic read, and one generation is optional and user-approved,** with its LLM spend and its media writes declared. Add the "not conclusive" state (change 9).
+
+### Probe check (can fail, no money, durable writes declared, precondition becomes "not probed")
+
+| ID | Can fail | Money | Durable writes | Precondition → not probed | Ruling |
+|---|---|---|---|---|---|
+| P-QK-1 | Yes, for presence; never for TX | None | None | Admin session | OK |
+| P-QK-2 | Yes | None | None: the SDK refuses the request before the handler reads the body | Declared | Change 4 (fail wording) |
+| P-QK-3 | Yes | One or more billed messages | **None with a zero-byte body.** A JSON body is processed and writes | **Missing:** "nothing signs to this receiver" | Change 5 |
+| P-QK-4 | Not in a live path | — | — | — | Deleted (change 1) |
+| P-QK-5 | Yes, once the evidence is fixed | ≤ 2 billed calls (declared) | None (self-run) | Declared, plus no surface | Change 7 |
+| P-QK-6 | Yes | None | None | Recorded principal | OK |
+| P-QK-7 | Yes | Optional trigger: LLM spend and credits (declared) | Optional trigger: page content, one photograph and its media row (declared) | Declared | Change 9 |
+| P-QK-8 | Yes | As the probes it uses | As the probes it uses | As the probes it uses | Drop TX and PX double-run wording only if the vendor offers no overlap; otherwise OK |
+
+### Public-repo check
+
+- **No identifier, host, URL, region value, key prefix or current-configuration statement** appears in the public part. "Recorded intent" and "as recorded" are rules, not states.
+- **One rule for the receiver keys** everywhere: "required on every Vercel target while the receiver route exists" (change 3).
+- **The acceptance grep** also adds the quoted queue strings from `run-agent` (change 1).
+
+### New pattern and CI time (CLAUDE.md rule 7)
+
+- **No new pattern:** one reference file, one index row with its triggers, and one ruled phrase in `domains.md`, in the DO-6b to DO-6e shape.
+- **No added CI time:** no job, workflow or test.
+
+### Required changes
+
+1. **[Q-D6f-1: QK-1, QK-2, QK-5, parts (1), (4), (5), (6), (7)] The publisher is not reached.**
+   - **QS-P:** one "not in use" row, as ruled.
+   - **Quoted strings:** remove every quoted string from the queue branch and from `qstashQueue.ts` ("QStash queue unavailable …", "Manual execution queued", "Failed to queue agent job", "Failed to queue agent execution", "QSTASH_TOKEN environment variable is not set").
+   - **P-QK-4:** delete it.
+   - **T-QK-5:** becomes Low, "Code at `origin/main`", DO, repo read. Check that the `run-agent` queue branch still follows the unified path's returns, and that `addManualExecution`, `addScheduledExecution` and `cancelJobsForAgent` still have no live caller (reader search). A live caller means this file needs publisher probe rows before merge.
+   - **Gotchas:** the "fallback hides missing names", "token reset cut-over" and "queued run stays pending" gotchas collapse into one: "the publisher is not reached (QK-2); a `use_queue: true` request runs inline".
+   - **(7):** the token-reset row becomes "no live path reads it; production tier only because the account is shared; no probe".
+   - **D6f.4:** the grep for the removed strings over the new file returns 0.
+
+   Pass: no queue-branch string in the file, and no probe or drift row on the publisher apart from the T-QK-5 code check. — Priority: High
+2. **[QK-3, Q-D6f-4, (1), T-QK-2, gotcha 3, (7)] A missing key fails the build.**
+   - **QK-3 and gotcha:** "without either key, `next build` fails while collecting page data. The SDK's error names the missing key (SDK text, confirm at use time)."
+   - **(7):** a new row, "Removing a signing key from a target: only after FU-D6f-a removes the receiver route. Before that, the target's next deploy fails". This is production tier on production.
+   - **T-QK-2:** High: both keys present on every Vercel target, and P-QK-2 passing there.
+
+   Pass: no sentence says the route returns 500 or "goes down" for a missing key. — Priority: High
+3. **[D6f.1 readers, QK-3, (1), T-QK-2, Q-D6f-4 text] One wording for the receiver keys.** It is "required on every Vercel target while the receiver route exists". Pass: the readers row says only "wrapped in `verifySignatureAppRouter`".
+4. **[P-QK-2] Fail wording.** Replace "A 500 means the route did not load, for example a signing key is missing (QK-3)" with "any other answer is a fail: record the status and stop". A protection 401 stays "not probed (protected host)". Pass: present. — Priority: Medium
+5. **[P-QK-3, Q-D6f-3] Make it safe as well as specified.**
+   - **Precondition:** P-QK-2 passed; a roll or key change was just made, or a schedule is recorded. Otherwise "not probed (nothing signs to this receiver)".
+   - **Body:** zero bytes. Never `{}` or any JSON: "a body that parses as JSON is processed as a job".
+   - **Pass:** the delivery status is not 403. The expected status is 500, because the handler cannot parse an empty body.
+   - **Fail:** 403 "invalid signature" (SDK text). A 2xx is also a fail: stop, and report to the main session.
+   - **Side effects:** retries set to 0 where offered. Otherwise up to the vendor's default retry count plus one deliveries, each billed, each one unstructured receiver error line (QK-6), and a dead-letter entry that the user deletes. No row is written, no agent runs.
+
+   Pass: all present. — Priority: High
+6. **[QK-4, T-QK-4, (1) schedules row] Leftover schedules.**
+   - **Code fact:** nothing at `origin/main` creates or deletes a schedule (QK-2 reader result).
+   - **Expected:** none unless recorded.
+   - **Class:** T-QK-4 becomes **High** for any unrecorded schedule, because it delivers to the receiver, which runs that agent.
+   - **Second live read in T-QK-4:** the main session, read-only under `supabase-ops`, counts `agents` rows with a non-null `qstash_schedule_id`. Count only, no identifiers. Expected 0 unless recorded.
+
+   Pass: present. — Priority: Medium
+7. **[P-QK-5, Q-D6f-7] The evidence comes from logs only.**
+   - **Parameters:** one field, an explicit image `mime_type`, `use_ai` left unset.
+   - **Pass:** "Textract analysis complete" ≥ 1, "Textract analysis failed" = 0 (`TextractClient`), and no "DeterministicExtractor: Extraction failed" after the probe time.
+   - **Fail:** "Textract analysis failed" ≥ 1; or "DeterministicExtractor: Extraction failed" whose error carries "OCR extraction failed - check AWS Textract configuration", while "Textract analysis complete" = 0.
+   - **Not conclusive:**
+     - "Textract analysis complete" ≥ 1 but the OCR error appears: "not conclusive (no readable text)";
+     - "Image extraction requires OCR - enable ocr_fallback": "not conclusive (OCR off)";
+     - no surface: "not probed (no surface)".
+   - **The tester's response is not evidence:** a failure result is returned, and the executor fills defaults.
+   - **Side effects:** none written for a run by the signed-in user.
+
+   Pass: every quoted string verbatim with its module. — Priority: High
+8. **[QK-8, T-QK-6] "Set by the project" is not proof either.** Add: whether a project-set `AWS_*` value reaches the function, or a runtime value shadows it, is a vendor fact, confirmed at use time. T-QK-6's pass is names only. A correct credential is shown only by P-QK-5 on that target. If the vendor reserves these names, the remedy is a code rename. Add it to the requirement as a neutral FU, never in the skill. Pass: present. — Priority: Medium
+9. **[P-QK-7, T-QK-10, Q-D6f-8] The not-conclusive state.**
+   - 0 adopt lines and 0 refused lines is "not conclusive (no new search, or gallery only)". Reused photographs log no adopt line, and a refused gallery search logs nothing.
+   - The optional trigger is a section that is not yet illustrated, for a business the user owns.
+
+   Pass: present. — Priority: Medium
+10. **[QK-5, T-QK-3] SDK-implicit names.**
+    - **QK-5:** "In the installed version, the client reads `QSTASH_URL` from the environment itself (SDK fact, confirm at use time)".
+    - **T-QK-3:** derives the SDK-implicit names from the installed version at use time and lists none in the file.
+    - **FU-D6f-e:** also gives `QSTASH_URL` `consumedBy: sdk`.
+
+    Pass: present. — Priority: Low
+11. **[D6f.1 TX readers] Name both entry points:** `extract_structured_data` in the extractor executor, and `executeDeterministicExtraction` in `StepExecutor.ts`. Remove "Dev confirms the call site". Pass: present. — Priority: Low
+12. **[Requirement §D6.6, Q-D6-2 record] The main session corrects the user's record,** confirming the wording with the user first. Suggested: "The main session confirmed that the QStash receiver is still deployed, so it stays in DO-6f. DO-6f found that the publisher is not reached (QK-2)." The DO-6f "Services live" line records the same, by role, with no target named. Pass: present before commit. — Priority: Medium
+13. **[FU-D6f-a] Order and content, stated neutrally.**
+    - **Remove option, in this order:** confirm in the console that no schedules exist, deleting any after recording them; remove the publisher and the receiver route; then remove the four names from every target. The keys go last, because the build needs them while the route exists. The schedule column goes in its own migration.
+    - **Reachable option:** must note that the receiver runs a different executor than a direct run. The scheduler's header already says so, so this is public.
+    - **SA review required** either way.
+
+    Pass: present in the requirement, absent from the skill. — Priority: Medium
+
+### Checked and honoured
+
+- **DO-6 changes 1–7:**
+  - after changes 1, 5 and 7, every probe has a precondition or reads "not probed";
+  - Local is guidance only;
+  - expected names come from the catalogue groups, and callers come from the reader search;
+  - the T-QK rows live in this file.
+- **DO-6c to DO-6e lessons:**
+  - each probe has an exact pass, an exact fail and declared side effects;
+  - none passes on an unset value (P-QK-1 is presence only);
+  - every quoted tracked string is verbatim with its module;
+  - after change 1, none comes from code with no live caller.
+- **Probe safety:**
+  - no probe enqueues an agent run or moves money beyond declared vendor usage;
+  - none needs DO to hold a key, and none prints a value;
+  - P-QK-3 writes nothing once its body is zero bytes.
+- **Tiers:** every production or shared-account change is production tier and executed by the user. A non-production-only account change is reversible.
+
+### Dev may build when
+
+- [ ] Changes 1–11 and 13 are applied to the spec text (BA or the main session).
+- [ ] The main session has done the Q-D6-2 live check by role and recorded it in the DO-6b form. Change 12 is applied, or confirmed with the user, before commit.
+- [ ] D6f-2 (SKILL.md: the §5 row and the triggers only) and D6f-3 (the one `domains.md` phrase) are as ruled. No other file in the third-party-ops skill is edited.
+- [ ] `wc -l` ≤ 180, and the public greps in D6f.4 (plus changes 1 and 3) return 0.
+
+### Approval
+
+[x] Spec approved with changes 1–13. No user decision is needed for the slice. FU-D6f-a goes to TL as a decision for the user.
+
+---
+
+## DO-6f implementation notes
+
+**By Dev — 2026-11-03.** Worktree `.claude/worktrees/do6f-queues`, branch `feature/devops-third-party-queues`, base `4c389406` (= `origin/main`). Nothing committed or stashed. No `.env*` file opened, no network or platform call.
+
+### What was built
+
+| File | Change | Lines |
+|---|---|---|
+| `.claude/skills/third-party-ops/queues-and-keys.md` | New. Intro, live-check line, QS-R / QS-P / TX / PX / FX table, boundary; §1–§6 of the template; §7 tiers and order. LF line endings | 128 |
+| `.claude/skills/third-party-ops/SKILL.md` | D6f-2 only: the §5 row now reads "Queues, AWS and small API-key providers: QStash, AWS Textract, Pexels, exchange-rate keys" → `[queues-and-keys.md](queues-and-keys.md)`; the description gains the D6f-2 triggers, inserted before "a vendor dashboard" | 86 (unchanged count; 2 lines changed) |
+| `.claude/skills/third-party-ops/domains.md` | D6f-3 only: §7 step 5 "queue callback targets (DO-6f, "not audited" until covered)" → "queue schedules and callback targets (`queues-and-keys.md`)" | 137 (unchanged count; 1 line changed) |
+
+`git diff --stat`: SKILL.md 2 lines, domains.md 1 line; the two edited files keep their CRLF working-tree endings (index is LF, `core.autocrlf=true`), so the diff is exactly the edited lines.
+
+**Verbatim checks** (`git grep -c -F` at `HEAD`, each ≥ 1 in its cited file): "Textract analysis failed", "Textract analysis complete" (`TextractClient.ts`, module `TextractClient`); "DeterministicExtractor: Textract fallback failed, attempting LLM with PDF text only", "DeterministicExtractor: Extraction failed", "OCR extraction failed - check AWS Textract configuration", "Image extraction requires OCR - enable ocr_fallback" (`DeterministicExtractor.ts`, module `DeterministicExtractor`); "No PEXELS_API_KEY; section will have no image" (debug), "Stock library refused the search" (warn, `status`), "Adopted a photograph for a section" (info) (`StockImageService.ts`, service `StockImageService`); "UNWIRED" (`CurrencyService.ts`). The header's "must NOT be wired again" spans two source lines, so the file paraphrases it ("forbids wiring them again") rather than quoting it. SDK strings ("`Upstash-Signature` header is missing", "invalid signature") are marked "SDK text, confirm at use time". Every path named in the file exists at the base, including `/test-plugins-v2` and `app/api/plugins/execute/route.ts`.
+
+### SA changes 1–13 → where they land
+
+| SA item | Where in `queues-and-keys.md` (or elsewhere) |
+|---|---|
+| 1. Publisher not reached | Table row QS-P "Not in use … (QK-2). No probe"; §1 row "QS-P token and URL"; §2 QK-1 (described, no string) and QK-2; §4 closing line "P-QK-4 is not used … QS-P and FX: not probed (no live path)"; §5 first gotcha ("a `use_queue: true` request runs inline"); §6 T-QK-5 rewritten as the Low code check; §7 row "QStash token reset: no live path reads it; production tier only because the account is shared; no probe". The five queue strings: 0 hits (grep below). The old fallback, cut-over and pending gotchas are gone |
+| 2. Missing key fails the build | §2 QK-3 ("`next build` … the deployment never becomes Ready"); §1 row "QS-R signing keys … the build fails"; §5 gotcha 2; §6 T-QK-2 High; §7 row "Removing a signing key from a target"; production tier bullet "removing any of these names from production" covers it on production. No 500 / "goes down" wording for a missing key |
+| 3. One wording for the receiver keys | Readers row says only "wrapped in `verifySignatureAppRouter`"; §1 says "every Vercel target while the receiver route exists". |
+| 4. P-QK-2 fail wording | §4 P-QK-2 Fails when: "Any other answer: record the status and stop"; protection 401 = "not probed (protected host)" |
+| 5. P-QK-3 safe and specified | §4 P-QK-3: precondition (P-QK-2 passed; roll/key change or recorded schedule; else "not probed (nothing signs to this receiver)"); zero-byte body, "Never `{}` or any JSON: a body that parses as JSON is processed as a job"; pass 500 plus the receiver's "Error processing job" line; fail a 500 with no such line and a `SignatureError` in the runtime logs; any other status a stop (SA Code Review — DO-6f fix 1); side effects: retries 0 or default retries plus one, each billed, each an unstructured receiver line (QK-6), dead-letter entry deleted by the user, no row, no run |
+| 6. Leftover schedules | §2 QK-4 (nothing creates or deletes; any schedule is a leftover and still delivers); §1 row "QS-R schedules"; §5 gotcha "Leftover schedules still deliver"; §6 T-QK-4 High, unrecorded schedule High, second read = main session read-only count of `agents` rows with non-null `qstash_schedule_id`, count only |
+| 7. P-QK-5 evidence from logs | §4 P-QK-5 parameters (one field, explicit image `mime_type`, `use_ai` unset), pass, fail as ruled; paragraph under the table: response not evidence, "not conclusive (no readable text)", "not conclusive (OCR off)"; precondition "not probed (no surface)"; side effects "nothing written for a self-run (never act-as)". Supporting fact in §2 QK-9 |
+| 8. Project-set is not proof | §2 QK-8 (shadowing is a vendor fact; only P-QK-5 shows a working credential); §5 gotcha "even 'set by the project' is not evidence"; §6 T-QK-6 "Names only". The rename remedy is FU-D6f-f in the requirement only, not in the skill |
+| 9. Pexels not-conclusive state | §4 P-QK-7 ("0 adopt and 0 refused: not conclusive (no new search, or gallery only)"; trigger = a section not yet illustrated, for a business the user owns); §6 T-QK-10; §2 QK-11 (reuse via `findBySourceRef` logs no adopt line; `findPhotos` refusal logs nothing) |
+| 10. SDK-implicit names | §2 QK-5 ("the client reads `QSTASH_URL` from the environment itself (SDK fact, confirm at use time)"); §6 T-QK-3 derives names at use time and lists none. FU-D6f-e (`consumedBy: sdk` for `QSTASH_URL`) is in the applied spec only |
+| 11. Both TX entry points | Service table row TX: `extract_structured_data` in the extractor executor and `executeDeterministicExtraction` in `StepExecutor.ts`; "Dev confirms" removed |
+| 12. Q-D6-2 record correction | Not in the skill. The applied spec's "Services live" line, dated 2026-11-03, and an italic correction on the Q-D6-2 row in §D6.6, both applied by the main session. |
+| 13. FU-D6f-a order and content | Applied spec, Follow-ups: remove option in the ruled order (schedules, then publisher and route, then names, keys last, column in its own migration), reachable option notes the different executor, SA review either way. Absent from the skill except as the pointer "FU-D6f-a's decision" |
+
+### Rulings Q-D6f-1 to Q-D6f-8 → where they land
+
+| Ruling | Where |
+|---|---|
+| Q-D6f-1 (publisher not reached; QS-R in full, QS-P one row) | As SA change 1 above; QS-R covered in §1, §3, §4 (P-QK-2, P-QK-3, P-QK-8), §5, §6 (T-QK-2/3/4), §7. The account rule kept in §1 "QStash account" |
+| Q-D6f-2 (name, prefix, tags) | File name `queues-and-keys.md`; IDs P-QK-n, T-QK-n, QK-n; tags QS-R, QS-P, TX, PX, FX in the service table; SKILL.md §5 label as D6f-2 |
+| Q-D6f-3 (P-QK-3 optional, user-run, only with something to check) | §4 P-QK-3 "Optional, user-approved, once", precondition as ruled |
+| Q-D6f-4 (required, surfaces at build) | §1 "Required on every Vercel target while the receiver route exists. Without either one, the build fails (QK-3)". P-QK-2 still runs |
+| Q-D6f-5 (FX not in use) | Service table FX row; §1 FX row; §4 "not probed (no live path)"; §5 last gotcha; §6 T-QK-11 Low; §7 "FX names removed … FU-D6f-b" |
+| Q-D6f-6 (domains.md pointer) | `domains.md` §7 step 5, the one phrase; the new file's §5 and §7 point back to it |
+| Q-D6f-7 (billed Textract probe, surface confirmed) | §4 P-QK-5: system plugin, no connection, `POST /api/plugins/execute`, self-run writes nothing, ≤ 2 billed calls, single-page image, `use_ai` unset, logs only, "not probed (no surface)" |
+| Q-D6f-8 (Pexels traffic read + optional generation) | §4 P-QK-7 and §6 T-QK-10, with LLM spend, credits and media writes declared |
+
+### Left out, and why
+
+- **P-QK-4** is not in the table (deleted by Q-D6f-1). The remaining probe IDs keep their numbers so the spec, the SA review and the file cite the same rows; one line in §4 says P-QK-4 is not used.
+- **QK-1 and QK-5 error/log strings** are not quoted (change 1): their code has no live caller. QK-1 is kept as one descriptive row so a reader knows why a `use_queue` request is not evidence.
+- **Follow-up content** (FU-D6f-a to FU-D6f-f) is in the applied spec only; the skill cites FU-D6f-a, -b and -c by ID as pointers, as the spec did.
+- **Length:** 128 lines, below the brief's ≈130–150 and the spec's 140–170 target, within the ≤ 180 cap. No probe or drift row was trimmed; the shortfall is prose (QS-P and FX are one row each).
+- **`docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`**: Dev did not edit it. The main session pasted the applied spec before `## Change History`, appended these notes and the SA review, and applied change 12 to §D6.6.
+
+### Checks run
+
+- Host, project-ID and team-ID grep over the three repo files: **0 hits**.
+- D6f.4 public grep over the new file (`vercel\.app`, `\.vercel\.`, `agents?pilot\.[a-z]`, `upstash\.io`, `amazonaws`, `pexels\.com`, `arn:`, `AKIA`, `us-[a-z]+-[0-9]`, `localhost:`, `https?://`, line references): **0 hits**.
+- The five removed queue strings over the new file: **0 hits**.
+- "500" in the new file: one hit, P-QK-3's ruled "expected 500: the handler cannot parse an empty body" (SA change 5); none for a missing key.
+
+---
+
+## SA Code Review — DO-6f
+
+**Code Review by SA — 2026-11-03**
+**Status:** 🔄 Fix Required (one High probe fix, one Medium wording fix, three Low text fixes; no re-review needed if applied as written). All five applied by the main session on 2026-11-03.
+
+Reviewed the uncommitted diff in the DO-6f worktree against base `4c389406`: the new `.claude/skills/third-party-ops/queues-and-keys.md` (128 lines), the `SKILL.md` diff (2 lines), the `domains.md` diff (1 line), and the requirement sections added (§0 DO-6 row, the §D6.6 Q-D6-2 correction, DO-6f Specification, two Change History rows, SA Review — DO-6f (short pass), DO-6f implementation notes). `origin/main` has moved past the base, but no file this slice cites changed. I used local reads, `git grep` at the base, and a read-only look at the installed `@upstash/qstash` 2.8.4. No platform, vendor or network call was made, and no `.env*` file was opened.
+
+### Results
+
+| # | Check | Result |
+|---|---|---|
+| 1 | SA short-pass changes 1–13 and rulings Q-D6f-1..8 | **All applied**, in the spec and in `queues-and-keys.md`. Changes 8 (FU-D6f-f) and 13 (FU-D6f-a) are in the requirement only. Change 12 is applied as an italic correction plus the services-live line. The user sees its wording at the diff step. One correction to the short pass itself: see fix 1 |
+| 2 | Code claims | **Verified at the base** with `git grep -cF` ≥ 1: all nine log and error strings with their modules; "UNWIRED"; both execution-path markers; `verifySignatureAppRouter`, `AWS_CAVEAT`, `executeDeterministicExtraction`, `extract_structured_data` (executor), `findBySourceRef`, `findPhotos`, `getBaseUrl`, `getQStashClient`, `tryTextract` and `handleImage`; 9 and 16 `console.*` calls; the scheduler's header; the build workflow's placeholder signing keys. Every path exists, including `app/test-plugins-v2` and `app/api/plugins/execute/route.ts`. **Two exceptions.** (a) The "invalid signature" 403 can never be returned in 2.8.4 (fix 1). (b) "The gallery path logs nothing" is too broad, because gallery adoptions log the adopt line (fix 3) |
+| 3 | Public repo | The skill file and `SKILL.md` are clean: no identifier, host, URL, account, region value or current-configuration statement. Some review and notes wording in the requirement needed tightening (fix 2) |
+| 4 | Probe safety | No probe runs an agent or prints a value, and none needs DO to hold a key. Money is declared vendor usage only. P-QK-3's zero-byte body writes nothing on either path, because the body is parsed before any write. **P-QK-3 cannot fail as written** (fix 1) |
+| 5 | Requirement edits | The spec sits before `## Change History`. The review and notes are at the end, with single `---` separators. `#do-6f-implementation-notes` resolves. The Q-D6-2 correction is accurate in substance, with one wording point (fix 5) |
+| 6 | Consistency | The `SKILL.md` §5 label and the triggers are exactly D6f-2. The `domains.md` phrase is exactly D6f-3. `domains.md` AD-2 and §2 (reader search), `vercel-ops` §3/§4, `supabase-ops` §2 and `env-drift-audit` §7 all exist and say what this file cites |
+
+### Code Review Comments
+
+1. **`queues-and-keys.md` QK-3, §1 and P-QK-3; the spec's QK-3, (1) and P-QK-3. P-QK-3 cannot fail.**
+   - **What the SDK does.** In 2.8.4, `Receiver.verify` returns `true` or throws `SignatureError`; it never returns `false`. `verifySignatureAppRouter` does not catch that throw. So a signature that does not verify gives a **500** before the handler runs, and the 403 "invalid signature" branch is unreachable.
+   - **Why the probe cannot fail.** With matching keys, the handler's `req.json()` fails on the empty body and the handler answers 500. So "not 403 (expected 500)" passes either way, and the short pass's "Can fail: Yes" for P-QK-3 was wrong.
+   - **What tells them apart.** The handler's "Error processing job" line (`console.error`, `app/api/cron/process-queue/route.ts`) is logged only when the handler ran. Exact text below. — Priority: High
+2. **`DEVOPS_AGENT_REQUIREMENT.md`, review and notes wording.** A few lines in the short-pass review and the implementation notes described the change 3 rewording in more detail than a public file needs. Reworded or removed. — Priority: Medium
+3. **`queues-and-keys.md` QK-11 and gotcha; spec gotcha. Gallery wording.** `imagesForSection` adopts through `adopt()`, which logs "Adopted a photograph for a section". Only the gallery's *refused search* (`findPhotos`) is silent. — Priority: Low
+4. **`queues-and-keys.md` §5, roll gotcha.** "until then a pass is 'not conclusive (overlap)'" reads as circular ("until P-QK-3 passes, a pass is not conclusive"). The ruled meaning is "before the redeploy". — Priority: Low
+5. **`DEVOPS_AGENT_REQUIREMENT.md` §D6.6, Q-D6-2 correction.** "That check was wrong" overstates it: the receiver is in use, and only the publisher is not. "Incomplete" is accurate. The dead-letter queue is also in scope. — Priority: Low
+
+### Optimisation Suggestions
+
+- T-QK-4's SQL count could add one state: if the read errors on the column, it is "not read (no column)", reported to the main session. The column appears in the data-export test's `agents` column list but in no tracked migration, so `business-os-schema-check` should confirm it at first use. This does not block.
+
+### Code Approved for QA: Yes, with fixes 1–5
+
+Fixes 1–5 are text only and need no SA re-review if applied verbatim. QA confirms them. After fix 1, QA re-runs `git grep -cF "Error processing job"` on the receiver route (expect 1) and checks that `grep -F "invalid signature"` returns 0 hits in the new file. After fix 2, QA re-runs the public read-through over the added requirement lines.
+
+---
+
+## QA Report — DO-6f
+
+**QA — 2026-11-03.** Test mode: full. Strategy: static checks (`test -e`, `git grep -F`, ID, anchor, line-ending and diff-placement checks) on a docs-and-skill slice. There is no app code to run. Base `4c389406` (= `origin/main`). No repo file edited, nothing stashed, no `.env*` opened, no network call.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `queues-and-keys.md` has the sibling intro sentence, the live-check line, the QS-R / QS-P / TX / PX / FX table, the boundary, §1–§6 and §7 tiers and order. 128 lines (cap 180; spec target about 130) | Pass |
+| 2 | Every path the new file names exists (15 repo paths: `app/api/cron/process-queue/route.ts`, `app/api/run-agent/route.ts`, `app/api/run-scheduled-agents/route.ts`, `lib/queues/qstashQueue.ts`, `lib/extraction/TextractClient.ts`, `lib/extraction/DeterministicExtractor.ts`, `lib/server/document-extractor-plugin-executor.ts`, `lib/pilot/StepExecutor.ts`, `lib/services/StockImageService.ts`, `lib/services/CurrencyService.ts`, `lib/admin/exchangeRates/ecbFeed.ts`, `components/settings/CurrencySelector.tsx`, `.github/workflows/build.yml`, `package.json`, `lib/admin/environment/catalogue.ts`; the pages `/admin/environment` and `/test-plugins-v2`; `app/api/plugins/execute/route.ts`; the sibling skills `vercel-ops`, `supabase-ops`, `env-drift-audit`, `env-change-protocol`) | Pass |
+| 3 | Every quoted string is verbatim in the named source (`git grep -c -F` = 1 in each): the 6 Textract/extractor strings, the 3 Pexels strings, "UNWIRED", "QUEUE-BASED EXECUTION PATH", "UNIFIED EXECUTION PATH", and the catalogue's "unset uses a default region" quoted in the spec. Modules match: `TextractClient` (module), `DeterministicExtractor` (module), `StockImageService` (service). Levels match (debug, warn with `status`, info, error with `err`) | Pass |
+| 4 | Every named symbol exists in the cited file (`tryTextract`, `handleImage`, `extract`, `isAvailable`, `analyzeDocument`, `imageForSection`, `imagesForSection`, `findBySourceRef`, `findPhotos`, `getBaseUrl`, `getQStashClient`, `addManualExecution`, `addScheduledExecution`, `cancelJobsForAgent`, `platformOrigin`, `updateRatesFromApi`, `extract_structured_data`, `executeDeterministicExtraction`, `AWS_CAVEAT`, `verifySignatureAppRouter`). The signing-key placeholders are in `build.yml`; `@aws-sdk/client-textract` is the only `@aws-sdk` dependency; 9 and 16 `console.*` calls confirmed | Pass |
+| 5 | The 5 removed queue strings over the new file (`grep -nF`): 0. "500" appears once, P-QK-3's ruled "expected 500"; no "goes down" | Pass |
+| 6 | IDs unique and contiguous: QK-1..12, T-QK-1..11, P-QK-1..3 and 5..8 (P-QK-4 retired by Q-D6f-1 and declared in §4). No duplicate definitions; every cited ID is defined; FU pointers a, b, c only | Pass |
+| 7 | Cross-references resolve: `vercel-ops` §3, §4; `supabase-ops` §2; `env-drift-audit` §7; `domains.md` §2 (reader search), §7 step 5 and AD-2; `SKILL.md` §5 | Pass |
+| 8 | Markdown links: the SKILL.md row link to `queues-and-keys.md` resolves; the new file has no links. Every added anchor in the requirement resolves (9 distinct, including `#do-6f-implementation-notes`). The one unresolved `](#…)` in the file is pre-existing prose in QA Report — DO-6d check 18 | Pass |
+| 9 | SKILL.md diff: the §5 row ("…: QStash, AWS Textract, Pexels, exchange-rate keys" → `[queues-and-keys.md](queues-and-keys.md)`) and the D6f-2 triggers verbatim, before "a vendor dashboard". Nothing else (numstat 2/2) | Pass |
+| 10 | `domains.md` diff is exactly one phrase (word diff: `+schedules and+`, `-(DO-6f, "not audited" until covered)-` → `+(\`queues-and-keys.md\`)+`), numstat 1/1 | Pass |
+| 11 | Requirement working tree: CR = LF = 5256, ends with CRLF. Two `---`/blank/`---` pairs (lines 4374, 4743) are pre-existing on `origin/main` (4176, 4545, offset +198); none in added text. numstat identical with `--ignore-cr-at-eol` (445/2). The 2 removed lines are the §0 DO-6 row and the Q-D6-2 row, both replaced | Pass |
+| 12 | Line endings, other files: SKILL.md and `domains.md` stay CRLF (86/86, 137/137). The new file is LF on disk, like DO-6e's at the same stage; git normalises it on add (`i/lf w/crlf` like its siblings) | Pass (note) |
+| 13 | Restatement grep from §D6.4 over the new file | Pass (0 hits) |
+| 14 | D6f.4 public grep over the new file (`vercel\.app`, `\.vercel\.`, `agents?pilot\.[a-z]`, `upstash\.io`, `amazonaws`, `pexels\.com`, `arn:`, `AKIA`, `us-[a-z]+-[0-9]`, `localhost:`, `https?://`, line references) | Pass (0 hits) |
+| 15 | Finding-11 regex over all added lines | 1 hit, pattern text inside a quoted grep command in the implementation notes, not an ID (Low 3, fixed) |
+| 16 | Broad grep over added lines: hosts, URLs, project and team IDs, key prefixes, account IDs, ARNs, region values, ports, personal paths | Pass: only the pattern lists in D6f.4 |
+| 17 | Read-through of the new file and spec for current-configuration wording | Pass. "At `origin/main` when this file was written … have a live path" is a code fact, not configuration. "This file states that shape, never whether it is in place" holds throughout. The Services-live line and the corrected Q-D6-2 row state code and deploy facts by role, with no target |
+| 18 | Read-through for any hint at an open weakness | **Fail (Medium 1)** on first run; pass after the fix |
+| 19 | D6f.4 criterion 1 (six parts, tags, paths, live check by role, QS-P and FX "not in use", ≤ 180) | Pass |
+| 20 | D6f.4 criterion 2 (probes: who, pass, fail, precondition, side effects; none enqueues a run, needs a key held by DO or prints a value; optional and user-approved; billed calls declared; no P-QK-4; zero-byte body; 2xx is a fail) | Partial: P-QK-7's optional trigger is marked optional but not user-approved (Low 1). The rest pass |
+| 21 | D6f.4 criterion 3 (the callback address is a pointer to `domains.md` AD-2) | Pass |
+| 22 | D6f.4 criterion 4 (verbatim strings with module; SDK strings marked; no queue-branch string) | Partial (Low 2); superseded by SA code review fix 1, which rewrote that cell with "confirm at use time" |
+| 23 | D6f.4 criterion 5 (no 500 or "goes down" for a missing key; readers row says only "wrapped in `verifySignatureAppRouter`") | Pass |
+| 24 | D6f.4 criterion 6 (public repo) | Pass with Low 3 explained |
+| 25 | D6f.4 criterion 7 (SKILL.md only D6f-2, `domains.md` only D6f-3, only the D6f.3 files touched) | Pass |
+
+### Findings
+
+**Medium 1: review and notes wording (check 18).** The skill file is clean. A few lines in the short-pass review and the implementation notes described the change 3 rewording in more detail than a public file needs, the same class as DO-6e Medium 2. The same lines as SA code review fix 2; fixed with that wording.
+
+**Low 1: P-QK-7's optional trigger is not marked user-approved** (D6f.4 criterion 2; the spec's P-QK-7 ended "User-approved, once"). Fix in `queues-and-keys.md`, P-QK-7 Probe column:
+`Optional trigger: the user illustrates one section not yet illustrated, for a business they own, through a generation surface found at use time` → `Optional, user-approved, once: the user illustrates one section not yet illustrated, for a business they own, through a generation surface found at use time`
+
+**Low 2: one SDK string lacked "confirm at use time"** (D6f.4 criterion 4). Superseded by SA code review fix 1, which rewrote the cell.
+
+**Low 3: one pattern-text hit** for the finding-11 regex: a quoted grep command in the implementation notes. Reworded to name the checks instead.
+
+**Low 4: one implementation note is inaccurate.** The spec's D6f-2 already lists "QStash or Upstash", so Upstash was not an extra. Fix in DO-6f implementation notes, What was built, SKILL.md row:
+`the description gains the D6f-2 triggers (plus "Upstash", as the brief asked), inserted before "a vendor dashboard"` → `the description gains the D6f-2 triggers, inserted before "a vendor dashboard"`
+
+**Notes, no action needed:**
+- The SKILL.md `description` grows from 1560 to 1816 characters. It was already past 1024 before this slice, and `github-ops` is too; earlier slices accepted it.
+- "UNWIRED" and the two run-agent block markers are quoted as location markers, not log strings. Their files have live callers, so the no-live-caller rule is not broken.
+- `origin/main` may move past `4c389406`. Sync before the PR.
+
+### Verdict
+
+**PASS WITH CHANGES.** All 7 D6f.4 criteria pass, two of them partially (Lows 1–2). Every path, string, symbol, ID, anchor, line-ending and diff-placement check passes. Medium 1 (check 18) must be fixed before commit. It is text only, in the requirement, with no change to the skill file. Lows 1 and 2 are one phrase each in `queues-and-keys.md`. Lows 3 and 4 are optional. After the fixes, re-run the read-through and the finding-11 grep.
+
+**After the fixes (main session, 2026-11-03):** Medium 1 and Lows 1, 3 and 4 applied; Low 2 superseded by SA fix 1. Re-run: `grep -F "invalid signature"` over `queues-and-keys.md` returns 0; `git grep -cF "Error processing job"` on the receiver route returns 1; the finding-11 regex over the added lines hits only the D6f.4 pattern lists; the read-through for current-configuration wording and for hints is clean. **Verdict after fixes: PASS.**
