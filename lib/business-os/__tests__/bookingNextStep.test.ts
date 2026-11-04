@@ -485,12 +485,39 @@ describe('the quote', () => {
   });
 
   it('refused is the owner’s move again, not the end of the job', () => {
-    for (const status of ['declined', 'expired']) {
-      expect(bookingNextStep({ ...held, proposalStatus: status })).toMatchObject({
-        whoseMove: 'owner',
-        actions: ['create_quote'],
-      });
-    }
+    expect(bookingNextStep({ ...held, proposalStatus: 'declined' })).toMatchObject({
+      whoseMove: 'owner',
+      labelKey: 'next.quote_refused',
+      actions: ['create_quote'],
+    });
+  });
+
+  /*
+   * ── EXPIRED IS NOT DECLINED, AND USED TO SAY IT WAS ───────────────────────
+   *
+   * The two shared a case, which was harmless only while nothing ever WROTE
+   * `expired`: the status sat in the union and the client's page worked expiry
+   * out live, so the branch was dead. The hourly sweep writes it now, and the
+   * card began telling owners "the quote was declined, you can send a new one"
+   * about a quote the client had simply never answered — a decision nobody
+   * made, and a recommendation to re-price work no one had objected to.
+   *
+   * Asserted separately from `declined` on purpose. Looping the two together
+   * is what let them drift into one meaning in the first place.
+   */
+  it('expired is its own state: nobody refused it, the clock ran out', () => {
+    const step = bookingNextStep({ ...held, proposalStatus: 'expired' });
+
+    expect(step).toMatchObject({ stage: 'proposal', whoseMove: 'owner' });
+    expect(step.labelKey).toBe('next.quote_expired');
+    expect(step.labelKey).not.toBe('next.quote_refused');
+  });
+
+  it('offers to extend a lapsed quote before offering to rewrite it', () => {
+    /* The cheap move first: the price is not what failed, the date is. */
+    const { actions } = bookingNextStep({ ...held, proposalStatus: 'expired' });
+
+    expect(actions).toEqual(['extend_quote', 'create_quote']);
   });
 
   it('claims nothing for a status nobody has decided the meaning of', () => {

@@ -8,6 +8,23 @@ import type { CallContext } from '@/lib/ai/providers/baseProvider';
 import { MemoryConfigService } from './MemoryConfigService';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'MemorySummarizer' });
+
+/**
+ * How many times an insert may be renumbered before the memory is given up on.
+ *
+ * `get_next_run_number` hands out a number and releases its advisory lock
+ * before the caller inserts, so two summarizations for the same agent can be
+ * handed the same one and the loser gets 23505 on
+ * `run_memories_agent_id_run_number_key`. Five attempts covers far more
+ * concurrent writers than the three call sites can produce.
+ */
+const MAX_RUN_NUMBER_ATTEMPTS = 5;
+
+/** Postgres unique_violation. */
+const UNIQUE_VIOLATION = '23505';
 
 export interface SummarizationInput {
   execution_id: string;
@@ -101,7 +118,7 @@ export class MemorySummarizer {
     let tokensUsed = { prompt: 0, completion: 0, total: 0 };
 
     try {
-      console.log(`🧠 [MemorySummarizer] Starting summarization for execution ${input.execution_id}`);
+      logger.info({ executionId: input.execution_id, agentId: input.agent_id }, 'Starting summarization');
 
       // Audit: Summarization started
       await this.auditTrail.log({
@@ -127,7 +144,7 @@ export class MemorySummarizer {
       const prompt = this.buildSummarizationPrompt(input, config);
 
       // 3. Call LLM to generate memory via ProviderFactory (handles token tracking)
-      console.log(`🤖 [MemorySummarizer] Calling ${config.model} for summarization...`);
+      logger.info({ model: config.model }, 'Calling model for summarization');
       const startTime = Date.now();
 
       // Get provider from factory for centralized token tracking
@@ -160,7 +177,7 @@ export class MemorySummarizer {
           completion: usage.completion_tokens || 0,
           total: (usage.prompt_tokens || 0) + (usage.completion_tokens || 0)
         };
-        console.log(`📊 [MemorySummarizer] Token usage:`, tokensUsed, `latency: ${latency}ms`);
+        logger.info({ tokensUsed, latencyMs: latency }, 'Summarization token usage');
       }
 
       // ProviderFactory returns OpenAI-compatible format
@@ -185,12 +202,12 @@ export class MemorySummarizer {
         memory.sentiment = 'neutral';
       }
 
-      console.log(`✅ [MemorySummarizer] Memory generated:`, {
-        summary_length: memory.summary.length,
+      logger.info({
+        summaryLength: memory.summary.length,
         sentiment: memory.sentiment,
-        has_patterns: Object.keys(memory.patterns_detected).length > 0,
-        has_suggestions: Object.keys(memory.suggestions).length > 0
-      });
+        hasPatterns: Object.keys(memory.patterns_detected).length > 0,
+        hasSuggestions: Object.keys(memory.suggestions).length > 0
+      }, 'Memory generated');
 
       // 4. Calculate importance score
       const importanceScore = this.calculateImportance(memory, input, importanceConfig);
@@ -198,11 +215,11 @@ export class MemorySummarizer {
       // 5. Save to database and get memory ID
       const memoryId = await this.saveMemory(input, memory, importanceScore);
 
-      console.log(`💾 [MemorySummarizer] Memory saved for run #${input.run_number}`);
+      logger.debug({ executionId: input.execution_id, memoryId }, 'Memory saved, generating embedding');
 
       // 6. Generate embedding immediately (async, non-blocking)
       this.generateEmbeddingAsync(memoryId, memory).catch((err) => {
-        console.error(`⚠️  [MemorySummarizer] Embedding generation failed (non-critical):`, err);
+        logger.error({ err, memoryId }, 'Embedding generation failed (non-critical)');
       });
 
       // Audit: Memory created successfully
@@ -265,7 +282,7 @@ export class MemorySummarizer {
       // Return token usage for tracking
       return { tokensUsed };
     } catch (error) {
-      console.error(`❌ [MemorySummarizer] Error summarizing execution:`, error);
+      logger.error({ err: error, agentId: input.agent_id, executionId: input.execution_id }, 'Error summarizing execution');
 
       // Audit: Memory summarization failed
       await this.auditTrail.log({
@@ -435,68 +452,142 @@ Response (JSON only):`;
   ): Promise<string> {
     const tokenCount = this.estimateTokens(memory.summary);
 
-    // Get next run_number atomically using database function
-    // This eliminates race conditions when multiple executions finish simultaneously
-    const { data: runNumberData, error: runNumberError } = await this.supabase
-      .rpc('get_next_run_number', { p_agent_id: input.agent_id });
+    // Numbering and insert are two round trips, and `get_next_run_number`
+    // releases its advisory lock before it returns — so between the two, a
+    // concurrent summarization for the same agent can be handed the same
+    // number and one of the inserts loses on
+    // run_memories_agent_id_run_number_key (23505). Three call sites fire
+    // summarization fire-and-forget (WorkflowPilot execute and resume,
+    // runAgentKit), so this happens in production.
+    //
+    // Migration 20261106 renumbers a colliding row inside the database, where
+    // the lock is still held at commit. This retry is what keeps the memory
+    // until that migration is applied, and costs nothing once it is.
+    let lastError: any = null;
 
-    if (runNumberError) {
-      console.error('❌ [MemorySummarizer] Error getting next run_number:', runNumberError);
-      throw runNumberError;
+    for (let attempt = 1; attempt <= MAX_RUN_NUMBER_ATTEMPTS; attempt++) {
+      const runNumber = await this.nextRunNumber(input.agent_id);
+
+      const { data, error } = await this.supabase
+        .from('run_memories')
+        .insert({
+          agent_id: input.agent_id,
+          user_id: input.user_id,
+          execution_id: input.execution_id,
+          run_number: runNumber,
+          run_timestamp: new Date().toISOString(),
+
+          summary: memory.summary,
+          sentiment: memory.sentiment,
+          key_outcomes: memory.key_outcomes,
+          patterns_detected: memory.patterns_detected,
+          suggestions: memory.suggestions,
+          user_feedback: input.user_feedback || null,
+
+          importance_score: Math.floor(importanceScore),
+          memory_type: 'run',
+          token_count: tokenCount,
+
+          model_used: input.model_used,
+          credits_consumed: input.credits_consumed,
+          execution_time_ms: input.execution_time_ms ? Math.floor(Number(input.execution_time_ms)) : null,
+          ais_score: input.ais_score ? Math.floor(Number(input.ais_score)) : null,
+
+          // Embedding will be generated immediately after save
+          embedding: null
+        })
+        .select('id, run_number')
+        .single();
+
+      if (!error) {
+        logger.info(
+          {
+            agentId: input.agent_id,
+            executionId: input.execution_id,
+            // What the row actually got: 20261106's trigger may have renumbered it
+            runNumber: data.run_number ?? runNumber,
+            requestedRunNumber: runNumber,
+            memoryId: data.id,
+            attempt
+          },
+          'Memory saved'
+        );
+        return data.id;
+      }
+
+      lastError = error;
+
+      if (error?.code !== UNIQUE_VIOLATION) {
+        logger.error(
+          {
+            err: error,
+            errorCode: error?.code,
+            errorDetails: error?.details,
+            errorHint: error?.hint,
+            agentId: input.agent_id,
+            userId: input.user_id,
+            executionId: input.execution_id,
+            runNumber
+          },
+          'Error saving memory to database'
+        );
+        throw error;
+      }
+
+      logger.warn(
+        {
+          errorCode: error.code,
+          errorDetails: error.details,
+          agentId: input.agent_id,
+          executionId: input.execution_id,
+          runNumber,
+          attempt,
+          maxAttempts: MAX_RUN_NUMBER_ATTEMPTS
+        },
+        'run_number was taken by a concurrent summarization, renumbering'
+      );
+
+      // Jittered, so two writers that collided do not collide again in step
+      await new Promise(resolve => setTimeout(resolve, 50 + Math.floor(Math.random() * 200)));
     }
 
-    // Ensure runNumber is an integer (Supabase RPC may return it as various types)
-    const runNumber = Math.floor(Number(runNumberData));
-    console.log(`📊 [MemorySummarizer] Got atomic run_number=${runNumber} for agent ${input.agent_id}`);
-
-    const { data, error } = await this.supabase
-      .from('run_memories')
-      .insert({
-        agent_id: input.agent_id,
-        user_id: input.user_id,
-        execution_id: input.execution_id,
-        run_number: runNumber,
-        run_timestamp: new Date().toISOString(),
-
-        summary: memory.summary,
-        sentiment: memory.sentiment,
-        key_outcomes: memory.key_outcomes,
-        patterns_detected: memory.patterns_detected,
-        suggestions: memory.suggestions,
-        user_feedback: input.user_feedback || null,
-
-        importance_score: Math.floor(importanceScore),
-        memory_type: 'run',
-        token_count: tokenCount,
-
-        model_used: input.model_used,
-        credits_consumed: input.credits_consumed,
-        execution_time_ms: input.execution_time_ms ? Math.floor(Number(input.execution_time_ms)) : null,
-        ais_score: input.ais_score ? Math.floor(Number(input.ais_score)) : null,
-
-        // Embedding will be generated immediately after save
-        embedding: null
-      })
-      .select('id')
-      .single();
-
-    if (error) {
-      console.error('❌ [MemorySummarizer] Error saving memory to database:', {
-        error,
-        errorMessage: error?.message,
-        errorCode: error?.code,
-        errorDetails: error?.details,
-        errorHint: error?.hint,
+    logger.error(
+      {
+        err: lastError,
+        errorCode: lastError?.code,
+        errorDetails: lastError?.details,
         agentId: input.agent_id,
         userId: input.user_id,
         executionId: input.execution_id,
-        runNumber
-      });
+        attempts: MAX_RUN_NUMBER_ATTEMPTS
+      },
+      'Error saving memory to database: run_number still taken after every attempt'
+    );
+    throw lastError;
+  }
+
+  /**
+   * Ask the database for this agent's next run_number.
+   *
+   * Advisory only. The answer can be stale by the time the insert lands (see
+   * `saveMemory`), which is why the caller retries and why migration 20261106
+   * has the final say inside the insert's own transaction.
+   *
+   * @private
+   */
+  private async nextRunNumber(agentId: string): Promise<number> {
+    const { data, error } = await this.supabase
+      .rpc('get_next_run_number', { p_agent_id: agentId });
+
+    if (error) {
+      logger.error({ err: error, agentId }, 'Error getting next run_number');
       throw error;
     }
 
-    console.log(`✅ [MemorySummarizer] Memory saved successfully with run_number=${runNumber}, id=${data.id}`);
-    return data.id;
+    // Supabase RPC may return it as various types
+    const runNumber = Math.floor(Number(data));
+    logger.debug({ agentId, runNumber }, 'Got next run_number');
+    return runNumber;
   }
 
   /**
@@ -538,7 +629,7 @@ Response (JSON only):`;
 
       return cost;
     } catch (error) {
-      console.error('❌ [MemorySummarizer] Error calculating cost:', error);
+      logger.error({ err: error, model }, 'Error calculating cost');
       // Fallback on error: gpt-4o-mini pricing
       return ((inputTokens / 1000000) * 0.15) + ((outputTokens / 1000000) * 0.60);
     }
@@ -553,7 +644,7 @@ Response (JSON only):`;
     }
 
     try {
-      console.log(`🔮 [MemorySummarizer] Generating embeddings for ${memoryIds.length} memories in batch...`);
+      logger.info({ memoryCount: memoryIds.length }, 'Generating embeddings in batch');
 
       // Load config
       const config = await MemoryConfigService.getEmbeddingConfig(this.supabase);
@@ -570,7 +661,7 @@ Response (JSON only):`;
           .in('id', batch);
 
         if (fetchError || !memories) {
-          console.error('❌ [MemorySummarizer] Error fetching memories batch:', fetchError);
+          logger.error({ err: fetchError }, 'Error fetching memories batch');
           continue;
         }
 
@@ -606,10 +697,10 @@ Response (JSON only):`;
             lastError = error;
             if (attempt < maxRetries) {
               const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
-              console.warn(`⚠️  [MemorySummarizer] Embedding API error (attempt ${attempt}/${maxRetries}), retrying in ${delayMs}ms...`);
+              logger.warn({ attempt, maxRetries, delayMs }, 'Embedding API error, retrying');
               await new Promise(resolve => setTimeout(resolve, delayMs));
             } else {
-              console.error(`❌ [MemorySummarizer] Failed to generate embeddings after ${maxRetries} attempts:`, error);
+              logger.error({ err: error, maxRetries }, 'Failed to generate embeddings after every attempt');
               throw error;
             }
           }
@@ -622,10 +713,13 @@ Response (JSON only):`;
         // Validate dimensions
         const expectedDimensions = config.dimensions || 1536;
         if (response.data[0].embedding.length !== expectedDimensions) {
-          console.warn(
-            `⚠️  [MemorySummarizer] Embedding dimension mismatch! ` +
-            `Expected ${expectedDimensions}, got ${response.data[0].embedding.length}. ` +
-            `Update memory_embedding_dimensions config to match model ${config.model}.`
+          logger.warn(
+            {
+              expectedDimensions,
+              actualDimensions: response.data[0].embedding.length,
+              model: config.model
+            },
+            'Embedding dimension mismatch, update the memory_embedding_dimensions config to match the model'
           );
         }
 
@@ -644,16 +738,16 @@ Response (JSON only):`;
           });
 
         if (batchUpdateError) {
-          console.error(`❌ [MemorySummarizer] Error saving batch embeddings:`, batchUpdateError);
+          logger.error({ err: batchUpdateError }, 'Error saving batch embeddings');
           throw batchUpdateError;
         }
 
-        console.log(`✅ [MemorySummarizer] Batch ${i / batchSize + 1}: Generated ${batch.length} embeddings`);
+        logger.info({ batchNumber: i / batchSize + 1, generated: batch.length }, 'Batch embeddings generated');
       }
 
-      console.log(`✅ [MemorySummarizer] Batch embedding complete: ${memoryIds.length} total`);
+      logger.info({ total: memoryIds.length }, 'Batch embedding complete');
     } catch (error) {
-      console.error('❌ [MemorySummarizer] Error in batch embedding generation:', error);
+      logger.error({ err: error }, 'Error in batch embedding generation');
       throw error;
     }
   }
@@ -671,7 +765,7 @@ Response (JSON only):`;
         .single();
 
       if (fetchError || !memory) {
-        console.error('❌ [MemorySummarizer] Memory not found:', memoryId);
+        logger.error({ err: fetchError, memoryId }, 'Memory not found');
         return;
       }
 
@@ -708,10 +802,10 @@ Response (JSON only):`;
           lastError = error;
           if (attempt < maxRetries) {
             const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
-            console.warn(`⚠️  [MemorySummarizer] Embedding API error (attempt ${attempt}/${maxRetries}), retrying in ${delayMs}ms...`);
+            logger.warn({ attempt, maxRetries, delayMs }, 'Embedding API error, retrying');
             await new Promise(resolve => setTimeout(resolve, delayMs));
           } else {
-            console.error(`❌ [MemorySummarizer] Failed to generate embedding after ${maxRetries} attempts:`, error);
+            logger.error({ err: error, maxRetries }, 'Failed to generate embedding after every attempt');
             throw error;
           }
         }
@@ -726,10 +820,13 @@ Response (JSON only):`;
       // Validate dimensions
       const expectedDimensions = config.dimensions || 1536;
       if (embedding.length !== expectedDimensions) {
-        console.warn(
-          `⚠️  [MemorySummarizer] Embedding dimension mismatch! ` +
-          `Expected ${expectedDimensions}, got ${embedding.length}. ` +
-          `Update memory_embedding_dimensions config to match model ${config.model}.`
+        logger.warn(
+          {
+            expectedDimensions,
+            actualDimensions: embedding.length,
+            model: config.model
+          },
+          'Embedding dimension mismatch, update the memory_embedding_dimensions config to match the model'
         );
       }
 
@@ -740,12 +837,12 @@ Response (JSON only):`;
         .eq('id', memoryId);
 
       if (updateError) {
-        console.error('❌ [MemorySummarizer] Error saving embedding:', updateError);
+        logger.error({ err: updateError, memoryId }, 'Error saving embedding');
       } else {
-        console.log(`✅ [MemorySummarizer] Embedding generated for memory ${memoryId}`);
+        logger.info({ memoryId }, 'Embedding generated');
       }
     } catch (error) {
-      console.error('❌ [MemorySummarizer] Error generating embedding:', error);
+      logger.error({ err: error, memoryId }, 'Error generating embedding');
     }
   }
 
@@ -757,7 +854,7 @@ Response (JSON only):`;
    */
   private async generateEmbeddingAsync(memoryId: string, memory: RunMemory): Promise<void> {
     try {
-      console.log(`🔮 [MemorySummarizer] Generating embedding for memory ${memoryId}...`);
+      logger.debug({ memoryId }, 'Generating embedding');
 
       // Build text for embedding
       const embeddingText = `${memory.summary} ${JSON.stringify(memory.key_outcomes)} ${JSON.stringify(memory.patterns_detected)}`;
@@ -792,10 +889,10 @@ Response (JSON only):`;
           lastError = error;
           if (attempt < maxRetries) {
             const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
-            console.warn(`⚠️  [MemorySummarizer] Embedding API error (attempt ${attempt}/${maxRetries}), retrying in ${delayMs}ms...`);
+            logger.warn({ attempt, maxRetries, delayMs }, 'Embedding API error, retrying');
             await new Promise(resolve => setTimeout(resolve, delayMs));
           } else {
-            console.error(`❌ [MemorySummarizer] Failed to generate embedding after ${maxRetries} attempts:`, error);
+            logger.error({ err: error, maxRetries }, 'Failed to generate embedding after every attempt');
             throw error;
           }
         }
@@ -810,10 +907,13 @@ Response (JSON only):`;
       // Validate dimensions
       const expectedDimensions = config.dimensions || 1536;
       if (embedding.length !== expectedDimensions) {
-        console.warn(
-          `⚠️  [MemorySummarizer] Embedding dimension mismatch! ` +
-          `Expected ${expectedDimensions}, got ${embedding.length}. ` +
-          `Update memory_embedding_dimensions config to match model ${config.model}.`
+        logger.warn(
+          {
+            expectedDimensions,
+            actualDimensions: embedding.length,
+            model: config.model
+          },
+          'Embedding dimension mismatch, update the memory_embedding_dimensions config to match the model'
         );
       }
 
@@ -824,12 +924,12 @@ Response (JSON only):`;
         .eq('id', memoryId);
 
       if (updateError) {
-        console.error('❌ [MemorySummarizer] Error saving embedding:', updateError);
+        logger.error({ err: updateError, memoryId }, 'Error saving embedding');
       } else {
-        console.log(`✅ [MemorySummarizer] Embedding generated successfully for memory ${memoryId}`);
+        logger.info({ memoryId }, 'Embedding generated');
       }
     } catch (error) {
-      console.error('❌ [MemorySummarizer] Error generating embedding:', error);
+      logger.error({ err: error, memoryId }, 'Error generating embedding');
       throw error;
     }
   }

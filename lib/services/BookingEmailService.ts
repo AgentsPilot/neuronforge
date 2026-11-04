@@ -712,6 +712,35 @@ export class BookingEmailService {
          */
         hasSchedule: Boolean(booking.start_time),
         /*
+         * ─────────────────────────────────────────────────────────────────
+         * NOTHING IS AGREED YET: A QUOTE IS COMING.
+         *
+         * A `sale_mode: 'proposal'` service with no pre-meeting writes a
+         * booking as soon as the owner records it, so there is somewhere to
+         * hang the price. At that moment there is no hour, no agreed sum and
+         * no quote — and the client was being told their order was
+         * CONFIRMED, which claims an agreement nobody has made.
+         *
+         * ── WHY THIS IS NOT JUST "hasSchedule === false" ──────────────────
+         *
+         * A course or a product is dateless too, and for those the order
+         * really IS confirmed: there is a price and an invoice behind it.
+         * Keying on the absence of a date alone would rewrite their
+         * confirmation into a promise of a quote that will never arrive. So
+         * the test is the SALE MODE, and three things that each prove there
+         * is already something to confirm:
+         *
+         *   · `sessions` — an accepted package, whose dates are in this mail;
+         *   · an invoice — money has been raised, so a price exists;
+         *   · a price on the service — sold at a known figure, not quoted.
+         */
+        awaitingQuote:
+          service.sale_mode === 'proposal' &&
+          !booking.start_time &&
+          !options?.sessions?.length &&
+          !hasInvoice &&
+          !hasPrice,
+        /*
          * The whole block, for a package. Undefined for an ordinary booking,
          * and the template then renders exactly as it did before.
          */

@@ -2424,6 +2424,25 @@ export class SchedulingBookingRepository {
         const contact = Array.isArray(booking.contact) ? booking.contact[0] : booking.contact;
         // Get invoice if exists - could be array or single object depending on join
         const invoice = Array.isArray(booking.invoice) ? booking.invoice[0] : booking.invoice;
+        /*
+         * ── AND THE SIBLINGS THAT `[0]` THROWS AWAY ─────────────────────────
+         *
+         * This join is one-to-MANY: a plan bills each period through its own
+         * invoice, and all of them carry this booking_id. Collapsing to `[0]`
+         * is right for `invoice` below — the card wants ONE invoice to describe
+         * the booking — but it means the rest were loaded and discarded.
+         *
+         * `buildSessionPlan` needed exactly them. It reads a period's refund
+         * from the period's TRANSACTION, which is null for an invoiced period,
+         * so a refunded instalment reported nothing back: the row kept offering
+         * Refund (the dialog then said 0, because the server knew better) and
+         * never withheld the receipt. Live case 2026-11-04: booking d37068e6,
+         * period 1 of 2, $32.50 invoiced on dcd4146f and refunded in full.
+         *
+         * Kept as a separate field so `invoice` keeps its exact meaning.
+         */
+        const invoices = (Array.isArray(booking.invoice) ? booking.invoice : invoice ? [invoice] : [])
+          .filter((row: { id?: string | null } | null) => Boolean(row?.id));
         const payments = Array.isArray(booking.payments) ? booking.payments : [];
 
         // Determine payment status - prefer invoice status if it shows 'paid' but booking doesn't
@@ -2474,7 +2493,20 @@ export class SchedulingBookingRepository {
            * plan has no invoice — its periods are transactions — so the invoice
            * figure alone left every plan refund invisible on this screen.
            */
-          refunded_total: refundedTotalFor(invoice, payments)
+          refunded_total: refundedTotalFor(invoice, payments),
+          /* Every invoice on this booking, for the per-period refund lookup
+             documented where `invoices` is built above. */
+          invoices: invoices.map((row: {
+            id: string;
+            amount?: number | string | null;
+            refunded_amount?: number | string | null;
+            refunded_at?: string | null;
+          }) => ({
+            id: row.id,
+            amount: row.amount ?? null,
+            refunded_amount: row.refunded_amount ?? null,
+            refunded_at: row.refunded_at ?? null,
+          }))
         };
       });
 

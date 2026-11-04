@@ -213,6 +213,23 @@ export const publicMessages: Catalogue = {
     notReschedulable: 'This booking is no longer open for changes.',
     rescheduleAlreadyHeld: 'This meeting has already taken place, so there is nothing to move.',
     rescheduleAlreadyCancelled: 'This meeting was cancelled, so there is nothing to move.',
+    /*
+     * BOOKING A REPLACEMENT IS NOT MOVING AN APPOINTMENT.
+     *
+     * A missed session stays on the record with whatever it cost; what the
+     * client books is an EXTRA session that stands in for it. Told "your
+     * appointment has been rescheduled", they return to a list showing both
+     * the missed hour and the new one and reasonably think something is wrong.
+     * These say what actually happened.
+     */
+    makeUpTitle: 'Book a replacement session',
+    makeUpSubtitle: 'Choose a new date and time for the session you missed',
+    makeUpConfirm: 'Book this session',
+    makeUpDoneTitle: 'Replacement session booked',
+    makeUpDoneDesc:
+      'Your new session is confirmed. The session you missed stays on your record, along with anything still owed for it.',
+    makeUpDoneChargedDesc:
+      'Your new session is confirmed, and it is billed like the others in your package — you will receive the invoice once it has been held. The session you missed stays on your record.',
     notCancellable: 'This booking can no longer be cancelled.',
     slotTaken: 'That time was taken while you were choosing. Pick another.',
     /** The appointment as it stands, shown beside the refusal. */
@@ -516,6 +533,14 @@ export const publicMessages: Catalogue = {
     notReschedulable: 'Esta reserva ya no admite cambios.',
     rescheduleAlreadyHeld: 'Esta cita ya se celebró, así que no hay nada que cambiar.',
     rescheduleAlreadyCancelled: 'Esta cita se canceló, así que no hay nada que cambiar.',
+    makeUpTitle: 'Reservar una sesión de recuperación',
+    makeUpSubtitle: 'Elige una nueva fecha y hora para la sesión a la que no asististe',
+    makeUpConfirm: 'Reservar esta sesión',
+    makeUpDoneTitle: 'Sesión de recuperación reservada',
+    makeUpDoneDesc:
+      'Tu nueva sesión está confirmada. La sesión a la que no asististe sigue en tu historial, junto con lo que quede pendiente de pago por ella.',
+    makeUpDoneChargedDesc:
+      'Tu nueva sesión está confirmada y se cobra como las demás de tu paquete: recibirás la factura una vez celebrada. La sesión a la que no asististe sigue en tu historial.',
     notCancellable: 'Esta reserva ya no se puede cancelar.',
     slotTaken: 'Ese horario se ocupó mientras elegías. Elige otro.',
     yourBookingIs: 'Tu cita',
@@ -804,6 +829,14 @@ export const publicMessages: Catalogue = {
     notReschedulable: 'לא ניתן עוד לשנות את הפגישה הזו.',
     rescheduleAlreadyHeld: 'הפגישה הזו כבר התקיימה, אין מה לשנות.',
     rescheduleAlreadyCancelled: 'הפגישה הזו בוטלה, אין מה לשנות.',
+    makeUpTitle: 'קביעת פגישת השלמה',
+    makeUpSubtitle: 'בחרו תאריך ושעה חדשים לפגישה שהוחמצה',
+    makeUpConfirm: 'קביעת הפגישה',
+    makeUpDoneTitle: 'פגישת ההשלמה נקבעה',
+    makeUpDoneDesc:
+      'הפגישה החדשה אושרה. הפגישה שהוחמצה נשארת ברשומות שלך, יחד עם כל סכום שטרם שולם עבורה.',
+    makeUpDoneChargedDesc:
+      'הפגישה החדשה אושרה, והיא מחויבת כמו שאר הפגישות בחבילה: החשבונית תישלח לאחר שתתקיים. הפגישה שהוחמצה נשארת ברשומות שלך.',
     notCancellable: 'לא ניתן עוד לבטל את הפגישה הזו.',
     slotTaken: 'השעה הזו נתפסה בזמן שבחרת. אפשר לבחור אחרת.',
     yourBookingIs: 'הפגישה שלך',

@@ -108,6 +108,14 @@ export type NextStepAction =
   | 'send_intake'
   | 'create_quote'
   | 'remind_quote'
+  /**
+   * Give a lapsed quote a new date, rather than writing another one.
+   *
+   * The only move left on an expired quote: the client's page refuses the
+   * acceptance once the date has passed, so chasing sends them somewhere that
+   * turns them away. Same action the Needs-you card raises.
+   */
+  | 'extend_quote'
   | 'send_invoice'
   | 'bill_next_stage'
   | 'remind_payment'
@@ -806,12 +814,38 @@ export function bookingNextStep(input: NextStepInput): NextStep {
      * the same reading `quoteWaitingOn` already takes.
      */
     case 'declined':
-    case 'expired':
       return {
         stage: 'proposal',
         whoseMove: 'owner',
         labelKey: 'next.quote_refused',
         actions: ['create_quote'],
+      };
+
+    /*
+     * ── NOBODY REFUSED THIS ONE. THE CLOCK RAN OUT ──────────────────────────
+     *
+     * `expired` shared the `declined` case, which was harmless for as long as
+     * nothing ever WROTE `expired`: the status existed in the union and the
+     * client's page worked expiry out live, so this branch was dead. The
+     * hourly sweep now writes it, and the dead branch became a false
+     * statement — a quote the client never answered was reported to the owner
+     * as "the quote was declined, you can send a new one".
+     *
+     * That is wrong twice. It invents a decision the client never made, and
+     * it recommends rewriting a quote whose price nobody has objected to,
+     * when the cheap move is to give the existing one more time. The Needs-you
+     * card already offers exactly that; this is the same offer where the owner
+     * is actually looking.
+     *
+     * `create_quote` stays beside it: a lapsed quote is sometimes genuinely
+     * stale, and re-pricing has to remain one click away.
+     */
+    case 'expired':
+      return {
+        stage: 'proposal',
+        whoseMove: 'owner',
+        labelKey: 'next.quote_expired',
+        actions: ['extend_quote', 'create_quote'],
       };
 
     case 'accepted':

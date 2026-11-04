@@ -59,8 +59,24 @@ describe('the route fetches what a refund is recorded in', () => {
   });
 
   it('attaches each stage’s own refund to that stage', () => {
-    // A refund belongs to the milestone whose money came back, not to the job.
-    expect(route).toMatch(/refunded_amount: stageInvoice\?\.refunded_amount/);
+    /*
+     * A refund belongs to the milestone whose money came back, not to the job.
+     *
+     * This pinned `refunded_amount: stageInvoice?.refunded_amount`, which was
+     * the invoice-only form. A stage now carries its money in one of TWO
+     * places — a milestone raises an invoice, an instalment period is charged
+     * directly — and the route resolves whichever is set before flattening it
+     * onto the stage. Pinning the old expression would have held the payload
+     * back to half the cases it already serves.
+     *
+     * The rule is unchanged and is what these assert: each stage is given its
+     * OWN refund, from the record that actually holds it.
+     */
+    expect(route).toMatch(/const refundRecord = stageInvoice \?\? stageCharge/);
+    expect(route).toMatch(/refunded_amount: refundRecord\?\.refunded_amount/);
+    /* Never the job's single invoice standing in for a stage — the defect this
+       file exists for. */
+    expect(route).not.toMatch(/refunded_amount: p\.created_invoice/);
   });
 });
 

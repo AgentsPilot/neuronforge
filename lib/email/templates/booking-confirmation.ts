@@ -106,6 +106,23 @@ export interface BookingConfirmationData {
    */
   hasSchedule?: boolean;
   /**
+   * A quoted service with no pre-meeting: the order exists, the price does not.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Deliberately NARROWER than `hasSchedule === false`, which is also true of a
+   * course or a product — and those really are confirmed, because a price and
+   * an invoice stand behind them. Rewriting their mail into a promise of a
+   * quote that will never arrive would be a worse bug than the one this fixes.
+   *
+   * This is only the `sale_mode: 'proposal'` case with no hour, no sessions,
+   * no invoice and no price: the booking row exists so the owner has somewhere
+   * to hang a quote, and the client has agreed to nothing. Saying "confirmed"
+   * there claims an agreement nobody has made. See `BookingEmailService`,
+   * where the four conditions are checked together.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  awaitingQuote?: boolean;
+  /**
    * This confirmation is a session ADDED to a package already running.
    *
    * ───────────────────────────────────────────────────────────────────────────
@@ -439,9 +456,13 @@ export function generateBookingConfirmationEmail(
       ${
         data.addedSession
           ? t.addedSessionGreeting[locale]
-          : data.hasSchedule === false
-            ? t.unscheduledGreeting[locale]
-            : t.greeting[locale]
+          : /* Checked BEFORE `hasSchedule`: both are true here, and only this
+               one knows the order is not yet agreed. */
+            data.awaitingQuote
+            ? t.awaitingQuoteGreeting[locale]
+            : data.hasSchedule === false
+              ? t.unscheduledGreeting[locale]
+              : t.greeting[locale]
       }
     </h2>
     <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted};">
@@ -451,9 +472,11 @@ export function generateBookingConfirmationEmail(
             (data.addedSession.chargedAmount
               ? ` ${t.addedSessionCharged[locale](data.addedSession.chargedAmount)}`
               : '')
-          : data.hasSchedule === false
-            ? t.unscheduledIntro[locale](data.clientName, data.branding.businessName)
-            : t.intro[locale](data.clientName, data.branding.businessName)
+          : data.awaitingQuote
+            ? t.awaitingQuoteIntro[locale](data.clientName, data.branding.businessName)
+            : data.hasSchedule === false
+              ? t.unscheduledIntro[locale](data.clientName, data.branding.businessName)
+              : t.intro[locale](data.clientName, data.branding.businessName)
       }
     </p>
 
@@ -622,7 +645,13 @@ export function generateBookingConfirmationEmail(
   return {
     subject: data.addedSession
       ? t.addedSessionSubject[locale](dateStr)
-      : (data.hasSchedule === false ? t.unscheduledSubject : t.subject)[locale](data.serviceName),
+      : (
+          data.awaitingQuote
+            ? t.awaitingQuoteSubject
+            : data.hasSchedule === false
+              ? t.unscheduledSubject
+              : t.subject
+        )[locale](data.serviceName),
     html: wrapInBrandedTemplate(content, brandingWithLocale),
     /* Empty for a purchase with no hour: the caller already refuses to attach
        one (`icsContent && hasSchedule !== false`), and building it is what

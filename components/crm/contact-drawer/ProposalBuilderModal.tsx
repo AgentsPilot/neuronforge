@@ -26,7 +26,7 @@
  * invoice is short. So sending is blocked, and the shortfall is named.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -797,78 +797,202 @@ export function ProposalBuilderModal({
    */
   const alreadyBooked = readOnly && Boolean(ownPackageId);
 
+  /**
+   * What is wrong with ONE candidate hour, if anything.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Lifted out of `sessionProblems` so the hour-picker below can ask the same
+   * question of hours the owner has not chosen yet. Two implementations of
+   * "can this hour be booked" would eventually disagree, and the picker would
+   * offer a lane the row beneath it then refuses.
+   *
+   * Pure in everything except the hooks it closes over, so it is equally valid
+   * for a date in the series and for a hypothetical one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const verdictFor = useCallback(
+    (local: string) => {
+      if (!local || local.length < 16) return 'empty' as const;
+
+      const start = fromBusinessLocalInput(local, packageZone);
+      if (start.getTime() < Date.now()) return 'past' as const;
+
+      const end = new Date(start.getTime() + sessionMinutes * 60_000);
+      const dateKey = local.slice(0, 10);
+      const from = local.slice(11, 16);
+      const to = toBusinessLocalInput(end, packageZone).slice(11, 16);
+
+      const closed = closedDayVerdict(timeOff, dateKey, { start: from, end: to });
+      if (closed.closed) return { closed } as const;
+
+      const windows = serviceHours ? windowsForDate(serviceHours, dateKey, timeOff) : [];
+      if (windows.length > 0) {
+        const inside = windows.some(window => from >= window.start && to <= window.end);
+        if (!inside) return { outside: windows[0] } as const;
+      }
+
+      if (takenRange !== seriesKey) return 'checking' as const;
+
+      const clash = takenSlots.some(
+        slot => new Date(slot.start) < end && new Date(slot.end) > start
+      );
+      if (clash) return 'taken' as const;
+
+      return null;
+    },
+    [packageZone, sessionMinutes, timeOff, serviceHours, takenRange, seriesKey, takenSlots]
+  );
+
   const sessionProblems = useMemo(
     () =>
       sessionDates.map(local => {
         /* Asked before anything else: see `alreadyBooked` above. */
         if (alreadyBooked) return null;
 
-        if (!local || local.length < 16) return 'empty' as const;
-
-        const start = fromBusinessLocalInput(local, packageZone);
-        if (start.getTime() < Date.now()) return 'past' as const;
-
-        const end = new Date(start.getTime() + sessionMinutes * 60_000);
-        const dateKey = local.slice(0, 10);
-        const from = local.slice(11, 16);
-        const to = toBusinessLocalInput(end, packageZone).slice(11, 16);
-
-        /*
-         * A day the owner closed, or a short day this hour falls outside of.
-         * Asked first because it is the owner's own statement about that date,
-         * and the most specific thing that can be said about it.
-         */
-        const closed = closedDayVerdict(timeOff, dateKey, { start: from, end: to });
-        if (closed.closed) return { closed } as const;
-
-        /*
-         * THE SERVICE'S OWN HOURS, through the same resolver the public booking
-         * page uses — so a client could never have been offered this hour
-         * either. Skipped entirely when the hours have not loaded or the
-         * service keeps none: an empty `availability` means "no pattern
-         * recorded", not "never open".
-         */
-        const windows = serviceHours ? windowsForDate(serviceHours, dateKey, timeOff) : [];
-        if (windows.length > 0) {
-          const inside = windows.some(window => from >= window.start && to <= window.end);
-          if (!inside) return { outside: windows[0] } as const;
-        }
-
-        /*
-         * And whether the hour is already sold. Half-open overlap, the same test
-         * the database constraint makes: a meeting ending exactly when this one
-         * starts is not a clash.
-         */
-        /*
-         * Only against a list fetched FOR THESE DATES.
-         *
-         * `checking` is not "free" — it is "not known yet", and the row says so
-         * rather than showing a clean date the next render may contradict. See
-         * `takenRange`: picking the first meeting rewrites the whole series, so
-         * there is always a moment when the dates are new and the busy list is
-         * not.
-         */
-        if (takenRange !== seriesKey) return 'checking' as const;
-
-        const clash = takenSlots.some(
-          slot => new Date(slot.start) < end && new Date(slot.end) > start
-        );
-        if (clash) return 'taken' as const;
-
-        return null;
+        /* The one rule, shared with the hour-picker — see `verdictFor`. */
+        return verdictFor(local);
       }),
-    [
-      sessionDates,
-      timeOff,
-      sessionMinutes,
-      packageZone,
-      serviceHours,
-      takenSlots,
-      takenRange,
-      seriesKey,
-      alreadyBooked,
-    ]
+    [sessionDates, alreadyBooked, verdictFor]
   );
+
+  /**
+   * WHICH HOUR WOULD BOOK THE WHOLE SERIES WITHOUT A SINGLE CLASH.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The panel used to step the cadence blindly from whatever hour the owner
+   * typed, then report in red how many of the six would silently fail. The
+   * owner was told the count above six identical date fields and left to
+   * repair them one at a time — on a real quote, three of six.
+   *
+   * This asks the question the other way round. Every candidate hour of the
+   * working day is run through `verdictFor` against EVERY date in the series,
+   * so an hour that is clear across all of them can simply be offered. A clash
+   * stops being an error discovered afterwards and becomes information shown
+   * before the choice.
+   *
+   * Only the hour moves. The weekday and the cadence are the owner's, and a
+   * picker that quietly changed the day would be answering a question nobody
+   * asked.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const hourLanes = useMemo(() => {
+    /* Nothing to offer until there is a series to test, and never over a
+       package that already exists — those dates are a record, not a plan. */
+    if (!isPackage || alreadyBooked || !sessionDates.length) return [];
+
+    const firstKey = sessionDates[0]?.slice(0, 10);
+    if (!firstKey) return [];
+
+    /*
+     * The hours worth showing, taken from the business's own windows on the
+     * days the series lands on rather than a fixed 9-to-5: a clinic open
+     * 07:00-12:00 should not be offered 16:00, and one open late should be.
+     * Union across the dates, so a short day does not hide an hour the rest of
+     * the series could use — `verdictFor` marks it closed on that one date.
+     */
+    const starts = new Set<string>();
+
+    for (const local of sessionDates) {
+      const dateKey = local.slice(0, 10);
+      const windows = serviceHours ? windowsForDate(serviceHours, dateKey, timeOff) : [];
+
+      for (const window of windows) {
+        const [h0, m0] = window.start.split(':').map(Number);
+        const [h1, m1] = window.end.split(':').map(Number);
+        /* Stepped by the session's own length, so every row is a slot that
+           actually fits rather than an hour that half-fits. */
+        for (
+          let mins = h0 * 60 + m0;
+          mins + sessionMinutes <= h1 * 60 + m1;
+          mins += sessionMinutes
+        ) {
+          starts.add(
+            `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`
+          );
+        }
+      }
+    }
+
+    /* No hours recorded: the service keeps no pattern, so there is no grid to
+       draw and the per-row warnings remain the whole answer. */
+    if (starts.size === 0) return [];
+
+    const chosenHour = sessionDates[0]?.slice(11, 16) ?? '';
+
+    return [...starts]
+      .sort()
+      .slice(0, 14)
+      .map(hhmm => {
+        const dates = recurringLocalInputs(firstKey, hhmm, cadence, sessionCount);
+        const verdicts = dates.map(verdictFor);
+
+        return {
+          hhmm,
+          dates,
+          verdicts,
+          /* Counted rather than just flagged: "3 תפוסות" is the sentence the
+             owner needs, and a bare red row does not say how bad it is. */
+          blocked: verdicts.filter(v => v !== null && v !== 'checking').length,
+          checking: verdicts.some(v => v === 'checking'),
+          isChosen: hhmm === chosenHour,
+        };
+      });
+  }, [
+    isPackage,
+    alreadyBooked,
+    sessionDates,
+    serviceHours,
+    timeOff,
+    sessionMinutes,
+    cadence,
+    sessionCount,
+    verdictFor,
+  ]);
+
+  /** The first hour that books the whole series, for the nudge above the grid. */
+  const clearLane = useMemo(
+    () => hourLanes.find(lane => lane.blocked === 0 && !lane.checking) ?? null,
+    [hourLanes]
+  );
+
+  /**
+   * THE SERIES LANDS ON A DAY THE BUSINESS DOES NOT WORK.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The grid is built from the hours the business actually keeps on the dates
+   * in the series. Move the first meeting to a Thursday for a business open
+   * Sunday to Wednesday and there are no hours on any of them — so the grid
+   * had nothing to draw and silently disappeared, at the exact moment its job
+   * was to say "you do not work that day".
+   *
+   * Told apart from "not loaded yet" on purpose: `serviceHours` is null until
+   * the pattern arrives, and announcing a closed day on missing data would be
+   * a guess. Only a LOADED pattern with no windows on any of the dates is an
+   * answer.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const seriesDayClosed = useMemo(() => {
+    if (!isPackage || alreadyBooked || !serviceHours || !sessionDates.length) return false;
+
+    return sessionDates.every(
+      local => windowsForDate(serviceHours, local.slice(0, 10), timeOff).length === 0
+    );
+  }, [isPackage, alreadyBooked, serviceHours, sessionDates, timeOff]);
+
+  /** The weekday the owner just chose, named in their own language. */
+  const seriesDayName = useMemo(() => {
+    const first = sessionDates[0];
+    if (!first || first.length < 10) return '';
+
+    try {
+      return new Date(`${first.slice(0, 10)}T12:00:00Z`).toLocaleDateString(
+        isRTL ? 'he-IL' : 'en-US',
+        { weekday: 'long' }
+      );
+    } catch {
+      return '';
+    }
+  }, [sessionDates, isRTL]);
 
   /*
    * HOW LOUD EACH PROBLEM IS, and what it costs.
@@ -1580,7 +1704,17 @@ export function ProposalBuilderModal({
       */}
       <DialogContent
         className="w-full h-[100dvh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden transition-[max-width] duration-200"
-        style={{ maxWidth: file ? '64rem' : '42rem' }}
+        /*
+         * Wider for a package, because the hour grid has a column per session
+         * and six of them do not fit a 42rem dialog without the rows wrapping
+         * into something unreadable. Narrower than the document view, which
+         * needs room for a preview pane rather than a table.
+         *
+         * Only `max-width` moves: the shell is already `w-full h-[100dvh]`
+         * below the `sm` breakpoint, so a phone is unaffected either way and
+         * the grid scrolls sideways in its own container there.
+         */
+        style={{ maxWidth: file ? '64rem' : isPackage ? '54rem' : '42rem' }}
         dir={isRTL ? 'rtl' : 'ltr'}
       >
         {/* Sticky header — `pe-14` leaves room for the close button. */}
@@ -1811,66 +1945,123 @@ export function ProposalBuilderModal({
               backgroundColor: `${MEETINGS_COLOR}0D`,
             }}
           >
-            <div className="flex items-start justify-between gap-3">
-              <label htmlFor="proposal-is-package" className="min-w-0 cursor-pointer">
-                <span className="flex items-center gap-2 text-sm font-semibold text-[var(--v2-text-primary)]">
-                  <CalendarClock className="h-4 w-4 shrink-0" style={{ color: MEETINGS_COLOR }} />
-                  {t('proposal.package')}
-                </span>
-                <span className="mt-1 block text-xs leading-relaxed text-[var(--v2-text-secondary)]">
-                  {t('proposal.package_hint')}
-                </span>
-              </label>
+            {/*
+              ─────────────────────────────────────────────────────────────────
+              WHAT IS BEING SOLD, ASKED BEFORE HOW IT IS PAID.
+              ─────────────────────────────────────────────────────────────────
+              This was a collapsed switch, and it did two jobs at once: it added
+              the sessions AND it silently replaced the money question further
+              down. `תשלום אחד / לפי שלבים / בתשלומים` becomes `מראש / אחרי כל
+              פגישה` the moment it is flipped, with nothing on screen saying so.
 
-              {/* Pinned to LTR, as in DailyBriefingCard: the shared Switch
-                  shifts its thumb rightwards by a fixed amount, which inside an
-                  RTL dialog would carry it out of its own track. */}
-              <div dir="ltr" className="mt-0.5 shrink-0">
-                <Switch
-                  id="proposal-is-package"
-                  checked={isPackage}
-                  disabled={readOnly || !serviceId}
-                  onCheckedChange={checked => {
-                    setIsPackage(checked);
+              So an owner who needed "charge after each meeting" could only find
+              it by already knowing to turn packages on first. The option they
+              were looking for was real, reachable, and invisible.
 
-                    /*
-                     * The same default the moment it is switched on, and undone
-                     * when it is switched off: a one-off job has no reason to be
-                     * due on receipt unless the owner said so.
-                     */
-                    if (!termsTouched) setTermsDays(checked ? 0 : null);
+              Two cards instead, each PRINTING ITS OWN PAYMENT TERMS. That line
+              is the whole fix: both worlds are readable before either is
+              chosen, so the money question is never a surprise that arrives
+              after a toggle.
 
-                    if (checked && !firstSession) {
+              Nothing about what gets written changes — the same `isPackage`,
+              the same handler body that the switch ran.
+              ─────────────────────────────────────────────────────────────────
+            */}
+            <span className="flex items-center gap-2 text-sm font-semibold text-[var(--v2-text-primary)]">
+              <CalendarClock className="h-4 w-4 shrink-0" style={{ color: MEETINGS_COLOR }} />
+              {t('proposal.sell_what')}
+            </span>
+
+            <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {([false, true] as const).map(wantsPackage => {
+                const on = isPackage === wantsPackage;
+                /* A package needs a service to hang its meetings off — see the
+                   note below — so that card alone can be unavailable. */
+                const unavailable = readOnly || (wantsPackage && !serviceId);
+
+                return (
+                  <button
+                    key={String(wantsPackage)}
+                    type="button"
+                    /* `proposal-is-package` is kept on the series card: it was
+                       the switch's id, and it still names the control that
+                       turns a package on — including when it is unavailable. */
+                    id={wantsPackage ? 'proposal-is-package' : 'proposal-is-job'}
+                    aria-pressed={on}
+                    disabled={unavailable}
+                    onClick={() => {
+                      if (unavailable || on) return;
+                      const checked = wantsPackage;
+
+                      setIsPackage(checked);
+
                       /*
-                       * Opens on a week today at 10:00 and generates the
-                       * default six weekly meetings straight away, so the owner
-                       * sees what the controls do rather than an empty panel
-                       * they have to work out.
+                       * The same default the moment it is switched on, and
+                       * undone when it is switched off: a one-off job has no
+                       * reason to be due on receipt unless the owner said so.
                        */
-                      const nextWeek = shiftBusinessDateKey(
-                        businessDateKey(new Date(), packageZone),
-                        7
-                      );
-                      const first = `${nextWeek}T10:00`;
-                      setFirstSession(first);
-                      setSessionDates(recurringLocalInputs(nextWeek, '10:00', cadence, sessionCount));
-                    }
-                    // Turning it off drops the dates: leaving them staged would
-                    // send a package the owner had just decided against.
-                    if (!checked) {
-                      setSessionDates([]);
-                      setFirstSession('');
-                    }
-                  }}
-                />
-              </div>
+                      if (!termsTouched) setTermsDays(checked ? 0 : null);
+
+                      if (checked && !firstSession) {
+                        /*
+                         * Opens on a week today at 10:00 and generates the
+                         * default six weekly meetings straight away, so the
+                         * owner sees what the controls do rather than an empty
+                         * panel they have to work out.
+                         */
+                        const nextWeek = shiftBusinessDateKey(
+                          businessDateKey(new Date(), packageZone),
+                          7
+                        );
+                        const first = `${nextWeek}T10:00`;
+                        setFirstSession(first);
+                        setSessionDates(
+                          recurringLocalInputs(nextWeek, '10:00', cadence, sessionCount)
+                        );
+                      }
+
+                      /* Turning it off drops the dates: leaving them staged
+                         would send a package the owner just decided against. */
+                      if (!checked) {
+                        setSessionDates([]);
+                        setFirstSession('');
+                      }
+                    }}
+                    className={`rounded-lg border p-3 text-start transition-colors ${
+                      on
+                        ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/10'
+                        : 'border-[var(--v2-border)] bg-[var(--v2-surface)] hover:border-[var(--v2-text-muted)]'
+                    } ${unavailable ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                  >
+                    <span
+                      className={`block text-sm font-bold ${
+                        on ? 'text-[var(--v2-primary)]' : 'text-[var(--v2-text-primary)]'
+                      }`}
+                    >
+                      {t(wantsPackage ? 'proposal.sell_series' : 'proposal.sell_job')}
+                    </span>
+                    <span className="mt-1 block text-[11px] leading-relaxed text-[var(--v2-text-secondary)]">
+                      {t(wantsPackage ? 'proposal.sell_series_hint' : 'proposal.sell_job_hint')}
+                    </span>
+                    {/*
+                      THE LINE THAT ANSWERS "how do I know what to choose".
+                      Both branches' payment options, readable before either is
+                      picked, so the money question is never discovered by
+                      flipping something and watching the screen change.
+                    */}
+                    <span className="mt-2 block border-t border-dashed border-[var(--v2-border)] pt-2 text-[11px] text-[var(--v2-text-secondary)]">
+                      {t(wantsPackage ? 'proposal.sell_series_pay' : 'proposal.sell_job_pay')}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
 
             {/*
               A package needs a service, and this quote has none. The meetings
               are bookings and `scheduling_bookings.service_id` is NOT NULL, so
               rather than let the owner fill in ten dates that acceptance would
-              refuse, the switch is disabled and says why.
+              refuse, the series card is disabled and this says why.
             */}
             {!serviceId && (
               <p className="mt-2.5 text-xs text-[var(--v2-text-secondary)]">
@@ -2014,6 +2205,141 @@ export function ProposalBuilderModal({
                       </div>
                     )}
 
+                    {/*
+                      ─────────────────────────────────────────────────────────
+                      WHICH HOUR BOOKS THE WHOLE SERIES.
+
+                      A column per session, a row per hour of the working day,
+                      and a mark saying whether that hour is free on that date.
+                      A row of green is a series that books without a single
+                      clash, and the owner picks it instead of repairing six
+                      dates one at a time.
+
+                      Only the HOUR changes when a row is pressed. The weekday
+                      and the cadence are the owner's answers and are not
+                      quietly rewritten underneath them.
+
+                      Scrolls sideways in its own container so the dialog never
+                      does — a phone gets the same grid, moved by a swipe.
+                      ─────────────────────────────────────────────────────────
+                    */}
+                    {/*
+                      The grid has nothing to draw because the business keeps no
+                      hours on this weekday. Said out loud, where the grid was —
+                      vanishing silently is what made this confusing.
+                    */}
+                    {seriesDayClosed && (
+                      <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>
+                          {t('proposal.package_day_closed').replace('{day}', seriesDayName)}
+                        </span>
+                      </div>
+                    )}
+
+                    {hourLanes.length > 1 && (
+                      <div className="rounded-lg border border-[var(--v2-border)] bg-[var(--v2-bg)]">
+                        <div className="border-b border-[var(--v2-border)] px-3 py-2">
+                          <div className="text-xs font-bold text-[var(--v2-text-primary)]">
+                            {t('proposal.package_hour_pick')}
+                          </div>
+                          <div className="mt-0.5 text-[11px] text-[var(--v2-text-muted)]">
+                            {clearLane
+                              ? t('proposal.package_hour_hint_clear').replace(
+                                  '{time}',
+                                  clearLane.hhmm
+                                )
+                              : t('proposal.package_hour_hint')}
+                          </div>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full border-collapse text-xs tabular-nums">
+                            <thead>
+                              <tr>
+                                <th className="px-3 py-1.5 text-start text-[10px] font-semibold text-[var(--v2-text-muted)]">
+                                  {t('proposal.package_hour_col')}
+                                </th>
+                                {sessionDates.map((local, index) => (
+                                  <th
+                                    key={`h-${index}`}
+                                    className="px-1 py-1.5 text-center text-[10px] font-semibold text-[var(--v2-text-muted)]"
+                                  >
+                                    {local.slice(8, 10)}/{local.slice(5, 7)}
+                                  </th>
+                                ))}
+                                <th />
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {hourLanes.map(lane => (
+                                <tr
+                                  key={lane.hhmm}
+                                  onClick={() => {
+                                    setFirstSession(`${sessionDates[0].slice(0, 10)}T${lane.hhmm}`);
+                                    setSessionDates(lane.dates);
+                                  }}
+                                  className={`cursor-pointer border-t border-[var(--v2-border)] transition-colors ${
+                                    lane.isChosen
+                                      ? 'bg-[var(--v2-primary)]/10'
+                                      : 'hover:bg-[var(--v2-surface)]'
+                                  }`}
+                                >
+                                  <td
+                                    className={`whitespace-nowrap px-3 py-1.5 font-semibold ${
+                                      lane.isChosen
+                                        ? 'text-[var(--v2-primary)]'
+                                        : lane.blocked === 0
+                                          ? 'text-emerald-600 dark:text-emerald-400'
+                                          : 'text-[var(--v2-text-muted)]'
+                                    }`}
+                                  >
+                                    {lane.hhmm}
+                                  </td>
+
+                                  {lane.verdicts.map((verdict, index) => (
+                                    <td key={index} className="px-1 py-1.5 text-center">
+                                      <span
+                                        aria-hidden
+                                        className={`inline-block h-4 w-4 rounded ${
+                                          verdict === null
+                                            ? 'bg-emerald-500/20'
+                                            : verdict === 'checking'
+                                              ? 'bg-[var(--v2-border)]'
+                                              : verdict === 'taken' || verdict === 'past'
+                                                ? 'bg-red-500/25'
+                                                : 'bg-[var(--v2-border)]'
+                                        }`}
+                                      />
+                                    </td>
+                                  ))}
+
+                                  <td className="whitespace-nowrap px-3 py-1.5 text-[11px] text-start">
+                                    {lane.checking ? (
+                                      <span className="text-[var(--v2-text-muted)]">
+                                        {t('proposal.package_date_checking')}
+                                      </span>
+                                    ) : lane.blocked === 0 ? (
+                                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                        {t('proposal.package_hour_all_free')}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[var(--v2-text-muted)]">
+                                        {t('proposal.package_hour_blocked').replace(
+                                          '{count}',
+                                          String(lane.blocked)
+                                        )}
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
                       {sessionDates.map((local, index) => {
                         const problem = sessionProblems[index];
@@ -2153,7 +2479,16 @@ export function ProposalBuilderModal({
           {/* How the money arrives. */}
           <div>
             <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-              {t('proposal.field.payment')}
+              {/*
+                A DIFFERENT QUESTION DESERVES A DIFFERENT WORD.
+
+                Both branches sat under `איך משלמים`, so the two option sets
+                read as rival answers to one question rather than as answers to
+                two. A job is asked HOW the money is arranged; a series is
+                asked WHEN it is taken, because the arrangement is already
+                settled by the meetings.
+              */}
+              {t(isPackage ? 'proposal.field.payment_when' : 'proposal.field.payment')}
             </label>
 
             {/*

@@ -26,6 +26,20 @@ import { CollapsibleSection } from '../CollapsibleSection';
 import type { SessionCardData, BookingJourneyData, BookingJourneyStep, MeetingAttempt } from './types';
 import type { IntakeQuestion } from '@/lib/business-os/intake/types';
 /*
+ * The matching half of the search, which has no React in it.
+ *
+ * It is a module rather than three closures in here because the number handling
+ * is where the bugs are and a source-level guard cannot catch an off-by-one in a
+ * separator class: "1200" must reach "₪1,200.00", "0501234567" must reach
+ * "050-123-4567", and "122026" must NOT reach a booking in October. Those need a
+ * test that runs — see bookingSearch.test.ts.
+ *
+ * What is SEARCHED stays here, because it depends on this component's own
+ * formatters: the date is matched as the card renders it, on the business's
+ * clock and in the owner's language.
+ */
+import { foldForSearch, searchWords, recordMatches } from '@/lib/business-os/bookingSearch';
+/*
  * `groupJourneyByDay` is gone from this card, deliberately.
  *
  * ─────────────────────────────────────────────────────────────────────────────
@@ -380,9 +394,10 @@ interface BookingsTabProps {
   /**
    * Give an expired quote a new date.
    *
-   * Offered on the journey's quote step and nowhere else: a live quote has
-   * nothing to extend. The drawer owns the dialog, so this tab stays a
-   * renderer and there is one extend form in the product, not two.
+   * Offered on the journey's quote step and on the next-step banner, which
+   * are two ways into the SAME dialog — a live quote has nothing to extend,
+   * so both appear only for `expired`. The drawer owns the dialog, so this tab
+   * stays a renderer and there is one extend form in the product, not two.
    */
   onExtendQuote?: (proposalId: string, validUntil: string | null) => void;
   onOpenProposalBuilder?: (
@@ -1480,31 +1495,77 @@ export function BookingsTab({
   };
 
   /**
+   * One intake answer as text, whatever shape it arrived in.
+   *
+   * A response can be a string, a number, a boolean, or a nested object from a
+   * multi-part question. This is called during render, so a shape it cannot
+   * handle must produce nothing rather than throw — the same rule the card's
+   * render guard keeps, and for the same reason: a throw here unmounts the
+   * whole drawer and throws the owner out of the contact they were working in.
+   */
+  const answerText = (answer: unknown): string => {
+    if (answer === null || answer === undefined) return '';
+    if (typeof answer === 'object') {
+      try {
+        return JSON.stringify(answer);
+      } catch {
+        return '';
+      }
+    }
+    return String(answer);
+  };
+
+  /**
    * Which bookings the search leaves standing.
    *
    * ───────────────────────────────────────────────────────────────────────────
-   * WHAT IS SEARCHED, AND WHY THOSE FIELDS
+   * ANY WORD, ANY NUMBER, IN ANY ORDER.
    *
-   * What an owner types into this box is one of three things: the name of the
-   * service, a word from the note they wrote on the booking, or a year. So:
-   * the service, the note, and the date AS RENDERED — the date has to be
-   * matched on its formatted text, or searching "2026" fails against an ISO
-   * string that starts "2026" in UTC while the card shows a different year in
-   * the business's zone, and "אוק" matches nothing at all.
+   * This read six fields and matched the whole query as one contiguous string,
+   * and on a client with fifty orders that is a box which cannot find anything.
+   * Every field it read is LOW-CARDINALITY — the service name repeats on all
+   * fifty, the status words on most of them, the note is usually empty — so a
+   * query matched almost everything or nothing at all. The one field with real
+   * spread, the date, was reachable only by typing it exactly as rendered:
+   * "oct 2026" failed against "Thu, Oct 12, 2026" because of the comma sitting
+   * between the two halves.
    *
-   * A PACKAGE's meetings are searched too, because the card the owner is
-   * hunting for is the container: hiding a package whose fourth session matches
-   * would hide the only row that could have shown it.
+   * Two changes, and no new control:
    *
-   * Case-folded and trimmed. No transliteration: a Hebrew business searching
-   * Hebrew words against Hebrew records needs no romanisation, and guessing at
-   * one would match things the owner did not ask for.
+   *   · The query is split into WORDS, and every word has to land somewhere in
+   *     the record. "oct 2026", "unpaid consultation" and "1200 refund" all
+   *     work, and the order they are typed in stops mattering.
+   *
+   *   · The record is everything an owner could know about the booking rather
+   *     than six chosen fields: what it is, where it stands, what somebody
+   *     wrote on it, when it happened, what it cost, and the ids, card tail and
+   *     phone number they may be reading off something else entirely.
+   *
+   * The words are pooled across the CONTAINER AND ITS MEETINGS rather than
+   * tested card by card, so "package october" finds a block whose name is on
+   * the container and whose date is on its fourth session. The card the owner
+   * is hunting for is the container either way: hiding a package because the
+   * match sits on a child would hide the only row that could have shown it.
+   *
+   * The date is still searched AS RENDERED as well as as stored. Rendered is
+   * the only form in the business's own zone, and the only one that can match
+   * "אוק"; matching the ISO string alone would find "2026" in a UTC timestamp
+   * while the card showed a different year.
    * ───────────────────────────────────────────────────────────────────────────
    */
   const needle = bookingSearch.trim().toLowerCase();
+  /*
+   * WORDS, not one string. Each must land; order is free.
+   *
+   * An empty one is dropped rather than treated as a term: a trailing space
+   * while the owner is still typing would otherwise produce a word that belongs
+   * to nobody, and the list would empty itself under them mid-keystroke. See
+   * `searchWords`.
+   */
+  const needles = searchWords(needle);
 
   const matchesSearch = (session: SessionCardData): boolean => {
-    if (!needle) return true;
+    if (needles.length === 0) return true;
 
     const haystack = (one: SessionCardData): string => {
       /*
@@ -1528,21 +1589,138 @@ export function BookingsTab({
         one.booking.start_time
       ).text;
 
-      return [
-        one.booking.service?.service_name,
-        one.booking.notes,
-        one.booking.status,
-        statusLabel,
-        one.booking.start_time ? formatDate(one.booking.start_time, { withYear: true }) : '',
-        one.booking.created_at ? formatShortDate(one.booking.created_at, { withYear: true }) : '',
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
+      const plan = one.payment?.plan;
+
+      return foldForSearch(
+        [
+          /* ── what it is ───────────────────────────────────────────────── */
+          one.booking.service?.service_name,
+          /* The journey's own copy of the name, for a row whose service join
+             came back empty. The card falls back to it, so the search must. */
+          one.journeyData?.service?.name,
+          one.booking.booking_source,
+          one.journeyData?.service?.duration,
+          one.booking.occurrence_number,
+
+          /* ── where it stands ──────────────────────────────────────────── */
+          one.booking.status,
+          statusLabel,
+          one.booking.meeting_status,
+          one.booking.payment_status,
+          one.payment?.invoiceStatus,
+
+          /* ── what somebody wrote on it ────────────────────────────────── */
+          one.booking.notes,
+          /* `cancel_reason` is the countable code and `cancellation_reason` the
+             older free text, which is the only thing rows cancelled before the
+             code have to say. Both, or those rows answer to nothing. */
+          one.booking.cancel_reason,
+          one.booking.cancel_note,
+          one.booking.cancellation_reason,
+          one.journeyData?.intake?.templateName,
+          one.journeyData?.schedule?.location,
+          /* The ANSWERS, not the question keys: an owner hunting "wants
+             evenings" is remembering what the client typed, not the field it
+             was typed into. */
+          Object.values(one.booking.intake_responses?.responses ?? {})
+            .map(answerText)
+            .join(' '),
+          /* A quoted job's stages carry the words an owner actually uses for
+             the money — "deposit", "on completion" — and nothing else on the
+             card says them. */
+          (plan?.stages ?? [])
+            .map(stage => [stage.label, stage.amount, stage.status].map(answerText).join(' '))
+            .join(' '),
+
+          /* ── what the journey rail shows ──────────────────────────────── */
+          /*
+           * THE QUOTE'S TOTAL LIVES HERE AND NOWHERE ELSE ON THE CARD.
+           *
+           * ───────────────────────────────────────────────────────────────
+           * `payment.amount` on a quoted job is the stage being described, or
+           * the invoice behind it — NOT the figure the client agreed to. The
+           * agreed total is rendered by the quote step alone, from
+           * `proposal.total` into its own `details`, and `plan.totalAmount`
+           * carries it only on a quote with more than one stage. So on a
+           * ₪5,000 job billed in one go, searching "5000" matched nothing: the
+           * number on screen was never in the record being searched.
+           *
+           * The rail is read whole rather than mining that one step, because
+           * the same is true of everything else on it — an email subject, the
+           * reason a job was called off, how many sessions a block holds. The
+           * rule the rest of this haystack follows is "search what the card
+           * shows", and the rail is most of what the card shows.
+           *
+           * `metadata` is scalars throughout (ids, statuses, timestamps,
+           * counts), so flattening its values costs nothing and is how a
+           * pasted proposal id finds its booking.
+           * ───────────────────────────────────────────────────────────────
+           */
+          (one.journeySteps ?? [])
+            .map(step =>
+              [step.key, step.label, step.details, ...Object.values(step.metadata ?? {})]
+                .map(answerText)
+                .join(' ')
+            )
+            .join(' '),
+
+          /* ── when ─────────────────────────────────────────────────────── */
+          one.booking.start_time ? formatDate(one.booking.start_time, { withYear: true }) : '',
+          one.booking.created_at ? formatShortDate(one.booking.created_at, { withYear: true }) : '',
+          /*
+           * The stored date BESIDE the rendered one, never instead of it.
+           *
+           * Rendered is what makes "אוק" and "Thu" reachable and is the only
+           * form on the business's clock. The ISO prefix is what makes
+           * "2026-10" reachable — the form an owner reading a spreadsheet or a
+           * bank line has in front of them, and one no locale will ever print.
+           */
+          one.booking.start_time?.slice(0, 10),
+          one.booking.created_at?.slice(0, 10),
+          one.payment?.paidAt?.slice(0, 10),
+          one.payment?.invoiceDueDate?.slice(0, 10),
+
+          /* ── what it cost ─────────────────────────────────────────────── */
+          one.payment?.amount,
+          one.payment?.invoicedAmount,
+          one.payment?.refundedAmount,
+          one.payment?.currency,
+          one.payment?.paymentMethod,
+          one.payment?.last4,
+          plan?.totalAmount,
+          plan?.installmentAmount,
+          plan?.installmentCount,
+
+          /* ── the numbers read off something else ──────────────────────── */
+          /*
+           * An owner arrives here FROM somewhere — a processor line, an invoice
+           * PDF, a mail thread — holding a number rather than a word. The whole
+           * ids are carried so a paste matches, and the phone a second time
+           * with its punctuation taken out so the digits alone match however
+           * the record happens to spell them.
+           */
+          one.booking.id,
+          one.booking.meeting_id,
+          one.booking.parent_booking_id,
+          one.payment?.id,
+          one.payment?.invoiceId,
+          one.payment?.outstandingInvoiceId,
+          one.booking.payment_id,
+          one.booking.client_first_name,
+          one.booking.client_last_name,
+          one.booking.client_email,
+          one.booking.client_phone,
+          one.booking.client_phone?.replace(/\D+/g, ''),
+        ]
+          .map(answerText)
+          .filter(Boolean)
+          .join(' ')
+      );
     };
 
-    return haystack(session).includes(needle)
-      || (session.meetings ?? []).some(meeting => haystack(meeting).includes(needle));
+    const text = [haystack(session), ...(session.meetings ?? []).map(haystack)].join(' ');
+
+    return recordMatches(needles, text);
   };
 
   const filteredSessions = sortedSessions.filter(matchesSearch);
@@ -1713,6 +1891,31 @@ export function BookingsTab({
           declineNote: null,
         });
         return;
+      /*
+       * ── GIVE THE LAPSED QUOTE MORE TIME ─────────────────────────────────
+       *
+       * The same dialog the quote step on the rail opens, reached from the
+       * banner because that is where an owner looks first. `bookingNextStep`
+       * offers this only for `expired`, which is the one status where there
+       * is something to extend.
+       *
+       * The id comes off the proposal step rather than being threaded through
+       * `SessionCardData`: the rail already reads it from exactly here, and a
+       * second copy of the same lookup is how the two would drift.
+       */
+      case 'extend_quote': {
+        const quoteStep = session.journeySteps?.find(step => step.key === 'proposal');
+        const proposalId = quoteStep?.metadata?.proposalId;
+        if (!proposalId) return;
+
+        onExtendQuote?.(
+          String(proposalId),
+          quoteStep?.metadata?.proposalValidUntil
+            ? formatShortDate(String(quoteStep.metadata.proposalValidUntil), { withYear: true })
+            : null
+        );
+        return;
+      }
       /*
        * Chasing a quote or an invoice both land on the payment manager, which
        * is where the document and its reminder live. Not `onSendInvoice`: that
@@ -2179,6 +2382,14 @@ export function BookingsTab({
             {sortedSessions.length > PAGE_SIZE && (
               <div className="relative">
                 <Search className="pointer-events-none absolute start-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--v2-text-muted)]" />
+                {/*
+                  The placeholder NAMES the numbers, because nothing else can.
+
+                  An owner reading "Search bookings" assumes it wants the service
+                  name, types it, matches all fifty, and concludes the box is
+                  broken. Naming the date and the amount is the only signal that
+                  a figure off a bank line or an invoice number will work.
+                */}
                 <input
                   type="text"
                   value={bookingSearch}
@@ -2191,7 +2402,7 @@ export function BookingsTab({
                     // instead of on the top of the results.
                     setBookingPage(null);
                   }}
-                  placeholder={t('crm.drawer.search_bookings') || 'Search bookings'}
+                  placeholder={t('crm.drawer.search_bookings') || 'Any word, date or amount'}
                   className="w-full rounded-lg border border-[var(--v2-border)] bg-[var(--v2-bg)] ps-9 pe-8 py-2 text-[13px] text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-1 focus:ring-[#8B5CF6] focus:border-transparent"
                 />
                 {bookingSearch && (
@@ -3096,6 +3307,22 @@ export function BookingsTab({
                                   const stepTitle =
                                     step.label ||
                                     (stageShowsItsOwnState ? null : outcomeTitle) ||
+                                    /*
+                                       A quoted job with no pre-meeting has
+                                       nothing confirmed yet: no hour, no price,
+                                       no quote. "אישור הזמנה נשלח" over that
+                                       claims an agreement nobody has made, so
+                                       the node says the order was CREATED.
+
+                                       Keyed off metadata rather than a separate
+                                       step key, because everything else hanging
+                                       off `confirmation` — delivery status, the
+                                       resend control, the email detail — is
+                                       still exactly right. */
+                                    (step.key === 'confirmation' &&
+                                    step.metadata?.awaitingQuote
+                                      ? translated(t, 'crm.booking.step.booking_created')
+                                      : null) ||
                                     translated(t, `crm.booking.step.${step.key}`) ||
                                     step.key;
                                   const isIntakeStep = step.key === 'intake';

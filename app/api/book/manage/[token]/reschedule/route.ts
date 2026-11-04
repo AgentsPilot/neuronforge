@@ -20,6 +20,7 @@ import { generateTimeSlots } from '@/lib/scheduling/availableSlots';
 import { windowsForDate } from '@/lib/scheduling/availabilityWindows';
 import { safeTimezone } from '@/lib/scheduling/businessTime';
 import { busyMeetings } from '@/lib/scheduling/busyMeetings';
+import { bookMakeUpSession } from '@/lib/scheduling/makeUpSession';
 import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
@@ -123,6 +124,50 @@ async function clientSessionMoveCount(
 }
 
 /**
+ * How many replacements this missed session has already been given.
+ *
+ * A make-up points back with `replaces_meeting_id`, so the count is simply how
+ * many rows name this one. Cancelled replacements are excluded: an hour the
+ * client was offered and that was then called off is not an allowance they
+ * spent, and refusing them a second attempt over it would leave them with no
+ * session and no way to book one.
+ */
+async function clientSessionReplacementCount(
+  userId: string,
+  bookingId: string,
+  meetingId: string
+): Promise<number> {
+  if (!meetingId) return 0;
+
+  const { count, error } = await supabaseServer
+    .from('scheduling_meetings')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('booking_id', bookingId)
+    .eq('replaces_meeting_id', meetingId)
+    /*
+     * `neq` ALONE WOULD COUNT NOTHING.
+     *
+     * A replacement nobody has marked yet carries `meeting_status = NULL`, and
+     * in SQL `meeting_status <> 'cancelled'` is UNKNOWN for a NULL — so the
+     * row is excluded rather than kept. That is every fresh replacement, which
+     * is exactly the case this count exists to catch: the limit would have read
+     * zero for ever and allowed unlimited rebooking.
+     */
+    .or('meeting_status.is.null,meeting_status.neq.cancelled');
+
+  if (error) {
+    logger.warn(
+      { err: error, bookingId, meetingId },
+      'Could not count replacements; allowing the booking'
+    );
+    return 0;
+  }
+
+  return count ?? 0;
+}
+
+/**
  * The move count that applies to what is being moved.
  *
  * A session is counted on its own; a booking keeps the rule it always had.
@@ -138,7 +183,21 @@ async function movesUsed(
   const sessionNumber = session?.session_number;
 
   if (typeof sessionNumber === 'number') {
-    return clientSessionMoveCount(userId, bookingId, sessionNumber);
+    /*
+     * A MAKE-UP COUNTS AGAINST THE SAME ALLOWANCE AS A MOVE.
+     *
+     * `clientSessionMoveCount` counts rows stamped `moved` by the client. A
+     * missed session is now REPLACED rather than moved, so it writes no such
+     * row — and the cap would have stopped applying to the one path most
+     * likely to be used repeatedly. Counting the replacements this session has
+     * already been given keeps one allowance over both shapes.
+     */
+    const [moves, replacements] = await Promise.all([
+      clientSessionMoveCount(userId, bookingId, sessionNumber),
+      clientSessionReplacementCount(userId, bookingId, String(session?.id ?? '')),
+    ]);
+
+    return moves + replacements;
   }
 
   return clientMoveCount(userId, bookingId);
@@ -197,12 +256,30 @@ async function sessionOf(
 
   const { data } = await supabaseServer
     .from('scheduling_meetings')
-    .select('id, booking_id, start_time, end_time, timezone, meeting_status, session_number')
+    /* `rebook_invited_at` because the settled test below asks whether the
+       owner invited this client to rearrange a missed hour. */
+    .select(
+      'id, booking_id, start_time, end_time, timezone, meeting_status, session_number, rebook_invited_at'
+    )
     .eq('id', meetingId)
     .eq('user_id', userId)
     .maybeSingle();
 
   if (!data || String(data.booking_id) !== bookingId) return { session: null, notMine: true };
+
+  /*
+   * A SUPERSEDED ATTEMPT IS NOT A SESSION ANYBODY CAN ACT ON.
+   *
+   * `moved` rows were resolving here, so a link from an email sent before the
+   * owner moved the hour loaded the panel, offered slots against the OLD
+   * start_time, and only failed at the POST with `not_reschedulable`. The
+   * client got a working-looking diary and a refusal at the last step.
+   *
+   * Refused as `notMine` so the answer is the same 404 a stranger's id gets:
+   * which of the two it was is not the client's business, and the current
+   * attempt is on their list with a link of its own.
+   */
+  if (data.meeting_status === 'moved') return { session: null, notMine: true };
 
   return { session: data as Record<string, unknown>, notMine: false };
 }
@@ -401,7 +478,23 @@ export async function GET(
       | null
       | undefined;
 
-    if (settledStatus === 'held' || settledStatus === 'cancelled') {
+    /*
+     * ── AND A MISSED SESSION ONLY WHERE THE OWNER ASKED FOR IT ─────────────
+     *
+     * `no_show` still passes the settled test: a missed hour is unresolved and
+     * rebooking it is the right next move WHEN the owner wants that. Their
+     * dialog asks exactly that question, and `rebook_invited_at` is the answer
+     * — stamped when they choose "let the client pick a time".
+     *
+     * Without the stamp the owner is handling it themselves, or has settled it
+     * by charging for the hour. Refused here as well as hidden on the page,
+     * because hiding a control is a courtesy and refusing the write is the
+     * guard: a link in an older email reaches this directly.
+     */
+    const missedWithoutInvitation =
+      settledStatus === 'no_show' && !session?.rebook_invited_at;
+
+    if (settledStatus === 'held' || settledStatus === 'cancelled' || missedWithoutInvitation) {
       return NextResponse.json(
         {
           success: false,
@@ -462,6 +555,50 @@ export async function GET(
      * Same question, asked the same way. Capped because this is a public,
      * token-authenticated endpoint and the loop below is bounded work.
      */
+    /**
+     * HOW LONG THE THING BEING MOVED ACTUALLY IS.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This was `service.duration_minutes`, which is right for an ordinary
+     * booking and empty for a package.
+     *
+     * A package is sold by a quote, so its service is `sale_mode: 'proposal'`
+     * and carries NO duration — correctly: the service is an agreement to meet
+     * six times, not an hour-long thing you can book off a page. The MEETINGS
+     * carry the length, and they are real: 14:00 to 15:00, sixty minutes.
+     *
+     * Reading the service therefore produced `null`, and both readers below
+     * treat a missing duration as "this is not sold by the hour" and answer
+     * nothing. So `openDates` came back empty and EVERY date in the client's
+     * calendar greyed out, while every date they clicked past the greying
+     * answered `not_time_based` — a client trying to move session 7 was shown
+     * a diary with no openings at all, on a business with 50 free days.
+     *
+     * The session's own hours are the answer when there is a session. The
+     * service stays the fallback for an ordinary booking, which has no
+     * meeting row to measure.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const sessionMinutes = (() => {
+      const from = session?.start_time ? new Date(String(session.start_time)) : null;
+      const to = session?.end_time ? new Date(String(session.end_time)) : null;
+      if (!from || !to || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+
+      const minutes = Math.round((to.getTime() - from.getTime()) / 60_000);
+      return minutes > 0 ? minutes : null;
+    })();
+
+    /*
+     * A FUNCTION, because `service` is normalised further down.
+     *
+     * Read eagerly here this would be a temporal dead zone error the moment
+     * the route ran — `service` is declared below, after the embedded
+     * relation is unwrapped. The two readers of this are closures that run
+     * later still, so deferring the lookup to call time is both correct and
+     * the thing that keeps it correct if either moves again.
+     */
+    const bookedMinutes = () => sessionMinutes ?? service?.duration_minutes ?? null;
+
     const openDaysRaw = new URL(request.url).searchParams.get('days');
     const openDays =
       openDaysRaw && /^\d{1,3}$/.test(openDaysRaw) ? Math.min(Number(openDaysRaw), 30) : null;
@@ -503,7 +640,8 @@ export async function GET(
       const dayWindows = windowsForDate(availability, date, timeOff ?? []);
       if (dayWindows.length === 0) return { slots: [], reason: 'closed_that_day' as const };
 
-      const duration = service?.duration_minutes;
+      /* The session's own length where there is one — see `bookedMinutes`. */
+      const duration = bookedMinutes();
       /* A service sold rather than booked has no slots to offer, and coercing
          a null length to zero would generate meaningless ones. */
       if (!duration || duration <= 0) return { slots: [], reason: 'not_time_based' as const };
@@ -556,7 +694,8 @@ export async function GET(
       const availability =
         typeof rawAvailability === 'string' ? JSON.parse(rawAvailability) : rawAvailability;
 
-      const duration = service?.duration_minutes;
+      /* The session's own length where there is one — see `bookedMinutes`. */
+      const duration = bookedMinutes();
       /* A service sold rather than booked has no hours to grey in or out. */
       if (!duration || duration <= 0) return [];
 
@@ -722,6 +861,17 @@ export async function GET(
       /* The session's own time where the page is open on one. */
       currentStartTime: session ? session.start_time : booking.start_time,
       meetingId: session ? session.id : null,
+      /*
+       * WHICH OF THE TWO THINGS THIS PAGE IS ABOUT.
+       *
+       * Rebooking a MISSED session appends a replacement and leaves the missed
+       * hour on the record; moving an unmarked one changes its time. The panel
+       * could not tell them apart, so every string it has says "reschedule" —
+       * and after a make-up it told the client their appointment had moved,
+       * then returned them to a list still showing the missed session and its
+       * fee. The copy keys turn on this.
+       */
+      mode: session?.meeting_status === 'no_show' ? ('makeup' as const) : ('move' as const),
       serviceConfig: {
         durationMinutes: service?.duration_minutes || 60,
         advanceBookingDays: service?.advance_booking_days || 30,
@@ -914,7 +1064,23 @@ export async function POST(
       | null
       | undefined;
 
-    if (settledStatus === 'held' || settledStatus === 'cancelled') {
+    /*
+     * ── AND A MISSED SESSION ONLY WHERE THE OWNER ASKED FOR IT ─────────────
+     *
+     * `no_show` still passes the settled test: a missed hour is unresolved and
+     * rebooking it is the right next move WHEN the owner wants that. Their
+     * dialog asks exactly that question, and `rebook_invited_at` is the answer
+     * — stamped when they choose "let the client pick a time".
+     *
+     * Without the stamp the owner is handling it themselves, or has settled it
+     * by charging for the hour. Refused here as well as hidden on the page,
+     * because hiding a control is a courtesy and refusing the write is the
+     * guard: a link in an older email reaches this directly.
+     */
+    const missedWithoutInvitation =
+      settledStatus === 'no_show' && !session?.rebook_invited_at;
+
+    if (settledStatus === 'held' || settledStatus === 'cancelled' || missedWithoutInvitation) {
       return NextResponse.json(
         {
           success: false,
@@ -1076,6 +1242,98 @@ export async function POST(
      * journey used to tell the owner they had made every move themselves.
      * ─────────────────────────────────────────────────────────────────────────
      */
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A MISSED SESSION IS MADE UP, NOT MOVED.
+     *
+     * `move_meeting` stamps the superseded row `moved` only when its status is
+     * NULL — correctly, since it will not erase a recorded outcome. So moving a
+     * `no_show` left TWO live rows on one `session_number`, which nothing in
+     * the codebase is built for: every reader keeps the highest occurrence, so
+     * the missed row and its fee vanished from the client's list, the email
+     * money lines, the job's mirrored status and the owner's drawer. The
+     * pending stage was re-pointed at the replacement on top of that.
+     *
+     * The owner's drawer has always done this the other way — append a session
+     * and point it back with `replaces_meeting_id` — and that is the shape the
+     * rest of the product reads. One mechanism now, in `makeUpSession`.
+     *
+     * `no_show` only. A session called off, or already held, never reaches here
+     * (`already_settled` above), and an unmarked session genuinely IS moving.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (session && session.meeting_status === 'no_show') {
+      const { data: siblings } = await supabaseServer
+        .from('scheduling_meetings')
+        .select('session_number')
+        .eq('booking_id', String(session.booking_id))
+        .eq('user_id', booking.user_id as string)
+        .not('session_number', 'is', null);
+
+      const madeUp = await bookMakeUpSession({
+        userId: booking.user_id as string,
+        containerId: String(session.booking_id),
+        missedMeetingId: String(session.id),
+        startTime: newStartInstant,
+        endTime: newEndInstant,
+        timezone: (session.timezone as string | null) ?? null,
+        siblings: siblings ?? [],
+      });
+
+      if (isSlotTakenError(madeUp.error)) {
+        return NextResponse.json(
+          { success: false, code: 'slot_taken', error: 'The selected time slot is not available' },
+          { status: 409 }
+        );
+      }
+
+      if (madeUp.error || !madeUp.id) {
+        requestLogger.error(
+          { err: madeUp.error, meetingId: session.id },
+          'Could not book a replacement for the missed session'
+        );
+        return NextResponse.json(
+          { success: false, code: 'move_failed', error: 'Failed to reschedule' },
+          { status: 500 }
+        );
+      }
+
+      /* The owner's record of it, as for a move. Never fatal. */
+      try {
+        const { BookingEmailService } = await import('@/lib/services/BookingEmailService');
+        await BookingEmailService.sendRescheduledEmail(
+          bookingId,
+          booking.user_id as string,
+          currentStartTime,
+          { sessionStart: newStartInstant, sessionEnd: newEndInstant, sessionMeetingId: madeUp.id }
+        );
+      } catch (err) {
+        requestLogger.error({ err, meetingId: session.id }, "A replacement session's notice threw");
+      }
+
+      requestLogger.info(
+        { bookingId, missed: session.id, replacement: madeUp.id, to: newStartInstant },
+        'Client booked a replacement for a session they missed'
+      );
+
+      return NextResponse.json({
+        success: true,
+        /* `madeUp` so the page can say what actually happened rather than
+           claiming the appointment moved — the copy differs. */
+        madeUp: true,
+        /*
+         * Whether this replacement carries a charge of its own, which it does
+         * on a package billed per session. The client was never asked — it
+         * follows from how the package was sold — so the page has to TELL
+         * them, or the first they hear of it is an invoice.
+         */
+        charged: Boolean(madeUp.charged),
+        meetingId: madeUp.id,
+        newStartTime: newStartInstant,
+        newEndTime: newEndInstant,
+      });
+    }
+
     if (session) {
       const moved = await schedulingBookingRepository.moveMeeting(
         String(session.id),

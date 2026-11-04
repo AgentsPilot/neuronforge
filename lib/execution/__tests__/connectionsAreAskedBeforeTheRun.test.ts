@@ -33,6 +33,11 @@
 
 const getConnection = jest.fn();
 const getPluginDefinition = jest.fn();
+const refreshToken = jest.fn();
+
+/** The provider's answer to the pre-flight's verification call. */
+const fetchMock = jest.fn();
+(global as unknown as { fetch: unknown }).fetch = fetchMock;
 
 jest.mock('@/lib/server/plugin-manager-v2', () => ({
   PluginManagerV2: {
@@ -42,7 +47,7 @@ jest.mock('@/lib/server/plugin-manager-v2', () => ({
 
 jest.mock('@/lib/server/user-plugin-connections', () => ({
   UserPluginConnections: {
-    getInstance: jest.fn(() => ({ getConnection })),
+    getInstance: jest.fn(() => ({ getConnection, refreshToken })),
   },
 }));
 
@@ -51,7 +56,14 @@ import { connectionsReady } from '@/lib/execution/connectionsReady';
 const USER = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
 /** A plugin definition shaped the way `getPluginDefinition` returns one. */
-const oauth = { plugin: { auth_config: { auth_type: 'oauth2_google' } } };
+const oauth = {
+  plugin: {
+    auth_config: {
+      auth_type: 'oauth2_google',
+      profile_url: 'https://example.invalid/userinfo',
+    },
+  },
+};
 const internal = { plugin: { auth_config: { auth_type: 'platform_key' } } };
 
 /** A connection row, as far as this module cares: not null. */
@@ -61,6 +73,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   getPluginDefinition.mockReturnValue(oauth);
   getConnection.mockResolvedValue(live);
+  refreshToken.mockResolvedValue({ access_token: 'fresh' });
+  /* The provider accepts the token unless a test says otherwise. */
+  fetchMock.mockResolvedValue({ status: 200 });
 });
 
 describe('asking before the run', () => {
@@ -170,5 +185,98 @@ describe('it fails open', () => {
     const blocked = await connectionsReady(USER, ['google-mail', 'google-sheets']);
 
     expect(blocked.map(b => b.plugin)).toEqual(['google-mail']);
+  });
+});
+
+/**
+ * Verifying, rather than trusting `expires_at`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THE EXPIRY IS NOT ENOUGH, MEASURED
+ *
+ * Live account, 2026-11-04 15:30. The stored Gmail token answered
+ *
+ *   401  "Request had invalid authentication credentials"
+ *
+ * while its `expires_at` sat comfortably in the future, and one refresh call
+ * produced a token that read the mailbox on the very next request. The grant
+ * was healthy the whole time.
+ *
+ * `getConnection` refreshes only within five minutes of the stored expiry, so
+ * it handed that dead token straight to the first step — and the owner was told
+ * for two days to reconnect something that was one API call from working.
+ */
+describe('verifying the token with the provider', () => {
+  it('asks the profile endpoint the plugin already declares', async () => {
+    await connectionsReady(USER, ['google-mail']);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.invalid/userinfo',
+      expect.objectContaining({ headers: { Authorization: 'Bearer good' } })
+    );
+  });
+
+  it('refreshes when the provider rejects a token the clock still calls valid', async () => {
+    fetchMock.mockResolvedValue({ status: 401 });
+
+    const blocked = await connectionsReady(USER, ['google-mail']);
+
+    expect(refreshToken).toHaveBeenCalledTimes(1);
+    /* Refreshed, so the run proceeds — which is the whole point of asking
+       before the step rather than after it. */
+    expect(blocked).toEqual([]);
+  });
+
+  it('blocks only when the token is rejected AND cannot be refreshed', async () => {
+    /* Proven dead and unrefreshable is the one case where the owner genuinely
+       must reconnect, and the only one worth skipping a run over. */
+    fetchMock.mockResolvedValue({ status: 401 });
+    refreshToken.mockResolvedValue(null);
+
+    const blocked = await connectionsReady(USER, ['google-mail']);
+
+    expect(blocked).toEqual([{ plugin: 'google-mail', reason: 'no_usable_connection' }]);
+  });
+
+  it('does NOT treat a 403 as a dead token', async () => {
+    /*
+     * A 403 is a scope or quota problem. The credential is fine and refreshing
+     * it changes nothing, so calling it dead would skip every run for ever over
+     * a permission only the owner can grant.
+     */
+    fetchMock.mockResolvedValue({ status: 403 });
+
+    const blocked = await connectionsReady(USER, ['google-mail']);
+
+    expect(refreshToken).not.toHaveBeenCalled();
+    expect(blocked).toEqual([]);
+  });
+
+  it('does not refresh a token the provider accepts', async () => {
+    await connectionsReady(USER, ['google-mail']);
+
+    expect(refreshToken).not.toHaveBeenCalled();
+  });
+
+  it('lets the run proceed when the provider cannot be reached', async () => {
+    /* A timeout or a 5xx says nothing about the credential. Same fail-open rule
+       as everything else here. */
+    fetchMock.mockRejectedValue(new Error('network down'));
+
+    const blocked = await connectionsReady(USER, ['google-mail']);
+
+    expect(blocked).toEqual([]);
+    expect(refreshToken).not.toHaveBeenCalled();
+  });
+
+  it('skips the probe for a plugin that declares no profile endpoint', async () => {
+    getPluginDefinition.mockReturnValue({
+      plugin: { auth_config: { auth_type: 'oauth2', profile_url: undefined } },
+    });
+
+    const blocked = await connectionsReady(USER, ['some-oauth-plugin']);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(blocked).toEqual([]);
   });
 });
