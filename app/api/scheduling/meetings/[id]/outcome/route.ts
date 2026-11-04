@@ -23,6 +23,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { supabaseServer } from '@/lib/supabaseServer';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import {
   schedulingBookingRepository,
@@ -380,6 +381,41 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
      */
     let clientNotified: boolean | null = null;
     let notifyError: string | null = null;
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE INVITATION IS A PERMISSION, SO IT IS WRITTEN DOWN.
+     *
+     * `notifyClient` only ever sent an email. Nothing recorded that the owner
+     * had asked this client to pick another time, so the client's portal could
+     * not tell "I invited them to rebook" from "I am leaving it for now" — and
+     * fell back to offering EVERY missed session a Change-date button. An owner
+     * who charged for a no-show and deliberately added no make-up still found
+     * the client invited to rearrange it.
+     *
+     * Stamped only for `no_show`, because that is the only outcome where the
+     * question arises: a held session has nothing to rebook, and a cancelled
+     * one is the owner's to replace.
+     *
+     * Non-blocking. The outcome is recorded and the mail is going out either
+     * way; a stamp that failed costs the client a button, which the owner can
+     * see and re-send.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (parsed.data.notifyClient && status === 'no_show') {
+      const { error: inviteError } = await supabaseServer
+        .from('scheduling_meetings')
+        .update({ rebook_invited_at: new Date().toISOString() })
+        .eq('id', meetingId)
+        .eq('user_id', user.id);
+
+      if (inviteError) {
+        requestLogger.error(
+          { err: inviteError, meetingId },
+          'Client invited to rebook but the invitation was not recorded'
+        );
+      }
+    }
 
     if (parsed.data.notifyClient && status !== 'held' && result.data.startTime) {
       try {

@@ -29,10 +29,44 @@
  *
  * Only non-zero counts appear. "0 slipped" is noise on a good month, and a row
  * of zeros trains the owner to skip the line that is meant to be the summary.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * BUT A COUNT ALONE DOES NOT SURVIVE BEING READ
+ *
+ * "2 improved · 1 slipped · 5 need more data" was shown to the owner, whose
+ * reply was the only review that matters:
+ *
+ *     "What does it mean? what improved or decreased?"
+ *
+ * The answer was on the same page, sixty lines below, in `HealthRows`. Nothing
+ * connected them. And in that instance the single declined category was
+ * cancellations — 23.5%, up from 10% — the most actionable fact on the page,
+ * reduced to the digit 1.
+ *
+ * So a direction with one or two categories NAMES them. Three or more keeps the
+ * count, because a chip listing four nouns is a sentence pretending to be a
+ * badge, and the rows below already carry the detail.
+ *
+ * `unavailable` always stays a count. Naming five categories nobody can measure
+ * yet is noise of exactly the kind the zero-suppression above exists to avoid.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import {
+  movedForTheBetter,
+  movedForTheWorse,
+  type CategoryHealth,
+} from '@/lib/business-os/insight/health/businessHealth';
+
+/**
+ * How many categories a chip will name before falling back to counting.
+ *
+ * Two, measured against the width of the chip row rather than chosen: three
+ * Hebrew category nouns with separators already wrap on a laptop, and a wrapped
+ * badge reads as two badges.
+ */
+const NAME_UP_TO = 2;
 
 interface VerdictLineProps {
   /** The stored narrative. Absent on accounts the nightly run has not reached. */
@@ -42,6 +76,14 @@ interface VerdictLineProps {
   steady: number;
   /** Categories with too little data to measure, so the tally adds up. */
   unavailable: number;
+  /**
+   * The categories behind the counts, so a chip can say WHICH.
+   *
+   * Optional: an account whose stored summary predates the field still gets the
+   * counts, which is what this component has always shown. Absent is not empty —
+   * `[]` would mean "measured nothing", and both correctly fall back to counting.
+   */
+  categories?: CategoryHealth[] | null;
 }
 
 export function VerdictLine({
@@ -50,15 +92,48 @@ export function VerdictLine({
   declined,
   steady,
   unavailable,
+  categories,
 }: VerdictLineProps) {
   const { t } = useLanguage();
 
+  /**
+   * The chip's text: the categories by name, or the bare count.
+   *
+   * `movedForTheBetter` / `movedForTheWorse` are imported rather than reimplemented
+   * because they hold the one rule that is easy to get backwards — cancellations
+   * is the single category where a RISE is the bad direction. A local
+   * `change > 0` here would file a worsening cancellation rate as an improvement.
+   */
+  const describe = (
+    count: number,
+    moved: (c: CategoryHealth) => boolean,
+    nounKey: string,
+    countKey: string
+  ): string => {
+    const named = (categories ?? []).filter(moved);
+
+    if (named.length === 0 || named.length > NAME_UP_TO) {
+      return `${count} ${t(countKey)}`;
+    }
+
+    const labels = named.map(c => t(`health.category.${c.category}`));
+    return `${t(nounKey)}: ${labels.join(', ')}`;
+  };
+
   const chips: { key: string; text: string; tone: 'up' | 'down' | 'flat' }[] = [];
   if (improved > 0) {
-    chips.push({ key: 'up', text: `${improved} ${t('reports.count_improved')}`, tone: 'up' });
+    chips.push({
+      key: 'up',
+      text: describe(improved, movedForTheBetter, 'reports.moved_better', 'reports.count_improved'),
+      tone: 'up',
+    });
   }
   if (declined > 0) {
-    chips.push({ key: 'down', text: `${declined} ${t('reports.count_slipped')}`, tone: 'down' });
+    chips.push({
+      key: 'down',
+      text: describe(declined, movedForTheWorse, 'reports.moved_worse', 'reports.count_slipped'),
+      tone: 'down',
+    });
   }
   if (steady > 0) {
     chips.push({ key: 'flat', text: `${steady} ${t('reports.count_steady')}`, tone: 'flat' });

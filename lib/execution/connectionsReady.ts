@@ -82,6 +82,43 @@ export interface BlockedConnection {
 }
 
 /**
+ * Does the provider still accept this token?
+ *
+ * `rejected` ONLY on a 401, which is the provider stating the credential is no
+ * good. Everything else answers `unknown` and the run proceeds:
+ *
+ *   · a 403 is a SCOPE or quota problem. The token is fine and refreshing it
+ *     changes nothing, so treating it as dead would skip runs for ever over a
+ *     permission the owner has to grant;
+ *   · a 5xx, a timeout or a network error says nothing about the credential;
+ *   · a plugin declaring no `profile_url` has nothing to ask.
+ *
+ * The asymmetry is deliberate. A false `rejected` costs one unnecessary
+ * refresh; a false `accepted` costs exactly what this function exists to
+ * prevent, and the step's own 401 handling is still behind it either way.
+ */
+async function tokenStillAccepted(
+  accessToken: string | null | undefined,
+  profileUrl: string | undefined
+): Promise<'accepted' | 'rejected' | 'unknown'> {
+  if (!accessToken || !profileUrl) return 'unknown';
+
+  try {
+    const response = await fetch(profileUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      /* A pre-flight must never outlast the thing it is checking for. The
+         route's own budget is 60s and a whole agent run has to fit inside it. */
+      signal: AbortSignal.timeout(5000),
+    });
+
+    return response.status === 401 ? 'rejected' : 'accepted';
+  } catch {
+    /* Never reached the provider, so nothing is known and nothing is claimed. */
+    return 'unknown';
+  }
+}
+
+/**
  * The plugins this agent needs that are not usable, after trying to refresh.
  *
  * An empty array means every required connection is live — including any that
@@ -132,7 +169,58 @@ export async function connectionsReady(
 
         if (!connection) {
           blocked.push({ plugin, reason: 'no_usable_connection' });
+          continue;
         }
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * AND THEN ASK THE PROVIDER, BECAUSE `expires_at` IS A HINT.
+         *
+         * `getConnection` refreshes only within five minutes of the stored
+         * expiry. That trusts a column, and the column is routinely wrong in
+         * the one direction that matters: a token can be rejected long before
+         * it expires — revoked, superseded, the grant re-scoped — and Google
+         * then answers 401 while our row still says valid for another half
+         * hour.
+         *
+         * Measured on a live account, 2026-11-04 15:30. The stored Gmail token
+         * returned:
+         *
+         *   401  "Request had invalid authentication credentials"
+         *
+         * while one refresh call produced a token that read the mailbox fine on
+         * the very next request. The connection was healthy throughout. The
+         * owner was shown "Your Gmail connection has expired. Please reconnect"
+         * for two days about a connection that was one API call from working,
+         * and reconnecting would have fixed nothing.
+         *
+         * So the pre-flight VERIFIES rather than assumes: one cheap call to the
+         * profile endpoint every OAuth plugin already declares, and on a 401 the
+         * token is refreshed here — while there is still a run to save, rather
+         * than one second after it was written off.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const verdict = await tokenStillAccepted(connection.access_token, authConfig.profile_url);
+
+        if (verdict !== 'rejected') continue; // accepted, or nothing to ask
+
+        const refreshed = await userConnections.refreshToken(connection, authConfig);
+
+        if (!refreshed) {
+          /* Proven dead AND unrefreshable. This is the one case where the owner
+             genuinely must reconnect, and the only one worth blocking on. */
+          logger.warn(
+            { userId, plugin },
+            'The provider rejected this token and it could not be refreshed; the owner must reconnect'
+          );
+          blocked.push({ plugin, reason: 'no_usable_connection' });
+          continue;
+        }
+
+        logger.info(
+          { userId, plugin },
+          'Provider rejected a token our expiry still called valid; refreshed before the run'
+        );
       } catch (err) {
         /* Fail open: one plugin we could not ask about is not grounds for
            refusing the run. Logged, because a connection check that throws

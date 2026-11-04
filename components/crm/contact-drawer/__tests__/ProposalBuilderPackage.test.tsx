@@ -55,6 +55,16 @@ const COPY: Record<string, string> = {
   'proposal.package_dates_warned': '{count} of these meetings fall on a day you are closed.',
   'proposal.package': 'Several meetings (a package)',
   'proposal.package_hint': 'Sell a block of sessions as one purchase.',
+  /* The branch that replaced the package switch — see `sell_what` in the
+     modal. Each card names its own payment terms, which is the whole point. */
+  'proposal.sell_what': 'What are you selling?',
+  'proposal.sell_job': 'One piece of work',
+  'proposal.sell_job_hint': 'A project or service priced as a single unit.',
+  'proposal.sell_job_pay': 'Paid: in one \u00b7 by stages \u00b7 in instalments',
+  'proposal.sell_series': 'A series of meetings',
+  'proposal.sell_series_hint': 'Several meetings sold as one purchase.',
+  'proposal.sell_series_pay': 'Paid: upfront \u00b7 after each meeting',
+  'proposal.field.payment_when': 'When the client pays',
   'proposal.package_first': 'First meeting',
   'proposal.package_how_many': 'How many, and how long',
   'proposal.package_repeats': 'Repeats',
@@ -427,9 +437,14 @@ describe('the money question', () => {
   it('gives the three job answers back when the package is turned off', async () => {
     await turnPackageOn();
 
-    const toggle = document.getElementById('proposal-is-package') as HTMLElement;
+    /*
+     * Turning it off is choosing the OTHER option now, not pressing the same
+     * control a second time. The switch became a two-way choice — a pressed
+     * radio does not unpress itself — so "off" is the job card.
+     */
+    const job = document.getElementById('proposal-is-job') as HTMLElement;
     await act(async () => {
-      fireEvent.click(toggle);
+      fireEvent.click(job);
     });
 
     expect(screen.getByRole('button', { name: 'By stages' })).toBeInTheDocument();
@@ -742,7 +757,11 @@ describe('a revision of a package', () => {
   it('opens as a package, with its dates', async () => {
     await openRevision();
 
-    expect(document.getElementById('proposal-is-package')).toBeChecked();
+    /* The series card is a `<button aria-pressed>` now, not a switch — see the
+       id comment in `ProposalBuilderModal`. `toBeChecked` only understands
+       checkbox, radio and aria-checked, so it throws on a pressed button
+       rather than failing an assertion. */
+    expect(document.getElementById('proposal-is-package')).toHaveAttribute('aria-pressed', 'true');
     // Six dates back, plus the first-meeting control.
     expect(dateInputs()).toHaveLength(7);
     expect(seriesValues()).toHaveLength(6);
@@ -796,7 +815,7 @@ describe('a revision of an ordinary staged job', () => {
       sessions: null,
     });
 
-    expect(document.getElementById('proposal-is-package')).not.toBeChecked();
+    expect(document.getElementById('proposal-is-package')).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByDisplayValue('Deposit')).toBeInTheDocument();
   });
 });

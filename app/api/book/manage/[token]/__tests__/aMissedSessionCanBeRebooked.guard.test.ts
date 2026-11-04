@@ -1,5 +1,20 @@
 /**
- * A missed session is rebookable by the client. A held or cancelled one is not.
+ * A missed session is rebookable by the client WHEN THE OWNER INVITED THEM.
+ * A held or cancelled one never is.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE RULE MOVED ONCE, DELIBERATELY
+ *
+ * This file originally pinned "a missed session is always rebookable", which
+ * fixed the bug described below. It was then narrowed: the owner's no-show
+ * dialog offers three answers — leave it, invite the client to pick, or book a
+ * make-up — and only the middle one hands the next move to the client. That
+ * answer is now recorded as `rebook_invited_at`, and the client's button and
+ * the client's write both key on it.
+ *
+ * Both rules are still here. The ORIGINAL bug — a blanket refusal of every
+ * outcome — is pinned by "has no rule that refuses every outcome"; the new one
+ * by "refuses a missed session only where the owner did not invite them".
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * WHAT WAS ON SCREEN (ClickUp 868mqzdty)
@@ -107,10 +122,49 @@ describe('the client route refuses only a settled session', () => {
     expect(resolved.length).toBe(2);
   });
 
-  it('never names no_show as a reason to refuse', () => {
-    /* The product's position in three places. A refusal on it would contradict
-       the mail the owner just sent. */
-    expect(client).not.toMatch(/=== 'no_show'/);
+  it('refuses a missed session only where the owner did not invite them', () => {
+    /*
+     * ── THE POLICY THIS FILE USED TO PIN, AND WHY IT CHANGED ───────────────
+     *
+     * It asserted that a missed session is NEVER refused: the hour is
+     * unresolved, so let the client pick another. True of the state, and
+     * false of the decision — the owner's dialog asks what happens next, and
+     * two of its three answers are "I am handling it" and "leave it for now".
+     *
+     * Nothing recorded that answer, so every missed session was offered a
+     * Change-date button. An owner who charged for a no-show and deliberately
+     * added no make-up found the client invited to rearrange an hour they had
+     * already paid for.
+     *
+     * So the refusal is allowed now, and bounded: it must be paired with the
+     * invitation, never written on `no_show` alone. That pairing IS the rule,
+     * which is why it is asserted as one expression rather than as the absence
+     * of a string.
+     */
+    expect(client).toMatch(
+      /settledStatus === 'no_show' &&\s*!session\?\.rebook_invited_at/
+    );
+
+    /* And never unconditionally: a bare `no_show` in the settled test would be
+       the old blanket refusal wearing the new rule's clothes. */
+    expect(client).not.toMatch(/settledStatus === 'no_show'(?!\s*&&)/);
+  });
+
+  it('reads the invitation from the session row, or the guard is always true', () => {
+    /* `rebook_invited_at` unselected would make every missed session look
+       uninvited, which is the blanket refusal by accident. */
+    expect(client).toMatch(/rebook_invited_at/);
+  });
+
+  it('routes a missed session to the make-up path instead', () => {
+    /*
+     * The other half of the same rule, and the reason the string above is now
+     * allowed to appear. Moving a `no_show` left two live rows on one session
+     * number, because `move_meeting` will not stamp `moved` over a recorded
+     * outcome — so the missed row and its money disappeared from every reader.
+     */
+    expect(client).toMatch(/session\.meeting_status === 'no_show'/);
+    expect(client).toMatch(/bookMakeUpSession\(/);
   });
 });
 
@@ -148,13 +202,15 @@ describe('the owner and the client agree', () => {
     expect(client).toMatch(/=== 'cancelled'/);
   });
 
-  it('neither refuses a missed one', () => {
+  it('the owner is never refused a missed one', () => {
     /*
-     * The two halves of the same journey. The owner's menu offers "rebook
-     * meeting" on a missed session; this is what makes the link it sends
-     * actually work.
+     * Unchanged, and the half that still holds: the owner's menu offers to
+     * rebook a missed session, and the owner's route must not refuse it.
+     *
+     * The CLIENT's half moved — see the settled test above. The owner decides
+     * whether the client may rearrange it, which is a different question from
+     * whether the owner may.
      */
     expect(owner).not.toMatch(/=== 'no_show'/);
-    expect(client).not.toMatch(/=== 'no_show'/);
   });
 });

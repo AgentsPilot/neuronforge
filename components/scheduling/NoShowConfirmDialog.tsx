@@ -28,7 +28,15 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Loader2, UserX } from 'lucide-react';
+import {
+  ArrowLeftRight,
+  Banknote,
+  CalendarPlus,
+  Loader2,
+  Mail,
+  Minus,
+  UserX,
+} from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -36,74 +44,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import {
+  ChoiceBar,
+  DECISION_ACCENT,
+  Hint,
+  OutcomeLine,
+  OutcomePanel,
+  StepMark,
+} from '@/components/scheduling/decisionDialogParts';
 
-/**
- * One switch, in a dialog that now asks two questions.
- *
- * Extracted rather than copied because the knob's placement carries a fix for
- * a real bug (below), and two copies of it are two things to get right the
- * next time either is touched.
- */
-function OutcomeSwitch({
-  checked,
-  onToggle,
-  disabled,
-  label,
-  description,
-  isRTL,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-  disabled: boolean;
-  label: string;
-  description: string;
-  isRTL: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={onToggle}
-      disabled={disabled}
-      className="w-full flex items-start justify-between gap-3 p-3 text-start bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors disabled:opacity-50"
-      style={{ borderRadius: 'var(--v2-radius-button)' }}
-    >
-      <span className="flex-1">
-        <span className="block text-sm font-medium text-[var(--v2-text-primary)]">{label}</span>
-        <span className="block text-xs text-[var(--v2-text-muted)] mt-0.5">{description}</span>
-      </span>
 
-      <span
-        className={`mt-0.5 relative inline-flex h-5 w-9 flex-shrink-0 transition-colors ${
-          checked ? 'bg-[#14B8A6]' : 'bg-[var(--v2-border)]'
-        }`}
-        style={{ borderRadius: '9999px' }}
-      >
-        {/* ── THE KNOB, IN BOTH DIRECTIONS ────────────────────────────
-            It was `absolute` with no inset, sliding by
-            `translate-x-[18px]`. Positive X is RIGHTWARD whatever the
-            writing direction, so in Hebrew the knob started at the right
-            edge and slid further right, off the end of its own track —
-            leaving a toggle that could not be read as on or off.
 
-            `insetInlineStart` places it at the start edge in either
-            direction, and the travel is signed by `isRTL`, which this
-            component already has for the dialog's own `dir`. Written
-            inline rather than as an `rtl:` utility so it cannot depend
-            on which Tailwind variants this project has enabled. */}
-        <span
-          className="absolute top-0.5 h-4 w-4 bg-white transition-transform"
-          style={{
-            borderRadius: '9999px',
-            insetInlineStart: '2px',
-            transform: checked ? `translateX(${isRTL ? -18 : 18}px)` : 'translateX(0)',
-          }}
-        />
-      </span>
-    </button>
-  );
-}
 
 interface NoShowConfirmDialogProps {
   open: boolean;
@@ -133,6 +84,16 @@ interface NoShowConfirmDialogProps {
    * hour and tells the client. Null hides the toggle.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * The replacement offer has not come back yet.
+   *
+   * It is fetched when the dialog opens, so for a moment `replacement` is
+   * absent for a reason that has nothing to do with whether one is possible.
+   * Without this the owner could confirm in that window and call a session
+   * off believing no replacement was on offer — the control that would have
+   * said otherwise simply had not rendered.
+   */
+  replacementLoading?: boolean;
   replacement?: {
     proposedStart: string;
     /**
@@ -178,6 +139,7 @@ export function NoShowConfirmDialog({
   clientName,
   chargeable = false,
   replacement,
+  replacementLoading = false,
   onConfirm,
 }: NoShowConfirmDialogProps) {
   const { t, isRTL } = useLanguage();
@@ -203,14 +165,31 @@ export function NoShowConfirmDialog({
    * first back on, which turns this one off; they are a choice, and the dialog
    * says so by only ever holding one of them.
    */
-  const chooseReplacement = (next: boolean) => {
-    setAddReplacement(next);
-    if (next) setNotifyClient(false);
-  };
+  /*
+   * ── SO THE SCREEN SAYS IT, RATHER THAN ENFORCING IT BEHIND THE OWNER ─────
+   *
+   * The rule above was real and invisible: two switches, and pressing one
+   * quietly released the other with nothing to explain why. An owner watching
+   * a toggle they did not touch flick itself off reads it as a bug, and the
+   * money switch sat between the two, changing what both of them meant.
+   *
+   * They are one question — WHO PICKS THE NEXT HOUR — so they are asked as
+   * one, with three answers. Doing nothing is a real answer and comes first:
+   * most no-shows are a conversation before they are a booking.
+   *
+   * Derived from the existing two booleans rather than held as a third piece
+   * of state. `onConfirm` is unchanged, and there is no way for a new source
+   * of truth to drift from the two the caller actually receives.
+   */
+  const nextStep: 'nothing' | 'client' | 'owner' = notifyClient
+    ? 'client'
+    : addReplacement
+      ? 'owner'
+      : 'nothing';
 
-  const chooseInvite = (next: boolean) => {
-    setNotifyClient(next);
-    if (next) setAddReplacement(false);
+  const chooseNext = (step: 'nothing' | 'client' | 'owner') => {
+    setNotifyClient(step === 'client');
+    setAddReplacement(step === 'owner');
   };
   /*
    * ───────────────────────────────────────────────────────────────────────────
@@ -258,15 +237,73 @@ export function NoShowConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={next => !working && onOpenChange(next)}>
-      <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <UserX className="w-5 h-5 text-[var(--v2-text-muted)]" />
+      {/*
+        WIDER, AND ONLY THE MIDDLE SCROLLS.
+
+        At `max-w-md` the two questions, the date picker and the summary ran to
+        a column taller than the viewport, so the confirm button sat below the
+        fold and the whole thing read as a form rather than a decision. The
+        extra width lets the answers sit two and three across, which is what
+        actually shortens it; `max-h` plus a scrolling body keeps the title and
+        the buttons fixed where they can always be reached.
+      */}
+      <DialogContent
+        /*
+         * `flex` opts OUT of the base dialog's own mobile handling — it gives
+         * the gutter and the scroll cap only to the non-flex branch, on the
+         * reasoning that a flex caller lays itself out. So both are supplied
+         * here: a 1rem margin each side on a phone, full width once there is
+         * room, and a height cap with the scroll on the BODY so the title and
+         * the two buttons stay reachable.
+         *
+         * The width is an inline style because `cn` is a plain join with no
+         * tailwind-merge: a `max-w-…` class would land beside the base's
+         * `max-w-lg` at equal specificity and source order would decide.
+         */
+        className="flex max-h-[86dvh] w-[calc(100%-2rem)] flex-col gap-0 p-0 sm:w-full"
+        style={{ maxWidth: '30rem' }}
+        dir={isRTL ? 'rtl' : 'ltr'}
+      >
+        {/*
+          PADDING, SECTION BY SECTION.
+
+          The base dialog applies `p-4 sm:p-6` only to its NON-flex branch, on
+          the same reasoning as the gutter and the scroll cap: a flex caller is
+          laying itself out. Taking that branch without replacing the padding
+          left every edge flush against the panel.
+
+          Given per section rather than to the panel, so the body can scroll
+          under a header and a footer that stay put — a single `p-6` on the
+          shell would scroll the title away with the content.
+        */}
+        <DialogHeader className="flex-shrink-0 border-b border-[var(--v2-border)] px-5 pb-4 pe-12 pt-4">
+          <DialogTitle className="flex items-center gap-2.5">
+            {/* The glyph in a tinted tile rather than loose beside the words:
+                it is the dialog's subject, and amber says "a decision is
+                wanted here" before a single line is read. */}
+            <span
+              aria-hidden
+              className="inline-grid h-8 w-8 flex-shrink-0 place-items-center"
+              style={{
+                borderRadius: 'var(--v2-radius-button)',
+                color: DECISION_ACCENT,
+                border: `1px solid color-mix(in srgb, ${DECISION_ACCENT} 40%, transparent)`,
+                background: `color-mix(in srgb, ${DECISION_ACCENT} 13%, transparent)`,
+              }}
+            >
+              <UserX className="h-4 w-4" />
+            </span>
             {t('scheduling.no_show.title')}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="py-3 space-y-4">
+        {/*
+          ONE COLUMN. The two-column attempt put the summary in a sidebar that
+          ran a third of the height and left a void beneath it, and the answers
+          in a narrow strip beside it. Everything reads downwards now: what is
+          recorded, the two questions, what will happen, the buttons.
+        */}
+        <div className="flex flex-1 flex-col gap-3.5 overflow-y-auto px-5 py-4">
           {/* ── THE NAME IN BOLD ────────────────────────────────────────────
               This records that a named person did not turn up, it goes on
               their timeline, and it counts against their no-show rate. The
@@ -281,7 +318,24 @@ export function NoShowConfirmDialog({
 
               Falls back to the plain sentence when there is no name, exactly
               as before. */}
-          <p className="text-sm text-[var(--v2-text-secondary)]">
+          {/*
+            A STATEMENT, SET APART FROM THE QUESTIONS BELOW IT.
+
+            This is the one thing on the dialog that is not a decision — it is
+            what pressing confirm records, whatever else is chosen. As a plain
+            paragraph it read like an introduction and was skipped; the amber
+            rule and tint give it the weight of a notice, and separate it from
+            the two questions that follow.
+          */}
+          <p
+            className="border-s-[3px] p-3 text-sm"
+            style={{
+              borderInlineStartColor: DECISION_ACCENT,
+              background: `color-mix(in srgb, ${DECISION_ACCENT} 11%, transparent)`,
+              borderRadius: 'var(--v2-radius-button)',
+              color: 'var(--v2-text-secondary)',
+            }}
+          >
             {clientName
               ? (() => {
                   /* Split on the PLACEHOLDER rather than a sentinel. Feeding
@@ -307,69 +361,123 @@ export function NoShowConfirmDialog({
               : t('scheduling.no_show.confirm')}
           </p>
 
-          {/* Each toggle says what it will actually do, beside itself. */}
-          <OutcomeSwitch
-            checked={notifyClient}
-            onToggle={() => chooseInvite(!notifyClient)}
-            disabled={working}
-            label={t('scheduling.no_show.notify_label')}
-            description={t('scheduling.no_show.notify_description')}
-            isRTL={isRTL}
-          />
-
           {/*
-            ── CHARGING FOR THE HOUR NOBODY CAME TO ──────────────────────────
-            Shown only where there is something to charge: a package session
-            carrying its own unbilled stage. An ordinary booking was invoiced
-            when it was made, so a toggle here would promise a decision that
-            has already been taken.
+            ── QUESTION ONE: THE MONEY ───────────────────────────────────────
+            Asked on its own, and first, because it is the decision that cannot
+            be undone quietly. Shown only where there IS something to charge: a
+            package session carrying its own unbilled stage. An ordinary booking
+            was invoiced when it was made, so asking here would offer a decision
+            already taken.
+
+            Still defaults to charging, for the reason set out above: an
+            accidental waiver silently lowers a plan total, while an accidental
+            charge is visible to both sides and undone by a refund.
           */}
           {chargeable && (
-            <OutcomeSwitch
-              checked={chargeSession}
-              onToggle={() => setChargeSession(v => !v)}
-              disabled={working}
-              label={t('scheduling.no_show.charge_label')}
-              description={t('scheduling.no_show.charge_description')}
-              isRTL={isRTL}
-            />
+            <div className="space-y-1.5">
+              <p className="flex items-center gap-2 text-xs font-semibold text-[var(--v2-text-secondary)]">
+                <StepMark n={1} />
+                {t('scheduling.no_show.money_q')}
+              </p>
+              <ChoiceBar
+                label={t('scheduling.no_show.money_q')}
+                value={chargeSession ? 'charge' : 'waive'}
+                onChoose={next => setChargeSession(next === 'charge')}
+                disabled={working}
+                options={[
+                  { value: 'charge', label: t('scheduling.no_show.money_charge'), tone: 'keep' },
+                  { value: 'waive', label: t('scheduling.no_show.money_waive'), tone: 'give' },
+                ]}
+              />
+              <Hint>
+                {chargeSession
+                  ? t('scheduling.no_show.money_charge_hint')
+                  : t('scheduling.no_show.money_waive_hint')}
+              </Hint>
+            </div>
           )}
 
           {/*
-            ── A MAKE-UP FOR THE HOUR NOBODY CAME TO ─────────────────────────
-            Offered only where the block can still take another session. The
-            date is in the description, because ticking this books that hour
-            and tells the client: the owner is agreeing to something they can
-            see rather than to a rule they have to remember.
+            A DISABLED BUTTON WITH NO EXPLANATION IS A BUG TO THE OWNER.
 
-            A make-up after a no-show is FREE, and deliberately so. The missed
-            session keeps its portion of the payment — the hour was held and
-            nobody came — so the replacement carries none. That is the owner's
-            to give, which is exactly why it is a toggle and not automatic.
+            The offer takes a moment to come back. Saying so, where the
+            question will appear, is what turns a dead confirm button into
+            something obviously temporary — and it holds the space so the
+            dialog does not jump when the answer lands.
           */}
-          {replacement && (
-            <OutcomeSwitch
-              checked={addReplacement}
-              onToggle={() => chooseReplacement(!addReplacement)}
-              disabled={working}
-              label={t('scheduling.no_show.replace_label') || 'Add a make-up session?'}
-              description={
-                addReplacement
-                  ? `${t('scheduling.no_show.replace_on_hint') || 'It will be booked for'} ${new Date(
-                      chosenStart || replacement.proposedStart
-                    ).toLocaleString(isRTL ? 'he-IL' : 'en-GB', {
-                      weekday: 'long',
-                      day: 'numeric',
-                      month: 'short',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}`
-                  : t('scheduling.no_show.replace_off_hint') ||
-                    'The missed session is not made up.'
-              }
-              isRTL={isRTL}
-            />
+          {replacementLoading && (
+            <p
+              className="flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--v2-text-muted)]"
+              style={{
+                borderRadius: 'var(--v2-radius-button)',
+                border: '1px dashed var(--v2-border)',
+              }}
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              {t('scheduling.no_show.replace_checking')}
+            </p>
           )}
+
+          {/*
+            ── QUESTION TWO: WHO PICKS THE NEXT HOUR ─────────────────────────
+            One question, because that is what it always was — see `chooseNext`.
+            "Nothing yet" leads, and is the default: a no-show is usually a
+            conversation before it is a booking, and the owner should not have
+            to switch two things off to say so.
+
+            The third answer appears only where the block can still take another
+            session, so it is never an offer the package cannot honour.
+          */}
+          <div className="space-y-1.5">
+            <p className="flex items-center gap-2 text-xs font-semibold text-[var(--v2-text-secondary)]">
+              {/* Numbered only when the money question is above it; on an
+                  ordinary booking this is the only question there is. */}
+              {chargeable && <StepMark n={2} />}
+              {t('scheduling.no_show.next_q')}
+            </p>
+
+            <ChoiceBar
+              label={t('scheduling.no_show.next_q')}
+              value={nextStep}
+              onChoose={chooseNext}
+              disabled={working}
+              /*
+               * The third answer only where the block can still take another
+               * session, so the bar never offers something the package cannot
+               * honour — and is a clean two-up when it cannot.
+               */
+              options={
+                replacement
+                  ? [
+                      { value: 'nothing', label: t('scheduling.no_show.next_nothing') },
+                      { value: 'client', label: t('scheduling.no_show.next_client') },
+                      { value: 'owner', label: t('scheduling.no_show.next_owner') },
+                    ]
+                  : [
+                      { value: 'nothing', label: t('scheduling.no_show.next_nothing') },
+                      { value: 'client', label: t('scheduling.no_show.next_client') },
+                    ]
+              }
+            />
+
+            <Hint>
+              {nextStep === 'nothing' && t('scheduling.no_show.next_nothing_hint')}
+              {nextStep === 'client' && t('scheduling.no_show.next_client_hint')}
+              {/* The hour itself, because choosing this books it: the owner
+                  agrees to something they can see, not to a rule. */}
+              {nextStep === 'owner' &&
+                replacement &&
+                `${t('scheduling.no_show.replace_on_hint') || 'It will be booked for'} ${new Date(
+                  chosenStart || replacement.proposedStart
+                ).toLocaleString(isRTL ? 'he-IL' : 'en-GB', {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}`}
+            </Hint>
+          </div>
 
           {/*
             * "Not that day." The rhythm's next free beats, same weekday and
@@ -465,9 +573,65 @@ export function NoShowConfirmDialog({
               </label>
             </div>
           )}
+
+          {/*
+            ──────────────────────────────────────────────────────────────────
+            WHAT WILL ACTUALLY HAPPEN, INCLUDING THE PART NOBODY CAN PREDICT.
+            ──────────────────────────────────────────────────────────────────
+            Each control says what IT does. None of them could say what the
+            COMBINATION does, and that is the half the owner cannot work out:
+            waiving the hour and booking a make-up on a per-session package
+            moves the charge onto the make-up, while charging and booking one
+            leaves the make-up free. Same two answers, opposite money.
+
+            That rule already exists — the drawer bills a replacement only when
+            the missed hour was waived — and until now it was discoverable only
+            by doing it and reading the invoice afterwards.
+          */}
+          <OutcomePanel title={t('scheduling.no_show.outcome_title')}>
+              <OutcomeLine icon={UserX}>{t('scheduling.no_show.outcome_recorded')}</OutcomeLine>
+
+              {chargeable && (
+                <OutcomeLine icon={Banknote} tone={chargeSession ? 'keep' : 'give'}>
+                  {chargeSession
+                    ? t('scheduling.no_show.outcome_charged')
+                    : t('scheduling.no_show.outcome_waived')}
+                </OutcomeLine>
+              )}
+
+              {nextStep === 'client' && (
+                <OutcomeLine icon={Mail}>{t('scheduling.no_show.outcome_invited')}</OutcomeLine>
+              )}
+
+              {nextStep === 'owner' && (
+                <>
+                  <OutcomeLine icon={CalendarPlus}>{t('scheduling.no_show.outcome_booked')}</OutcomeLine>
+                  {/*
+                    Only where there is money in play at all. On an upfront
+                    package nothing moves either way, and saying so would
+                    invent a decision the owner never made.
+                  */}
+                  {chargeable && (
+                    <OutcomeLine icon={ArrowLeftRight} tone={chargeSession ? undefined : 'keep'}>
+                      {chargeSession
+                        ? t('scheduling.no_show.outcome_makeup_free')
+                        : t('scheduling.no_show.outcome_makeup_carries')}
+                    </OutcomeLine>
+                  )}
+                </>
+              )}
+
+              {nextStep === 'nothing' && (
+                <OutcomeLine icon={Minus}>{t('scheduling.no_show.outcome_quiet')}</OutcomeLine>
+              )}
+          </OutcomePanel>
         </div>
 
-        <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
+        <div
+          className={`flex flex-shrink-0 gap-3 border-t border-[var(--v2-border)] bg-[var(--v2-surface)] px-5 py-3.5 ${
+            isRTL ? 'flex-row-reverse' : ''
+          }`}
+        >
           <button
             type="button"
             onClick={() => onOpenChange(false)}
@@ -480,7 +644,10 @@ export function NoShowConfirmDialog({
           <button
             type="button"
             onClick={confirm}
-            disabled={working}
+            /* Held while the replacement offer is in flight: confirming now
+               would settle the session without the question having been
+               asked — see `replacementLoading`. */
+            disabled={working || replacementLoading}
             className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-[var(--v2-primary)] hover:opacity-90 transition-all disabled:opacity-50"
             style={{ borderRadius: 'var(--v2-radius-button)' }}
           >

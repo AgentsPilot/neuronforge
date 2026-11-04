@@ -140,7 +140,7 @@ export async function packageSessionLines(
      */
     const { data: stages, error: stageError } = await supabaseServer
       .from('payment_plan_installments')
-      .select('meeting_id, amount, currency, status, invoice_id')
+      .select('meeting_id, amount, currency, status, invoice_id, transaction_id')
       .eq('user_id', userId)
       .in('meeting_id', sessions.map(([, row]) => String(row.id)));
 
@@ -187,6 +187,48 @@ export async function packageSessionLines(
          */
         const amount = back > 0 ? back : invoice.refunded_at ? Number(invoice.amount ?? 0) : 0;
         if (amount > 0) refundedByInvoice.set(String(invoice.id), amount);
+      }
+    }
+
+    /*
+     * ── AND THE SESSIONS WHOSE MONEY NEVER PASSED THROUGH AN INVOICE ─────────
+     *
+     * A session billed per completed meeting is usually taken straight off the
+     * card, so its stage has `transaction_id` and `invoice_id IS NULL`. The
+     * refund is flattened onto that charge, not onto an invoice — so reading
+     * invoices alone told the client NOTHING came back, on the one package
+     * shape most likely to be refunded a session at a time.
+     *
+     * This is the client-facing half of the same fault fixed in
+     * `app/api/business-os/proposals/route.ts`: one missing join, two surfaces.
+     * Here it is worse than a stale menu item — these lines go out in email.
+     */
+    const chargeIds = [
+      ...new Set(
+        (stages ?? [])
+          .map(stage => stage.transaction_id)
+          .filter((id): id is string => typeof id === 'string' && Boolean(id))
+      ),
+    ];
+
+    const refundedByCharge = new Map<string, number>();
+
+    if (chargeIds.length > 0) {
+      const { data: charges, error: chargeError } = await supabaseServer
+        .from('payment_transactions')
+        .select('id, amount, refunded_amount, refunded_at')
+        .eq('user_id', userId)
+        .in('id', chargeIds);
+
+      if (chargeError) {
+        logger.warn({ err: chargeError, bookingId }, 'Could not read a package’s charge refunds');
+      }
+
+      for (const charge of charges ?? []) {
+        const back = Number(charge.refunded_amount ?? 0);
+        /* Same reading as the invoice above: a refund with no figure is whole. */
+        const amount = back > 0 ? back : charge.refunded_at ? Number(charge.amount ?? 0) : 0;
+        if (amount > 0) refundedByCharge.set(String(charge.id), amount);
       }
     }
 
@@ -399,7 +441,12 @@ export async function packageSessionLines(
        * A cancelled session's stage is voided when it is called off, so it
        * carries no figure — which is the truth: it will never be billed.
        */
-      const back = stage?.invoice_id ? (refundedByInvoice.get(String(stage.invoice_id)) ?? 0) : 0;
+      /* Whichever record holds this session's money — exactly one is set. */
+      const back = stage?.invoice_id
+        ? (refundedByInvoice.get(String(stage.invoice_id)) ?? 0)
+        : stage?.transaction_id
+          ? (refundedByCharge.get(String(stage.transaction_id)) ?? 0)
+          : 0;
       const charged = Number(stage?.amount ?? 0);
 
       /*

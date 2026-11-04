@@ -30,7 +30,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Loader2, CalendarX } from 'lucide-react';
+import { CalendarPlus, CalendarX, FileText, Loader2, Mail } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -38,6 +38,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import {
+  ChoiceBar,
+  Hint,
+  OutcomeLine,
+  OutcomePanel,
+} from '@/components/scheduling/decisionDialogParts';
 
 interface CancelMeetingDialogProps {
   open: boolean;
@@ -68,6 +74,16 @@ interface CancelMeetingDialogProps {
    * Null hides the toggle entirely, which is every ordinary booking.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * The replacement offer has not come back yet.
+   *
+   * It is fetched when the dialog opens, so for a moment `replacement` is
+   * absent for a reason that has nothing to do with whether one is possible.
+   * Without this the owner could confirm in that window and call a session
+   * off believing no replacement was on offer — the control that would have
+   * said otherwise simply had not rendered.
+   */
+  replacementLoading?: boolean;
   replacement?: {
     proposedStart: string;
     /**
@@ -117,6 +133,7 @@ export function CancelMeetingDialog({
   clientName,
   isQuoted,
   replacement,
+  replacementLoading = false,
   onConfirm,
 }: CancelMeetingDialogProps) {
   const { t, isRTL } = useLanguage();
@@ -165,15 +182,30 @@ export function CancelMeetingDialog({
 
   return (
     <Dialog open={open} onOpenChange={next => !working && onOpenChange(next)}>
-      <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
-        <DialogHeader>
+      {/*
+        THE SAME SHELL AS THE NO-SHOW DIALOG.
+
+        `flex` opts OUT of the base dialog's own gutter, height cap AND its
+        `p-4 sm:p-6` padding — all three live in its non-flex branch, on the
+        reasoning that a flex caller lays itself out. So `p-0` neutralises what
+        is left and each section pads itself, which is also what lets the body
+        scroll under a header and footer that stay put.
+      */}
+      <DialogContent
+        className="flex max-h-[86dvh] w-[calc(100%-2rem)] flex-col gap-0 p-0 sm:w-full"
+        style={{ maxWidth: '30rem' }}
+        dir={isRTL ? 'rtl' : 'ltr'}
+      >
+        <DialogHeader className="flex-shrink-0 border-b border-[var(--v2-border)] px-5 pb-4 pe-12 pt-4">
           <DialogTitle className="flex items-center gap-2">
             <CalendarX className="w-5 h-5 text-[var(--v2-text-muted)]" />
             {t('scheduling.cancel_meeting.title') || 'Cancel the meeting'}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="py-3 space-y-4">
+        {/* Only the middle scrolls, so the title and the two buttons stay
+            reachable however many hours the picker is offering. */}
+        <div className="flex flex-1 flex-col gap-3.5 overflow-y-auto px-5 py-4">
           {/* The name in bold, and `bdi` so a Latin name inside a Hebrew
               sentence is not reordered — the same reasoning as the no-show
               dialog, which is where this pattern comes from. */}
@@ -197,54 +229,115 @@ export function CancelMeetingDialog({
               : t('scheduling.cancel_meeting.confirm')}
           </p>
 
-          {/* ── ONLY WHERE THERE IS A QUOTE TO CONTINUE ──────────────────── */}
-          {isQuoted && (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={proposalContinues}
-              onClick={() => setProposalContinues(v => !v)}
-              disabled={working}
-              className="w-full flex items-start justify-between gap-3 p-3 text-start bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors disabled:opacity-50"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              <span className="flex-1">
-                <span className="block text-sm font-medium text-[var(--v2-text-primary)]">
-                  {/* A QUESTION, not a statement. It reads as a label
-                      describing the booking otherwise, and the owner is being
-                      asked to decide — the hint below then says what their
-                      answer will put in front of the client. */}
-                  {t('scheduling.cancel_meeting.proposal_label') ||
-                    'Is the quote still going ahead?'}
-                </span>
-                {/* What the CLIENT will read, not a restatement of the label.
-                    The owner is choosing between two messages, so the dialog
-                    shows which one they are choosing. */}
-                <span className="block text-xs text-[var(--v2-text-muted)] mt-0.5">
-                  {proposalContinues
-                    ? t('scheduling.cancel_meeting.proposal_on_hint')
-                    : t('scheduling.cancel_meeting.proposal_off_hint')}
-                </span>
-              </span>
+          {/* ── ONLY WHERE THERE IS A QUOTE TO CONTINUE ────────────────────
+              The last switch in this dialog, made a bar like the others. It is
+              a question with two answers — is the quote still coming — and the
+              answer decides which of two opposite things the client is told,
+              so it belongs in the same control as the rest.
 
-              <span
-                className={`mt-0.5 relative inline-flex h-5 w-9 flex-shrink-0 transition-colors ${
-                  proposalContinues ? 'bg-[#14B8A6]' : 'bg-[var(--v2-border)]'
-                }`}
-                style={{ borderRadius: '9999px' }}
-              >
-                <span
-                  className="absolute top-0.5 h-4 w-4 bg-white transition-transform"
-                  style={{
-                    borderRadius: '9999px',
-                    insetInlineStart: '2px',
-                    transform: proposalContinues
-                      ? `translateX(${isRTL ? -18 : 18}px)`
-                      : 'translateX(0)',
-                  }}
-                />
-              </span>
-            </button>
+              Still defaults to "yes": proceeding without the meeting is the
+              whole reason this route exists, as against stopping the job,
+              which is a different button.
+          */}
+          {isQuoted && (
+            <div className="space-y-1.5">
+              <p className="text-xs font-semibold text-[var(--v2-text-secondary)]">
+                {t('scheduling.cancel_meeting.proposal_label')}
+              </p>
+
+              <ChoiceBar
+                label={t('scheduling.cancel_meeting.proposal_label')}
+                value={proposalContinues ? 'yes' : 'no'}
+                onChoose={next => setProposalContinues(next === 'yes')}
+                disabled={working}
+                options={[
+                  { value: 'yes', label: t('scheduling.cancel_meeting.proposal_yes') },
+                  { value: 'no', label: t('scheduling.cancel_meeting.proposal_no') },
+                ]}
+              />
+
+              <Hint>
+                {proposalContinues
+                  ? t('scheduling.cancel_meeting.proposal_on_hint')
+                  : t('scheduling.cancel_meeting.proposal_off_hint')}
+              </Hint>
+            </div>
+          )}
+
+          {/*
+            A DISABLED BUTTON WITH NO EXPLANATION IS A BUG TO THE OWNER.
+
+            The offer takes a moment to come back. Saying so, where the
+            question will appear, is what turns a dead confirm button into
+            something obviously temporary — and it holds the space so the
+            dialog does not jump when the answer lands.
+          */}
+          {replacementLoading && (
+            <p
+              className="flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--v2-text-muted)]"
+              style={{
+                borderRadius: 'var(--v2-radius-button)',
+                border: '1px dashed var(--v2-border)',
+              }}
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              {t('scheduling.cancel_meeting.replace_checking')}
+            </p>
+          )}
+
+          {/* ── A REPLACEMENT FOR THE HOUR BEING GIVEN BACK ───────────────────
+              ASKED BEFORE ITS OWN ANSWER.
+
+              The date chips and the free picker rendered ABOVE this control,
+              so the owner was shown a list of hours to choose between and only
+              then asked whether they wanted a replacement at all. Reading
+              downwards the dialog answered a question it had not put yet.
+
+              Now the question comes first and the hours appear underneath it,
+              once the answer is yes — the same order the no-show dialog uses,
+              through the same `ChoiceBar`.
+          */}
+          {replacement && (
+            <div className="space-y-1.5">
+              <p className="flex items-center gap-2 text-xs font-semibold text-[var(--v2-text-secondary)]">
+                {t('scheduling.cancel_meeting.replace_label') || 'Add a replacement session?'}
+              </p>
+
+              <ChoiceBar
+                label={t('scheduling.cancel_meeting.replace_label') || 'Add a replacement session?'}
+                value={addReplacement ? 'yes' : 'no'}
+                onChoose={next => setAddReplacement(next === 'yes')}
+                disabled={working}
+                options={[
+                  { value: 'no', label: t('scheduling.cancel_meeting.replace_no') },
+                  { value: 'yes', label: t('scheduling.cancel_meeting.replace_yes') },
+                ]}
+              />
+
+              <Hint>
+                {addReplacement ? (
+                  <>
+                    {t('scheduling.cancel_meeting.replace_on_hint') || 'It will be booked for'}{' '}
+                    {/* `bdi` because a date sits inside right-to-left copy. */}
+                    <bdi className="font-medium text-[var(--v2-text-primary)]">
+                      {new Date(chosenStart || replacement.proposedStart).toLocaleString(
+                        isRTL ? 'he-IL' : 'en-GB',
+                        {
+                          weekday: 'long',
+                          day: 'numeric',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        }
+                      )}
+                    </bdi>
+                  </>
+                ) : (
+                  t('scheduling.cancel_meeting.replace_off_hint') ||
+                  'The block keeps its remaining sessions only.'
+                )}
+              </Hint>
+            </div>
           )}
 
           {/*
@@ -351,39 +444,44 @@ export function CancelMeetingDialog({
             </div>
           )}
 
-          {/* ── A REPLACEMENT FOR THE HOUR BEING GIVEN BACK ───────────────────
-              Only where the block can still take one. The date is on the face
-              of the control, because ticking it books that hour and tells the
-              client — the owner must be agreeing to something they can see.
+          {/*
+            ──────────────────────────────────────────────────────────────────
+            WHAT WILL ACTUALLY HAPPEN — the same closing panel the no-show
+            dialog ends on.
+
+            Each control above says what IT does. This says what the whole
+            answer does, in the order the client will experience it: the hour
+            goes back, they are told, the quote is settled, a replacement is
+            booked. Three of those four are decisions taken on this screen,
+            and nothing previously gathered them into one reading.
+
+            Deliberately silent about money. This dialog is not told whether
+            the session carries a stage — it has no `chargeable` prop — and a
+            line claiming the charge is voided would be asserting something it
+            cannot see. The no-show dialog says it because it IS told.
+            ──────────────────────────────────────────────────────────────────
           */}
-          {replacement && (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={addReplacement}
-              onClick={() => setAddReplacement(v => !v)}
-              disabled={working}
-              className="w-full flex items-start justify-between gap-3 p-3 text-start bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors disabled:opacity-50"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              <span className="flex-1">
-                <span className="block text-sm font-medium text-[var(--v2-text-primary)]">
-                  {t('scheduling.cancel_meeting.replace_label') ||
-                    'Add a replacement session?'}
-                </span>
-                <span className="block text-xs text-[var(--v2-text-muted)] mt-0.5">
+          <OutcomePanel title={t('scheduling.cancel_meeting.outcome_title')}>
+              <OutcomeLine icon={CalendarX}>
+                {t('scheduling.cancel_meeting.outcome_off')}
+              </OutcomeLine>
+
+              <OutcomeLine icon={Mail}>{t('scheduling.cancel_meeting.outcome_told')}</OutcomeLine>
+
+              {isQuoted && (
+                <OutcomeLine icon={FileText}>
+                  {proposalContinues
+                    ? t('scheduling.cancel_meeting.outcome_quote_on')
+                    : t('scheduling.cancel_meeting.outcome_quote_off')}
+                </OutcomeLine>
+              )}
+
+              {replacement && (
+                <OutcomeLine icon={CalendarPlus}>
                   {addReplacement
-                    ? /* The hour it will book, spelled out. `bdi` because a
-                         date sits inside right-to-left copy. */
-                      (t('scheduling.cancel_meeting.replace_on_hint') ||
-                        'It will be booked for')
-                    : t('scheduling.cancel_meeting.replace_off_hint') ||
-                      'The block keeps its remaining sessions only.'}
-                  {addReplacement && (
-                    <>
-                      {' '}
-                      <bdi className="font-medium text-[var(--v2-text-primary)]">
-                        {new Date(chosenStart || replacement.proposedStart).toLocaleString(
+                    ? t('scheduling.cancel_meeting.outcome_replaced').replace(
+                        '{date}',
+                        new Date(chosenStart || replacement.proposedStart).toLocaleString(
                           isRTL ? 'he-IL' : 'en-GB',
                           {
                             weekday: 'long',
@@ -392,35 +490,19 @@ export function CancelMeetingDialog({
                             hour: '2-digit',
                             minute: '2-digit',
                           }
-                        )}
-                      </bdi>
-                    </>
-                  )}
-                </span>
-              </span>
-
-              <span
-                className={`mt-0.5 relative inline-flex h-5 w-9 flex-shrink-0 transition-colors ${
-                  addReplacement ? 'bg-[#14B8A6]' : 'bg-[var(--v2-border)]'
-                }`}
-                style={{ borderRadius: '9999px' }}
-              >
-                <span
-                  className="absolute top-0.5 h-4 w-4 bg-white transition-transform"
-                  style={{
-                    borderRadius: '9999px',
-                    insetInlineStart: '2px',
-                    transform: addReplacement
-                      ? `translateX(${isRTL ? -18 : 18}px)`
-                      : 'translateX(0)',
-                  }}
-                />
-              </span>
-            </button>
-          )}
+                        )
+                      )
+                    : t('scheduling.cancel_meeting.outcome_not_replaced')}
+                </OutcomeLine>
+              )}
+          </OutcomePanel>
         </div>
 
-        <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
+        <div
+          className={`flex flex-shrink-0 gap-3 border-t border-[var(--v2-border)] bg-[var(--v2-surface)] px-5 py-3.5 ${
+            isRTL ? 'flex-row-reverse' : ''
+          }`}
+        >
           <button
             type="button"
             onClick={() => onOpenChange(false)}
@@ -437,7 +519,10 @@ export function CancelMeetingDialog({
           <button
             type="button"
             onClick={confirm}
-            disabled={working}
+            /* Held while the replacement offer is in flight: confirming now
+               would settle the session without the question having been
+               asked — see `replacementLoading`. */
+            disabled={working || replacementLoading}
             className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-[var(--v2-primary)] hover:opacity-90 transition-all disabled:opacity-50"
             style={{ borderRadius: 'var(--v2-radius-button)' }}
           >

@@ -21,11 +21,26 @@
  *
  *   · The date is searched AS RENDERED. Matching the ISO string instead would
  *     find "2026" in a UTC timestamp while the card shows a different year in
- *     the business's zone, and would never match "אוק" at all.
+ *     the business's zone, and would never match "אוק" at all. The stored form
+ *     is searched BESIDE it, never in its place.
  *
  *   · A PACKAGE's meetings are searched. The card an owner is hunting for is
  *     the container, so hiding a package whose fourth session matches hides the
  *     only row that could have shown it.
+ *
+ *   · The query is split into WORDS and every word must land, because matching
+ *     the whole query as one contiguous string meant "oct 2026" failed against
+ *     "Thu, Oct 12, 2026" — a comma between the two halves was enough.
+ *
+ *   · A NUMBER is reached twice over: as text, and as bare digits against the
+ *     record's figures with their separators closed up. The owner types "1200"
+ *     and the card shows "₪1,200.00"; neither should have to know about the
+ *     other.
+ *
+ *   · The drawer fetches a window big enough to search. The tab filters
+ *     CLIENT-SIDE, so a 50-row window ordered newest-first meant a client with
+ *     fifty-five bookings had five the box could not see — and it answered "no
+ *     bookings match" for a record that exists.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -94,7 +109,7 @@ describe('paging', () => {
 });
 
 describe('search', () => {
-  const haystack = code.slice(code.indexOf('const haystack'), code.indexOf('return haystack(session)'));
+  const haystack = code.slice(code.indexOf('const haystack'), code.indexOf('const text = [haystack(session)'));
 
   it('matches the service, the note and the status', () => {
     expect(haystack).toContain('one.booking.service?.service_name');
@@ -108,20 +123,129 @@ describe('search', () => {
     expect(haystack).toContain('one.booking.start_time\n      ).text;');
   });
 
-  it('matches the date as the card renders it, not as it is stored', () => {
+  it('matches the date as the card renders it AND as it is stored', () => {
+    /*
+     * Rendered is the only form on the business's clock and the only one that
+     * can match "אוק". The ISO prefix is the form an owner reading a bank line
+     * or a spreadsheet has in front of them, and one no locale will print. The
+     * requirement is both; it was never "instead".
+     */
     expect(haystack).toContain('formatDate(one.booking.start_time, { withYear: true })');
+    expect(haystack).toContain('one.booking.start_time?.slice(0, 10)');
     expect(haystack).not.toContain('one.booking.start_time.toLowerCase()');
   });
 
-  it("looks inside a package's meetings", () => {
-    expect(code).toMatch(/\(session\.meetings \?\? \[\]\)\.some\(meeting => haystack\(meeting\)\.includes\(needle\)\)/);
+  it("pools the container's words with its meetings, rather than testing card by card", () => {
+    /*
+     * `every` word must land, but not necessarily on the SAME row: "package
+     * october" has its name on the container and its date on session four, and
+     * a per-card test would reject both halves. The card shown is the
+     * container either way.
+     */
+    expect(code).toMatch(/const text = \[haystack\(session\), \.\.\.\(session\.meetings \?\? \[\]\)\.map\(haystack\)\]\.join\(' '\)/);
+  });
+
+  it('splits the query into words, every one of which must land', () => {
+    /*
+     * Matching the whole query as one contiguous string is what made "oct
+     * 2026" fail against "Thu, Oct 12, 2026". The splitting and the AND both
+     * live in `lib/business-os/bookingSearch.ts`, whose own test exercises them
+     * on real strings — this only pins that the tab uses them rather than
+     * growing a second opinion about what a match is.
+     */
+    expect(code).toContain('const needles = searchWords(needle);');
+    expect(code).toContain('return recordMatches(needles, text);');
+    expect(code).toContain('if (needles.length === 0) return true;');
+    expect(code).toContain("from '@/lib/business-os/bookingSearch'");
+  });
+
+  it('keeps the matching rules in one module, not two', () => {
+    /*
+     * The number handling is three assertions about one character class, and a
+     * grep cannot check any of them — see bookingSearch.test.ts, which runs.
+     * What this CAN check is that the component has not quietly re-implemented
+     * them, which is the failure that would make the tested module irrelevant.
+     */
+    for (const own of ['const figures = (', 'const hitsWord = (', 'const fold = (']) {
+      expect(code).not.toContain(own);
+    }
+  });
+
+  it('searches the money, the ids and the phone an owner is reading off something else', () => {
+    // The fields this box could not see are exactly the ones with enough
+    // spread to identify one booking out of fifty.
+    expect(haystack).toContain('one.payment?.amount');
+    expect(haystack).toContain('one.payment?.invoicedAmount');
+    expect(haystack).toContain('one.payment?.last4');
+    expect(haystack).toContain('one.payment?.invoiceId');
+    expect(haystack).toContain('one.booking.id');
+    // Twice: as written, and as digits alone, however the record spells it.
+    expect(haystack).toContain('one.booking.client_phone');
+    expect(haystack).toContain("one.booking.client_phone?.replace(/\\D+/g, '')");
+  });
+
+  it('searches the journey rail, which is where a quote total is shown', () => {
+    /*
+     * REPORTED: a ₪280 quote could not be found by "280".
+     *
+     * `payment.amount` on a quoted job is the stage being described or the
+     * invoice behind it, and `plan.totalAmount` exists only once a quote has
+     * more than one stage — so on a job billed in one go, the figure the owner
+     * is looking at was in no field this searched. It is rendered by the quote
+     * step, out of `proposal.total` into `details`, and the card reads it back
+     * from exactly here (`journeySteps.find(s => s.key === 'proposal')`).
+     *
+     * Pinned as the WHOLE rail rather than that one step: the same is true of
+     * every other figure and word on it, and singling out the quote would
+     * leave the next one to be reported as a bug.
+     */
+    expect(haystack).toContain('one.journeySteps ?? []');
+    expect(haystack).toContain('step.details');
+    expect(haystack).toContain('step.metadata ?? {}');
+  });
+
+  it("searches what somebody actually wrote, including the client's own answers", () => {
+    expect(haystack).toContain('one.booking.cancel_note');
+    // The older free text too, or rows cancelled before the code answer to
+    // nothing at all.
+    expect(haystack).toContain('one.booking.cancellation_reason');
+    expect(haystack).toContain('one.booking.intake_responses?.responses');
+  });
+
+  it('cannot throw on an answer shape it does not know', () => {
+    // Called during render: a throw here unmounts the drawer and throws the
+    // owner out of the contact they were working in.
+    const answer = code.slice(code.indexOf('const answerText'), code.indexOf('const needle ='));
+    expect(answer).toContain('JSON.stringify(answer)');
+    expect(answer).toMatch(/catch \{\s*return '';/);
   });
 
   it('is case-folded, trimmed, and does not transliterate', () => {
-    // A Hebrew business searching Hebrew words against Hebrew records needs no
-    // romanisation, and guessing at one matches things nobody asked for.
+    /*
+     * A Hebrew business searching Hebrew words against Hebrew records needs no
+     * romanisation, and guessing at one matches things nobody asked for.
+     *
+     * Latin combining marks ARE stripped, from both sides, so neither the query
+     * nor the record has to be spelled the way the other was. That is a fold,
+     * not a transliteration: Hebrew points sit in a different Unicode block and
+     * are untouched, which bookingSearch.test.ts asserts on real Hebrew.
+     */
     expect(code).toContain("const needle = bookingSearch.trim().toLowerCase();");
+    // Both sides folded by the same function, or one of them is not reachable
+    // from the other.
+    expect(code).toContain('const needles = searchWords(needle);');
+    expect(code).toContain('return foldForSearch(');
     expect(code).not.toMatch(/translit|romani[sz]/i);
+
+    /*
+     * The class is pinned by its codepoints rather than by the characters
+     * themselves: written literally they are invisible in a diff, and a review
+     * cannot tell U+0300–U+036F (Latin marks, to be stripped) from
+     * U+0591–U+05C7 (Hebrew points, to be left alone).
+     */
+    const matcher = fs.readFileSync(path.join(process.cwd(), 'lib/business-os/bookingSearch.ts'), 'utf8');
+    expect(matcher).toContain("normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '')");
+    expect(matcher).not.toMatch(/\\u05[0-9a-f]{2}/i);
   });
 
   it('appears only once there is more than a page to hunt through', () => {
@@ -155,6 +279,59 @@ describe('search', () => {
   it('is labelled in every language the drawer speaks', () => {
     expect(context.match(/'crm\.drawer\.search_bookings':/g) ?? []).toHaveLength(3);
     expect(context.match(/'crm\.drawer\.no_booking_matches':/g) ?? []).toHaveLength(3);
-    expect(context).toContain("'crm.drawer.search_bookings': 'חיפוש בהזמנות'");
+    expect(context).toContain("'crm.drawer.search_bookings': 'כל מילה, תאריך או סכום'");
+  });
+
+  it('names the date and the amount in the placeholder, in every language', () => {
+    /*
+     * "Search bookings" tells an owner to type the service name, which on a
+     * client with fifty orders matches all fifty — and they conclude the box is
+     * broken. The placeholder is the only place the numbers can be offered,
+     * since nothing else on screen says a figure or an invoice number works.
+     */
+    expect(code).toContain("t('crm.drawer.search_bookings') || 'Any word, date or amount'");
+    expect(context).toContain("'crm.drawer.search_bookings': 'Any word, date or amount'");
+    expect(context).toContain("'crm.drawer.search_bookings': 'Cualquier palabra, fecha o importe'");
+  });
+});
+
+describe('the window the search can see', () => {
+  /*
+   * The tab filters CLIENT-SIDE. Everything above narrows the list that
+   * ARRIVED, so the fetch decides what can be found at all — and a window
+   * smaller than a client's history makes the box answer "no bookings match"
+   * about a record that exists. That is the one failure a search must not have,
+   * because it is indistinguishable from the truth.
+   */
+  const drawer = fs.readFileSync(
+    path.join(process.cwd(), 'components/crm/contact-drawer/CRMContactDrawerV2.tsx'),
+    'utf8'
+  );
+
+  it('asks for a window big enough to hold a client history', () => {
+    const windows = drawer.match(/\/api\/scheduling\/bookings\?contact_id=\$\{contactId\}&limit=(\d+)/g) ?? [];
+    expect(windows.length).toBeGreaterThan(0);
+    for (const seen of windows) {
+      expect(Number(seen.match(/limit=(\d+)/)![1])).toBeGreaterThanOrEqual(200);
+    }
+  });
+
+  it('asks for the same window on every path, or a reload shrinks the list', () => {
+    // The first load and the silent refresh both feed the same `sessions`
+    // state. Two different numbers means the set being searched changes under
+    // the owner for reasons they cannot see.
+    const windows = (drawer.match(/\/api\/scheduling\/bookings\?contact_id=\$\{contactId\}&limit=(\d+)/g) ?? [])
+      .map(seen => seen.match(/limit=(\d+)/)![1]);
+    expect(new Set(windows).size).toBe(1);
+  });
+
+  it('stays inside what the route will serve', () => {
+    // `/api/scheduling/bookings` validates `limit` at max 500; asking for more
+    // is a 400, which is a drawer with no bookings in it.
+    const route = fs.readFileSync(path.join(process.cwd(), 'app/api/scheduling/bookings/route.ts'), 'utf8');
+    const ceiling = Number(route.match(/limit: z\.number\(\)\.min\(1\)\.max\((\d+)\)/)![1]);
+    const windows = (drawer.match(/\/api\/scheduling\/bookings\?contact_id=\$\{contactId\}&limit=(\d+)/g) ?? [])
+      .map(seen => Number(seen.match(/limit=(\d+)/)![1]));
+    for (const asked of windows) expect(asked).toBeLessThanOrEqual(ceiling);
   });
 });

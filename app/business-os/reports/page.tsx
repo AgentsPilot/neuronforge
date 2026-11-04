@@ -528,6 +528,10 @@ export default function ReportsPage() {
                 declined={health.measures?.declined ?? 0}
                 steady={health.measures?.steady ?? 0}
                 unavailable={health.measures?.unavailable ?? 0}
+                /* So a chip can name the one or two categories that moved,
+                   rather than leaving the owner to find them in the rows far
+                   below. See `VerdictLine`. */
+                categories={health.measures?.categories ?? null}
               />
 
               {/*
