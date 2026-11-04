@@ -123,7 +123,7 @@ In the `env-drift-audit` §7 format, and under its rules. "Who reads" as there.
 2. Publish at the zone's DNS host the records Vercel shows for each attached host and, on a zone move, carry every recorded record, email included. Their contents come from each vendor's file. Record each record's owner (T-AD-8).
 3. Config valid and certificate issued (P-AD-7). Production: the aliases include it.
 4. Confirm the platform and marketing first labels are reserved (T-AD-4). If not, a code change merges first.
-5. **Add** every inbound address for the new address, keeping the old ones until step 8: redirect URIs (`stripe.md`, `google.md`, later DO-6g and DO-6h), webhook endpoints (`stripe.md`, `email.md`), `google.md`'s JavaScript origins and authorised domains, the Supabase Auth URLs, and queue callback targets (DO-6f, "not audited" until covered).
+5. **Add** every inbound address for the new address, keeping the old ones until step 8: redirect URIs (`stripe.md`, `google.md`, later DO-6g and DO-6h), webhook endpoints (`stripe.md`, `email.md`), `google.md`'s JavaScript origins and authorised domains, the Supabase Auth URLs, and queue schedules and callback targets (`queues-and-keys.md`).
 6. Set A1 (and A2, A3 as planned) on the target, then rebuild (AD-1).
 7. Run P-AD-1 to P-AD-8 on the new deployment.
 8. Only then remove old registrations. Keep the old host answering while sent mail and shared links may still use it (AD-9).
