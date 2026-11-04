@@ -41,6 +41,26 @@
  *     wrong anyway, since `listUsers()` was unpaginated and only ever saw the first 50
  *     accounts.
  *
+ * ── Added by G-2, the V1 retirement (2026-11-03) ──────────────────────────
+ * docs/requirements/GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md section 12.
+ *
+ *   - `/oauth/[plugin]/start` — rode the V1 strategies' `connect()`, which calls bare
+ *     `window.addEventListener` inside a Promise executor, so on Node it threw a
+ *     ReferenceError and the route answered 500 before it could redirect. Dead on
+ *     arrival, not merely unused.
+ *   - `/oauth/token` — **this reverses the Slice 0 decision recorded above.** Slice 0
+ *     deleted `app/api/oauth/token` and deliberately left this sibling, noting the
+ *     unsigned-`state` class stayed open as R4. It had no session check and wrote a
+ *     plugin connection via `pluginConnectionRepository.upsert` using a `user_id`
+ *     parsed out of caller-supplied `state` — the same IDOR class as the `x-user-id`
+ *     sweep. Zero in-repo callers. Deleted rather than gated.
+ *
+ * NOTE on literals: neither path gets a FORBIDDEN_LITERALS entry. `walk()` does not
+ * skip `__tests__`, and `app/api/plugins/available/__tests__/route.test.ts` contains
+ * `https://connect.stripe.com/oauth/token` — a `/oauth/token` literal would match it
+ * and redden the gate on an unrelated Stripe URL. Both routes had zero callers, so
+ * there is no literal to defend against; REMOVED_FILES and REMOVED_DIRS are enough.
+ *
  * Restoring any of these must fail here: the secret egress, the anonymous LLM spend, the
  * anonymous plugin execution and the enumeration oracle all come back with the file.
  * Modelled on lib/__tests__/system-initializer-removed.guard.test.ts.
@@ -72,6 +92,9 @@ const REMOVED_FILES = [
   'app/api/v6/fetch-plugin-data/route.ts',
   'app/api/oauth/token/route.ts',
   'app/api/check-user-status/route.ts',
+  // G-2, 2026-11-03 — the V1 plugin-strategy OAuth surface
+  'app/oauth/token/route.ts',
+  'app/oauth/[plugin]/start/route.ts',
 ];
 
 /**
@@ -86,6 +109,9 @@ const REMOVED_DIRS = [
   'app/api/v6/fetch-plugin-data',
   'app/api/oauth/token',
   'app/api/check-user-status',
+  // G-2, 2026-11-03
+  'app/oauth/token',
+  'app/oauth/[plugin]',
 ];
 
 const FORBIDDEN_LITERALS = [
@@ -133,12 +159,16 @@ describe('guard: dead plugin routes stay removed', () => {
     expect(present).toEqual([]);
   });
 
-  it('the sibling routes that were NOT deleted are still present', () => {
-    // Deleting `app/api/oauth/token` must not be read as "the OAuth surface is gone".
-    // `app/oauth/token` and `app/oauth/callback/[plugin]` still exist and still parse an
-    // unsigned `state` — tracked as R4, deliberately not closed by Slice 0. If either
-    // disappears, someone has widened this deletion without saying so.
-    expect(fs.existsSync(path.join(REPO_ROOT, 'app/oauth/token/route.ts'))).toBe(true);
+  it('the V2 OAuth callback was NOT deleted and is still present', () => {
+    // This assertion used to require `app/oauth/token/route.ts` to EXIST, recording
+    // Slice 0's deliberate 2026-09-21 decision to leave it. G-2 reverses that decision
+    // and deletes it, so it moved into REMOVED_FILES above.
+    //
+    // `app/oauth/callback/[plugin]` stays, and must: it is the live V2 callback for
+    // EVERY plugin, driven by PluginManagerV2 and UserPluginConnections rather than the
+    // V1 registry. Deleting it would break every plugin connect in the product. It also
+    // still parses an unsigned `state`, so R4 remains open for this route — G-2 closed
+    // R4 only for the two routes it removed.
     expect(
       fs.existsSync(path.join(REPO_ROOT, 'app/oauth/callback/[plugin]/route.ts'))
     ).toBe(true);

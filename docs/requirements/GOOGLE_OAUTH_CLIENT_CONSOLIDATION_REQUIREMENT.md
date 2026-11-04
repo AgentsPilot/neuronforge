@@ -293,6 +293,7 @@ Found while investigating, **out of scope here**, recorded so they are not lost.
 | **AF-4** | **`app/api/contact/route.ts` is an unauthenticated open mail relay** with no Zod validation and no rate limit, and no callers. It is one of `GMAIL_CLIENT_ID`'s two consumers, which is the only reason it appears here | `app/api/contact/route.ts:61` | Explicitly out of scope; has its own task. Recorded only as a consumer of the variable |
 | **AF-5** | **Secrets are stored as `Config`, not `Sensitive`, in Vercel** — per the private doc only 11 of 68 are Hidden/Secret, so `GOOGLE_CLIENT_SECRET` among others is readable by anyone with team access | `docs/ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md` §1.7 | Already noted there as a new S7 task. Relevant because section 7 step 2 rewrites two of those values |
 | **AF-6** | **V1 token refresh has never worked.** `pluginRegistry.ts:192` and `:315` wire `refreshToken` to members that do not exist on `gmailPluginStrategy.ts` / `googleDrivePluginStrategy.ts` (each has only `connect` and `handleOAuthCallback`), so both fields are `undefined` and `PluginCoordinator.ts:331`'s `if (isExpired && strategy.refreshToken)` branch is unreachable. Any V1-path Google call with an expired access token fails with no refresh attempted | `pluginRegistry.ts:192,315`; `gmailPluginStrategy.ts` (ends `:299`); `PluginCoordinator.ts:331` | A silent failure class independent of this stream. G-5 uses its existence as free evidence that the V1 data path is cold; if that path were live this would be a standing production fault |
+| **AF-7** | **`fetchContext` was a third dead wiring, with no caller at all.** `pluginRegistry.ts:189` set `fetchContext: gmailDataStrategy.fetchContext`, but `gmailDataStrategy` has no such member and the deleted `gmailPluginStrategy` had none either, so the spread never supplied one. Nothing in `app/` or `lib/` calls `.fetchContext(` — the only two mentions were the interface declaration and the dead assignment. Found while implementing G-2, which removes both; it was the one real TypeScript error in a file G-2 edits | `pluginRegistry.ts:61,189` on `origin/main@4c389406`; `gmailDataStrategy.ts` | **Closed by G-2.** Recorded because it corrects this document: section 12's liveness table listed `fetchContext` as LIVE |
 
 ---
 
@@ -335,8 +336,8 @@ The V1 layer is **not one thing**, and that is the whole reason this is a plan r
 | V1 surface | Members | Live? | Evidence |
 |---|---|---|---|
 | **OAuth halves** | `connect`, `handleOAuthCallback` | **Dead** | Only reachable from `app/oauth/[plugin]/start/route.ts:14` — which throws before it can redirect, because `connect()`'s Promise executor calls bare `window.addEventListener` (`gmailPluginStrategy.ts` ~98) — and from `app/oauth/token/route.ts:41`, which has **zero in-repo callers** and no session check |
-| **Data halves** | `run`, `fetchContext` | **LIVE** | `PluginCoordinator.ts:34` ← `runAgentWithContext` (`lib/utils/runAgentWithContext.ts:12`) ← `/api/run-agent:967`, `/api/agent-stream:258`, `/api/cron/process-queue:276`, `/api/agent-chains/run:69` |
-| **Data halves** | `refreshToken` | **WIRED TO `undefined`** | See the callout below — this is a finding, not a classification |
+| **Data halves** | `run` | **LIVE** | `PluginCoordinator.ts:34` ← `runAgentWithContext` (`lib/utils/runAgentWithContext.ts:12`) ← `/api/run-agent:967`, `/api/agent-stream:258`, `/api/cron/process-queue:276`, `/api/agent-chains/run:69` |
+| **Data halves** | `refreshToken`, `fetchContext` | **WIRED TO `undefined`** | Neither resolves to a real member. See the callout below and AF-6 / AF-7 — findings, not classifications |
 | **Metadata** | `capabilities`, `inputTemplates`, `outputTemplates`, labels | **LIVE** | `app/api/generate-agent/route.ts:43,438,472`, `lib/outputInference.ts:2`, `lib/utils/interpolatePrompt.ts:33`, `app/api/plugin-connections/disconnect/route.ts:43` |
 
 So the first slice is free and the last one needs a measurement before it can be sized.
@@ -426,7 +427,20 @@ No new suite, so **no added CI wall clock** — confirmed: G-2 adds no Jest file
 
 Two things to state in the PR body. First, **`G3-1b`** ("every catalogue entry is read by code") versus **`G3-1a`** ("every read is catalogued") form a pincer: the `catalogue.ts:259` deletion and the reader deletions **must be one commit**, or the guard goes red from one side or the other. That is the real hard ordering constraint — stronger than the "readers first, variable last" convention, which for a build-time-inlined `NEXT_PUBLIC_` variable is discipline rather than necessity. Second, deleting `configs/google-drive.json` retires the `*EnvVar` branch of `scanPluginConfig` (`:229`) and one of the guard's two JSON read paths. That is a deliberate reduction of guard surface and belongs recorded as a decision, in the same spirit this section demands for the R4 reversal.
 
-**Also required by CLAUDE.md § Logging.** Two files G-2 touches and **keeps** are non-compliant: `googleDriveDataStrategy.ts` (**2** `console.*`) and `pluginRegistry.ts` (**3**, including a commented-out `console.log` block at ~`:619` that is also dead code). The rule requires naming the file and the count and proposing conversion. Proposal: flag both counts and leave them non-compliant **only** on an explicit user decision tied to G-6 deleting them, recorded in the workplan. The three deleted files (`gmailPluginStrategy.ts` 26, `googleDrivePluginStrategy.ts` 28, `app/oauth/token/route.ts` 1) need no action. `gmailDataStrategy.ts` (25) is untouched by G-2.
+**Also required by CLAUDE.md § Logging — DECIDED 2026-11-04: CONVERT.** Three files G-2 touches and **keeps** were non-compliant: `gmailDataStrategy.ts` (**25** `console.*`), `pluginRegistry.ts` (**3** — two live calls plus a commented-out `console.log` block at `:620` before this change — `HEAD` numbering, verified — that is also dead code) and `googleDriveDataStrategy.ts` (**2**). Thirty matches, **29 live calls**. An earlier version of this paragraph said two files and five calls; that was wrong, because the static-import fix meant `gmailDataStrategy.ts` had to be touched after all. The author's proposal was to leave all three and let G-6 delete the files; **the user chose to convert them**, so the whole of each file is now on the Pino standard and the three files hold no `console.` token at all. The three deleted files (`gmailPluginStrategy.ts` 26, `googleDrivePluginStrategy.ts` 28, `app/oauth/token/route.ts` 1) need no action.
+
+The conversion's own rules, so a reviewer can check it line by line rather than call by call:
+
+| Rule | Why |
+|---|---|
+| One module logger per file — `createLogger({ module: 'plugins/<file>' })` from `@/lib/logger` | The server standard. `lib/logger/client.ts` would be wrong here: every route that reaches `pluginRegistry` is Node.js (`agent-stream`, `generate-agent-v2`, `generate-agent-v2-sdk` declare `runtime = 'nodejs'` explicitly; the rest default to it), none is `'use client'`, and **`PluginCoordinator.ts` — the direct caller — already imports `@/lib/logger`**, so Pino was in this module graph before the change. No new runtime dependency |
+| Context first, message second; errors always `{ err }` | `docs/SYSTEM_LOGGING_GUIDELINES.md`. Every `console.error` became `logger.error({ err, … }, '…')`, so Pino's `err` serializer gets the stack instead of a stringified object |
+| `info` for the operation's start, finish and counts; `debug` for per-item loop detail and variable dumps | The guidelines' own level table (`debug` = "Variable values, conditional branches, detailed flow") and its worked `logger.debug({ queryParams, filters }, …)` example. Message text is otherwise unchanged, so existing log searches still match |
+| **User search text moved from `info` to `debug`** | `run()`'s entry log carried `inputVariables: input_variables` — the agent's own Gmail search terms — at a level production emits. It now rides only on the `processedInputs` line at `debug`, which carries the same object verbatim as `originalInputs`, and `lib/logger.ts` pins production to `info`. `searchQuery` was dropped from two `info` lines for the same reason: it is `processedInputs.query`, already on that `debug` line. **Nothing is lost at `debug`; one field stops reaching production logs** |
+| `decodeBase64Url`'s invalid-input warning logs `typeof data`, not `data` | That parameter is raw attachment base64. The branch only fires when the value is falsy or not a string, so its type is the whole diagnostic and the value is pure leak surface |
+| The dead commented-out block in `pluginRegistry.ts` was **deleted**, not converted | It is commented-out dead code, not a logging call. Deleting it is what makes a future `grep console\.` over these files come back empty |
+
+**The two Google response bodies**, recorded so G-6 does not have to re-derive them. The **list-failure** site (`gmailDataStrategy.ts:81`) was on the LIVE `run` path at `error`, which production emits, so a Google 400 whose message quoted the rejected `q` parameter would have put the user's search text into production logs by a route the demotion above does not cover. SA's review named it, and it is **fixed rather than recorded**: the alertable facts (`userId`, `statusCode`, `statusText`) stay at `error` and the body moved to its own `debug` line beneath. The **token-refresh** site (`:619`) keeps its body at `error` on purpose — Google's token endpoint returns `{error, error_description}`, never echoes the secret, carries no owner text at all, and AF-6 proves the whole method unreachable. Either way the body is at least structured, which matters because `lib/logger/config.ts` has no `body` redact path and Pino cannot redact a message string. Beyond that one split, no log line was added or removed: this is a transport change, not a change to what the V1 path reports.
 
 **Pre-existing type errors G-2 must take a position on**, or the Dev is blocked at ship-drill step 1: `PluginStrategy` is imported as a type from `../pluginRegistry` by four strategy files, but `pluginRegistry.ts` exports only `InputTemplate`, `OutputTemplate` and `PluginDefinition` — **there is no `PluginStrategy` export**. G-2 deletes two of the four importers; `googleDriveDataStrategy.ts:7` and `chatgptResearchStrategy.ts:7` remain and will still error. Separately, `app/oauth/[plugin]/start/route.ts:43` calls `strategy.connect({ supabase, popup })` against a signature requiring `userId`, and `app/oauth/token/route.ts:41-46` calls the optional `handleOAuthCallback` with no guard — both deleted by G-2. State up front whether G-2 fixes the two survivors or records them as pre-existing.
 
@@ -469,3 +483,256 @@ Three supporting facts:
 | 2026-11-03 | SA ruling on the guard | Section 8. CI value-check **rejected** (CI holds no Google values; a placeholder-vs-placeholder check would be green while production is broken), Actions-secrets variant rejected as a new pattern, startup assertion rejected (fails closed on the five-minute refresh path; module scope runs during `next build`), new route and new panel rejected as redundant — `/admin/environment` already prints all four IDs in full. Accepted: one `EnvDiagnostic` mirroring `supabase-url-mismatch`, one catalogue wording pass with a `docLink`, one `describe` inside the existing `catalogueDrift.guard.test.ts`. SA's preferred variant — delete `NEXT_PUBLIC_GOOGLE_CLIENT_ID` and its two deprecated readers so the **existing** guard enforces the rule with no new code — adopted, and section 7 sequenced to deliver it |
 | 2026-11-03 | V1 retirement plan | Section 12. Split the V1 layer by liveness: the OAuth halves are dead, the data halves are LIVE via `PluginCoordinator` on the legacy `runAgentWithContext` run path, and the metadata has four live consumers — so `pluginRegistry` cannot be deleted on a code read alone. Six slices G-1..G-6. **No variable is renamed in our code**: `plugin-manager-v2.ts` substitutes an unset variable with the literal `${GOOGLE_CLIENT_ID}` text, so a rename landing before the Vercel variable exists reproduces the incident; the only rename worth doing is the Google-side display name (G-1). G-2 must update two existing guard suites, one of which currently asserts `app/oauth/token/route.ts` **exists**. `app/oauth/callback/[plugin]/route.ts` is V2 and is kept |
 | 2026-11-03 | SA review of section 12 — APPROVE WITH CHANGES, all 12 mandatory items applied | SA found two evidence errors that made a G-2 instruction unexecutable, both independently verified and corrected here: the two Google OAuth strategies have **no `refreshToken` member** (so G-2 deletes the files rather than editing them, the live `GOOGLE_CLIENT_ID` read is `gmailDataStrategy.ts:566,577-578`, and the registry's refresh wiring is `undefined` — now AF-6), and the registry defines **three** keys not four with no `slack` entry. Guard-suite count corrected from two to **four**: `catalogueDrift.guard.test.ts` (four breakages, including an unguarded `readdirSync` that errors the whole suite) and `pluginConnectionsBrowserAccess.guard.test.ts:41` were both missed. The `FORBIDDEN_LITERALS` instruction was **dropped** — `/oauth/token` false-positives on a `connect.stripe.com/oauth/token` literal in a scanned test. Added: `googleDriveDataStrategy.ts:14-27` dynamic-import delegates, all seven `lib/plugins/v2/` files, three sign-in negative-control tests marked KEEP, the mandatory logging flag, the pre-existing-type-error position, and the `G3-1a`/`G3-1b` same-commit pincer as the real ordering constraint. G-5's execution-count half dropped as deciding nothing. **Option B's direction reversed: production keeps the grant-bearing client and the NEW client serves non-production, making the environment split cost zero reconnects instead of 19** — so the reconnects are avoidable, not deferrable, and section 6 needs updating. No-rename ruling affirmed but re-grounded on "a rename buys nothing" rather than on the hazard |
+| 2026-11-03 | G-2 implemented | 21 files: 11 deleted (both V1 OAuth routes, both Google OAuth strategies, all seven `lib/plugins/v2/` files), 9 edited. Four guard suites updated as SA required; `FORBIDDEN_LITERALS` left alone. **Three things implementation found that review did not.** (1) `gmailDataStrategy.ts:7` had a **static** `import { gmailStrategy } from './gmailPluginStrategy'` spread into the object at `:29` — a hard build break that neither section 12 nor the SA review listed; fixed by dropping the spread and declaring `pluginKey`/`name` directly. (2) `fetchContext` was a third dead wiring with no caller — now AF-7, and it corrects the liveness table above. (3) `lib/agentkit/v6/intent/plugin-spec-loader.ts:106` lists `lib/plugins/v2/configs` as a spec path. Left alone, and the decisive reason is stronger than the `fs.existsSync` guard: **`loadSpecFromFile` has zero callers** — `generate-intent.ts:216` imports `loadPluginRegistryFromSpecs`, a different export — so the stale path sits inside a dead exported function and cannot run, not merely cannot throw. Editing a `lib/agentkit/v6/` file under rule 8 and the V6 Work Protocol for zero behavioural effect would be disproportionate. The follow-up is to **delete `loadSpecFromFile` whole** (it also carries a `console.error` at `:112`), not to patch one array entry — otherwise the path goes and the dead function stays. Verification: 24 suites / 556 tests pass, including all three sign-in negative-control suites and the three guards that run on Windows; **`tsc` introduces no new error, and strictly reduces them** — an earlier wording here claimed "no error in any file G-2 edits", which was wrong: the filter that produced it omitted `googleDriveDataStrategy.ts`, which carries four. All four are pre-existing and G-2 takes that file from **ten to four** — `TS2305` leaves `PluginStrategy` unresolved, so the object literal has no contextual signature and every destructured parameter becomes an implicit `any`; deleting `connect` and `handleOAuthCallback` removed six of those bindings. Position on the survivors (a mandatory item of the SA plan review): **recorded as pre-existing, not fixed here** — `PluginStrategy` has never been exported from `pluginRegistry.ts`, there were **five** importers of it (not four, as section 12 and the plan review said) and three survive (`googleDriveDataStrategy.ts:7`, `chatgptResearchStrategy.ts:7`, `slackPluginStrategy.ts:11`); they go with the files in G-6. `oneAddressPolicy.guard.test.ts` fails **locally only** — its `relative()` helper builds a forward-slash prefix that never matches a Windows backslash path, so no exemption resolves and even the resolver it excludes unconditionally shows up as an offender; pre-existing and Linux-CI-only |
+| 2026-11-03 | SA code review of G-2 — APPROVE WITH CHANGES | **No defect in the deletions.** SA independently re-ran the suites (26/580 pass; one unrelated pre-existing failure in `lib/__tests__/supabaseFetch.test.ts`) and the typecheck, swept every `*.test.ts(x)` and `.github/` for the deleted basenames and confirmed **no suite or workflow was missed**, and verified the `G3-1a`/`G3-1b` same-commit pincer is satisfied. All three implementation findings upheld. **Rulings:** removing the `refreshToken` wiring rather than repointing it at the working `gmailDataStrategy.refreshToken:559` — CONFIRMED, because that branch also writes through `pluginConnectionRepository.updateRefreshedToken` (`PluginCoordinator.ts:338-343`), so repointing would switch on a token-refresh-plus-DB-write path that has never executed, inside a deletion PR. Carry-forward for G-6: do **not** read "refreshToken is dead" off the registry alone — `gmailDataStrategy.ts:559` is a real implementation, and unwiring it is a different decision from deleting it. The guard-surface reduction (deleting `configs/dropbox.json` and the whole `*EnvVar` scanner rather than keeping an orphan JSON to hold a floor above water) — ACCEPTABLE and preferred to the plan's instruction, conditional on correcting `docs/feature_flags.md:968` and naming the residual gap in the guard header; both done. Leaving the V6 spec path — CONFIRMED. The `oneAddressPolicy` Windows diagnosis — independently verified, with the stronger finding that the offender set is **exactly** the exemption set, which is positive evidence the suite goes green on Linux CI after the pruning. **Applied from the review:** F-3 (a fourth dead import, `slackDataStrategy`, knowingly left because removing it orphans the Slack V1 pair), F-4 `docs/feature_flags.md`, F-5 `.claude/skills/third-party-ops/google.md`, F-6 a dead link in `DASHBOARD_UI_NEW_V2_COMPLETE.md`, F-8 closing `FU-D6c-b` in the DevOps register, F-9 the file count, and the two ruling conditions. **F-1 (the mandatory logging flag) is the one blocking item and is with the user:** it is three surviving files and 30 calls, not two and five — `gmailDataStrategy.ts` (25) had to be touched after all, so section 12's "untouched by G-2" sentence was wrong |
+| 2026-11-04 | F-1 decided — the three surviving files converted to Pino | The user chose **convert** over leaving them for G-6. **29 live `console.*` calls** replaced across `gmailDataStrategy.ts` (25), `pluginRegistry.ts` (2) and `googleDriveDataStrategy.ts` (2), plus the commented-out dead block in `pluginRegistry.ts` deleted: the three files now hold no `console.` token. Each file gets one `createLogger({ module })`; context first, message second; every error as `{ err }`. Levels follow the guidelines' own table — `info` for start/finish/counts, `debug` for loop detail and variable dumps — and the one behavioural consequence is deliberate: **the agent's Gmail search text no longer reaches production logs**, because it rode on an `info` line and now rides only on a `debug` line that carries the same object, with production pinned to `info`. The one route that could still have carried it — the list-failure `error` at `:81`, which logged Google's verbatim response body — was closed in the same change set once SA named it. `decodeBase64Url` logs `typeof data` instead of raw attachment base64. Verification: `tsc` total **unchanged by the conversion** at **1873** errors with **0** crash markers (so the count is real, not an OOM reading as clean) — that is F-1 measured against the already-staged G-2 tree, not against `main`; QA later measured the slice as a whole and found `4def6c34` is **1911**, so G-2 + F-1 together remove **38** errors and add none and the only diagnostics in the three files are `googleDriveDataStrategy.ts`'s four pre-existing ones, line-shifted; **15 of 16 suites and 264 of 265 tests pass**, including `PluginCoordinator.repository.test.ts` (the direct caller), all three `lib/logger/__tests__` redaction suites and **three of the four** G-2 guards — the fourth is the failure named next, so "all four pass" would contradict it. The single failure is `oneAddressPolicy.guard.test.ts`, still local-only, with the same five offenders that are exactly its exemption set — the Windows path bug, untouched by this change. No guard needed pruning: no repo-wide `console.*` allow-list names these files. Line endings preserved per file (`pluginRegistry.ts` LF, the other two CRLF), so the diff is 15/15, 67/42 and 6/2 rather than whole-file churn |
+| 2026-11-04 | SA code review of the F-1 conversion — APPROVE | **No defect in the conversion.** SA re-ran everything rather than taking the numbers: `grep console\.` over the three files returns nothing (`HEAD` counts 25 / 3 / 2 confirmed, so 30 matches and 29 live calls is right); logger calls are gmail `info` 6 / `debug` 6 / `warn` 9 / `error` 4 = 25, registry 2, drive 2; `tsc` is **1873** errors with **0** crash markers and the only diagnostics in the three files are `googleDriveDataStrategy.ts`'s four pre-existing ones; a 16-suite / 265-test subset covering every suite the row names passes except `oneAddressPolicy.guard.test.ts`, whose five offenders are exactly its exemption set. Server logger confirmed correct independently: the only importers are four API routes, `PluginCoordinator`, `outputInference` and `interpolatePrompt`, none `'use client'`, none Edge; `createLogger` applies `loggerConfig.redact` and Pino's default `err` serializer, and no context key collides with a reserved field or a redact path. **Rulings.** J-1 (user search text demoted from `info` to `debug`) — **in scope and required**, not optional: `docs/SYSTEM_LOGGING_GUIDELINES.md` § Sensitive Data Redaction states the owner-text rule outright ("what a user typed is never logged at any level; text a model derived from it is logged at `debug` only"), so a conversion that re-emitted it at `info` would not have been compliant. Dropping `searchQuery` from two `info` lines is sound because the value is recoverable at `debug` on the `processedInputs` line, whose `originalInputs` is a verbatim spread. J-2 (`typeof data`, not `data`) — **in scope and correct**: the branch fires only when the value is falsy or not a string, so the type is the whole diagnostic and the value is raw attachment base64 at `warn`, a level production emits. J-3 (token-refresh body) — **acceptable to leave**, structured and on a method AF-6 proves unreachable; the review's own finding is that the same pattern exists at `:81` on the LIVE path, which is why section 12 now records both. **Three doc corrections applied by SA, no code touched:** the commented-block line reference (`:620` on `HEAD`, not `~:633`, which pointed at neither tree), "the four G-2 guards" pass (three — `oneAddressPolicy` is the fourth and is the failure), and the unqualified "search text no longer reaches production logs" claim. **Carry-forward to G-6, all pre-existing and deliberately not changed here:** mailbox-derived attachment filenames still ride `warn`/`error` lines (`:447`, `:490`, `:503`, `:516`, `:527`) that production emits, while the same field was demoted to `debug` on the success path; `status` is used where the guidelines' standard field name is `statusCode`; `:81` carries no `userId`; and `refreshToken`'s two `info` lines carry no context object |
+| 2026-11-04 | Three of SA's F-1 findings applied | Not left for G-6, because all three sit on the LIVE `run` path in the file the conversion had just rewritten. (1) **The list-failure body leak at `:81`** — SA's J-3 finding, and the one that mattered: it logged Google's verbatim reply to a request whose `q` is the user's search text, at `error`, which production emits. Split so `error` keeps `userId`, `statusCode` and `statusText` and the body goes to a `debug` line, which is the same treatment every other owner-text-bearing field in the file already gets — so the search-text claim now holds without a caveat. SA offered `errorText.slice(0, 500)` as the proportionate move; that bounds log volume but would not have closed the leak, since a 400 quoting the rejected parameter lands well inside the first 500 characters. (2) **`userId` added to `:81`**, which SA called the least useful line in the file — a production error on the live path with no tenant context. (3) **`status` → `statusCode`** at all three sites, the guidelines' standard field name; `statusText` has no standard counterpart and keeps its name. Left for G-6 as SA ruled: the five mailbox-derived attachment filenames on `warn`/`error` lines (Low, pre-existing, and each one's `warn` would be left saying nothing without a second `debug` line beside it), and `refreshToken`'s two context-free `info` lines, which have no `userId` in scope to add. Also corrected here: the previous row said **20 of 21 suites / 285 of 286 tests**, which double-counted five suites across two `jest` invocations that overlapped. The true figure is **15 of 16 suites and 264 of 265 tests**, which is what SA independently measured and reported. Re-verified after these three edits: same 15 of 16 suites, and `tsc` unchanged |
+| 2026-11-04 | QA pass on G-2 + F-1 — PASS, no defect | Full report appended as § 13. All five checks completed. **The full suite against a real baseline: 0 net new failures.** QA built a detached worktree at `4def6c34` rather than trusting a subset — 1998 suites on the staged tree (28 failed / 49541 tests passed), 25 of those 28 also fail on the baseline, and the 3 that differ are **load-dependent timeouts**, proved by re-running them isolated on the staged tree (3 passed, 218 tests) and by the fact that none of them imports anything in this change set; the staged run carries 54 `Exceeded timeout` markers overall. The dedup trap was real: **56 raw `FAIL` lines for 28 distinct suites**, exactly 2×. **No live caller of anything deleted**, over all tracked files plus `.github/`, `middleware.ts`, `next.config.js`, `vercel.json` and every `*.json`: every surviving match is a comment, a guard string, a third-party URL (`connect.stripe.com/oauth/token`, `api.notion.com/v1/oauth/token` — which is exactly why no `FORBIDDEN_LITERALS` entry was right) or a deliberate decoy (three suites set `NEXT_PUBLIC_GOOGLE_CLIENT_ID` to prove no fallback, and `catalogueDrift` skips `__tests__`, so removing the catalogue entry does not strand them). `app/oauth/` now holds exactly one file. **The surviving V1 `run` path was exercised, not read**: a `tsx` harness with a stubbed `fetch` and `LOG_LEVEL=debug` ran 8 scenarios, so all 26 converted calls fired — `pluginKey`/`name` byte-identical to the deleted strategy's, `connect`/`handleOAuthCallback` `undefined`, every return shape and thrown error unchanged, no `ReferenceError`, no swallowed `throw`. **Not covered, and worth knowing:** no browser check (Playwright is not installed and nothing here renders), no live Google OAuth exercise (the `fetch` seam was stubbed and `tests/jest-no-network.ts` blocks the alternative), and the Linux-CI conclusion for `oneAddressPolicy` is derived by re-computing the suite's logic with a working `relative()`, not from a Linux run |
+| 2026-11-04 | QA finding FU-QA-2 — **the `google-mail` V1 `run` path cannot ever have succeeded** | Pre-existing, identical on `HEAD`, nothing to fix in this slice — but it changes what G-5 is for, so it is a row of its own rather than a line in § 13. `gmailDataStrategy.ts:63` calls `this.processGenericInputs(…)`, while `pluginRegistry.ts` wires `run: gmailDataStrategy.run` — a **detached** function reference, so `this` is the registry entry, which has no such method. Invoked the way `PluginCoordinator.ts:374` invokes it, QA's harness gets `TypeError: this.processGenericInputs is not a function`, and the pre-existing `catch` swallows it into the `{ summary, error, totalEmails: 0, … }` shape — so the failure has always looked to a caller like "no emails found". `googleDriveDataStrategy.run` is an arrow function with no `this` and is unaffected. **Consequence for G-5:** its one read-only query asks whether any agent still runs on V1, and was framed as the gate G-6 waits on. For `google-mail` the question is now narrower than a usage count — a non-zero count would mean agents have been failing, not that the path works, so G-5 must read outcomes and not just presence. Also recorded: this is why the F-1 conversion cannot be verified end to end against production logs for Gmail — there are none to compare. **FU-QA-1** strengthens the `loadSpecFromFile` follow-up: **all three** of its candidate directories are absent (`lib/plugins/v2/configs`, `lib/plugins/specs`, `specs/`), so the whole `possiblePaths` array is stale and deleting the function whole is the only coherent fix. **FU-QA-3** confirms SA's J-3 premise empirically rather than by inference — `pluginRegistry['google-mail'].refreshToken` is `undefined` at runtime. **FU-QA-4 is fixed here, not carried:** `.claude/skills/third-party-ops/google.md` still listed eight files G-2 deleted as "never a probe target", which would have sent a DevOps agent hunting for things that no longer exist; the V1 bullet now names only the three survivors, the `Universal*` bullet is gone, and the start-route note says the route was deleted and points at the live V2 callback instead |
+
+---
+
+## 13. QA report — G-2 + F-1 (2026-11-04)
+
+> Appended by QA after the two SA approvals. This section is append-only; no row above it, and no
+> Change History row, was edited. QA ran read-only: no repository file was changed, nothing was
+> committed, no stash was touched.
+
+**Test mode:** full · **Strategy:** A (in-memory exercise of `run()` against a stubbed `fetch`) + B
+(full Jest suite with a HEAD baseline) + C (two standalone Node/tsx scripts) · **Focus:** api,
+schema, security, suite-level regression · **Skipped:** D (browser) — the change set contains no UI
+surface; `/oauth/[plugin]/start` was browser-reachable but is deleted and had no in-repo caller, and
+`app/oauth/callback/[plugin]/route.ts` is untouched · **Input source:** QA judgement from the task
+brief.
+
+**Verdict: PASS.** No defect. Four findings, all pre-existing or cosmetic, listed below.
+
+### 13.1 Full Jest suite against a HEAD baseline — PASS, 0 net new failures
+
+The baseline is a detached worktree at `4def6c34` (= `HEAD`, i.e. the tree before these staged
+changes), created outside the repo with the shared `node_modules` symlinked, so neither tree sees
+the other.
+
+| Run | Command | Result |
+|---|---|---|
+| Staged tree, everything | `npx jest --ci --silent` | 28 failed / 8 skipped / 1962 passed of 1998 suites; 161 failed / 60 skipped / 49541 passed of 49762 tests; 1862 s |
+| Baseline, the 28 that failed above | `npx jest --ci --silent <28 paths>` | 25 failed / 3 passed of 28 |
+| Staged tree, the 3 that differ, isolated | `npx jest --ci <3 paths>` | **3 passed, 218 tests** |
+
+The dedup trap was real and worth restating: the staged run printed **56** `FAIL` lines for **28**
+distinct suites — exactly 2×. A `comm` over raw `FAIL` lines would have reported all 28 as new.
+Both sides were `sort -u`'d on the suite path (and the baseline's Windows backslashes normalised)
+before comparing.
+
+The three suites that failed in the full staged run but passed in the baseline subset are
+`app/admin/business-os-llm/__tests__/leakPanel.render.test.tsx`,
+`app/admin/exchange-rates/__tests__/exchangeRates.render.test.tsx` and
+`components/business-os/settings/__tests__/PlanUpgrade.render.test.tsx`. All three are
+load-dependent timeouts, not regressions:
+
+- two fail with the bare `thrown: "Exceeded timeout of 5000 ms for a test."`, the third with a
+  `findByTestId` `waitFor` timeout;
+- the full run clocked them at 209 s and 204 s wall (vs 82 s and 105 s unloaded), and the staged
+  run contains 54 `Exceeded timeout` markers across the suite;
+- **re-run isolated on the staged tree they all pass** (218 tests, 0 failures);
+- none of the three imports anything in this change set — no plugin, OAuth or logging surface.
+
+So the suite-level answer is: **28 failing suites on the staged tree, 28 failing or flaking on
+`HEAD`, 0 attributable to G-2 or F-1.** (The brief's "roughly 30 on clean main" is accurate; the
+exact figure here is 25 hard failures plus 3 load-flakes among the suites this change set could not
+touch.)
+
+Of the four guard suites G-2 edited, three pass on Windows and the fourth is §13.5:
+
+```
+PASS app/api/plugins/__tests__/dead-plugin-routes-removed.guard.test.ts (16.663 s)
+PASS lib/admin/environment/__tests__/catalogueDrift.guard.test.ts (11.137 s)
+PASS lib/plugins/__tests__/pluginConnectionsBrowserAccess.guard.test.ts (11.91 s)
+FAIL lib/utils/__tests__/oneAddressPolicy.guard.test.ts (27.299 s)   <- §13.5, Windows-only
+```
+
+### 13.2 No live caller of anything deleted — PASS
+
+Swept every deleted export, basename and route path across all tracked files (`app/`, `lib/`,
+`components/`, `hooks/`, `scripts/`, `tests/`, `.github/`, `supabase/`, `types/`, `simulators/`,
+`__mocks__/`, `middleware.ts`, `next.config.js`, `vercel.json`, `jest*.config.js`, `package.json`
+and every `*.json`), excluding only `archive/`, `docs/` and `backups/`:
+
+`gmailStrategy`, `googleDriveStrategy`, `universalPlugins`, `UniversalPlugin`,
+`UniversalOAuthHandler`, `UniversalAPIClient`, `createUniversalPlugin`, `UniversalPluginConfig`,
+`EndpointConfig`, `gmailPluginStrategy`, `googleDrivePluginStrategy`, `plugins/v2`, `oauth/token`,
+`/oauth/<x>/start`, `NEXT_PUBLIC_GOOGLE_CLIENT_ID`, and `.connect(` / `.handleOAuthCallback(` /
+`.fetchContext(` as call sites.
+
+**Every surviving match is a comment, a guard-test string, an unrelated third-party URL or a
+deliberate decoy.** Specifically:
+
+- `oauth/token` survives only as `connect.stripe.com/oauth/token` and
+  `api.notion.com/v1/oauth/token` in plugin definitions and one Stripe test — which is exactly why
+  G-2 was right not to add a `FORBIDDEN_LITERALS` entry for it.
+- `NEXT_PUBLIC_GOOGLE_CLIENT_ID` survives in three suites that **set it as a decoy** to prove the
+  invite sign-in path does not fall back to it. Those are negative controls and all three pass. The
+  `catalogueDrift` guard skips `__tests__`, so removing the catalogue entry does not strand them —
+  confirmed by that guard passing.
+- `.handleOAuthCallback(` survives at `app/oauth/callback/[plugin]/route.ts:117`, which is
+  `UserPluginConnections.handleOAuthCallback` — the V2 path, unrelated to the deleted V1 member.
+  That route's only imports are `next/server`, `@/lib/logger`, `pino`, `PluginManagerV2` and
+  `UserPluginConnections`; it touched nothing deleted.
+- `middleware.ts:156` matches `pathname.startsWith('/oauth')`, a prefix that still correctly covers
+  the surviving callback.
+- `app/oauth/` now contains exactly one file: `callback/[plugin]/route.ts`. Kept, as intended.
+
+**The one live code reference to a deleted path**, already recorded by implementation and confirmed
+here as harmless: `lib/agentkit/v6/intent/plugin-spec-loader.ts:106` lists
+`lib/plugins/v2/configs/<key>.json` as the first of three candidate spec paths. It cannot run —
+`loadSpecFromFile` has **zero callers** anywhere (`generate-intent.ts:216` imports
+`loadPluginRegistryFromSpecs`, a different export, and `specLoader` is an optional parameter that
+**no call site in the repo passes**, confirmed by sweeping `specLoader`; the production branch goes
+to `loadPluginRegistryFromDatabase`). The other two candidate directories, `lib/plugins/specs` and
+`specs/`, **do not exist either**, which is independent evidence the function was already dead.
+Non-defect; see §13.6 FU-QA-1.
+
+### 13.3 Behavioural check on the surviving V1 `run` path — PASS
+
+Exercised in memory with `tsx`, importing the real `lib/plugins/strategies/gmailDataStrategy.ts`
+and the real `lib/plugins/pluginRegistry.ts` against a stubbed `globalThis.fetch`, with
+`LOG_LEVEL=debug` so every converted call actually executed. Eight scenarios.
+
+Object shape after the `...gmailStrategy` spread was dropped:
+
+```
+pluginKey = "google-mail"          name = "Gmail"
+typeof run = function              typeof refreshToken = function
+typeof connect = undefined         typeof handleOAuthCallback = undefined
+own keys: cleanExtractedText, decodeBase64Url, extractEmailBody, extractTextFromAttachment,
+          generateGenericSummary, identifyContentType, name, pluginKey, processAllAttachments,
+          processGenericInputs, refreshToken, run
+```
+
+`pluginKey: 'google-mail'` and `name: 'Gmail'` are byte-identical to what the deleted
+`gmailPluginStrategy` supplied (`gmailPluginStrategy.ts:11-12` on `HEAD`), and that object had
+**exactly four** own members — `pluginKey`, `name`, `connect`, `handleOAuthCallback` — so the spread
+supplied nothing else that could now be missing. `connect` and `handleOAuthCallback` are the only
+losses and §13.2 shows nothing calls them.
+
+| # | Scenario | Result |
+|---|---|---|
+| A | happy path, 2 messages + 1 attachment each | 3 fetches; returns `{summary, totalEmails:2, totalAvailable:2, emails, searchQuery, searchCriteria, userEmail, fetchedAt}`; attachment text extracted; never throws |
+| B | list returns `messages: []` | 1 fetch; early return `{summary, totalEmails:0, emails:[], searchQuery, searchCriteria}` |
+| C | list returns 400 | `error` line carries `userId`/`statusCode`/`statusText`, body goes to `debug`, then the `Error` is thrown and the outer `catch` returns `{summary, error:'Gmail API error: 400 Bad Request', totalEmails:0, emails:[], errorType:'Error', troubleshooting[3]}` |
+| D | every detail fetch 404s | 3 fetches; two `warn` lines; returns `totalEmails:0` with `totalAvailable:2` — loop-level failure still yields a success shape, as before |
+| E | `expires_at` in the past | 0 fetches; `info` then the `error` catch; returns `error:'Access token expired, refresh needed'` |
+| F | invoked through `pluginRegistry['google-mail'].run(...)`, i.e. the way `PluginCoordinator.ts:374` calls it | `TypeError: this.processGenericInputs is not a function`, swallowed into the error shape — **pre-existing, see §13.6 FU-QA-2** |
+| G | `refreshToken({refresh_token:null})` | **throws** `Error: No refresh token available for Gmail connection` |
+| H | `refreshToken({refresh_token:'rt'})` | **throws** `Error: Google OAuth credentials not configured` |
+
+Conclusions on the three things the brief asked about:
+
+- **Control flow and return shape unchanged.** Every hunk inside `run()` is a `console.*` → `logger.*`
+  substitution; the only non-logging edits in the whole function are the dropped
+  `searchQuery: processedInputs.query` / `inputVariables` log fields. `run()` never throws — it
+  catches everything and returns the error shape — and scenarios C and E confirm the thrown
+  `Error`s still reach that catch with their original messages.
+- **No `logger.*` call references an out-of-scope variable.** All 26 fired under
+  `LOG_LEVEL=debug` across the eight scenarios with no `ReferenceError`. A read confirms the same:
+  `userId` is a destructured parameter of `run`, `processedInputs`/`errorText`/`message.id`/
+  `part.filename` are all declared above their use, and `logger` is module-scoped.
+- **No `throw` is swallowed.** The three `throw`s inside `run()` reach the pre-existing catch
+  (C, E); `refreshToken`'s throws propagate (G, H); `googleDriveDataStrategy.run` still
+  `logger.error(...)` **then** `throw error`.
+
+Supporting facts verified separately: zero `console.` tokens remain in the three files; 26 + 2 + 2 =
+30 `logger.*` calls replace 29 live `console.*` ones (the extra is the deliberate error/`debug` split
+at `:81`); `lib/logger.ts:26` pins production to `info`, which is what makes the "search text no
+longer reaches production logs" claim true; and the only importers of `pluginRegistry` are four API
+routes plus `PluginCoordinator`, `outputInference` and `interpolatePrompt`, whose own importers are
+all API routes — **no `'use client'` module can reach the new Pino import**, so the conversion
+cannot pull a server logger into a browser bundle.
+
+### 13.4 Typecheck — PASS, the stated numbers are correct
+
+```
+NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit -p tsconfig.json
+```
+
+**1873** `error TS####` diagnostics. **0** crash markers — grepped for
+`JavaScript heap out of memory`, `FATAL ERROR`, `Allocation failed`, `<--- Last few GCs`,
+`v8::internal`. The run is positively proven to have produced diagnostics rather than died early,
+because 1873 of them are present.
+
+QA also ran the same command on the baseline worktree, which the brief did not ask for and which
+turns "1873" from a number into a comparison: **`HEAD` is 1911 errors, 0 crash markers, so the change
+set removes 38 and adds none.** Compared per file, **no file's error count rose and no file appears
+in the staged list that was absent from the baseline list.** Within `lib/plugins/` the drop is 42 →
+**8**, and `googleDriveDataStrategy.ts` alone goes 10 → 4 — deleting `connect` and
+`handleOAuthCallback` removed six implicit-`any` bindings, which matches the figure implementation
+recorded.
+
+The only diagnostics in any file this change set edits are four in
+`lib/plugins/strategies/googleDriveDataStrategy.ts` — one `TS2305` (`PluginStrategy` has never been
+exported from `pluginRegistry.ts`) and three `TS7031` implicit-`any` bindings that follow from it,
+since the broken annotation leaves the object literal without a contextual signature. All
+pre-existing; the same `TS2305` also sits on `chatgptResearchStrategy.ts:7` and
+`slackPluginStrategy.ts:11`, neither touched here.
+
+### 13.5 `oneAddressPolicy.guard.test.ts` — CONFIRMED Windows-only, exactly five offenders, no sixth
+
+Confirmed, not fixed. One `it` fails (`only the resolver and the documented exceptions read the
+variable`); the other three pass.
+
+The cause is as described: `relative()` at `:104` is `file.replace(ROOT + '/', '')`, and `ROOT` is
+built with `path.join`, so on Windows the haystack is `…\determined-tu-5450e6\lib\…` while the
+needle ends in a forward slash. Nothing matches, `relative()` returns the full absolute path, and no
+entry in `ALLOWED` / `OAUTH_FILES` / `NAME_ONLY_LISTINGS` can resolve.
+
+Observed offenders on the staged tree — **five, and exactly the five-entry exemption set**:
+
+| Offender (absolute path elided) | Exemption list it belongs to |
+|---|---|
+| `lib/utils/origins.ts` | `ALLOWED` (`RESOLVER`) |
+| `lib/email/platformBranding.ts` | `ALLOWED` |
+| `lib/admin/environment/catalogue.ts` | `NAME_ONLY_LISTINGS` |
+| `lib/plugins/strategies/slackPluginStrategy.ts` | `OAUTH_FILES` |
+| `app/oauth/callback/[plugin]/route.ts` | `OAUTH_FILES` |
+
+**No sixth offender.** Verified two independent ways:
+
+1. A standalone Node script re-implementing the suite's own walker and regexes with a
+   platform-normalised `relative()` — i.e. what Linux CI effectively computes. It reports
+   `FILES.length = 2364` (the suite needs > 300), the loopback test's offenders as `[]` **with and
+   without** the resolver exemption, test 3's readers as exactly the five files above, **readers not
+   in the exemption set: `[]`**, and **exemptions with no matching reader: `[]`** — a clean 1:1, so
+   the list is neither short nor stale.
+2. The same suite on the baseline tree fails identically with **eight** offenders — exactly `HEAD`'s
+   eight-entry exemption set, including the three entries G-2 pruned
+   (`gmailPluginStrategy.ts`, `googleDrivePluginStrategy.ts`,
+   `lib/plugins/v2/core/UniversalOAuthHandler.ts`). So the 1:1 property holds before and after, and
+   the pruning shrank the offender list by exactly the three files it deleted.
+
+That is positive evidence the suite goes green on Linux CI.
+
+### 13.6 Findings — none blocking
+
+No bug. No performance issue. Four items, for the record:
+
+| ID | Severity | Finding |
+|---|---|---|
+| **FU-QA-1** | Low | `lib/agentkit/v6/intent/plugin-spec-loader.ts:106` still names the deleted `lib/plugins/v2/configs`. Unreachable (§13.2) and correctly left alone under rule 8; the recorded G-6 follow-up — delete `loadSpecFromFile` whole, with its `console.error` at `:112` — remains the right fix. QA adds one fact that strengthens it: **neither of the other two candidate directories exists either**, so the whole `possiblePaths` array is stale, not just one entry. |
+| **FU-QA-2** | Low, pre-existing | `run()` uses `this.processGenericInputs`, but the registry wires `run: gmailDataStrategy.run` as a detached function, so `this` is the registry entry and the call is a `TypeError` swallowed into the error shape (§13.3 scenario F). Identical on `HEAD` — not introduced here. It means the V1 Gmail `run` path **cannot have been succeeding in production**, which is worth knowing for G-5's "is anything still on V1" count: the data halves are reachable but, for `google-mail`, already broken. QA did not verify the same for `google-drive`, whose `run` is an arrow function and uses no `this`. |
+| **FU-QA-3** | Low, pre-existing | `refreshToken` at `gmailDataStrategy.ts:618` logs Google's verbatim token-endpoint error `body` at `error`. SA ruled this acceptable because AF-6 makes the method unreachable; QA confirms the premise empirically — `pluginRegistry['google-mail'].refreshToken` is `undefined` at runtime. Already a G-6 carry-forward. |
+| **FU-QA-4** | Cosmetic | `.claude/skills/third-party-ops/google.md:53-55` still lists `gmailPluginStrategy.ts`, `googleDrivePluginStrategy.ts`, `lib/plugins/v2/configs/google-drive.json`, `app/oauth/[plugin]/start/route.ts`, `app/oauth/token/route.ts`, `UniversalOAuthHandler.ts`, `UniversalPlugin.ts` and `lib/plugins/v2/registry.ts` as "never a probe target". The advice is still sound (never probe them), but a DevOps agent reading it will look for files that no longer exist. The same file's `NEXT_PUBLIC_GOOGLE_CLIENT_ID` bullet **was** updated in this change set, so only the two bullets around it are stale. |
+
+### 13.7 What QA could not check
+
+- **No browser check.** Playwright is not installed and adding it needs SA review. Nothing in the
+  change set renders.
+- **No live Google OAuth exercise.** `tests/jest-no-network.ts` refuses non-loopback connections and
+  the brief was read-only on external platforms, so the `fetch` seam was stubbed instead. A real
+  plugin reconnect through `app/oauth/callback/[plugin]/route.ts` — the route G-2 deliberately keeps
+  — is **not** covered by anything here and is worth one manual click before or after merge, even
+  though the file is untouched.
+- **Linux CI not executed.** §13.5's conclusion that `oneAddressPolicy` goes green there is derived
+  from re-computing the suite's logic with a working `relative()`, not from a Linux run.
+- **`npm run test:bos-entitlements` not run** — correctly not applicable: the diff imports nothing
+  from `lib/business-os/entitlements/` and touches neither `catalog.ts` nor `tierMatrix.ts`.

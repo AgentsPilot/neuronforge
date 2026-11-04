@@ -50,11 +50,10 @@ The **current** setup (which Google Cloud projects exist, which client and key e
 
 **Never a probe target.** These readers are deprecated or unused; a pass or a failure on them says nothing about the live path:
 
-- V1: `lib/plugins/strategies/gmailPluginStrategy.ts`, `googleDrivePluginStrategy.ts`, `gmailDataStrategy.ts`, `chatgptResearchStrategy.ts`; `lib/plugins/v2/configs/google-drive.json`; `app/oauth/[plugin]/start/route.ts` and `app/oauth/token/route.ts` (through `lib/plugins/pluginRegistry.ts`).
-- `NEXT_PUBLIC_GOOGLE_CLIENT_ID`: read only by the V1 strategies. It is not on the live path, and no check pairs it with `GOOGLE_CLIENT_ID`.
-- `lib/plugins/v2/core/UniversalOAuthHandler.ts`, `UniversalPlugin.ts` and `lib/plugins/v2/registry.ts`: imported by nothing outside that folder except guard tests (confirm at use time).
+- V1: `lib/plugins/strategies/gmailDataStrategy.ts`, `googleDriveDataStrategy.ts` and `chatgptResearchStrategy.ts`, reached through `lib/plugins/pluginRegistry.ts`. **Everything else this bullet used to list is gone** — G-2 deleted both Google OAuth strategies, both `app/oauth/` V1 routes and the whole `lib/plugins/v2/` tree — so do not go hunting for them. The `google-mail` `run` path is not merely deprecated but **cannot succeed**: the registry wires `run` as a detached function, so its `this.processGenericInputs` call throws and the error shape swallows it (FU-QA-2 in the consolidation requirement). `googleDriveDataStrategy.run` is an arrow function and is unaffected by that, but it is still deprecated.
+- `NEXT_PUBLIC_GOOGLE_CLIENT_ID`: **RETIRED.** G-2 deleted its last two readers with the V1 strategies and removed its catalogue entry; G-3 deletes it from Vercel. It never reached the browser despite the prefix, because no `'use client'` module imported the V1 registry. Do not reintroduce it: the plugin client is `GOOGLE_CLIENT_ID` (server-side) and sign-in is `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`.
 
-**V2 has no start route.** The browser builds the authorisation URL itself, so there is no start response to read. The V1 start route is never a target.
+**V2 has no start route.** The browser builds the authorisation URL itself, so there is no start response to read. The V1 start route that used to be the wrong thing to probe no longer exists — G-2 deleted it. `app/oauth/` now holds exactly one file, the live V2 callback `callback/[plugin]/route.ts`, which **is** a legitimate target.
 
 ## 3. Dashboard steps (the user)
 
