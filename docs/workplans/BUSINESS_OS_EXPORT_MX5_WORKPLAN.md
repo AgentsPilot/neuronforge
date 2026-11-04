@@ -1,6 +1,6 @@
 # Workplan: Business OS Export MX-5 (E8) — Admin "Send export to owner"
 
-> **Last Updated**: 2026-11-03
+> **Last Updated**: 2026-11-04
 
 **Developer:** Dev (EXPORT session)
 **Step:** E8 (user's numbering) = doc slice MX-5
@@ -10,7 +10,7 @@
 **Coordination:** `C:/Users/Barak/My Projects/AgentsPilot/SELF_SERVICE_EXIT_COORDINATION.md` (outside git). CC-1 read on 2026-11-03: the last line is the EXPORT "E8 (MX-5) STARTED" entry (no lock, no migration, `BusinessDetail.tsx` and `page.tsx` not edited). No lock held by either session that MX-5 needs. The cleanup-regen lock is not needed (no migration)
 **Branch:** `feature/bos-export-mx5-admin-send` (RM-created, worktree `neuronforge-mx5`, off `origin/main` `4c389406`). Dev confirmed it with `git branch --show-current` on 2026-11-03 before writing this file. Not `main`
 **Date:** 2026-11-03
-**Status:** Code Complete 2026-11-04 (tasks 2–11 done, uncommitted); waiting for SA code review
+**Status:** SA approved, QA passed after the Bug 1 fix, user approved the diff 2026-11-04; PR #623 open. Live checks L-1…L-5 owed after deploy
 
 ---
 
@@ -704,11 +704,21 @@ New failure:           accountClosureRepositories.callers.guard › AccountLockR
 
 **Verdict: FAIL** (one High bug, test-only, small fix). Everything else passes. The live checks L-1…L-5 are still owed after deploy, with the user's go-ahead.
 
+### Re-pass after Bug 1 (coordinator, 2026-11-04)
+- [x] Bug 1 fixed: the T-P5 line naming the lock repository class is deleted from `export-sends/__tests__/route.test.ts`; DELETE's allow-list is unchanged (DELETE confirmed). `accountClosureRepositories.callers.guard` + the route test: 2 suites, 75/75 pass
+- [x] After RM merged `origin/main` (`27f13ab7`): 6 suites, 562/562 pass (route, `source.guard`, `adminGate.writes`, the three callers guards)
+- [x] DELETE confirmed CC-3 (the `source.guard` MX-3.1 rewrite), so D-3 is settled
+
+**Verdict after re-pass: PASS.** The live checks L-1…L-5 are still owed after deploy.
+
 ---
 
 ## Commit Info
 
-_RM will populate this section._
+- Branch: `feature/bos-export-mx5-admin-send`
+- `d28f43a1` feat(admin): send a data export to the business owner (MX-5)
+- `db1866db` merge of `origin/main` (`27f13ab7`), no conflicts
+- PR: [AgentsPilot/neuronforge#623](https://github.com/AgentsPilot/neuronforge/pull/623)
 
 ---
 
@@ -722,3 +732,4 @@ _RM will populate this section._
 | 2026-11-04 | SA code review | Code approved for QA. M-1 and M-2 met; POST order, no email in any answer, tenant scoping (S-2 job read on user_id + request ids), Q3 (owner route tests unedited, helper never throws) and E-20 verified; 13 focused suites, 756 tests pass. D-1, D-2 accepted; D-3 accepted subject to DELETE's CC-3 confirmation. Two low should-fix items (T-U9 coverage of every 409 code; single `usableEmail` call) |
 | 2026-11-04 | SA should-fix items applied (Dev) | (1) T-U9: the `it.each` over `account_closed`, `export_no_login_email`, `admin_self_send` and `export_in_progress` was already in `dataExportSendDialog.render.test.tsx` (l.162–176, just above the `export_daily_limit` case at l.178), so it needed no new test. (2) `export-sends/route.ts` step 8: `usableEmail()` is now called once into `to`, the route branches on `null`, and the `as string` cast is gone. (Optional) `DataExportSendDialog.tsx`: a history line with an unknown status logs one `clientLogger` warn (`unknown_status`, request id only) instead of being dropped silently, with a new T-U11 case. Re-run: admin route 52, dialog render 20, `source.guard` 112 = 184/184; ESLint clean on the three files; CRLF kept; no commit |
 | 2026-11-04 | QA testing report (automated only) | **FAIL, 1 High bug.** Focused: 13 suites / 761 tests pass. Full run: 1999 suites, 27 failed (54 FAIL lines deduped), 151 tests failed. 25 of the 27 fail without MX-5 (11 quarantined, 14 Windows-only), and 1 was a QA temp-file artifact that passes alone. The 1 new failure is `accountClosureRepositories.callers.guard`: the route test's T-P5 writes the literal `AccountLockRepository`. Owner email checked byte-identical against the base builder. 4 test-only cases added (GET 429, GET lower-casing, GET upper-case self, timeout not marked; T-U11 three status words). L-1…L-5 not run |
+| 2026-11-04 | QA re-pass, user approval, PR | Bug 1 fixed (one test line removed), 75/75; DELETE confirmed CC-3; user approved the diff; RM committed `d28f43a1`, merged `origin/main` (`db1866db`, 562/562 after merge), opened PR #623 |
