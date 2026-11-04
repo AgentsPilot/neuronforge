@@ -7,6 +7,9 @@
  */
 
 import net from 'node:net';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 /** Attempt one connection and report how it ended, without throwing. */
 function attempt(options: net.NetConnectOpts): Promise<{
@@ -102,6 +105,80 @@ describe('the Jest no-network guard', () => {
     expect(first.connected).toBe(false);
     expect(second.connected).toBe(false);
     expect(second.error?.message).toContain('Blocked a network connection to example.org:80');
+  });
+
+  /**
+   * The refusal COUNT is what the gate holds to a ceiling (G8 in
+   * .github/ci/jest-gate-check.mjs), so two properties of the recorder decide
+   * whether that ceiling means anything:
+   *
+   *   - OFF unless asked. Every developer machine runs with no record
+   *     directory, and must behave exactly as it did before the recorder
+   *     existed.
+   *   - Never counting THIS file. The cases above refuse connections
+   *     deliberately, and counting them would have the ceiling measuring the
+   *     guard's own test rather than the suite's leaks.
+   *
+   * The second is why this file cannot observe its own recording unaided: it is
+   * exempt. `NO_NETWORK_RECORD_GUARDS_OWN_TEST=1` lifts the exemption and
+   * nothing else, so the real refusal path runs end to end on this file's own
+   * refusals.
+   *
+   * Deliberately NOT done by impersonating another file through
+   * `__currentSandbox`: measured, a socket inherited from an earlier file in
+   * the worker opened inside that window, was charged to the fake identity, and
+   * landed in the REAL record directory in two runs out of three — phantom
+   * counts in the number the gate ratchets on. Both environment variables are
+   * restored exemption-first below, so no ordering leaves a window in which a
+   * refusal is both counted and pointed at the shared directory.
+   */
+  it('records a refusal only when asked, and never counts this file by default', async () => {
+    const previousDir = process.env.NO_NETWORK_RECORD_DIR;
+    const previousOverride = process.env.NO_NETWORK_RECORD_GUARDS_OWN_TEST;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'no-network-guard-'));
+    const records = () =>
+      fs
+        .readdirSync(dir)
+        .filter(f => f.endsWith('.jsonl'))
+        .flatMap(f => fs.readFileSync(path.join(dir, f), 'utf8').split('\n'))
+        .filter(line => line.trim())
+        .map(line => JSON.parse(line));
+
+    try {
+      /* Asked to record — but this file is exempt, so nothing is counted. */
+      process.env.NO_NETWORK_RECORD_DIR = dir;
+      await attempt({ host: 'example.com', port: 443 });
+      expect(records()).toEqual([]);
+
+      /* Exemption lifted: the same refusal is now recorded. */
+      process.env.NO_NETWORK_RECORD_GUARDS_OWN_TEST = '1';
+      await attempt({ host: 'example.com', port: 443 });
+
+      /*
+       * Filtered to our own destination rather than asserting the total: with
+       * the exemption lifted, a socket inherited from an earlier file in this
+       * worker would be recorded here too, and must not fail this case.
+       */
+      const ours = () => records().filter(r => r.destination === 'example.com:443');
+      expect(ours()).toHaveLength(1);
+      expect(ours()[0].possiblyNotTheOriginFile).toContain('jest-no-network.guard.test.ts');
+      expect(ours()[0].possiblyNotTheOriginCase).toContain('records a refusal only when asked');
+      /* The transport is the one field that is not a guess, so it must be there. */
+      expect(ours()[0].transport.join(' ')).toContain('jest-no-network.guard.test.ts');
+
+      /* Not asked — nothing more is written, exemption lifted or not. */
+      delete process.env.NO_NETWORK_RECORD_DIR;
+      await attempt({ host: 'example.com', port: 443 });
+      expect(ours()).toHaveLength(1);
+    } finally {
+      /* Exemption first: the reverse order would briefly count this file's
+         refusals into whatever directory the run itself is using. */
+      if (previousOverride === undefined) delete process.env.NO_NETWORK_RECORD_GUARDS_OWN_TEST;
+      else process.env.NO_NETWORK_RECORD_GUARDS_OWN_TEST = previousOverride;
+      if (previousDir === undefined) delete process.env.NO_NETWORK_RECORD_DIR;
+      else process.env.NO_NETWORK_RECORD_DIR = previousDir;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('leaves loopback alone, so a test can reach a server it started itself', async () => {
