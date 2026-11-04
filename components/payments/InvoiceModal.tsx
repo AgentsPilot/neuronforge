@@ -1049,7 +1049,26 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
                             e.stopPropagation();
                             selectDueDatePreset(preset);
                           }}
-                          className={`w-full px-4 py-2.5 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${
+                          /*
+                            The colour is NOT optional on a dropdown row.
+
+                            Neither this button nor its label set one, so the
+                            text inherited — and on the dark theme that resolved
+                            to a dark ink on the dark `--v2-surface` panel the
+                            list is drawn on, leaving "Due on Receipt", "Net 7",
+                            "Net 30", "Net 60" and "Custom" almost unreadable.
+                            Only the hovered and the selected rows showed
+                            through, because those two get a background of their
+                            own.
+
+                            On the ROW rather than the label, which is where the
+                            language and currency dropdowns in settings put it,
+                            so anything added beside the label inherits it too.
+                            Both sibling dropdowns in this same modal already
+                            state it on their own text; this one was the
+                            omission.
+                          */
+                          className={`w-full px-4 py-2.5 text-sm flex items-center justify-between text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] ${
                             dueDatePreset === preset.value ? 'bg-[var(--v2-bg)]' : ''
                           }`}
                         >

@@ -66,6 +66,7 @@ import { scheduleIntervalOf } from '@/lib/business-os/schedule/stored';
 import { auditLog } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { inputsFor } from './inputsFor';
+import { connectionsReady } from './connectionsReady';
 
 const logger = createLogger({ module: 'scheduledAgentRunner' });
 
@@ -273,6 +274,7 @@ export function causeOfFailure(execution: unknown): string {
        this. Preferred over everything else below: it is the only one written
        for a person rather than for us. */
     failedStepError?: string;
+    failedStepCode?: string;
     execution_trace?: {
       failedSteps?: string[];
       stepExecutions?: Array<{ stepId?: string; metadata?: { success?: boolean; error?: string } }>;
@@ -609,6 +611,46 @@ async function executeOne(
       return;
     }
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * ASK THE CONNECTIONS BEFORE SPENDING A RUN ON THEM.
+     *
+     * Measured on a live account, 2026-11-03: `draft_client_replies` failed at
+     * 09:10, 09:15, 09:20, 09:25 and 09:30, each time on its FIRST step with
+     * "Your Gmail connection has expired. Please reconnect in Settings" — and
+     * each failure then triggered a refresh that SUCCEEDED, one second after
+     * the run it could have saved was written off. Fifteen failures since
+     * 1 November, none successful, on a connection that was never actually
+     * dead.
+     *
+     * `connectionsReady` refreshes anything near expiry while there is still a
+     * run to save, using the same `getConnection` the steps use. Where that
+     * cannot produce a usable connection, the run is SKIPPED rather than
+     * failed: the owner has to re-authorise, no amount of retrying changes
+     * that, and five failures an hour bury the one line that would have told
+     * them so. The readiness card already names the connection and offers the
+     * reconnect.
+     *
+     * Fails open by construction — see the module header. An uncertain check
+     * lets the run proceed, where a wrongly confident one would skip every run
+     * for ever and look deliberate doing it.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const blocked = await connectionsReady(agent.user_id, agent.plugins_required ?? []);
+    if (blocked.length > 0) {
+      const names = blocked.map(b => b.plugin).join(', ');
+      await scheduledExecutionRepository.markSkipped(
+        run.id,
+        `waiting on a connection: ${names}`
+      );
+      result.skipped += 1;
+      log.info(
+        { blocked: blocked.map(b => b.plugin) },
+        'Run skipped: a connection the plan needs is not usable, and only the owner can fix it'
+      );
+      return;
+    }
+
     const inputValues = await inputsFor(agent);
 
     const pilotAgent: PilotAgent = {
@@ -709,7 +751,15 @@ async function executeOne(
        */
       const why = causeOfFailure(execution);
 
-      await scheduledExecutionRepository.markFailed(run.id, why, retry);
+      await scheduledExecutionRepository.markFailed(
+        run.id,
+        why,
+        retry,
+        /* The code travels with the sentence so the dashboard can say it in
+           the owner's language — the sentence itself comes from a plugin
+           definition and those are English-only. */
+        (execution as { failedStepCode?: string })?.failedStepCode
+      );
       result.failed += 1;
 
       /* `last_run` is NOT written: the agent did not successfully run. */

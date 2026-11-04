@@ -141,7 +141,7 @@ export const en = {
     'nav.home': 'Dashboard',
     'nav.label': 'Business areas',
     'nav.myday': 'My day',
-    'nav.payments': 'Orders',
+    'nav.payments': 'Money',
     'myday.greeting.morning': 'Good morning',
     'myday.greeting.afternoon': 'Good afternoon',
     'myday.greeting.evening': 'Good evening',
@@ -613,6 +613,11 @@ export const en = {
     'automation.import_leads_from_sheet.watches': 'New rows in your leads spreadsheet',
     'automation.available_heading': 'Also available',
     'automation.needs_plugin': 'Needs {plugin}',
+    'automation.failure.title': 'This agent has stopped',
+    'automation.failure.reconnect': 'One of the apps this agent uses has stopped accepting it. Reconnect that app and the agent carries on by itself.',
+    'automation.failure.busy': 'An app this agent uses is busy and turned it away. Nothing to do — it tries again on its next run.',
+    'automation.failure.data': 'Something this agent needed was missing — an address, a record, or a permission. Check the details it works with and it will pick up from there.',
+    'automation.failure.unknown': 'This one is on us. The agent hit a problem on our side; we can see it and it will keep trying.',
     'automation.next_retry': 'tries again {when}',
     'automation.page_range': '{from}–{to} of {total}',
     'automation.page_previous': 'Previous page',
@@ -683,6 +688,15 @@ export const en = {
     'gaps.value.quoted': 'quoted',
     'gaps.value.to_bill': 'to bill',
     'gaps.plan_still_charging': 'plan still charging',
+    'gaps.context.cancelled_by_client': 'The client called it off',
+    'gaps.context.cancelled_by_owner': 'You called this one off',
+    'gaps.context.quote_viewed': 'They opened it and have not answered',
+    'gaps.context.quote_unopened': 'They have not opened it yet',
+    'gaps.context.invoice_held': 'The appointment went ahead and was billed',
+    'gaps.context.invoice_no_show': 'They missed the appointment and it was charged for',
+    'gaps.context.invoice_cancelled': 'The appointment was called off and the invoice still stands',
+    'gaps.open_contact': 'Open the client',
+    'gaps.open_booking': 'Open the booking',
     'gaps.auto_held_check': 'marked automatically because the date passed, worth checking it happened',
     'gaps.cancelled_not_rebooked': 'has not booked again since',
     'gaps.working': 'Working…',
@@ -3692,13 +3706,22 @@ export const en = {
     'payments.money_status.failed': 'Payment failed',
     'payments.money_status.draft': 'Draft',
     'payments.money_status.cancelled': 'Cancelled',
+
+    /* Which date a `MoneyEntry` is showing. Beside the family above because
+       both are keyed off the shared entry shape in lib/payments/moneyItems.ts.
+       An unlabelled date is worse than none: "3 Oct" does not say whether that
+       has happened or is still coming. */
+    'payments.date_paid': 'Paid',
+    'payments.date_due': 'Due',
+    'payments.date_created': 'Raised',
+    'payments.date_refunded': 'Refunded',
     'crm.session': 'Session',
     'payments.entries': 'orders',
     'payments.item': 'order',
     'payments.section.bookings': 'Bookings',
     'payments.section.other': 'Not linked to a booking',
     'common.actions': 'Actions',
-    'payments.awaiting_collection': 'Still to collect',
+    'payments.awaiting_collection': 'Still to collect, late included',
     'payments.search.any_amount': 'any amount',
     'payments.search.over': 'over',
     'payments.search.under': 'under',
@@ -3725,6 +3748,11 @@ export const en = {
     'payments.all_of_it_late': 'All of it is late',
     'payments.all_collected': 'Nothing outstanding',
     'payments.returned_to_clients': 'Returned to clients',
+    'payments.explain.collected': 'Money already in. Not counted again below.',
+    'payments.explain.outstanding': 'Everything still owed, late part included.',
+    'payments.explain.overdue': 'Part of Outstanding, not added to it.',
+    'payments.explain.cancelled': 'Outside the order value.',
+    'payments.explain.refunded': 'Outside the order value.',
     'payments.no_refunds': 'No refunds',
     'reports.tab_money': 'Money',
     'reports.view_money': 'View orders',
@@ -3755,7 +3783,7 @@ export const en = {
     'payments.select.all': 'Select all',
     'payments.select.none': 'Clear selection',
     'payments.overdue_total': 'Overdue',
-    'payments.overdue_subtitle': 'Part of what is outstanding',
+    'payments.overdue_subtitle': 'Part of the figure beside it',
     'payments.nothing_overdue': 'Nothing late',
     'payments.cancelled_total': 'Cancelled',
     'payments.cancelled_subtitle': 'Asked for, never arriving',
@@ -4250,6 +4278,8 @@ export const en = {
     'reports.col_payments': 'Payments',
     'reports.col_revenue': 'Revenue',
     'reports.col_lost': 'Lost',
+    // Heads the summed row at the TOP of the services table.
+    'reports.col_total': 'Total',
     'reports.col_service': 'Service',
     'reports.arrived_caption': '{leads} new contacts arrived in this period. The bookings and revenue are what arrived in the SAME period from anyone that channel ever brought, so a client who first came months ago still counts here. {untracked} of the new contacts came with no referrer and no tag, so they sit in the "{direct}" row.',
     'reports.needs_has': 'needs {min}, has {sample}',
@@ -5352,4 +5382,53 @@ export const en = {
     'leads.inbox.readiness.replies_off_desc': 'Enquiries from your website are being filed, but automatic replies are off, so nobody receives your booking link.',
     'leads.inbox.readiness.connect_title': 'Leads from your own website',
     'leads.inbox.readiness.connect_desc': 'Your website emails you when somebody fills in your contact form. We can file them as leads and reply with a link to book.',
+
+    /* ───────────────────────────────────────────────────────────────────────
+       The money page (/business-os/money).
+
+       Reuses `payments.*` for the figures themselves (collected, outstanding,
+       overdue, cancelled, refunded) so the two money screens cannot name the
+       same number differently. Only this page's own sentences live here.
+       ─────────────────────────────────────────────────────────────────────── */
+    'money.title': 'Your money',
+    'money.scope': 'Every figure below describes the period you picked above. Choose "All time" for the whole picture.',
+    'money.failed': 'Could not load your money right now. Please try again.',
+    // The headline figure. "Actually" because the figure beside it is what was sold, not what arrived.
+    'money.came_in': 'Actually came in',
+    'money.of_book': 'out of {total} of work sold',
+    'money.of_which_late': 'of which late',
+    // Explains the nesting in the bar, which is the one device the page has to teach.
+    'money.nested_note': 'The red sits inside the yellow, not beside it: money that is late is money you are owed, so it is counted once.',
+    'money.needs_you': 'Needs chasing',
+    'money.late_note': 'Past its due date. Already counted in what you are owed, above.',
+    'money.not_due_yet': 'Not due yet',
+    'money.not_due_note': 'Agreed, with the date still ahead. Nothing to do about it today.',
+    'money.fell_through': 'What will not arrive',
+    'money.fell_through_note': 'Neither is part of what your orders are worth: one never arrived, the other went back out.',
+    'money.list_title': 'All the money, by the work it belongs to',
+    'money.search_placeholder': 'Search a client, invoice or amount',
+    // Says plainly that the chips govern the list and not the figures above it.
+    'money.chips_scope': 'Filters the list below only:',
+    /* Its own key rather than `payments.invoice_filter.all`, which reads 'Todas'
+       in Spanish because it agrees with "facturas". This chip means all MONEY. */
+    'money.filter_all': 'All',
+    'money.chips_note': 'The figures above do not move when you filter, so there is always something to compare against. Search does narrow them, because then you are asking about one client.',
+    'money.nothing_here': 'Nothing here for this period.',
+    'money.row_key': 'Each row is one piece of work and all the money attached to it. A package of three sessions is one row that opens to three payments, not three rows.',
+    // Heads the second section: money the grouping found no booking for.
+    'money.loose_note': 'Money with no booking behind it: a bill raised on its own, or a sale that never became an appointment. It is yours just the same.',
+    'money.entries_title': 'The payments in this order',
+    // The drawer: one row opened, read as a sequence rather than a record.
+    // The two closed lists, and the way into them from the headline card.
+    'money.see_orders': 'See the orders behind this',
+    'money.orders_door': 'Work you sold, and the money against it',
+    'money.loose_door': 'Bills raised on their own, with no booking behind them',
+    'money.open_detail': 'See the whole story',
+    // Not "select all": it turns on picking, and picking all is one use of it.
+    'money.select_many': 'Select several',
+    'money.actions_title': 'What you can do',
+    'money.facts_title': 'The details',
+    'money.open_bill': 'The bill itself',
+    'money.open_order': 'Open the order',
+    'money.open_client': "The client's card",
 };

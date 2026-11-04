@@ -70,6 +70,16 @@ import { GET } from '../route';
 import { bosRowFilter } from '@/lib/business-os/llm/callCatalog';
 import { quietQueueFigures, quietSummaryRows } from '@/tests/helpers/jobs-queues-fixtures';
 
+/*
+ * The audit write is non-blocking by mandate, so its failure is invisible —
+ * and in this suite it was a real request to the placeholder Supabase URL.
+ * `AuditTrailService` builds its own client with `createClient`, so mocking
+ * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
+ */
+jest.mock('@/lib/services/AuditTrailService', () =>
+  jest.requireActual('@/tests/helpers/silentAuditTrail')
+);
+
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const OFF_AREA_ADMIN_EMAIL = 'changed-by@example.com';
 

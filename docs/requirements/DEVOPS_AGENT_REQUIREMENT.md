@@ -48,7 +48,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
 | DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) ✅ DO-5a MERGED 2026-10-31 (PR #592; see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) 🟡 spec re-checked by BA 2026-10-31 (FU-5: H10, the Q-D5-9 note, the H3 boundary, the check list §D5.2.2(g), Q-D5b-1 to Q-D5b-4); SA short pass 2026-10-31 **APPROVED WITH CHANGES** (see [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)); DO-5b built (see [DO-5b implementation notes](#do-5b-implementation-notes)); **SA code review 2026-10-31: Code Approved for QA**, with four small skill fixes (repo reads use `origin/main:./<path>` from the worktree root; `devops.md` unchanged beyond the pointer line); **QA 2026-10-31: QA passed**, with two small non-blocking items, both fixed (see [QA Report — DO-5b](#qa-report--do-5b)); **user approved the diff 2026-11-01**, PR open with auto-merge. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file): ✅ PR #593 MERGED 2026-10-31; `origin/main` shows the file untracked and the `.gitignore` line. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
-| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; commit + PR.** |
+| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; MERGED (#614). DO-6e (domains and app addresses, narrowed by the user) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6e implementation notes](#do-6e-implementation-notes)); SA code review approved with three fixes; QA 19 checks, two Mediums and a Low fixed by the main session; user approved the diff 2026-11-03; merged (#616). DO-6f (queues, AWS and small API-key providers) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6f implementation notes](#do-6f-implementation-notes)); SA code review approved with five fixes; QA 25 checks, one Medium and three Lows; all fixes applied by the main session; user approved the diff 2026-11-04; merged (#620). DO-6g (messaging apps: Meta and Slack) spec + SA short pass approved with changes; built 2026-11-04 (see [DO-6g implementation notes](#do-6g-implementation-notes)); SA code review approved with eight fixes; QA 24 checks, one High, one Medium and four Lows; all fixes applied by the main session; user approved the diff 2026-11-04; commit + PR.** |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
 
@@ -1160,7 +1160,7 @@ Third-party checks join as a fifth area, **Third-party**, one platform at a time
 | Q | Decision |
 |---|---|
 | Q-D6-1 | Target: production live, Preview and local test. DO-6a records the **current** setup as found and changes nothing; the per-environment key mode is checked by T-ST-3 and the checkout probe. What the live check found is recorded privately, not here. Any change is a later decision by the user. |
-| Q-D6-2 | Order accepted. The user asked to confirm every service is still in use. The main session checked QStash (the one the user doubted): it is still in use, so it stays in DO-6f. **Each later slice starts by confirming its services are live** (a code path that runs, and the names set on Vercel) and drops any that are not. |
+| Q-D6-2 | Order accepted. The user asked to confirm every service is still in use. The main session checked QStash (the one the user doubted): it is still in use, so it stays in DO-6f. *Corrected 2026-11-03 (DO-6f, QK-2): that check was incomplete. The receiver route is still deployed, but no code path reaches the publisher; QStash stays in DO-6f, narrowed to the receiver, its signing keys, schedules and dead-letter queue.* **Each later slice starts by confirming its services are live** (a code path that runs, and the names set on Vercel) and drops any that are not. |
 | Q-D6-3 | The user does not want Preview's payment setup changed now. DO-6a records Preview as it is; no slice in DO-6 changes Preview's Stripe setup. |
 
 ---
@@ -1886,6 +1886,578 @@ Approved. It reads the project's log store and cannot change project state, so i
 
 ---
 
+## DO-6e Specification — Domains and addresses (third-party-ops)
+
+SA changes 1–20 applied (see [SA Review — DO-6e (short pass)](#sa-review--do-6e-short-pass))
+
+**By BA — 2026-11-03.** Short scoping pass, like DO-6b to DO-6d. A config and docs slice: no application code, no CI job, no CI time. It adds one reference file and one index row to `third-party-ops`, under SKILL.md §1–§4 and SA Review — DO-6 (changes 1–7: a probe has a precondition or it is "not probed", a roll overlap makes a pass "not conclusive", derivation from code, no copied lists, T- rows live in the platform file). It also carries one §3 sentence correction, which the DO-6e SA pass rules as the §1–§4 SA pass for that sentence (Q-D6e-5). It applies the DO-6c and DO-6d lessons up front: every probe states its precondition, an exact pass, an exact fail and its side effects; a probe that passes on an unset value is not a probe; every quoted log string is checked verbatim with its module.
+
+**Scope, as narrowed by the user (2026-11-03).** Two parts:
+
+1. **The three address names now:** `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_MARKETING_URL`, `NEXT_PUBLIC_PUBLIC_SITE_HOST`. What each controls, the build-time rule, how Preview overrides the app address while the redirect builders do not, and the tie to vendor redirect registrations and the Supabase Auth URL configuration.
+2. **A checklist for attaching a custom domain.** Registrar and DNS detail beyond that checklist waits until a domain is recorded in the private inventory. Until then, the registrar and DNS drift rows are **"not audited"**.
+
+**Services live (Q-D6-2 rule).** Before build, the main session confirms by role that each of A1–A3 still has a code path that runs, and records the result in the DO-6b form ("The main session confirmed on <date> that …", no target named). A3 runs only when it is set (D6e.1 AD-4), so its check is "a code path that runs **when set**". Registrar and DNS: "not audited" until a domain is recorded. The main session confirmed on 2026-11-03 that A1 and A2 each still have a code path that runs (`platformOrigin()` and `marketingOrigin()`, both with live callers), and that A3 has a code path that runs when set (`publicSiteHost()`, read by `middleware.ts`), so all three stay. Whether each one is set is not recorded here; DO checks it at use time with the T-AD checks.
+
+**Boundary.** DO owns the three names, which stable address each environment uses (by role, private), the domain attachments on Vercel (read through `vercel-ops`), and the checklist below. **DNS ownership matches `email.md` §3:** each vendor's file names the records that vendor needs and checks their verification (the sending-domain records: `email.md`). `domains.md` owns publishing every vendor's records at the zone's DNS host, recording each record's owner (T-AD-8), and DMARC as the domain-owner record. It names no record value. `email.md` is not edited. Redirect URIs are registered per `stripe.md` (DO-6a) and `google.md` (DO-6c); this file points to those rules and never restates them. The Supabase Site URL and redirect list are a `supabase-ops` §2 dashboard row. A business's chosen prefix is app data; DO never writes it.
+
+### D6e.1 Context and findings from code
+
+Taken from the code at the worktree's `origin/main` base. Names and readers only: no value read, no `.env*` opened, no network. The skill names files and functions only.
+
+| # | Name | Catalogue group `addresses`, `expectedIn` (prod / preview / local) | Controls |
+|---|---|---|---|
+| A1 | `NEXT_PUBLIC_APP_URL` | required / required / required | This app's own origin: links the app sends out (emails, payment returns, plugin sign-in redirects) |
+| A2 | `NEXT_PUBLIC_MARKETING_URL` | optional everywhere | The separate marketing application's origin, which holds the login and signup pages |
+| A3 | `NEXT_PUBLIC_PUBLIC_SITE_HOST` | optional everywhere | The host whose one-label subdomains serve each business's public pages |
+
+| # | Finding | Where | Consequence for the file |
+|---|---|---|---|
+| AD-1 | **All three are build-time.** They are `NEXT_PUBLIC_` names, inlined at build into the server bundle, the browser bundle and middleware (edge). One precision: `processEnvironmentVariables` reads `process.env[varName]` dynamically on the server, so for the plugin definitions A1 is read at run time, not inlined. An unset A1 leaves the `${…}` placeholder and logs "Environment variable not found, keeping placeholder" (module `PluginManager`). | `lib/utils/origins.ts` (header); `middleware.ts`; `lib/server/plugin-manager-v2.ts` | On Vercel either way a change needs a new deployment of what serves it (`vercel-ops` §4). Saving the variable changes nothing on a running deployment. `/admin/environment` reports the deployment it is served from. The placeholder count is DO's server-side evidence (T-AD-1). |
+| AD-2 | **`platformOrigin()` does not simply return A1.** In order: rule 0, in a browser served from a real host, the served origin wins when A1 is unset or a loopback. Rule 1, a loopback A1 is refused on Vercel. Rule 2, **on a Preview the deployment's own host outranks A1**. Then A1. Then, on Vercel production, the project's stable production host; on other Vercel environments, the deployment host, then the stable production host. Then the code fallback. Off Vercel, the development or production code fallback, chosen by `NODE_ENV`. | `platformOrigin`, `vercelEnv`, `browserOrigin` in `lib/utils/origins.ts` | On Preview, A1 is ignored by every caller of `platformOrigin()`/`platformUrl()`. The code fallback constants are named by role only ("the code fallback"), never quoted. |
+| AD-3 | **The redirect builders read A1 directly, on purpose.** A redirect has to match the vendor's registration, so `lib/utils/__tests__/oneAddressPolicy.guard.test.ts` lists these files as exceptions (`ALLOWED`, `OAUTH_FILES`). The readers: the connect route's redirect fallback when the definition has none; the plugin definitions' `${…}` placeholders (`processEnvironmentVariables`, per `google.md` §2); the OAuth callback page's target origin when it posts to the opener; `platformEmailLogoUrl` (logo shown only when A1 is set and https); and the deprecated V1 strategies, which the guard also lists. `UniversalOAuthHandler` is **not live**: it is reachable only through `lib/plugins/v2/registry.ts`, which the deprecated V1 registry imports and never uses. | `app/api/v2/plugins/connect/route.ts` (`POST`); `lib/server/plugin-manager-v2.ts`; `app/oauth/callback/[plugin]/route.ts` (`APP_URL`, `buildPostMessageResponse`); `lib/email/platformBranding.ts` (`platformEmailLogoUrl`) | **The failure depends on the origin the user browses from, not on the target.** A plugin connection completes only when the opener page is on the address A1 names and that address is registered with the vendor. Started from any other origin (for example a per-deployment Preview host), the callback's message goes to a target origin that is not the opener's, and the browser drops it. On a Preview browsed at the stable address A1 names, with that address registered, it completes. `google.md` §5 already has the gotcha "The callback answers one origin"; `domains.md` points to it. The live openers (`lib/client/oauth-handler.ts`, the Inbox channel dialog, `useChannelConnect`, the Stripe Connect wizard) each have their own "closed" and "timed out" texts. `domains.md` does not list `UniversalOAuthHandler` as a reader. |
+| AD-4 | **A3 decides the public address shape.** Unset means the path form: `{platform origin}/site/{prefix}`. Set means `{prefix}.{A3}` with https, and A3 then **outranks the platform origin** for every address a business shows or shares. A local-only host (loopback or a loopback-resolving test domain) is refused outside development. | `publicSiteHost`, `isLocalOnlyHost`, `publicSiteUrl`, `publicSiteDisplayHost`, `publicSiteSuffix` in `lib/utils/origins.ts` | Setting A3 before a wildcard host is attached and valid makes every address the dashboard hands out resolve nowhere, on a deployment whose A1 is correct. Order row. Preview gets the path form unless a stable preview wildcard is recorded. |
+| AD-5 | **The subdomain rewrite runs only when A3 is set,** the host header ends with `.{A3}`, the prefix is one label and the prefix is not reserved. Middleware then rewrites to the `/site/{prefix}` route. The apex itself (host equal to A3) falls through to the platform, as does anything else. | `middleware.ts` (`middleware`, "A BUSINESS'S PUBLIC PAGES") | The rewrite probe needs a wildcard host as its precondition. Without one it is "not probed (no wildcard host)". |
+| AD-6 | **The reserved list is what keeps a business off the platform's own hostname.** The platform and the marketing site are siblings of the business pages on one apex, so their first labels must be in `RESERVED_PREFIXES`. Middleware, the subdomain check route, the website pages route, `businessSubdomain.ts` and `resolveBusinessByPrefix.ts` import the one list. | `lib/business-os/reservedPrefixes.ts` (`RESERVED_PREFIXES`, `isReservedPrefix`, `validatePrefix`) | Drift check T-AD-4. The recorded first labels of the platform and marketing hosts, where they are subdomains, are checked against the list, derived at use time. A host at the apex has no label to reserve. The skill names no label. |
+| AD-7 | **`marketingOrigin()` has no loopback or preview rule.** It returns A2, or a code fallback chosen by `NODE_ENV`. Sign-out and every login link cross to it. | `marketingOrigin`, `marketingUrl` in `lib/utils/origins.ts` | A loopback A2 on a deployed target sends users to an address only the builder's machine can reach. Probe P-AD-3. Code follow-up FU-D6e-c. The marketing application is a separate Vercel project; the names it reads are not derivable here (Q-D6e-4). |
+| AD-8 | **Browser-side detection depends on a project setting.** In the browser, rule 2 needs the `NEXT_PUBLIC_` copies of Vercel's system variables, and those exist only when the project exposes system variables. Without them, a browser on a Preview with a real A1 configured uses A1 while the server uses the deployment host. | `lib/utils/origins.ts` (comment on `browserOrigin`) | Gotcha, plus a user dashboard check (T-AD-9). `vercel-ops/dashboard-settings.md` does not list the setting: T-AD-9 stays in `domains.md`, and FU-D6e-d adds it there later. |
+| AD-9 | **Mail already sent keeps pointing at the old host.** The email logo URL is fixed at send time, and the code requires the image to keep answering on that host. | `lib/email/platformBranding.ts` (header) | Moving A1 never retires the old host while sent mail may still be read. Order row. |
+
+### D6e.2 What the file teaches (the six-part template)
+
+The file is `.claude/skills/third-party-ops/domains.md` (Q-D6e-1). It opens with the same intro sentence as `email.md` and `google.md`, plus the live-check line. It is organised by A1–A3, then the checklist for attaching a custom domain. Target length: about 130–160 lines, at most about 180 (trim prose, never a probe or drift row).
+
+**(1) What must differ between environments.** The **current** setup (which stable address each environment uses, which domains are attached to which project, the registrar, the zone's DNS host and records) is a private-inventory pointer, checked at use time and reported by role.
+
+| Setting | Rule per environment |
+|---|---|
+| A1 | Set on every target (catalogue). Production: the recorded stable address of the web app project. Preview: the recorded stable preview address, registered with each vendor whose Preview connection is wanted; **never production's address** (a connection started on a Preview would then complete on production, which runs production's code and writes to production's data). Never a loopback on a deployed target. Local: guidance only |
+| A2 | Unset (code fallback) or the recorded stable address of the marketing project. Never a loopback on a deployed target. Names read by the marketing app: not derivable here |
+| A3 | Production: set only once a wildcard host for it is attached to the web app project with valid config and a certificate. Preview: unset (path form) unless a stable preview wildcard is recorded. Local: optional, a loopback-resolving test host (named in `origins.ts`, never here) |
+| Domain attachment | Each recorded domain attached to the project it serves (web app or marketing, by role), to the right target, with a valid certificate. The wildcard host is on the web app project |
+| Sibling labels | When the platform or marketing host is a subdomain of A3, its first label is reserved (AD-6). A host at the apex has no label to reserve, and the rewrite already lets it through |
+| System-variable exposure | Per project, as recorded (AD-8) |
+| Vendor redirects, Supabase Auth URLs | Registered for each environment's stable A1 address, per `stripe.md`, `google.md` and `supabase-ops` §2 |
+
+**(2) Where the code reads it.** The AD-1 to AD-9 files, named as files and functions, with AD-2's order stated exactly. Expected names come from the catalogue group `addresses` at `origin/main`. **Reader derivation (Q-D6e-3), a reader search, never a name search:** `git grep -l -F` for A1's literal name at `origin/main` over `app/`, `lib/` (definitions included), `components/`, `hooks/` and `middleware.ts`; file names only; tests excluded; a hit only in a comment is not a reader; cross-check against the guard's `ALLOWED` and `OAUTH_FILES` lists; a reader in neither list and not on a redirect line is a finding, as is any A2 or A3 reader outside `origins.ts` and `middleware.ts`. The `SKILL.md` §1 rule ("never searches the code for names") stands unedited. The skill holds no reader list beyond the AD-3 examples.
+
+**(3) Dashboard steps (the user),** by area name, confirmed at use time. **Vercel:** project Domains (attach, wildcard, target, config status, certificate), on each project; the system-variable exposure setting in the project's Environment Variables settings; env values per `vercel-ops`. **Registrar:** nameservers, auto-renew, expiry date, transfer lock, registrant contact. **The zone's DNS host:** records, each with its recorded owner. **Supabase:** Authentication, URL Configuration, including the marketing app's entries, by role. **Each vendor's redirect, origin and webhook lists:** per its file. The user reports attached yes/no, config valid yes/no, certificate valid yes/no, "matches the recorded address: yes/no", "on/off as recorded: yes/no", auto-renew on yes/no, lock on yes/no, days to expiry above the recorded threshold yes/no, and the last-updated time. Never a domain, a host, a record value or a registrar account detail.
+
+**(4) Probes.** Each fails when the setting is wrong and moves no money. Each runs on the deployment named per `vercel-ops` §4, after it is Ready. A 401/403 from deployment protection is "not probed". No probe completes an OAuth connection.
+
+| ID | Change | Probe | Pass | Fails when | Who | Precondition and side effects |
+|---|---|---|---|---|---|---|
+| P-AD-1 | Any of A1–A3 | `/admin/environment` on that deployment | Name shows Set, or Not set where intended; no `required-not-set`. Proves presence, never the value; correctness comes from P-AD-2 to P-AD-8 | The other state | Main session or user | Admin session. None |
+| P-AD-2 | A1, A3 | The public booking address the dashboard shows for a business the user owns (`publicSiteDisplayHost`) | Production: the recorded shape (`{prefix}.{A3}` when set, else `{stable A1}/site/{prefix}`). Preview: that deployment's per-deployment host, path form, not an alias the user browses | A loopback, another deployment's host, the code fallback host, or the subdomain shape where no wildcard is recorded. A1's address on Preview is the AD-8 failure (T-AD-9), not an A1 failure | User (browser), yes/no | A business the user owns with a prefix, else "not probed (no business)". None (read only) |
+| P-AD-3 | A2 | Sign out on that deployment | Lands on the recorded marketing address, with a valid certificate | A loopback, a certificate warning, or an unrecorded host | User | Signed in on that deployment. Ends the user's session |
+| P-AD-4 | A1 direct readers | Plugin connect cancelled at consent, with a control (below) | The surface's "failed" text from the address under test | Its "closed" text while the control shows "failed", or a redirect-mismatch page | User; DO (logs) | Below |
+| P-AD-5 | A1 email logo | The `email.md` send probe on that deployment | The received platform email shows the logo image | Text wordmark, or a broken image, while A1 is set and https. On Preview, a broken image because deployment protection covers A1's host is "not probed (protected host)" | User; DO per `email.md` | As `email.md` (invite row, audit entries, revoke) |
+| P-AD-6 | A3, wildcard host | Open `{prefix}.{A3}` for a published business the user owns, then `{reserved label}.{A3}` | The business's page with the address bar unchanged; the reserved label serves the platform, not a site | Platform page for the business, or a site served on a reserved label | User | Wildcard host attached and A3 set, else "not probed (no wildcard host)". One page view recorded in that business's visitor stats (`PageViewTracker`, `app/site/[subdomain]/page.tsx`) |
+| P-AD-7 | Domain attach | `list_project_domains`, `get_domain_config`; production: deployment aliases (`vercel-ops` §4 step 5) | Each recorded domain attached to the right project and target; config valid; aliases include it | Missing, on the other project, misconfigured, or not aliased | DO | With no domain recorded: "not read (no domain recorded)". None |
+| P-AD-8 | Supabase Auth URLs | Sign in through an in-app sign-in surface on that deployment that returns to the served origin (`lib/client/auth-actions.ts` builds `redirectTo` from `window.location.origin`), found at use time. The Google half: `google.md`'s G1 probe, completed by the user on their own existing account | Returns to the same origin, signed in | Lands on another origin (Supabase's fallback to the Site URL when the origin is not allowed: vendor fact, confirm at use time), or Supabase's redirect error | User | An in-app sign-in surface, else "not probed (no in-app sign-in surface)"; the login pages themselves live in the marketing app (Q-D6e-4). A session, plus any sign-in records |
+
+**P-AD-4 in full.** Surface named at use time; suggested: the Inbox channel mailbox connect (a Google plugin through the connect route, client per `google.md`). It quotes that surface's texts verbatim, which are the code defaults of translated strings in `components/business-os/leads/InboxChannelSetupDialog.tsx`, each checked with `grep -cF` ≥ 1 at build: "failed" = "That mailbox could not be connected. Try again."; "closed" = "The sign-in window closed before it finished." On a vendor error the callback returns before `handleOAuthCallback`, so it writes nothing (confirmed by SA). That a cancel on the consent screen returns `access_denied` rather than closing the popup is a vendor fact, confirmed at use time.
+
+- **Control:** the same probe, run from A1's address. The "failed" text there shows that the message mechanism works.
+- **Pass:** the "failed" text from the address under test.
+- **Fail:** the "closed" text from the address under test while the control shows "failed", or a redirect-mismatch page.
+- **Not conclusive:** the control also shows "closed" (the popup lost its opener, or the vendor behaves differently).
+- **Not probed:** no client registered for this address (`google.md`); no stable preview address recorded ("not probed (no stable preview address)"); the popup closed by hand; no cancel offered.
+- **By design:** run from a per-deployment Preview host it fails, because the callback answers one origin (`google.md` §5). A code fact, not drift.
+- **Side effects:** a connect log line ("Initiating plugin OAuth connection", module `PluginConnectAPI`) and a callback provider-error line ("OAuth error from provider", module `OAuthCallbackAPI`), which carries the vendor's error description. If the user consents by mistake, a plugin connection is written, and the user disconnects it.
+
+**(5) Gotchas,** each grounded in a repo file:
+
+- **Build-time, all three** (AD-1): saving is not deploying, and older Previews keep their old value. An unset A1 keeps the definitions' placeholder and logs the `PluginManager` placeholder line.
+- **Preview A1 and the direct readers** (AD-2, AD-3): a pointer to `google.md` §5 "The callback answers one origin", plus the rule that Preview's A1 never names production's address.
+- **A3 outranks a correct A1** (AD-4): set A3 early and every shared address breaks.
+- **Path-form links keep working** after A3 is set, as long as the platform host serves `/site/{prefix}`. Retire nothing that businesses may already have printed.
+- **The reserved list guards the platform's hostname** (AD-6); the apex needs no label.
+- **A2 has no loopback refusal** (AD-7).
+- **System-variable exposure changes browser behaviour** (AD-8), and it is project-wide.
+- **Sent mail pins the old host** (AD-9).
+- **A certificate on an unserved host can lapse unseen.** `origins.ts` records a past sign-out landing on an expired-certificate warning (past tense, no host named, nothing said about which fallback host is served today). A host the code falls back to must actually be served.
+- **A DNS record left pointing at a removed target is a takeover risk.** Remove the record in the same change as the attachment (vendor fact, confirm at use time).
+- **Moving the nameservers moves every record in the zone,** email records included.
+
+**(6) Drift checks** (in `env-drift-audit` §7 format, under its rules):
+
+| ID | Check | Expected state from | Live read | Class | Who |
+|---|---|---|---|---|---|
+| T-AD-1 | On each Vercel target of the web app project, the `addresses` names match `expectedIn` (A1 on all three) | Catalogue at `origin/main` | `vercel-ops` §3 (names only); runtime logs: 0 "Environment variable not found, keeping placeholder" (module `PluginManager`) with `varName` A1, on that deployment after Ready; no definition load in the window is "not read" | High | DO |
+| T-AD-2 | No deployed target hands out a loopback or local-only address (P-AD-2, P-AD-3) | `origins.ts` rules | User report | High | User / main session |
+| T-AD-3 | A3 is set on a target only where a wildcard host for it is attached and valid | Private inventory | `vercel-ops` §3 + P-AD-7; user "matches the recorded address: yes/no" | High | DO; User |
+| T-AD-4 | The recorded platform and marketing first labels, for subdomain hosts only, are in `RESERVED_PREFIXES` at `origin/main` | Code at `origin/main`; private inventory | Repo read | Medium | DO |
+| T-AD-5 | Each recorded domain is attached to the right project and target, config and certificate valid, production aliases include it | Private inventory | P-AD-7 | High | DO |
+| T-AD-6 | Vendor redirect lists and the Supabase Auth URLs (the marketing app's entries included, by role) name each environment's stable A1 address. Pointer to the T- rows of `stripe.md` and `google.md`; the Supabase row is new here | Private inventory | User report | High | User |
+| T-AD-7 | Registrar: auto-renew on, expiry beyond the recorded threshold, transfer lock on, registrant contact reachable | Private inventory | User report | High | User. "Not audited" until a domain is recorded |
+| T-AD-8 | Every record in the zone has a recorded owner (web app, marketing, email per `email.md`, DMARC as domain owner), and none points at a removed target | Private inventory | User report | High | User. "Not audited" until a domain is recorded |
+| T-AD-9 | Each project's system-variable exposure is on/off as recorded | Private inventory | User report (project Environment Variables settings), "on/off as recorded: yes/no" | Medium | User |
+
+**(7) Tiers, order, and the checklist for attaching a custom domain.** Pointer to `env-change-protocol`; nothing restated there.
+
+**Tiers.** These are **production tier** (SA reviews the plan, the user executes): any change to production's A1, A2 or A3; any domain attach or detach on either project; any DNS record; any nameserver change; any registrar setting; the system-variable exposure setting on either project (it is project-wide); the Supabase Site URL or redirect list; and any vendor redirect registration production uses. A Preview-only A1 or A3 change is reversible, and the user applies it after the approval in chat.
+
+**Attaching a custom domain** (each step gates the next):
+
+0. **Zone move, when the plan includes a wildcard host.** Whether the wildcard needs the zone's nameservers moved to Vercel is a vendor fact, confirmed at use time. If it does, every existing record in the zone (email included) is recreated at the new DNS host and checked against the private inventory **before** the nameservers change; the email vendor's domain verification and P-AD-5 are re-run after the change. Production tier. Its undo (switching back) is slow because of DNS propagation.
+1. Attach the domain, and the wildcard host if business subdomains are wanted, to the right project in Vercel (`vercel-ops`; the user executes).
+2. Publish at the zone's DNS host the records Vercel shows for each attached host, and on a zone move carry every recorded record, email included; their contents come from each vendor's file. Record each record's owner (T-AD-8).
+3. Config valid and certificate issued (P-AD-7). Production: the aliases include it.
+4. Confirm the platform and marketing first labels are reserved (T-AD-4). If not, a code change merges first.
+5. **Add** every inbound address for the new address, keeping the old ones until step 8: redirect URIs (`stripe.md`, `google.md`, later DO-6g and DO-6h), webhook endpoints (`stripe.md`, `email.md`), `google.md`'s JavaScript origins and authorised domains, the Supabase Auth URLs, and queue callback targets (DO-6f, "not audited" until covered).
+6. Set A1 (and A2, A3 as planned) on the target, then rebuild (AD-1).
+7. Run P-AD-1 to P-AD-8 on the new deployment.
+8. Only then remove old registrations. Keep the old host answering while sent mail and shared links may still use it (AD-9).
+9. Registrar: auto-renew on, transfer lock on, contact checked (T-AD-7). Record it in the private inventory, and change T-AD-7 and T-AD-8 from "not audited".
+
+| Change | When |
+|---|---|
+| A3 set | After the wildcard host is valid (step 3), never before |
+| A1 moves | New inbound addresses registered (step 5) before the rebuild; old ones removed after the probes |
+| Nameservers move | After every existing record is recreated and checked (step 0) |
+| A domain removed | After no address name, vendor registration or sent link needs it; DNS record removed in the same change |
+
+### D6e.3 Files to change
+
+| # | File | Action |
+|---|---|---|
+| D6e-1 | `.claude/skills/third-party-ops/domains.md` | New, §D6e.2, target about 130–160 lines (at most about 180) |
+| D6e-2 | `.claude/skills/third-party-ops/SKILL.md` | Three edits and nothing else: (a) the §5 row becomes "Domains, app addresses, registrar and DNS" → `[domains.md](domains.md)` (Q-D6e-1); (b) the description triggers gain "an app address, `NEXT_PUBLIC_APP_URL`, the marketing address, the public-site host, a business subdomain, a custom domain, DNS, a registrar, domain renewal"; (c) the §3 "Redirect URIs come from the app address" sentence takes the exact text of the Q-D6e-5 ruling |
+| D6e-3 | This requirement | §0 row, these sections, notes, reviews |
+| — | `stripe.md`, `email.md`, `google.md`, `llm-providers.md`, `vercel-ops`, `supabase-ops`, `env-drift-audit`, `env-change-protocol`, `devops.md`, `CLAUDE.md` | **Not edited** |
+
+**Follow-ups (requirement only, not skill text; stated neutrally):**
+
+- FU-D6e-a (Low): the OAuth callback posts to its own request origin, and the connect route refuses with an error when A1 is unset instead of building an "undefined" redirect. The redirect stays on A1 by design.
+- FU-D6e-b (Low): remove `UniversalOAuthHandler`, `UniversalPlugin` and the unused `universalPlugins` import, and their guard-list entries.
+- FU-D6e-c (Low): `marketingOrigin()` refuses a loopback on a deployed build, like `platformOrigin()` rule 1.
+- FU-D6e-d (Low, docs): add the system-variable exposure setting to `vercel-ops/dashboard-settings.md` in a later `vercel-ops` pass.
+
+### D6e.4 Acceptance criteria
+
+- [ ] `domains.md` has the six parts plus tiers, order and the checklist for attaching a custom domain (step 0 for the zone move, then steps 1–9). It is organised by A1–A3. Every file path it names exists. It states the Q-D6-2 live check by role, and states T-AD-7 and T-AD-8 as "not audited until a domain is recorded". `wc -l` ≤ 180.
+- [ ] Each probe names who runs it, its pass, what it shows when wrong, its precondition and its side effects. P-AD-4 has its control, pass, fail, not-conclusive and not-probed states. P-AD-6 is "not probed (no wildcard host)" without its precondition. No probe completes an OAuth connection or moves money.
+- [ ] AD-2's rule order and AD-3's direct readers are stated, with the failure framed by the origin the user browses from, the readers derived at use time and not listed beyond the examples, and the never-production rule for Preview's A1 present.
+- [ ] Vendor redirect and email DNS rules are pointers to `stripe.md`, `google.md`, `email.md` and `supabase-ops`, not restated; the DNS boundary matches `email.md` §3. The restatement grep from §D6.4 over `domains.md` returns 0, or each hit is a pointer.
+- [ ] Every quoted string is verbatim in the cited live file or module (`grep -cF` ≥ 1). No quoted string comes from a file without a live caller.
+- [ ] **Public repo:** the finding-11 regex over the added lines returns 0. QA also greps `domains.md` for `vercel\.app`, `\.vercel\.`, `agents?pilot\.[a-z]`, `localhost:`, `\.(ai|com|io|site|me|net|org)\b` outside file paths, `lvh`, `localtest` and line references: 0 hits. No domain, host, example business subdomain, project or team ID, URL, registrar name, record value, or statement of what is attached, set or missing today.
+- [ ] The SKILL.md diff is only D6e-2 (its three edits). The diff touches only the D6e.3 files.
+
+### D6e.5 Open questions for SA
+
+- [x] **Q-D6e-1** File name. **Ruled:** `domains.md`; index row label "Domains, app addresses, registrar and DNS". (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-2** What Preview's A1 holds. **Ruled:** the recorded stable preview address, registered with each vendor whose Preview connection is wanted; never production's address. With no stable preview address recorded, P-AD-4 on Preview is "not probed (no stable preview address)", not an expected fail. Run from a per-deployment host it fails by design, stated as a code fact with a pointer to `google.md`. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-3** Code search for direct reads of A1. **Ruled:** yes, narrowly, as a reader search, never a name search, with the procedure in §D6e.2 (2). `SKILL.md` §1 stands unedited. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-4** The marketing app's own env names. **Ruled:** agreed, not covered; the file covers A2 and the marketing project's domain attachment and certificate, and records "names read by the marketing app: not derivable here". Its Supabase redirect entries are named in T-AD-6 by role. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-5** The §3 redirect-URI sentence. **Ruled:** fold it in; this pass is the §1–§4 SA pass for that one sentence. New text: "Each environment's stable address (`NEXT_PUBLIC_APP_URL`; the redirect builders read it directly, on purpose, not through `platformOrigin()`: see `domains.md`) plus the redirect exactly as the code builds it is registered with the vendor, per environment." The rest of the bullet is unchanged. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-6** P-AD-4's callback and cancel behaviour. **Ruled:** confirmed in part. The callback writes nothing on a vendor error and logs one line with the vendor's error and description. That a cancel returns `access_denied` is a vendor fact confirmed at use time. Surface: a Google plugin through the connect route, suggested the Inbox channel mailbox connect, chosen at use time. Run with a control. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-7** `vercel-ops/dashboard-settings.md` coverage of system-variable exposure. **Ruled:** not covered there. T-AD-9 stays in `domains.md` as a user dashboard step; FU-D6e-d. (raised by: BA | status: resolved by SA)
+- [x] **Q-D6e-8** FU-D6e-a class. **Ruled:** Low, not Medium. A connection from A1's address completes; browsing from another origin is fixed by configuration. The remaining code defect is the unset-A1 case. (raised by: BA | status: resolved by SA)
+
+---
+
+## DO-6f Specification — Queues, AWS and small API-key providers (third-party-ops)
+
+**By BA — 2026-11-03; SA changes 1–13 and rulings Q-D6f-1 to Q-D6f-8 applied 2026-11-03.** A short scoping pass, in the same form as DO-6b to DO-6e. This is a config and docs slice: no application code, no CI job and no added CI time. It adds one reference file and one index row to `third-party-ops`, under SKILL.md §1–§4 and SA Review — DO-6 (changes 1–7: every probe has a precondition or reads "not probed", a roll overlap makes a pass "not conclusive", everything is derived from code, nothing is copied as a list, and the T- rows live in the platform file). It also applies the DO-6c to DO-6e lessons from the start:
+- every probe states its precondition, an exact pass, an exact fail and its side effects;
+- a probe that passes on an unset value is not a probe;
+- every quoted log string is checked verbatim, with its module;
+- no quoted string comes from code that has no live caller.
+
+**Scope (DO-6 row).** Four services, five tags:
+- **QS-R**, the QStash receiver: the current and next signing keys (with their rotation), the schedules and the dead-letter queue;
+- **QS-P**, the QStash publisher: the token, the URL and the callback address per environment, covered as "not in use" (Q-D6f-1);
+- **TX**, the AWS Textract credential and region;
+- **PX**, Pexels;
+- **FX**, the two FX-rate providers, covered as "not in use" (Q-D6f-5).
+
+**Services live (Q-D6-2 rule).** The main session confirmed on 2026-11-03 that the QStash receiver is still deployed, so it stays in DO-6f. DO-6f found that the publisher is not reached (QK-2). TX and PX have a code path that runs; FX has none (QK-12). No target is named. Whether each name is set is not recorded here: DO checks that at use time with the T-QK checks.
+
+**Boundary.**
+- **DO owns:** the eight env names in §D6f.1; which account each environment's QStash and AWS credentials belong to, and which IAM principal holds the AWS key (by role, private); and the QStash schedules and dead-letter queue as dashboard reads.
+- **The callback address is A1 policy:** `platformOrigin()`, owned by `domains.md`. This file points to it, for schedules only, and never restates it.
+- **Our own shared secrets stay out (Q-D6-11):** the cron secret, the agent-run webhook secret, and the scheduler's own switch. The QStash signing keys are third-party, so they are in.
+- **App data is not DO's:** exchange rates and the admin rate sync. The rate sync uses a keyless public feed, so it has no third-party credential in this slice.
+
+### D6f.1 Context and findings from code
+
+Taken from the code at the worktree's `origin/main` base (`4c389406`). Names and readers only: no value was read, no `.env*` file was opened and no network call was made. The installed QStash SDK (2.8.4) was read from the shared `node_modules`, only to confirm what the receiver wrapper and the client do.
+
+| # | Service | Names (catalogue group, `expectedIn` prod / preview / local) | Readers |
+|---|---|---|---|
+| QS-R | Upstash QStash receiver | `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY` (`jobs`, optional everywhere, `consumedBy: sdk`) | `app/api/cron/process-queue/route.ts` (`POST`, wrapped in `verifySignatureAppRouter`) |
+| QS-P | Upstash QStash publisher | `QSTASH_TOKEN`, `QSTASH_URL` (`jobs`, optional everywhere) | `lib/queues/qstashQueue.ts` (`addManualExecution`, `addScheduledExecution`, `cancelJobsForAgent`), gated by the "QUEUE-BASED EXECUTION PATH" branch of `app/api/run-agent/route.ts`. **Not reached** (QK-2) |
+| TX | AWS Textract: document text extraction | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` (`external`, optional everywhere, each with the catalogue's AWS caveat) | `lib/extraction/TextractClient.ts`, called from `tryTextract` in `lib/extraction/DeterministicExtractor.ts`. Two live entry points: `extract_structured_data` in `lib/server/document-extractor-plugin-executor.ts`, and `executeDeterministicExtraction` in `lib/pilot/StepExecutor.ts` (step type `deterministic_extraction`) |
+| PX | Pexels: stock photographs for generated sites | `PEXELS_API_KEY` (`external`, optional everywhere) | `imageForSection`, `imagesForSection` in `lib/services/StockImageService.ts`, called from the website generation paths (callers derived at use time) |
+| FX | Two exchange-rate providers | `EXCHANGE_RATE_API_KEY`, `FIXER_API_KEY` (`external`, optional everywhere) | `fetchFromExchangeRateApi`, `fetchFromFixerIo` in `lib/services/CurrencyService.ts`, reached only through `updateRatesFromApi`, which has no caller |
+
+| # | Finding | Where | Consequence for the file |
+|---|---|---|---|
+| QK-1 | **The queue branch would fall back silently.** It runs only on a deployed target (not a development server) with both `QSTASH_URL` and `QSTASH_TOKEN` set; otherwise it logs a warn line and runs the agent inline. The branch is not reached (QK-2), so its lines are not evidence and are not quoted. | `app/api/run-agent/route.ts` | Described without a quoted string. |
+| QK-2 | **The publisher is not reached (confirmed by SA, Q-D6f-1).** The branch sits after the unified execution path. That path runs the Workflow Pilot, or AgentKit when the pilot did not run (`shouldExecute`), and the `if (executionResult)` block returns in every branch. The queue branch is reached only if an executor resolves to a falsy value, which neither one's type allows. `addManualExecution` has one caller, inside that branch. `addScheduledExecution` is called only through `agentQueue.add`, and `agentQueue` has no importer. `cancelJobsForAgent` has no caller. The receiver imports only a type from the module. The scheduler (`app/api/run-scheduled-agents/route.ts`) states in its header that it no longer dispatches through QStash. | `app/api/run-agent/route.ts` (the "UNIFIED EXECUTION PATH" and "QUEUE-BASED EXECUTION PATH" blocks); `lib/queues/qstashQueue.ts`; `app/api/run-scheduled-agents/route.ts` (header) | QS-P is one "not in use" row: no probe, no quoted string. P-QK-4 is deleted. T-QK-5 is a Low code-reachability check. FU-D6f-a goes to TL as a decision for the user. |
+| QK-3 | **A missing signing key fails the build.** In the installed SDK, `verifySignatureAppRouter` throws when the wrapper is created if either key is missing. The wrapper is created at module scope, and `next build` evaluates route modules while collecting page data, so a deployment missing either key never becomes Ready (`.github/workflows/build.yml` sets placeholder keys for CI's build for this reason). Once loaded, the wrapper answers a request without a signature header with 403 "`Upstash-Signature` header is missing", before it reads the body. A signature that does not verify makes the SDK's `Receiver.verify` throw `SignatureError`, which the wrapper does not catch, so the answer is a 500 before the handler runs, not a 403. Both are SDK behaviour, not tracked code: confirm them against the installed version at use time. The handler parses the body first; when that fails it logs "Error processing job" (unstructured, QK-6) and answers 500. | `app/api/cron/process-queue/route.ts`; `.github/workflows/build.yml`; the SDK's Next.js entry | Both signing keys are required on every Vercel target while the receiver route exists (Q-D6f-4). P-QK-2 proves the 403 path on a Ready deployment, can fail, and writes nothing. |
+| QK-4 | **The callback address is chosen when a message is published, and schedules keep theirs.** `getBaseUrl()` returns `platformOrigin()`, and messages are sent to that address plus `/api/cron/process-queue`. On a Preview this is the deployment's own host (`domains.md` AD-2). A schedule stores its destination in QStash and keeps it after the app address moves; `agents.qstash_schedule_id` records the link. Nothing at `origin/main` creates or deletes a schedule (QK-2 reader result), so any schedule found in the console is a leftover, and it still delivers to the receiver. | `lib/queues/qstashQueue.ts` (`getBaseUrl`, header comment) | Pointer to `domains.md`; fills in `domains.md` §7 step 5 (Q-D6f-6). T-QK-4 is High for any unrecorded schedule and adds a read-only count of `qstash_schedule_id`. |
+| QK-5 | **The token is read when the client is first used.** The client is built with the token only. In the installed version (2.8.4), the client reads `QSTASH_URL` from the environment itself as its base address (SDK fact, confirm at use time). The path is not reached (QK-2), so its error strings are not quoted. | `getQStashClient` in `lib/queues/qstashQueue.ts` | T-QK-3 derives SDK-implicit names from the installed version at use time and lists none. FU-D6f-e also gives `QSTASH_URL` `consumedBy: sdk`. |
+| QK-6 | **The QStash files log through `console.*`.** `qstashQueue.ts` makes 9 such calls and `process-queue/route.ts` makes 16. Their lines are not structured Pino records. `run-agent`, `TextractClient`, `DeterministicExtractor`, `StockImageService`, `CurrencyService` and the extractor executor have 0. | Both files | The receiver's evidence is the console's delivery status, never a log count. Converting them is FU-D6f-d. |
+| QK-7 | **Textract is enabled only when all three AWS names are present,** `AWS_REGION` included. The client's region fallback is unreachable. The catalogue's role text for `AWS_REGION` ("unset uses a default region") does not match the code. | `TextractClient` constructor and `analyzeDocument` | The file states the code's behaviour. FU-D6f-c. The default region is never quoted. |
+| QK-8 | **"Set" does not prove the AWS credential is configured, and neither does "set by the project".** The catalogue's AWS caveat says the Vercel runtime may set these names itself, and Vercel's docs describe such runtime values as unusable as AWS credentials (vendor fact). Whether a project-set `AWS_*` value reaches the function, or a runtime value shadows it, is also a vendor fact, confirmed at use time. | `catalogue.ts` (`AWS_CAVEAT`); `TextractClient.isAvailable` | `/admin/environment` cannot settle presence for TX. T-QK-6 reads project env names only; a correct credential is shown only by P-QK-5 on that target. If the vendor reserves these names, the remedy is a code rename (FU-D6f-f). |
+| QK-9 | **Textract failures are swallowed.** `analyzeDocument` logs "Textract analysis failed" (module `TextractClient`, `error`) and returns empty. For a PDF, the extractor goes on without Textract ("DeterministicExtractor: Textract fallback failed, attempting LLM with PDF text only", module `DeterministicExtractor`). For an image, it throws "OCR extraction failed - check AWS Textract configuration"; `extract()` catches it, logs "DeterministicExtractor: Extraction failed" (module `DeterministicExtractor`, `error`, message in `err`), and returns a failure result, so it never surfaces as a response error. With `use_ai: true` the executor sets `ocrFallback: false`, and an image throws "Image extraction requires OCR - enable ocr_fallback" instead: not a credential fault. One extraction may call Textract twice. Whether a multi-page document is accepted is a vendor fact. | `TextractClient.analyzeDocument`; `DeterministicExtractor` (`handleImage`, `tryTextract`, `extract`) | P-QK-5 takes its evidence from logs only, with `use_ai` unset, and declares up to two billed calls. T-QK-8 counts the failure line. |
+| QK-10 | **Textract is called with the key passed explicitly,** and the code calls only `AnalyzeDocument` (forms and tables). `@aws-sdk/client-textract` is the only `@aws-sdk/*` dependency. | `TextractClient.analyzeDocument`; `package.json` | Least privilege is derived from code, re-derived at use time. |
+| QK-11 | **Pexels degrades silently.** With the key unset, `imageForSection` logs "No PEXELS_API_KEY; section will have no image" (service `StockImageService`, `debug`) and returns null. `imagesForSection` returns an empty list and logs nothing. A refused single-image search logs "Stock library refused the search" (`warn`, with `status`); a refused gallery search (`findPhotos`) logs nothing. A photograph that is used is copied into the business's storage bucket and media library ("Adopted a photograph for a section", `info`); one already in the library is reused through `findBySourceRef` without an adopt line. | `lib/services/StockImageService.ts` | Evidence is the warn line by `status` plus the adopt line (P-QK-7, T-QK-10), with a "not conclusive" state when both are 0. |
+| QK-12 | **The FX-rate keys have no live caller.** `updateRatesFromApi` has no caller in `app/`, `lib/`, `components/` or `hooks/`. The file's header calls it "UNWIRED" and says it must not be wired again, because the only writer of the rate table is the admin route through `ExchangeRatesRepository`. The file is loaded in the browser (`components/settings/CurrencySelector.tsx`, `'use client'`), where a non-`NEXT_PUBLIC_` name is never available. The admin rate sync (`app/api/admin/exchange-rates/sync/route.ts`) reads a keyless public feed (`lib/admin/exchangeRates/ecbFeed.ts`). | `lib/services/CurrencyService.ts` (header) | One "not in use" row, no probe, T-QK-11 at Low; FU-D6f-b (Q-D6f-5). |
+
+### D6f.2 What the file teaches (the six-part template)
+
+The file is `.claude/skills/third-party-ops/queues-and-keys.md` (Q-D6f-2). It opens with the same intro sentence as its siblings, then the live-check line, the QS-R / QS-P / TX / PX / FX table and the boundary paragraph. Target length: about 130–170 lines, at most about 180. If it runs long, trim prose, never a probe or drift row.
+
+**ID prefix: `QK`** (probes P-QK-n, drift checks T-QK-n, findings QK-n). One prefix per file, as the siblings use (`ST`, `GO`, `LLM`, `AD`). "QA" is avoided because it reads as the Quality Assurance agent. Service tags are QS-R, QS-P, TX, PX and FX, because `domains.md` already uses A1–A3. P-QK-4 is retired (publisher not reached); the other IDs keep their numbers so this spec, the SA review and the file cite the same rows.
+
+**(1) What must differ between environments.** The **current** setup is a private-inventory pointer, checked at use time and reported by role: which QStash account each environment uses; which AWS account and IAM principal hold the Textract key; which region; which targets carry a Pexels key; and any recorded QStash schedules.
+
+| Setting | Rule per environment |
+|---|---|
+| QStash account | Token, URL and both signing keys on a target come from **one** recorded account. Keys from another account fail every signed delivery (QK-3). The signing keys are per account, so every target that shares an account rolls together. Kept because it decides whether a future publisher's messages verify |
+| QS-R signing keys | Required on every Vercel target while the receiver route exists. Without either one, the build fails (QK-3) |
+| QS-P token and URL | No live path reads them (QK-2). Whether they stay set is FU-D6f-a's decision |
+| QS-R schedules | None, unless recorded with their destination. A recorded schedule's destination is a stable address that serves the receiver and that QStash can reach from the public internet; a Preview host behind deployment protection refuses it unless a bypass is recorded (vendor fact, confirm at use time) |
+| TX names | All three, or none. Set by the **project** on each target where OCR extraction is wanted, and never left to runtime-injected values (QK-8). The region is one where the vendor offers Textract (vendor fact). Production and non-production keys come from separate IAM principals where recorded. This file states that shape, never whether it is in place |
+| TX IAM principal | Recorded by role. Its policy grants only the Textract action(s) the code calls (QK-10). Never a root or administrator credential; no console sign-in; key age within the recorded rotation period |
+| PX key | Optional per target. Unset means generated sites have no stock photographs (QK-11): a product choice, recorded per environment |
+| FX names | Not set on any target unless recorded with a reason (QK-12) |
+
+"Local" is guidance for whoever runs the app locally. DO reads no `.env*` file, so local is never a DO check.
+
+**(2) Where the code reads it.** The D6f.1 readers and findings, named as files and functions only. Expected names come from the catalogue groups `jobs` and `external` at `origin/main`, filtered to these eight names. The callers of `addManualExecution`, `addScheduledExecution`, `cancelJobsForAgent`, `imageForSection` and `updateRatesFromApi` are derived at use time by the reader-search procedure of `domains.md` §2. The file holds no caller list. **Never a probe target:** `backups/` and `archive/` copies.
+
+**(3) Dashboard steps (the user)**, by area name, confirmed at use time:
+- **Upstash console, QStash:** the signing-keys area (roll); Schedules (count, destination host matches the recorded address yes/no, delete); Logs or Events (delivery status for a message); the dead-letter queue (count, delete); usage and plan limits. The token area belongs to QS-P (not in use).
+- **AWS console, IAM:** the user or role holding the key; attached policies (Textract-only yes/no); access keys (count, age, last used and its service); console sign-in off yes/no.
+- **AWS Billing:** a budget and alert for Textract spend, as recorded.
+- **Pexels:** the API key page; the rate limit shown.
+- **Vercel:** env values per `vercel-ops` and `env-change-protocol`. The value never passes through chat or a file.
+
+The user reports presence, "same account as recorded: yes/no", "policy Textract-only: yes/no", "last used service is Textract: yes/no", "key age within the recorded period: yes/no", "schedule count as recorded: yes/no", "dead-letter count", "delivery status code" and the last-updated time. The user never reports a token, a key or a key fragment, a signing key, an account or principal identifier, an ARN, a schedule or message identifier, a destination URL or an amount.
+
+**(4) Probes.** Each one fails when the setting is wrong. None enqueues an agent run, none needs DO to hold a key, none prints a value, and none is run in a loop. Each runs on the deployment named per `vercel-ops` §4, after it is Ready. A 401 from deployment protection is "not probed (protected host)". Where a probe calls a paid vendor API, it is optional, user-approved and run once; a declined probe is "not probed (declined)".
+
+| ID | Change | Probe | Pass | Fails when | Who | Precondition and side effects |
+|---|---|---|---|---|---|---|
+| P-QK-1 | Any of the eight names | `/admin/environment` on that deployment | Shows Set, or Not set where intended. Proves presence only. **For TX it proves nothing (QK-8)**: use `vercel-ops` §3 (project env names) instead | The other state | Main session or user | Admin session. None |
+| P-QK-2 | QS-R signing keys; the receiver | POST to that deployment's `/api/cron/process-queue` with **no body and no signature header** | 403 with "`Upstash-Signature` header is missing" (SDK text, confirmed at use time) | Any other answer is a fail: record the status and stop | Main session or user (HTTP; DO has no HTTP probe) | Deployment reachable without protection, else "not probed (protected host)". A protection 401 is told apart from the SDK's 403 by status and body. One request log line. Nothing is written: the SDK refuses the request before the handler reads the body |
+| P-QK-3 | QS-R keys match the account | Optional, user-approved, once. In the Upstash console, publish one message with a **zero-byte body** to that deployment's receiver address, with retries set to 0 where offered. Never `{}` or any JSON: a body that parses as JSON is processed as a job | Delivery status 500, and the target's runtime logs show the receiver's "Error processing job" line at the delivery time: the handler ran and could not parse the empty body (QK-3) | A 500 with no "Error processing job" line and a `SignatureError` in the runtime logs (SDK text, confirm at use time): the keys on the target are not the publishing account's current or next key. Any other status, a 2xx included: stop and report to the main session | User (console); DO (runtime logs) | P-QK-2 passed, and a roll or key change was just made, or a schedule is recorded; otherwise "not probed (nothing signs to this receiver)". Retries 0 where offered; otherwise up to the vendor's default retry count plus one deliveries, each billed (vendor pricing, confirm at use time), each with one unstructured receiver error line (QK-6), and a dead-letter entry that the user deletes. No row is written, no agent runs |
+| P-QK-5 | TX names, region, key | Optional, user-approved, once. A single-page image in plain base64 (no data-URL prefix) showing one known printed word, sent through a surface that runs `extract_structured_data` as the signed-in user, with one field, an explicit image `mime_type` and `use_ai` left unset. Suggested surface: the plugin tester on `/test-plugins-v2`, which runs it through `POST /api/plugins/execute`; `document-extractor` is a system plugin with a platform key, so no connection is needed | "Textract analysis complete" ≥ 1 and "Textract analysis failed" = 0 (module `TextractClient`), and no "DeterministicExtractor: Extraction failed" (module `DeterministicExtractor`), after the probe time | "Textract analysis failed" ≥ 1; or "DeterministicExtractor: Extraction failed" whose error carries "OCR extraction failed - check AWS Textract configuration" while "Textract analysis complete" = 0 | User (trigger); DO (log counts) | TX names set by the project on that target (`vercel-ops` §3), else "not probed (not set)". Tester not served on the target: "not probed (no surface)". Up to **two** billed Textract calls (QK-9; vendor pricing, confirm at use time); log lines. Nothing written for a run by the signed-in user (an admin act-as run is audited: never use it) |
+| P-QK-6 | TX IAM scope and key age | User reads IAM for the recorded principal | Policy Textract-only yes; last-used service Textract yes; key age within the recorded period yes; console sign-in off yes | Any "no" | User | None |
+| P-QK-7 | PX key | Traffic read: DO counts "Adopted a photograph for a section" and "Stock library refused the search" by `status` (service `StockImageService`) since Ready. Optional: the user illustrates one section that is not yet illustrated, for a business they own, through a generation surface found at use time | ≥ 1 adopt line and 0 refused lines | A refused line with an authorisation status (401 or 403). A rate status (429) is "not conclusive (rate limited)" | DO; user (optional trigger) | No traffic: "not probed (no traffic)". 0 adopt and 0 refused lines: "not conclusive (no new search, or gallery only)", because reused photographs log no adopt line and a refused gallery search logs nothing. The optional trigger spends LLM calls and credits on the user's own account, writes page content, and copies one photograph into that business's bucket and media library. User-approved, once |
+| P-QK-8 | Key rotation (QS-R signing keys, TX key, PX key) | The probes above on the new deployment, then retire the old credential, then repeat them | Pass after the old credential is retired | Any failure after retiring it | User; DO | As the probes used. Overlap per §(5). Where the vendor offers no overlap (vendor fact), it is a cut-over: probe once after Ready |
+
+**The P-QK-5 response is not evidence:** a failure result is returned and the executor fills defaults. Not conclusive: "Textract analysis complete" ≥ 1 but the OCR error appears is "not conclusive (no readable text)"; "Image extraction requires OCR - enable ocr_fallback" is "not conclusive (OCR off)".
+
+P-QK-4 is deleted (Q-D6f-1). QS-P and FX have no probe: "not probed (no live path)" (QK-2, QK-12).
+
+**(5) Gotchas**, each grounded in a repo file:
+- **The publisher is not reached** (QK-2): a `use_queue: true` request runs inline. Never read it as proof that QStash ran.
+- **The signing keys are a build dependency** (QK-3): without either key, `next build` fails while collecting page data. The SDK's error names the missing key (SDK text, confirm at use time).
+- **Signing keys are account-wide, and a roll is ordered** (vendor fact, confirm at use time). After a roll, the old next key becomes current and a new next key is created. Set current = the old next and next = the new next on **every** target that shares the account, and redeploy. Roll again only after that redeploy is Ready and P-QK-3 passes. Until the redeploy, a P-QK-3 pass is "not conclusive (overlap)".
+- **Leftover schedules still deliver** (QK-4): nothing in the code creates or cancels one, and moving the app address does not move them. Pointer to `domains.md` §7 step 5.
+- **The QStash files log through `console.*`** (QK-6): the receiver's evidence is the console's delivery status, never a log count.
+- **Unset `AWS_REGION` disables Textract** (QK-7). The catalogue's role text says otherwise (FU-D6f-c).
+- **Runtime-injected AWS names** (QK-8): "Set" on `/admin/environment`, and even "set by the project", is not evidence. P-QK-5 is.
+- **Textract errors degrade instead of failing** (QK-9). PDFs fall back without it, images return a failure result. A multi-page document can fail for a reason that is not the credential.
+- **Textract costs money per page** (`DeterministicExtractor.ts` header) and can be called twice per extraction (QK-9).
+- **Pexels unset or refused is silent** (QK-11). The unset line is debug level, and a refused gallery search logs nothing.
+- **The FX keys do nothing** (QK-12). Setting them changes nothing, and the code forbids wiring them again.
+
+**(6) Drift checks** (in the `env-drift-audit` §7 format, under its rules):
+
+| ID | Check | Expected state from | Live read | Class | Who reads |
+|---|---|---|---|---|---|
+| T-QK-1 | On each **Vercel target** of the web app project, the eight names match the recorded intent. Catalogue `expectedIn` is optional for all eight, so the private inventory sets which are wanted where. Local: "not read (main session / user)" | Catalogue at `origin/main`; private inventory | `vercel-ops` §3 (names only) | High | DO |
+| T-QK-2 | Both signing keys present on every Vercel target, and P-QK-2 passing there | Code at `origin/main` (QK-3) | `vercel-ops` §3; P-QK-2 | High | DO; main session |
+| T-QK-3 | Token, URL and both keys on one target belong to the recorded account. No SDK-implicit QStash name, derived from the installed version at use time, is set unless recorded. The file lists none | Private inventory; SDK docs at use time | User report ("same account as recorded"); `vercel-ops` §3 | High | User; DO |
+| T-QK-4 | QStash schedules: count and destinations as recorded (none by default); any unrecorded schedule is High, because it delivers to the receiver, which runs that agent. Dead-letter count since the last run. Second read: the main session, read-only under `supabase-ops`, counts `agents` rows with a non-null `qstash_schedule_id`: count only, no identifiers, 0 unless recorded | Private inventory; code at `origin/main` (QK-4) | User report (Schedules, dead-letter queue); `supabase-ops` §2 read-only SQL | High | User; main session |
+| T-QK-5 | The `run-agent` queue branch still follows the unified path's returns, and `addManualExecution`, `addScheduledExecution` and `cancelJobsForAgent` still have no live caller (reader search). A live caller means this file needs publisher probe rows before merge | Code at `origin/main` | Repo read | Low | DO |
+| T-QK-6 | TX: all three names set by the project, or none, on each target, matching the recorded intent. Names only: a correct credential is shown only by P-QK-5 on that target | Private inventory | `vercel-ops` §3 (project env names) | High | DO |
+| T-QK-7 | TX IAM: the key belongs to the recorded principal; the policy is Textract-only; the last-used service is Textract; key age within the recorded period; no second active key outside a recorded rotation; console sign-in off | Private inventory; code at `origin/main` (QK-10) | User report (IAM) | High | User |
+| T-QK-8 | "Textract analysis failed" (module `TextractClient`) count since the last run. > 0 is Medium, and High if it is every call. No calls: "not read (no traffic)" | Change records | Runtime logs | Medium | DO |
+| T-QK-9 | An AWS budget and alert for Textract spend, set as recorded | Private inventory | User report (Billing) | Medium | User |
+| T-QK-10 | "Stock library refused the search" (service `StockImageService`) count by `status` since the last run. An authorisation status > 0 is High; a rate status > 0 is Medium. 0 adopt and 0 refused: "not conclusive (no new search, or gallery only)". No traffic: "not read (no traffic)" | Change records | Runtime logs | Medium | DO |
+| T-QK-11 | The FX names are not set on any target unless recorded, and `updateRatesFromApi` still has no caller at `origin/main` (reader search). A new caller means this file needs a probe row before merge | Code at `origin/main`; private inventory | `vercel-ops` §3; repo read | Low | DO |
+
+**(7) Tiers and order against the deploy.** This section points to `env-change-protocol` and restates nothing.
+
+**Tiers.** These are **production tier** (SA reviews the plan, the user executes):
+- a QStash token reset, or a signing-key roll, on an account that production uses (both are account-wide);
+- deleting or creating a schedule on that account;
+- removing a signing key from production;
+- creating, rotating, deactivating or deleting the AWS key production uses;
+- any change to its IAM policy, or to production's region;
+- a change to production's Pexels key;
+- removing any of these names from production.
+
+A change to a credential or account used **only** by non-production environments, as recorded, is reversible: the user applies it after the approval in chat. Where one account serves several environments, every change to it is production tier.
+
+| Change | When |
+|---|---|
+| Signing-key roll | Both keys already on every target that shares the account → roll → set current and next on every such target → deploy Ready → P-QK-2 and P-QK-3 → only then any further roll |
+| QStash token reset | No live path reads it (QK-2); production tier only because the account is shared; no probe |
+| Removing a signing key from a target | Only after FU-D6f-a removes the receiver route. Before that, the target's next deploy fails (QK-3). Production tier on production |
+| AWS key rotation | Create the second key on the recorded principal → set all three names → deploy Ready → P-QK-5 → **deactivate** the old key → P-QK-5 again → delete it after the recorded wait (two keys per principal and deactivation are vendor facts, confirm at use time) |
+| IAM policy narrowed | After P-QK-5 passes on the current policy. Then P-QK-5 again |
+| App address moves (`domains.md` §7) | Recorded schedules recreated for the new address in step 5. The old host keeps serving the receiver until the old schedules are deleted and in-flight retries have drained |
+| Removing a TX or PX name from a target | Only after no live path on that target needs it, as recorded |
+| FX names removed | At any time (no live path). The code removal is FU-D6f-b |
+
+### D6f.3 Files to change
+
+| # | File | Action |
+|---|---|---|
+| D6f-1 | `.claude/skills/third-party-ops/queues-and-keys.md` | New, per §D6f.2. Target about 130–170 lines, at most about 180 |
+| D6f-2 | `.claude/skills/third-party-ops/SKILL.md` | Two edits and nothing else. (a) The §5 row becomes "Queues, AWS and small API-key providers: QStash, AWS Textract, Pexels, exchange-rate keys" → `[queues-and-keys.md](queues-and-keys.md)`. (b) The description triggers gain "QStash or Upstash, a queue token, a QStash signing key, rolling signing keys, the queue callback, `/api/cron/process-queue`, a QStash schedule, AWS, an AWS access key, IAM, Textract, OCR, document extraction, Pexels, stock photos, an exchange-rate API key" |
+| D6f-3 | `.claude/skills/third-party-ops/domains.md` | Ruled yes (Q-D6f-6): in §7 step 5, replace "queue callback targets (DO-6f, "not audited" until covered)" with "queue schedules and callback targets (`queues-and-keys.md`)". Nothing else |
+| D6f-4 | This requirement | §0 row, these sections, notes, reviews; the §D6.6 Q-D6-2 record corrected (SA change 12) |
+| — | `stripe.md`, `email.md`, `google.md`, `llm-providers.md`, `vercel-ops`, `supabase-ops`, `env-drift-audit`, `env-change-protocol`, `devops.md`, `CLAUDE.md`, `lib/admin/environment/catalogue.ts`, all application code | **Not edited** |
+
+**Follow-ups.** These go in the requirement only, never in the skill text (the skill names FU IDs as pointers only), and are stated neutrally:
+- **FU-D6f-a** (decision for TL and the user; SA review required either way): the QStash queue path.
+  - **Remove option, in this order:** confirm in the console that no schedules exist, deleting any after recording them; remove the publisher and the receiver route; then remove the four names from every target. The keys go last, because the build needs them while the route exists. The schedule column goes in its own migration.
+  - **Reachable option:** the receiver runs a different executor than a direct run (the scheduler's header already says so); that difference is part of the decision.
+- **FU-D6f-b** (Low, Dev): remove `updateRatesFromApi`, `fetchFromExchangeRateApi` and `fetchFromFixerIo`, and the two catalogue entries, in one PR. The drift guard fails if an entry is left with no reader.
+- **FU-D6f-c** (Low, Dev): make the catalogue's `AWS_REGION` role text match the code (an unset region disables Textract), or let the constructor accept an unset region. Pick one; the other stays as it is.
+- **FU-D6f-d** (Low, Dev): convert `lib/queues/qstashQueue.ts` and `app/api/cron/process-queue/route.ts` to Pino (CLAUDE.md § Logging), unless FU-D6f-a removes them first.
+- **FU-D6f-e** (Low, Dev): align the signing keys' catalogue `expectedIn` with QK-3 (required wherever the receiver route exists), and give `QSTASH_URL` `consumedBy: sdk` (QK-5), unless FU-D6f-a removes them.
+- **FU-D6f-f** (Low, Dev, only if confirmed): if the vendor reserves the `AWS_*` names so that a project-set value does not reach the function (QK-8), rename the three names the code reads, with their catalogue entries, in one PR.
+
+### D6f.4 Acceptance criteria
+
+- [ ] `queues-and-keys.md` has the six parts, plus tiers and order. It is organised by QS-R, QS-P, TX, PX and FX. Every file path it names exists at the base. It states the Q-D6-2 live check by role, the QK-2 result as ruled under Q-D6f-1 (QS-P "not in use"), and FX as "not in use". `wc -l` ≤ 180.
+- [ ] Each probe names who runs it, its pass, what it shows when wrong, its precondition and its side effects. None enqueues an agent run, needs DO to hold a key, or prints a value. P-QK-3, P-QK-5 and P-QK-7's optional trigger are marked optional and user-approved, and declare their billed calls. P-QK-4 does not exist. P-QK-3 requires a zero-byte body and treats a 2xx as a fail.
+- [ ] The callback address is a pointer to `domains.md` AD-2, not restated. The restatement grep from §D6.4 over the new file returns 0, or each hit is a pointer.
+- [ ] Every quoted string from tracked code is verbatim in its cited file (`grep -cF` ≥ 1), with its module or service. Every SDK string is marked "SDK text, confirm at use time". No quoted string comes from a file without a live caller: `grep -nF` over the new file for "QStash queue unavailable", "Manual execution queued", "Failed to queue agent job", "Failed to queue agent execution" and "QSTASH_TOKEN environment variable is not set" returns 0.
+- [ ] No sentence says the receiver route returns 500 or "goes down" for a missing key. The readers row says only "wrapped in `verifySignatureAppRouter`" (SA change 3).
+- [ ] **Public repo:** the finding-11 regex over the added lines returns 0. QA also greps the new file for `vercel\.app`, `\.vercel\.`, `agents?pilot\.[a-z]`, `upstash\.io`, `amazonaws`, `pexels\.com`, `arn:`, `AKIA`, `us-[a-z]+-[0-9]`, `localhost:`, `https?://` and line references: 0 hits. The file holds no account, principal, schedule or message identifier, no region value, no URL, no key prefix, and no statement of what is set, missing or open today.
+- [ ] The SKILL.md diff is only D6f-2. The `domains.md` diff is only D6f-3. The diff touches only the D6f.3 files.
+
+### D6f.5 Open questions for SA
+
+All answered by SA Review — DO-6f (2026-11-03).
+
+- [x] **Q-D6f-1: Is the QStash publisher reached?** (QK-2) **SA: no.** Ship the QStash coverage now, narrowed to QS-R in full; QS-P is one "not in use" row with no probe, no quoted string and no environment rule beyond FU-D6f-a; the account rule stays in (1); P-QK-4 deleted; T-QK-5 a Low code check; the callback address a pointer for schedules only; the main session corrects its Q-D6-2 record. (raised by: BA | status: resolved)
+- [x] **Q-D6f-2: File name and prefix.** **SA: agreed.** `queues-and-keys.md`, prefix `QK`, tags QS-R, QS-P, TX, PX, FX. (raised by: BA | status: resolved)
+- [x] **Q-D6f-3: The console-published signed probe (P-QK-3).** **SA: allowed, optional, user-run, and only when there is something to check** (after a roll or key change, or while a schedule is recorded; otherwise "not probed (nothing signs to this receiver)"), with a zero-byte body. (raised by: BA | status: resolved)
+- [x] **Q-D6f-4: Are the signing keys required?** (QK-3) **SA: required, and it surfaces at build.** "Required on every Vercel target while the receiver route exists. Without either one, the build fails." Catalogue not edited (FU-D6f-e). P-QK-2 still runs. (raised by: BA | status: resolved)
+- [x] **Q-D6f-5: How to treat the FX-rate providers.** **SA: agreed as suggested.** (raised by: BA | status: resolved)
+- [x] **Q-D6f-6: The pointer in `domains.md` §7 step 5.** **SA: yes**, the one phrase as D6f-3 words it; nothing else in `domains.md` changes. (raised by: BA | status: resolved)
+- [x] **Q-D6f-7: A billed Textract probe.** **SA: allowed, surface confirmed:** `document-extractor` is a system plugin with a platform key and needs no connection; the plugin tester runs it through `POST /api/plugins/execute`, which writes no row for a run by the signed-in user; up to two billed calls, a single-page image, `use_ai` unset, evidence from logs only; no tester on the target is "not probed (no surface)". (raised by: BA | status: resolved)
+- [x] **Q-D6f-8: A Pexels probe.** **SA: agreed.** A traffic read is the probe; one generation is optional and user-approved, with its LLM spend and media writes declared; plus the "not conclusive" state. (raised by: BA | status: resolved)
+
+---
+
+## DO-6g Specification — Messaging apps: Meta and Slack (third-party-ops)
+
+**By BA — 2026-11-04; SA changes 1–12 and rulings Q-D6g-1 to Q-D6g-9 applied 2026-11-04.** A short scoping pass, in the same form as DO-6b to DO-6f. This is a config and docs slice: no application code, no CI job and no added CI time. It adds one reference file and one index row to `third-party-ops`, under SKILL.md §1–§4 and SA Review — DO-6 (changes 1–7). It applies the DO-6c to DO-6f lessons from the start:
+- every probe states its precondition, an exact pass, an exact fail and its side effects;
+- a probe that passes on an unset value is not a probe;
+- every quoted log string is checked verbatim, with its module;
+- no quoted string comes from code that has no live caller (QK-2 rule).
+
+**Scope (DO-6 row).** Two vendors, five tags:
+- **WA-W**, the WhatsApp webhook: the verify token and the webhook subscription in the Meta dashboard, covered in full;
+- **MA**, the Meta app behind `META_ADS_*`: one client for the Meta Insights and Meta Ads plugins, covered in full for Meta Insights;
+- **WA-O**, the WhatsApp Business OAuth client and its login configuration, covered as "not in use" (MS-1, Q-D6g-1);
+- **SL**, the Slack V2 app (client, redirect URI, scopes), covered as "not in use" (MS-1, Q-D6g-1);
+- **SL-V1**, the deprecated Slack V1 names, including the two tunnel names: one "deprecated, never probed" row that names its readers (SA change 2). No check is designed for V1 beyond the catalogue's own presence rule (CLAUDE.md, Deprecated; Q-D6g-9).
+
+**Services live (Q-D6-2 rule).** The main session confirmed on 2026-11-04, from code, that the active plugin profile (`lib/server/plugin-profile.ts`) loads Meta Insights and does not load Slack, WhatsApp Business or Meta Ads (MS-1), so those three are recorded as not in use (SA change 11). The WhatsApp webhook route is deployed and answers on its own, without the plugin (MS-4). No target is named. Whether each name is set is not recorded here: DO checks that at use time with the T-MS checks.
+
+**Boundary.**
+- **DO owns:** the eleven env names in §D6g.1; which Meta app and which Slack app each environment uses (by role, private); and the Meta and Slack app settings as dashboard reads.
+- **The stable address is A1 policy,** owned by `domains.md` (AD-2, AD-3). This file points to it for redirect URIs and the webhook callback, and never restates it.
+- **DO-6h owns** every other vendor's plugin OAuth app (Airtable, Discord, Dropbox, HubSpot, LinkedIn, Microsoft, Notion, Salesforce). This file owns every Meta app and every Slack app.
+- **App data is not DO's:** stored connections, channel connections, Page tokens and synced metrics. DO never writes or deletes them.
+
+### D6g.1 Context and findings from code
+
+Taken from the code at the worktree's `origin/main` base (`0eb3949e`). Names and readers only: no value was read, no `.env*` file was opened and no network call was made.
+
+| # | Service | Names (catalogue group `plugins`; `expectedIn` prod / preview / local) | Readers |
+|---|---|---|---|
+| WA-W | WhatsApp webhook | `WHATSAPP_VERIFY_TOKEN` (optional everywhere) | `GET` in `app/api/plugins/webhooks/whatsapp-business/route.ts` (module `WhatsAppWebhook`), read per request |
+| MA | Meta app: Meta Insights (loaded), Meta Ads (not loaded) | `META_ADS_CLIENT_ID`, `META_ADS_CLIENT_SECRET` (optional everywhere) | `${…}` placeholders in `meta-insights-plugin-v2.json` and `meta-ads-plugin-v2.json`, filled by `processEnvironmentVariables` in `lib/server/plugin-manager-v2.ts`; the connect route `app/api/v2/plugins/connect/route.ts`; the callback `app/oauth/callback/[plugin]/route.ts`; `exchangeCodeForTokens` in `lib/services/OAuthTokenService.ts`. Live surface: the channels card (`components/business-os/insight/ChannelsCard.tsx` through `hooks/useChannelConnect.ts`), then `app/api/business-os/channel-insights/connect/route.ts` |
+| WA-O | WhatsApp Business OAuth client and login configuration | `WHATSAPP_CLIENT_ID`, `WHATSAPP_CLIENT_SECRET`, `WHATSAPP_CONFIG_ID` (optional everywhere) | `whatsapp-business-plugin-v2.json`. **Not in use:** outside the active profile (MS-1) |
+| SL | Slack V2 app | `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` (optional everywhere) | `slack-plugin-v2.json`. **Not in use:** no plugin in the active profile reads them (MS-1). The deprecated V1 strategy also reads the Slack secret name (SL-V1) |
+| SL-V1 | Slack V1 (deprecated) | `NEXT_PUBLIC_SLACK_CLIENT_ID` (optional everywhere); `NGROK_SLACK_REDIRECT_URI`, `NEXT_PUBLIC_NGROK_SLACK_REDIRECT_URI` (forbidden / forbidden / optional) | `lib/plugins/strategies/slackPluginStrategy.ts` and `slackDataStrategy.ts`, through `lib/plugins/pluginRegistry.ts`, which deployed routes import. The strategy reads `NEXT_PUBLIC_SLACK_CLIENT_ID`, the tunnel names and `SLACK_CLIENT_SECRET`. Never a probe target |
+
+| # | Finding | Where | Consequence for the file |
+|---|---|---|---|
+| MS-1 | **Three of the four plugins are not loaded.** The active profile is a hardcoded constant (`ACTIVE_PLUGIN_PROFILE`). Of these plugins it lists only `meta-insights`. A plugin outside it is never read or env-substituted. Its connect answers 404 "Plugin not found", and its callback answers "Plugin configuration not found". The executor refuses it with "Plugin not enabled in active profile" (module `PluginExecuter`, `warn`) before any executor runs, and a stored connection for it cannot run. | `lib/server/plugin-profile.ts`; `lib/server/plugin-manager-v2.ts` (`loadCorePlugins`); `getNotEnabledMessage` in `lib/server/plugin-executer-v2.ts` | WA-O, SL and the Meta Ads half of MA are "not in use" rows: no probe, no quoted string from their executors. T-MS-11 is a Low code check on the profile. FU-D6g-a goes to TL. |
+| MS-2 | **An unset MA name is not refused by our code.** `processEnvironmentVariables` keeps the literal `${…}` text and logs "Environment variable not found, keeping placeholder" (module `PluginManager`, `warn`, `varName`) once per instance load (each cold start). An empty value is treated like an unset one. The literal placeholder is truthy, so the check `if (!authConfig.client_id \|\| !authConfig.client_secret)` in `handleOAuthCallback` never fires for an unset name, and the connect route's `authConfig.redirect_uri \|\|` fallback never fires either: an unset A1 leaves `${NEXT_PUBLIC_APP_URL}` in the redirect (P-MS-2 catches it). An unset ID shows as a vendor error at the dialog, and an unset secret shows only at the token exchange. Names of plugins outside the profile log nothing, because their definitions are never read. A load is shown by "Plugin manager initialized" (module `PluginManager`, `info`, with `loadedPluginKeys` and `skippedPluginKeys`), logged once per instance at the end of `initializeWithCorePlugins` (SA change 1). | `plugin-manager-v2.ts`; `lib/server/user-plugin-connections.ts`; the connect route | The placeholder count is the drift read (T-MS-4), with the load marker as its denominator. No marker line in the window is "not read (no load in window)", never 0. |
+| MS-3 | **The live connect builds its URL on the server and sends five parameters:** `client_id`, `redirect_uri`, `response_type`, `scope` and `state`. The browser builder (`lib/client/oauth-handler.ts`) also sends `user_scope`. It reads only the client-safe allow-list (`CLIENT_SAFE_AUTH_CONFIG_FIELDS`), which has no `additional_params`. So neither builder sends the definition's `additional_params`, where `WHATSAPP_CONFIG_ID` goes. The egress test seeds `WHATSAPP_CONFIG_ID` with a sentinel value that must never appear in a response (SA change 9). | `app/api/v2/plugins/connect/route.ts`; `lib/plugins/sanitize-plugin-definition.ts`; `lib/testing/plugin-secret-matcher.ts` | The WA-O row says the configuration ID is substituted but not sent (reader search at use time). FU-D6g-a, reachable option. |
+| MS-4 | **The webhook verification fails closed.** An unset or empty token logs "WHATSAPP_VERIFY_TOKEN is not set - refusing webhook verification" (`error`) and answers 403 "Forbidden". A wrong token or mode logs "Webhook verification failed - invalid token" (`warn`) with the same 403. A match logs "Webhook verified successfully" (`info`) and echoes `hub.challenge` with 200. Every request first logs "Webhook verification request received" (`info`). All are in module `WhatsAppWebhook`. The response cannot tell unset from wrong, by design (route comment), but the log lines can. The callback path is the definition's `webhook_config.endpoint_path`. | `app/api/plugins/webhooks/whatsapp-business/route.ts`, its `__tests__/route.test.ts`; `whatsapp-business-plugin-v2.json` (`webhook_config`) | P-MS-5 tells the two apart by log line; a probe with a made-up token logs two lines (received, invalid token) (SA change 6). The token is read per request, so a change needs a new deployment, and it is not a `NEXT_PUBLIC_` name, so nothing is inlined (`vercel-ops` §4; SA optimisation 2). |
+| MS-5 | **One Meta client serves two plugins.** Both Meta definitions name `META_ADS_*`. Each has its own callback path, and only the loaded one needs registering. Neither definition has a `refresh_url`, so a Meta connection has no refresh path. When its stored expiry nears, `getConnection` logs "Smart Refresh: No refresh token available - user needs to reconnect" (module `UserPluginConnections`), and the owner reconnects. The client secret is used only at the code exchange. | Both Meta definitions; `getConnection`, `handleOAuthCallback` in `user-plugin-connections.ts` | A secret change affects only new connects and reconnects on our side. Whether Meta keeps existing tokens valid after a secret reset is a vendor fact, confirm at use time. Until it is confirmed once on a non-production app and recorded, plan a reset as a cut-over that may force every connection to reconnect (SA change 10, Q-D6g-7). |
+| MS-6 | **One scope the app cannot grant fails the whole dialog.** The Meta Insights definition's `_scope_note` records this ("Invalid Scopes"): a scope is listed only once the app dashboard offers it. | `meta-insights-plugin-v2.json` (`_scope_note`) | A scope added to a loaded Meta definition is confirmed available before merge (§7). Scopes are derived from the definitions at use time, and this file lists none. |
+| MS-7 | **The Graph API version is pinned in two places per loaded plugin:** in the definition's dialog, token and profile addresses, and in the executor's version constant. All four must agree. | The Meta Insights definition; `lib/server/meta-insights-plugin-executor.ts` (`GRAPH_VERSION`) | T-MS-7 checks, for each **loaded** Meta plugin, that the four agree and that Meta still supports the version (SA change 4, Q-D6g-8). A Meta plugin outside the profile is covered by T-MS-11 only. The file names no version. FU-D6g-c. |
+| MS-8 | **The token exchange reports a failure by status.** It logs "Token exchange failed" (module `OAuthTokenService`, `error`, with `status`). A 2xx with no token throws "No access token received". The callback then logs "OAuth callback failed" (module `OAuthCallbackAPI`, with `plugin`). A vendor error at the dialog logs "OAuth error from provider", and nothing is stored. A success logs "OAuth callback successful". Every callback first logs "OAuth callback received" (module `OAuthCallbackAPI`, with `plugin`). "OAuth callback failed" is logged by the callback's `catch`, so it covers every throw after the definition is found, including "Failed to fetch profile" (module `OAuthTokenService`) and the connection save: it is not specific to the secret (SA change 5). | `OAuthTokenService.ts`; `app/oauth/callback/[plugin]/route.ts` | Evidence for P-MS-3 and P-MS-4 and T-MS-10. It is counted by class, and the logged error text is never read out. "OAuth callback received" is the traffic denominator. |
+| MS-9 | **Slack, for the record (not in use):** the profile read uses the user token, the user scope is sent only by the browser builder (MS-3), and the live connect route does not send it. | `handleOAuthCallback`; `oauth-handler.ts`; connect route | Not in the file beyond the SL row. FU-D6g-a, reachable option. |
+
+### D6g.2 What the file teaches (the six-part template)
+
+The file is `.claude/skills/third-party-ops/messaging.md` (Q-D6g-2). It opens with the same intro sentence as its siblings, then the live-check line, the WA-W / MA / WA-O / SL / SL-V1 table and the boundary paragraph. Target length: about 120–160 lines, at most about 180. If it runs long, trim prose, never a probe or drift row.
+
+**ID prefix: `MS`** (probes P-MS-n, drift checks T-MS-n, findings MS-n). Service tags: WA-W, MA, WA-O, SL, SL-V1.
+
+**(1) What must differ between environments.** The **current** setup is a private-inventory pointer, checked at use time and reported by role:
+- which Meta app each environment's MA names and WA names belong to, and whether one app serves both;
+- which environment the WhatsApp webhook subscription points at;
+- which Slack app, if any.
+
+| Setting | Rule per environment |
+|---|---|
+| Meta app per environment | `META_ADS_CLIENT_ID` and `META_ADS_CLIENT_SECRET` on a target come from **one** recorded app, set together or not at all, and with A1 set. Where one app serves several environments or both name families, every change to it is a change to all of them |
+| MA redirect URIs | Each **loaded** Meta plugin's callback, exactly as its definition builds it, at each environment's stable A1 address (`domains.md`). Only a stable address can be registered. A callback for a plugin outside the profile is registered only if recorded |
+| Meta app mode and permissions | Production's app is live, not in development mode, and every scope the loaded Meta definitions request is available at the access level the recorded audience needs (vendor terms, confirm at use time). Development mode admits only users with a role on the app |
+| WA-W token | Set on the target the recorded webhook subscription points at. Elsewhere unset is safe: the route refuses (MS-4). With no receiving environment recorded, it is expected unset on every target (SA change 7). Never the same value as any other secret |
+| WA-W subscription | One recorded receiving environment per Meta app, or none recorded (SA change 7): the callback is the stable A1 address plus the definition's `webhook_config.endpoint_path`, with the fields the definition implies subscribed. One callback per app (vendor fact, confirm at use time) |
+| WA-O, SL names | No plugin in the active profile reads them (MS-1). The deprecated V1 strategy also reads the Slack secret name (SL-V1). Whether they stay set is FU-D6g-a's decision |
+| SL-V1 names | The two tunnel names never on a deployed target (catalogue: forbidden on production and preview). `NEXT_PUBLIC_SLACK_CLIENT_ID` not set unless recorded |
+
+"Local" is guidance for whoever runs the app locally. DO reads no `.env*` file, so local is never a DO check. A loopback or tunnel redirect is registered only on a non-production app.
+
+**(2) Where the code reads it.** The D6g.1 readers and MS-1 to MS-9, named as files and functions only. Expected names come from the catalogue group `plugins` at `origin/main`, filtered to these eleven names. Callback paths, scopes and the webhook path are derived from the definitions at use time. Which plugins are loaded is read from `lib/server/plugin-profile.ts`. The file holds no list of either. **Never a probe target:** the SL-V1 files and routes, the Slack and WhatsApp executors (outside the profile), `backups/` and `archive/` copies.
+
+**(3) Dashboard steps (the user)**, by area name, confirmed at use time:
+- **Meta for Developers, App Dashboard** (each recorded app):
+  - Basic settings: app ID present, app secret (reset), app mode, privacy policy and data-deletion fields as recorded.
+  - The Facebook Login (or Login for Business) settings: valid OAuth redirect URIs, strict redirect matching on; for WA-O, the login configuration.
+  - App Review or permissions: each derived scope's access level.
+  - The WhatsApp configuration's webhook: callback address host matches the recorded address yes/no, subscribed fields, "Verify and save".
+- **Slack app management** (not in use): OAuth and Permissions redirect URLs and scopes; Basic Information credentials.
+- **Vercel:** env values per `vercel-ops` and `env-change-protocol`. The value never passes through chat or a file.
+
+The user reports the following:
+- presence;
+- "same app as recorded: yes/no", "registered: yes/no", "matches the recorded address: yes/no";
+- app mode;
+- "scope available: yes/no" per derived scope;
+- the subscribed fields by name;
+- the last verification and last-updated time.
+
+The user never reports an app ID, a secret, a verify token, a configuration ID, a business-account or phone-number identifier, a redirect URI, a callback address or a Page.
+
+**(4) Probes.** Each one fails when the setting is wrong. None sends a message, posts to a channel, touches an ad account or spends money, and none prints a value or runs in a loop. Each runs on the deployment named per `vercel-ops` §4, after it is Ready. A 401 from deployment protection, or any answer that is not the route's own, is "not probed (protected host)". WA-O, SL and SL-V1 have no probe: "not probed (no live path)" (MS-1).
+
+| ID | Change | Probe | Pass | Fails when | Who | Precondition and side effects |
+|---|---|---|---|---|---|---|
+| P-MS-1 | Any of the eleven names | `/admin/environment` on that deployment | Set, or Not set where intended; no `should-not-be-set` for the tunnel names. Presence only | The other state | Main session or user | Admin session. None |
+| P-MS-2 | MA names substituted | Signed in on that deployment, POST `/api/v2/plugins/connect` with `plugin_key` `meta-insights`, and test the returned `authUrl` through a filter that prints yes/no only | No `${` (raw or URL-encoded) anywhere; the `redirect_uri` parameter is the target's recorded stable address plus the definition's callback path, with no `//oauth` | Either test fails | Main session | None written. "Initiating plugin OAuth connection" and "OAuth URL generated" (module `PluginConnectAPI`). The response holds the client ID and a `state` value: never printed or pasted. Proves substitution, not Meta's acceptance, and not the secret |
+| P-MS-3 | MA client, redirect URI, mode, scopes | On the environment's stable A1 address (`domains.md`), never a per-deployment host, start the Facebook and Instagram connect on the dashboard channels card; stop at Meta's dialog; cancel. The callback returns there, and posts only to that origin (gotcha 10) | Meta's dialog loads for the app (user yes/no), with no error page | Meta shows an invalid-app, blocked-redirect or "Invalid Scopes" page (vendor messages, confirm at use time); DO counts the placeholder line (T-MS-4) > 0 | User; DO (logs, on the deployment that serves that address, named per `vercel-ops` §4) | A Business OS owner session on that address, else "not probed (no surface)". A pass by a user with a role on the app does not prove a user without a role can connect: P-MS-8 reads the mode. Logs only; on a cancel the callback stores nothing ("OAuth error from provider", module `OAuthCallbackAPI`). If the user consents by mistake, see P-MS-4's cleanup |
+| P-MS-4 | MA secret | Optional, user-approved, once: P-MS-3 completed on the user's own Facebook account, from the environment's stable A1 address (`domains.md`), never a per-deployment host | "OAuth callback successful" ≥ 1 and "OAuth callback failed" = 0 for `plugin` `meta-insights` after the probe time | Any "OAuth callback failed" ≥ 1, or "OAuth callback received" ≥ 1 with "OAuth callback successful" = 0, for `plugin` `meta-insights` after the probe time. With "Token exchange failed" ≥ 1 (module `OAuthTokenService`), suspect the secret or the redirect. Without it, record the failure class and stop: it is not a credential fault. No "OAuth callback received" line at all is "not conclusive (callback did not arrive)" | User (trigger); DO (log counts, on the deployment that serves that address, named per `vercel-ops` §4) | P-MS-3 passed. Writes a connection row (or reconnects the user's own one) and its audit entry. If a Page is found: channel connection rows, the channels capability turned on, an audit entry and a background sync of Graph reads ("Channel insights connected", module `ChannelConnectAPI`). Cleanup: disconnect on the card, then remove the app in the user's Facebook settings (vendor area, confirm at use time) |
+| P-MS-5 | WA-W token present on the target | GET the webhook path with `hub.mode=subscribe`, a `hub.verify_token` made up for the probe (never the real one) and any `hub.challenge` | 403 "Forbidden", and in the logs **of the deployment probed**, from the probe time, "Webhook verification failed - invalid token" ≥ 1 and 0 "WHATSAPP_VERIFY_TOKEN is not set - refusing webhook verification" | The not-set line ≥ 1 in that window, from this or any other request. A 200 means the made-up string is the token: stop and rotate | Main session or user (HTTP); DO (logs) | Route reachable, else "not probed (protected host)". Two log lines (received, invalid token). Nothing written. Proves presence, not that it matches Meta's copy |
+| P-MS-6 | WA-W token matches; callback address | Optional, user-approved, once: "Verify and save" on the recorded app's webhook, with the recorded callback and the token typed by the user into the dashboard directly (it never passes through chat) | Meta accepts it, and "Webhook verified successfully" ≥ 1 on that deployment at the time | Meta reports a verification failure, with "Webhook verification failed - invalid token" or the not-set line ≥ 1; or no request line at all (the callback points elsewhere) | User (dashboard); DO (logs) | A receiving environment is recorded, P-MS-5 passed, and the token or the callback just changed; else "not probed (no receiving environment recorded)" or "not probed (nothing changed)". A dashboard save on the app: production tier on production's app. Nothing written in the app |
+| P-MS-7 | WA-W subscription | User reads the webhook configuration | Callback host matches the recorded address yes; subscribed fields as derived yes | Any "no" | User | None |
+| P-MS-8 | Meta app settings | User reads Basic settings, Login settings and permissions for the recorded app | Mode as recorded (production: live); every loaded plugin's callback registered for each stable address yes; strict matching on yes; each derived scope available yes | Any "no" | User; DO derives the callbacks and scopes | None |
+| P-MS-9 | Rotation (MA secret, WA-W token) | The probes above on the new deployment, in the §7 order | Pass after the change | Any failure after it | User; DO | As the probes used. A Meta secret reset is a cut-over (vendor fact, confirm at use time): there is no old secret to retire |
+
+**(5) Gotchas**, each grounded in a repo file:
+- **Three plugins are not loaded** (MS-1). A stored connection for one of them cannot run, and its connect answers 404. Never read a Slack, WhatsApp or Meta Ads failure as a credential fault.
+- **Unset is not refused by our code** (MS-2). It surfaces as a vendor error page, or at the token exchange. The placeholder line is logged once per instance load (each cold start), not per request.
+- **The configuration ID is substituted but not sent** (MS-3). Setting it changes nothing at `origin/main`.
+- **One client, two plugins** (MS-5): a secret change touches both Meta plugins, and every environment that shares the app.
+- **No refresh path for Meta** (MS-5): expiry means a reconnect by the owner, not drift.
+- **One unavailable scope fails the whole dialog** (MS-6).
+- **The Graph version is pinned in two places** for each loaded Meta plugin (MS-7), and Meta retires versions on its own schedule (vendor fact).
+- **The verify token is only checked when Meta verifies** (MS-4; that Meta sends it only on "Verify and save" is a vendor fact). A wrong token breaks nothing until the next verification.
+- **One webhook callback per app** (vendor fact, confirm at use time): two environments on one app cannot both receive.
+- **The callback answers one origin** (`google.md` §5 applies to every plugin through the same callback route).
+- **Development mode admits only role users** (vendor fact): a passing connect by an admin of the app proves nothing about customers.
+
+**(6) Drift checks** (in the `env-drift-audit` §7 format, under its rules):
+
+| ID | Check | Expected state from | Live read | Class | Who reads |
+|---|---|---|---|---|---|
+| T-MS-1 | On each **Vercel target** of the web app project, the eleven names match the recorded intent. Local: "not read (main session / user)" | Catalogue at `origin/main`; private inventory | `vercel-ops` §3 (names only) | High | DO |
+| T-MS-2 | The two tunnel names are absent on production and preview (catalogue: forbidden) | Catalogue at `origin/main` | `vercel-ops` §3; P-MS-1 | Medium | DO |
+| T-MS-3 | `META_ADS_CLIENT_ID` with `META_ADS_CLIENT_SECRET`, and wherever that pair is set, `NEXT_PUBLIC_APP_URL` too | Code at `origin/main` | `vercel-ops` §3 (names only) | High | DO |
+| T-MS-4 | On each deployment since the last run: "Plugin manager initialized" (module `PluginManager`, `info`) ≥ 1, its `loadedPluginKeys` includes `meta-insights`, **and** 0 "Environment variable not found, keeping placeholder" with `varName` among the MA names or `NEXT_PUBLIC_APP_URL`. No marker line: "not read (no load in window)", never 0 | Change records | Runtime logs | High | DO |
+| T-MS-5 | Meta app: every callback of a loaded Meta plugin, derived from the definitions and the profile at `origin/main`, registered for each environment's stable address; strict matching on | Code at `origin/main`; private inventory | User report (P-MS-8) | High | User; DO (code side) |
+| T-MS-6 | Meta app mode as recorded (production: live); every scope the loaded Meta definitions request available at the recorded access level; privacy and data-deletion fields set as recorded | Code at `origin/main` (scopes derived); private inventory | User report (P-MS-8) | High | User; DO (code side) |
+| T-MS-7 | Each **loaded** Meta definition's dialog, token and profile addresses, and its executor's version constant, pin the same Graph version, and Meta's changelog lists that version as supported beyond the recorded threshold | Code at `origin/main`; vendor docs at use time | Repo read; vendor changelog | Medium | DO (code); main session (vendor docs) |
+| T-MS-8 | WA-W: the token set on the recorded receiving target, and P-MS-5 passing there. No receiving environment recorded: the token unset on every target, and "not read (no receiving environment recorded)" for the P-MS-5 half | Private inventory; code at `origin/main` (MS-4) | `vercel-ops` §3; P-MS-5 | High | DO; main session |
+| T-MS-9 | WA-W subscription: callback host matches the recorded address; subscribed fields as derived; last verification after the last token change. No receiving environment recorded: "not read (no receiving environment recorded)" | Private inventory; definition at `origin/main` | User report (P-MS-7) | High | User |
+| T-MS-10 | "WHATSAPP_VERIFY_TOKEN is not set - refusing webhook verification", "Webhook verification failed - invalid token" (module `WhatsAppWebhook`), and "OAuth callback failed" for `plugin` `meta-insights` (module `OAuthCallbackAPI`), counted since the last run. More than the recorded probes is Medium. Denominators: "Webhook verification request received" = 0 is "not read (no traffic)" for the webhook strings; "OAuth callback received" (module `OAuthCallbackAPI`, `plugin` `meta-insights`) = 0 is "not read (no traffic)" for the callback string | Change records | Runtime logs | Medium | DO |
+| T-MS-11 | `slack`, `whatsapp-business` and `meta-ads` are still outside the active profile, and `meta-insights` still inside it (`lib/server/plugin-profile.ts`). A change means this file needs probe rows before merge. Cross-check at runtime from the same "Plugin manager initialized" line (`loadedPluginKeys`, `skippedPluginKeys`) (SA optimisation 1) | Code at `origin/main`; runtime logs | Repo read; runtime logs | Low | DO |
+| T-MS-12 | The WA-O, SL and SL-V1 names are not set on any target unless recorded with a reason | Private inventory | `vercel-ops` §3 | Low | DO |
+
+**(7) Tiers and order against the deploy.** This section points to `env-change-protocol` and restates nothing.
+
+**Tiers.** These are **production tier** (SA reviews the plan, the user executes):
+- on a Meta app production uses: any secret reset, any redirect URI added or removed, any change to the mode, permissions, login configuration, privacy or data-deletion fields, and any change to the webhook callback, its fields or a "Verify and save";
+- a change to production's verify token;
+- creating a new app for production (it changes the client ID);
+- the same on a Slack app production uses;
+- removing any of these names from production.
+
+A change to an app used **only** by non-production environments, as recorded, is reversible: the user applies it after the approval in chat. Where one app serves several environments, every change to it is production tier.
+
+| Change | When |
+|---|---|
+| Meta app secret reset | Whether Meta keeps existing tokens valid after a reset is a vendor fact, confirm at use time. Until it is confirmed once on a non-production app and recorded, plan it as a cut-over that may force every connection of that app to reconnect (Q-D6g-7): reset → set the secret on every target that shares the app at once → deploy Ready → P-MS-2, P-MS-3, then P-MS-4 if approved. New connects fail until the deploy is Ready |
+| Verify token rotation | Set the new token on the receiving target → deploy Ready → P-MS-5 → "Verify and save" with the new token (P-MS-6). Nothing to retire: Meta checks the token only at verification (vendor fact) |
+| A new or changed callback path, or a new environment | Its redirect registered on the app for every stable address before merge, or before that environment serves the connect |
+| A scope a loaded Meta definition starts to request | Available on the app (and approved where Meta requires) before merge (MS-6) |
+| App address moves (`domains.md` §7) | In step 5: add the new redirect URIs; switch the webhook callback only after the new address is Ready and serves the route (one callback per app, vendor fact, confirm at use time, so there is no overlap); then P-MS-6. Remove the old redirect URIs in step 8 |
+| A new Meta or Slack app (client ID change) | Every existing connection of the plugins on it must reconnect: an owner-facing change, planned and announced as such |
+| A plugin added to the active profile | This file gains its probe rows and its redirects are registered before merge (T-MS-11) |
+| Removing WA-O, SL or SL-V1 names | After FU-D6g-a decides |
+
+### D6g.3 Files to change
+
+| # | File | Action |
+|---|---|---|
+| D6g-1 | `.claude/skills/third-party-ops/messaging.md` | New, per §D6g.2. Target about 120–160 lines, at most about 180 |
+| D6g-2 | `.claude/skills/third-party-ops/SKILL.md` | Two edits and nothing else. (a) The §5 row becomes "Messaging and Meta apps: the WhatsApp webhook, the Meta app (Meta Insights, Meta Ads), Slack" → `[messaging.md](messaging.md)`. (b) The description triggers gain "WhatsApp, a WhatsApp webhook, a webhook verify token, a Meta or Facebook app, a Meta app secret, Facebook Login, a login configuration, Meta Insights, Meta Ads, connecting Facebook or Instagram, a Graph API version, App Review or app mode, Slack, a Slack app or client secret, a Slack redirect URL, a tunnel redirect", inserted before "a vendor dashboard" |
+| D6g-3 | `.claude/skills/third-party-ops/domains.md` | Q-D6g-6 (SA change 12): in §7 step 5, `later DO-6g and DO-6h` → `` `messaging.md`, later DO-6h ``, so the parenthesis reads ``(`stripe.md`, `google.md`, `messaging.md`, later DO-6h)``. The "webhook endpoints" phrase is not changed: this file's "App address moves" row owns the webhook switch. Nothing else |
+| D6g-4 | This requirement | §0 row, these sections, notes, reviews |
+| — | `stripe.md`, `email.md`, `google.md`, `llm-providers.md`, `queues-and-keys.md`, `vercel-ops`, `supabase-ops`, `env-drift-audit`, `env-change-protocol`, `devops.md`, `CLAUDE.md`, `lib/admin/environment/catalogue.ts`, all application code | **Not edited** |
+
+**Follow-ups.** These go in the requirement only, never in the skill text (the skill names FU IDs as pointers only), and are stated neutrally:
+- **FU-D6g-a** (decision for TL and the user; SA review required either way): the three plugins outside the active profile (Slack, WhatsApp Business, Meta Ads), with their names and the WhatsApp webhook route.
+  - **Remove option, in this order:** record and then clear the dashboard registrations; remove the route and the definitions with their catalogue entries in one PR; then remove the names from every target. The Slack names are removed from targets only after both the V2 definition and the V1 strategy's reads are gone.
+  - **Reachable option:** adding a plugin to the profile needs SA review and this file's probe rows. For WhatsApp, the configuration ID has to be sent (MS-3), which widens the client-safe allow-list or changes the connect route. For Slack, the live connect route has to send the user scope (MS-9).
+- **FU-D6g-b** (Low, Dev): make the catalogue's `WHATSAPP_CONFIG_ID` role text match the code (substituted, not sent), unless FU-D6g-a settles it first.
+- **FU-D6g-c** (Low, Dev): a guard test that each Meta definition's addresses and its executor pin the same Graph version, in the shape of the Stripe API-version guard.
+- **FU-D6g-d** (Low, Dev): convert the `console.*` calls in `lib/server/slack-plugin-executor.ts` and `lib/server/whatsapp-business-plugin-executor.ts` to Pino (CLAUDE.md § Logging), unless FU-D6g-a removes them first.
+
+### D6g.4 Acceptance criteria
+
+- [ ] `messaging.md` has the six parts, plus tiers and order. It is organised by WA-W, MA, WA-O, SL and SL-V1. Every file path it names exists at the base. It states the live check by role and the MS-1 result (WA-O and SL "not in use", Meta Ads not loaded, SL-V1 deprecated). `wc -l` ≤ 180.
+- [ ] Each probe names who runs it, its pass, what it shows when wrong, its precondition and its side effects. None sends a message, posts to a channel, touches an ad account, needs DO to hold a key, or prints a value. P-MS-4 and P-MS-6 are marked optional and user-approved. P-MS-5 uses a made-up token and treats a 200 as a stop.
+- [ ] Redirect URIs and the webhook callback are pointers to `domains.md` (AD-2, AD-3), not restated. The restatement grep from §D6.4 over the new file returns 0, or each hit is a pointer.
+- [ ] Every quoted string from tracked code is verbatim in its cited file (`grep -cF` ≥ 1), with its module. Every vendor message is marked "confirm at use time". No string from the Slack, WhatsApp or Meta Ads executors, the SL-V1 files or the V1 routes is quoted.
+- [ ] No sentence presents WA-O, SL or Meta Ads as live, and no probe or drift row targets them beyond T-MS-11 and T-MS-12.
+- [ ] **Public repo:** the finding-11 regex over the added lines returns 0. QA also greps the new file for each of these, and gets 0 hits:
+  - `facebook\.com`, `graph\.`, `slack\.com`;
+  - `ngrok[-.]`, `vercel\.app`, `agents?pilot\.[a-z]`, `localhost:`, `https?://`;
+  - `v[0-9]+\.[0-9]` (a Graph version);
+  - line references.
+
+  The file holds no app, client, configuration, business-account, phone-number or Page identifier, no version number, no URL, and no statement of what is set, missing or open today. A read-through finds no hint of an open weakness.
+- [ ] The SKILL.md diff is only D6g-2. The `domains.md` diff is only D6g-3. The diff touches only the D6g.3 files.
+
+### D6g.5 Open questions for SA
+
+- [x] **Q-D6g-1: Coverage of the plugins outside the profile.** (MS-1) **SA: agreed. Ship now.** WA-W and MA (Meta Insights) are covered in full. WA-O, SL and the Meta Ads half each get one "not in use" row, with no probe, no quoted executor string, a §1 rule that only points to FU-D6g-a, and T-MS-11 at Low. SL's "not in use" means "outside the active profile"; the SL-V1 row records that the deprecated V1 code reads `SLACK_CLIENT_SECRET` too (change 2). WA-W is covered in full, but "no receiving environment recorded" is a valid record, because no loaded plugin uses the webhook (change 7). The main session confirmed from code that the active profile loads Meta Insights only, and records Slack, WhatsApp Business and Meta Ads as not in use; it confirms the wording with the user first (change 11). (raised by: BA | status: resolved)
+- [x] **Q-D6g-2: File name, prefix and tags.** **SA: agreed.** `messaging.md`, prefix `MS`, tags WA-W, MA, WA-O, SL and SL-V1, with the index label and triggers as in D6g-2. "Before 'a vendor dashboard'" is a unique anchor in the current description. (raised by: BA | status: resolved)
+- [x] **Q-D6g-3: Is the verify token in scope?** **SA: yes.** The verify token's other copy lives in the vendor's dashboard. It is a third-party setting, not one of our own shared secrets (Q-D6-11). (raised by: BA | status: resolved)
+- [x] **Q-D6g-4: The dashboard "Verify and save" probe (P-MS-6).** **SA: allowed, optional and user-run.** Its precondition is that a receiving environment is recorded **and** the token or the callback just changed. Otherwise it is "not probed (nothing changed)" or "not probed (no receiving environment recorded)". It is production tier on production's app. The user types the token into the dashboard directly, so it never passes through chat. (raised by: BA | status: resolved)
+- [x] **Q-D6g-5: Completing a Meta connect (P-MS-4).** **SA: allowed, optional and user-approved,** on the user's own account, with the writes and the two-step cleanup declared as written. It must start from the environment's stable address (change 3), and its fail wording is corrected (change 5). (raised by: BA | status: resolved)
+- [x] **Q-D6g-6: The `domains.md` §7 step 5 edit.** **SA: the redirect phrase only. Drop the webhook phrase.** Step 5 says "**Add** … keeping the old ones until step 8", which WA-W cannot do if the app holds one callback, so listing `messaging.md` under "webhook endpoints" would teach the wrong order. The redirect phrase already sends the operator to `messaging.md`, and its "App address moves" row owns the webhook switch. The exact edit is `later DO-6g and DO-6h` → `` `messaging.md`, later DO-6h ``. Nothing else in `domains.md` changes (change 12). (raised by: BA | status: resolved)
+- [x] **Q-D6g-7: Does a Meta app secret reset invalidate existing connections?** **SA: agreed.** Plan a reset as "may force every connection of that app to reconnect" until it has been confirmed once on a non-production app and recorded. In the file this is a vendor fact, "confirm at use time" (change 10). (raised by: BA | status: resolved)
+- [x] **Q-D6g-8: The Graph version check.** **SA: agreed at Medium, scoped to the loaded Meta plugins** (change 4). The definition pins the version in three addresses (dialog, token and profile), and the executor pins it in its constant. All four must agree. FU-D6g-c is the code guard. The file names no version. (raised by: BA | status: resolved)
+- [x] **Q-D6g-9: The tunnel names.** **SA: agreed.** T-MS-2 is a catalogue presence check, and SL-V1 stays the only V1 content. This satisfies CLAUDE.md "Deprecated — Do Not Use or Extend": V1 is recorded, never probed, never extended. (raised by: BA | status: resolved)
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -1936,6 +2508,15 @@ Approved. It reads the project's log store and cannot change project state, so i
 | 2026-11-02 | DO-6d spec + SA short pass | BA scoping spec (LLM providers: OpenAI, Anthropic, Groq, Kimi keys; the two model-name names; Mistral not wired); SA approved with changes 1–13 and settled Q-D6d-1..7 (no user question): Groq is required wherever the help bot is served, two ledger cases, never-read columns and the counts-by-class rule, help bot probe for OpenAI and Groq, no app-side probe for Anthropic and Kimi, no functional model-name probe. SA changes folded into §DO-6d. |
 | 2026-11-02 | DO-6d build | `third-party-ops/llm-providers.md` new (142 lines); SKILL.md index row + triggers. Awaiting SA code review and QA. |
 | 2026-11-02 | DO-6d SA code review + QA | SA approved for QA with two fixes (help bot probe precondition excludes agent-search questions; old LM-8 wording scrubbed). QA PASS, 20 checks (19 pass, 1 deferred), 3 Lows: Low 1 (stale status text) fixed by the main session; Low 2 (LF endings, normalised by git) and Low 3 (`InputHelp` mode not reachable from the floating button) left on purpose. |
+| 2026-11-03 | DO-6e spec + SA short pass | After a live check, the user narrowed DO-6e to the three app address names plus a checklist for attaching a custom domain. BA spec (AD-1..9, P-AD-1..8, T-AD-1..9); SA approved with 20 changes and ruled Q-D6e-1..8, including the one-sentence SKILL.md §3 correction. |
+| 2026-11-03 | DO-6e build | `domains.md` (137 lines) + SKILL.md §3 sentence, §5 row and triggers; spec with SA changes 1–20 applied; services-live check recorded; follow-ups FU-D6e-a..d. |
+| 2026-11-03 | DO-6e SA code review + QA | SA approved with three text fixes. QA: 19 checks, failed only the read-through for current-configuration wording (two Mediums: a Change History sentence and quotes of removed phrases in the SA sections). Main session applied SA fixes 1–3 and QA Medium 1–2; finding-11 regex and the read-through re-run clean. Low 2 accepted; Low 3 (sync with main) done at commit. |
+| 2026-11-03 | DO-6f spec + SA short pass | BA spec for queues, AWS and small API-key providers; SA approved with 13 changes (5 High, 6 Medium, 2 Low) and ruled Q-D6f-1 to Q-D6f-8. No code path reaches the QStash publisher, so QStash coverage is narrowed to the receiver, its signing keys and schedules; the Q-D6-2 record is corrected. |
+| 2026-11-03 | DO-6f build | New `queues-and-keys.md` (128 lines), SKILL.md §5 row and triggers, one phrase in `domains.md` §7 step 5; spec with SA changes 1–13 applied. See [DO-6f implementation notes](#do-6f-implementation-notes). |
+| 2026-11-03 | DO-6f SA code review + QA | SA approved with five text fixes: P-QK-3 now tells a key mismatch from a match by the receiver's log line (the SDK answers a bad signature with 500, not 403), plus wording fixes. QA: 25 checks; one Medium (review and notes wording) and three Lows, all fixed by the main session; re-run clean. |
+| 2026-11-04 | DO-6g spec + SA short pass | BA spec for messaging apps (Meta, Slack); SA approved with 12 changes and ruled Q-D6g-1 to Q-D6g-9. The active plugin profile loads Meta Insights only, so the WhatsApp Business OAuth client, Slack and Meta Ads are recorded as not in use; the WhatsApp webhook verification and the Meta Insights app are covered in full. |
+| 2026-11-04 | DO-6g build | New `messaging.md`, SKILL.md §5 row and triggers, one phrase in `domains.md` §7 step 5; spec with SA changes 1–12 applied. See [DO-6g implementation notes](#do-6g-implementation-notes). |
+| 2026-11-04 | DO-6g SA code review + QA | SA approved with eight text fixes: P-MS-4 now fails on a callback received with no success line, the Services live line takes the sibling form, plus wording fixes. QA: 24 checks; one High, one Medium and four Lows, all text, all applied by the main session; final verdict PASS. |
 
 ---
 
@@ -4367,3 +4948,905 @@ None.
 **PASS.** Every §D6d.4 criterion passes, as do SA changes 1–13 and rulings Q-D6d-1..7. The public-repo regex over the added lines finds 0. The 3 weakness-grep hits and the current-state hits are all rule text. Every path, quoted string, logger field and code claim holds at this tree. Three Low edge cases, none blocking.
 
 ---
+
+---
+
+## SA Review — DO-6e (short pass)
+
+**Reviewed by SA — 2026-11-03**
+**Verdict: APPROVED WITH CHANGES.** The narrowed scope is right: the three address names, plus a checklist for attaching a custom domain, with registrar and DNS rows "not audited" until a domain is recorded. The boundary, the six-part shape, the probe discipline carried over from DO-6c and DO-6d, and the public-repo criteria are also right. AD-1, AD-4 to AD-7 and AD-9 hold as written. Five things would have made the skill wrong:
+
+- **The raw-reader failure depends on the origin the user is browsing from, not on the target.** A plugin connection fails whenever the opener page is not on the address A1 names. It succeeds on a Preview when the user browses the stable address A1 names and that address is registered with the vendor. Reading A1 directly for a redirect is deliberate: `lib/utils/__tests__/oneAddressPolicy.guard.test.ts` lists the OAuth files as exceptions, because a redirect has to match the vendor's registration. AD-3, Q-D6e-2, Q-D6e-8 and FU-D6e-a all assume the opposite.
+- **P-AD-4's quoted strings come from code with no live caller.** "Authorization window was closed" and "Authorization timeout" are both in `UniversalOAuthHandler.ts`. That handler is reached only through an import that the deprecated V1 registry never uses. The live openers have different texts, and each one has its own.
+- **The DNS boundary contradicts `email.md`.** `email.md` §3 already says the sending-domain records are published under DO-6e and that DMARC is a domain-owner record for DO-6e. The spec gives them back to `email.md`, so as written, neither file would own publishing them.
+- **The checklist does not cover moving the zone.** For a wildcard host, Vercel may require its own nameservers (vendor fact, confirm at use time). Moving the nameservers moves every record in the zone, the email records included.
+- **P-AD-6 and P-AD-8 are not fully specified.** P-AD-6 writes a page view it does not declare. P-AD-8 names a sign-in "on that deployment", but the login pages live in the marketing app.
+
+None of this needs a decision from the user. Required changes 1–20 below fix it.
+
+I reviewed this in the DO-6e worktree at `7c0b328b` (= `origin/main` at review time). I reviewed it against §D6e, SA Review — DO-6 changes 1–7, the DO-6c and DO-6d short passes, `third-party-ops` `SKILL.md`, `stripe.md`, `email.md`, `google.md` and `llm-providers.md`, `vercel-ops` `SKILL.md` and `dashboard-settings.md`, and `supabase-ops` `SKILL.md`. No platform call, no SQL, no vendor call and no network call was made, and no `.env*` file was opened. Local reads and `git grep` at `origin/main` only.
+
+### Code claims (catalogue table, AD-1 to AD-9)
+
+| # | Result | Correction for `domains.md` |
+|---|---|---|
+| Catalogue table | **Verified.** Group `addresses` holds the three names. A1 is `exp('R', 'R', 'R')`. A2 and A3 use the `config` default, which is optional everywhere. | — |
+| AD-1 | **Verified, with one precision.** The `origins.ts` and `middleware.ts` reads are literal and inlined. `processEnvironmentVariables` in `plugin-manager-v2.ts` reads `process.env[varName]` dynamically on the server, so for the definitions the value is read at run time, not inlined. On Vercel either way a new deployment is needed (`vercel-ops` §4), so the consequence stands. An unset A1 leaves the `${…}` placeholder in the definition and logs "Environment variable not found, keeping placeholder" (module `PluginManager`, 1 hit). | Change 13. |
+| AD-2 | **Verified, with a precision.** After A1: on Vercel production, the project's stable production host. On other Vercel environments, the deployment host, then the stable production host. Then the code fallback. Off Vercel, the development or production code fallback, chosen by `NODE_ENV`. | Change 14. |
+| AD-3 | **Corrected.** The readers are right: the connect route's fallback, the definition placeholders, the callback's `APP_URL` target origin, `platformEmailLogoUrl`, and the deprecated V1 strategies, which the guard also lists. **The consequence is wrong.** The connection fails when the opener's origin differs from A1's address. That covers a per-deployment Preview host, but it does not cover the stable address A1 names on Preview. The live openers (`lib/client/oauth-handler.ts`, the Inbox channel dialog, `useChannelConnect`, the Stripe Connect wizard) each have their own "closed" and "timed out" texts. **"SA to confirm" `UniversalOAuthHandler`: not live.** It is reachable only through `lib/plugins/v2/registry.ts`, which `lib/plugins/pluginRegistry.ts` (deprecated V1) imports and never uses. | Changes 1, 2, 4. `google.md` §5 already has the gotcha "The callback answers one origin". `domains.md` points to it and does not restate it. |
+| AD-4 | **Verified.** A3 outranks the platform origin in `publicSiteUrl`, `publicSiteDisplayHost` and `publicSiteSuffix`. `isLocalOnlyHost` refuses a local-only host outside development. Hosts are https, except local-only hosts. | — |
+| AD-5 | **Verified.** The rewrite runs only when A3 is set, the host header ends with `.{A3}`, the prefix is one label and the prefix is not reserved. The apex itself (host equal to A3) falls through to the platform. | Change 15 (apex). |
+| AD-6 | **Verified.** The list is imported by `middleware.ts`, the subdomain check route, the website pages route, `businessSubdomain.ts` and `resolveBusinessByPrefix.ts`. | — |
+| AD-7 | **Verified.** `marketingOrigin()` is A2 or the code fallback, chosen by `NODE_ENV`, with no loopback rule. | — |
+| AD-8 | **Verified.** The `browserOrigin` comment names the setting. **"SA to confirm": `vercel-ops/dashboard-settings.md` does not list it** (Q-D6e-7). | Change 18. |
+| AD-9 | **Verified.** The module header requires the image to keep answering on the host it was sent from. | — |
+| Quoted strings | **Fail as cited.** Both strings are verbatim, but only in `UniversalOAuthHandler.ts`, which has no live caller. | Change 2. |
+
+### Rulings on "SA to confirm" and Q-D6e-1 to Q-D6e-8
+
+- **Q-D6e-1: `domains.md`.** Change the index row label to "Domains, app addresses, registrar and DNS" so that a search for the address names finds it.
+- **Q-D6e-2: Preview's A1 holds the recorded stable preview address, registered with each vendor whose Preview connection is wanted. It never names production's address.** With production's address in Preview's A1, a connection started on a Preview completes on production, which runs production's code and writes to production's data. If no stable preview address is recorded, P-AD-4 on Preview is "not probed (no stable preview address)". It is not an "expected fail". Run from A1's address, P-AD-4 on Preview can pass today. Run from a per-deployment host, it fails by design, and the file says so as a code fact, with a pointer to `google.md`.
+- **Q-D6e-3: yes, narrowly, as a reader search, never a name search.** The procedure:
+  - `git grep -l -F` for the literal name at `origin/main`, over `app/`, `lib/` (definitions included), `components/`, `hooks/` and `middleware.ts`.
+  - File names only. Tests are excluded. A hit that is only in a comment is not a reader: several files mention A1 in a comment only.
+  - Cross-check the hits against the guard's `ALLOWED` and `OAUTH_FILES` lists in `oneAddressPolicy.guard.test.ts`.
+  - A reader in neither list and not on a redirect line is a finding, reported in the requirement. The same goes for any A2 or A3 reader outside `origins.ts` and `middleware.ts`.
+
+  `domains.md` states this exception in part (2). The §1 rule ("never searches the code for names") stands unedited.
+- **Q-D6e-4: agreed.** The file covers A2, and the marketing project's domain attachment and certificate. It records "names read by the marketing app: not derivable here". That app's Supabase redirect entries are named as part of T-AD-6, by role.
+- **Q-D6e-5: yes, fold it in. This pass is the §1–§4 SA pass for that one sentence.** The §3 bullet becomes: "Each environment's stable address (`NEXT_PUBLIC_APP_URL`; the redirect builders read it directly, on purpose, not through `platformOrigin()`: see `domains.md`) plus the redirect exactly as the code builds it is registered with the vendor, per environment." The rest of the bullet is unchanged. Nothing else in §1–§4 changes.
+- **Q-D6e-6: confirmed in part.**
+  - **Confirmed:** on a vendor error the callback returns before `handleOAuthCallback`, so it writes nothing. It logs one line with the vendor's error and description.
+  - **Vendor fact, confirm at use time:** that a cancel on Google's consent screen returns `access_denied` to the callback rather than closing the popup.
+  - **Surface:** a Google plugin connected through the connect route. The suggested surface is the Inbox channel mailbox connect, chosen at use time. Its "failed" and "closed" texts are distinct in its own file.
+  - Run it with a control (change 3).
+- **Q-D6e-7: not covered there.** T-AD-9 stays in `domains.md` as a user dashboard step. The area is the project's Environment Variables settings, confirmed at use time. `vercel-ops` is not edited in this slice: FU-D6e-d.
+- **Q-D6e-8: Low, not Medium.** A connection from A1's address completes. What fails is browsing from another origin, and the fix for that is configuration (browse and register the stable address), not code. The code defect left is narrower: an unset A1 produces an empty target origin, and the connect fallback produces a literal "undefined" in the redirect. The catalogue already makes A1 required everywhere.
+
+### Probe check (can fail, no money, durable writes declared, precondition becomes "not probed")
+
+| ID | Can fail | Money | Durable writes | Precondition → not probed | Ruling |
+|---|---|---|---|---|---|
+| P-AD-1 | Yes, for presence | None | None | Admin session; protection 401/403 | Presence only (change 12) |
+| P-AD-2 | Yes | None | None | **Missing:** a business with a prefix | Change 8 |
+| P-AD-3 | Yes | None | Ends the session (declared) | **Missing:** signed in on that deployment | Add the precondition (change 8) |
+| P-AD-4 | Yes, once paired | None | **Undeclared:** two log lines; a connection if the user consents by mistake | Partly | Changes 2, 3 |
+| P-AD-5 | Yes | None | As `email.md` (declared by pointer) | As `email.md` | Change 9 |
+| P-AD-6 | Yes | None | **Undeclared:** a page view in that business's visitor stats | Declared | Change 10 |
+| P-AD-7 | Yes | None | None | Declared | OK |
+| P-AD-8 | Yes, once rewritten | None | A session, plus any sign-in records | **Missing** | Change 11 |
+
+### Public-repo check
+
+- **Above the PRIVATE heading, the spec names no domain, host, ID, URL, registrar or record value.** Env var names, repo paths, function names and vendor names by role are fine.
+- **One phrase states current configuration by implication.** The checklist's title implied current configuration. Reword it to "a checklist for attaching a custom domain" in the requirement and in `domains.md`. The conditional "not audited until a domain is recorded" is a rule, not a state, and may stay.
+- **The past expired-certificate gotcha** paraphrases a comment that is already in tracked code. Keep it in the past tense, name no host, and never say which code fallback host is or is not served today.
+- **FU-D6e-a, FU-D6e-b and FU-D6e-c are neutral robustness follow-ups,** not security weaknesses, and may stay in the requirement as worded after change 19. None exposes data or lets one user act on another user's data.
+- **The public grep in D6e.4** also covers the product's domain-name stems in domain form (`agents?pilot\.` followed by a TLD) and `\.vercel\.`, besides the listed patterns (change 20).
+
+### New pattern and CI time (CLAUDE.md rule 7)
+
+- **No new pattern.** The slice adds one reference file, one index row with its triggers, and one ruled sentence in §3, under the DO-6b to DO-6d shape. The reader search is a read-only `git grep` with a stated scope, not new machinery.
+- **No added CI time.** No job, workflow or test is added.
+
+### Required changes
+
+1. **[AD-3, part (1) A1 row, gotcha 2, Q-D6e-2] Reframe the raw-reader failure by origin.** A connection completes only when the opener is on A1's address and that address is registered. Reading A1 directly for a redirect is deliberate (the guard test's OAuth exception). Part (1) Preview A1 becomes "the recorded stable preview address; never production's address". Gotcha 2 becomes a pointer to `google.md` "The callback answers one origin", plus the A1-on-Preview rule. Pass: no sentence says Preview connections fail as such, and the never-production rule is present. — Priority: High
+2. **[P-AD-4, D6e.4 quoted strings] Live surface, live strings.** Remove both `UniversalOAuthHandler` strings. P-AD-4 names its surface at use time (suggested: the Inbox channel mailbox connect, a Google plugin through the connect route). It quotes that surface's "failed" and "closed" texts verbatim, with the file next to them, each checked with `grep -cF` ≥ 1 at build. Where the text is translated, quote the code default and say so. Pass: no quoted string from a file without a live caller. — Priority: High
+3. **[P-AD-4] Pair with a control, and declare everything.**
+   - **Control:** the same probe, run from A1's address. The "failed" text there shows that the message mechanism works.
+   - **Pass:** the "failed" text from the address under test.
+   - **Fail:** the "closed" text from the address under test, while the control shows "failed", or a redirect-mismatch page.
+   - **Not conclusive:** the control also shows "closed" (the popup lost its opener, or the vendor behaves differently).
+   - **Not probed:** no client registered for this address (`google.md`); the popup closed by hand; no cancel offered.
+   - **Side effects:** a connect log line and a callback provider-error log line, which carries the vendor's error description. If the user consents by mistake, a plugin connection is written, and the user disconnects it.
+
+   Pass: all five states and the side effects are present. — Priority: High
+4. **[AD-3, FU-D6e-b] `UniversalOAuthHandler` settled as not live.** AD-3 drops "SA to confirm". FU-D6e-b becomes "remove the handler, `UniversalPlugin` and the unused `universalPlugins` import, and their guard-list entries". The `supabaseClient` point goes, because the code is removed. `domains.md` does not list it as a reader. Pass: no "SA to confirm" left on it. — Priority: Medium
+5. **[Boundary, checklist step 2] Align DNS ownership with `email.md` §3.**
+   - `email.md` names which records the email vendor needs and checks their verification.
+   - `domains.md` owns publishing every vendor's records at the zone's DNS host, recording each record's owner (T-AD-8), and DMARC as the domain-owner record. It names no record value.
+   - Step 2 is rewritten from "email records … are not touched here" to "publish, and on a zone move carry, every recorded record, email included; their contents come from each vendor's file".
+   - `email.md` is not edited.
+
+   Pass: the boundary sentence and step 2 match `email.md` §3. — Priority: High
+6. **[Checklist, tiers, rollback] Moving the zone.** Add a step before step 1, for the case where the plan includes a wildcard host. Whether the wildcard needs the zone's nameservers moved to Vercel is a vendor fact, confirmed at use time.
+   - If it does, every existing record in the zone (email included) is recreated at the new DNS host and checked against the private inventory **before** the nameservers change.
+   - Then the email vendor's domain verification and P-AD-5 are re-run after the change.
+   - The nameserver change is production tier.
+   - Its undo (switch back) is slow because of DNS propagation, and the step says so explicitly.
+
+   Pass: the step, its tier and its undo are present. — Priority: High
+7. **[Checklist step 5] Every inbound address, not only redirects.** Step 5 also covers:
+   - the webhook endpoints, per `stripe.md` and `email.md`;
+   - `google.md`'s JavaScript origins and authorised domains;
+   - queue callback targets (DO-6f, "not audited" until covered).
+
+   Each one is added for the new address and kept for the old one until step 8. Pass: step 5 names each family by pointer. — Priority: Medium
+8. **[P-AD-2, P-AD-3] Preconditions and the Preview reading.**
+   - **P-AD-2:** precondition, a business the user owns that has a prefix; otherwise "not probed (no business)". On Preview, the pass is that deployment's per-deployment host, not an alias the user browses. If the display shows A1's address on Preview, that is the AD-8 failure (T-AD-9), not an A1 failure.
+   - **P-AD-3:** precondition, signed in on that deployment.
+
+   Pass: both preconditions and the AD-8 reading are present. — Priority: Medium
+9. **[P-AD-5] A broken image is a fail too.** The fail cell adds "a broken image". On Preview, a broken image because deployment protection covers A1's host is "not probed (protected host)". Pass: present. — Priority: Low
+10. **[P-AD-6] Declare the page view.** The side effects become "one page view recorded in that business's visitor stats (`PageViewTracker`, `app/site/[subdomain]/page.tsx`)". Pass: present. — Priority: Medium
+11. **[P-AD-8] Rewrite the sign-in probe.**
+    - **Precondition:** an in-app sign-in surface on that deployment that returns to the served origin. `lib/client/auth-actions.ts` builds `redirectTo` from `window.location.origin`. The surface is found at use time; otherwise "not probed (no in-app sign-in surface)". The login pages themselves live in the marketing app (Q-D6e-4).
+    - **Google half:** a pointer to `google.md`'s G1 probe, completed by the user on their own existing account.
+    - **Fail:** landing on another origin, which is Supabase's fallback to the Site URL when the origin is not allowed (vendor fact, confirm at use time), or Supabase's redirect error.
+    - **Side effects:** a session, plus any sign-in records.
+
+    Pass: the precondition, the pointer and the side effects are present. — Priority: Medium
+12. **[P-AD-1] Presence only.** Add "proves presence, never the value; correctness comes from P-AD-2 to P-AD-8". Pass: present. — Priority: Low
+13. **[AD-1, T-AD-1] Runtime read of the definitions.** Add the dynamic-read precision. Add the unset-A1 log line as DO's server-side evidence: count of "Environment variable not found, keeping placeholder", module `PluginManager`, filtered to the A1 name, on that deployment, after Ready. This goes as an extra live-read column in T-AD-1, or as a gotcha. Pass: the string is verbatim with its module. — Priority: Low
+14. **[AD-2 in part (2)] State the fallback order exactly** as given in the code-claims table. The code fallback constants stay unquoted. Pass: present. — Priority: Low
+15. **[T-AD-4, part (1) sibling labels] The apex case.** A host at the apex itself has no label to reserve, and the rewrite already excludes it (host equal to A3 falls through). T-AD-4 checks first labels of subdomain hosts only. Pass: present. — Priority: Low
+16. **[Part (2)] Reader derivation** as ruled in Q-D6e-3: scope, comment hits excluded, cross-check against the guard's lists, a stray reader reported as a finding. Pass: present, with no reader list beyond the AD-3 examples. — Priority: Medium
+17. **[D6e-2] SKILL.md edits:**
+    - the §5 row, with the new label (Q-D6e-1);
+    - the description triggers;
+    - the one §3 sentence in the exact text of the Q-D6e-5 ruling.
+
+    The SKILL.md diff contains these three edits and nothing else. D6e.4's "SKILL.md diff is only D6e-2" stands with the D6e-2 row updated to include them. — Priority: Medium
+18. **[T-AD-9, Q-D6e-7] T-AD-9 stays here** as a user dashboard step: the project's Environment Variables settings area, confirmed at use time, reported as "on/off as recorded: yes/no". Add FU-D6e-d (Low, docs): add the setting to `vercel-ops/dashboard-settings.md` in a later `vercel-ops` pass. — Priority: Low
+19. **[D6e.3 follow-ups] Record them in the requirement, never in the skill:**
+    - FU-D6e-a (**Low**): the callback posts to its own request origin, and the connect route refuses with an error when A1 is unset, instead of building an "undefined" redirect. The redirect stays on A1 by design.
+    - FU-D6e-b per change 4.
+    - FU-D6e-c as written.
+    - FU-D6e-d per change 18.
+
+    Pass: all four are in D6e.3 and absent from `domains.md`. — Priority: Low
+20. **[Tiers, public grep, length]**
+    - **Production tier also includes:** the system-variable exposure setting on either project (it is project-wide) and any nameserver change.
+    - **Wording:** the checklist title becomes "attaching a custom domain".
+    - **Grep:** the D6e.4 grep adds `agents?pilot\.[a-z]` and `\.vercel\.`.
+    - **Length:** ≤ ~180 lines. If it runs over, trim prose, never a probe or drift row.
+
+    Pass: `wc -l` ≤ 180, and grep 0. — Priority: Low
+
+### Checked and honoured
+
+- **DO-6 changes 1–7:** after changes 3, 8 and 11, every probe has a precondition or reads "not probed". Local is guidance only. Derivation is from the catalogue and from code, there are no copied lists, and the T-AD rows live in `domains.md`.
+- **DO-6c and DO-6d lessons:** after the changes, each probe has an exact pass and fail, none passes on an unset value, side effects are declared, and quoted strings are verbatim with their file or module.
+- **Probe safety:** no probe moves money, needs a secret in hand or completes an OAuth connection. Every probe of a deployment is made by the main session or the user, under `vercel-ops` §4.
+- **Tiers:** every production, domain, DNS, registrar, Supabase URL and vendor registration change is production tier, executed by the user. A Preview-only A1 or A3 change is reversible.
+
+### Approval
+
+[x] Spec approved with changes 1–20. Dev builds `domains.md` and the three SKILL.md edits after the main session's Q-D6-2 live check. No user decision is needed.
+
+---
+
+## DO-6e implementation notes
+
+**By Dev — 2026-11-03.** Built in the DO-6e worktree on `feature/devops-third-party-dns`, at base `7c0b328b`. Docs and skill only: no application code, no CI change. Nothing committed.
+
+### What was built
+
+| File | Change |
+|---|---|
+| `.claude/skills/third-party-ops/domains.md` | New, 137 lines. Intro and live-check line in the sibling form; the A1–A3 table; the boundary paragraph; §1–§6 of the template; §7 tiers, the checklist for attaching a custom domain (step 0 for the zone move, then steps 1–9) and the order table |
+| `.claude/skills/third-party-ops/SKILL.md` | Three edits only: the description triggers; the §3 "Redirect URIs come from the app address" sentence in the exact text of the Q-D6e-5 ruling; the §5 row "Domains, app addresses, registrar and DNS" → `[domains.md](domains.md)`. Line endings preserved; the diff is 3 lines changed |
+
+Checks run at build:
+
+- Every quoted string is verbatim in its file (`grep -cF` = 1 each): the two Inbox channel dialog texts in `components/business-os/leads/InboxChannelSetupDialog.tsx`; "Initiating plugin OAuth connection" (module `PluginConnectAPI`); "OAuth error from provider" (module `OAuthCallbackAPI`); "Environment variable not found, keeping placeholder" (module `PluginManager`); "A BUSINESS'S PUBLIC PAGES" in `middleware.ts`.
+- Every file path named in `domains.md` exists at the base.
+- The public-repo scan over the added lines returns only `[a-z]{20}` hits, each a code identifier (`InboxChannelSetupDialog`, `processEnvironmentVariables`, `publicSiteDisplayHost`, `platformEmailLogoUrl`). The QA grep (including `agents?pilot\.[a-z]`, `\.vercel\.`, the `me` top-level label, and line references) returns 0.
+
+### SA changes applied with a judgement call
+
+- **Change 6 (zone move step):** added as **step 0**, so the existing step numbers (and change 7's "until step 8") stay valid. The checklist is therefore "step 0, then steps 1–9" rather than ten renumbered steps.
+- **Change 3 (P-AD-4):** the five states and side effects did not fit a table cell, so the table row points to a block under the table, in the form `email.md` uses for its replay probe. The connect log line is named as "Initiating plugin OAuth connection", the first `info` line the route logs for every connect.
+- **Change 13 (placeholder line):** applied both ways: a live-read clause in T-AD-1 (with "no definition load in the window is not read", as T-GO-4 has) and a clause in the first gotcha.
+- **Q-D6e-3 (stray reader is a finding):** the ruling says "reported in the requirement". In the skill text, which applies at every future run, it reads "reported in the private docs", per `SKILL.md` §3 ("Findings from a run go to the private docs only"). For this slice's own build no stray reader was looked for beyond the SA review's cross-check.
+- **Change 4 (`UniversalOAuthHandler` not live):** `domains.md` does not name it at all (`google.md` §2 already lists it as never a probe target). The not-live ruling and FU-D6e-b live in the requirement only.
+- **Change 18 (T-AD-9):** worded per project ("each project's system-variable exposure"), since change 20 makes the setting production tier on either project.
+
+### Left out, with reason
+
+- **The SA review's PRIVATE items** (all six) and both spec PRIVATE bullets: not in any tracked file or in `do6e-spec-applied.md`, per the public-repo rule.
+- **The "SA to confirm" and line-number pointers** of the original spec: removed from the applied spec, because each is now ruled.
+- The main session inserted the applied spec, the SA review and these notes into this requirement, and recorded the Q-D6-2 live check in the spec's services-live paragraph.
+
+---
+
+## SA Code Review — DO-6e
+
+**Code Review by SA — 2026-11-03**
+**Status:** 🔄 Fix Required (three small text fixes, no re-review needed)
+
+Reviewed the uncommitted diff in the DO-6e worktree against `origin/main` (`7c0b328b`): the new `.claude/skills/third-party-ops/domains.md` (137 lines), the `SKILL.md` diff (3 lines), and the requirement sections added (§0 DO-6 row, DO-6e Specification, two Change History rows dated 2026-11-03, SA Review — DO-6e (short pass), DO-6e implementation notes). Local reads and `grep` only; no platform, vendor or network call; no `.env*` opened.
+
+### Results
+
+| # | Check | Result |
+|---|---|---|
+| 1 | SA short-pass changes 1–20 and rulings Q-D6e-1..8 | **All applied**, in the spec and in `domains.md`. Change 6 as step 0 (keeps change 7's "until step 8" valid) and P-AD-4's states in a block under the table are accepted judgement calls. The Q-D6e-3 destination "the private docs" in the skill, instead of "the requirement", is **endorsed**: it follows `SKILL.md` §3 ("Findings from a run go to the private docs only") and supersedes the ruling's wording for future runs. None of the short pass's private items appears in any tracked file |
+| 2 | Code claims in `domains.md` | **All verified** at the worktree with `grep -cF` ≥ 1: every file path exists; every function named exists in its cited file; both Inbox channel dialog texts are the code defaults of translated strings; "Initiating plugin OAuth connection" (`PluginConnectAPI`), "OAuth error from provider" (`OAuthCallbackAPI`), "Environment variable not found, keeping placeholder" (`PluginManager`, logged with `varName`), "A BUSINESS'S PUBLIC PAGES"; the callback's vendor-error return comes before `handleOAuthCallback`; `PageViewTracker` is rendered by the public site page; `redirectTo` is built from `window.location.origin`; `required-not-set` is a classifier state; the catalogue rows match the A1–A3 table |
+| 3 | `SKILL.md` | The §3 sentence is the exact Q-D6e-5 text, rest of the bullet unchanged. The §5 row label and the trigger list follow the sibling style. No other change |
+| 4 | Public repo | The pattern grep over every added line returns 0. No domain, host, URL, ID, registrar or DNS-host name, record value or security weakness. **One exception:** the first 2026-11-03 Change History row states current configuration (fix 1) |
+| 5 | Probes | Each can fail, moves no money, declares its writes (session end, log lines, page view, invite row, accidental connection) and turns a failed precondition into "not probed" / "not read". P-AD-4 has its control and all five states. No probe completes an OAuth connection |
+
+### Code Review Comments
+
+1. `docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`, Change History row "DO-6e spec + SA short pass" — its first sentence implied current configuration, the same class the short pass removed from the checklist wording. Replace that sentence with "After a live check, the user narrowed DO-6e to the three app address names plus a checklist for attaching a custom domain." — Priority: Medium
+2. `docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`, DO-6e implementation notes, "Left out, with reason" — the last two bullets are stale: the requirement has now been edited, and the spec already carries the main session's dated services-live line. Replace them with one bullet: "The main session inserted the applied spec, the SA review and these notes into this requirement, and recorded the Q-D6-2 live check in the spec's services-live paragraph." — Priority: Low
+3. `docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`, between the SA short pass's Approval and "## DO-6e implementation notes" — two consecutive `---` separators; delete one. — Priority: Low
+
+### Optimisation Suggestions
+
+- None blocking. `domains.md` is 137 lines, inside the 180-line ceiling.
+
+### Code Approved for QA: Yes, with fixes 1–3
+
+Fixes 1–3 are text only and need no SA re-review; QA confirms them, re-running the public grep over the added lines after fix 1.
+
+---
+
+## QA Report — DO-6e
+
+**QA — 2026-11-03.** Test mode: full. Strategy: static checks (grep, `test -e`, diff placement) on a docs-and-skill slice; no app code to run. Base `7c0b328b`.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `domains.md` has the six SKILL.md §4 parts, then tiers, the checklist (step 0, steps 1–9) and the order table; organised by A1–A3; 137 lines (limit 180) | Pass |
+| 2 | Live check stated by role; T-AD-7 and T-AD-8 "not audited" until a domain is recorded; the dated services-live line is in the spec | Pass |
+| 3 | Every file path in `domains.md` exists (14 repo paths plus sibling skill files) | Pass |
+| 4 | Every code symbol named exists in the file cited (19 symbols) | Pass |
+| 5 | Every quoted log and UI string is verbatim in the module stated (`git grep -cF` = 1 each) | Pass |
+| 6 | Catalogue table matches `catalogue.ts` (group `addresses`, A1 required everywhere, A2 and A3 optional) | Pass |
+| 7 | Probes: who, pass, fail, precondition and side effects; P-AD-4's control and states; no probe completes an OAuth connection or moves money | Pass |
+| 8 | AD-2 fallback order; readers derived, not listed; Preview's A1 never production's | Pass |
+| 9 | DNS and redirect rules are pointers; the boundary matches `email.md` §3 | Pass |
+| 10 | Restatement grep from §D6.4 over `domains.md` | Pass (0 hits) |
+| 11 | Extra `domains.md` greps from D6e.4 (hosts, platform suffixes, ports, line references) | Pass (0 hits) |
+| 12 | Finding-11 regex over all added lines | Pass (0 hits) |
+| 13 | Broad regex over added lines | Pass (code identifiers and the D6e.4 pattern list only) |
+| 14 | SKILL.md diff: description triggers, the §3 sentence (exact Q-D6e-5 text) and the §5 row only; line endings unchanged | Pass |
+| 15 | Requirement diff: additions in the expected places; the only removed line is the §0 DO-6 row being replaced | Pass |
+| 16 | Added internal anchors resolve (9) | Pass |
+| 17 | Read-through: no statement of current configuration in added text | Fail, then fixed (Medium 1–2) |
+| 18 | No security-weakness wording; FU-D6e-a..d are neutral follow-ups | Pass |
+| 19 | `domains.md` line endings (LF on disk; stored as LF like its siblings) | Pass (note) |
+
+**Findings.**
+- **Medium 1:** the first 2026-11-03 Change History row implied current configuration (same as SA code review fix 1). Fixed by the main session.
+- **Medium 2:** the SA short pass and the SA code review quoted the removed phrases, so the statement stayed in tracked text. Fixed by the main session: both now describe the class without quoting.
+- **Low 1:** SA code review fixes 2 and 3 were unapplied when QA read the file. Fixed by the main session.
+- **Low 2:** two §5 gotchas (the zone move and an unowned domain still named) are vendor or checklist facts rather than repo-file facts; both are marked as vendor facts. Accepted as is.
+- **Low 3:** `origin/main` moved past the base; sync before the PR. Not a defect in the slice.
+
+**Verdict:** FAIL on the read-through (check 17) as first run; PASS after the main session applied Medium 1–2 and Low 1. Re-run of check 12 and the read-through: see the Change History row for 2026-11-03 "DO-6e SA code review + QA".
+
+---
+
+## SA Review — DO-6f (short pass)
+
+**Reviewed by SA — 2026-11-03**
+**Verdict: APPROVED WITH CHANGES.** The scope, the four-service split, the `QK` prefix, the boundary (callback address is `domains.md`'s, our own shared secrets out, FX as "not in use") and the public-repo criteria are right. QK-6, QK-7, QK-9 to QK-12 hold as written, with small precisions below. Four things would have made the skill wrong:
+
+- **QK-2 is confirmed: the QStash publisher is not reached.** The file must not teach probes, drift reads or quoted strings for a branch that never runs. The spec's own rule ("no quoted string comes from code that has no live caller") already forbids every run-agent queue string it quotes.
+- **A missing signing key fails the build, not the route.** The SDK wrapper throws when it is created, and `next build` evaluates route modules while collecting page data (`.github/workflows/build.yml` says exactly this, and sets placeholder signing keys for that reason). So a deployment with a missing key never becomes Ready. P-QK-2's "a 500 means a signing key is missing" can never be observed.
+- **P-QK-3 is safe only with a zero-byte body.** An empty body makes the handler's JSON parse throw before anything is written. A body that parses as JSON (even `{}`) goes into the job processor, which writes. The spec says "empty body", but it does not forbid the alternatives or explain why.
+- **P-QK-5 reads the response as evidence, and the response is not evidence.** The image-path error "OCR extraction failed …" is caught inside `extract()`, logged as "DeterministicExtractor: Extraction failed", and returned as a failure result. The executor then fills defaults. Also, `use_ai: true` switches OCR off, and that error is not a credential fault.
+
+None of this needs a decision from the user. Required changes 1–13 below fix it. FU-D6f-a stays a decision for TL and the user, as the spec proposes.
+
+I reviewed this in the DO-6f worktree at `4c389406` (= `origin/main`). I reviewed it against §D6f, SA Review — DO-6 changes 1–7, the DO-6c to DO-6e short passes, `third-party-ops` `SKILL.md` and `domains.md`, and the installed `@upstash/qstash` **2.8.4** (read only, from the shared `node_modules`). No platform call, no SQL, no vendor call and no network call was made, and no `.env*` file was opened. Local reads and `git grep` at `origin/main` only.
+
+### Code claims (QS / TX / PX / FX table, QK-1 to QK-12)
+
+| # | Result | Correction for `queues-and-keys.md` |
+|---|---|---|
+| Names and catalogue | **Verified.** All eight are optional everywhere: `secret()` and `config()` default to `OPTIONAL`, and the two signing keys carry `consumedBy: sdk`. `@aws-sdk/client-textract` is the only `@aws-sdk/*` dependency. | — |
+| Readers, TX | **Verified, and the "Dev confirms" point is settled.** `lib/pilot/StepExecutor.ts` reaches the extractor through `executeDeterministicExtraction` (step type `deterministic_extraction`). It is a second live entry point. | Change 11 |
+| QK-1 | **Code is verified, but it is in the unreached branch** (QK-2). Its warn string cannot be quoted in the file. | Change 1 |
+| QK-2 | **Confirmed.** `shouldExecute` starts true. The pilot path either sets `executionResult` (typed `Promise<WorkflowExecutionResult>`), returns 500, or falls through to AgentKit on "disabled". AgentKit either sets `executionResult` (typed `Promise<AgentKitExecutionResult>`) or returns 500. The `if (executionResult)` block returns in every branch: the normal return, the logging-failure return, or a rethrow. So `if (use_queue)` is reached only if an executor resolves to a falsy value, which neither one's type allows. `addManualExecution` has one caller, inside that branch. `addScheduledExecution` is called only by `agentQueue.add` in the same module, and `agentQueue` has no importer. `cancelJobsForAgent` has no caller. The receiver imports only a type from the module. The scheduler's header says it no longer dispatches through QStash. | Change 1 (Q-D6f-1) |
+| QK-3 | **Corrected.** In 2.8.4, `verifySignatureAppRouter` throws "currentSigningKey is required, …" or "nextSigningKey is required, …" **when the wrapper is created**. That happens at module evaluation, because `POST` is built at module scope. `next build` evaluates route modules while collecting page data, so a missing key fails the **build**. Once loaded, the wrapper answers a request with no signature header with 403 "`Upstash-Signature` header is missing", and does so before it reads the body. A signature that does not verify gets 403 "invalid signature". Both 403 strings are present in the ESM and CJS builds. | Changes 2, 3, 4 |
+| QK-4 | **Verified.** The callback address is `platformOrigin()` plus the receiver path, and on a Preview it is the deployment's host (`domains.md` AD-2). The schedule link is the `agents.qstash_schedule_id` column. **Add:** nothing at `origin/main` creates or deletes a schedule (no live caller of `addScheduledExecution` or `cancelJobsForAgent`). Any schedule found in the console is therefore a leftover, and it still delivers to the receiver. | Change 6 |
+| QK-5 | **The text is verified, but it is in the unreached path.** **SDK point settled for 2.8.4:** the client reads `QSTASH_URL` from the environment as its base address (the app never passes it), plus `UPSTASH_DISABLE_TELEMETRY`. Keep "confirm for the installed version at use time". | Changes 1, 10 |
+| QK-6 | **Verified:** 9 and 16 lines with `console.*`. `run-agent`, `TextractClient`, `DeterministicExtractor`, `StockImageService`, `CurrencyService` and the extractor executor have 0. | — |
+| QK-7 | **Verified.** The constructor requires all three names, so the region fallback inside `analyzeDocument` is unreachable. | — |
+| QK-8 | **Verified as a catalogue fact.** Also unsettled: whether a **project-set** `AWS_*` value reaches the function, or a runtime value shadows it, is a vendor fact. So "set by the project" is not proof either. | Change 8 |
+| QK-9 | **Verified, all strings verbatim with their modules**: "Textract analysis failed" and "Textract analysis complete" (`TextractClient`); "DeterministicExtractor: Textract fallback failed, attempting LLM with PDF text only" (`DeterministicExtractor`); the thrown "OCR extraction failed - check AWS Textract configuration". **Precision:** that throw is caught in `extract()`, logged as "DeterministicExtractor: Extraction failed" (`DeterministicExtractor`, `error`, message in `err`), and returned as a failure result. It never surfaces as a response error. With `use_ai: true` the executor sets `ocrFallback: false`, and an image throws "Image extraction requires OCR - enable ocr_fallback" instead. | Change 7 |
+| QK-10 | **Verified.** Credentials are passed explicitly, and only `AnalyzeDocumentCommand` with `FORMS` and `TABLES` is used. | — |
+| QK-11 | **Verified, all three strings verbatim** (service `StockImageService`; debug, warn with `status`, info). **Precision:** a photograph already in the business's media library is reused through `findBySourceRef` without an adopt line, and the gallery search's refusal (`findPhotos`) logs nothing. | Change 9 |
+| QK-12 | **Verified.** `updateRatesFromApi` has no caller, the header says "UNWIRED" and "must NOT be wired again", and `CurrencySelector.tsx` is `'use client'` and imports the service. | — |
+
+### Rulings on Q-D6f-1 to Q-D6f-8
+
+- **Q-D6f-1: the publisher is not reached. Ship the QStash coverage now, narrowed to the receiver, the signing keys, and the schedules and dead-letter queue.** Do not wait for FU-D6f-a. The receiver is deployed, it answers the public internet, its keys are a build dependency of every deployment (change 2), and any leftover schedule still delivers to it. In the file:
+  - Split QS into **QS-R** (receiver: the two signing keys, the schedules, the dead-letter queue), covered in full, and **QS-P** (publisher: token, URL, callback address).
+  - QS-P is one row: "not in use: the publisher is not reached by a live path at `origin/main` (QK-2)". It has no probe, no quoted string and no environment rule beyond "whether to keep these is FU-D6f-a's decision". The account rule (token, URL and keys from one account) stays in (1), because it decides whether a future publisher's messages verify.
+  - P-QK-4 is deleted. T-QK-5 becomes a Low code check in the T-QK-11 form (change 1).
+  - The callback address stays a pointer to `domains.md`, for the schedules only.
+  - The main session corrects its Q-D6-2 record (change 12).
+- **Q-D6f-2: agreed.** `queues-and-keys.md`, prefix `QK`, service tags QS-R, QS-P, TX, PX and FX. Index label as in D6f-2.
+- **Q-D6f-3: allowed, optional, user-run, and only when there is something to check.** Run it after a roll or a key change, or while a schedule is recorded. Otherwise "not probed (nothing signs to this receiver)". It needs a **zero-byte** body (change 5).
+- **Q-D6f-4: required, and it surfaces at build.** The file says "both signing keys are required on every Vercel target while the receiver route exists. Without either one, the build fails (QK-3)". (change 3). The catalogue is not edited (FU-D6f-e). P-QK-2 still runs, to prove the 403 path on a Ready deployment.
+- **Q-D6f-5: agreed as suggested.** One "not in use" row, no probe, T-QK-11 at Low, and FU-D6f-b removes the fetchers and both catalogue entries together.
+- **Q-D6f-6: yes.** One phrase in `domains.md` §7 step 5, as D6f-3 words it. This pass is the ruling. Nothing else in `domains.md` changes.
+- **Q-D6f-7: allowed, and the surface is confirmed.**
+  - `document-extractor` is `isSystem` with `auth_type: platform_key`, so the access resolver gives it a virtual connection, and no connection is needed.
+  - The plugin tester runs it through `POST /api/plugins/execute`, which writes no row for a run by the signed-in user. Only an admin act-as run is audited.
+  - Up to two billed calls, a single-page image, `use_ai` left unset, and the evidence from logs only (change 7).
+  - Whether the tester page is served on the target deployment is found at use time. Otherwise "not probed (no surface)".
+- **Q-D6f-8: agreed. The probe is a traffic read, and one generation is optional and user-approved,** with its LLM spend and its media writes declared. Add the "not conclusive" state (change 9).
+
+### Probe check (can fail, no money, durable writes declared, precondition becomes "not probed")
+
+| ID | Can fail | Money | Durable writes | Precondition → not probed | Ruling |
+|---|---|---|---|---|---|
+| P-QK-1 | Yes, for presence; never for TX | None | None | Admin session | OK |
+| P-QK-2 | Yes | None | None: the SDK refuses the request before the handler reads the body | Declared | Change 4 (fail wording) |
+| P-QK-3 | Yes | One or more billed messages | **None with a zero-byte body.** A JSON body is processed and writes | **Missing:** "nothing signs to this receiver" | Change 5 |
+| P-QK-4 | Not in a live path | — | — | — | Deleted (change 1) |
+| P-QK-5 | Yes, once the evidence is fixed | ≤ 2 billed calls (declared) | None (self-run) | Declared, plus no surface | Change 7 |
+| P-QK-6 | Yes | None | None | Recorded principal | OK |
+| P-QK-7 | Yes | Optional trigger: LLM spend and credits (declared) | Optional trigger: page content, one photograph and its media row (declared) | Declared | Change 9 |
+| P-QK-8 | Yes | As the probes it uses | As the probes it uses | As the probes it uses | Drop TX and PX double-run wording only if the vendor offers no overlap; otherwise OK |
+
+### Public-repo check
+
+- **No identifier, host, URL, region value, key prefix or current-configuration statement** appears in the public part. "Recorded intent" and "as recorded" are rules, not states.
+- **One rule for the receiver keys** everywhere: "required on every Vercel target while the receiver route exists" (change 3).
+- **The acceptance grep** also adds the quoted queue strings from `run-agent` (change 1).
+
+### New pattern and CI time (CLAUDE.md rule 7)
+
+- **No new pattern:** one reference file, one index row with its triggers, and one ruled phrase in `domains.md`, in the DO-6b to DO-6e shape.
+- **No added CI time:** no job, workflow or test.
+
+### Required changes
+
+1. **[Q-D6f-1: QK-1, QK-2, QK-5, parts (1), (4), (5), (6), (7)] The publisher is not reached.**
+   - **QS-P:** one "not in use" row, as ruled.
+   - **Quoted strings:** remove every quoted string from the queue branch and from `qstashQueue.ts` ("QStash queue unavailable …", "Manual execution queued", "Failed to queue agent job", "Failed to queue agent execution", "QSTASH_TOKEN environment variable is not set").
+   - **P-QK-4:** delete it.
+   - **T-QK-5:** becomes Low, "Code at `origin/main`", DO, repo read. Check that the `run-agent` queue branch still follows the unified path's returns, and that `addManualExecution`, `addScheduledExecution` and `cancelJobsForAgent` still have no live caller (reader search). A live caller means this file needs publisher probe rows before merge.
+   - **Gotchas:** the "fallback hides missing names", "token reset cut-over" and "queued run stays pending" gotchas collapse into one: "the publisher is not reached (QK-2); a `use_queue: true` request runs inline".
+   - **(7):** the token-reset row becomes "no live path reads it; production tier only because the account is shared; no probe".
+   - **D6f.4:** the grep for the removed strings over the new file returns 0.
+
+   Pass: no queue-branch string in the file, and no probe or drift row on the publisher apart from the T-QK-5 code check. — Priority: High
+2. **[QK-3, Q-D6f-4, (1), T-QK-2, gotcha 3, (7)] A missing key fails the build.**
+   - **QK-3 and gotcha:** "without either key, `next build` fails while collecting page data. The SDK's error names the missing key (SDK text, confirm at use time)."
+   - **(7):** a new row, "Removing a signing key from a target: only after FU-D6f-a removes the receiver route. Before that, the target's next deploy fails". This is production tier on production.
+   - **T-QK-2:** High: both keys present on every Vercel target, and P-QK-2 passing there.
+
+   Pass: no sentence says the route returns 500 or "goes down" for a missing key. — Priority: High
+3. **[D6f.1 readers, QK-3, (1), T-QK-2, Q-D6f-4 text] One wording for the receiver keys.** It is "required on every Vercel target while the receiver route exists". Pass: the readers row says only "wrapped in `verifySignatureAppRouter`".
+4. **[P-QK-2] Fail wording.** Replace "A 500 means the route did not load, for example a signing key is missing (QK-3)" with "any other answer is a fail: record the status and stop". A protection 401 stays "not probed (protected host)". Pass: present. — Priority: Medium
+5. **[P-QK-3, Q-D6f-3] Make it safe as well as specified.**
+   - **Precondition:** P-QK-2 passed; a roll or key change was just made, or a schedule is recorded. Otherwise "not probed (nothing signs to this receiver)".
+   - **Body:** zero bytes. Never `{}` or any JSON: "a body that parses as JSON is processed as a job".
+   - **Pass:** the delivery status is not 403. The expected status is 500, because the handler cannot parse an empty body.
+   - **Fail:** 403 "invalid signature" (SDK text). A 2xx is also a fail: stop, and report to the main session.
+   - **Side effects:** retries set to 0 where offered. Otherwise up to the vendor's default retry count plus one deliveries, each billed, each one unstructured receiver error line (QK-6), and a dead-letter entry that the user deletes. No row is written, no agent runs.
+
+   Pass: all present. — Priority: High
+6. **[QK-4, T-QK-4, (1) schedules row] Leftover schedules.**
+   - **Code fact:** nothing at `origin/main` creates or deletes a schedule (QK-2 reader result).
+   - **Expected:** none unless recorded.
+   - **Class:** T-QK-4 becomes **High** for any unrecorded schedule, because it delivers to the receiver, which runs that agent.
+   - **Second live read in T-QK-4:** the main session, read-only under `supabase-ops`, counts `agents` rows with a non-null `qstash_schedule_id`. Count only, no identifiers. Expected 0 unless recorded.
+
+   Pass: present. — Priority: Medium
+7. **[P-QK-5, Q-D6f-7] The evidence comes from logs only.**
+   - **Parameters:** one field, an explicit image `mime_type`, `use_ai` left unset.
+   - **Pass:** "Textract analysis complete" ≥ 1, "Textract analysis failed" = 0 (`TextractClient`), and no "DeterministicExtractor: Extraction failed" after the probe time.
+   - **Fail:** "Textract analysis failed" ≥ 1; or "DeterministicExtractor: Extraction failed" whose error carries "OCR extraction failed - check AWS Textract configuration", while "Textract analysis complete" = 0.
+   - **Not conclusive:**
+     - "Textract analysis complete" ≥ 1 but the OCR error appears: "not conclusive (no readable text)";
+     - "Image extraction requires OCR - enable ocr_fallback": "not conclusive (OCR off)";
+     - no surface: "not probed (no surface)".
+   - **The tester's response is not evidence:** a failure result is returned, and the executor fills defaults.
+   - **Side effects:** none written for a run by the signed-in user.
+
+   Pass: every quoted string verbatim with its module. — Priority: High
+8. **[QK-8, T-QK-6] "Set by the project" is not proof either.** Add: whether a project-set `AWS_*` value reaches the function, or a runtime value shadows it, is a vendor fact, confirmed at use time. T-QK-6's pass is names only. A correct credential is shown only by P-QK-5 on that target. If the vendor reserves these names, the remedy is a code rename. Add it to the requirement as a neutral FU, never in the skill. Pass: present. — Priority: Medium
+9. **[P-QK-7, T-QK-10, Q-D6f-8] The not-conclusive state.**
+   - 0 adopt lines and 0 refused lines is "not conclusive (no new search, or gallery only)". Reused photographs log no adopt line, and a refused gallery search logs nothing.
+   - The optional trigger is a section that is not yet illustrated, for a business the user owns.
+
+   Pass: present. — Priority: Medium
+10. **[QK-5, T-QK-3] SDK-implicit names.**
+    - **QK-5:** "In the installed version, the client reads `QSTASH_URL` from the environment itself (SDK fact, confirm at use time)".
+    - **T-QK-3:** derives the SDK-implicit names from the installed version at use time and lists none in the file.
+    - **FU-D6f-e:** also gives `QSTASH_URL` `consumedBy: sdk`.
+
+    Pass: present. — Priority: Low
+11. **[D6f.1 TX readers] Name both entry points:** `extract_structured_data` in the extractor executor, and `executeDeterministicExtraction` in `StepExecutor.ts`. Remove "Dev confirms the call site". Pass: present. — Priority: Low
+12. **[Requirement §D6.6, Q-D6-2 record] The main session corrects the user's record,** confirming the wording with the user first. Suggested: "The main session confirmed that the QStash receiver is still deployed, so it stays in DO-6f. DO-6f found that the publisher is not reached (QK-2)." The DO-6f "Services live" line records the same, by role, with no target named. Pass: present before commit. — Priority: Medium
+13. **[FU-D6f-a] Order and content, stated neutrally.**
+    - **Remove option, in this order:** confirm in the console that no schedules exist, deleting any after recording them; remove the publisher and the receiver route; then remove the four names from every target. The keys go last, because the build needs them while the route exists. The schedule column goes in its own migration.
+    - **Reachable option:** must note that the receiver runs a different executor than a direct run. The scheduler's header already says so, so this is public.
+    - **SA review required** either way.
+
+    Pass: present in the requirement, absent from the skill. — Priority: Medium
+
+### Checked and honoured
+
+- **DO-6 changes 1–7:**
+  - after changes 1, 5 and 7, every probe has a precondition or reads "not probed";
+  - Local is guidance only;
+  - expected names come from the catalogue groups, and callers come from the reader search;
+  - the T-QK rows live in this file.
+- **DO-6c to DO-6e lessons:**
+  - each probe has an exact pass, an exact fail and declared side effects;
+  - none passes on an unset value (P-QK-1 is presence only);
+  - every quoted tracked string is verbatim with its module;
+  - after change 1, none comes from code with no live caller.
+- **Probe safety:**
+  - no probe enqueues an agent run or moves money beyond declared vendor usage;
+  - none needs DO to hold a key, and none prints a value;
+  - P-QK-3 writes nothing once its body is zero bytes.
+- **Tiers:** every production or shared-account change is production tier and executed by the user. A non-production-only account change is reversible.
+
+### Dev may build when
+
+- [ ] Changes 1–11 and 13 are applied to the spec text (BA or the main session).
+- [ ] The main session has done the Q-D6-2 live check by role and recorded it in the DO-6b form. Change 12 is applied, or confirmed with the user, before commit.
+- [ ] D6f-2 (SKILL.md: the §5 row and the triggers only) and D6f-3 (the one `domains.md` phrase) are as ruled. No other file in the third-party-ops skill is edited.
+- [ ] `wc -l` ≤ 180, and the public greps in D6f.4 (plus changes 1 and 3) return 0.
+
+### Approval
+
+[x] Spec approved with changes 1–13. No user decision is needed for the slice. FU-D6f-a goes to TL as a decision for the user.
+
+---
+
+## DO-6f implementation notes
+
+**By Dev — 2026-11-03.** Worktree `.claude/worktrees/do6f-queues`, branch `feature/devops-third-party-queues`, base `4c389406` (= `origin/main`). Nothing committed or stashed. No `.env*` file opened, no network or platform call.
+
+### What was built
+
+| File | Change | Lines |
+|---|---|---|
+| `.claude/skills/third-party-ops/queues-and-keys.md` | New. Intro, live-check line, QS-R / QS-P / TX / PX / FX table, boundary; §1–§6 of the template; §7 tiers and order. LF line endings | 128 |
+| `.claude/skills/third-party-ops/SKILL.md` | D6f-2 only: the §5 row now reads "Queues, AWS and small API-key providers: QStash, AWS Textract, Pexels, exchange-rate keys" → `[queues-and-keys.md](queues-and-keys.md)`; the description gains the D6f-2 triggers, inserted before "a vendor dashboard" | 86 (unchanged count; 2 lines changed) |
+| `.claude/skills/third-party-ops/domains.md` | D6f-3 only: §7 step 5 "queue callback targets (DO-6f, "not audited" until covered)" → "queue schedules and callback targets (`queues-and-keys.md`)" | 137 (unchanged count; 1 line changed) |
+
+`git diff --stat`: SKILL.md 2 lines, domains.md 1 line; the two edited files keep their CRLF working-tree endings (index is LF, `core.autocrlf=true`), so the diff is exactly the edited lines.
+
+**Verbatim checks** (`git grep -c -F` at `HEAD`, each ≥ 1 in its cited file): "Textract analysis failed", "Textract analysis complete" (`TextractClient.ts`, module `TextractClient`); "DeterministicExtractor: Textract fallback failed, attempting LLM with PDF text only", "DeterministicExtractor: Extraction failed", "OCR extraction failed - check AWS Textract configuration", "Image extraction requires OCR - enable ocr_fallback" (`DeterministicExtractor.ts`, module `DeterministicExtractor`); "No PEXELS_API_KEY; section will have no image" (debug), "Stock library refused the search" (warn, `status`), "Adopted a photograph for a section" (info) (`StockImageService.ts`, service `StockImageService`); "UNWIRED" (`CurrencyService.ts`). The header's "must NOT be wired again" spans two source lines, so the file paraphrases it ("forbids wiring them again") rather than quoting it. SDK strings ("`Upstash-Signature` header is missing", "invalid signature") are marked "SDK text, confirm at use time". Every path named in the file exists at the base, including `/test-plugins-v2` and `app/api/plugins/execute/route.ts`.
+
+### SA changes 1–13 → where they land
+
+| SA item | Where in `queues-and-keys.md` (or elsewhere) |
+|---|---|
+| 1. Publisher not reached | Table row QS-P "Not in use … (QK-2). No probe"; §1 row "QS-P token and URL"; §2 QK-1 (described, no string) and QK-2; §4 closing line "P-QK-4 is not used … QS-P and FX: not probed (no live path)"; §5 first gotcha ("a `use_queue: true` request runs inline"); §6 T-QK-5 rewritten as the Low code check; §7 row "QStash token reset: no live path reads it; production tier only because the account is shared; no probe". The five queue strings: 0 hits (grep below). The old fallback, cut-over and pending gotchas are gone |
+| 2. Missing key fails the build | §2 QK-3 ("`next build` … the deployment never becomes Ready"); §1 row "QS-R signing keys … the build fails"; §5 gotcha 2; §6 T-QK-2 High; §7 row "Removing a signing key from a target"; production tier bullet "removing any of these names from production" covers it on production. No 500 / "goes down" wording for a missing key |
+| 3. One wording for the receiver keys | Readers row says only "wrapped in `verifySignatureAppRouter`"; §1 says "every Vercel target while the receiver route exists". |
+| 4. P-QK-2 fail wording | §4 P-QK-2 Fails when: "Any other answer: record the status and stop"; protection 401 = "not probed (protected host)" |
+| 5. P-QK-3 safe and specified | §4 P-QK-3: precondition (P-QK-2 passed; roll/key change or recorded schedule; else "not probed (nothing signs to this receiver)"); zero-byte body, "Never `{}` or any JSON: a body that parses as JSON is processed as a job"; pass 500 plus the receiver's "Error processing job" line; fail a 500 with no such line and a `SignatureError` in the runtime logs; any other status a stop (SA Code Review — DO-6f fix 1); side effects: retries 0 or default retries plus one, each billed, each an unstructured receiver line (QK-6), dead-letter entry deleted by the user, no row, no run |
+| 6. Leftover schedules | §2 QK-4 (nothing creates or deletes; any schedule is a leftover and still delivers); §1 row "QS-R schedules"; §5 gotcha "Leftover schedules still deliver"; §6 T-QK-4 High, unrecorded schedule High, second read = main session read-only count of `agents` rows with non-null `qstash_schedule_id`, count only |
+| 7. P-QK-5 evidence from logs | §4 P-QK-5 parameters (one field, explicit image `mime_type`, `use_ai` unset), pass, fail as ruled; paragraph under the table: response not evidence, "not conclusive (no readable text)", "not conclusive (OCR off)"; precondition "not probed (no surface)"; side effects "nothing written for a self-run (never act-as)". Supporting fact in §2 QK-9 |
+| 8. Project-set is not proof | §2 QK-8 (shadowing is a vendor fact; only P-QK-5 shows a working credential); §5 gotcha "even 'set by the project' is not evidence"; §6 T-QK-6 "Names only". The rename remedy is FU-D6f-f in the requirement only, not in the skill |
+| 9. Pexels not-conclusive state | §4 P-QK-7 ("0 adopt and 0 refused: not conclusive (no new search, or gallery only)"; trigger = a section not yet illustrated, for a business the user owns); §6 T-QK-10; §2 QK-11 (reuse via `findBySourceRef` logs no adopt line; `findPhotos` refusal logs nothing) |
+| 10. SDK-implicit names | §2 QK-5 ("the client reads `QSTASH_URL` from the environment itself (SDK fact, confirm at use time)"); §6 T-QK-3 derives names at use time and lists none. FU-D6f-e (`consumedBy: sdk` for `QSTASH_URL`) is in the applied spec only |
+| 11. Both TX entry points | Service table row TX: `extract_structured_data` in the extractor executor and `executeDeterministicExtraction` in `StepExecutor.ts`; "Dev confirms" removed |
+| 12. Q-D6-2 record correction | Not in the skill. The applied spec's "Services live" line, dated 2026-11-03, and an italic correction on the Q-D6-2 row in §D6.6, both applied by the main session. |
+| 13. FU-D6f-a order and content | Applied spec, Follow-ups: remove option in the ruled order (schedules, then publisher and route, then names, keys last, column in its own migration), reachable option notes the different executor, SA review either way. Absent from the skill except as the pointer "FU-D6f-a's decision" |
+
+### Rulings Q-D6f-1 to Q-D6f-8 → where they land
+
+| Ruling | Where |
+|---|---|
+| Q-D6f-1 (publisher not reached; QS-R in full, QS-P one row) | As SA change 1 above; QS-R covered in §1, §3, §4 (P-QK-2, P-QK-3, P-QK-8), §5, §6 (T-QK-2/3/4), §7. The account rule kept in §1 "QStash account" |
+| Q-D6f-2 (name, prefix, tags) | File name `queues-and-keys.md`; IDs P-QK-n, T-QK-n, QK-n; tags QS-R, QS-P, TX, PX, FX in the service table; SKILL.md §5 label as D6f-2 |
+| Q-D6f-3 (P-QK-3 optional, user-run, only with something to check) | §4 P-QK-3 "Optional, user-approved, once", precondition as ruled |
+| Q-D6f-4 (required, surfaces at build) | §1 "Required on every Vercel target while the receiver route exists. Without either one, the build fails (QK-3)". P-QK-2 still runs |
+| Q-D6f-5 (FX not in use) | Service table FX row; §1 FX row; §4 "not probed (no live path)"; §5 last gotcha; §6 T-QK-11 Low; §7 "FX names removed … FU-D6f-b" |
+| Q-D6f-6 (domains.md pointer) | `domains.md` §7 step 5, the one phrase; the new file's §5 and §7 point back to it |
+| Q-D6f-7 (billed Textract probe, surface confirmed) | §4 P-QK-5: system plugin, no connection, `POST /api/plugins/execute`, self-run writes nothing, ≤ 2 billed calls, single-page image, `use_ai` unset, logs only, "not probed (no surface)" |
+| Q-D6f-8 (Pexels traffic read + optional generation) | §4 P-QK-7 and §6 T-QK-10, with LLM spend, credits and media writes declared |
+
+### Left out, and why
+
+- **P-QK-4** is not in the table (deleted by Q-D6f-1). The remaining probe IDs keep their numbers so the spec, the SA review and the file cite the same rows; one line in §4 says P-QK-4 is not used.
+- **QK-1 and QK-5 error/log strings** are not quoted (change 1): their code has no live caller. QK-1 is kept as one descriptive row so a reader knows why a `use_queue` request is not evidence.
+- **Follow-up content** (FU-D6f-a to FU-D6f-f) is in the applied spec only; the skill cites FU-D6f-a, -b and -c by ID as pointers, as the spec did.
+- **Length:** 128 lines, below the brief's ≈130–150 and the spec's 140–170 target, within the ≤ 180 cap. No probe or drift row was trimmed; the shortfall is prose (QS-P and FX are one row each).
+- **`docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`**: Dev did not edit it. The main session pasted the applied spec before `## Change History`, appended these notes and the SA review, and applied change 12 to §D6.6.
+
+### Checks run
+
+- Host, project-ID and team-ID grep over the three repo files: **0 hits**.
+- D6f.4 public grep over the new file (`vercel\.app`, `\.vercel\.`, `agents?pilot\.[a-z]`, `upstash\.io`, `amazonaws`, `pexels\.com`, `arn:`, `AKIA`, `us-[a-z]+-[0-9]`, `localhost:`, `https?://`, line references): **0 hits**.
+- The five removed queue strings over the new file: **0 hits**.
+- "500" in the new file: one hit, P-QK-3's ruled "expected 500: the handler cannot parse an empty body" (SA change 5); none for a missing key.
+
+---
+
+## SA Code Review — DO-6f
+
+**Code Review by SA — 2026-11-03**
+**Status:** 🔄 Fix Required (one High probe fix, one Medium wording fix, three Low text fixes; no re-review needed if applied as written). All five applied by the main session on 2026-11-03.
+
+Reviewed the uncommitted diff in the DO-6f worktree against base `4c389406`: the new `.claude/skills/third-party-ops/queues-and-keys.md` (128 lines), the `SKILL.md` diff (2 lines), the `domains.md` diff (1 line), and the requirement sections added (§0 DO-6 row, the §D6.6 Q-D6-2 correction, DO-6f Specification, two Change History rows, SA Review — DO-6f (short pass), DO-6f implementation notes). `origin/main` has moved past the base, but no file this slice cites changed. I used local reads, `git grep` at the base, and a read-only look at the installed `@upstash/qstash` 2.8.4. No platform, vendor or network call was made, and no `.env*` file was opened.
+
+### Results
+
+| # | Check | Result |
+|---|---|---|
+| 1 | SA short-pass changes 1–13 and rulings Q-D6f-1..8 | **All applied**, in the spec and in `queues-and-keys.md`. Changes 8 (FU-D6f-f) and 13 (FU-D6f-a) are in the requirement only. Change 12 is applied as an italic correction plus the services-live line. The user sees its wording at the diff step. One correction to the short pass itself: see fix 1 |
+| 2 | Code claims | **Verified at the base** with `git grep -cF` ≥ 1: all nine log and error strings with their modules; "UNWIRED"; both execution-path markers; `verifySignatureAppRouter`, `AWS_CAVEAT`, `executeDeterministicExtraction`, `extract_structured_data` (executor), `findBySourceRef`, `findPhotos`, `getBaseUrl`, `getQStashClient`, `tryTextract` and `handleImage`; 9 and 16 `console.*` calls; the scheduler's header; the build workflow's placeholder signing keys. Every path exists, including `app/test-plugins-v2` and `app/api/plugins/execute/route.ts`. **Two exceptions.** (a) The "invalid signature" 403 can never be returned in 2.8.4 (fix 1). (b) "The gallery path logs nothing" is too broad, because gallery adoptions log the adopt line (fix 3) |
+| 3 | Public repo | The skill file and `SKILL.md` are clean: no identifier, host, URL, account, region value or current-configuration statement. Some review and notes wording in the requirement needed tightening (fix 2) |
+| 4 | Probe safety | No probe runs an agent or prints a value, and none needs DO to hold a key. Money is declared vendor usage only. P-QK-3's zero-byte body writes nothing on either path, because the body is parsed before any write. **P-QK-3 cannot fail as written** (fix 1) |
+| 5 | Requirement edits | The spec sits before `## Change History`. The review and notes are at the end, with single `---` separators. `#do-6f-implementation-notes` resolves. The Q-D6-2 correction is accurate in substance, with one wording point (fix 5) |
+| 6 | Consistency | The `SKILL.md` §5 label and the triggers are exactly D6f-2. The `domains.md` phrase is exactly D6f-3. `domains.md` AD-2 and §2 (reader search), `vercel-ops` §3/§4, `supabase-ops` §2 and `env-drift-audit` §7 all exist and say what this file cites |
+
+### Code Review Comments
+
+1. **`queues-and-keys.md` QK-3, §1 and P-QK-3; the spec's QK-3, (1) and P-QK-3. P-QK-3 cannot fail.**
+   - **What the SDK does.** In 2.8.4, `Receiver.verify` returns `true` or throws `SignatureError`; it never returns `false`. `verifySignatureAppRouter` does not catch that throw. So a signature that does not verify gives a **500** before the handler runs, and the 403 "invalid signature" branch is unreachable.
+   - **Why the probe cannot fail.** With matching keys, the handler's `req.json()` fails on the empty body and the handler answers 500. So "not 403 (expected 500)" passes either way, and the short pass's "Can fail: Yes" for P-QK-3 was wrong.
+   - **What tells them apart.** The handler's "Error processing job" line (`console.error`, `app/api/cron/process-queue/route.ts`) is logged only when the handler ran. Exact text below. — Priority: High
+2. **`DEVOPS_AGENT_REQUIREMENT.md`, review and notes wording.** A few lines in the short-pass review and the implementation notes described the change 3 rewording in more detail than a public file needs. Reworded or removed. — Priority: Medium
+3. **`queues-and-keys.md` QK-11 and gotcha; spec gotcha. Gallery wording.** `imagesForSection` adopts through `adopt()`, which logs "Adopted a photograph for a section". Only the gallery's *refused search* (`findPhotos`) is silent. — Priority: Low
+4. **`queues-and-keys.md` §5, roll gotcha.** "until then a pass is 'not conclusive (overlap)'" reads as circular ("until P-QK-3 passes, a pass is not conclusive"). The ruled meaning is "before the redeploy". — Priority: Low
+5. **`DEVOPS_AGENT_REQUIREMENT.md` §D6.6, Q-D6-2 correction.** "That check was wrong" overstates it: the receiver is in use, and only the publisher is not. "Incomplete" is accurate. The dead-letter queue is also in scope. — Priority: Low
+
+### Optimisation Suggestions
+
+- T-QK-4's SQL count could add one state: if the read errors on the column, it is "not read (no column)", reported to the main session. The column appears in the data-export test's `agents` column list but in no tracked migration, so `business-os-schema-check` should confirm it at first use. This does not block.
+
+### Code Approved for QA: Yes, with fixes 1–5
+
+Fixes 1–5 are text only and need no SA re-review if applied verbatim. QA confirms them. After fix 1, QA re-runs `git grep -cF "Error processing job"` on the receiver route (expect 1) and checks that `grep -F "invalid signature"` returns 0 hits in the new file. After fix 2, QA re-runs the public read-through over the added requirement lines.
+
+---
+
+## QA Report — DO-6f
+
+**QA — 2026-11-03.** Test mode: full. Strategy: static checks (`test -e`, `git grep -F`, ID, anchor, line-ending and diff-placement checks) on a docs-and-skill slice. There is no app code to run. Base `4c389406` (= `origin/main`). No repo file edited, nothing stashed, no `.env*` opened, no network call.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `queues-and-keys.md` has the sibling intro sentence, the live-check line, the QS-R / QS-P / TX / PX / FX table, the boundary, §1–§6 and §7 tiers and order. 128 lines (cap 180; spec target about 130) | Pass |
+| 2 | Every path the new file names exists (15 repo paths: `app/api/cron/process-queue/route.ts`, `app/api/run-agent/route.ts`, `app/api/run-scheduled-agents/route.ts`, `lib/queues/qstashQueue.ts`, `lib/extraction/TextractClient.ts`, `lib/extraction/DeterministicExtractor.ts`, `lib/server/document-extractor-plugin-executor.ts`, `lib/pilot/StepExecutor.ts`, `lib/services/StockImageService.ts`, `lib/services/CurrencyService.ts`, `lib/admin/exchangeRates/ecbFeed.ts`, `components/settings/CurrencySelector.tsx`, `.github/workflows/build.yml`, `package.json`, `lib/admin/environment/catalogue.ts`; the pages `/admin/environment` and `/test-plugins-v2`; `app/api/plugins/execute/route.ts`; the sibling skills `vercel-ops`, `supabase-ops`, `env-drift-audit`, `env-change-protocol`) | Pass |
+| 3 | Every quoted string is verbatim in the named source (`git grep -c -F` = 1 in each): the 6 Textract/extractor strings, the 3 Pexels strings, "UNWIRED", "QUEUE-BASED EXECUTION PATH", "UNIFIED EXECUTION PATH", and the catalogue's "unset uses a default region" quoted in the spec. Modules match: `TextractClient` (module), `DeterministicExtractor` (module), `StockImageService` (service). Levels match (debug, warn with `status`, info, error with `err`) | Pass |
+| 4 | Every named symbol exists in the cited file (`tryTextract`, `handleImage`, `extract`, `isAvailable`, `analyzeDocument`, `imageForSection`, `imagesForSection`, `findBySourceRef`, `findPhotos`, `getBaseUrl`, `getQStashClient`, `addManualExecution`, `addScheduledExecution`, `cancelJobsForAgent`, `platformOrigin`, `updateRatesFromApi`, `extract_structured_data`, `executeDeterministicExtraction`, `AWS_CAVEAT`, `verifySignatureAppRouter`). The signing-key placeholders are in `build.yml`; `@aws-sdk/client-textract` is the only `@aws-sdk` dependency; 9 and 16 `console.*` calls confirmed | Pass |
+| 5 | The 5 removed queue strings over the new file (`grep -nF`): 0. "500" appears once, P-QK-3's ruled "expected 500"; no "goes down" | Pass |
+| 6 | IDs unique and contiguous: QK-1..12, T-QK-1..11, P-QK-1..3 and 5..8 (P-QK-4 retired by Q-D6f-1 and declared in §4). No duplicate definitions; every cited ID is defined; FU pointers a, b, c only | Pass |
+| 7 | Cross-references resolve: `vercel-ops` §3, §4; `supabase-ops` §2; `env-drift-audit` §7; `domains.md` §2 (reader search), §7 step 5 and AD-2; `SKILL.md` §5 | Pass |
+| 8 | Markdown links: the SKILL.md row link to `queues-and-keys.md` resolves; the new file has no links. Every added anchor in the requirement resolves (9 distinct, including `#do-6f-implementation-notes`). The one unresolved `](#…)` in the file is pre-existing prose in QA Report — DO-6d check 18 | Pass |
+| 9 | SKILL.md diff: the §5 row ("…: QStash, AWS Textract, Pexels, exchange-rate keys" → `[queues-and-keys.md](queues-and-keys.md)`) and the D6f-2 triggers verbatim, before "a vendor dashboard". Nothing else (numstat 2/2) | Pass |
+| 10 | `domains.md` diff is exactly one phrase (word diff: `+schedules and+`, `-(DO-6f, "not audited" until covered)-` → `+(\`queues-and-keys.md\`)+`), numstat 1/1 | Pass |
+| 11 | Requirement working tree: CR = LF = 5256, ends with CRLF. Two `---`/blank/`---` pairs (lines 4374, 4743) are pre-existing on `origin/main` (4176, 4545, offset +198); none in added text. numstat identical with `--ignore-cr-at-eol` (445/2). The 2 removed lines are the §0 DO-6 row and the Q-D6-2 row, both replaced | Pass |
+| 12 | Line endings, other files: SKILL.md and `domains.md` stay CRLF (86/86, 137/137). The new file is LF on disk, like DO-6e's at the same stage; git normalises it on add (`i/lf w/crlf` like its siblings) | Pass (note) |
+| 13 | Restatement grep from §D6.4 over the new file | Pass (0 hits) |
+| 14 | D6f.4 public grep over the new file (`vercel\.app`, `\.vercel\.`, `agents?pilot\.[a-z]`, `upstash\.io`, `amazonaws`, `pexels\.com`, `arn:`, `AKIA`, `us-[a-z]+-[0-9]`, `localhost:`, `https?://`, line references) | Pass (0 hits) |
+| 15 | Finding-11 regex over all added lines | 1 hit, pattern text inside a quoted grep command in the implementation notes, not an ID (Low 3, fixed) |
+| 16 | Broad grep over added lines: hosts, URLs, project and team IDs, key prefixes, account IDs, ARNs, region values, ports, personal paths | Pass: only the pattern lists in D6f.4 |
+| 17 | Read-through of the new file and spec for current-configuration wording | Pass. "At `origin/main` when this file was written … have a live path" is a code fact, not configuration. "This file states that shape, never whether it is in place" holds throughout. The Services-live line and the corrected Q-D6-2 row state code and deploy facts by role, with no target |
+| 18 | Read-through for any hint at an open weakness | **Fail (Medium 1)** on first run; pass after the fix |
+| 19 | D6f.4 criterion 1 (six parts, tags, paths, live check by role, QS-P and FX "not in use", ≤ 180) | Pass |
+| 20 | D6f.4 criterion 2 (probes: who, pass, fail, precondition, side effects; none enqueues a run, needs a key held by DO or prints a value; optional and user-approved; billed calls declared; no P-QK-4; zero-byte body; 2xx is a fail) | Partial: P-QK-7's optional trigger is marked optional but not user-approved (Low 1). The rest pass |
+| 21 | D6f.4 criterion 3 (the callback address is a pointer to `domains.md` AD-2) | Pass |
+| 22 | D6f.4 criterion 4 (verbatim strings with module; SDK strings marked; no queue-branch string) | Partial (Low 2); superseded by SA code review fix 1, which rewrote that cell with "confirm at use time" |
+| 23 | D6f.4 criterion 5 (no 500 or "goes down" for a missing key; readers row says only "wrapped in `verifySignatureAppRouter`") | Pass |
+| 24 | D6f.4 criterion 6 (public repo) | Pass with Low 3 explained |
+| 25 | D6f.4 criterion 7 (SKILL.md only D6f-2, `domains.md` only D6f-3, only the D6f.3 files touched) | Pass |
+
+### Findings
+
+**Medium 1: review and notes wording (check 18).** The skill file is clean. A few lines in the short-pass review and the implementation notes described the change 3 rewording in more detail than a public file needs, the same class as DO-6e Medium 2. The same lines as SA code review fix 2; fixed with that wording.
+
+**Low 1: P-QK-7's optional trigger is not marked user-approved** (D6f.4 criterion 2; the spec's P-QK-7 ended "User-approved, once"). Fix in `queues-and-keys.md`, P-QK-7 Probe column:
+`Optional trigger: the user illustrates one section not yet illustrated, for a business they own, through a generation surface found at use time` → `Optional, user-approved, once: the user illustrates one section not yet illustrated, for a business they own, through a generation surface found at use time`
+
+**Low 2: one SDK string lacked "confirm at use time"** (D6f.4 criterion 4). Superseded by SA code review fix 1, which rewrote the cell.
+
+**Low 3: one pattern-text hit** for the finding-11 regex: a quoted grep command in the implementation notes. Reworded to name the checks instead.
+
+**Low 4: one implementation note is inaccurate.** The spec's D6f-2 already lists "QStash or Upstash", so Upstash was not an extra. Fix in DO-6f implementation notes, What was built, SKILL.md row:
+`the description gains the D6f-2 triggers (plus "Upstash", as the brief asked), inserted before "a vendor dashboard"` → `the description gains the D6f-2 triggers, inserted before "a vendor dashboard"`
+
+**Notes, no action needed:**
+- The SKILL.md `description` grows from 1560 to 1816 characters. It was already past 1024 before this slice, and `github-ops` is too; earlier slices accepted it.
+- "UNWIRED" and the two run-agent block markers are quoted as location markers, not log strings. Their files have live callers, so the no-live-caller rule is not broken.
+- `origin/main` may move past `4c389406`. Sync before the PR.
+
+### Verdict
+
+**PASS WITH CHANGES.** All 7 D6f.4 criteria pass, two of them partially (Lows 1–2). Every path, string, symbol, ID, anchor, line-ending and diff-placement check passes. Medium 1 (check 18) must be fixed before commit. It is text only, in the requirement, with no change to the skill file. Lows 1 and 2 are one phrase each in `queues-and-keys.md`. Lows 3 and 4 are optional. After the fixes, re-run the read-through and the finding-11 grep.
+
+**After the fixes (main session, 2026-11-03):** Medium 1 and Lows 1, 3 and 4 applied; Low 2 superseded by SA fix 1. Re-run: `grep -F "invalid signature"` over `queues-and-keys.md` returns 0; `git grep -cF "Error processing job"` on the receiver route returns 1; the finding-11 regex over the added lines hits only the D6f.4 pattern lists; the read-through for current-configuration wording and for hints is clean. **Verdict after fixes: PASS.**
+
+---
+
+## SA Review — DO-6g (short pass)
+
+**Reviewed by SA — 2026-11-04**
+**Verdict: APPROVED WITH CHANGES.** The scope, the five tags, the `MS` prefix, the boundary with DO-6h and `domains.md`, the "not in use" treatment of WA-O, SL and the Meta Ads half, and the public-repo criteria are right. Every quoted string is verbatim in its cited file with the stated module. MS-1 to MS-6, MS-8 and MS-9 hold as written, with the small precisions below. Four things would have made the skill wrong:
+
+- **T-MS-4 reads 0 whether the config is right or there was no load.** This is the P-QK-3 trap again. The spec says "no definition load in window: not read", but it gives DO no line that shows a load happened. A clean load logs nothing at `warn`. The positive marker exists: "Plugin manager initialized" (module `PluginManager`, `info`, with `loadedPluginKeys`), logged once per instance at the end of `initializeWithCorePlugins`. T-MS-10 has the same gap for its "no traffic" state.
+- **The SL-V1 reader claim is wrong in two ways.** `lib/plugins/pluginRegistry.ts` is imported by more than the two V1 OAuth routes: `app/api/plugin-connections/disconnect/route.ts`, `app/api/generate-agent/route.ts` and `lib/intelligence/execution/PluginCoordinator.ts` import it too. Also, `slackPluginStrategy.ts` reads `SLACK_CLIENT_SECRET` (and `NEXT_PUBLIC_APP_URL`) at module scope, not only the V1 names. So for SL, "not in use" holds only for the active plugin profile. The deprecated V1 code, which is deployed, reads the Slack secret name too.
+- **P-MS-3 and P-MS-4 run "on that deployment", but the callback does not come back there.** The redirect is the stable A1 address (`domains.md` AD-3). A connect started from a per-deployment host finishes on the deployment that serves A1, and that page posts its result only to the A1 origin (`google.md` §5, which the spec already cites as a gotcha). The probe has to start from the environment's stable address, and DO reads the callback lines on the deployment that serves it.
+- **T-MS-7 targets Meta Ads,** but the spec's own acceptance criterion says no drift row targets it apart from T-MS-11 and T-MS-12.
+
+None of this needs a decision from the user. Required changes 1–12 below fix it. FU-D6g-a stays a decision for TL and the user, as the spec proposes.
+
+I reviewed this in the DO-6g worktree at `0eb3949e` (= `origin/main`), against §D6g, SA Review — DO-6 changes 1–7, the DO-6f short pass, and the `third-party-ops` files `SKILL.md`, `domains.md`, `google.md` and `queues-and-keys.md`. I made no platform call, ran no SQL, made no vendor or network call and opened no `.env*` file. I used local reads and `git grep` at `origin/main` only.
+
+### Code claims (D6g.1 table, MS-1 to MS-9)
+
+| # | Result | Correction for `messaging.md` |
+|---|---|---|
+| Names and catalogue | **Verified.** All eleven names are in group `plugins`. The nine non-tunnel names default to `OPTIONAL`, and the two tunnel names are `exp('X', 'X', 'O')`. `NEXT_PUBLIC_APP_URL` is `exp('R', 'R', 'R')`. | — |
+| WA-W readers | **Verified.** `GET` in the webhook route (module `WhatsAppWebhook`) reads the token per request. The route test exists. `webhook_config.endpoint_path` is in the WhatsApp definition. | — |
+| MA readers | **Verified.** Both Meta definitions use `${META_ADS_CLIENT_ID}`, `${META_ADS_CLIENT_SECRET}` and `${NEXT_PUBLIC_APP_URL}/oauth/callback/<key>`. The live path is `useChannelConnect` → `POST /api/v2/plugins/connect` (`plugin_key` `meta-insights`) → popup → callback, then `POST /api/business-os/channel-insights/connect`. | — |
+| SL-V1 readers | **Wrong.** The registry has three more importers than the spec says (see above). The V1 strategy reads `SLACK_CLIENT_SECRET` at module scope. | Change 2 |
+| MS-1 | **Verified.** `ACTIVE_PLUGIN_PROFILE = 'business_os'` lists `meta-insights` and not `slack`, `whatsapp-business` or `meta-ads`. The loader reads only profile keys. The connect route answers 404 `Plugin not found`. The callback posts `Plugin configuration not found`. `execute()` and `fetchDynamicOptions()` log "Plugin not enabled in active profile" (module `PluginExecuter`, `warn`) before any executor is built. | — |
+| MS-2 | **Verified.** `!envValue` keeps the literal `${…}`, so an empty value is treated like an unset one, and it logs `warn` with `varName`. The literal placeholder is truthy, so the `!authConfig.client_id \|\| !authConfig.client_secret` check in `handleOAuthCallback` never fires on an unset name. The connect route's `authConfig.redirect_uri \|\|` fallback never fires either, so an unset A1 leaves `${NEXT_PUBLIC_APP_URL}` in the redirect. P-MS-2 catches that. **Precision:** the line is logged once per **instance** load (each cold start of each function instance), not once per deployment. | Change 1 |
+| MS-3 | **Verified for Meta:** the route sends five parameters, and the Google `access_type` and `prompt` apply only to `oauth2_google`. `CLIENT_SAFE_AUTH_CONFIG_FIELDS` has no `additional_params`, and the browser builder adds `user_scope` and PKCE only. **Wording is wrong:** `plugin-secret-matcher.ts` seeds `WHATSAPP_CONFIG_ID` with a **value sentinel** that must never appear in a response. It is not one of the forbidden key names. | Change 9 |
+| MS-4 | **Verified,** all four strings verbatim and at the stated levels. A probe with a made-up token logs **two** lines (received, invalid token), not three. | Change 6 |
+| MS-5 | **Verified.** Neither Meta definition has `refresh_url`. `getConnection` logs the Smart Refresh `warn` and returns null when there is no refresh token. The secret is used only in `exchangeCodeForTokens` (and in refresh, which Meta never reaches). | Change 10 (wording) |
+| MS-6 | **Verified.** "Invalid Scopes" is in `_scope_note`. | — |
+| MS-7 | **Verified for Meta Insights:** the definition's dialog, token and profile addresses, and `GRAPH_VERSION` in its executor. The Meta Ads executor's constant is named `API_VERSION`, but that is out of scope (change 4). | Change 4 |
+| MS-8 | **Verified,** with the modules as stated. "OAuth callback failed" is logged by the callback's `catch`, so it covers every throw after the definition is found, including "Failed to fetch profile" (module `OAuthTokenService`) and the connection save. It is not specific to the secret. | Change 5 |
+| MS-9 | **Verified.** The profile token is `tokens.authed_user?.access_token \|\| tokens.access_token`. Only `oauth-handler.ts` sends `user_scope`. | — |
+
+### Rulings on Q-D6g-1 to Q-D6g-9
+
+- **Q-D6g-1: agreed. Ship now.** WA-W and MA (Meta Insights) are covered in full. WA-O, SL and the Meta Ads half each get one "not in use" row, with no probe, no quoted executor string, a §1 rule that only points to FU-D6g-a, and T-MS-11 at Low. Two precisions:
+  - SL's "not in use" means "outside the active profile". The SL-V1 row records that the deprecated V1 code reads `SLACK_CLIENT_SECRET` too (change 2).
+  - WA-W is covered in full, but "no receiving environment recorded" is a valid record, because no loaded plugin uses the webhook (change 7).
+
+  The main session records the result in the DO-6f change 12 form, by role, and confirms the wording with the user first.
+- **Q-D6g-2: agreed.** `messaging.md`, prefix `MS`, tags WA-W, MA, WA-O, SL and SL-V1, with the index label and triggers as in D6g-2. "Before 'a vendor dashboard'" is a unique anchor in the current description.
+- **Q-D6g-3: yes.** The verify token's other copy lives in the vendor's dashboard. It is a third-party setting, not one of our own shared secrets (Q-D6-11).
+- **Q-D6g-4: allowed, optional and user-run.** Its precondition is that a receiving environment is recorded **and** the token or the callback just changed. Otherwise it is "not probed (nothing changed)" or "not probed (no receiving environment recorded)". It is production tier on production's app. The user types the token into the dashboard directly, so it never passes through chat.
+- **Q-D6g-5: allowed, optional and user-approved,** on the user's own account, with the writes and the two-step cleanup declared as written. It must start from the environment's stable address (change 3), and its fail wording is corrected (change 5).
+- **Q-D6g-6: the redirect phrase only. Drop the webhook phrase.** Step 5 says "**Add** … keeping the old ones until step 8". WA-W cannot do that if the app holds one callback, which is the spec's own §7 row ("switch … only after the new address is Ready"). So listing `messaging.md` under "webhook endpoints" would teach the wrong order. The redirect phrase already sends the operator to `messaging.md`, and its "App address moves" row owns the webhook switch. The exact edit in `domains.md` §7 step 5 is `later DO-6g and DO-6h` → `` `messaging.md`, later DO-6h `` (so the parenthesis reads ``(`stripe.md`, `google.md`, `messaging.md`, later DO-6h)``). Nothing else in `domains.md` changes. This pass is the ruling.
+- **Q-D6g-7: agreed.** Plan a reset as "may force every connection of that app to reconnect" until it has been confirmed once on a non-production app and recorded. In the file this is a vendor fact, "confirm at use time" (change 10).
+- **Q-D6g-8: agreed at Medium, scoped to the loaded Meta plugins** (change 4). The definition pins the version in three addresses (dialog, token and profile), and the executor pins it in its constant. All four must agree. FU-D6g-c is the code guard. The file names no version.
+- **Q-D6g-9: agreed.** T-MS-2 is a catalogue presence check, and SL-V1 stays the only V1 content. This satisfies CLAUDE.md "Deprecated — Do Not Use or Extend": V1 is recorded, never probed, never extended.
+
+### Probe check (can fail, no money, no message, no value printed, precondition becomes "not probed")
+
+| ID | Can fail | Sends / spends | Durable writes | Precondition → not probed | Ruling |
+|---|---|---|---|---|---|
+| P-MS-1 | Yes, for presence | None | None | Admin session | OK (`should-not-be-set` is the page's real code) |
+| P-MS-2 | Yes: a placeholder survives URL encoding as `%24%7B`, and a wrong A1 fails the `redirect_uri` test | None | None | Signed-in session | OK. Add that it does not prove the secret |
+| P-MS-3 | Yes (vendor page) | None | None on cancel | Owner session | Change 3 (origin) |
+| P-MS-4 | Yes | Graph reads only (Page scopes, no ads scope) | Declared | Declared | Changes 3, 5 |
+| P-MS-5 | Yes, by log line only. The HTTP 403 is the same either way, by design | None | None | Protected host | Change 6 (line count, same-deployment read) |
+| P-MS-6 | Yes | None | Vendor-side save only | Add "no receiving environment recorded" | Change 7 |
+| P-MS-7, P-MS-8 | Yes (user yes/no) | None | None | — | OK |
+| P-MS-9 | As the probes it uses | — | — | — | OK |
+
+### Public-repo check
+
+- No identifier, host, URL, version number, scope list or current-configuration statement appears in the text to be tracked. "As recorded" and "recorded intent" are rules, not states.
+- MS-5 and Q-D6g-1 use the neutral DO-6f change 12 form (changes 10 and 11).
+- A read-through finds no hint of an open weakness (D6g.4).
+
+### New pattern and CI time (CLAUDE.md rule 7)
+
+- **No new pattern:** one reference file, one index row with triggers, and one ruled phrase in `domains.md`, in the DO-6b to DO-6f shape.
+- **No added CI time:** no job, workflow or test. FU-D6g-c is a later Dev slice.
+
+### Required changes
+
+1. **[MS-2, T-MS-4, gotcha 2] A load marker, so 0 means something.**
+   - **T-MS-4 pass:** "Plugin manager initialized" (module `PluginManager`, `info`) is ≥ 1 on that deployment in the window, its `loadedPluginKeys` includes `meta-insights`, **and** 0 "Environment variable not found, keeping placeholder" with `varName` among the MA names or `NEXT_PUBLIC_APP_URL`.
+   - **No marker line:** "not read (no load in window)", never 0.
+   - **MS-2 and gotcha:** "once per instance load (each cold start)".
+
+   Pass: present. — Priority: High
+2. **[D6g.1 SL-V1 and SL rows, (1) "WA-O, SL names" row, T-MS-12, FU-D6g-a] V1 readers stated correctly.**
+   - **SL-V1 readers:** "`lib/plugins/strategies/slackPluginStrategy.ts` and `slackDataStrategy.ts`, through `lib/plugins/pluginRegistry.ts`, which deployed routes import. The strategy reads `NEXT_PUBLIC_SLACK_CLIENT_ID`, the tunnel names and `SLACK_CLIENT_SECRET`".
+   - **SL row and (1):** "No plugin in the active profile reads them (MS-1). The deprecated V1 strategy also reads the Slack secret name (SL-V1)."
+   - **FU-D6g-a remove option:** the Slack names are removed from targets only after both the V2 definition and the V1 strategy's reads are gone. Stated neutrally.
+
+   Still no probe and no quoted string from V1. Pass: the SL-V1 row reads as above, and the V1 secret read is named. — Priority: High
+3. **[P-MS-3, P-MS-4, Q-D6g-5] Start from the stable address.**
+   - **Probe column:** "on the environment's stable A1 address (`domains.md`), never a per-deployment host. The callback returns there, and posts only to that origin (gotcha 10)."
+   - **Who:** DO reads the callback lines on the deployment that serves that address. Name that deployment per `vercel-ops` §4.
+
+   Pass: present. — Priority: High
+4. **[MS-7, T-MS-7, gotcha 7, Q-D6g-8] Scope to loaded plugins.**
+   - **T-MS-7:** "each **loaded** Meta definition's dialog, token and profile addresses, and its executor's version constant, pin the same Graph version …".
+   - **Meta Ads:** a Meta plugin outside the profile is covered by T-MS-11 only.
+
+   Pass: T-MS-7 does not name Meta Ads, and the acceptance line about Meta Ads holds. — Priority: Medium
+5. **[P-MS-4, MS-8] Fail wording.**
+   - **Fail:** any "OAuth callback failed" ≥ 1 for `plugin` `meta-insights` after the probe time.
+   - **Attribution:** with "Token exchange failed" ≥ 1 (module `OAuthTokenService`), suspect the secret or the redirect. Without it, record the failure class and stop: it is not a credential fault.
+   - **Not conclusive:** no "OAuth callback received" line at all is "not conclusive (callback did not arrive)".
+
+   Pass: present. — Priority: Medium
+6. **[P-MS-5] Precision.** "Two log lines", not three. The pass and the fail read the logs **of the deployment probed**, from the probe time. A not-set line from any other request in that window still fails it. Pass: present. — Priority: Low
+7. **[(1) WA-W rows, P-MS-6, T-MS-8, T-MS-9, Q-D6g-4] "None recorded" is a valid state.**
+   - **(1) subscription row:** "one recorded receiving environment per Meta app, or none recorded".
+   - **With none recorded:** the token is expected unset on every target, and T-MS-8, T-MS-9 and P-MS-6 read "not read / not probed (no receiving environment recorded)".
+   - **"One callback per app":** in §1, gotcha 9 and the §7 row, write "vendor fact, confirm at use time".
+
+   Pass: present. — Priority: Medium
+8. **[T-MS-10] Denominators.** "No traffic" needs a marker. For the webhook strings, "Webhook verification request received" = 0 is "not read (no traffic)". For the callback string, "OAuth callback received" (module `OAuthCallbackAPI`, `plugin` `meta-insights`) = 0 is "not read (no traffic)". Pass: present. — Priority: Medium
+9. **[MS-3] Egress helper wording.** "The egress test seeds `WHATSAPP_CONFIG_ID` with a sentinel value that must never appear in a response" (`lib/testing/plugin-secret-matcher.ts`). Pass: present. — Priority: Low
+10. **[MS-5, (7) secret-reset row, Q-D6g-7] Vendor fact, not an open item.** "Whether Meta keeps existing tokens valid after a secret reset is a vendor fact, confirm at use time. Until it is confirmed once on a non-production app and recorded, plan a reset as a cut-over that may force every connection to reconnect." Pass: present. — Priority: Low
+11. **[Q-D6g-1 text, Services live line] Neutral record wording.** Use the DO-6f change 12 form, for example: "The main session confirmed from code that the active profile loads Meta Insights only, and records Slack, WhatsApp Business and Meta Ads as not in use." The main session confirms it with the user first. Pass: present before commit. — Priority: Low
+12. **[D6g-3, Q-D6g-6, D6g.4] One phrase in `domains.md`.** Make only the redirect-URI edit ruled above. Drop the "webhook endpoints" edit. The acceptance line "the `domains.md` diff is only D6g-3" stays, with D6g-3 reduced to that one phrase. Pass: `git diff` on `domains.md` is that one phrase. — Priority: Medium
+
+### Optimisation suggestions (non-blocking)
+
+- T-MS-11 can also be cross-checked at runtime from the same "Plugin manager initialized" line (`loadedPluginKeys`, `skippedPluginKeys`), which costs nothing once change 1 is in.
+- MS-4's "a change needs a redeploy only to reach the function, not a rebuild": say "a new deployment, and not a `NEXT_PUBLIC_` name, so nothing is inlined" (`vercel-ops` §4 wording).
+- T-MS-3's A1 clause is already covered by A1 being required everywhere. Keep it, because it is cheap, or point to `domains.md` T-AD-1.
+
+### Approval
+
+[x] Specification approved, conditional on changes 1–12. Proceed to the file once they are applied. No second SA pass is needed if QA confirms each "Pass" line.
+
+---
+
+## DO-6g implementation notes
+
+**By Dev — 2026-11-04.** Worktree `.claude/worktrees/do6g-messaging`, branch `feature/devops-third-party-messaging`, base `0eb3949e` (= `origin/main`). Nothing committed or stashed. No `.env*` file opened, no network or platform call.
+
+### What was built
+
+| File | Change | Lines |
+|---|---|---|
+| `.claude/skills/third-party-ops/messaging.md` | New. Intro, live-check line, WA-W / MA / WA-O / SL / SL-V1 table, boundary; §1–§6 of the template; §7 tiers and order. LF line endings | 122 |
+| `.claude/skills/third-party-ops/SKILL.md` | D6g-2 only: the §5 row now reads "Messaging and Meta apps: the WhatsApp webhook, the Meta app (Meta Insights, Meta Ads), Slack" → `[messaging.md](messaging.md)`; the description gains the D6g-2 triggers, inserted before "a vendor dashboard" | 86 (unchanged count; 2 lines changed) |
+| `.claude/skills/third-party-ops/domains.md` | D6g-3 only (SA change 12): §7 step 5 `later DO-6g and DO-6h` → `` `messaging.md`, later DO-6h `` | 137 (unchanged count; 1 line changed) |
+
+`git diff --numstat`: SKILL.md 2/2, domains.md 1/1, messaging.md 122/0. The two edited files keep their CRLF working-tree endings (index is LF, `core.autocrlf=true`), so the diff is exactly the edited lines.
+
+**Verbatim checks** (`git grep -cF` at `origin/main`, each ≥ 1 in its cited file, module from that file's `createLogger`):
+- `app/api/plugins/webhooks/whatsapp-business/route.ts` (module `WhatsAppWebhook`): "Webhook verification request received", "WHATSAPP_VERIFY_TOKEN is not set - refusing webhook verification", "Webhook verification failed - invalid token", "Webhook verified successfully", "Forbidden"; the "cannot tell the two apart" route comment.
+- `lib/server/plugin-manager-v2.ts` (module `PluginManager`): "Environment variable not found, keeping placeholder" (`warn`, `varName`), "Plugin manager initialized" (`info`, `loadedPluginKeys`, `skippedPluginKeys`); `processEnvironmentVariables`, `loadCorePlugins`, `initializeWithCorePlugins`.
+- `lib/server/plugin-executer-v2.ts` (module `PluginExecuter`): "Plugin not enabled in active profile"; `getNotEnabledMessage`.
+- `app/api/v2/plugins/connect/route.ts` (module `PluginConnectAPI`): "Plugin not found", "Initiating plugin OAuth connection", "OAuth URL generated"; `authUrl`, `plugin_key`.
+- `app/oauth/callback/[plugin]/route.ts` (module `OAuthCallbackAPI`, child logger with `plugin`): "OAuth callback received", "OAuth error from provider", "OAuth callback failed", "OAuth callback successful", "Plugin configuration not found".
+- `lib/services/OAuthTokenService.ts` (module `OAuthTokenService`): "Token exchange failed" (`error`, `status`), "No access token received", "Failed to fetch profile"; `exchangeCodeForTokens`.
+- `lib/server/user-plugin-connections.ts` (module `UserPluginConnections`): "Smart Refresh: No refresh token available - user needs to reconnect"; `handleOAuthCallback`, `getConnection`, `!authConfig.client_id || !authConfig.client_secret`.
+- `app/api/business-os/channel-insights/connect/route.ts` (module `ChannelConnectAPI`): "Channel insights connected".
+- Symbols: `ACTIVE_PLUGIN_PROFILE` and `meta-insights` (`plugin-profile.ts`); `CLIENT_SAFE_AUTH_CONFIG_FIELDS` (`sanitize-plugin-definition.ts`, no `additional_params`); `user_scope` (`oauth-handler.ts`); `WHATSAPP_CONFIG_ID` (`plugin-secret-matcher.ts`); `GRAPH_VERSION` (`meta-insights-plugin-executor.ts`); `_scope_note`, "Invalid Scopes" (Meta Insights definition, no `refresh_url`); `webhook_config`, `endpoint_path` (WhatsApp definition); `SLACK_CLIENT_SECRET`, `NEXT_PUBLIC_SLACK_CLIENT_ID`, `NGROK_SLACK_REDIRECT_URI` (`slackPluginStrategy.ts`); `useChannelConnect` (`ChannelsCard.tsx`); `should-not-be-set` (`lib/admin/environment`).
+
+Vendor messages and labels ("Invalid Scopes" pages, invalid-app and blocked-redirect pages, "Verify and save", the one-callback-per-app rule, secret-reset behaviour) are marked "vendor fact" or "confirm at use time". Every path named in the file exists at the base, including `app/api/plugins/webhooks/whatsapp-business/__tests__/route.test.ts`, and `/admin/environment` is served by `app/admin/environment/page.tsx`. No string from the Slack, WhatsApp or Meta Ads executors, the SL-V1 files or the V1 routes is quoted.
+
+### SA changes 1–12 → where they land
+
+| SA item | Where in `messaging.md` (or elsewhere) |
+|---|---|
+| 1. Load marker | §2 MS-2 ("Plugin manager initialized", once per instance; "once per instance load (each cold start)"); §5 gotcha 2; §6 T-MS-4 pass and "not read (no load in window)", never 0 |
+| 2. V1 readers | Service table SL-V1 row ("which deployed routes import"; the strategy reads `NEXT_PUBLIC_SLACK_CLIENT_ID`, the tunnel names and `SLACK_CLIENT_SECRET`); SL row and §1 "WA-O, SL names" row. FU-D6g-a remove-option sentence in the applied spec only |
+| 3. Stable address | §4 P-MS-3 and P-MS-4 Probe column; Who column names the deployment that serves the address, per `vercel-ops` §4; precondition "on that address" |
+| 4. Loaded plugins only | §2 MS-7 (four pins, Meta Insights); §5 gotcha 7; §6 T-MS-7 "each **loaded** Meta definition". No drift row names Meta Ads apart from T-MS-11 |
+| 5. P-MS-4 fail wording | §4 P-MS-4 Fails when (any "OAuth callback failed"; attribution with and without "Token exchange failed"; "not conclusive (callback did not arrive)"); §2 MS-8 states the `catch` scope |
+| 6. P-MS-5 precision | §4 P-MS-5 pass and fail read the probed deployment's logs from the probe time; "Two log lines" |
+| 7. None recorded | §1 WA-W token and subscription rows; §4 P-MS-6 precondition; §6 T-MS-8 and T-MS-9; "vendor fact, confirm at use time" in §1, gotcha 9 and the §7 address-move row |
+| 8. Denominators | §6 T-MS-10, both "not read (no traffic)" markers |
+| 9. Egress helper | §2 MS-3, sentinel-value wording |
+| 10. Secret reset | §7 "Meta app secret reset" row; applied spec MS-5 |
+| 11. Neutral record wording | Applied spec only: "Services live" line and Q-D6g-1, in the DO-6f change 12 form; for the main session to confirm with the user |
+| 12. One `domains.md` phrase | `domains.md` §7 step 5, the redirect phrase only; applied spec D6g-3 reworded to match |
+
+### Rulings Q-D6g-1 to Q-D6g-9 → where they land
+
+| Ruling | Where |
+|---|---|
+| Q-D6g-1 | Live-check line; WA-O, SL and the Meta Ads half as "not in use" rows with no probe; §1 rules point to FU-D6g-a; T-MS-11 Low |
+| Q-D6g-2 | File name, `MS` prefix, five tags; SKILL.md §5 label and triggers as D6g-2 |
+| Q-D6g-3 | WA-W covered in §1, §3, §4 (P-MS-5, P-MS-6, P-MS-7), §6 (T-MS-8, T-MS-9, T-MS-10), §7 |
+| Q-D6g-4 | §4 P-MS-6: optional, user-run, recorded receiving environment and a just-made change, token typed into the dashboard directly; production tier in §7 |
+| Q-D6g-5 | §4 P-MS-4: optional, user-approved, own account, writes and two-step cleanup declared, stable address |
+| Q-D6g-6 | `domains.md` one phrase; §7 "App address moves" row owns the webhook switch |
+| Q-D6g-7 | §7 secret-reset row, as a vendor fact |
+| Q-D6g-8 | §6 T-MS-7 at Medium, loaded plugins, four pins; no version named |
+| Q-D6g-9 | T-MS-2 a catalogue presence check; SL-V1 row "Recorded, never probed, never extended" |
+
+### Deviations from the applied spec
+
+- **§2 numbering.** §2 carries MS-1 to MS-8. The applied spec keeps MS-9 (the Slack user scope) out of the file; the SL row records only that Slack is not in use.
+- **Gotchas are numbered** 1–11 (siblings use bullets), so P-MS-3's ruled "(gotcha 10)" resolves to a row.
+- **Gotcha 10** carries `google.md` §5's consequence in one clause ("completes at Meta, but the page never hears of it"), so the stable-address rule in P-MS-3 has its reason next to it.
+- **SA optimisations 1 and 2 adopted:** T-MS-11 also reads `loadedPluginKeys` and `skippedPluginKeys` from the load marker; MS-4 says "a new deployment, and not a `NEXT_PUBLIC_` name, so nothing is inlined". Optimisation 3: T-MS-3 kept as written.
+- **"Derive, never list"** paragraph points to the reader search in `domains.md` §2, in the `queues-and-keys.md` form.
+- **Length:** 122 lines, within the 120–160 target and the ≤ 180 cap. No probe or drift row was trimmed.
+- **`docs/requirements/DEVOPS_AGENT_REQUIREMENT.md`**: Dev did not edit it; the main session added the applied spec, the SA review and these notes.
+
+### Checks run
+
+- Host, project-ID, team-ID, vendor-host, tunnel, loopback and version grep over the added lines of the three repo files: **0 hits**.
+- D6g.4 public grep over the new file (`facebook\.com`, `graph\.`, `slack\.com`, `ngrok[-.]`, `vercel\.app`, `agents?pilot\.[a-z]`, `localhost:`, `https?://`, `v[0-9]+\.[0-9]`, line references): **0 hits**.
+- Every double-quoted string in the new file checked against `origin/main`: each code string found in its cited file; the rest are this skill's own status labels, a CLAUDE.md heading or vendor labels marked as such.
+- Every file path in the new file exists at `origin/main`.
+- `git diff --numstat` touches only the three D6g.3 files; line endings: `messaging.md` LF, `SKILL.md` and `domains.md` CRLF in the working tree (unchanged).
+
+---
+
+## SA Code Review — DO-6g
+
+**Code Review by SA — 2026-11-04**
+**Status:** 🔄 Fix Required (one High wording fix in the requirement, one Medium wording fix, five Low text fixes; no re-review needed if applied as written). The skill files need two one-phrase edits only.
+
+I reviewed the uncommitted diff in the DO-6g worktree against base `0eb3949e` (= `origin/main`). The diff covers:
+- the new `.claude/skills/third-party-ops/messaging.md` (122 lines);
+- the `SKILL.md` diff (2 lines) and the `domains.md` diff (1 line);
+- the requirement additions: the §0 DO-6 row, the DO-6g Specification, two Change History rows, SA Review — DO-6g (short pass) and DO-6g implementation notes.
+
+I used local reads and `git grep` at the base only. I made no platform, vendor or network call and opened no `.env*` file.
+
+### Results
+
+| # | Check | Result |
+|---|---|---|
+| 1 | SA short-pass changes 1–12 and rulings Q-D6g-1..9 | **All applied**, in the spec and in `messaging.md`. Change 2's FU-D6g-a sentence and change 11 are in the requirement only, as ruled. §D6.6 Q-D6-2 needs no correction: it makes no claim about the messaging services. SA optimisations 1 and 2 were adopted. |
+| 2 | Code claims | **Verified at the base** with `git grep -cF` ≥ 1, each in its cited file and module, at the stated level. This covers all four `WhatsAppWebhook` strings and "Forbidden", and the two `PluginManager` lines with `varName`, `loadedPluginKeys` and `skippedPluginKeys`. It also covers "Plugin not enabled in active profile" (`PluginExecuter`); the `PluginConnectAPI`, `OAuthCallbackAPI`, `OAuthTokenService`, `UserPluginConnections` and `ChannelConnectAPI` strings; and every named symbol. Neither Meta definition has `refresh_url`. The Meta Insights definition pins the version in its dialog, token and profile addresses, and its executor in `GRAPH_VERSION`. Every path exists, including `hooks/useChannelConnect.ts` (which posts to the connect route), the route test, `backups/` and `archive/`. No string is quoted from the Slack, WhatsApp or Meta Ads executors, the V1 files or the V1 routes |
+| 3 | Probes can fail | **Yes.** P-MS-5 tells unset from wrong by log line on the deployment probed. Its own "invalid token" line is the denominator, so an unset token cannot pass. T-MS-4 has the load marker as its denominator, and `loadedPluginKeys` also catches a definition that failed validation. T-MS-10 has both "no traffic" markers. P-MS-2 catches a surviving placeholder (raw or encoded) and a trailing-slash A1. P-MS-4 leaves one outcome unclassified (fix 3) |
+| 4 | Probe safety | No probe sends a message, posts to Slack, touches an ad account, spends money or prints a value, and none needs DO to hold a key. P-MS-4 declares its writes and its two-step cleanup. P-MS-6 is a vendor-side save only, and it is gated |
+| 5 | Boundaries | `domains.md` is pointed to, never restated (AD-2, AD-3, §2 reader search, §7). Its diff is exactly the ruled phrase. DO-6h owns every other vendor's OAuth app. App data is not DO's. `google.md` §5 is cited for the one-origin callback and says so |
+| 6 | Deprecated V1 | Recorded, never probed, never extended. The only V1 content is the SL-V1 row, the §1 rule and T-MS-2 / T-MS-12 |
+| 7 | Consistency with siblings | The §5 label and the triggers are exactly D6g-2, inserted before "a vendor dashboard". The six parts plus tiers and order follow the sibling layout. The numbered gotchas are an accepted deviation, so that "(gotcha 10)" resolves. LF in the new file, as in the siblings |
+| 8 | Public repo | `messaging.md`, `SKILL.md` and `domains.md` are clean: no ID, host, URL, Graph version or current-configuration statement. Grep hits in the requirement are only in the D6g.4 pattern lists. The requirement text needs fixes 1, 2 and 7, and fix 8 is recommended. Fix 4 aligns one probe phrase with `google.md` |
+
+
+### Code Review Comments
+
+1. **Requirement, SA short pass, public-repo check.** One bullet reworded to the plain rule (D6g.4). — Priority: High
+2. **Spec, "Services live" line.** Rewritten in the sibling form, "The main session confirmed on 2026-11-04, from code, …", without a user-confirmation clause; the user's approval is recorded in §0 and Change History at commit. — Priority: Medium
+3. **P-MS-4 "Fails when"** (`messaging.md` and spec): a callback received with no success line now counts as a fail. — Priority: Low
+4. **P-MS-2** (`messaging.md` and spec): the `state` wording aligned with `google.md` G3. — Priority: Low
+5. **Implementation notes, §2 numbering bullet:** corrected. — Priority: Low
+6. **Implementation notes:** requirement bullet and the `/admin/environment` path wording corrected. — Priority: Low
+7. **Change History, DO-6g spec row:** "the WhatsApp Business OAuth client". — Priority: Low
+8. **SA short pass:** reworded phrases are no longer quoted (recommended). — Priority: Low
+
+### Code Approved for QA: Yes, with fixes 1–8
+
+All eight are text only and were applied by the main session.
+
+---
+
+## QA Report — DO-6g
+
+**QA — 2026-11-04.** Test mode: full. Strategy: static checks (`test -e`, `git grep -cF` at `HEAD`, ID, anchor, line-ending, separator and diff-placement checks) on a docs-and-skill slice. There is no app code to run. Base `0eb3949e` (`HEAD`). `origin/main` has since moved to `27f13ab7` (PR #621), which touches none of the four files. No repo file edited, nothing stashed or committed, no `.env*` opened, no network call. The added-lines corpus was built with `git add -N` on the new file, `git diff -U0 | grep '^+'` (538 lines), then `git reset -q`; `git status --porcelain` was the same before and after.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | D6g.4 criterion 1: `messaging.md` has the intro sentence, the live-check line, the WA-W / MA / WA-O / SL / SL-V1 table, the boundary, §1–§6 and §7 tiers and order. The live check is by role, with the MS-1 result (WA-O and SL not in use, Meta Ads not loaded, SL-V1 deprecated). 122 lines (cap 180) | Pass |
+| 2 | Every path the new file names exists (`test -e`): the 19 full repo paths (webhook route, connect route, callback route, channel-insights connect route, `ChannelsCard.tsx`, `useChannelConnect.ts`, `oauth-handler.ts`, the meta-insights definition, `pluginRegistry.ts`, `sanitize-plugin-definition.ts`, `slackPluginStrategy.ts`, the meta-insights executor, `plugin-executer-v2.ts`, `plugin-manager-v2.ts`, `plugin-profile.ts`, `user-plugin-connections.ts`, `OAuthTokenService.ts`, `plugin-secret-matcher.ts`, `backups/`, `archive/`). The 8 short names each resolve to one file (`meta-ads-plugin-v2.json`, `whatsapp-business-plugin-v2.json`, `slack-plugin-v2.json`, `slackDataStrategy.ts`, the webhook `__tests__/route.test.ts`, and so on). Pages `/admin/environment` (`app/admin/environment/page.tsx`) and `/api/v2/plugins/connect` exist. Also the paths cited in the requirement: the three extra registry importers and the two executors in FU-D6g-d | Pass |
+| 3 | Every quoted code string is verbatim in its cited file (`git grep -cF` ≥ 1), with the right module and level: 5 webhook strings (module `WhatsAppWebhook`; info, error, warn, info, plus the two `'Forbidden'` 403s); "Environment variable not found, keeping placeholder" (`warn`, `varName`) and "Plugin manager initialized" (`info`, `loadedPluginKeys`, `skippedPluginKeys`), module `PluginManager`; "Plugin not enabled in active profile" (`warn`, `PluginExecuter`); "Plugin not found" (404), "Initiating plugin OAuth connection", "OAuth URL generated" (`PluginConnectAPI`); the 5 callback strings (`OAuthCallbackAPI`, child logger with `plugin`); "Token exchange failed" (`error`, `status`), "No access token received", "Failed to fetch profile" (`OAuthTokenService`); the Smart Refresh line (`UserPluginConnections`); "Channel insights connected" (`ChannelConnectAPI`); "Invalid Scopes" (`_scope_note`); the two `authConfig` expressions; the route comment "cannot tell the two apart" | Pass |
+| 4 | Every named symbol exists: `processEnvironmentVariables`, `loadCorePlugins`, `initializeWithCorePlugins`, `getNotEnabledMessage`, `ACTIVE_PLUGIN_PROFILE`, `CLIENT_SAFE_AUTH_CONFIG_FIELDS` (no `additional_params` in that file), `user_scope`, `exchangeCodeForTokens`, `handleOAuthCallback`, `getConnection`, `GRAPH_VERSION`, `webhook_config`, `endpoint_path`, `useChannelConnect`, `should-not-be-set`. Neither Meta definition has `refresh_url`. The sentinel is in `plugin-secret-matcher.ts`. The catalogue rows match §D6g.1 (eleven names in `plugins`, tunnels `exp('X', 'X', 'O')`). SA-review symbols also hold: `execute()` and `fetchDynamicOptions()`, the `authed_user` token expression, the Meta Ads `API_VERSION` | Pass |
+| 5 | No quoted string comes from the Slack, WhatsApp or Meta Ads executors, the SL-V1 files or the V1 routes. "OAuth URL generated", "Token exchange failed" and "OAuth callback failed" also appear in V1 strategy files as substrings. The file always gives the live module next to them, so a count by module is unambiguous | Pass (note) |
+| 6 | IDs unique and contiguous in the file: MS-1..8, P-MS-1..9, T-MS-1..12, each defined once. Every cited ID is defined. FU pointer `FU-D6g-a` only. In the requirement, MS-1..9, FU-D6g-a..d, Q-D6g-1..9 and SA changes 1–12 are all defined. MS-9 is defined only in the spec, by design (D6g.1: "Not in the file beyond the SL row"). One dangling reference: SA change 11 cites "D6g.6 record", and there is no §D6g.6 (Medium 1 h) | Pass with one dangling reference |
+| 7 | Cross-references resolve: `SKILL.md` §5 (live rule), `domains.md` AD-2, AD-3, §2 (reader search), §7 step 5; `google.md` §5 (callback answers one origin); `env-drift-audit` §7; `vercel-ops` §3 for names-only reads; gotcha 10 resolves to "The callback answers one origin". **One wrong section:** MS-4's "a new deployment … nothing is inlined (`vercel-ops` §3)". That rule is in `vercel-ops` §4, not §3 (Low 1) | Pass with Low 1 |
+| 8 | Anchors added to the requirement: 10 distinct, all resolve (including `#do-6g-implementation-notes`). The SKILL.md row link to `messaging.md` resolves. The new file has no links | Pass |
+| 9 | SKILL.md diff: the old file with the D6g-2 triggers inserted before the first "a vendor dashboard", and the §5 row replaced, equals the new file byte for byte (after CR normalisation). numstat 2/2. "a vendor dashboard" occurs twice in the file, and the first one is in the description, so the anchor is right. The description grows from 1801 to 2119 characters | Pass |
+| 10 | `domains.md` diff: the old file with `later DO-6g and DO-6h` → `` `messaging.md`, later DO-6h `` equals the new file exactly. numstat 1/1. "webhook endpoints" unchanged, as Q-D6g-6 ruled | Pass |
+| 11 | Only the D6g.3 files change: SKILL.md, `domains.md`, the requirement, and the new `messaging.md`. No other skill still says "not covered yet (DO-6g)" | Pass |
+| 12 | Line endings: the requirement has CRLF on all 5762 lines, SKILL.md on 86/86, `domains.md` on 137/137. numstat is the same with `--ignore-cr-at-eol`. `messaging.md` is LF on disk (122 LF, 0 CRLF). Git normalises it on add (`i/lf`, like its siblings). Same as DO-6e and DO-6f at this stage | Pass (note) |
+| 13 | Separator doubling (`---`, blank, `---`): two pairs in the requirement, at lines 4580 and 4949. Both are pre-existing (the base has them at 4373 and 4742; the offset is +207). None is in the added text. The spec section matches `do6g-spec-applied.md` exactly, plus its closing separator | Pass |
+| 14 | Restatement grep from §D6.4 over the new file | Pass (0 hits) |
+| 15 | D6g.4 public grep over the new file (`facebook\.com`, `graph\.`, `slack\.com`, `ngrok[-.]`, `vercel\.app`, `agents?pilot\.[a-z]`, `localhost:`, `https?://`, `v[0-9]+\.[0-9]`, line references) | Pass (0 hits). The only numbers in the file are HTTP statuses |
+| 16 | Finding-11 regex over all 538 added lines | 1 hit: `prj_` inside the quoted grep pattern in the DO-6g implementation notes, Checks run. It is pattern text, not an ID (Low 4, optional) |
+| 17 | Broad grep over the added lines: hosts, URLs, `prj_`, `team_`, vendor key prefixes (`sk_`, `pk_`, `whsec_`, `xox`, `EAA`, `AKIA`), Graph versions, `ngrok`, `localhost:`, ports, 12+ digit runs, personal paths and names. The hits are only the pattern lists in D6g.4 and Checks run, and the catalogue env names `NGROK_SLACK_REDIRECT_URI` and `NEXT_PUBLIC_NGROK_SLACK_REDIRECT_URI`. "graph." matched only "paragraph." | Pass |
+| 18 | D6g.4 criterion 2 (probes): each one names who runs it, a pass, a fail, a precondition and side effects. None sends, posts, touches an ad account, needs DO to hold a key or prints a value. P-MS-4 and P-MS-6 say "Optional, user-approved, once". P-MS-5 uses a made-up token, and a 200 means stop | Pass |
+| 19 | D6g.4 criterion 3 (pointers): redirect URIs and the webhook callback point to `domains.md` and the stable A1 address. No host or path is restated, and callback paths are "derived from the definitions" | Pass |
+| 20 | D6g.4 criterion 4: strings are verbatim with their modules (checks 3 and 5). Vendor pages are marked "vendor messages, confirm at use time"; one callback per app, the secret reset and P-MS-9 are marked "vendor fact, confirm at use time" | Pass |
+| 21 | D6g.4 criterion 5: no sentence presents WA-O, SL or Meta Ads as live. Only T-MS-11 and T-MS-12 target them by name. P-MS-1 and T-MS-1 read the presence of all eleven names, as the applied spec defines them, and that is not a target on the service | Pass |
+| 22 | D6g.4 criterion 6 (public repo): the file holds no identifier, version, URL or current state | Pass for the file. See check 24 for the requirement |
+| 23 | Read-through of `messaging.md` for current configuration and open weaknesses | Pass. "Answers on its own, without the plugin" is the code fact that puts WA-W in scope. "Privacy and data-deletion fields as recorded" is a neutral dashboard read |
+| 24 | Read-through of every added sentence in the requirement (§0 row, spec, SA review, implementation notes, Change History) | **Fail, then Pass after fixes.** High 1 and Medium 1 in the SA short-pass text; Lows 2–3 in the implementation notes |
+
+### Findings
+
+- **High 1:** one SA short-pass bullet reworded to the plain rule (same fix as SA code review fix 1).
+- **Medium 1:** the SA short pass no longer quotes replaced phrases; change 11's reference now points at the Services live line (there is no §D6g.6).
+- **Low 1:** `vercel-ops` §4, not §3, for "nothing is inlined" (`messaging.md`, spec, notes).
+- **Low 2:** implementation note on §2 numbering corrected.
+- **Low 3:** implementation note on the requirement corrected.
+- **Low 4 (optional, applied):** the grep pattern in Checks run is no longer quoted.
+
+### Verdict
+
+**PASS WITH CHANGES.** Every D6g.4 criterion and every path, string, symbol, ID, anchor, line-ending, separator and diff-placement check passes. High 1, Medium 1 and Lows 1–4 were applied by the main session; the re-run read-through and finding-11 grep are clean. **Final verdict after fixes: PASS.**

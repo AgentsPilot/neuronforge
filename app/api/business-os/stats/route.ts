@@ -118,6 +118,19 @@ interface BusinessShapeStats {
   /** The explicit answer, once the chat starts asking how money is collected. */
   collection_method: string | null;
   online_presence_mode: string | null;
+  /**
+   * The two answers `online_presence_mode` cannot hold.
+   *
+   * It records only what WE are asked to build, so a business keeping its own
+   * site and one with no web presence at all both carry `booking_only`. The
+   * readiness card needs them apart: one can be offered the agent that reads
+   * enquiry email, the other cannot, having no site to send any.
+   *
+   * Null on both means never established, and the card is built to wait on
+   * that rather than guess a direction.
+   */
+  has_own_website: boolean | null;
+  leads_arrive_by_email: boolean | null;
   has_priced_services: boolean;
 }
 
@@ -978,13 +991,23 @@ export async function GET(request: NextRequest) {
       // invoice_id, so the two are joined on that key rather than summed twice.
       supabaseServer
         .from('payment_transactions')
-        .select('service_id, invoice_id, amount')
+        /*
+         * `refunded_amount` because money that went back is not money a client
+         * spent. Without it this band reported a fully refunded payment as a
+         * sale: measured on one account, ₪2,400 of returned money counted as
+         * purchases, which is why the band read ₪1,025 above what the money
+         * page said for the same window. Every other revenue figure on this
+         * route nets refunds through `netRevenue`; this one had its own loop
+         * and never did.
+         */
+        .select('service_id, invoice_id, amount, refunded_amount')
         .eq('user_id', user.id)
         .eq('status', 'succeeded')
         .gte('created_at', periodStart),
       supabaseServer
         .from('payment_invoices')
-        .select('id, service_id, booking_id, amount, status')
+        // `refunded_amount` for the same reason as the transactions above.
+        .select('id, service_id, booking_id, amount, status, refunded_amount')
         .eq('user_id', user.id)
         /*
          * `partially_refunded` belongs with `paid` here, and omitting it would
@@ -2092,6 +2115,7 @@ export async function GET(request: NextRequest) {
       booking_id: string | null;
       amount: number | string | null;
       status: string;
+      refunded_amount?: number | string | null;
     };
     const revenueInvoices = (serviceRevenueInvoices || []) as RevenueInvoice[];
 
@@ -2157,7 +2181,14 @@ export async function GET(request: NextRequest) {
       inv.service_id || (inv.booking_id ? bookingServiceById.get(inv.booking_id) ?? null : null);
 
     const serviceRevenueMap: Record<string, { service_name: string; revenue: number; count: number; lost: number }> = {};
-    const addServiceRevenue = (serviceId: string | null, amount: number | string | null) => {
+    const addServiceRevenue = (
+      serviceId: string | null,
+      amount: number | string | null,
+      /* What came back out of it. Netted here rather than at each call site so
+         a new source of revenue cannot be added without answering the
+         question. */
+      refunded: number | string | null = 0
+    ) => {
       const key = serviceId || UNATTRIBUTED_SERVICE_ID;
       if (!serviceRevenueMap[key]) {
         serviceRevenueMap[key] = {
@@ -2170,24 +2201,105 @@ export async function GET(request: NextRequest) {
         };
       }
       // amount is DECIMAL and may arrive as a string.
-      serviceRevenueMap[key].revenue += Number(amount) || 0;
+      serviceRevenueMap[key].revenue += (Number(amount) || 0) - (Number(refunded) || 0);
+      /* The COUNT is of payments, so a refund does not reduce it: the client
+         did buy, and the row above already says what came back. */
       serviceRevenueMap[key].count += 1;
     };
 
     const invoiceById = new Map<string, RevenueInvoice>(revenueInvoices.map(inv => [inv.id, inv]));
     const settledInvoiceIds = new Set<string>();
 
-    type RevenueTransaction = { service_id: string | null; invoice_id: string | null; amount: number | string | null };
+    type RevenueTransaction = {
+      service_id: string | null;
+      invoice_id: string | null;
+      amount: number | string | null;
+      refunded_amount?: number | string | null;
+    };
     ((serviceRevenueTransactions || []) as RevenueTransaction[]).forEach(tx => {
       const linkedInvoice = tx.invoice_id ? invoiceById.get(tx.invoice_id) : undefined;
       if (linkedInvoice) settledInvoiceIds.add(linkedInvoice.id);
       // A payment raised against an invoice inherits that invoice's service.
-      addServiceRevenue(tx.service_id || (linkedInvoice ? invoiceServiceId(linkedInvoice) : null), tx.amount);
+      addServiceRevenue(
+        tx.service_id || (linkedInvoice ? invoiceServiceId(linkedInvoice) : null),
+        tx.amount,
+        tx.refunded_amount
+      );
     });
 
     revenueInvoices.forEach(inv => {
       if (settledInvoiceIds.has(inv.id)) return; // already counted as its transaction
-      addServiceRevenue(invoiceServiceId(inv), inv.amount);
+      addServiceRevenue(invoiceServiceId(inv), inv.amount, inv.refunded_amount);
+    });
+
+    /*
+     * AND THE PLAN STAGES NOTHING ELSE IN HERE CAN SEE.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This band's basis is "collected PLUS still owed, service-attributable" —
+     * but it read `payment_transactions` and `payment_invoices` and nothing
+     * else. A stage of a payment plan that has been agreed and not yet billed
+     * exists in `payment_plan_installments` and NOWHERE ELSE: no invoice has
+     * been raised for it and no card has been charged.
+     *
+     * Measured on one account: ₪1,375 of agreed money absent from a card that
+     * claims to include what is owed. It is the same omission, in the same
+     * file, that the late-money tile had — see
+     * `lateMoneyAgreesWithTheOrdersPage.guard.test.ts`, which was written when
+     * that tile under-reported by ₪1,200 over three stages. The fix landed
+     * there and not here.
+     *
+     * `invoice_id is null` and no transaction, for the reason the owed total
+     * already gives: a billed stage IS the invoice, and counting both reports
+     * the same money twice. Attributed through the booking, since a stage
+     * carries no service of its own.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const { data: serviceOwedStages, error: serviceStagesError } = await supabaseServer
+      .from('payment_plan_installments')
+      .select('amount, booking_id, transaction_id')
+      .eq('user_id', user.id)
+      .in('status', ['pending', 'overdue'])
+      .is('invoice_id', null)
+      .gte('created_at', periodStart);
+
+    if (serviceStagesError) {
+      /* Said out loud rather than swallowed: silently, this band goes back to
+         under-reporting agreed money with nothing to show it had. */
+      requestLogger.warn(
+        { err: serviceStagesError },
+        'Could not read plan stages for the services band'
+      );
+    }
+
+    (serviceOwedStages || []).forEach(stage => {
+      // A stage already settled by a charge is that transaction, counted above.
+      if (stage.transaction_id) return;
+
+      /*
+       * A STAGE WITH NO BOOKING IS DELIBERATELY NOT COUNTED.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * Not because it is not real money — it is — but because the money page
+       * cannot see it either: `buildMoneyItems` groups by booking, so a stage
+       * with none has no row to belong to. Counting it HERE and not there is
+       * how this band came to disagree with the money page in the first place,
+       * which is the whole defect being fixed.
+       *
+       * Measured on one account: four such stages worth ₪1,300, all belonging
+       * to Stripe payment plans whose `payment_plan_subscriptions` row was
+       * written with `booking_id` null. That is a data fault in the plan
+       * creation path, and it is the thing to fix — not papered over by two
+       * screens counting it differently.
+       *
+       * It also has no service to be attributed to: a stage carries none and
+       * the booking is where one would come from, so it could only ever land
+       * in the "Other" row of a table about what people buy.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (!stage.booking_id) return;
+
+      addServiceRevenue(bookingServiceById.get(stage.booking_id) ?? null, stage.amount);
     });
 
     /*
@@ -2263,6 +2375,25 @@ export async function GET(request: NextRequest) {
         payment_mode: (businessProfile as any)?.payment_mode ?? null,
         collection_method: (businessProfile as any)?.collection_method ?? null,
         online_presence_mode: presenceMode,
+        /*
+         * ⚠️ BOTH ARE null UNTIL `20261105_own_site_and_lead_arrival.sql` IS
+         * APPLIED, and that is deliberate rather than an oversight.
+         *
+         * The select above fetches a NAMED COLUMN LIST. Adding these two to it
+         * before the migration ran made PostgREST reject the whole select with
+         * 42703, and the error is discarded at the destructure below — so
+         * `businessProfile` came back null and `scheduling_availability` with
+         * it. Every business looked like it had no working hours, and the
+         * dashboard told owners nobody could book them. The comment above the
+         * select describes the same failure from a previous occurrence.
+         *
+         * So the columns are added to the select in the SAME change that
+         * applies the migration. Until then these read undefined and resolve to
+         * null, which suppresses the mailbox offer — the safe direction by
+         * design.
+         */
+        has_own_website: (businessProfile as any)?.has_website ?? null,
+        leads_arrive_by_email: (businessProfile as any)?.leads_arrive_by_email ?? null,
         has_priced_services: hasPaidServices,
       },
       website: {

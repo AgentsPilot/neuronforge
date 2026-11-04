@@ -435,6 +435,11 @@ function BusinessOSContent() {
               payment_mode: s.business_shape?.payment_mode,
               collection_method: s.business_shape?.collection_method,
               online_presence_mode: s.business_shape?.online_presence_mode,
+              /* The two the presence mode cannot carry. The readiness card
+                 gates the enquiry-mail agent on both, and reads null as
+                 "do not offer" rather than as false. */
+              has_website: s.business_shape?.has_own_website ?? null,
+              leads_arrive_by_email: s.business_shape?.leads_arrive_by_email ?? null,
               hasPricedServices: s.business_shape?.has_priced_services ?? null,
               plans: s.business_shape?.plans ?? null,
               // What the services actually say — these decide whether hours, a
@@ -1072,7 +1077,7 @@ function BusinessOSContent() {
         break;
 
       case 'open_invoice_dialog':
-        router.push('/business-os/orders?action=create');
+        router.push('/business-os/money?action=create');
         break;
 
       case 'show_service_list':
@@ -1545,13 +1550,29 @@ function BusinessOSContent() {
                 router.push('/business-os/website?view=links');
               } else if (action === 'connect_inbox_channel') {
                 /*
-                 * The wizard, not a navigation.
+                 * The channels card FIRST, then the wizard on top of it.
                  *
-                 * Setup reads this owner's own mail to learn their form's
-                 * shape, so it has to happen where they are — and it is the
-                 * same dialog the onboarding build page opens, for the same
-                 * reason: one setup, mounted twice.
+                 * The wizard itself is unchanged and still opens here rather
+                 * than navigating anywhere: setup reads this owner's own mail to
+                 * learn their form's shape, so it has to happen where they are,
+                 * and it is the same dialog the onboarding build page opens —
+                 * one setup, mounted twice.
+                 *
+                 * What is new is where they are standing when it opens. A lead
+                 * channel is a CHANNEL: it belongs with the others, and the card
+                 * already carries a row for it once it exists. Opening the
+                 * wizard from a readiness line left the owner with no idea where
+                 * the thing they had just configured now lived, so the next
+                 * visit started with "where do I change this?".
+                 *
+                 * Scrolled with the same helper as `connect_channels` below, for
+                 * the same reason: the page body scrolls, not the window, and the
+                 * chrome would otherwise cover what it lands on.
                  */
+                const channelsCard = document.getElementById(CHANNELS_CARD_ID);
+                if (channelsCard) {
+                  scrollIntoBusinessOsView(channelsCard);
+                }
                 setInboxSetupOpen(true);
               } else if (action === 'enable_lead_replies') {
                 void enableLeadReplies();

@@ -61,6 +61,16 @@ jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
 
 import { GET } from '../route';
 
+/*
+ * The audit write is non-blocking by mandate, so its failure is invisible —
+ * and in this suite it was a real request to the placeholder Supabase URL.
+ * `AuditTrailService` builds its own client with `createClient`, so mocking
+ * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
+ */
+jest.mock('@/lib/services/AuditTrailService', () =>
+  jest.requireActual('@/tests/helpers/silentAuditTrail')
+);
+
 /** The exact words the Activity tab shows (QA E-2), as written in route.ts. */
 const MIN_COST_MESSAGES = {
   format: 'Minimum cost must be a dollar amount written in digits, for example 0.05',

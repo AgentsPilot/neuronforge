@@ -69,7 +69,14 @@ interface TabDef {
 const TABS: TabDef[] = [
   { href: '/business-os', color: '#F97316', Icon: Sun, labelKey: 'nav.myday', fallback: 'My day' },
   { href: '/business-os/crm', color: '#8B5CF6', Icon: Users, labelKey: 'cap.people.name', fallback: 'People', capability: 'crm' },
-  { href: '/business-os/orders', color: '#22C58B', Icon: Receipt, labelKey: 'nav.payments', fallback: 'Orders', capability: 'payments' },
+  /*
+   * Money, which is the new design of what this tab has always opened.
+   *
+   * `/business-os/orders` still exists and still works — the Stripe Connect
+   * callback lands on it, the chat links to it, and those URLs are in the
+   * wild. It is simply no longer what the tab opens.
+   */
+  { href: '/business-os/money', color: '#22C58B', Icon: Receipt, labelKey: 'nav.payments', fallback: 'Money', capability: 'payments' },
   { href: '/business-os/website', color: '#4F6EF7', Icon: Globe, labelKey: 'cap.website.name', fallback: 'Online presence', capability: 'website' },
   { href: '/business-os/reports', color: '#22C58B', Icon: BarChart3, labelKey: 'cap.reports.name', fallback: 'Business overview', capability: 'reports' },
   { href: null, color: '#D14E97', Icon: Settings, labelKey: 'cap.config.name', fallback: 'Configuration' },

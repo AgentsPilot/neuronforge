@@ -210,7 +210,25 @@ export class ScheduledExecutionRepository {
    *
    * ⟨unscoped-by-design⟩ — addressed by row id.
    */
-  async markFailed(id: string, message: string, retry: boolean): Promise<void> {
+  async markFailed(
+    id: string,
+    message: string,
+    retry: boolean,
+    /**
+     * The provider's error CODE, when the run produced one.
+     *
+     * `message` is already written for a person, but it is written in ENGLISH:
+     * it comes from a plugin definition's `common_errors`, and those carry one
+     * language. An owner on a Hebrew dashboard was reading "Your Gmail
+     * connection has expired. Please reconnect in Settings → Connected Apps."
+     * in the middle of Hebrew.
+     *
+     * The code is the half that can be translated — a stable key a surface
+     * looks up in the owner's own language — and the English sentence stays
+     * beside it as the fallback for any code nobody has translated.
+     */
+    code?: string
+  ): Promise<void> {
     if (!retry) {
       /*
        * ───────────────────────────────────────────────────────────────────────
@@ -254,6 +272,7 @@ export class ScheduledExecutionRepository {
             title: issue.title,
             message: issue.message,
             what_to_do: issue.what_to_do,
+            ...(code ? { code } : {}),
           },
         },
       });

@@ -62,6 +62,21 @@ import { NextRequest } from 'next/server';
 
 import { POST } from '../code/route';
 
+/*
+ * The rate-limit counter is an RPC through `supabaseServer`, and in this suite
+ * it left the machine. `rateLimitRepository.hit` FAILS OPEN: an unreachable
+ * counter returns `{ allowed: true, hits: 0, degraded: true }`, so that is
+ * exactly the verdict these cases already saw, minus the request. Worth saying
+ * plainly — they have never exercised a healthy limiter.
+ */
+jest.mock('@/lib/repositories/RateLimitRepository', () => ({
+  ...jest.requireActual('@/lib/repositories/RateLimitRepository'),
+  rateLimitRepository: {
+    hit: async () => ({ allowed: true, hits: 0, degraded: true }),
+    prune: async () => 0,
+  },
+}));
+
 function friendRow(): BusinessOsInviteRedemptionView {
   return {
     id: '11111111-1111-4111-8111-111111111111',

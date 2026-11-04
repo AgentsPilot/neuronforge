@@ -160,6 +160,11 @@ const computedConfigurationSchema = z.object({
      web presence share `booking_only`. Nullable — "not established" is a real
      answer and the common one. */
   has_website: z.boolean().nullish(),
+  /* Enquiries from that site land in a mailbox. Asked as a follow-up and only
+     where `has_website` is true, because it does not follow from it: an owner
+     with their own site may take every enquiry by phone. Decides which offer
+     the dashboard makes, never anything that gets built. */
+  leads_arrive_by_email: z.boolean().nullish(),
   payment_mode: z.enum(['none', 'upfront', 'invoicing', 'installments']),
   needs_stripe_connect: z.boolean(),
   /** Clients fill in a form before their appointment. */
@@ -390,6 +395,32 @@ export async function POST(request: NextRequest) {
       // falls back to it when there are no services to count. Writing it now
       // would keep manufacturing stale answers for that fallback to trust.
       profileData.online_presence_mode = configuration.online_presence_mode;
+      /*
+       * THE TWO FACTS THE PRESENCE MODE CANNOT CARRY, now in columns of their
+       * own rather than only inside `extracted_data`.
+       *
+       * `online_presence_mode` records what WE are asked to build, so a business
+       * keeping its own site and one with no web presence at all both land on
+       * `booking_only` — the confusion the comment at `activationProfile`
+       * already names. Capability activation read `has_website` out of the
+       * request to work around it; the dashboard could not, because by then the
+       * request is gone and nothing had been written down.
+       *
+       * `?? null` rather than a skip: null is the real and common answer
+       * ("never established"), and the readiness card is built to wait on it
+       * rather than guess. An absent key would leave a previous answer standing
+       * on a re-run, which for a question that was re-asked is wrong.
+       *
+       * ⚠️ BOTH WRITES ARE COMMENTED OUT UNTIL THE MIGRATION IS APPLIED.
+       *
+       * `20261105_own_site_and_lead_arrival.sql` adds them. Until it has run,
+       * naming either one here makes the upsert fail with 42703 and this route
+       * returns 500 "Failed to save profile" — onboarding cannot complete at
+       * all. Re-enable these two lines in the same change that applies the
+       * migration, not before.
+       */
+      // profileData.has_website = configuration.has_website ?? null;
+      // profileData.leads_arrive_by_email = configuration.leads_arrive_by_email ?? null;
       profileData.needs_stripe_connect = configuration.needs_stripe_connect;
       /*
        * HOW THE MONEY ARRIVES, in its own column and not only inside the blob.

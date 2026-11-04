@@ -113,6 +113,9 @@ interface PreviewData {
     online_presence_mode?: 'full_website' | 'booking_only' | 'website_only' | 'none';
     /** They told us they already have a site. Null means "not established". */
     has_website?: boolean | null;
+    /** And whether that site's enquiries reach a mailbox — the follow-up, asked
+     *  only of those owners. Null means "not established". */
+    leads_arrive_by_email?: boolean | null;
     payment_mode?: 'none' | 'upfront' | 'invoicing' | 'installments';
     needs_stripe_connect?: boolean;
     pipeline_stages?: Array<{
@@ -545,6 +548,10 @@ function OnboardingBuildContent() {
            keeps its own site shares `booking_only` with one that has no web
            presence at all, so the mode cannot tell them apart. */
         hasOwnWebsite: data.configuration?.has_website === true,
+        /* The follow-up's answer, which is what the mailbox task actually
+           depends on: connecting a mailbox is pointless for a site whose
+           enquiries never reach one. */
+        leadsArriveByEmail: data.configuration?.leads_arrive_by_email === true,
       },
       selectedLanguage as 'en' | 'he' | 'es'
     )) {
