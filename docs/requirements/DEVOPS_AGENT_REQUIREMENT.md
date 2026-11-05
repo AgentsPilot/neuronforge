@@ -48,7 +48,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-3 | `vercel-ops` skill | ✅ MERGED 2026-10-31 (PR #589). See [DO-3 Specification](#do-3-specification--vercel-ops-skill), [SA Review — DO-3](#sa-review--do-3), [DO-3 implementation notes](#do-3-implementation-notes) and [QA Report — DO-3](#qa-report--do-3). Follow-up FU-4 ⬜ (DO-5) |
 | DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) ✅ DO-5a MERGED 2026-10-31 (PR #592; see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) 🟡 spec re-checked by BA 2026-10-31 (FU-5: H10, the Q-D5-9 note, the H3 boundary, the check list §D5.2.2(g), Q-D5b-1 to Q-D5b-4); SA short pass 2026-10-31 **APPROVED WITH CHANGES** (see [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)); DO-5b built (see [DO-5b implementation notes](#do-5b-implementation-notes)); **SA code review 2026-10-31: Code Approved for QA**, with four small skill fixes (repo reads use `origin/main:./<path>` from the worktree root; `devops.md` unchanged beyond the pointer line); **QA 2026-10-31: QA passed**, with two small non-blocking items, both fixed (see [QA Report — DO-5b](#qa-report--do-5b)); **user approved the diff 2026-11-01**, PR open with auto-merge. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file): ✅ PR #593 MERGED 2026-10-31; `origin/main` shows the file untracked and the `.gitignore` line. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
-| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; MERGED (#614). DO-6e (domains and app addresses, narrowed by the user) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6e implementation notes](#do-6e-implementation-notes)); SA code review approved with three fixes; QA 19 checks, two Mediums and a Low fixed by the main session; user approved the diff 2026-11-03; merged (#616). DO-6f (queues, AWS and small API-key providers) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6f implementation notes](#do-6f-implementation-notes)); SA code review approved with five fixes; QA 25 checks, one Medium and three Lows; all fixes applied by the main session; user approved the diff 2026-11-04; merged (#620). DO-6g (messaging apps: Meta and Slack) spec + SA short pass approved with changes; built 2026-11-04 (see [DO-6g implementation notes](#do-6g-implementation-notes)); SA code review approved with eight fixes; QA 24 checks, one High, one Medium and four Lows; all fixes applied by the main session; user approved the diff 2026-11-04; commit + PR.** |
+| DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | 🟡 Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; MERGED (#614). DO-6e (domains and app addresses, narrowed by the user) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6e implementation notes](#do-6e-implementation-notes)); SA code review approved with three fixes; QA 19 checks, two Mediums and a Low fixed by the main session; user approved the diff 2026-11-03; merged (#616). DO-6f (queues, AWS and small API-key providers) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6f implementation notes](#do-6f-implementation-notes)); SA code review approved with five fixes; QA 25 checks, one Medium and three Lows; all fixes applied by the main session; user approved the diff 2026-11-04; merged (#620). DO-6g (messaging apps: Meta and Slack) spec + SA short pass approved with changes; built 2026-11-04 (see [DO-6g implementation notes](#do-6g-implementation-notes)); SA code review approved with eight fixes; QA 24 checks, one High, one Medium and four Lows; all fixes applied by the main session; user approved the diff 2026-11-04; commit + PR. DO-6g merged (#622). DO-6h (plugin OAuth apps) spec + SA short pass approved with changes; built 2026-11-04 (see [DO-6h implementation notes](#do-6h-implementation-notes)); SA code review approved with eight fixes; QA 26 checks, one High, one Medium and four Lows; all fixes applied by the main session; user approved the diff 2026-11-05; commit + PR.** |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
 
@@ -2458,6 +2458,225 @@ A change to an app used **only** by non-production environments, as recorded, is
 
 ---
 
+## DO-6h Specification — Plugin OAuth apps (third-party-ops)
+
+**By BA — 2026-11-04; SA changes 1–12 and rulings Q-D6h-1 to Q-D6h-9 applied 2026-11-04.** A short scoping pass, in the same form as DO-6b to DO-6g. This is a config and docs slice: no application code, no CI job and no added CI time. It adds one reference file and one index row to `third-party-ops`, under SKILL.md §1–§4 and SA Review — DO-6 (changes 1–7). It applies the DO-6c to DO-6g lessons from the start:
+- every probe states its precondition, an exact pass, an exact fail and its side effects;
+- a probe that passes on an unset value is not a probe;
+- a "zero warnings" read counts only when a positive marker shows the plugin loaded in the window ("Plugin manager initialized", SA Review — DO-6g change 1); a "zero failures" read counts only when an outcome line is above zero;
+- every quoted log string is checked verbatim, with its module, and a string that other modules also log, or that starts another message, is matched as an exact message plus module;
+- no quoted string comes from code that has no live caller (QK-2 rule).
+
+**Scope (DO-6 row).** Eight vendors, eight tags:
+- **MX**, the Microsoft app registration behind `MICROSOFT_*`: one client for the Outlook plugin (loaded) and the OneDrive plugin (not loaded), covered in full for Outlook;
+- **AT** Airtable, **DC** Discord, **DB** Dropbox, **HS** HubSpot, **LI** LinkedIn, **NT** Notion, **SF** Salesforce: one compact table, one row each, "not in use" (MS-1 in `messaging.md`), no probe;
+- the OneDrive half of MX is "not in use" in the same way.
+
+**Services live (Q-D6-2 rule).** The main session confirmed on 2026-11-04, from code, that the active plugin profile loads Outlook and none of the other plugins in scope (OA-1), so those are recorded as not in use. The Outlook half of MX has a live path; the OneDrive half and the seven other vendors do not. No target is named. DO checks which names are set at use time (T-OA-1).
+
+**Boundary.**
+- **DO owns:** the sixteen env names in §D6h.1; which Microsoft registration each environment uses (by role, private); and the registration's settings as dashboard reads, including the client secret's expiry bucket.
+- **The stable address is A1 policy,** owned by `domains.md` (AD-2, AD-3). This file points to it for redirect URIs and never restates it.
+- **`google.md` owns** the Google plugin client (G3); **`messaging.md` owns** every Meta app and every Slack app. This file owns every other vendor's plugin OAuth app.
+- **The shared connect, callback and token-exchange path** is described once, in `messaging.md` MS-2 (unset names keep the placeholder) and MS-8 (the callback's log classes). This file points to them and does not restate them.
+- **App data is not DO's:** stored connections, calendar sync settings, synced calendar events, inbox-channel settings, drafts, and the refresh-failure mark a revoked grant writes. DO never writes or deletes them.
+
+### D6h.1 Context and findings from code
+
+Taken from the code at the worktree's `origin/main` base (`4b6c4abe`). Names and readers only: no value was read, no `.env*` file was opened and no network call was made.
+
+| # | Service | Names (catalogue group `plugins`; `expectedIn` prod / preview / local) | Readers |
+|---|---|---|---|
+| MX | Microsoft app registration: Outlook (loaded), OneDrive (not loaded) | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` (optional everywhere; catalogue role: the OAuth client and secret for the Outlook and OneDrive plugins) | `${…}` placeholders in `lib/plugins/definitions/outlook-plugin-v2.json` and `onedrive-plugin-v2.json` (both `auth_type` `oauth2_microsoft`, both on the vendor's multi-tenant `/common/` authority, both with a `refresh_url`), filled by `processEnvironmentVariables` in `lib/server/plugin-manager-v2.ts`; the shared connect and callback path (`messaging.md` MS-2, MS-8); refresh through `refreshToken` in `lib/server/user-plugin-connections.ts` → `refreshAccessTokenDetailed` in `lib/services/OAuthTokenService.ts` (OA-3). Live surfaces: calendar sync (`components/scheduling/CalendarSyncSettings.tsx`, `app/api/scheduling/calendar-sync/enable/route.ts`, the `calendar-sync` cron through `lib/services/CalendarSyncService.ts`); the leads inbox (`app/api/business-os/leads/inbox/*`, provider `outlook`); the `draft_client_replies_outlook` automation (`lib/business-os/automations/catalog.ts`) |
+| AT | Airtable | `AIRTABLE_CLIENT_ID`, `AIRTABLE_CLIENT_SECRET` (optional everywhere) | `airtable-plugin-v2.json`. **Not in use** (MS-1) |
+| DC | Discord | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` (optional everywhere) | `discord-plugin-v2.json`. **Not in use** |
+| DB | Dropbox | `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET` (optional everywhere; both catalogued as secret) | `dropbox-plugin-v2.json`. **Not in use** |
+| HS | HubSpot | `HUBSPOT_CLIENT_ID`, `HUBSPOT_CLIENT_SECRET` (optional everywhere) | `hubspot-plugin-v2.json`. **Not in use** |
+| LI | LinkedIn | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET` (optional everywhere) | `linkedin-plugin-v2.json`. **Not in use** |
+| NT | Notion | `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET` (optional everywhere) | `notion-plugin-v2.json`. **Not in use.** `lib/testing/plugin-secret-matcher.ts` seeds `NOTION_CLIENT_SECRET` with a sentinel value that must never appear in a response (an egress test, not a reader) |
+| SF | Salesforce | `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET` (optional everywhere) | `salesforce-plugin-v2.json`. **Not in use** |
+
+Every definition's redirect is `${NEXT_PUBLIC_APP_URL}/oauth/callback/<key>`, so `NEXT_PUBLIC_APP_URL` (A1) is a reader dependency of every row.
+
+| # | Finding | Where | Consequence for the file |
+|---|---|---|---|
+| OA-1 | **Only Outlook is loaded.** Of the nine plugin keys in scope (airtable, discord, dropbox, hubspot, linkedin, notion, onedrive, outlook, salesforce), the active profile lists only `outlook`; the others are only in the `all` profile. What an unloaded plugin does (never read or substituted, connect 404, callback "Plugin configuration not found", executor refusal) is `messaging.md` MS-1; this file points there. The profile's own comment records that one plugin carries both mail and calendar | `lib/server/plugin-profile.ts` | OneDrive and AT to SF are "not in use" rows: no probe, no quoted executor string. T-OA-9 is a Low code check on the profile. FU-D6h-a goes to TL |
+| OA-2 | **One Microsoft client serves two plugins,** each with its own callback path. Only the loaded one (Outlook) needs registering; a OneDrive callback is registered only if recorded. Both definitions use the multi-tenant `/common/` authority, so the registration must accept work or school accounts and personal accounts (vendor fact, confirm at use time) | Both Microsoft definitions | §1 rows; T-OA-4 |
+| OA-3 | **Refresh uses the client secret** (unlike Meta, `messaging.md` MS-5). The Outlook definition has a `refresh_url`. `buildOAuthRequest` sends the client credentials in an HTTP Basic header, or in the body. The code exchange uses Basic only when a PKCE verifier comes back in `state`, which the browser adds for `requires_pkce`; refresh uses Basic when the definition sets `requires_pkce`. The Outlook definition does not set it, so both legs send the secret in the body. `refreshToken` is reached from `getConnection` (proactive, within five minutes of the stored expiry), from the executor's one retry after a provider 401 (`refreshAfterRejection` in `lib/server/base-plugin-executor.ts`), from the executable-plugin listing in `plugin-manager-v2.ts`, and from the session-scoped `app/api/plugins/refresh-token/route.ts`, which the calendar sync card calls. The stored expiry comes from the vendor's `expires_in` (`calculateExpiresAt`); the definition's `token_expiry_seconds` is not read by this path. The calendar-sync cron reads each enabled user's calendar on a schedule | `OAuthTokenService.ts` (`buildOAuthRequest`, `refreshAccessTokenDetailed`); `user-plugin-connections.ts` (`getConnection`, `refreshToken`); `base-plugin-executor.ts`; `plugin-manager-v2.ts`; the refresh-token route; `outlook-plugin-v2.json` | **A secret change reaches every stored Outlook connection at its next refresh, not only new connects.** This also gives a secret probe that needs no user action (P-OA-4) |
+| OA-4 | **Refresh outcomes are logged in two modules.** `refreshAccessTokenDetailed` (module `OAuthTokenService`, `warn`, with `status` and `revoked`, **no plugin key**) logs "Token refresh refused: the grant is gone and the owner must reconnect" when the vendor's body contains `invalid_grant`, and "Token refresh failed for a reason that may pass; not blaming the grant" for anything else. `refreshToken` (module `UserPluginConnections`, with `pluginKey`) logs "Token Refresh: Attempting to refresh token" (`info`) first, then "Token Refresh Success - New token saved" (`info`), or "Token refresh failed" (`warn`, with `reason` `grant_revoked` or `transient`). Only `grant_revoked` writes the refresh-failure mark on the connection. Three more exits follow the attempt line: "Token refresh: No refresh token available - user needs to reconnect" (`warn`), "Failed to save refreshed token" (`error`) and "Token refresh error" (`error`, the `catch`). `getConnection` adds "Smart Refresh Success: Token refreshed and ready for use" (`info`) or "Smart Refresh Failed: User needs to reconnect in Settings" (`error`), same module | `OAuthTokenService.ts`; `user-plugin-connections.ts` | Evidence is counted from the `UserPluginConnections` outcome lines, filtered by `pluginKey` `outlook`, because only they carry the plugin. 'Token refresh failed' is logged with the same text by `PluginRefreshTokenAPI` (with `pluginKey`) and by the deprecated `PluginCoordinator`. It is also the start of two `OAuthTokenService` messages and one `PluginManager` message (with `pluginKey`). Count it only as the exact message **and** module `UserPluginConnections`. The outcome lines are the denominator; "Token Refresh: Attempting to refresh token" is context only. The logged error text and `userId` are never read out |
+| OA-5 | **A wrong or expired client secret reads as `transient`, not revoked.** The vendor refuses a bad client credential with an error other than `invalid_grant` (vendor fact, confirm at use time), so the outcome is `transient`: nothing is marked on the connection and no readiness warning appears. Every Outlook call then fails at each refresh attempt. A refresh that never reaches the vendor is also `transient` and logs no `OAuthTokenService` line; an unset secret is sent as its placeholder (MS-2) and reads the same way | `refreshAccessTokenDetailed` (the `invalid_grant` test) | The only signal is a run of `reason` `transient` for `outlook` with no success (P-OA-4, T-OA-7). Gotcha 4 |
+| OA-6 | **An unset MX name is not refused by our code;** the load marker shows a load happened. Both are `messaging.md` MS-2, which applies to every definition loaded through the same manager | `plugin-manager-v2.ts` | T-OA-3 uses the same marker-plus-placeholder form as T-MS-4 |
+| OA-7 | **The connect surfaces turn features on.** Enabling calendar sync with Outlook makes the app push bookings as calendar events and pull busy times; enabling the inbox channel reads mail; the automation drafts replies. On the calendar sync card, connect (`connectPlugin`) and enable are separate actions, so a no-enable surface exists in code (confirm at use time). The callback answers one origin (`google.md` §5) | `CalendarSyncSettings.tsx`; the calendar-sync enable route; `CalendarSyncService.ts`; the inbox routes; `catalog.ts` | Every probe stops before any enable step. A completed connect (P-OA-5) is optional and never followed by an enable |
+
+### D6h.2 What the file teaches (the six-part template)
+
+The file is `.claude/skills/third-party-ops/oauth-apps.md` (Q-D6h-2). It opens with the same intro sentence as its siblings, then the live-check line, the MX table row, one compact table for AT to SF, and the boundary paragraph. Target length: about 120–160 lines, at most about 180. If it runs long, trim prose, never a probe or drift row; the seven-vendor table stays one row each.
+
+**ID prefix: `OA`** (findings OA-n, probes P-OA-n, drift checks T-OA-n). Service tags: MX, AT, DC, DB, HS, LI, NT, SF.
+
+**The seven-vendor table** (exact columns; one row each):
+
+| Tag | Vendor | Names | Definition | Status |
+|---|---|---|---|---|
+| AT … SF | (vendor) | (the pair from §D6h.1) | `<key>-plugin-v2.json` | Not in use: outside the active profile (`messaging.md` MS-1). No probe. Redirect, if recorded: the definition's callback at each stable A1 address (`domains.md`). Whether the names stay set: FU-D6h-a |
+
+The NT row adds the egress-sentinel note from §D6h.1. No row adds anything else.
+
+**(1) What must differ between environments.** The **current** setup (which Microsoft registration each environment's MX names belong to, and whether one registration serves several environments) is recorded in the private inventory by role, checked at use time, and reported by role.
+
+| Setting | Rule per environment |
+|---|---|
+| Registration per environment | `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET` on a target come from **one** recorded registration, set together or not at all, and with A1 set. Where one registration serves several environments, every change to it is a change to all of them |
+| MX redirect URIs | Outlook's callback, exactly as its definition builds it, at each environment's stable A1 address (`domains.md`), under the registration's Web platform (vendor fact, confirm at use time). Only a stable address can be registered. A OneDrive callback only if recorded |
+| Supported account types | Cover both work or school accounts and personal accounts, as the `/common/` authority requires (OA-2; vendor fact, confirm at use time) |
+| API permissions | Every scope the Outlook definition requests is configured as a delegated permission on the registration; admin-consent and publisher-verification status as recorded (vendor terms, confirm at use time). Scopes are derived from the definition at use time; this file lists none |
+| Client secret | The secret the target holds is a current secret of the recorded registration, with days to expiry above the recorded threshold (T-OA-5). Two secrets may coexist on one registration only during a rotation (§7) |
+| AT to SF, OneDrive | No plugin in the active profile reads them (OA-1). Whether they stay set is FU-D6h-a's decision |
+
+"Local" is guidance for whoever runs the app locally. DO reads no `.env*` file, so local is never a DO check. A loopback redirect is registered only on a non-production registration.
+
+**(2) Where the code reads it.** The §D6h.1 readers and OA-1 to OA-7, named as files and functions only. Expected names come from the catalogue group `plugins` at `origin/main`, filtered to these sixteen. Callback paths and scopes are derived from the definitions at use time. Which plugins are loaded is read from `lib/server/plugin-profile.ts`. **Never a probe target:** the OneDrive executor and the AT to SF executors (outside the profile), `backups/` and `archive/` copies.
+
+**(3) Dashboard steps (the user)**, by area name, confirmed at use time:
+- **Microsoft Entra admin centre, App registrations** (the recorded registration):
+  - Overview: application ID present, same registration as recorded yes/no.
+  - Authentication: the Web platform's redirect URIs; supported account types.
+  - Certificates and secrets: the client secrets listed, each one's expiry; add a secret; delete a secret.
+  - API permissions: each derived delegated permission present; admin-consent status.
+  - Branding and properties: publisher verification status.
+- **Vercel:** env values per `vercel-ops` and `env-change-protocol`. The value never passes through chat or a file. A new secret's value is shown by the vendor once, at creation (vendor fact, confirm at use time): the user copies it straight into Vercel.
+- **AT to SF** (not in use): no dashboard step unless FU-D6h-a decides.
+
+The user reports the following:
+- presence;
+- "same registration as recorded: yes/no", "registered: yes/no", "account types cover work and personal: yes/no";
+- "permission present: yes/no" per derived scope, and the consent and verification status;
+- the number of secrets listed (one, or two during a rotation), and for each, the **days-to-expiry bucket**: more than 90, 30 to 90, under 30, or expired;
+- the last-updated time.
+
+The user never reports an application, directory or tenant identifier, a secret value, a secret's identifier, hint or description, an expiry date, a redirect URI or an account.
+
+**(4) Probes.** Each one fails when the setting is wrong. None sends mail, creates, moves or deletes a calendar event, drafts a reply, enables calendar sync or the inbox channel, or connects a real account (except the optional, user-approved P-OA-5), and none prints a value or runs in a loop. Each runs on the deployment named per `vercel-ops` §4, after it is Ready. A 401 from deployment protection, or any answer that is not the route's own, is "not probed (protected host)". OneDrive and AT to SF have no probe: "not probed (no live path)" (OA-1).
+
+**Refresh outcome lines** (SA change 4). All are module `UserPluginConnections`, `pluginKey` `outlook`, on the deployment under test, from Ready:
+- **Outcome lines:** "Token Refresh Success - New token saved" (S) and "Token refresh failed" by `reason` (T for `transient`, R for `grant_revoked`).
+- **Pass:** S ≥ 1. T, if any, is recorded by count.
+- **Fail:** T ≥ 1 and S = 0. Record the class, never the logged text, and stop the rotation.
+- **Not conclusive:** R ≥ 1 with S = 0 and T = 0. That is one owner's grant, not the secret.
+- **Not read (no refresh in window):** S + T + R = 0, whatever the count of "Token Refresh: Attempting to refresh token". The attempt line also precedes the no-refresh-token exit and two error exits ("Failed to save refreshed token", "Token refresh error"), so it is context, not the denominator.
+- **Window:** from Ready until the first outcome line, capped at the vendor's access-token lifetime (vendor fact, confirm at use time) plus one calendar-sync cron interval (`vercel.json`). The cron runs on production deployments only (`vercel-ops` §6); elsewhere only user traffic refreshes.
+- **Rotation overlap:** While the old secret is still valid at the vendor, a pass of P-OA-4, P-OA-4b or P-OA-5 may have used it (for example if the new value never reached the target), so it is "pass, not conclusive (overlap)". It proves the target for the §7 delete only when it comes from a deployment that carries the new value: one created after the name's last-updated time on that target (`vercel-ops` §3 and §4), with the user's report that this time is after the new secret was added. After the delete, P-OA-4 is read again on each target (P-OA-4b or P-OA-5 where it does not read); only a pass after the delete is conclusive.
+
+| ID | Change | Probe | Pass | Fails when | Who | Precondition and side effects |
+|---|---|---|---|---|---|---|
+| P-OA-1 | Any of the sixteen names | `/admin/environment` on that deployment | Set, or Not set where intended. Presence only | The other state | Main session or user | Admin session. None |
+| P-OA-2 | MX names substituted | Signed in on that deployment, POST `/api/v2/plugins/connect` with `plugin_key` `outlook`, and test the returned `authUrl` through a filter that prints yes/no only | No `${` (raw or URL-encoded) anywhere; the `redirect_uri` parameter is the target's recorded stable address plus the definition's callback path, with no `//oauth` | Either test fails | Main session | None written. "Initiating plugin OAuth connection" and "OAuth URL generated" (module `PluginConnectAPI`). The response holds the client ID and a `state` value: never printed or pasted. Proves substitution, not the vendor's acceptance, and not the secret |
+| P-OA-3 | MX client, redirect URI, account types, permissions | On the environment's stable A1 address (`domains.md`), never a per-deployment host, start an Outlook connect from a surface that connects without enabling anything (the calendar sync card's connect action, confirm at use time); stop at the vendor's sign-in or consent page; cancel. The callback returns there (`google.md` §5) | The vendor's sign-in page loads for the registration (user yes/no), with no error page | The vendor shows an unknown-application, redirect-URI-mismatch or unsupported-account-type page (vendor messages, confirm at use time); DO counts the placeholder line (T-OA-3) > 0 | User; DO (logs, on the deployment that serves that address, named per `vercel-ops` §4) | A Business OS owner session on that address, and a surface that does not enable sync or the inbox on connect; else "not probed (no surface)". A pass with one account type proves nothing about the other (gotcha 9). On a cancel the callback stores nothing ("OAuth error from provider", module `OAuthCallbackAPI`) |
+| P-OA-4 | MX secret (primary: no user action) | DO reads the refresh outcome lines over the window above | As the outcome rules above | As the outcome rules above; "not conclusive" as defined there | DO (logs) | S + T + R = 0: "not read (no refresh in window)", never a pass. A refresh writes new tokens on the owners' own connections, as it would anyway; the probe adds no traffic |
+| P-OA-4b | MX secret (fallback 1) | Optional, user-approved, once: on the environment's stable A1 address, when the calendar sync card shows the user's **own** Outlook connection as expired, the user clicks its Outlook icon to refresh it (confirm at use time; never the card's calendar refresh button, never enable) | As P-OA-4, after the probe time | As P-OA-4, after the probe time | User (trigger); DO (log counts on the deployment that serves that address) | P-OA-4 not read, and the user has an Outlook connection, else "not probed (no own connection)". Writes new tokens on the user's own connection, as a refresh would anyway. The route also logs a 'Token refresh failed' line under `PluginRefreshTokenAPI`, which is not counted (SA change 3). The route refreshes only a token that is expired or within five minutes of expiry, so a valid token gives no outcome line ("not read"). If the refresh fails, the card starts an Outlook connect on its own: the user cancels it at the vendor's page |
+| P-OA-5 | MX secret (fallback 2) | Optional, user-approved, once: P-OA-3 completed on the user's own Microsoft account, from the environment's stable A1 address, from the same no-enable surface | "OAuth callback successful" ≥ 1 and "OAuth callback failed" = 0 for `plugin` `outlook` after the probe time | As `messaging.md` P-MS-4's fail column, with `plugin` `outlook` | User (trigger); DO (log counts, on the deployment that serves that address) | P-OA-4 is not read, and P-OA-4b is not read or not probed. Writes a connection row (or reconnects the user's own one, replacing its tokens) and its audit entry. Never followed by an enable step. Cleanup: disconnect in the app, then remove the app's access in the user's Microsoft account (vendor area, confirm at use time) |
+| P-OA-6 | Registration settings | User reads the §3 areas for the recorded registration | Same registration yes; Outlook's callback registered for each stable address yes; account types cover work and personal yes; each derived permission present yes; consent and verification as recorded; each secret's bucket above the recorded threshold | Any "no", or a bucket at or below the threshold | User; DO derives the callback and scopes | None |
+| P-OA-7 | Rotation (MX secret) | The probes above in the §7 order | Every target proved before the delete (§4 "Rotation overlap"), then a pass after the delete, and no fail in the window after it | Any failure after either step | User; DO | As the probes used |
+
+**(5) Gotchas**, each grounded in a repo file:
+1. **Only Outlook is loaded** (OA-1). A OneDrive, Airtable, Discord, Dropbox, HubSpot, LinkedIn, Notion or Salesforce failure is never read as a credential fault (`messaging.md` MS-1).
+2. **One client, two plugins** (OA-2): a secret change touches Outlook and OneDrive, and every environment that shares the registration.
+3. **Refresh uses the secret** (OA-3): a secret change reaches every stored Outlook connection at its next refresh, from any of `refreshToken`'s callers, not only new connects. This differs from Meta (`messaging.md` MS-5).
+4. **A bad or expired secret reads as transient** (OA-5): no connection is marked and no readiness warning appears. The refresh outcome count is the only signal.
+5. **Match refresh lines exactly** (OA-4): 'Token refresh failed' is logged by several modules, some with `pluginKey`. Count the `UserPluginConnections` line, by `pluginKey` and `reason`.
+6. **The client secret expires on a date set at creation** (vendor fact, confirm at use time): expiry is planned drift (T-OA-5), never a surprise.
+7. **Unset is not refused by our code** (`messaging.md` MS-2): it surfaces as a vendor error page, or at the token exchange.
+8. **The callback answers one origin** (`google.md` §5).
+9. **`/common/` serves two account kinds** (OA-2; vendor fact): a work tenant may also require admin consent or a verified publisher. A pass with a personal account proves nothing for a work account, and the reverse.
+10. **The connect surfaces turn features on** (OA-7): a probe never enables calendar sync or the inbox channel.
+
+**(6) Drift checks** (in the `env-drift-audit` §7 format, under its rules):
+
+| ID | Check | Expected state from | Live read | Class | Who reads |
+|---|---|---|---|---|---|
+| T-OA-1 | On each **Vercel target** of the web app project, the sixteen names match the recorded intent. `NEXT_PUBLIC_APP_URL` is checked by `domains.md`; T-OA-2 checks only that it is set wherever the MX pair is set. Local: "not read (main session / user)" | Catalogue at `origin/main`; private inventory | `vercel-ops` §3 (names only) | High | DO |
+| T-OA-2 | `MICROSOFT_CLIENT_ID` with `MICROSOFT_CLIENT_SECRET`, and wherever that pair is set, `NEXT_PUBLIC_APP_URL` too | Code at `origin/main` | `vercel-ops` §3 (names only) | High | DO |
+| T-OA-3 | On each deployment since the last run: "Plugin manager initialized" (module `PluginManager`, `info`) ≥ 1, its `loadedPluginKeys` includes `outlook`, **and** 0 "Environment variable not found, keeping placeholder" with `varName` among the MX names or `NEXT_PUBLIC_APP_URL`. No marker line: "not read (no load in window)", never 0 | Change records | Runtime logs | High | DO |
+| T-OA-4 | Registration: Outlook's callback, derived from the definition at `origin/main`, registered under the Web platform for each environment's stable address; supported account types cover work and personal | Code at `origin/main`; private inventory | User report (P-OA-6) | High | User; DO (code side) |
+| T-OA-5 | Client secret: the bucket of each secret on the recorded registration (more than 90, 30 to 90, under 30, expired) is above the recorded threshold; only one secret listed outside a recorded rotation. Never the secret's identifier, hint, description or date | Private inventory (threshold: at least the time a rotation across every target takes, including a wait for P-OA-4 traffic) | User report (P-OA-6) | High | User |
+| T-OA-6 | Every scope the Outlook definition requests is a delegated permission on the registration; consent and publisher-verification status as recorded | Code at `origin/main` (scopes derived); private inventory | User report (P-OA-6) | Medium | User; DO (code side) |
+| T-OA-7 | Since the last run, the refresh outcome lines above, by `reason`. Any window with T ≥ 1 and S = 0 is High (OA-5). `grant_revoked` at or above the recorded baseline (private inventory) is Medium; below it, record the count. S + T + R = 0 is "not read (no traffic)" | Change records; private inventory (baseline) | Runtime logs | High | DO |
+| T-OA-8 | "OAuth callback failed" for `plugin` `outlook` (module `OAuthCallbackAPI`) since the last run, more than the recorded probes. "OAuth callback received" for `outlook` = 0 is "not read (no traffic)" | Change records | Runtime logs | Medium | DO |
+| T-OA-9 | `outlook` still inside the active profile, and `onedrive`, `airtable`, `discord`, `dropbox`, `hubspot`, `linkedin`, `notion` and `salesforce` still outside it; cross-checked at runtime from "Plugin manager initialized" (`loadedPluginKeys`, `skippedPluginKeys`). A change means this file needs probe rows before merge | Code at `origin/main`; runtime logs | Repo read; runtime logs | Low | DO |
+| T-OA-10 | The AT to SF names are not set on any target unless recorded with a reason | Private inventory | `vercel-ops` §3 | Low | DO |
+
+**(7) Tiers and order against the deploy.** This section points to `env-change-protocol` and restates nothing.
+
+**Tiers.** These are **production tier** (SA reviews the plan, the user executes):
+- on a registration production uses: adding or deleting a client secret, any redirect URI added or removed, any change to supported account types, API permissions, consent or publisher verification;
+- creating a new registration for production (it changes the client ID);
+- removing any of these names from production.
+
+A change to a registration used **only** by non-production environments, as recorded, is reversible: the user applies it after the approval in chat. Where one registration serves several environments, every change to it is production tier.
+
+| Change | When |
+|---|---|
+| Client secret rotation (planned, before expiry) | Add the new secret; the old one stays valid (vendor fact, confirm at use time) → set the new value on **every** target that uses the registration → each deploy Ready → P-OA-2, then the first of P-OA-4, P-OA-4b or P-OA-5 that reads, on each target → delete the old secret only when **every** target is proved (§4 "Rotation overlap") → P-OA-4 again on each target → record the new bucket (T-OA-5). Until every target is proved, the old secret stays on the registration, so a deployment built before the change (an instant rollback) still works; if a target is never proved, the old secret ends on its own expiry date, and T-OA-7 and T-OA-8 watch the window after that date. Deleting the old secret before every target carries the new one fails every stored connection on the lagging target at its next refresh, and it reads as `transient` (OA-5) |
+| Client secret exposed | The same order up to Ready on every target, then delete the old secret without waiting for a probe. The plan names the targets not proved as at risk, and T-OA-7 is read in the next window |
+| Client secret already expired | Add a new secret → set it on every target → deploy Ready → the first of P-OA-4, P-OA-4b or P-OA-5 that reads, on each target → delete the expired secret → record the new bucket (T-OA-5). Whether existing grants recover at the next refresh without a reconnect, because the client ID is unchanged, is a vendor fact, confirm at use time |
+| A new registration (client ID change) | Every existing Outlook connection must reconnect: an owner-facing change, planned and announced as such |
+| A new or changed callback path, or a new environment | Its redirect registered for every stable address before merge, or before that environment serves the connect |
+| A scope the Outlook definition starts to request | Configured as a permission on the registration (and consented where the vendor requires) before merge. Whether existing connections need to re-consent is a vendor fact, confirm at use time |
+| Supported account types narrowed | Only with a plan for the connections of the excluded kind, which fail at their next refresh (vendor fact, confirm at use time) |
+| App address moves (`domains.md` §7) | In step 5, add the new redirect URI; remove the old one in step 8 |
+| A plugin added to the active profile | This file gains its probe rows and its redirect is registered before merge (T-OA-9) |
+| Removing AT to SF or OneDrive names | After FU-D6h-a decides |
+
+**Last-updated time:** where `vercel-ops` §3 shows the name's last-updated time on each target, it is after the new secret was added. Alone it is never a pass; with a probe pass it proves the target for the delete (§4 "Rotation overlap"). Before the first production rotation, the outcome class a refused or expired secret produces (`reason` `transient` expected, OA-5) is confirmed once on a non-production registration and recorded in the private inventory; in the file it is a vendor fact, "confirm at use time".
+
+### D6h.3 Files to change
+
+| # | File | Action |
+|---|---|---|
+| D6h-1 | `.claude/skills/third-party-ops/oauth-apps.md` | New, per §D6h.2. Target about 120–160 lines, at most about 180 |
+| D6h-2 | `.claude/skills/third-party-ops/SKILL.md` | Two edits and nothing else. (a) The §5 row "Plugin OAuth apps \| not covered yet (DO-6h)" becomes "Plugin OAuth apps: Microsoft (Outlook, OneDrive), Airtable, Discord, Dropbox, HubSpot, LinkedIn, Notion, Salesforce" → `[oauth-apps.md](oauth-apps.md)`. (b) The description triggers gain "Microsoft, Outlook, OneDrive, an Entra or Azure app registration, a Microsoft client secret, a client secret expiry, Outlook calendar sync, a token refresh failure, Airtable, Discord, Dropbox, HubSpot, LinkedIn, Notion, Salesforce, a plugin OAuth app", inserted before ", a vendor dashboard, or" in the description, which is unique in the file (SA change 10). The §2 table row is not touched |
+| D6h-3 | `.claude/skills/third-party-ops/domains.md` | In §7 step 5, `later DO-6h` → `` `oauth-apps.md` ``, so the parenthesis reads ``(`stripe.md`, `google.md`, `messaging.md`, `oauth-apps.md`)``. Nothing else |
+| D6h-4 | `.claude/skills/third-party-ops/messaging.md` | One phrase in the boundary paragraph (QA Low 4): `is DO-6h's` → ``is `oauth-apps.md`'s``. Nothing else |
+| D6h-5 | This requirement | §0 row, these sections, notes, reviews |
+| — | `stripe.md`, `email.md`, `google.md`, `llm-providers.md`, `queues-and-keys.md`, `vercel-ops`, `supabase-ops`, `env-drift-audit`, `env-change-protocol`, `devops.md`, `CLAUDE.md`, `lib/admin/environment/catalogue.ts`, all application code | **Not edited** |
+
+**Follow-ups.** These go in the requirement only, never in the skill text (the skill names FU IDs as pointers only), and are stated neutrally:
+- **FU-D6h-a** (decision for TL and the user; SA review required either way): whether to keep the names of the plugins outside the profile (OneDrive, Airtable, Discord, Dropbox, HubSpot, LinkedIn, Notion, Salesforce) set on targets, and their definitions and catalogue entries in the tree. **Remove option, in this order:** record and then clear the dashboard registrations; remove the definitions and catalogue entries in one PR (OneDrive's names stay, because Outlook reads them); then remove the names from every target. **Reachable option:** adding a plugin to the profile needs SA review and this file's probe rows.
+
+### D6h.4 Acceptance criteria
+
+- [ ] `oauth-apps.md` has the six parts, plus tiers and order. It is organised by MX and one table for AT to SF, one row each. Every file path it names exists at the base. It states the live check in the §Services-live wording and the OA-1 result (Outlook loaded; OneDrive and AT to SF not in use). `wc -l` ≤ 180.
+- [ ] Each probe names who runs it, its pass, what it shows when wrong, its precondition and its side effects. None sends mail, touches a calendar event, drafts a reply, enables sync or the inbox, needs DO to hold a key, or prints a value. P-OA-4b and P-OA-5 are marked optional and user-approved; P-OA-5 is used only when P-OA-4 and P-OA-4b are not read.
+- [ ] **No check can pass on silence:** T-OA-3 requires the "Plugin manager initialized" marker with `outlook` in `loadedPluginKeys`; P-OA-4, P-OA-4b and T-OA-7 require an outcome line (S + T + R ≥ 1) for `outlook`, never the attempt line alone; T-OA-8 requires "OAuth callback received" ≥ 1 for `outlook`. Each has its "not read" state.
+- [ ] The §7 rotation row orders add → set everywhere → deploy → probe on every target → delete old only when every target is proved past the overlap (a pass plus a last-updated time after the new secret was added) → repeat the probe, keeps the old secret on the registration until then, names what happens to a target not proved, and states that a bad secret reads as `transient`. The "Client secret exposed" row deletes without waiting and names the targets at risk.
+- [ ] Redirect URIs are pointers to `domains.md` (AD-2, AD-3), not restated. The shared connect and callback path is a pointer to `messaging.md` MS-2 and MS-8, not restated. The restatement grep from §D6.4 over the new file returns 0, or each hit is a pointer.
+- [ ] Every quoted string from tracked code is verbatim in its cited file (`grep -cF` ≥ 1), with its module. Each refresh line is counted as an exact message plus module. Every vendor message or behaviour is marked "confirm at use time". No string from the OneDrive or AT to SF executors is quoted.
+- [ ] No sentence presents OneDrive or AT to SF as live, and no probe or drift row targets them beyond T-OA-9 and T-OA-10.
+- [ ] **Public repo:** the finding-11 regex over the added lines returns 0. QA also greps the new file for each of these, and gets 0 hits:
+  - `microsoftonline`, `graph\.microsoft`, `microsoft\.com`, `azure\.com`, `airtable\.com`, `discord\.com`, `dropboxapi`, `hubapi`, `hubspot\.com`, `linkedin\.com`, `notion\.(com|so)`, `salesforce\.com`;
+  - `https?://`, `localhost:`, `vercel\.app`, `agents?pilot\.[a-z]`;
+  - `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-` (an application or directory identifier);
+  - `AADSTS` (a vendor error code);
+  - `v[0-9]+\.[0-9]` (an API version);
+  - line references.
+
+  The file holds no application, directory, tenant or secret identifier, no expiry date, no version number, no URL, no count of stored connections, and no statement of what is set, missing or open today. A read-through finds no hint of an open weakness.
+- [ ] The SKILL.md diff is only D6h-2. The `domains.md` diff is only D6h-3. The diff touches only the D6h.3 files.
+
+### D6h.5 Open questions for SA
+
+- [x] **Q-D6h-1: Coverage of the plugins outside the profile.** (OA-1) **SA: agreed. Ship now.** MX (Outlook) is covered in full. OneDrive and AT to SF get one "not in use" row each, with no probe, no quoted executor string, a §1 rule that only points to FU-D6h-a, and T-OA-9 and T-OA-10 at Low. (raised by: BA | status: resolved)
+- [x] **Q-D6h-2: File name, prefix, tags, index row and triggers.** **SA: agreed.** `oauth-apps.md`, prefix `OA`, tags MX, AT, DC, DB, HS, LI, NT, SF, with the index label and triggers in D6h-2. "A vendor dashboard" occurs twice in `SKILL.md` (the description and the §2 table), so the insertion is anchored on ", a vendor dashboard, or" in the description, which is unique (change 10). (raised by: BA | status: resolved)
+- [x] **Q-D6h-3: The log-based secret probe (P-OA-4) as the primary secret probe.** **SA: yes,** with changes 4 and 5. It is passive and cannot pass on silence. It is often "not read": on any non-production deployment the cron does not run (vendor fact), and a target may have no Outlook connection in use. "Not read" is a normal result, and the fallback order is P-OA-4b, then P-OA-5. (raised by: BA | status: resolved)
+- [x] **Q-D6h-4: The completed connect (P-OA-5).** **SA: allowed, optional and user-approved,** on the user's own account, from the stable address and a no-enable surface, with the writes and the two-step cleanup as declared. The precondition is "P-OA-4 and P-OA-4b are not read" (change 7). The completed exchange uses the secret through the same `buildOAuthRequest` as refresh, so a pass proves the secret on that deployment. (raised by: BA | status: resolved)
+- [x] **Q-D6h-5: The rotation order and the transient trap.** **SA: agreed, with the order made total** (change 6). Planned rotation: the old secret is deleted only after every target that uses the registration has a pass on a deployment Ready after the new value was set. Until every target is proved, the old secret stays on the registration for deployments built before the change, and it ends on its own expiry date: that date is the cut-over, watched by T-OA-7 and T-OA-8. An exposed secret is deleted without waiting for proof, and the plan names the risk. The one-time non-production confirmation of the outcome class, recorded in the private inventory, is agreed; in the file it is a vendor fact, "confirm at use time". (raised by: BA | status: resolved)
+- [x] **Q-D6h-6: The secret-expiry drift check (T-OA-5).** **SA: agreed.** Fixed buckets in the file. The threshold is in the private inventory, and it must be at least the time a rotation across every target takes, including a wait for P-OA-4 traffic. High at or below the threshold. Buckets only. (raised by: BA | status: resolved)
+- [x] **Q-D6h-7: The `domains.md` §7 step 5 edit.** **SA: agreed.** `later DO-6h` → `` `oauth-apps.md` ``, so the parenthesis reads ``(`stripe.md`, `google.md`, `messaging.md`, `oauth-apps.md`)``. Nothing else in `domains.md` changes. (raised by: BA | status: resolved)
+- [x] **Q-D6h-8: An API-version drift row for Microsoft.** **SA: agreed, no version row.** The file names no version. If a loaded Microsoft definition or its executor ever pins an endpoint version that the vendor retires on a schedule, a Medium row in the T-MS-7 shape is added then. (raised by: BA | status: resolved)
+- [x] **Q-D6h-9: Credential placement (OA-3).** **SA: agreed,** worded as in change 12 (OA-3). (raised by: BA | status: resolved)
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -2517,6 +2736,9 @@ A change to an app used **only** by non-production environments, as recorded, is
 | 2026-11-04 | DO-6g spec + SA short pass | BA spec for messaging apps (Meta, Slack); SA approved with 12 changes and ruled Q-D6g-1 to Q-D6g-9. The active plugin profile loads Meta Insights only, so the WhatsApp Business OAuth client, Slack and Meta Ads are recorded as not in use; the WhatsApp webhook verification and the Meta Insights app are covered in full. |
 | 2026-11-04 | DO-6g build | New `messaging.md`, SKILL.md §5 row and triggers, one phrase in `domains.md` §7 step 5; spec with SA changes 1–12 applied. See [DO-6g implementation notes](#do-6g-implementation-notes). |
 | 2026-11-04 | DO-6g SA code review + QA | SA approved with eight text fixes: P-MS-4 now fails on a callback received with no success line, the Services live line takes the sibling form, plus wording fixes. QA: 24 checks; one High, one Medium and four Lows, all text, all applied by the main session; final verdict PASS. |
+| 2026-11-04 | DO-6h spec + SA short pass | BA spec for plugin OAuth apps (the Microsoft registration behind Outlook and OneDrive; Airtable, Discord, Dropbox, HubSpot, LinkedIn, Notion, Salesforce); SA approved with 12 changes and ruled Q-D6h-1 to Q-D6h-9. The active plugin profile loads Outlook only, so OneDrive and the seven other vendors are recorded as not in use; the Microsoft registration is covered in full for Outlook, with a refresh-outcome log read as the primary secret probe and a rotation that deletes the old secret only on proof. |
+| 2026-11-04 | DO-6h build | New `oauth-apps.md`, SKILL.md §5 row and triggers, one phrase in `domains.md` §7 step 5; spec with SA changes 1–12 applied. See [DO-6h implementation notes](#do-6h-implementation-notes). |
+| 2026-11-05 | DO-6h SA code review + QA | SA approved for QA with eight text fixes: P-OA-4b names its trigger and the connect a failed refresh opens, and the rotation keeps the old secret on the registration until every target is proved, plus wording fixes. QA: 26 checks; one High (the rotation now carries the sibling overlap rule), one Medium (review and notes wording) and four Lows, all text, all applied by the main session; final verdict PASS. |
 
 ---
 
@@ -5850,3 +6072,302 @@ All eight are text only and were applied by the main session.
 ### Verdict
 
 **PASS WITH CHANGES.** Every D6g.4 criterion and every path, string, symbol, ID, anchor, line-ending, separator and diff-placement check passes. High 1, Medium 1 and Lows 1–4 were applied by the main session; the re-run read-through and finding-11 grep are clean. **Final verdict after fixes: PASS.**
+
+---
+
+## SA Review — DO-6h (short pass)
+
+**Reviewed by SA — 2026-11-04**
+**Verdict: APPROVED WITH CHANGES.** The scope, the `OA` prefix, the tags, the boundary with `google.md`, `messaging.md` and `domains.md`, the "not in use" treatment of OneDrive and AT to SF, and the public-repo criteria are right. Every quoted log string is verbatim in its cited file, with the stated module and level. The DO-6g lessons are applied from the start. Four things would have made the skill wrong:
+
+- **P-OA-4's pass and fail leave a gap, and its denominator does not prove an outcome.** The pass needs "Token refresh failed" = 0, and the fail needs success = 0. A window with one `grant_revoked` and one success is neither. "Token Refresh: Attempting to refresh token" is logged **before** the no-refresh-token exit and before two error exits, so an attempt line ≥ 1 does not mean any outcome was logged. The "one stored-token lifetime" window is also taken from the definition's `token_expiry_seconds`, which no code reads: the stored expiry comes from the vendor's `expires_in` (`calculateExpiresAt`).
+- **The exact-message warning names the wrong collisions.** "Token refresh failed" is not only a prefix of two `OAuthTokenService` messages. The **identical** message is logged by `PluginRefreshTokenAPI` (with `pluginKey`) and by the deprecated `PluginCoordinator`. It is also a prefix of a `PluginManager` message that carries `pluginKey`. A `pluginKey` `outlook` filter without the module filter therefore double-counts.
+- **The rotation can stall, or delete the old secret without proof.** P-OA-4 needs refresh traffic. The calendar-sync cron runs only on production (vendor fact), and a target may hold no Outlook connection in use. P-OA-5's precondition sets no order after P-OA-4. The §7 row then has no rule for the case where no probe reads, and the old secret must not be deleted on silence.
+- **The name count is wrong.** §D6h.1 lists sixteen names (eight pairs), not eighteen.
+
+None of this needs a decision from the user. Required changes 1–12 below fix it. FU-D6h-a stays a decision for TL and the user, as the spec proposes.
+
+I reviewed this in the DO-6h worktree at `4b6c4abe` (= `origin/main`), against §D6h, SA Review — DO-6 changes 1–7, SA Review — DO-6g, and the `third-party-ops` files `SKILL.md`, `messaging.md`, `google.md` and `domains.md`. I made no platform call, ran no SQL, made no vendor or network call and opened no `.env*` file. I used local reads and `git grep` at `origin/main` only.
+
+### Code claims (D6h.1 table, OA-1 to OA-7)
+
+| # | Result | Correction for `oauth-apps.md` |
+|---|---|---|
+| Names and catalogue | **Verified, count wrong.** Sixteen names, all in group `plugins`, all with the default `expectedIn` (optional on every target). `DROPBOX_APP_KEY` and `DROPBOX_APP_SECRET` are both `secret`. The MX roles read "OAuth client / secret for the Outlook and OneDrive plugins". | Change 1 |
+| MX readers | **Verified.** Both Microsoft definitions use `${MICROSOFT_CLIENT_ID}`, `${MICROSOFT_CLIENT_SECRET}` and `${NEXT_PUBLIC_APP_URL}/oauth/callback/<key>`, `auth_type` `oauth2_microsoft`, the `/common/` authority, and a `refresh_url`. Neither sets `requires_pkce`. The calendar-sync cron reaches Outlook through `PluginExecuterV2.execute` → the executor → `access-strategy.ts` → `getConnection`. | — |
+| AT to SF readers | **Verified.** Each definition reads its own pair and the A1 redirect. The Notion egress sentinel is in `lib/testing/plugin-secret-matcher.ts`. | — |
+| OA-1 | **Verified.** `ACTIVE_PLUGIN_PROFILE = 'business_os'` lists `outlook` and none of the other eight keys. All nine keys are in `all`. The profile comment on `outlook` says that one plugin carries calendar and mail. | — |
+| OA-2 | **Verified** in code. Account types are vendor facts, marked as such. | — |
+| OA-3 | **Partly wrong.** `refreshAfterRejection` **does** call `this.userConnections.refreshToken` (confirmed, so drop "confirm at use time"). `refreshToken` has two more live callers: the executable-plugin listing in `plugin-manager-v2.ts`, and the session-scoped `app/api/plugins/refresh-token/route.ts`, which the calendar sync card calls. `token_expiry_seconds` is not read by any code path (types and the sanitizer test only). | Changes 2, 12 |
+| OA-4 | **Strings verified**, modules and levels right. The collision list is wrong (see above). Three more exits follow "Token Refresh: Attempting to refresh token": "Token refresh: No refresh token available - user needs to reconnect" (`warn`), "Failed to save refreshed token" (`error`) and "Token refresh error" (`error`, the `catch`). | Changes 3, 4 |
+| OA-5 | **Verified** in code. A non-2xx body without `invalid_grant` is `transient`, and only `grant_revoked` calls `recordRefreshFailure`. Two more ways to reach `transient`: a fetch that never reaches the vendor (no `OAuthTokenService` line at all), and an unset secret sent as the literal placeholder (MS-2). | Change 11 |
+| OA-6 | **Verified** (`messaging.md` MS-2 applies unchanged). | — |
+| OA-7 | **Verified.** On the calendar sync card, connect (`connectPlugin`) and enable (`/api/scheduling/calendar-sync/enable`) are separate actions in `CalendarSyncSettings.tsx`, so a no-enable surface exists in code. Confirm it at use time. | — |
+| Log strings | **Verified with `git grep -cF`:** "Initiating plugin OAuth connection" and "OAuth URL generated" (`PluginConnectAPI`); "OAuth callback received", "OAuth error from provider", "OAuth callback successful" and "OAuth callback failed" (`OAuthCallbackAPI`, child field `plugin`); "Plugin manager initialized" and "Environment variable not found, keeping placeholder" (`PluginManager`); both `refreshAccessTokenDetailed` messages (`OAuthTokenService`, `warn`, no plugin key); all four `UserPluginConnections` lines at the stated levels. | — |
+| Credential placement | **Verified,** with one precision: the code exchange chooses Basic when a PKCE verifier comes back in `state`, which the browser adds only for `requires_pkce`. Refresh chooses Basic on `requires_pkce`. Outlook gets the body form in both. | Change 12 |
+
+### Rulings on Q-D6h-1 to Q-D6h-9
+
+- **Q-D6h-1: agreed. Ship now.** MX (Outlook) is covered in full. OneDrive and AT to SF get one "not in use" row each, with no probe, no quoted executor string, a §1 rule that only points to FU-D6h-a, and T-OA-9 and T-OA-10 at Low.
+- **Q-D6h-2: agreed.** `oauth-apps.md`, prefix `OA`, tags MX, AT, DC, DB, HS, LI, NT, SF, with the index label and triggers in D6h-2. **Precision:** "a vendor dashboard" occurs twice in `SKILL.md` (the description and the §2 table). Anchor the insertion on ", a vendor dashboard, or" in the description, which is unique in the file (change 10).
+- **Q-D6h-3: yes, P-OA-4 is the primary secret probe,** with changes 4 and 5. It is passive and cannot pass on silence. It is often "not read": on any non-production deployment the cron does not run (vendor fact), and a target may have no Outlook connection in use. "Not read" is a normal result, and the fallback order is P-OA-4b, then P-OA-5 (change 5).
+- **Q-D6h-4: allowed, optional and user-approved,** on the user's own account, from the stable address and a no-enable surface, with the writes and the two-step cleanup as declared. The precondition becomes "P-OA-4 and P-OA-4b are not read" (change 7). The completed exchange uses the secret through the same `buildOAuthRequest` as refresh, so a pass proves the secret on that deployment.
+- **Q-D6h-5: agreed, with the order made total** (change 6). Planned rotation: the old secret is deleted only after every target that uses the registration has a pass on a deployment Ready after the new value was set. Until every target is proved, the old secret stays on the registration for deployments built before the change, and it ends on its own expiry date: that date is the cut-over, watched by T-OA-7 and T-OA-8. An exposed secret is deleted without waiting for proof, and the plan names the risk. The one-time non-production confirmation of the outcome class, recorded in the private inventory, is agreed. In the file it is a vendor fact, "confirm at use time".
+- **Q-D6h-6: agreed.** Fixed buckets in the file. The threshold is in the private inventory, and it must be at least the time a rotation across every target takes, including a wait for P-OA-4 traffic. High at or below the threshold. Buckets only.
+- **Q-D6h-7: agreed.** In `domains.md` §7 step 5, `later DO-6h` → `` `oauth-apps.md` ``, so the parenthesis reads ``(`stripe.md`, `google.md`, `messaging.md`, `oauth-apps.md`)``. The phrase is present once at the base. Nothing else in `domains.md` changes. This pass is the ruling.
+- **Q-D6h-8: agreed, no version row.** The file names no version. If a loaded Microsoft definition or its executor ever pins an endpoint version that the vendor retires on a schedule, add a Medium row in the T-MS-7 shape then.
+- **Q-D6h-9: agreed,** worded as in change 12.
+
+### Probe check (can fail, no mail or event, no value printed, precondition becomes "not probed / not read")
+
+| ID | Can fail | Sends / creates | Durable writes | Precondition → not probed | Ruling |
+|---|---|---|---|---|---|
+| P-OA-1 | Yes, for presence | None | None | Admin session | OK |
+| P-OA-2 | Yes: placeholder raw or `%24%7B`, wrong redirect | None | None | Signed-in session | OK. Proves substitution only |
+| P-OA-3 | Yes (vendor page) | None | None on cancel | Owner session, no-enable surface | OK |
+| P-OA-4 | Yes, after change 4 | None added | Owners' own token refreshes, which happen anyway | No outcome line → "not read" | Changes 4, 5 |
+| P-OA-4b (new) | Yes | None | New tokens on the user's own connection | User has an Outlook connection | Change 5 |
+| P-OA-5 | Yes | None (no enable) | Connection row and audit, declared | P-OA-4 and P-OA-4b not read | Change 7 |
+| P-OA-6 | Yes (user yes/no) | None | None | — | OK |
+| P-OA-7 | As the probes it uses | — | — | — | Change 6 |
+
+### Public-repo check
+
+- No identifier, host, URL, version number, scope list, connection count or current-configuration statement appears in the text to be tracked. "As recorded" and "recorded intent" are rules, not states.
+- The `/common/` authority is a fact read from a tracked definition. Keep it.
+- The "Services live" line names the check that reads the names (change 9).
+
+### New pattern and CI time (CLAUDE.md rule 7)
+
+- **No new pattern:** one reference file, one index row with triggers, and one phrase in `domains.md`, in the DO-6b to DO-6g shape.
+- **No added CI time:** no job, workflow or test.
+- **Size:** `messaging.md` covers more ground in 122 lines. About 140–170 lines for `oauth-apps.md` with these changes is realistic, and the 180-line cap stands.
+
+### Required changes
+
+1. **[Boundary, P-OA-1, (2), T-OA-1, D6h.4] Sixteen names.** Replace "eighteen" with "sixteen" everywhere. T-OA-1 adds: "`NEXT_PUBLIC_APP_URL` is checked by `domains.md`; T-OA-2 checks only that it is set wherever the MX pair is set." Pass: the file and the applied spec give sixteen. — Priority: Medium
+2. **[OA-3, gotcha 3] Refresh callers, stated from code.** Replace the "Refresh is reached from …" sentence with: "`refreshToken` is reached from `getConnection` (proactive, within five minutes of the stored expiry), from the executor's one retry after a provider 401 (`refreshAfterRejection` in `lib/server/base-plugin-executor.ts`), from the executable-plugin listing in `plugin-manager-v2.ts`, and from the session-scoped `app/api/plugins/refresh-token/route.ts`, which the calendar sync card calls. The stored expiry comes from the vendor's `expires_in` (`calculateExpiresAt`); the definition's `token_expiry_seconds` is not read by this path." Delete "The definition's `token_expiry_seconds` is short". Pass: no "confirm at use time" on `refreshAfterRejection`, and no claim that `token_expiry_seconds` sets the window. — Priority: Medium
+3. **[OA-4, gotcha 5] The collisions, named correctly.** Replace the prefix sentence with: "'Token refresh failed' is logged with the same text by `PluginRefreshTokenAPI` (with `pluginKey`) and by the deprecated `PluginCoordinator`. It is also the start of two `OAuthTokenService` messages and one `PluginManager` message (with `pluginKey`). Count it only as the exact message **and** module `UserPluginConnections`." Gotcha 5 reads: "**Match refresh lines exactly** (OA-4): 'Token refresh failed' is logged by several modules, some with `pluginKey`. Count the `UserPluginConnections` line, by `pluginKey` and `reason`." Pass: present. — Priority: High
+4. **[P-OA-4, T-OA-7, D6h.4] A total pass and fail, with an outcome denominator.** All lines are module `UserPluginConnections`, `pluginKey` `outlook`, on the deployment under test, from Ready.
+   - **Outcome lines:** "Token Refresh Success - New token saved" (S) and "Token refresh failed" by `reason` (T for `transient`, R for `grant_revoked`).
+   - **Pass:** S ≥ 1. T, if any, is recorded by count.
+   - **Fail:** T ≥ 1 and S = 0. Record the class, never the logged text, and stop the rotation.
+   - **Not conclusive:** R ≥ 1 with S = 0 and T = 0. That is one owner's grant, not the secret.
+   - **Not read (no refresh in window):** S + T + R = 0, whatever the count of "Token Refresh: Attempting to refresh token". The attempt line also precedes the no-refresh-token exit and two error exits ("Failed to save refreshed token", "Token refresh error"), so it is context, not the denominator.
+   - **Window:** from Ready until the first outcome line, capped at the vendor's access-token lifetime (vendor fact, confirm at use time) plus one calendar-sync cron interval (`vercel.json`). The cron runs on production deployments only (`vercel-ops` §6); elsewhere only user traffic refreshes.
+
+   T-OA-7 and the D6h.4 "no check can pass on silence" line use the same outcome denominator. Pass: present. — Priority: High
+5. **[(4) new row P-OA-4b] A user-triggered refresh before a full connect.** Add:
+   - **ID and change:** P-OA-4b, MX secret (fallback 1).
+   - **Probe:** optional, user-approved, once: on the environment's stable A1 address, when the calendar sync card shows the user's **own** Outlook connection as expired, the user clicks its Outlook icon to refresh it (confirm at use time; never the card's calendar refresh button, never enable).
+   - **Pass, fail, not conclusive:** as P-OA-4, after the probe time.
+   - **Who:** user (trigger); DO (log counts on the deployment that serves that address).
+   - **Precondition and side effects:** P-OA-4 not read, and the user has an Outlook connection, else "not probed (no own connection)". Writes new tokens on the user's own connection, as a refresh would anyway. The route also logs a 'Token refresh failed' line under `PluginRefreshTokenAPI`, which is not counted (change 3).
+
+   Pass: present. — Priority: Medium
+6. **[(7) rotation rows, P-OA-7, Q-D6h-5] Delete the old secret only on proof, or name the risk.**
+   - **Planned rotation:** "Add the new secret; the old one stays valid (vendor fact, confirm at use time) → set the new value on **every** target that uses the registration → each deploy Ready → P-OA-2, then the first of P-OA-4, P-OA-4b or P-OA-5 that reads, on each target → delete the old secret only when **every** target has a pass → record the new bucket (T-OA-5). Until every target has a pass, the old secret stays on the registration, so a deployment built before the change (an instant rollback) still works; if a target never gets a pass, the old secret ends on its own expiry date, and T-OA-7 and T-OA-8 watch the window after that date."
+   - **New row, "Client secret exposed":** the same order up to Ready on every target, then delete the old secret without waiting for a probe. The plan names the targets that had no pass as at risk, and T-OA-7 is read in the next window.
+   - **Corroboration only:** where `vercel-ops` §3 shows the name's last-updated time on each target, it is after the new secret was added. This is never a pass.
+   - **P-OA-7 pass:** "every target has a pass before the delete, and no fail in the window after it".
+
+   Pass: present. — Priority: High
+7. **[P-OA-5 precondition, D6h.4] Fallback order.** The precondition becomes "P-OA-4 and P-OA-4b are not read". The D6h.4 line becomes "used only when P-OA-4 and P-OA-4b are not read". Pass: the precondition names both probes. — Priority: Medium
+8. **[T-OA-7] No undefined baseline.** Replace T-OA-7's `grant_revoked` clause with "`grant_revoked` at or above the recorded baseline (private inventory) is Medium; below it, record the count". Pass: the clause names the baseline. — Priority: Low
+9. **[Services live] Neutral wording.** Replace the last sentence of the Services live line with "DO checks which names are set at use time (T-OA-1)." Pass: present. — Priority: Low
+10. **[D6h-2 (b), Q-D6h-2] Unique anchor.** Insert the triggers before ", a vendor dashboard, or" in the description. The §2 table row is not touched. Pass: `git diff` on `SKILL.md` is the §5 row and one insertion in the description. — Priority: Low
+11. **[OA-5, gotcha 4] Every route to `transient`.** Append to OA-5: "A refresh that never reaches the vendor is also `transient` and logs no `OAuthTokenService` line; an unset secret is sent as its placeholder (MS-2) and reads the same way." Pass: present. — Priority: Low
+12. **[OA-3, Q-D6h-9] Credential placement, both legs.** "`buildOAuthRequest` sends the client credentials in an HTTP Basic header, or in the body. The code exchange uses Basic only when a PKCE verifier comes back in `state`, which the browser adds for `requires_pkce`; refresh uses Basic when the definition sets `requires_pkce`. The Outlook definition does not set it, so both legs send the secret in the body." Pass: present. — Priority: Low
+
+### Optimisation suggestions (non-blocking)
+
+- T-OA-9 and T-MS-11 read the same "Plugin manager initialized" line. One runtime read can serve both.
+- P-OA-3's no-enable surface can be named from code (the calendar sync card's connect action), still marked "confirm at use time".
+
+### Approval
+
+[x] Specification approved, conditional on changes 1–12. Proceed to the file once they are applied. No second SA pass is needed if QA confirms each "Pass" line.
+
+---
+
+## DO-6h implementation notes
+
+**By Dev — 2026-11-04.** Worktree `.claude/worktrees/do6h-oauth-apps`, branch `feature/devops-third-party-oauth-apps`, base `4b6c4abe` (= `origin/main`). Nothing committed, staged or stashed. No `.env*` file opened, no network or platform call.
+
+### What was built
+
+| File | Change | Lines |
+|---|---|---|
+| `.claude/skills/third-party-ops/oauth-apps.md` | New. Intro, live-check line, MX table, the seven-vendor table (one row each), boundary; §1–§6 of the template; §7 tiers and order. LF line endings | 134 (132 at build; +2 for the rotation overlap paragraph) |
+| `.claude/skills/third-party-ops/SKILL.md` | D6h-2 only: the §5 row now reads "Plugin OAuth apps: Microsoft (Outlook, OneDrive), Airtable, Discord, Dropbox, HubSpot, LinkedIn, Notion, Salesforce" → `[oauth-apps.md](oauth-apps.md)`; the description gains the D6h-2 triggers, inserted before ", a vendor dashboard, or" (SA change 10). The §2 table row is untouched | 86 (unchanged count; 2 lines changed) |
+| `.claude/skills/third-party-ops/domains.md` | D6h-3 only: §7 step 5 `later DO-6h` → `` `oauth-apps.md` `` | 137 (unchanged count; 1 line changed) |
+| `.claude/skills/third-party-ops/messaging.md` | D6h-4 only (QA Low 4, applied by the main session): the boundary paragraph's `is DO-6h's` → ``is `oauth-apps.md`'s`` | 122 (unchanged count; 1 line changed) |
+| This requirement | §0 DO-6 row; DO-6h Specification (SA changes and rulings applied) before Change History; three Change History rows; SA Review — DO-6h (short pass); these notes; SA Code Review — DO-6h and QA Report — DO-6h | CRLF kept |
+
+The edited files keep CRLF; each edit asserted its anchor once and wrote through a temporary file in the same folder, then a replace.
+
+**Verbatim checks** (`git grep -cF` at `origin/main`, each ≥ 1 in its cited file, module from that file's `createLogger`):
+- `lib/server/user-plugin-connections.ts` (module `UserPluginConnections`): "Token Refresh: Attempting to refresh token" (`info`), "Token Refresh Success - New token saved" (`info`), "Token refresh failed" (`warn`, `reason`), "Token refresh: No refresh token available - user needs to reconnect" (`warn`), "Failed to save refreshed token" (`error`), "Token refresh error" (`error`), "Smart Refresh Success: Token refreshed and ready for use" (`info`), "Smart Refresh Failed: User needs to reconnect in Settings" (`error`); `grant_revoked`, `recordRefreshFailure`, `calculateExpiresAt`, `getConnection`, `refreshToken`.
+- `lib/services/OAuthTokenService.ts` (module `OAuthTokenService`): "Token refresh refused: the grant is gone and the owner must reconnect", "Token refresh failed for a reason that may pass; not blaming the grant", "Token refresh failed - user needs to reconnect"; `invalid_grant`, `buildOAuthRequest`, `requires_pkce`, `refreshAccessTokenDetailed`.
+- `lib/server/plugin-manager-v2.ts` (module `PluginManager`): "Plugin manager initialized", "Environment variable not found, keeping placeholder", and a message starting "Token refresh failed"; one `refreshToken(` call.
+- `app/api/plugins/refresh-token/route.ts` (module `PluginRefreshTokenAPI`): "Token refresh failed"; calls `refreshToken`. `lib/intelligence/execution/PluginCoordinator.ts` (module `PluginCoordinator`): "Token refresh failed".
+- `app/api/v2/plugins/connect/route.ts` (module `PluginConnectAPI`): "Initiating plugin OAuth connection", "OAuth URL generated".
+- `app/oauth/callback/[plugin]/route.ts` (module `OAuthCallbackAPI`): "OAuth callback received", "OAuth error from provider", "OAuth callback successful", "OAuth callback failed", "Plugin configuration not found".
+- `lib/server/base-plugin-executor.ts`: `refreshAfterRejection`, which calls `refreshToken`.
+- Symbols and paths: `ACTIVE_PLUGIN_PROFILE` and `outlook` (`plugin-profile.ts`, with the one-plugin mail-and-calendar comment); `NOTION_CLIENT_SECRET` (`plugin-secret-matcher.ts`); `draft_client_replies_outlook` (`catalog.ts`); `calendar-sync` (`vercel.json`); `connectPlugin` and the refresh-token call (`CalendarSyncSettings.tsx`); `oauth2_microsoft`, the `/common/` authority and `refresh_url` in both Microsoft definitions, no `requires_pkce` in the Outlook one; `provider` `outlook` in the inbox routes; the sixteen names in `lib/admin/environment/catalogue.ts`; all nine definitions exist.
+
+Vendor behaviour (account types, consent and verification, secret coexistence and expiry, the refused-credential error class, the access-token lifetime, vendor error pages) is marked "vendor fact" or "confirm at use time". No string from the OneDrive or AT to SF executors is quoted.
+
+### SA changes 1–12 → where they land
+
+| SA item | Where in `oauth-apps.md` (or elsewhere) |
+|---|---|
+| 1. Sixteen names | Boundary, P-OA-1, "Derive, never list", T-OA-1 (with the `NEXT_PUBLIC_APP_URL` sentence); applied spec Boundary, (2), P-OA-1, T-OA-1 |
+| 2. Refresh callers from code | §2 OA-3 (four callers, `calculateExpiresAt`, `token_expiry_seconds` not read); gotcha 3; no "confirm at use time" on `refreshAfterRejection` |
+| 3. Collisions named | §2 OA-4 (`PluginRefreshTokenAPI`, `PluginCoordinator`, two `OAuthTokenService` and one `PluginManager` message; exact message and module); gotcha 5 as worded |
+| 4. Total pass and fail | §4 "Refresh outcome lines" paragraph (S, T, R); P-OA-4 pass, fail, not conclusive, "not read" on S + T + R = 0, window to the first outcome line capped at the vendor lifetime plus one cron interval; T-OA-7 uses the same lines; applied spec D6h.4 |
+| 5. P-OA-4b | §4 new row, fallback 1, with its precondition and the uncounted `PluginRefreshTokenAPI` line |
+| 6. Delete on proof | §7 planned-rotation row, new "Client secret exposed" row, the closing last-updated-time sentence; P-OA-7 pass; amended by QA High 1 ("Rotation overlap", §4) |
+| 7. Fallback order | P-OA-5 precondition "P-OA-4 and P-OA-4b are not read"; applied spec D6h.4 |
+| 8. Baseline | T-OA-7 "at or above the recorded baseline (private inventory)" |
+| 9. Neutral wording | Applied spec "Services live" line: "DO checks which names are set at use time (T-OA-1)" |
+| 10. Unique anchor | SKILL.md description, inserted before ", a vendor dashboard, or" |
+| 11. Every route to `transient` | §2 OA-5 last sentence |
+| 12. Credential placement | §2 OA-3, both legs |
+
+### Rulings Q-D6h-1 to Q-D6h-9 → where they land
+
+| Ruling | Where |
+|---|---|
+| Q-D6h-1 | Live-check line; seven-vendor table and OneDrive as "not in use" with no probe; §1 rule points to FU-D6h-a; T-OA-9 and T-OA-10 Low |
+| Q-D6h-2 | File name, `OA` prefix, eight tags; SKILL.md §5 label and triggers |
+| Q-D6h-3 | P-OA-4 primary; fallback order P-OA-4b then P-OA-5; "not read" as a normal result |
+| Q-D6h-4 | P-OA-5: optional, user-approved, own account, stable address, no-enable surface, writes and two-step cleanup |
+| Q-D6h-5 | §7 rotation and exposed rows; the one-time non-production confirmation in the closing sentence, as a vendor fact |
+| Q-D6h-6 | §3 buckets; T-OA-5 with the threshold rule in "Expected state from" |
+| Q-D6h-7 | `domains.md` one phrase |
+| Q-D6h-8 | No version row; the file names no version |
+| Q-D6h-9 | §2 OA-3 wording |
+
+### Deviations from the applied spec
+
+- **SA optimisations adopted:** P-OA-3 names the calendar sync card's connect action, marked "confirm at use time"; T-OA-9 notes that its runtime read is the same as `messaging.md` T-MS-11.
+- **The refresh outcome lines** (S, T, R) are defined once, in a short paragraph above the probe table; the rules (pass, fail, not conclusive, not read, window) sit in the P-OA-4 row, and P-OA-4b and T-OA-7 point to them.
+- **Gotcha 8** carries `google.md` §5's consequence in one clause, as `messaging.md` gotcha 10 does.
+- **Spec scope line:** "nine tags" corrected to "eight tags" (MX, AT, DC, DB, HS, LI, NT, SF), matching the spec's own tag list.
+- **§D6h.1 header:** `expectedIn` written as "optional everywhere" per name, as the SA code-claims table found.
+- **Length:** 134 lines, within the 120–160 target and the 180 cap. No probe or drift row was trimmed.
+- **Rotation overlap (QA High 1).** Added the sibling overlap rule (`google.md` §4, `llm-providers.md` §4): while the old secret is still valid, a pass of P-OA-4, P-OA-4b or P-OA-5 is "pass, not conclusive (overlap)"; a target is proved for the delete only by a pass on a deployment created after the name's last-updated time, which the user reports is after the new secret was added; P-OA-4 is read again after the delete. With SA code review fix 2, the old secret stays on the registration until every target is proved, so an instant rollback still works. This amends SA change 6 in the file, the applied spec and D6h.4.
+- **D6h-4 (QA Low 4).** `messaging.md`'s boundary paragraph pointed every other vendor's plugin OAuth app at DO-6h; it now points at `oauth-apps.md`. One phrase, applied by the main session; the D6h.3 table records it.
+
+### Checks run
+
+- D6h.4 public greps over the new file (vendor hosts, URL schemes, loopback, hosting and app domains, identifier shapes, vendor error codes, version strings, line references): **0 hits**.
+- The finding-11 regex over all added lines (the three edited files and the new file): **0 hits**.
+- The D6h.4 greps over the added requirement, SKILL.md and `domains.md` lines: hits only in the D6h.4 pattern list.
+- Every double-quoted code string in the new file checked against `origin/main` as above; the rest are this skill's status labels or vendor labels marked as such.
+- Every file path in the new file exists at `origin/main`.
+- `git diff --stat` touches only the D6h.3 files; the new file is untracked.
+
+### Left out
+
+- SA code review and QA: see the sections below; all fixes were applied by the main session.
+- FU-D6h-a stays in the requirement only, for TL and the user.
+- No other skill file (beyond the one `messaging.md` phrase, D6h-4), agent file or application code was edited.
+
+---
+
+## SA Code Review — DO-6h
+
+**Code Review by SA — 2026-11-04**
+**Status:** 🔄 Fix Required. All fixes are text only: three Medium fixes, five Low fixes and one Low recommended fix. No re-review is needed if they are applied as written. The `SKILL.md` and `domains.md` diffs need no change.
+
+I reviewed the uncommitted diff in the DO-6h worktree against base `4b6c4abe`. The diff covers:
+- the new `.claude/skills/third-party-ops/oauth-apps.md` (132 lines, LF);
+- the `SKILL.md` diff (2 lines) and the `domains.md` diff (1 line);
+- the requirement additions: the §0 DO-6 row, the DO-6h Specification, two Change History rows, SA Review — DO-6h (short pass) and DO-6h implementation notes.
+
+`origin/main` has since moved one docs-only merge ahead of the base. It touches none of these files or any cited code, so every claim below holds at both refs. RM syncs from `main` as usual. I used local reads and `git grep` only. I made no platform, vendor or network call and opened no `.env*` file.
+
+### Results
+
+| # | Check | Result |
+|---|---|---|
+| 1 | SA changes 1–12 and rulings Q-D6h-1..9 | **All applied**, in `oauth-apps.md` and in the requirement's applied spec, each where the implementation notes say. Change 10's anchor is the single ", a vendor dashboard, or" in the description. The inserted triggers are exactly the D6h-2 list, and the §2 table row is untouched. Both SA optimisations were adopted. |
+| 2 | Code claims at `origin/main` | **Verified**, with `git grep -cF` ≥ 1 for each string in its cited file, its `createLogger` module and the stated level. That covers: all eight `UserPluginConnections` lines; the three `OAuthTokenService` messages; "Plugin manager initialized" and the placeholder line (`PluginManager`); "Token refresh failed" in `PluginRefreshTokenAPI` (`warn`, `pluginKey`) and `PluginCoordinator` (`error`); the `PluginManager` message that starts with it; the `PluginConnectAPI` and `OAuthCallbackAPI` lines (child field `plugin`); and every named symbol. The four `refreshToken` callers are the only callers on the V2 path. The legacy `refreshAccessToken` is exported but has no caller, so no Outlook refresh skips the counted lines. `token_expiry_seconds` is read only by types and a test, and `calculateExpiresAt` takes `expires_in`. The code exchange chooses Basic on a returned PKCE verifier, and refresh chooses it on `requires_pkce`. The sixteen names are all in group `plugins` with the default `expectedIn`. The active profile lists `outlook` and none of the other eight keys. All nine definitions build `/oauth/callback/<key>`. Both Microsoft definitions are `oauth2_microsoft` on `/common/` with a `refresh_url`, and Outlook sets no `requires_pkce`. `vercel.json` has the `calendar-sync` cron. Every path exists. |
+| 3 | Probes can fail, print nothing, need no key held by DO | **Yes** for P-OA-1..7 and T-OA-1..10. Nothing can pass on silence: T-OA-3 needs its load marker, P-OA-4, P-OA-4b and T-OA-7 need an outcome line, and T-OA-8 needs "OAuth callback received". There are three gaps. P-OA-4b's trigger is underspecified: the route skips a valid token, and a failed refresh opens a connect on its own (fix 1). The rotation's "keeps the old secret" can be misread (fix 2). The P-OA-5 precondition has no rule for a P-OA-4b that was "not probed" (fix 6). The P-OA-4 → 4b → 5 ladder and the §7 order are otherwise coherent: delete on proof, the exposed-secret exception, corroboration that is never a pass. |
+| 4 | Public repo | `oauth-apps.md`, `SKILL.md` and `domains.md` are clean. Over the new file, the finding-11 regex and every D6h.4 pattern give 0 hits. Over all added lines, the hits are only in the D6h.4 pattern list, its rule sentences, and one line reference in the pasted short pass. No identifier, host, URL, version, connection count or current-configuration statement appears. The requirement text needs fix 3 (Medium). Fix 7 (Low, recommended) aligns the pasted short pass with the DO-6e to DO-6g wording. |
+| 5 | Dev's two extra edits | **Both approved.** "Eight vendors, eight tags" matches the tag list: MX plus seven. "Optional everywhere" is the catalogue default for all sixteen names; no entry passes `expectedIn`. |
+| 6 | §0 row | **Correct.** It records DO-6g's merge with the right PR number, and DO-6h in the form of the earlier slices. The anchor `#do-6h-implementation-notes` resolves. At commit, the row records the review outcome. |
+| 7 | Consistency with siblings | `messaging.md` MS-1, MS-2, MS-5, MS-8, P-MS-4 (with the DO-6g fail column), T-MS-4, T-MS-7 and T-MS-11 are cited correctly and not restated. `google.md` G3 and §5 ("The callback answers one origin") are cited correctly. `domains.md` AD-2, AD-3, §2 reader search and §7 steps 5 and 8 are cited correctly. `vercel-ops` §3 and §4 are cited correctly. One exception: `vercel-ops` §6 already states the production-only cron rule (fix 4). LF in the new file; the index stores LF for the edited files. |
+
+### Code Review Comments
+
+1. **P-OA-4b** (`oauth-apps.md` and spec): the trigger is the card's Outlook icon on a connection shown as expired, never the card's calendar refresh button; a valid token gives "not read", and the connect a failed refresh opens is cancelled by the user. — Priority: Medium
+2. **§7 planned rotation and Q-D6h-5** (`oauth-apps.md`, spec and SA short pass): the old secret stays on the registration until every target has a pass, so a deployment built before the change (an instant rollback) still works. — Priority: Medium
+3. **Q-D6h-9** (spec and SA short pass): the ruling ends at "worded as in change 12", and the spec's question is titled "Credential placement (OA-3)". — Priority: Medium
+4. **P-OA-4 and the spec's Window bullet:** the production-only cron rule cites `vercel-ops` §6. — Priority: Low
+5. **§7 "Client secret already expired"** (`oauth-apps.md` and spec): the order runs through the probe on each target, the delete of the expired secret and the new bucket. — Priority: Low
+6. **P-OA-5 precondition** (`oauth-apps.md` and spec): P-OA-4b may be "not read" or "not probed". — Priority: Low
+7. **SA short pass:** Pass lines and rulings point at each change; the one line reference is replaced. — Priority: Low (recommended)
+8. **Implementation notes, Checks run:** the third bullet matches the text it describes. — Priority: Low
+9. **§0 DO-6 row:** updated to the review outcome before commit. — Priority: Low (at commit)
+
+### Optimisation Suggestions
+
+- `PluginCoordinator`'s own header calls it the legacy AgentKit run path. "The legacy `PluginCoordinator`" would match the code more closely than "the deprecated". This does not block.
+- The §0 row's label column could add "plugin OAuth apps" to the DO-6 family list. This does not block.
+
+### Code Approved for QA: Yes, with fixes 1–8
+
+All fixes are text only and were applied by the main session.
+
+---
+
+## QA Report — DO-6h
+
+**QA — 2026-11-05.** Test mode: full. Strategy: static checks (`test -e`, `git grep -cF` at `HEAD`, ID, anchor, line-ending, separator and diff-exactness checks, plus a code read of every behavioural claim) on a docs-and-skill slice. There is no app code to run. Base `4b6c4abe` (`HEAD`). `origin/main` has since moved one docs-only merge ahead, which touches none of the four files and none of the cited code paths. No repo file edited, nothing staged, stashed or committed, no `.env*` opened, no network call. The added-lines corpus was built with `git add -N` on the new file, `git diff -U0 | grep '^+'` (556 lines = 132 + 2 + 1 + 421), then `git reset -q`. `git status --porcelain` was byte-identical before and after.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | D6h.4 criterion 1: `oauth-apps.md` has the intro sentence, the live-check line (with the OA-1 result: Outlook loaded, OneDrive and AT to SF not in use), the MX table, the seven-vendor table (one row each, exact D6h.2 columns, the NT row alone adds the sentinel note), the boundary, §1–§6 and §7 tiers and order. 132 lines (cap 180) | Pass |
+| 2 | Every path exists (`test -e`): the 15 full repo paths, `backups/` and `archive/`. All nine `<key>-plugin-v2.json` short names resolve to one file each. `/admin/environment` and `/api/v2/plugins/connect` exist; the callback route exists. Short name `catalog.ts` matches three files, but the MX row gives its full path (note) | Pass |
+| 3 | Every quoted log string is verbatim (`git grep -cF` ≥ 1) with the stated module and level, read in context, including the collisions OA-4 names | Pass |
+| 4 | Every symbol exists and every code claim holds (profile, refresh callers, expiry source, credential placement, cron, catalogue, both Microsoft definitions, every redirect built from `NEXT_PUBLIC_APP_URL`) | Pass |
+| 5 | No quoted string comes from the OneDrive or AT to SF executors. `PluginCoordinator` is named only as a collision, not quoted as a probe string | Pass (note) |
+| 6 | IDs unique and contiguous in the file: OA-1..7, P-OA-1..7 plus P-OA-4b, T-OA-1..10, each defined once, each cited one defined. FU pointer `FU-D6h-a` only. In the requirement: D6h-1..5, D6h.1..5, Q-D6h-1..9, SA changes 1–12, FU-D6h-a all defined. External `messaging.md` IDs exist | Pass |
+| 7 | Cross-references resolve: `messaging.md`, `domains.md`, `google.md`, `vercel-ops` §3 and §4, `env-change-protocol`, `env-drift-audit` §7, `SKILL.md` §5 | Pass |
+| 8 | Links and anchors: 11 distinct `#…` anchors on added lines, all resolve, including `#do-6h-implementation-notes`. The SKILL.md link to `oauth-apps.md` resolves. The new file has no links | Pass |
+| 9 | SKILL.md diff: the base with the D6h-2 triggers inserted before ", a vendor dashboard, or" and the §5 row replaced equals the new file exactly (after CR normalisation). numstat 2/2. The §2 table row is untouched. Description grows 2132 → 2384 characters | Pass |
+| 10 | `domains.md` diff: base with `later DO-6h` (count 1) → `` `oauth-apps.md` `` equals the new file exactly. numstat 1/1 | Pass |
+| 11 | Only the D6h.3 files change. No other skill says "not covered yet (DO-6h)". One forward pointer in `messaging.md` still named DO-6h (Low 4) | Pass with Low 4 |
+| 12 | Line endings: the requirement, SKILL.md and `domains.md` CRLF on every line; numstat identical with `--ignore-cr-at-eol`. `oauth-apps.md` is LF on disk; git normalises it on add, like its siblings | Pass (note) |
+| 13 | Separator doubling: two pre-existing pairs in the requirement; none in added text. The spec sits before Change History; the Change History rows follow the DO-6g rows; SA review and notes follow DO-6g's QA report | Pass |
+| 14 | Restatement grep from §D6.4 over the new file | Pass (0 hits) |
+| 15 | D6h.4 public greps over the new file: vendor hosts, URL schemes, loopback, hosting and app domains, identifier shapes, vendor error codes, versions, line references | Pass (0 hits each). The only numbers are IDs, HTTP 401/404 and the 30/90 buckets |
+| 16 | Finding-11 regex over all 556 added lines | Pass (0 hits) |
+| 17 | Broad grep over added lines: hosts, URLs, project and team ID prefixes, vendor key prefixes, GUIDs, vendor error codes, versions, ports, `localhost`, 12+ digit runs, 4+ digit runs, personal paths and names. Hits only in the D6h.4 pattern list, "paragraph." for `graph.`, "Gmail" in an unchanged trigger, dates, PR numbers and the base SHA | Pass |
+| 18 | D6h.4 criterion 2 (probes): each names who, pass, fail, precondition and side effects. None sends mail, touches a calendar event, drafts, enables sync or the inbox, needs DO to hold a key or prints a value. P-OA-4b and P-OA-5 are optional and user-approved, once; P-OA-5 declares its connection row, audit entry and two-step cleanup | Pass |
+| 19 | D6h.4 criterion 3 (no pass on silence): T-OA-3 needs the marker with `outlook`; P-OA-4, P-OA-4b and T-OA-7 need S + T + R ≥ 1; T-OA-8 needs "OAuth callback received" ≥ 1. Each has its "not read" state | Pass |
+| 20 | D6h.4 criterion 4 (rotation order): during the overlap the old secret still works, so a pass alone did not prove the target holds the new one before the delete (High 1) | **Fail, then Pass after fixes (High 1)** |
+| 21 | D6h.4 criterion 5 (pointers): redirects point to `domains.md` AD-2/AD-3 and A1; shared path points to MS-2 and MS-8; nothing restated | Pass |
+| 22 | D6h.4 criterion 6: strings verbatim with module; refresh lines counted as exact message plus module; every vendor behaviour marked "vendor fact" or "confirm at use time" | Pass |
+| 23 | D6h.4 criterion 7: no sentence presents OneDrive or AT to SF as live; only T-OA-9 and T-OA-10 name them as targets of a check | Pass |
+| 24 | D6h.4 criterion 9 (diff scope): SKILL.md only D6h-2, `domains.md` only D6h-3 | Pass |
+| 25 | Read-through of `oauth-apps.md` for current configuration: none | Pass |
+| 26 | Read-through of every added requirement sentence (§0 row, spec, SA review, notes, Change History) for current configuration | **Fail, then Pass after fixes.** Medium 1 (review and notes wording); Lows 1–3 |
+
+### Findings
+
+- **High 1:** the §7 rotation now carries the overlap rule of `google.md`, `stripe.md`, `llm-providers.md` and `email.md`: while the old secret is valid a pass is "pass, not conclusive (overlap)", a target is proved for the delete only on a deployment shown to carry the new value, and P-OA-4 is read again after the delete (file, applied spec, D6h.4, notes).
+- **Medium 1:** review and notes wording reworded.
+- **Low 1:** the SA short pass's two Services live lines reworded.
+- **Low 2:** the implementation note on where the refresh outcome rules sit corrected.
+- **Low 3:** the line reference in SA change 10 replaced.
+- **Low 4:** `messaging.md`'s boundary pointer now names `oauth-apps.md` (one phrase, D6h-4).
+
+**Notes, no action needed:** `oauth-apps.md` is LF on disk and git normalises it on add. The SKILL.md `description` has grown past 2000 characters across the family; worth an SA look before the family closes. Sync with `main` before the PR.
+
+### Verdict
+
+**PASS WITH CHANGES.** Every path, string, module, level, symbol, ID, cross-reference, anchor, public-repo grep and line-ending check passes. High 1, Medium 1 and Lows 1–4 were applied by the main session; the finding-11 grep and the public greps were re-run over the added lines. **Final verdict after fixes: PASS.**
