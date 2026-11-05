@@ -1299,7 +1299,20 @@ export default function BookingManagePage() {
                                   : 'var(--ap-text)',
                             }}
                           >
-                            {t(kind)}
+                            {/*
+                              A MISSED SESSION IS NOT MOVED, IT IS REPLACED.
+
+                              Its hour is past and stays on the record as
+                              missed; nobody books that time again. What this
+                              opens for a missed row is the panel that adds a
+                              REPLACEMENT at a new time — which is also what
+                              the panel itself now calls it. "שינוי מועד" over
+                              an hour that cannot change was the last place
+                              still describing the old behaviour.
+                            */}
+                            {kind === 'reschedule' && meeting.meetingStatus === 'no_show'
+                              ? t('makeUpTitle')
+                              : t(kind)}
                           </button>
                         );
                       })}

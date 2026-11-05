@@ -97,6 +97,48 @@ function letterToIndex(letters: string): number {
  * parse positional via this helper, it emits a 2D array per row instead of
  * an object. Otherwise it falls through to object-building (WP-4 behavior).
  */
+/**
+ * `config.mapping`, in whichever of its two shapes, as a `field_mapping` object.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TWO SHAPES EXIST IN THIS CODEBASE AND BOTH ARE REAL
+ *
+ *   object   { email: 'D', first_name: 'B' }          ← committed plans emit this
+ *   array    [{ source: 'D', target: 'email' }, …]    ← WorkflowValidator reads this
+ *
+ * Both say the same thing: which source field lands in which target field. The
+ * object's VALUE is the source, matching `field_mapping`'s own direction
+ * (`{ sender: 'from' }` = target `sender` ← source `from`), so it passes
+ * through unchanged.
+ *
+ * Returns null for anything else, and the caller then leaves `config` alone:
+ * a mapping that cannot be read must not become a half-applied one.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function normaliseMappingAlias(mapping: unknown): Record<string, string> | null {
+  if (Array.isArray(mapping)) {
+    const built: Record<string, string> = {};
+    for (const entry of mapping) {
+      const { source, target } = (entry ?? {}) as { source?: unknown; target?: unknown };
+      if (typeof source === 'string' && typeof target === 'string') built[target] = source;
+    }
+    return Object.keys(built).length > 0 ? built : null;
+  }
+
+  if (mapping && typeof mapping === 'object') {
+    const built: Record<string, string> = {};
+    for (const [target, source] of Object.entries(mapping as Record<string, unknown>)) {
+      /* Values must be field NAMES. A nested object or an array here is some
+         other idea wearing the same key, and guessing at it is how a contact
+         gets filed under somebody else's address. */
+      if (typeof source === 'string') built[target] = source;
+    }
+    return Object.keys(built).length > 0 ? built : null;
+  }
+
+  return null;
+}
+
 function parsePositionalKey(key: string): number | null {
   if (/^\d+$/.test(key)) return parseInt(key, 10);
   let m = key.match(/^column_(\d+)$/);
@@ -2863,6 +2905,54 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
     // The LLM emits structured mappings: {sender: "from", subject: "subject", received_date: "date"}
     // This is the preferred mode — deterministic, no guessing, no alias tables.
     // Handles both array input (map each item) and single object input (inside scatter-gather).
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * `mapping` IS `field_mapping`. THREE PARTS DISAGREED ABOUT ONE FIELD.
+     *
+     * A committed plan writes `config.mapping` as an object:
+     *
+     *   { operation: 'map', config: { mapping: { email: 'D', first_name: 'B' } } }
+     *
+     * `WorkflowValidator` (see its MAP OPERATIONS branch) reads `config.mapping`
+     * as an ARRAY of `{ source, target }`. And this function matched neither:
+     * it knew `field_mapping` and seven other shapes, and none of them is
+     * `mapping`.
+     *
+     * What happened instead is worse than being ignored. The standard fallback
+     * at the foot of this function does `const mapping = config || {}` — it
+     * treats the WHOLE config object as the mapping template. So
+     * `{ mapping: { email: 'D' } }` produces one output key, literally named
+     * `mapping`, holding the unapplied spec:
+     *
+     *   { mapping: { email: 'D', phone: 'E', first_name: 'B' } }
+     *
+     * No `email` anywhere. A downstream "skip anyone with no address"
+     * conditional then skips EVERY row, the scatter-gather collects nothing,
+     * and the run reports `completed`. Nothing throws and nothing is logged.
+     *
+     * Measured on a live account: the spreadsheet importer ran daily from
+     * 1 November, read the owner's sheet every time, and filed ZERO contacts
+     * while reporting success on all three runs. The owner's columns were
+     * correct, their data was correct, and nothing anywhere said otherwise.
+     *
+     * So the alias is normalised onto `field_mapping` here, once, and every
+     * mode below works unchanged — positional keys, 2D-array detection, dotted
+     * paths, all of it already built and tested. Adding a second
+     * implementation for the same idea is how the three parts drifted apart in
+     * the first place.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (config && !config.field_mapping && config.mapping) {
+      const normalised = normaliseMappingAlias(config.mapping);
+      if (normalised) {
+        logger.info(
+          { targets: Object.keys(normalised) },
+          '[transformMap] config.mapping normalised onto field_mapping'
+        );
+        config = { ...config, field_mapping: normalised };
+      }
+    }
+
     if (config && config.field_mapping && typeof config.field_mapping === 'object') {
       const mapping = config.field_mapping as Record<string, string>;
       // WP-SR: support `column_N` source keys for positional access. The LLM

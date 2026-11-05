@@ -2156,26 +2156,68 @@ export async function GET(request: NextRequest) {
 
     const cancelledInvoices = (cancelledForServices || []) as CancelledInvoice[];
     const bookingServiceById = new Map<string, string>();
-    const unattributedBookingIds = Array.from(new Set(
-      /* Both sets: a cancelled invoice that names only its booking would
-         otherwise be attributed to nothing and show up as "Other". */
-      [...revenueInvoices, ...cancelledInvoices]
-        .filter(inv => !inv.service_id && inv.booking_id)
-        .map(inv => inv.booking_id as string)
-    ));
-    if (unattributedBookingIds.length > 0) {
-      const { data: invoiceBookings, error: invoiceBookingsError } = await supabaseServer
+
+    /**
+     * Learn which service each of these bookings names, into the shared map.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * A FUNCTION, BECAUSE THE MAP HAS TO BE FILLED TWICE.
+     *
+     * It used to be filled exactly once, from one population: the bookings of
+     * invoices carrying no `service_id`. Five of them on the account this was
+     * measured against.
+     *
+     * The payment-plan instalments are then attributed through the SAME map,
+     * two hundred lines below — and they are not even fetched until after it
+     * was built, so an instalment's booking could never have been in it. Every
+     * lookup missed, `?? null` turned the miss into "this names no service",
+     * and the money landed in the "Other" row of a table about what people buy.
+     *
+     * Measured live, 2026-11-03: ₪1,375 across four instalments filed as
+     * unattributed, while all four bookings named a service perfectly well —
+     * `d92aed46`, `d92aed46`, `f69ccbf0`, `5be8fe70`. The owner's reading was
+     * the correct one: you cannot book without a service, and on that account
+     * all 52 bookings have one. The report was wrong, not the data.
+     *
+     * So the lookup is a function and it is called for every booking this band
+     * references, invoices and instalments alike. Already-known ids are not
+     * re-fetched, so the second call is usually a no-op.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const learnBookingServices = async (bookingIds: (string | null | undefined)[]) => {
+      const wanted = Array.from(new Set(
+        bookingIds.filter((id): id is string => Boolean(id) && !bookingServiceById.has(id as string))
+      ));
+      if (wanted.length === 0) return;
+
+      const { data: rows, error } = await supabaseServer
         .from('scheduling_bookings')
         .select('id, service_id')
         .eq('user_id', user.id)
-        .in('id', unattributedBookingIds);
-      if (invoiceBookingsError) {
-        requestLogger.warn({ err: invoiceBookingsError }, 'Failed to resolve invoice bookings for revenue by service');
+        .in('id', wanted);
+
+      if (error) {
+        /* Said out loud. Silently, this is the bug above returning: money filed
+           under "Other" with nothing anywhere to say why. */
+        requestLogger.warn(
+          { err: error, wanted: wanted.length },
+          'Could not resolve bookings for revenue by service; their money will read as unattributed'
+        );
+        return;
       }
-      (invoiceBookings || []).forEach((b: { id: string; service_id: string | null }) => {
+
+      (rows || []).forEach((b: { id: string; service_id: string | null }) => {
         if (b.service_id) bookingServiceById.set(b.id, b.service_id);
       });
-    }
+    };
+
+    /* An invoice that names only its booking — including a cancelled one,
+       which would otherwise be written off against nothing. */
+    await learnBookingServices(
+      [...revenueInvoices, ...cancelledInvoices]
+        .filter(inv => !inv.service_id && inv.booking_id)
+        .map(inv => inv.booking_id)
+    );
 
     const invoiceServiceId = (inv: RevenueInvoice): string | null =>
       inv.service_id || (inv.booking_id ? bookingServiceById.get(inv.booking_id) ?? null : null);
@@ -2216,6 +2258,68 @@ export async function GET(request: NextRequest) {
       amount: number | string | null;
       refunded_amount?: number | string | null;
     };
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * AN INVOICE RAISED BEFORE THE WINDOW STILL NAMES THE SERVICE IT SOLD.
+     *
+     * `revenueInvoices` is filtered by the invoice's OWN `created_at`, which is
+     * right for counting invoices and wrong for attributing payments. A client
+     * settling in October an invoice raised in September is revenue in October:
+     * the transaction is in the window, its invoice is not, so `invoiceById`
+     * misses and the payment inherits no service at all.
+     *
+     * Measured live, 2026-11-03, on the 30-day window:
+     *
+     *   ₪300  paid 22 Oct  against INV-00015, raised 2 Oct  ("ייעוץ אישי")
+     *   ₪300  paid 22 Oct  against INV-00014, raised 1 Oct  ("ייעוץ אישי")
+     *
+     * Both invoices name service `72a1ec8f` perfectly well. Both payments were
+     * filed as "Other" — ₪600 of a service that has its OWN row three lines
+     * above, so the same service appeared twice in one table, once named and
+     * once not.
+     *
+     * So the invoices a payment REFERENCES are fetched by id, whatever their
+     * age. For lookup only: they are never iterated as revenue of their own, so
+     * nothing outside the window is counted. `settledInvoiceIds` and the
+     * `revenueInvoices` loop below both stay exactly as they were.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    const missingInvoiceIds = Array.from(new Set(
+      ((serviceRevenueTransactions || []) as RevenueTransaction[])
+        .map(tx => tx.invoice_id)
+        .filter((id): id is string => Boolean(id) && !invoiceById.has(id as string))
+    ));
+
+    if (missingInvoiceIds.length > 0) {
+      const { data: olderInvoices, error: olderInvoicesError } = await supabaseServer
+        .from('payment_invoices')
+        .select('id, service_id, booking_id, amount, status, refunded_amount')
+        .eq('user_id', user.id)
+        .in('id', missingInvoiceIds);
+
+      if (olderInvoicesError) {
+        /* Said out loud: silently, this is the defect above returning, and its
+           only symptom is money quietly filed under "Other". */
+        requestLogger.warn(
+          { err: olderInvoicesError, wanted: missingInvoiceIds.length },
+          'Could not resolve the invoices some payments settle; their money will read as unattributed'
+        );
+      }
+
+      (olderInvoices || []).forEach(inv => {
+        invoiceById.set(inv.id as string, inv as unknown as RevenueInvoice);
+      });
+
+      /* And their bookings, for the ones that name only a booking — the same
+         resolution the in-window invoices already get. */
+      await learnBookingServices(
+        (olderInvoices || [])
+          .filter(inv => !inv.service_id && inv.booking_id)
+          .map(inv => inv.booking_id as string)
+      );
+    }
+
     ((serviceRevenueTransactions || []) as RevenueTransaction[]).forEach(tx => {
       const linkedInvoice = tx.invoice_id ? invoiceById.get(tx.invoice_id) : undefined;
       if (linkedInvoice) settledInvoiceIds.add(linkedInvoice.id);
@@ -2271,6 +2375,24 @@ export async function GET(request: NextRequest) {
         'Could not read plan stages for the services band'
       );
     }
+
+    /*
+     * THE LOOKUP THESE STAGES ARE ABOUT TO USE, FILLED FIRST.
+     *
+     * Without this the map holds only the bookings of service-less invoices,
+     * which a stage's booking is essentially never one of — so every stage
+     * missed and its money was filed as "Other" against a booking that named
+     * its service all along. See `learnBookingServices`.
+     *
+     * Only the stages that will actually be counted: one already settled by a
+     * charge was counted as that transaction, and one with no booking is not
+     * counted at all, so neither needs resolving.
+     */
+    await learnBookingServices(
+      (serviceOwedStages || [])
+        .filter(stage => !stage.transaction_id)
+        .map(stage => stage.booking_id)
+    );
 
     (serviceOwedStages || []).forEach(stage => {
       // A stage already settled by a charge is that transaction, counted above.

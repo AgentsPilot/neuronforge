@@ -899,6 +899,9 @@ export const en = {
     'health.category.retention': 'Retention',
     'health.category.operations': 'Operations',
     'health.category.pricing': 'Pricing',
+    /* The one category where a RISE is the bad direction, which is why the
+       chips below never pair it with a word about the number moving. */
+    'health.category.cancellations': 'Cancellations',
     'health.category.website': 'Website',
 
     // AI Summary Section
@@ -2686,7 +2689,7 @@ export const en = {
     /* The bookings tab's own search, offered once a contact has more than one
        page of history. The curly quotes are deliberate: the term is the
        client's own words quoted back. */
-    'crm.drawer.search_bookings': 'Search bookings',
+    'crm.drawer.search_bookings': 'Any word, date or amount',
     'crm.drawer.no_booking_matches': 'No bookings match “{term}”',
     'crm.drawer.schedule_first': 'Schedule first session',
     'crm.drawer.new_session': 'New',
@@ -2729,6 +2732,16 @@ export const en = {
     'crm.booking.package.add_meeting': 'Add another meeting',
     'crm.booking.package.add_confirm': 'Add it',
     'crm.booking.package.adding': 'Adding…',
+    /* The footer switch became two answers, and the amount moved onto the
+       one that charges: "bill it like the others" never said how much, so
+       waiving it was a decision whose cost you had to go and look up. */
+    'crm.booking.package.charge_yes': 'Yes, bill it',
+    'crm.booking.package.charge_yes_hint': 'Like every other session in the package.',
+    'crm.booking.package.charge_no': 'No, free of charge',
+    'crm.booking.package.charge_no_hint': 'This one is given, and nothing is invoiced for it.',
+    'crm.booking.package.makes_up_q': 'Is this a make-up session?',
+    'crm.booking.package.makes_up_why': 'It stands in for an hour that was missed or called off, so that one stops being offered again.',
+    'crm.booking.package.makes_up_yes': 'Yes, instead of one',
     'crm.booking.package.charge_it': 'Bill it like the others',
     'crm.booking.package.makes_up_for': 'Makes up for',
     'crm.booking.package.makes_up_for_nothing': 'Nothing, an extra session',
@@ -2757,6 +2770,9 @@ export const en = {
     'crm.next.send_intake': 'Send the intake form before the meeting',
     'crm.next.create_quote': 'Next: send a quote',
     'crm.next.quote_refused': 'The quote was refused. You can send a new one',
+    /* Nobody refused this one, the date simply passed. Saying "refused" invents
+       a decision the client never made. */
+    'crm.next.quote_expired': 'The quote ran out before they answered. Give it more time, or send a new one',
     'crm.next.send_invoice': 'Next: collect payment',
     'crm.next.bill_next_stage': 'The next stage is due to be billed',
     'crm.next.fallback': 'Needs you',
@@ -2767,6 +2783,7 @@ export const en = {
     'crm.next.badge.missed': 'Client did not attend',
     'crm.next.badge.create_quote': 'Needs a quote',
     'crm.next.badge.quote_refused': 'Quote refused',
+    'crm.next.badge.quote_expired': 'Quote expired',
     'crm.next.badge.send_invoice': 'Needs invoicing',
     /* A state, not an instruction: without it the badge fell back to the full
        sentence and printed it twice, stacked. */
@@ -2812,6 +2829,7 @@ export const en = {
     'crm.next.action.new_meeting': 'Book another meeting',
     'crm.next.action.cancel_booking': 'Cancel booking',
     'crm.next.action.send_intake': 'Send form',
+    'crm.next.action.extend_quote': 'Extend the quote',
     'crm.next.action.create_quote': 'Create a quote',
     'crm.next.action.remind_quote': 'Send a reminder',
     'crm.next.action.send_invoice': 'Send invoice',
@@ -2845,6 +2863,9 @@ export const en = {
     'crm.booking.step.ordered': 'Ordered',
     'crm.booking.step.confirmed': 'Confirmed',
     'crm.booking.step.confirmation': 'Confirmation sent',
+    /* A quoted job with no pre-meeting: nothing is confirmed yet, because
+       nothing has been priced or agreed. The order exists; the quote follows. */
+    'crm.booking.step.booking_created': 'Booking created',
     'crm.journey.cancellation_mail': 'The client was told',
     'crm.journey.cancellation_mail_none': 'The client was not told',
     'crm.booking.email_sent': 'Email sent',
@@ -3064,6 +3085,9 @@ export const en = {
     'crm.journey.resend': 'Send again',
     'crm.journey.not_wired': 'Not connected yet',
     'crm.booking.reschedule': 'Reschedule',
+    /* A MISSED session is not moved: its hour is past and stays on the record.
+       What this books is a replacement at a new time, so it says so. */
+    'crm.booking.book_replacement': 'Book a replacement',
     'crm.payment.status.partially_refunded_short': 'Partially refunded',
     'crm.payment.status.refunded': 'Refunded',
     'crm.payment.status.partially_refunded': '{amount} refunded',
@@ -4238,6 +4262,20 @@ export const en = {
     'reports.written_off': 'Written off',
     'reports.not_enough_data': 'not enough data yet',
     'reports.count_improved': 'improved',
+    /*
+     * NOUNS, AND THEY HAVE TO BE.
+     *
+     * Used when the chip names the categories instead of counting them.
+     * A verb here would describe THE NUMBER, and for cancellations the
+     * number moves the opposite way to the health: the rate rose from 10%
+     * to 23.5%, which is worse, so "cancellations slipped" reads as the
+     * exact opposite of what happened.
+     *
+     * A noun before a colon describes the MOVE, not the figure, and needs
+     * no agreement with however many categories follow it.
+     */
+    'reports.moved_better': 'Improved',
+    'reports.moved_worse': 'Worsened',
     'reports.count_slipped': 'slipped',
     'reports.count_steady': 'steady',
     'reports.count_need_data': 'need more data',
@@ -4280,6 +4318,10 @@ export const en = {
     'reports.col_lost': 'Lost',
     // Heads the summed row at the TOP of the services table.
     'reports.col_total': 'Total',
+    /* The two names the stats route writes itself. Every other row in that
+       table is the owner's own service name and is never translated. */
+    'reports.service_other': 'Other',
+    'reports.service_deleted': 'Deleted service',
     'reports.col_service': 'Service',
     'reports.arrived_caption': '{leads} new contacts arrived in this period. The bookings and revenue are what arrived in the SAME period from anyone that channel ever brought, so a client who first came months ago still counts here. {untracked} of the new contacts came with no referrer and no tag, so they sit in the "{direct}" row.',
     'reports.needs_has': 'needs {min}, has {sample}',
@@ -4924,9 +4966,27 @@ export const en = {
     'scheduling.cancel_meeting.dismiss': 'Go back',
     'scheduling.cancel_meeting.confirm': 'The meeting is called off and the client will be told.',
     'scheduling.cancel_meeting.confirm_named': 'The meeting with {name} is called off and the client will be told.',
+    'scheduling.cancel_meeting.proposal_yes': 'Yes, still coming',
+    'scheduling.cancel_meeting.proposal_no': 'No, stepping back',
     'scheduling.cancel_meeting.proposal_label': 'Is the quote still going ahead?',
     'scheduling.cancel_meeting.proposal_on_hint': 'They will read that the quote is on its way and you do not need to meet first.',
     'scheduling.cancel_meeting.proposal_off_hint': 'They will read that no quote will follow. The booking itself stays open, and probably wants closing.',
+    /* The bar's two answers. The control was a switch, so it had a
+       question but no words for yes and no. */
+    /* The closing panel, matching the no-show dialog's. Silent about money:
+       this dialog is not told whether the session carries a stage. */
+    'scheduling.cancel_meeting.outcome_title': 'What will happen',
+    'scheduling.cancel_meeting.outcome_off': 'The session is called off and its hour goes back into your diary.',
+    'scheduling.cancel_meeting.outcome_told': 'The client is emailed that it is off.',
+    'scheduling.cancel_meeting.outcome_quote_on': 'Your quote is still coming — the email says so.',
+    'scheduling.cancel_meeting.outcome_quote_off': 'The client is told no quote will follow.',
+    'scheduling.cancel_meeting.outcome_replaced': 'A replacement is booked for {date}, and named in the same email.',
+    'scheduling.cancel_meeting.outcome_not_replaced': 'The package keeps its remaining sessions only.',
+    /* Shown where the replacement question will be, while the offer is
+       still being looked up — so the held confirm button has a reason. */
+    'scheduling.cancel_meeting.replace_checking': 'Checking whether a replacement can be booked…',
+    'scheduling.cancel_meeting.replace_no': 'No',
+    'scheduling.cancel_meeting.replace_yes': 'Yes, book one',
     'scheduling.cancel_meeting.replace_label': 'Add a replacement session?',
     "scheduling.cancel_meeting.replace_pick": "Or choose another date",
     "scheduling.cancel_meeting.replace_any": "Or pick any date and time",
@@ -4946,6 +5006,34 @@ export const en = {
     'scheduling.no_show.notify_label': 'Invite them to rebook',
     'scheduling.no_show.notify_description': 'Sends a short email with a link to pick another time. It does not mention a missed appointment or assign blame. Leave off if you would rather speak to them first.',
     'scheduling.no_show.charge_label': 'Charge for this session',
+    /* ── The dialog asks two questions now, not three switches ──────────────
+       "Invite them" and "add a make-up" were one question all along: who picks
+       the next hour. The money is its own decision and is asked on its own. */
+    'scheduling.no_show.money_q': 'This hour — is it charged?',
+    'scheduling.no_show.money_charge': 'Yes, charge it',
+    'scheduling.no_show.money_charge_hint': 'The hour was held and nobody came.',
+    'scheduling.no_show.money_waive': 'No, waive it',
+    'scheduling.no_show.money_waive_hint': 'The charge is removed from the plan.',
+    'scheduling.no_show.next_q': 'And what next?',
+    'scheduling.no_show.replace_checking': 'Checking whether a make-up can be booked…',
+    'scheduling.no_show.next_nothing': 'Nothing for now',
+    'scheduling.no_show.next_nothing_hint': 'Talk to them first; arrange a time later.',
+    'scheduling.no_show.next_client': 'Let the client pick a time',
+    /* Its own, short. The switch's hint ran to three sentences and ended
+       "leave it off if you would rather talk first" — about a control that
+       no longer exists. */
+    'scheduling.no_show.next_client_hint': 'A short email with a link. It does not mention the missed session.',
+    'scheduling.no_show.next_owner': 'I will book it now',
+    /* What the combination actually does — see the panel's own note. */
+    'scheduling.no_show.outcome_title': 'What will happen',
+    'scheduling.no_show.outcome_recorded': 'The session is marked as not held and counts towards the no-show rate.',
+    'scheduling.no_show.outcome_charged': 'The hour is charged, like a session that took place.',
+    'scheduling.no_show.outcome_waived': 'Nothing is charged. The payment for it is removed from the plan.',
+    'scheduling.no_show.outcome_invited': 'A short email goes out with a link to pick a new time. It does not mention the missed session.',
+    'scheduling.no_show.outcome_booked': 'The make-up session is booked and goes into the diary straight away.',
+    'scheduling.no_show.outcome_makeup_free': 'The make-up is included — the missed hour has already been charged for.',
+    'scheduling.no_show.outcome_makeup_carries': 'The charge moves to the make-up — the client pays once, for the session that happens.',
+    'scheduling.no_show.outcome_quiet': 'Nothing is sent to the client and no further session is arranged.',
     'scheduling.no_show.charge_description': 'The hour was held and nobody came, so it is billed like a session that went ahead. Turn off to waive it: the session stays marked as missed, and its payment is removed from the plan.',
     'scheduling.booking.intake_open_settings': 'Open client form settings',
     'scheduling.booking.time_already_booked': 'You already have a booking at this time.',
@@ -5152,6 +5240,17 @@ export const en = {
     'proposal.package_dates_warned': '{count} of these meetings fall on a day you are closed or outside your hours. They will still be booked.',
     'proposal.package_date_taken': 'Something is already booked at this time, so this meeting would not be created.',
     'proposal.package_date_checking': 'Checking this time…',
+    /* The hour grid: a column per session, a row per hour of the working day.
+       Picking a row that is clear beats repairing six dates one at a time. */
+    /* The grid cannot be drawn because the business keeps no hours on that
+       weekday. Said out loud: vanishing silently is what confused people. */
+    'proposal.package_day_closed': 'You do not work on {day}. Pick another day for the series, or add hours to that day in your settings.',
+    'proposal.package_hour_pick': 'What time?',
+    'proposal.package_hour_hint': 'Each row is the whole series at that hour. Green means the hour is free on that date.',
+    'proposal.package_hour_hint_clear': '{time} books all of them without a clash.',
+    'proposal.package_hour_col': 'Time',
+    'proposal.package_hour_all_free': 'All free',
+    'proposal.package_hour_blocked': '{count} taken',
     'proposal.package_date_outside': 'Outside your working hours ({start}–{end}).',
     'proposal.package_date_past': 'This time has already passed.',
     'proposal.package_count': '{count} meetings of {minutes} minutes. The client sees every date before approving.',
@@ -5186,6 +5285,18 @@ export const en = {
        error yet, and the asterisk on the label already says it will be needed. */
     'proposal.field.valid_until_past': 'That date has already passed. A quote has to stay open until at least today.',
     'proposal.field.payment': 'How it gets paid',
+    /* A series is asked WHEN, not HOW: the arrangement is already settled by
+       the meetings, and only the timing is left to decide. */
+    'proposal.field.payment_when': 'When the client pays',
+    /* The branch, asked before any money question. Each option prints its own
+       payment terms so both worlds are readable before either is chosen. */
+    'proposal.sell_what': 'What are you selling?',
+    'proposal.sell_job': 'One piece of work',
+    'proposal.sell_job_hint': 'A project or service priced as a single unit.',
+    'proposal.sell_job_pay': 'Paid: in one · by stages · in instalments',
+    'proposal.sell_series': 'A series of meetings',
+    'proposal.sell_series_hint': 'Several meetings sold as one purchase.',
+    'proposal.sell_series_pay': 'Paid: upfront · after each meeting',
     'proposal.field.count': 'Payments',
     'proposal.field.frequency': 'Every',
     'proposal.field.stages': 'Stages',
@@ -5395,8 +5506,11 @@ export const en = {
     'money.failed': 'Could not load your money right now. Please try again.',
     // The headline figure. "Actually" because the figure beside it is what was sold, not what arrived.
     'money.came_in': 'Actually came in',
-    'money.of_book': 'out of {total} of work sold',
+    'money.of_book': 'out of {total} ever asked for',
     'money.of_which_late': 'of which late',
+    // The bar's total: every amount ever asked for, in four exhaustive states.
+    'money.everything': 'Billed in total',
+    'money.whole_book_note': 'Every amount you were ever owed is in one of these four, and in only one of them. The red sits inside the yellow because money that is late is money you are owed, counted once.',
     // Explains the nesting in the bar, which is the one device the page has to teach.
     'money.nested_note': 'The red sits inside the yellow, not beside it: money that is late is money you are owed, so it is counted once.',
     'money.needs_you': 'Needs chasing',
@@ -5404,7 +5518,12 @@ export const en = {
     'money.not_due_yet': 'Not due yet',
     'money.not_due_note': 'Agreed, with the date still ahead. Nothing to do about it today.',
     'money.fell_through': 'What will not arrive',
-    'money.fell_through_note': 'Neither is part of what your orders are worth: one never arrived, the other went back out.',
+    /* Each figure above carries its own line, because the honest answer to "is
+       this part of the total" differs between them. This one says only that
+       the pair does not add to anything, so nobody tries. */
+    'money.fell_through_note': 'Both are already inside the total above. Neither is money you have.',
+    'money.cancelled_note': 'Part of the total above. It was billed and will not arrive.',
+    'money.refunded_note': 'Part of the total above. It arrived, then went back.',
     'money.list_title': 'All the money, by the work it belongs to',
     'money.search_placeholder': 'Search a client, invoice or amount',
     // Says plainly that the chips govern the list and not the figures above it.

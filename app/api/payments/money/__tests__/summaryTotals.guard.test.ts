@@ -38,9 +38,20 @@ describe('the money route separates what it summarises from what it lists', () =
   });
 
   it('builds `searched` from the search alone, never the filter', () => {
+    /*
+     * Bounded at `const beforeKind`, not `const filtered`.
+     *
+     * The pipeline gained a step — `searched → beforeKind (filter + method) →
+     * filtered (kind)` — and this slice used to run all the way to `filtered`,
+     * swallowing `beforeKind` with it. It then reported the `matchesFilter`
+     * that belongs to the row list as if it had leaked into the summary.
+     *
+     * The rule is unchanged: whatever builds `searched` may consult the search
+     * and nothing else. Only the end of the window moved.
+     */
     const searched = route.slice(
       route.indexOf('const searched ='),
-      route.indexOf('const filtered =')
+      route.indexOf('const beforeKind =')
     );
 
     /* `terms` is the parsed search, and the only input `searched` may consult.
@@ -52,10 +63,16 @@ describe('the money route separates what it summarises from what it lists', () =
   });
 
   it('applies the filter on top of the search, so the two stay nested', () => {
-    // `filtered` must be a subset of `searched` — if it were built from
-    // `allItems` instead, searching would stop narrowing the rows.
-    expect(route).toMatch(/const filtered = searched\.filter\(/);
+    /*
+     * Still nested, one step further down. The KPI filter and the method now
+     * land on `beforeKind`, and `filtered` narrows THAT by kind — so the chain
+     * from `searched` is unbroken and each stage is a subset of the last.
+     * Built from `allItems` at any point, searching would stop narrowing the
+     * rows, which is the regression this protects.
+     */
+    expect(route).toMatch(/const beforeKind = searched\.filter\(/);
     expect(route).toContain('matchesFilter(item, filter)');
+    expect(route).toMatch(/const filtered = beforeKind\.filter\(/);
   });
 
   it('paginates on the filtered count, not the summarised one', () => {
@@ -92,14 +109,20 @@ describe('the money route pages within the chosen kind', () => {
   });
 
   it('narrows the LIST by kind, so the pager offers the pages that view has', () => {
-    const filtered = route.slice(route.indexOf('const filtered ='), route.indexOf('const sorted ='));
+    const filtered = route.slice(
+      route.indexOf('const filtered ='),
+      route.indexOf('const sorted =')
+    );
     expect(filtered).toContain("kind === 'all' || item.kind === kind");
   });
 
   it('does NOT narrow the summary by kind, which describes the whole book', () => {
     // Same invariant as the KPI filter: figures that re-derive from the view
     // offering them cannot be compared against each other.
-    const searched = route.slice(route.indexOf('const searched ='), route.indexOf('const filtered ='));
+    const searched = route.slice(
+      route.indexOf('const searched ='),
+      route.indexOf('const beforeKind =')
+    );
     expect(searched).not.toContain('item.kind');
   });
 });

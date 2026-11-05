@@ -172,73 +172,103 @@ describe('it opens where the series says, not on the next free hour', () => {
 });
 
 describe('the money question', () => {
-  it('is a switch, not a checkbox', () => {
-    expect(dialog).toMatch(/<Switch\n?\s+id="booking-extra-toggle"/);
-    expect(dialog).toMatch(/onCheckedChange=\{extraToggle\.onChange\}/);
+  /*
+   * ── IT WAS A SWITCH IN THE FOOTER. IT IS TWO ANSWERS IN THE BODY ────────
+   *
+   * The switch said "bill it like the others" with no amount on it, beside
+   * Cancel and Save. A footer holds what you do to a dialog; this describes
+   * the session being made, and down there it read as a setting and was
+   * missed — which on a per-session package means giving an hour away.
+   *
+   * So what is pinned is the INVARIANT, not the widget: both answers are
+   * present, neither is reachable by omission, and the waiver is the one
+   * drawn in amber because it is the one that costs money.
+   */
+  it('offers both answers explicitly, so neither is taken by omission', () => {
+    expect(dialog).toMatch(/\(\[true, false\] as const\)\.map\(charge =>/);
+    expect(dialog).toMatch(/onClick=\{\(\) => extraToggle\.onChange\(charge\)\}/);
+  });
+
+  it('says what it costs, on the answer that charges', () => {
+    /* "Bill it like the others" never named a figure, so waiving it was a
+       decision whose price the owner had to go and look up. */
+    expect(dialog).toContain('crm.booking.package.charge_yes');
+    expect(dialog).toContain('crm.booking.package.charge_no');
+  });
+
+  it('colours the WAIVER amber, not the charge', () => {
+    /* Amber is the card's word for money wanting an answer. On the charge it
+       would warn about the ordinary case; on the waiver it marks the one that
+       gives an hour away. */
+    expect(dialog).toMatch(/charge \? '#2DD4BF' : '#D97706'/);
   });
 
   /*
-   * The footer's question group, which now holds BOTH of the caller's
-   * questions — the money one and "what does this make up for".
+   * The question group, which now sits in the BODY beside the date rather
+   * than in the footer. The two placement tests that lived here pinned
+   * `me-auto` and the absence of a `dir="ltr"` wrapper — both were about
+   * keeping a switch off the buttons in the footer, and neither describes
+   * anything that still exists.
    *
-   * Sliced from the condition that opens the group, which is why it names both
-   * props. `{extraToggle && (` opens the INNER block these days, past the
-   * `me-auto` that does the pinning, so slicing from there measured the wrong
-   * half and this guard failed on a change that had not broken anything.
+   * What replaced them is the placement itself: the block is rendered inside
+   * the scrolling body, above the sticky footer, so it is read as part of
+   * making the session.
    */
-  const questionGroup = () =>
-    dialog.slice(
-      dialog.indexOf('{(extraToggle || makeUpFor) && ('),
-      dialog.indexOf('Right side - Cancel and Save')
-    );
+  it('is asked in the body, not in the footer beside the buttons', () => {
+    const body = dialog.indexOf('{(extraToggle || makeUpFor) && (');
+    const footer = dialog.indexOf('Sticky Footer');
 
-  it('sits on the inline start, which is the right in Hebrew', () => {
-    /*
-     * The footer is `justify-between` and the group beside it is empty on a
-     * new booking, so without this the question floated near the middle. A
-     * margin on the inline END pins it to the START in either script.
-     *
-     * On the group rather than on the switch, so a second question joins it
-     * there instead of drifting off towards the buttons.
-     */
-    expect(questionGroup()).toMatch(/className="me-auto flex flex-wrap items-center/);
-  });
-
-  it('does not wrap the switch in a direction of its own', () => {
-    // `Switch` already carries a `:dir(rtl)` rule for its thumb. A `dir="ltr"`
-    // wrapper here would neutralise it — the same correct-it-twice fault as
-    // the inverted calendar icon.
-    expect(questionGroup()).not.toMatch(/dir="ltr"/);
+    expect(body).toBeGreaterThan(-1);
+    expect(footer).toBeGreaterThan(-1);
+    expect(body).toBeLessThan(footer);
   });
 });
 
-/**
- * WHAT THIS SESSION MAKES UP FOR.
- *
- * A session standing in for one that was called off or missed could only be
- * declared from the cancel/no-show dialog's own offer. Added from here instead
- * — which is where an owner naturally goes — the fact was lost, and the missed
- * session went on offering "change date" for the life of the package.
- *
- * What these lock is the GATING, because the risk in the change was never the
- * feature, it was the ordinary add quietly behaving differently.
- */
 describe('the make-up question', () => {
   it('is asked only when the caller passes it', () => {
     expect(dialog).toMatch(/\{makeUpFor && \(/);
   });
 
-  it('offers "makes up for nothing" first, and that is what null shows as', () => {
-    /* The honest default. A claim nobody made must not be recorded for them,
-       so the absence is the selected option rather than an empty box. */
-    expect(dialog).toMatch(/value=\{makeUpFor\.value \?\? MAKES_UP_FOR_NOTHING\}/);
-    expect(dialog).toMatch(/<SelectItem value=\{MAKES_UP_FOR_NOTHING\}>/);
+  it('treats "makes up for nothing" as the default, and shows it as an answer', () => {
+    /*
+     * The honest default: a claim nobody made must not be recorded for them,
+     * so the absence is a selected answer rather than an empty box.
+     *
+     * It was a `SelectItem` behind a sentinel value, because Radix throws on
+     * an empty one. The control is a pair of answers now — `null` IS the
+     * no-make-up state, with no sentinel to leak — and the missed hours are
+     * rows underneath rather than options inside a menu.
+     */
+    expect(dialog).toMatch(/Boolean\(makeUpFor\.value\) === isMakeUp/);
+    expect(dialog).toContain('makeUpFor.noneLabel');
   });
 
-  it('hands back null, never the sentinel', () => {
-    /* Radix refuses an empty item value, so the absence needs a name inside
-       the component. No caller should ever see it. */
-    expect(dialog).toMatch(/next === MAKES_UP_FOR_NOTHING \? null : next/);
+  it('lists the missed hours as rows, not inside a select', () => {
+    /* Two or three of them is a list: visible without opening anything, and
+       clear of `SelectTrigger`, which hand-rolls its own RTL on top of the
+       `dir` its container already applies. */
+    expect(dialog).toMatch(/makeUpFor\.options\.map\(option =>/);
+    expect(dialog).not.toMatch(/<SelectItem value=\{option\.value\}>/);
+  });
+
+  it('hands back null for "makes up for nothing"', () => {
+    /*
+     * The RULE is unchanged and the mechanism is not. A sentinel existed only
+     * because Radix refuses an empty `SelectItem` value, and the select is
+     * gone — the control is two buttons now, so the absence can simply BE
+     * `null` with nothing to translate back.
+     *
+     * This asserted `next === MAKES_UP_FOR_NOTHING ? null : next`, which
+     * contradicted its own sibling above ("no sentinel to leak") and pinned
+     * the design the refactor deliberately replaced. What matters to a caller
+     * is unchanged: choosing "no" hands back null, choosing "yes" hands back a
+     * real candidate rather than an empty state.
+     */
+    expect(dialog).toMatch(
+      /isMakeUp \? \(makeUpFor\.options\[0\]\?\.value \?\? null\) : null/
+    );
+    /* And no sentinel survives anywhere, which is the half worth guarding. */
+    expect(dialog).not.toContain('MAKES_UP_FOR_NOTHING');
   });
 
   it('is only offered when something is actually waiting to be made up', () => {

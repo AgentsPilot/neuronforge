@@ -332,7 +332,23 @@ export function MeetingRowActions({
   if (onReschedule && !held && !calledOff) {
     items.push({
       key: 'reschedule',
-      label: t('crm.booking.reschedule') || 'Reschedule',
+      /*
+       * A MISSED SESSION IS NOT MOVED, AND MUST NOT SAY IT IS.
+       *
+       * Its hour is past and stays on the record as `no_show`; nobody books
+       * that time again. What this action actually does for a missed row is
+       * open the dialog that adds a REPLACEMENT at a new time, which is also
+       * what the client's own portal now calls it.
+       *
+       * The word was the last part still describing the old behaviour, where
+       * rebooking a missed session genuinely tried to move it — and left two
+       * live rows on one session number because the database will not stamp
+       * `moved` over a recorded outcome.
+       */
+      label:
+        meetingStatus === 'no_show'
+          ? t('crm.booking.book_replacement') || 'Book a replacement'
+          : t('crm.booking.reschedule') || 'Reschedule',
       icon: CalendarClock,
       run: onReschedule,
     });

@@ -264,7 +264,38 @@ export function PaymentManagementModal({
    */
   const canMarkPaid = isPlan ? Boolean(settleableInvoiceId) : paymentData?.status === 'pending';
 
-  const canRefund = paymentData?.status === 'paid';
+  /**
+   * MORE THAN ONE PAYMENT MEANS THIS DIALOG CANNOT NAME THE REFUND.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The refund here is addressed by `bookingId`, which is exactly right while a
+   * booking holds ONE payment — an ordinary booking, or a package paid upfront.
+   * There "the booking's money" and "the payment" are the same thing.
+   *
+   * A package billed per session is not that. Each held session raises its own
+   * invoice and its own charge, so the booking's paid figure is a SUM: two
+   * sessions of 46.66 were offered here as a single 93.32 refund. That figure
+   * corresponds to nothing anyone can do —
+   *
+   *   · it is two Stripe refunds, not one, so the fee is taken twice;
+   *   · neither stage can be marked refunded afterwards, because the money
+   *     came back against no particular one;
+   *   · and waiving ONE missed session while keeping the other charge — the
+   *     ordinary reason to be here — cannot be expressed at all.
+   *
+   * `resolveRefundTargets` already refuses it (`AMBIGUOUS_TARGET`), so the only
+   * thing this offered was a figure the server would not honour.
+   *
+   * The answer is subtraction, not a picker. Every paid session already has its
+   * own refund on its own row, beside the date and the outcome it belongs to.
+   * A second list inside this dialog would be a worse copy of a control that
+   * already works, and one more place to keep in step.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const paidStages = stages.filter(stage => stage.status === 'paid' && stage.invoiceId);
+  const refundBelongsToSessions = paidStages.length > 1;
+
+  const canRefund = paymentData?.status === 'paid' && !refundBelongsToSessions;
   const [view, setView] = useState<ModalView>('refund');
 
   /*
@@ -663,7 +694,23 @@ export function PaymentManagementModal({
    * and is the same dialog the money list and the payments tab open. One refund
    * dialog, wherever a refund starts.
    */
-  if (view === 'refund' && canRefund) {
+  /*
+   * ── A REFUND VIEW WITH NOTHING TO REFUND FALLS BACK ───────────────────────
+   *
+   * `view` opens on `'refund'`, and the early return below is what normally
+   * serves it. The legacy form further down was unreachable only BECAUSE that
+   * return always fired — its own note says so, and says the cap it computes
+   * would be wrong if the two conditions ever parted.
+   *
+   * Narrowing `canRefund` parts them: on a per-session package the return no
+   * longer fires, and the form behind it would have rendered the very figure
+   * this change removes — the booking's summed 93.32. So the view falls back
+   * to the details instead, which is the screen that actually has something
+   * to show: the plan, stage by stage, each with its own money.
+   */
+  const effectiveView: ModalView = view === 'refund' && !canRefund ? 'details' : view;
+
+  if (effectiveView === 'refund' && canRefund) {
     return (
       <RefundModal
         isOpen={isOpen}
@@ -733,7 +780,7 @@ export function PaymentManagementModal({
         <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-5 bg-[var(--v2-bg)]">
           <DialogHeader className="rtl:text-right">
             <DialogTitle className="flex items-center gap-3 text-base sm:text-lg font-semibold text-[var(--v2-text-primary)]">
-              {view === 'refund' ? (
+              {effectiveView === 'refund' ? (
                 <>
                   <button
                     onClick={() => { setView('details'); setError(null); }}
@@ -1452,7 +1499,7 @@ export function PaymentManagementModal({
           )}
 
           {/* Refund View */}
-          {view === 'refund' && (
+          {effectiveView === 'refund' && (
             <form onSubmit={handleRefund} className="space-y-4">
               {/* Transaction Info */}
               <div className="rounded-lg bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4">

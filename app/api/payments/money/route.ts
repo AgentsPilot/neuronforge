@@ -612,9 +612,26 @@ export async function GET(request: NextRequest) {
     const matchesMethod = (item: MoneyItem) =>
       method === 'any' || item.method === method || item.method === 'mixed';
 
-    const filtered = searched.filter(
-      item => matchesFilter(item, filter) && (kind === 'all' || item.kind === kind) && matchesMethod(item)
+    /*
+     * Everything the filter keeps, BEFORE the kind is chosen.
+     *
+     * Split out so the two kinds can be counted without being fetched. A
+     * surface that shows both as entry points — "Orders 73", "Invoices without
+     * an order 4" — needs each count while loading only ONE of the two lists,
+     * and the alternative is a second round trip per kind on every page change
+     * to learn a number already sitting in memory here.
+     */
+    const beforeKind = searched.filter(
+      item => matchesFilter(item, filter) && matchesMethod(item)
     );
+
+    /** How many rows each kind holds under the current filter, search and method. */
+    const kindCounts = {
+      booking: beforeKind.filter(item => item.kind === 'booking').length,
+      standalone: beforeKind.filter(item => item.kind === 'standalone').length,
+    };
+
+    const filtered = beforeKind.filter(item => kind === 'all' || item.kind === kind);
 
     /**
      * Order, applied before the page window.
@@ -786,8 +803,17 @@ export async function GET(request: NextRequest) {
       success: true,
       data: {
         items: sorted.slice(offset, offset + limit),
-        /** Rows matching BOTH search and filter — what paginates. */
+        /** Rows matching BOTH search and filter, within the chosen kind — what paginates. */
         total: filtered.length,
+        /**
+         * How many rows each kind holds, before the kind was chosen.
+         *
+         * So a surface offering both as entry points can state each count
+         * while loading only one of the lists. Unaffected by `kind`,
+         * `limit` and `offset` by definition — it is what those would have
+         * matched.
+         */
+        kindCounts,
         totals,
         /**
          * The window's EVENTS, or null when none was asked for.
