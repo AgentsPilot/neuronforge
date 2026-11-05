@@ -142,6 +142,22 @@ function agentsTable() {
   return api;
 }
 
+/*
+ * The audit write is non-blocking by mandate, so its failure is invisible —
+ * and in this suite it was a real request to the placeholder Supabase URL:
+ * `queueDue` audits every tick it commits to (scheduledAgentRunner.ts), seven
+ * entries in this file alone. `AuditTrailService` builds its own client with
+ * `createClient`, so the `@/lib/supabaseServer` mock below does not stop it.
+ *
+ * It took the whole gate to see: the service batches on a 5 s unref'd timer,
+ * so running this file ALONE exits before the flush and looks clean, while in
+ * a full run the POST lands on whichever suite is running five seconds later.
+ * Three innocent files were named that way. See tests/jest-no-network.ts.
+ */
+jest.mock('@/lib/services/AuditTrailService', () =>
+  jest.requireActual('@/tests/helpers/silentAuditTrail')
+);
+
 jest.mock('@/lib/supabaseServer', () => ({
   supabaseServer: { from: () => agentsTable() },
 }));
