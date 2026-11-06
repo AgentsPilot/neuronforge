@@ -1984,7 +1984,12 @@ function mapWritableData(
  * digits. A leading minus is not formatting: it is the signature of a
  * spreadsheet having done arithmetic on something that was never a sum.
  */
-function usablePhoneOrNull(value: string | number | boolean): string | null {
+function usablePhoneOrNull(value: unknown): string | null {
+  /* Only a string or a number can be a phone. A boolean, a symbol or anything
+     else in a phone column is junk by construction, and `String()`-ing it would
+     manufacture a plausible-looking one. */
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+
   const text = String(value).trim();
   if (text === '') return null;
 
@@ -2031,7 +2036,19 @@ function resolveWriteValue(
    * worse failure.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  if (field.name === 'phone' && value !== null && typeof value !== 'object') {
+  /*
+   * `field.column` is the physical column, which is the thing actually being
+   * written. `undefined` is excluded deliberately and is NOT the same as null
+   * here: it means the caller did not mention the field, and turning it into a
+   * NULL would erase a phone the owner already had on every update that did not
+   * happen to include one.
+   */
+  if (
+    field.column === 'phone' &&
+    value !== null &&
+    value !== undefined &&
+    typeof value !== 'object'
+  ) {
     return usablePhoneOrNull(value);
   }
 

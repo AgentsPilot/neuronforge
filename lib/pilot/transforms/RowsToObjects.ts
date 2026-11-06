@@ -129,16 +129,24 @@ export function rowsToObjects(data: any[], config: RowsToObjectsConfig = {}): an
    * object.
    *
    * `source_row` is 1-based, like the row numbers down the left of the sheet,
-   * and it accounts for both the header and any rows the read skipped —
-   * `row_offset` is what the caller read from. Default 1, which is the plain
-   * "I read from the top" case.
+   * and it accounts for both the header and any rows the read skipped.
    *
-   * Written only when it does not collide with a real column. A sheet whose
-   * header literally says "source_row" means its own data, and silently
+   * OPT-IN, AND THAT MATTERS MORE THAN IT LOOKS. `rows_to_objects` is used by
+   * every agent on the platform that reads a sheet, and stamping unconditionally
+   * put an extra key into every object each of them produces. Nothing asked for
+   * it, anything mapping over the keys would see it, and a shape change to a
+   * shared transform is the kind of thing that breaks an agent nobody has
+   * touched in months. `row_offset` is the caller saying where the read started,
+   * which is both the information the stamp needs and a clear statement that it
+   * is wanted: without it, output is byte-for-byte what it was before.
+   *
+   * Written only when it does not collide with a real column either. A sheet
+   * whose header literally says "source_row" means its own data, and silently
    * overwriting that would be the worse failure.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  const rowOffset = typeof config.row_offset === 'number' ? config.row_offset : 1
+  const hasOffset = typeof config.row_offset === 'number'
+  const rowOffset = hasOffset ? (config.row_offset as number) : 1
   const headerRows = config.headers ? 0 : headerRowIndex + 1
   const takenKeys = new Set(
     headers.map((h: string, i: number) => {
@@ -146,7 +154,7 @@ export function rowsToObjects(data: any[], config: RowsToObjectsConfig = {}): an
       return preserveCase ? trimmed : trimmed.toLowerCase()
     })
   )
-  const stampRow = !takenKeys.has('source_row')
+  const stampRow = hasOffset && !takenKeys.has('source_row')
 
   return dataRows.map((row: any[], rowIndex: number) => {
     const obj: Record<string, any> = {}

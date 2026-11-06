@@ -26,13 +26,29 @@
  *                     does `{{path}}` lookups only, so `{{index + 2}}` cannot
  *                     be expressed.
  *
- *   `step9a`          the mark is opt-in. An unset `status_column` would
+ *   `executeIf`       the mark is opt-in. An unset `status_column` would
  *                     resolve the range to `Leads!2`, Google answers 400, and
  *                     the step fails AFTER the contact is filed — turning a
  *                     completed import into a failed run for every agent
  *                     installed before this existed.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THE GUARD IS NOT A NESTED CONDITIONAL
+ *
+ * It was one first — a `step9a` wrapper of `type: 'conditional'` — and it never
+ * ran. Inside a scatter, a conditional nested in ANOTHER conditional's branch
+ * was not traversed, so the write silently never happened while the run
+ * reported success: the exact failure mode this whole agent keeps producing.
+ *
+ * `executeIf` is checked before every step by the one path that cannot be
+ * skipped, so the guard rides on the step it guards rather than on a wrapper
+ * that may or may not be walked. These assertions name `step9` directly for
+ * that reason; a reappearing `step9a` is the bug coming back.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+
+import fs from 'fs';
+import path from 'path';
 
 import plan from '@/lib/business-os/automations/agents/importLeadsFromSheet.steps.json';
 import { AUTOMATION_AGENTS } from '@/lib/business-os/automations/catalog';
@@ -45,6 +61,7 @@ type Step = {
   config?: Record<string, unknown>;
   params?: Record<string, unknown>;
   condition?: Record<string, unknown>;
+  executeIf?: Record<string, unknown>;
   steps?: Step[];
   scatter?: { steps?: Step[] };
 };
@@ -117,7 +134,7 @@ describe('only a row we actually filed gets marked', () => {
   it('the write comes after the contact exists, not before', () => {
     const host = find('step7')?.steps ?? [];
     const createAt = host.findIndex(s => s.id === 'step8');
-    const markAt = host.findIndex(s => s.id === 'step9a');
+    const markAt = host.findIndex(s => s.id === 'step9');
 
     expect(createAt).toBeGreaterThanOrEqual(0);
     expect(markAt).toBeGreaterThan(createAt);
@@ -126,18 +143,34 @@ describe('only a row we actually filed gets marked', () => {
 
 describe('the mark is opt-in', () => {
   it('is guarded on the owner having nominated a column', () => {
-    const guard = find('step9a');
-
-    expect(guard?.type).toBe('conditional');
-    expect(guard?.condition).toMatchObject({
+    expect(find('step9')?.executeIf).toMatchObject({
       field: 'input.status_column',
       operator: 'not_equals',
       value: '',
     });
   });
 
-  it('wraps the write, so an unset column writes nothing at all', () => {
-    expect(find('step9a')?.steps?.map(s => s.id)).toEqual(['step9']);
+  it('carries the guard on the write itself, not on a wrapper step', () => {
+    /* See the note at the top: a nested conditional inside a scatter was not
+       traversed, so a wrapper guard meant the write never ran at all. */
+    expect(find('step9a')).toBeUndefined();
+    expect(find('step9')?.type).toBe('action');
+  });
+
+  it('and the executor actually honours executeIf on a nested step', () => {
+    /*
+     * The half that is easy to forget. Only `WorkflowPilot.executeSingleStep`
+     * read `executeIf`; a step running under a scatter goes through
+     * `StepExecutor`, which ignored it — so the guard would have been decoration
+     * and the write would have fired with an empty column.
+     */
+    const executor = fs.readFileSync(
+      path.join(process.cwd(), 'lib/pilot/StepExecutor.ts'),
+      'utf8'
+    );
+
+    expect(executor).toContain('executeIf');
+    expect(executor).toContain('executeIf condition not met');
   });
 
   it('offers the column and the wording as OPTIONAL inputs', () => {

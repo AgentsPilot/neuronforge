@@ -90,9 +90,16 @@ describe('the importer depends on it', () => {
      * the tag and the chaser skipping it are one mechanism, and this file is
      * about the half that silently did not work.
      */
-    const plan = readFileSync(IMPORTER, 'utf-8');
+    /*
+     * Parsed, not read as text. Asserting on the file's whitespace made this
+     * fail the moment the plan was reformatted and the array wrapped across
+     * three lines — a red gate over an indentation change, saying nothing about
+     * whether the tag is written. `JSON.stringify` with no indent is canonical,
+     * so this follows the value and not the layout.
+     */
+    const plan = JSON.parse(readFileSync(IMPORTER, 'utf-8')) as unknown;
 
-    expect(plan).toContain('"tags": ["spreadsheet-import"]');
+    expect(JSON.stringify(plan)).toContain('"tags":["spreadsheet-import"]');
   });
 
   it('still lets one bad row through without aborting the import', () => {

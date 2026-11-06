@@ -58,10 +58,22 @@ const body = source.slice(
   source.indexOf('function resolveWriteValue')
 );
 
+/*
+ * The signature is rewritten whole rather than having each annotation stripped
+ * by name. Matching the exact type text meant that widening the parameter to
+ * `unknown` broke the EXTRACTION and not the rule — a red suite that said
+ * nothing about whether a phone is accepted. This survives any future change to
+ * the types; only a rename of the function itself would reach it.
+ */
+const plainJs = body.replace(
+  /function usablePhoneOrNull\s*\([^)]*\)\s*:[^{]+\{/,
+  'function usablePhoneOrNull(value) {'
+);
+
 // eslint-disable-next-line @typescript-eslint/no-implied-eval
 const usablePhoneOrNull = new Function(
-  `${body.replace(/: string \| number \| boolean/, '').replace(/: string \| null/, '')}; return usablePhoneOrNull;`
-)() as (v: string | number) => string | null;
+  `${plainJs}; return usablePhoneOrNull;`
+)() as (v: unknown) => string | null;
 
 describe('the values that cost the owner their trust', () => {
   it.each([-7475, -10022, -4022, -5244, -9161, -1838, -6723])(
