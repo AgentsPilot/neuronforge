@@ -12,22 +12,49 @@
       "range": "{{input.range}}!A2:Z200"
     },
     "output_variable": "sheet",
-    "output_schema": { "type": "object" }
+    "output_schema": {
+      "type": "object"
+    }
   },
   {
     "step_id": "step2",
     "id": "step2",
     "type": "transform",
     "name": "Key each row by column letter",
-    "description": "KEYED BY LETTER, NOT BY HEADER, which is the whole reason this agent needs no model. `rows_to_objects` normally takes the first row as the header; here the headers are stated outright as A to Z, so every row becomes an object whose keys are column letters. That is what lets the next step read whichever column the owner pointed at: `{{input.email_column}}` holds `C`, and `C` is a key that exists. Keying on the owner's own header text instead would break the moment they rename it, translate it, or leave it blank — and `preserve_case` keeps `C` as `C` rather than lowercasing it out of existence.",
+    "description": "KEYED BY LETTER, NOT BY HEADER, which is the whole reason this agent needs no model. `rows_to_objects` normally takes the first row as the header; here the headers are stated outright as A to Z, so every row becomes an object whose keys are column letters. That is what lets the next step read whichever column the owner pointed at: `{{input.email_column}}` holds `C`, and `C` is a key that exists. Keying on the owner's own header text instead would break the moment they rename it, translate it, or leave it blank — and `preserve_case` keeps `C` as `C` rather than lowercasing it out of existence. ROW_OFFSET 2 because step1 reads from A2: without it `source_row` would number from the array and a write-back would mark the wrong line.",
     "operation": "rows_to_objects",
     "input": "{{sheet.values}}",
     "config": {
       "headers": [
-        "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
-        "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "J",
+        "K",
+        "L",
+        "M",
+        "N",
+        "O",
+        "P",
+        "Q",
+        "R",
+        "S",
+        "T",
+        "U",
+        "V",
+        "W",
+        "X",
+        "Y",
+        "Z"
       ],
-      "preserve_case": true
+      "preserve_case": true,
+      "row_offset": 2
     },
     "output_variable": "rows"
   },
@@ -36,14 +63,15 @@
     "id": "step3",
     "type": "transform",
     "name": "Put the owner's columns where the CRM expects them",
-    "description": "THE MAPPING IS THE OWNER'S ANSWER, interpolated. A transform's `config` is resolved like any other field, so `{{input.email_column}}` becomes the letter chosen on the install dialog and the map reads `{ email: 'C' }` — their column C into our `email`. NO MODEL DECIDES THIS, and that is the point. An earlier version had one work out which column held what; it could not invent an address, because the prompt forbade it, but nothing stopped it choosing the WRONG column, and the result is contacts filed under somebody else's address. That is the only failure in this agent that reaches real people, and asking removes it outright. A spreadsheet's columns are a short visible list, so asking costs one dropdown — the mailbox channel measures instead because you genuinely cannot ask somebody to describe their email format, and that reasoning does not carry across. `phone` maps from a column the owner may have left unchosen; it then maps from nothing and arrives empty, which is a blank phone number and harmless.",
+    "description": "THE MAPPING IS THE OWNER'S ANSWER, interpolated. A transform's `config` is resolved like any other field, so `{{input.email_column}}` becomes the letter chosen on the install dialog and the map reads `{ email: 'C' }` — their column C into our `email`. NO MODEL DECIDES THIS, and that is the point. An earlier version had one work out which column held what; it could not invent an address, because the prompt forbade it, but nothing stopped it choosing the WRONG column, and the result is contacts filed under somebody else's address. That is the only failure in this agent that reaches real people, and asking removes it outright. A spreadsheet's columns are a short visible list, so asking costs one dropdown — the mailbox channel measures instead because you genuinely cannot ask somebody to describe their email format, and that reasoning does not carry across. `phone` maps from a column the owner may have left unchosen; it then maps from nothing and arrives empty, which is a blank phone number and harmless. `source_row` rides along unmapped — it is not the owner's column, it is where their row was, and step9 needs it to mark the right line.",
     "operation": "map",
     "input": "{{rows}}",
     "config": {
       "mapping": {
         "email": "{{input.email_column}}",
         "first_name": "{{input.name_column}}",
-        "phone": "{{input.phone_column}}"
+        "phone": "{{input.phone_column}}",
+        "source_row": "source_row"
       }
     },
     "output_variable": "people"
@@ -80,12 +108,25 @@
               "plugin": "business-os",
               "action": "find_contacts",
               "params": {
-                "filters": [{ "field": "email", "op": "eq", "value": "{{person.email}}" }],
-                "order_by": [{ "field": "created_at", "dir": "asc" }],
+                "filters": [
+                  {
+                    "field": "email",
+                    "op": "eq",
+                    "value": "{{person.email}}"
+                  }
+                ],
+                "order_by": [
+                  {
+                    "field": "created_at",
+                    "dir": "asc"
+                  }
+                ],
                 "limit": 1
               },
               "output_variable": "existing",
-              "output_schema": { "type": "object" }
+              "output_schema": {
+                "type": "object"
+              }
             },
             {
               "step_id": "step7",
@@ -114,11 +155,44 @@
                       "email": "{{person.email}}",
                       "phone": "{{person.phone}}",
                       "notes": "Imported from the spreadsheet {{input.range}}.",
-                      "tags": ["spreadsheet-import"]
+                      "tags": [
+                        "spreadsheet-import"
+                      ]
                     }
                   },
                   "output_variable": "filed",
-                  "output_schema": { "type": "object" }
+                  "output_schema": {
+                    "type": "object"
+                  }
+                },
+                {
+                  "step_id": "step9",
+                  "id": "step9",
+                  "type": "action",
+                  "name": "Mark the row as imported",
+                  "plugin": "google-sheets",
+                  "action": "write_range",
+                  "description": "SO THE OWNER CAN SEE WHAT WAS TAKEN. Without this the sheet is unchanged after an import and the same rows are read again every day, with nothing on the page to say which ones are already filed. Written only where a contact was actually created — this sits beside step8 inside the same branch, so a row we skipped as a duplicate is left alone rather than claimed. `source_row` is the sheet's own row number, carried from step2. RAW, not USER_ENTERED: a status is text and must never be re-parsed as a date or a formula by the spreadsheet that receives it. OPT-IN VIA `executeIf`, NOT A WRAPPER. The guard was a nested conditional and it never ran: inside a scatter, a conditional nested in another conditional's branch was not traversed, so the write silently never happened while the run reported success. `executeIf` is checked by `executeSingleStep` on EVERY step before it runs, which is the one place that cannot be skipped. An unset `status_column` therefore skips the write and leaves the owner's sheet untouched.",
+                  "params": {
+                    "spreadsheet_id": "{{input.spreadsheet_id}}",
+                    "range": "{{input.range}}!{{input.status_column}}{{person.source_row}}",
+                    "values": [
+                      [
+                        "{{input.status_text}}"
+                      ]
+                    ],
+                    "input_option": "RAW"
+                  },
+                  "output_variable": "marked",
+                  "output_schema": {
+                    "type": "object"
+                  },
+                  "executeIf": {
+                    "conditionType": "simple",
+                    "field": "input.status_column",
+                    "operator": "not_equals",
+                    "value": ""
+                  }
                 }
               ]
             }
@@ -127,7 +201,9 @@
       ],
       "continueOnError": true
     },
-    "gather": { "operation": "collect" },
+    "gather": {
+      "operation": "collect"
+    },
     "output_variable": "import_results"
   }
 ]

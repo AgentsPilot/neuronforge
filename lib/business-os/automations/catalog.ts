@@ -588,6 +588,43 @@ export const AUTOMATION_AGENTS: AutomationAgent[] = [
           dependsOn: ['spreadsheet_id', 'range'],
         },
       },
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * WHERE TO WRITE BACK, SO THE SHEET SHOWS WHAT WAS TAKEN.
+       *
+       * Until this existed the import was invisible from the owner's side:
+       * the agent read the same sheet every day and left no mark, so nothing
+       * on the page said which rows were already filed. The only way to know
+       * was to open the CRM and compare by hand.
+       *
+       * OPTIONAL, and silence is a real answer. An owner who does not want
+       * their sheet written to leaves it blank and keeps exactly today's
+       * behaviour — step9 resolves to an empty range and writes nothing. We
+       * are a guest in that spreadsheet; marking it is a courtesy they have
+       * to ask for, not something to assume.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      {
+        name: 'status_column',
+        type: 'string',
+        required: false,
+        description: 'Which column to mark once a lead is filed, if you want the sheet updated',
+        options: {
+          plugin: 'google-sheets',
+          action: 'read_range',
+          parameter: 'column',
+          dependsOn: ['spreadsheet_id', 'range'],
+        },
+      },
+      {
+        /* Theirs to word: this lands in their spreadsheet, next to their own
+           columns, and is read by whoever opens it rather than by us. */
+        name: 'status_text',
+        type: 'string',
+        required: false,
+        description: 'What to write in that column',
+        default: 'Imported',
+      },
     ],
     /*
      * Daily. A lead that sits in a spreadsheet for a week is a lead the

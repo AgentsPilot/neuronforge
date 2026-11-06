@@ -193,6 +193,44 @@ export class StepExecutor {
 
     logger.info({ stepId: step.id, stepName: step.name, stepType: step.type }, 'Executing step');
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * `executeIf`, WHICH ONLY THE TOP LEVEL USED TO HONOUR.
+     *
+     * `WorkflowPilot.executeSingleStep` checks this on every step it runs. Steps
+     * INSIDE a scatter or a loop do not go through it — `ParallelExecutor` hands
+     * each one straight to this method — so a guard written on such a step was
+     * read by nobody and the step ran unconditionally.
+     *
+     * Found the hard way. The spreadsheet importer marks each row it files, and
+     * that write has to be optional: an owner who nominates no status column
+     * must have their sheet left alone. Expressed as `executeIf`, the guard
+     * vanished; expressed as a nested `conditional`, the wrapper was never
+     * traversed inside the scatter either. Both attempts reported SUCCESS and
+     * wrote nothing, which is the failure mode this whole plan exists to avoid.
+     *
+     * One check, in the one place every nested step passes through. A step with
+     * no `executeIf` is unaffected, so nothing that runs today changes.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const guard = (step as unknown as { executeIf?: unknown }).executeIf;
+    if (guard) {
+      const shouldExecute = this.conditionalEvaluator.evaluate(guard as never, context);
+
+      if (!shouldExecute) {
+        logger.info(
+          { stepId: step.id, stepName: step.name },
+          'Skipping step — its executeIf condition was not met'
+        );
+        return {
+          stepId: step.id,
+          success: true,
+          data: { skipped: true, reason: 'executeIf condition not met' },
+          executionTime: Date.now() - startTime,
+        } as StepOutput;
+      }
+    }
+
     // === BATCH CALIBRATION: DEPENDENCY CHECK ===
     // In batch mode, check if dependencies failed with non-recoverable errors
     if (context.batchCalibrationMode) {

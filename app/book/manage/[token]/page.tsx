@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { CalendarPlus, ClipboardCheck, ClipboardList, CreditCard, FileText, Hourglass, Mail, RefreshCw, User, X } from 'lucide-react';
 
@@ -66,6 +66,10 @@ export default function BookingManagePage() {
   const [awaitingQuote, setAwaitingQuote] = useState(false);
   const [intake, setIntake] = useState<PortalIntake | null>(null);
   const [payment, setPayment] = useState<PortalPayment | null>(null);
+  /* The latest payment, readable from inside an async loop that outlives the
+     render it started in — see the return-from-payment effect below. */
+  const paymentRef = useRef<PortalPayment | null>(null);
+  paymentRef.current = payment;
   const [loading, setLoading] = useState(true);
   /** The questions, unfolded in place rather than on a page of their own. */
   /*
@@ -215,6 +219,71 @@ export default function BookingManagePage() {
 
   useEffect(() => {
     loadBooking();
+  }, [loadBooking]);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * COMING BACK FROM A PAYMENT, WHERE THE REDIRECT CAN OUTRUN THE WEBHOOK.
+   *
+   * `InvoicePaymentPanel` finishes with `window.location.href = successUrl`, so
+   * this page reloads and `loadBooking` above reads the server fresh. That is
+   * not the problem. The problem is WHEN: Stripe returns the client the moment
+   * the card clears, and the webhook that records the payment lands a second or
+   * two later. The read is correct and simply too early.
+   *
+   * So the client arrives at a page that still says what they came to settle.
+   * On a single payment the tile merely lingers; on a PLAN they are shown a
+   * figure — "$65 · 0 of 2 payments made · due Friday" — about money they have
+   * just sent. Reported from a live portal, and only a manual refresh cleared
+   * it.
+   *
+   * `?payment=success` is the panel's own marker and nothing read it until now.
+   * On that one arrival the page re-reads a few times, a second and a half
+   * apart, until `plan.paid` moves or the balance settles — then stops. Bounded
+   * at five attempts: a payment that has not landed in eight seconds is not
+   * landing on this page load, and polling for ever would be worse than the
+   * stale figure it is trying to replace.
+   *
+   * QUIET, like every other refetch here: the booking is already on screen, and
+   * blanking it to update a number reads worse than the number being a moment
+   * late.
+   *
+   * The marker is stripped either way, so a reload does not start this again.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('payment') !== 'success') return;
+
+    url.searchParams.delete('payment');
+    window.history.replaceState({}, '', url.toString());
+
+    let live = true;
+
+    /* What the figure says now. When this changes, the webhook has landed. */
+    const settled = (p: PortalPayment | null) =>
+      p === null || p.state !== 'due' ? 'done' : `${p.plan?.paid ?? 0}/${p.amount ?? 0}`;
+
+    const before = settled(paymentRef.current);
+
+    void (async () => {
+      for (let attempt = 0; attempt < 5 && live; attempt += 1) {
+        await loadBooking(true);
+        await new Promise(resolve => window.setTimeout(resolve, 1500));
+
+        /* Read through the ref: `payment` closed over here would be the value
+           from the render that started this, never the one just fetched. */
+        if (!live || settled(paymentRef.current) !== before) return;
+      }
+    })();
+
+    return () => {
+      live = false;
+    };
+    /* Once, on the arrival that carries the marker. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadBooking]);
 
   /*

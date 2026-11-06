@@ -5937,9 +5937,37 @@ export function CRMContactDrawerV2({
                    * land in.
                    */
                   setReplacementOffer(null);
-                  setReplacementLoading(true);
 
+                  /*
+                   * ───────────────────────────────────────────────────────────
+                   * THE FLAG IS RAISED ONLY WHERE SOMETHING WILL LOWER IT.
+                   *
+                   * `setReplacementLoading(true)` sat OUTSIDE this guard while
+                   * the only `finally` that clears it sat inside. So whenever
+                   * the guard did not run, the dialog opened on
+                   *
+                   *     Checking whether a make-up can be booked…
+                   *
+                   * and span there for ever, with "Mark as no-show" disabled
+                   * behind it. The owner could not record the no-show at all.
+                   *
+                   * It is not an edge case. A PLAIN BOOKING — one payment or a
+                   * payment plan, taken from the booking page — has no meeting
+                   * of its own: `BookingsTab` calls this with two arguments and
+                   * `meetingId` is undefined. Only a package SESSION passes
+                   * `row.meeting_id`. So every single booking hung, and the
+                   * same hour booked from the calendar did not, because that
+                   * surface does not come through here.
+                   *
+                   * A plain booking has no package to add a session to, so the
+                   * honest answer is "no make-up offer" — reached by clearing
+                   * the flag rather than by never lowering it. The cancel path
+                   * below never had this: it fetches unconditionally, so its
+                   * `finally` always runs.
+                   * ───────────────────────────────────────────────────────────
+                   */
                   if (meetingId && (status === 'cancelled' || status === 'no_show')) {
+                    setReplacementLoading(true);
                     const forMeeting = meetingId;
 
                     void (async () => {
@@ -5971,6 +5999,9 @@ export function CRMContactDrawerV2({
                         setReplacementLoading(false);
                       }
                     })();
+                  } else {
+                    /* Nothing to look up, so nothing is being looked up. */
+                    setReplacementLoading(false);
                   }
                   /*
                    * Whether the no-show dialog offers the charge decision. The

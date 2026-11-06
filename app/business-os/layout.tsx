@@ -11,7 +11,7 @@ import { BUSINESS_OS_SCROLL_ID } from '@/lib/business-os/pageContainer';
 import { ConfigurationDialogProvider } from '@/components/business-os/ConfigurationDialogProvider';
 import { CapabilitiesProvider } from '@/components/business-os/CapabilitiesProvider';
 import { UpgradeModalProvider } from '@/components/business-os/settings/UpgradeModalProvider';
-import { Space_Grotesk, Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 
 import { readPlanBadge } from '@/lib/business-os/entitlements/readPlanBadge';
 import { redirectIfAwaitingPayment } from '@/lib/business-os/invites/paymentHoldGate';
@@ -30,18 +30,43 @@ import { PlanPaymentBanner } from '@/components/business-os/billing/PlanPaymentB
 // dynamic-usage signal inside the gate's session read).
 export const dynamic = 'force-dynamic';
 
-// Load Space Grotesk for display text (headlines)
-const spaceGrotesk = Space_Grotesk({
-  subsets: ['latin'],
-  weight: ['500', '600', '700'],
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * READ FROM DISK, NOT DOWNLOADED WHILE BUILDING.
+ *
+ * This file is the one `next/font` named when it brought down the deploy on
+ * 2026-11-06 — see the long note in `app/layout.tsx` for the error and why its
+ * message points at nothing. Both faces are now vendored under `app/fonts`, so
+ * the build reads two files instead of asking Google for them.
+ *
+ * These are the VARIABLE releases, one file per family covering the whole
+ * weight axis, which is why the discrete `weight: ['500','600','700']` lists
+ * are gone and a range stands in their place. Each range is what the file
+ * carries, not what this layout happens to use today: Space Grotesk is drawn
+ * 300-700, Inter 100-900. Naming the range rather than the subset means a
+ * heading that later asks for 400 gets a real 400 instead of a browser
+ * synthesising one.
+ *
+ * The variable names are unchanged on purpose — `--font-display` and
+ * `--font-body` are referenced across the Business OS stylesheets, and this
+ * change is meant to be invisible on screen.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+// Space Grotesk for display text (headlines)
+const spaceGrotesk = localFont({
+  src: '../fonts/SpaceGrotesk-Variable-latin.woff2',
+  weight: '300 700',
+  style: 'normal',
   variable: '--font-display',
   display: 'swap',
 });
 
-// Load Inter for body text
-const inter = Inter({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
+// Inter for body text
+const inter = localFont({
+  src: '../fonts/Inter-Variable-latin.woff2',
+  weight: '100 900',
+  style: 'normal',
   variable: '--font-body',
   display: 'swap',
 });

@@ -45,8 +45,9 @@
  * packages found in this state had exactly that shape: a cancelled stage on the
  * missed hour and no stage on its replacement.
  *
- * So it is derived from how the package is SOLD, which is a fact and not a
- * decision — the rule the owner's route already states in its own words:
+ * So it is derived from two facts, neither of which is the client's to decide.
+ *
+ * First, how the package is SOLD — the rule the owner's route already states:
  *
  *   · UPFRONT block — the money is already in. The replacement takes the missed
  *     session's portion and is never billed again. No stage.
@@ -54,6 +55,20 @@
  *     a session is billed when it is HELD. So the replacement carries a stage
  *     of its own, priced exactly like the ones beside it, or the client
  *     receives a session nobody ever invoices.
+ *
+ * Second, and added later, what the OWNER already decided about the missed
+ * hour. The sale rule alone double-billed: a no-show the owner chose to CHARGE
+ * still produced a stage on the replacement, so the client paid twice for one
+ * delivered hour the moment they picked their new date. The owner's own dialog
+ * had mirrored this since it was caught giving sessions away; this path had
+ * not.
+ *
+ *   · missed stage BILLED — the hour is paid for. The make-up carries no stage.
+ *   · missed stage VOIDED — nothing was charged. The replacement is billed, if
+ *     the package bills per session at all.
+ *
+ * Both must hold. The sale rule says whether a stage is POSSIBLE; the owner's
+ * decision says whether this replacement should carry one.
  *
  * The missed session's own stage is left exactly as the owner left it. That is
  * the other half of the fix: today `moveMeeting` silently re-points it at the
@@ -143,6 +158,7 @@ export async function bookMakeUpSession(
     containerId: request.containerId,
     meetingId: created.data.id,
     sessionNumber,
+    missedMeetingId: request.missedMeetingId,
   });
 
   return { id: created.data.id, error: null, charged };
@@ -189,8 +205,70 @@ async function chargeIfSoldPerSession(args: {
   containerId: string;
   meetingId: string;
   sessionNumber: number;
+  /** The hour this replaces, so its stage can be read. */
+  missedMeetingId: string;
 }): Promise<boolean> {
   try {
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * ONE PAYMENT PER HOUR THE CLIENT ACTUALLY GETS.
+     *
+     * How the package is sold decides whether a replacement CAN carry a stage.
+     * It does not decide whether this one SHOULD, and that distinction was
+     * missing: the owner has already answered the money question on the
+     * no-show dialog, and the answer lives on the missed session's own stage.
+     *
+     *   missed stage BILLED  →  the client has paid for this hour already.
+     *                           The make-up is the owner's gift and carries
+     *                           no stage.
+     *   missed stage VOIDED  →  nothing was charged for the missed hour, so
+     *                           the replacement is what gets billed.
+     *
+     * The owner's drawer has mirrored the waiver since it was found giving
+     * sessions away — see `missedHourWasWaived` in `CRMContactDrawerV2`. The
+     * CLIENT's path did not, so a no-show the owner chose to CHARGE produced a
+     * second stage the moment the client picked their new date: two charges,
+     * one delivered hour, and nothing on either screen saying so.
+     *
+     * Read from the stage rather than passed in, because this path has no
+     * dialog to ask: the client is never shown the money question and is not
+     * going to be. The owner's decision is already recorded, and this is where
+     * it is honoured.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const { data: missedStages, error: missedError } = await supabaseServer
+      .from('payment_plan_installments')
+      .select('id, status')
+      .eq('meeting_id', args.missedMeetingId)
+      .eq('user_id', args.userId);
+
+    if (missedError) {
+      /*
+       * Could not read it. Bill nothing rather than risk billing twice: an
+       * unbilled make-up is money the owner can still raise, where a duplicate
+       * charge has already reached the client.
+       */
+      logger.error(
+        { err: missedError, missedMeetingId: args.missedMeetingId },
+        'Could not read the missed session’s stage; leaving the make-up unbilled'
+      );
+      return false;
+    }
+
+    /* `cancelled` is how a waiver is recorded. Anything else — pending, sent,
+       paid — is money the client already owes or has paid for that hour. */
+    const missedWasCharged = (missedStages ?? []).some(
+      stage => String((stage as { status?: unknown }).status) !== 'cancelled'
+    );
+
+    if (missedWasCharged) {
+      logger.info(
+        { containerId: args.containerId, missedMeetingId: args.missedMeetingId },
+        'The missed hour was charged, so its make-up carries no stage'
+      );
+      return false;
+    }
+
     const { data: proposal } = await supabaseServer
       .from('proposals')
       .select('id, title, currency, created_plan_id, sessions, contact_id')

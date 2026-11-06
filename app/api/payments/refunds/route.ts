@@ -435,7 +435,43 @@ export async function POST(request: NextRequest) {
       ? await stopPlanBehind(user.id, transactionId, body.reason, requestLogger, body.cancel_reason)
       : null;
 
-    return NextResponse.json({ success: true, data: { ...result, plan_stopped: planStopped } });
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AND CANCEL THE BOOKING, WHICH THIS PATH USED TO IGNORE.
+     *
+     * `cancel_booking` is declared on the schema, and the refine above even
+     * refuses the request without a `cancel_reason` to go with it — so the
+     * caller is made to supply both. The GROUP path then acts on it. This one,
+     * the single transaction, read `stop_plan` and nothing else.
+     *
+     * A ONE-PAYMENT booking refunds through here. So "refund partially, and
+     * cancel the booking as well" refunded the money, answered 200 with
+     * `success: true`, and left the booking exactly as it was — still waiting
+     * on the client. Half the instruction was dropped and the response said
+     * everything had worked. A plan-backed booking took the group path and
+     * cancelled correctly, which is why it read as a one-payment fault.
+     *
+     * AFTER the refund, for the reason the group path states in its own words:
+     * freeing the slot emails the client, and telling somebody their booking
+     * is off while their money is still held is worse than telling them
+     * nothing yet.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const bookingCancelled = body.cancel_booking
+      ? await cancelBookingBehind(
+          user.id,
+          transactionId,
+          body.booking_id,
+          body.reason,
+          requestLogger,
+          body.cancel_reason
+        )
+      : null;
+
+    return NextResponse.json({
+      success: true,
+      data: { ...result, plan_stopped: planStopped, booking_cancelled: bookingCancelled },
+    });
   } catch (error) {
     requestLogger.error({ err: error }, 'Refund request failed');
     return NextResponse.json(

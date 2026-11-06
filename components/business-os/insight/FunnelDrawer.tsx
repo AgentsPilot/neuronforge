@@ -109,7 +109,10 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
           fontWeight: 600,
           letterSpacing: isRTL ? 'normal' : '0.08em',
           textTransform: isRTL ? 'none' : 'uppercase',
-          color: checklistComplete ? '#059669' : '#F97316',
+          /* `#059669` is a dark green chosen against a white card; on the
+             dark ground it is barely separable from the surface. The success
+             token reads on both, and the orange beside it already did. */
+          color: checklistComplete ? 'var(--v2-success)' : '#F97316',
           marginBottom: '5px',
           fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
         }}
@@ -142,7 +145,10 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
               width: '22px',
               height: '22px',
               borderRadius: '99px',
-              background: '#10B981',
+              /* A filled accent, not a ground under themed ink — legitimate in
+                 either theme. Written as the token anyway: it is the same
+                 value, and it says WHY the badge is green. */
+              background: 'var(--v2-success)',
               flexShrink: 0,
             }}
           >
@@ -195,7 +201,22 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
               key={index}
               className="lv-stat"
               style={{
-                background: '#F8F9FC',
+                /*
+                 * A TOKEN, BECAUSE THIS BOX IS READ IN BOTH THEMES.
+                 *
+                 * It was `#F8F9FC`, a near-white panel, while the value and
+                 * label below it take `var(--v2-text-primary)` and
+                 * `--v2-text-secondary`. In dark mode those resolve to light
+                 * ink, so the box rendered as two white rectangles with the
+                 * figures all but invisible inside them — seen on the funnel's
+                 * "40 dropped" panel, where the only two numbers that matter
+                 * could not be read at all.
+                 *
+                 * `--v2-bg` is the sunken tint used for a panel inside a card
+                 * everywhere else, and it moves with the theme like the text
+                 * on top of it.
+                 */
+                background: 'var(--v2-bg)',
                 border: '1px solid var(--v2-border)',
                 borderRadius: '13px',
                 padding: '12px 13px',
@@ -236,7 +257,15 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                 className={`lvs-sub ${stat.good ? 'good' : ''} ${stat.bad ? 'bad' : ''}`}
                 style={{
                   fontSize: '11.5px',
-                  color: stat.good ? '#22C58B' : stat.bad ? '#C0392B' : 'var(--v2-text-secondary)',
+                  /* The semantic tokens, which are defined identically in
+                     both themes and chosen to read on either ground. `#C0392B`
+                     was a dark red that all but vanished once the box behind
+                     it stopped being white. */
+                  color: stat.good
+                    ? 'var(--v2-success)'
+                    : stat.bad
+                      ? 'var(--v2-error)'
+                      : 'var(--v2-text-secondary)',
                   marginTop: '5px',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                   whiteSpace: 'nowrap',
@@ -258,8 +287,9 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
         <div
           className="lv-conf"
           style={{
-            border: '1px solid #DDE2EE',
-            background: '#F7F9FD',
+            /* Same fault, same fix: hardcoded light panel under themed ink. */
+            border: '1px solid var(--v2-border)',
+            background: 'var(--v2-bg)',
             borderRadius: '13px',
             padding: '13px 14px',
             marginBottom: '16px',
@@ -312,7 +342,9 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
             style={{
               height: '6px',
               borderRadius: '6px',
-              background: '#E4E8F2',
+              /* The unfilled track. A fixed pale grey disappears into a light
+                 card and glares out of a dark one. */
+              background: 'var(--v2-border)',
               overflow: 'hidden',
             }}
           >
@@ -321,7 +353,10 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                 display: 'block',
                 height: '100%',
                 borderRadius: '6px',
-                background: '#9AA5BE',
+                /* The filled part must stay legible against the track above in
+                   both themes, so it takes the muted ink rather than a fixed
+                   mid-grey that only separates from one of them. */
+                background: 'var(--v2-text-muted)',
                 transition: 'width 0.5s',
                 width: `${Math.min((content.conf.cur / content.conf.need) * 100, 100)}%`,
               }}
@@ -334,7 +369,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
               display: 'flex',
               justifyContent: 'space-between',
               fontSize: '11px',
-              color: '#8A93A8',
+              color: 'var(--v2-text-muted)',
               marginTop: '6px',
               fontVariantNumeric: 'tabular-nums',
               fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
@@ -519,7 +554,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                   className="lv-td-tag"
                   style={{
                     fontSize: '12px',
-                    color: '#22C58B',
+                    color: 'var(--v2-success)',
                     fontWeight: 600,
                     whiteSpace: 'nowrap',
                     fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
