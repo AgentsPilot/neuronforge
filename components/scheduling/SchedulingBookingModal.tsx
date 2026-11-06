@@ -33,7 +33,6 @@ import {
   type BookingStepKey,
 } from '@/lib/scheduling/bookingSteps';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Clock, User, Mail, Phone, Calendar, FileText, CheckCircle, XCircle, AlertCircle, Search, X, Plus, Globe, Facebook, MessageCircle, Users as UsersIcon, Check, Trash2, CreditCard, Tag, ClipboardList, Loader2 } from 'lucide-react';
@@ -222,15 +221,23 @@ interface SchedulingBookingModalProps {
     checked: boolean;
     onChange: (next: boolean) => void;
     /**
-     * Draw the eye to it, because missing it costs money.
+     * Missing this costs money — which is why it is no longer a switch.
      *
-     * On a package billed per session every other session is charged, so an
-     * unticked box means "give this one away" — a decision, not a default.
-     * It was missed, and the only way back was to cancel the session and add
-     * it again, which the client sees as two emails about one hour.
+     * ─────────────────────────────────────────────────────────────────────
+     * On a package billed per session every other session is charged, so
+     * "off" means "give this one away": a decision, not a default. As an
+     * unticked switch in the footer it was missed, and the only way back was
+     * to cancel the session and add it again — two emails to the client
+     * about one hour.
      *
-     * Settles the moment it is touched: an attention cue that keeps pulsing
-     * after it has been read is just noise.
+     * It was a pulsing label. It is now two explicit answers in the body,
+     * with the amount printed on the one that charges, so the waiver cannot
+     * be taken by omission and needs no animation to be noticed.
+     *
+     * The flag is kept because it still says WHY this caller is asking —
+     * the package bills per session — and a future surface may want to lead
+     * differently on it. Nothing reads it today.
+     * ─────────────────────────────────────────────────────────────────────
      */
     attention?: boolean;
   };
@@ -271,7 +278,6 @@ interface SchedulingBookingModalProps {
  * so the absence cannot be spelled `''`. It is converted back to `null` the
  * moment it leaves this component — no caller ever sees the sentinel.
  */
-const MAKES_UP_FOR_NOTHING = '__none__';
 
 // Source options for new clients (use existing CRM source keys)
 const SOURCE_OPTIONS = [
@@ -3212,6 +3218,211 @@ export function SchedulingBookingModal({
           )}
           </BookingStep>
 
+          {/*
+            ───────────────────────────────────────────────────────────────────
+            WHAT THIS SESSION IS, asked where the session is being made.
+
+            These two lived in the FOOTER, beside Cancel and Save: a switch
+            reading "bill it like the others" with no amount on it, and a
+            dropdown labelled only "instead of". A footer holds what you do to
+            a dialog; these describe the thing being created, and in that
+            position they read as settings and were missed.
+
+            The second is not a setting at all. It writes
+            `replaces_meeting_id`, which is what marks the missed hour as made
+            up — and therefore what stops the owner's drawer AND the client's
+            portal offering to rearrange an hour that already has a stand-in.
+            Said here it is recorded; said nowhere it is lost for the rest of
+            the package's life, and cannot be inferred afterwards.
+
+            `py-4` rather than `pt-4`: with no bottom padding the last card sat
+            flush against the end of the scrolling body and was clipped by the
+            sticky footer. `px-5` is the gutter `BookingStep` uses above it, so
+            this block lines up with the questions it follows.
+            ───────────────────────────────────────────────────────────────────
+          */}
+          {(extraToggle || makeUpFor) && (
+            <div className="space-y-4 border-t border-[var(--v2-border)] px-5 py-4">
+              {extraToggle && (
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                    {extraToggle.label}
+                  </p>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {([true, false] as const).map(charge => {
+                      const on = extraToggle.checked === charge;
+                      /*
+                       * Amber on the WAIVER, not on the charge: giving a
+                       * session away is the answer that costs money and the
+                       * one that was being taken by accident. The same amber
+                       * this card already uses for a figure wanting an answer.
+                       */
+                      const accent = charge ? '#2DD4BF' : '#D97706';
+
+                      return (
+                        <button
+                          key={String(charge)}
+                          type="button"
+                          role="radio"
+                          aria-checked={on}
+                          onClick={() => extraToggle.onChange(charge)}
+                          className="flex items-start gap-2.5 border p-3 text-start transition-colors"
+                          style={{
+                            borderRadius: 'var(--v2-radius-button)',
+                            borderColor: on ? accent : 'var(--v2-border)',
+                            background: on ? 'var(--v2-surface)' : 'var(--v2-bg)',
+                            boxShadow: on ? `inset 0 0 0 1px ${accent}` : undefined,
+                          }}
+                        >
+                          <span
+                            aria-hidden
+                            className="mt-1 inline-block h-3.5 w-3.5 flex-shrink-0 rounded-full border-2"
+                            style={{
+                              borderColor: on ? accent : 'var(--v2-border)',
+                              background: on
+                                ? `radial-gradient(circle, ${accent} 0 44%, transparent 46%)`
+                                : 'transparent',
+                            }}
+                          />
+                          <span className="flex-1">
+                            <span
+                              className="block text-sm font-semibold"
+                              style={{ color: on ? accent : 'var(--v2-text-primary)' }}
+                            >
+                              {t(
+                                charge
+                                  ? 'crm.booking.package.charge_yes'
+                                  : 'crm.booking.package.charge_no'
+                              )}
+                            </span>
+                            <span className="mt-0.5 block text-[11px] leading-relaxed text-[var(--v2-text-muted)]">
+                              {t(
+                                charge
+                                  ? 'crm.booking.package.charge_yes_hint'
+                                  : 'crm.booking.package.charge_no_hint'
+                              )}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {makeUpFor && (
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                    {t('crm.booking.package.makes_up_q')}
+                  </p>
+                  <p className="-mt-1 text-[11px] text-[var(--v2-text-muted)]">
+                    {t('crm.booking.package.makes_up_why')}
+                  </p>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {([false, true] as const).map(isMakeUp => {
+                      const on = Boolean(makeUpFor.value) === isMakeUp;
+
+                      return (
+                        <button
+                          key={String(isMakeUp)}
+                          type="button"
+                          role="radio"
+                          aria-checked={on}
+                          /* Choosing "yes" selects the first candidate rather
+                             than leaving an empty state: the list below is
+                             then a correction, not a second required step. */
+                          onClick={() =>
+                            makeUpFor.onChange(
+                              isMakeUp ? (makeUpFor.options[0]?.value ?? null) : null
+                            )
+                          }
+                          className="flex items-start gap-2.5 border p-3 text-start transition-colors"
+                          style={{
+                            borderRadius: 'var(--v2-radius-button)',
+                            borderColor: on ? '#2DD4BF' : 'var(--v2-border)',
+                            background: on ? 'var(--v2-surface)' : 'var(--v2-bg)',
+                            boxShadow: on ? 'inset 0 0 0 1px #2DD4BF' : undefined,
+                          }}
+                        >
+                          <span
+                            aria-hidden
+                            className="mt-1 inline-block h-3.5 w-3.5 flex-shrink-0 rounded-full border-2"
+                            style={{
+                              borderColor: on ? '#2DD4BF' : 'var(--v2-border)',
+                              background: on
+                                ? 'radial-gradient(circle, #2DD4BF 0 44%, transparent 46%)'
+                                : 'transparent',
+                            }}
+                          />
+                          <span className="flex-1">
+                            <span
+                              className="block text-sm font-semibold"
+                              style={{ color: on ? '#2DD4BF' : 'var(--v2-text-primary)' }}
+                            >
+                              {isMakeUp
+                                ? t('crm.booking.package.makes_up_yes')
+                                : makeUpFor.noneLabel}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/*
+                    ROWS, NOT A SELECT.
+
+                    Two or three missed hours are a list, not a menu: shown
+                    like this the choice is visible without opening anything,
+                    and it steps around `SelectTrigger`, which hand-rolls its
+                    own RTL with `rtl:flex-row-reverse` inside a container
+                    `dir` has already reversed.
+                  */}
+                  {makeUpFor.value && (
+                    <div className="space-y-1.5 pt-1">
+                      {makeUpFor.options.map(option => {
+                        const picked = makeUpFor.value === option.value;
+
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            role="radio"
+                            aria-checked={picked}
+                            onClick={() => makeUpFor.onChange(option.value)}
+                            className="flex w-full items-center gap-2.5 border px-3 py-2 text-start tabular-nums transition-colors"
+                            style={{
+                              borderRadius: 'var(--v2-radius-button)',
+                              borderColor: picked ? '#2DD4BF' : 'var(--v2-border)',
+                              background: picked ? 'var(--v2-surface)' : 'var(--v2-bg)',
+                            }}
+                          >
+                            <span
+                              aria-hidden
+                              className="inline-block h-3 w-3 flex-shrink-0 rounded-full border-2"
+                              style={{
+                                borderColor: picked ? '#2DD4BF' : 'var(--v2-border)',
+                                background: picked
+                                  ? 'radial-gradient(circle, #2DD4BF 0 44%, transparent 46%)'
+                                  : 'transparent',
+                              }}
+                            />
+                            <span className="text-xs font-medium text-[var(--v2-text-primary)]">
+                              {option.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+
           </div>
 
           {/* Sticky Footer */}
@@ -3344,105 +3555,6 @@ export function SchedulingBookingModal({
                     `extraToggle`. In the footer because it is part of the
                     decision being confirmed, not part of describing the
                     appointment. */}
-                {(extraToggle || makeUpFor) && (
-                  /*
-                    `me-auto`, which is the whole placement rule.
-                    ─────────────────────────────────────────────────────────
-                    The footer is `justify-between`, and for a NEW booking the
-                    quick-actions group beside it is empty — so three children
-                    spread out left the question floating near the middle. A
-                    margin on the inline END pins it to the inline START, which
-                    is the LEFT in English and the RIGHT in Hebrew, without
-                    either side being named.
-
-                    A switch rather than a checkbox: it is a setting being
-                    turned on, next to two buttons, and `Switch` already knows
-                    which way its thumb travels in each script. No `dir`
-                    wrapper here — that would neutralise the `:dir(rtl)` rule
-                    the component carries and correct the same thing twice.
-
-                    ── WHY A WRAPPER ────────────────────────────────────────
-                    A package billed per session can ask BOTH questions at
-                    once. They share this one `me-auto` box so the second does
-                    not land against the buttons, and `flex-wrap` drops it to a
-                    second line rather than squeezing Cancel and Save on a
-                    narrow dialog. With only the toggle passed — every caller
-                    but the package add — the box holds one row and renders
-                    exactly as it did before.
-                  */
-                  <div className="me-auto flex flex-wrap items-center gap-x-5 gap-y-2">
-                  {extraToggle && (
-                  <div className="flex items-center gap-2.5">
-                    <Switch
-                      id="booking-extra-toggle"
-                      checked={extraToggle.checked}
-                      onCheckedChange={extraToggle.onChange}
-                    />
-                    <label
-                      htmlFor="booking-extra-toggle"
-                      className={`cursor-pointer text-sm ${
-                        extraToggle.attention && !extraToggle.checked
-                          ? 'booking-toggle-attention font-medium'
-                          : 'text-[var(--v2-text-secondary)]'
-                      }`}
-                      style={
-                        extraToggle.attention && !extraToggle.checked
-                          ? /*
-                             * Amber, the same one this card already uses for
-                             * an overdue figure — money that needs an answer,
-                             * not an error. Red would say something is wrong;
-                             * nothing is, until the dialog is saved with the
-                             * question unanswered.
-                             *
-                             * Inline rather than a token class so the colour
-                             * and the pulse are switched by one condition and
-                             * cannot drift apart.
-                             */
-                            { color: '#D97706' }
-                          : undefined
-                      }
-                    >
-                      {extraToggle.label}
-                    </label>
-                  </div>
-                  )}
-
-                  {makeUpFor && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-[var(--v2-text-secondary)]">
-                        {makeUpFor.label}
-                      </span>
-                      <Select
-                        value={makeUpFor.value ?? MAKES_UP_FOR_NOTHING}
-                        onValueChange={next =>
-                          makeUpFor.onChange(next === MAKES_UP_FOR_NOTHING ? null : next)
-                        }
-                      >
-                        <SelectTrigger className="h-9 min-w-[200px] border-[var(--v2-border)] bg-[var(--v2-surface)] text-sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="border-[var(--v2-border)] bg-[var(--v2-surface)]">
-                          {/*
-                            FIRST, AND THE DEFAULT. A session added to a
-                            package is an ordinary session until the owner
-                            says otherwise — standing in for a missed hour is
-                            the claim, and a claim nobody made must not be
-                            recorded on their behalf.
-                          */}
-                          <SelectItem value={MAKES_UP_FOR_NOTHING}>
-                            {makeUpFor.noneLabel}
-                          </SelectItem>
-                          {makeUpFor.options.map(option => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                  </div>
-                )}
 
                 {/* Right side - Cancel and Save */}
                 <div className="flex items-center gap-2">
@@ -3550,41 +3662,6 @@ export function SchedulingBookingModal({
           }
 
           /* Datetime input dark mode styling for scheduling */
-          /*
-           * ───────────────────────────────────────────────────────────────
-           * THE CHARGE QUESTION, WHILE IT IS STILL UNANSWERED.
-           *
-           * On a package billed per session, leaving this off gives the
-           * session away — so it is a decision, not a default, and it was
-           * being missed. The only way back was to cancel the session and add
-           * it again, which the client sees as two emails about one hour.
-           *
-           * It keeps pulsing until it is answered, by the owner's own
-           * instruction — the question is worth money and this dialog is
-           * saved in a hurry. The class is dropped the moment the switch is
-           * turned on, so the movement stops when it has done its job rather
-           * than on a timer.
-           *
-           * prefers-reduced-motion gets the emphasis without the movement —
-           * the point is to be noticed, and for some people movement is the
-           * one thing that makes a screen unusable.
-           * ───────────────────────────────────────────────────────────────
-           */
-          .booking-toggle-attention {
-            animation: bookingTogglePulse 1.1s ease-in-out infinite;
-          }
-
-          @keyframes bookingTogglePulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.35; }
-          }
-
-          @media (prefers-reduced-motion: reduce) {
-            .booking-toggle-attention {
-              animation: none;
-            }
-          }
-
           .datetime-input-scheduling {
             color-scheme: light;
           }

@@ -532,6 +532,42 @@ export const emailTranslations = {
       he: (clientName: string, businessName: string) =>
         `שלום ${clientName}, ההזמנה שלך מ-${businessName} אושרה.`
     },
+    /*
+     * ── NOTHING IS CONFIRMED YET, AND SAYING SO WAS THE BUG ──────────────────
+     *
+     * A quoted service with no pre-meeting writes a booking the moment the
+     * owner records it, so the client can be sent a price later. There is no
+     * hour, no agreed sum and no quote yet — the booking row is a place to
+     * hang one.
+     *
+     * The unscheduled copy above was still the nearest fit, so the client was
+     * told their order was CONFIRMED: a word that claims an agreement nobody
+     * has made, over a service with no date and no price. Nothing in the mail
+     * told them what actually happens next, because the only true answer is
+     * "a quote is being prepared".
+     *
+     * Separate from `unscheduled*` rather than replacing it: a course or a
+     * product sold outright is also dateless, and for those the order genuinely
+     * IS confirmed — there is a price and an invoice behind it.
+     */
+    awaitingQuoteSubject: {
+      en: (serviceName: string) => `Your order has been created - ${serviceName}`,
+      es: (serviceName: string) => `Tu pedido ha sido creado - ${serviceName}`,
+      he: (serviceName: string) => `ההזמנה שלך נוצרה - ${serviceName}`
+    },
+    awaitingQuoteGreeting: {
+      en: 'Your order has been created',
+      es: 'Tu pedido ha sido creado',
+      he: 'ההזמנה שלך נוצרה'
+    },
+    awaitingQuoteIntro: {
+      en: (clientName: string, businessName: string) =>
+        `Hi ${clientName}, your order with ${businessName} has been created. They are putting your quote together and will send it to you shortly.`,
+      es: (clientName: string, businessName: string) =>
+        `Hola ${clientName}, tu pedido con ${businessName} ha sido creado. Están preparando tu presupuesto y te lo enviarán en breve.`,
+      he: (clientName: string, businessName: string) =>
+        `שלום ${clientName}, ההזמנה שלך מ-${businessName} נוצרה. כרגע מכינים עבורך הצעת מחיר והיא תישלח אליך בקרוב.`
+    },
     unscheduledPaymentRequired: {
       en: (amount: string) =>
         `<strong>Payment Required:</strong> Please complete your payment of ${amount} to confirm your order.`,

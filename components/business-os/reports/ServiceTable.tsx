@@ -27,7 +27,7 @@
  */
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
+import { REPORTS_COLORS, UNATTRIBUTED_SERVICE_ID } from '@/lib/business-os/reports/constants';
 
 export interface ServiceRow {
   service_id: string;
@@ -54,6 +54,34 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
   const { t } = useLanguage();
 
   if (services.length === 0) return null;
+
+  /*
+    THE TWO NAMES THE SERVER INVENTS, SAID IN THE READER'S LANGUAGE.
+    ───────────────────────────────────────────────────────────────────────────
+    Every other row here is the owner's own text and must never be touched. But
+    `serviceRevenueMap` writes two names itself, in English, and they reached a
+    Hebrew table untranslated:
+
+      'Other'            the unattributed remainder, keyed by the sentinel id
+      'Unknown Service'  a service that has since been deleted, which "keeps
+                         its money but loses its name"
+
+    The route's own comment says "the client localizes the unattributed row" —
+    this is the client, and it was not doing it.
+
+    The deleted case is matched on the literal because the name IS the only
+    signal: the row carries a real service id, and nothing else distinguishes
+    it from a service genuinely called that.
+  */
+  const rowName = (row: ServiceRow) => {
+    if (row.service_id === UNATTRIBUTED_SERVICE_ID) {
+      return t('reports.service_other') || 'Other';
+    }
+    if (row.service_name === 'Unknown Service') {
+      return t('reports.service_deleted') || 'Deleted service';
+    }
+    return row.service_name;
+  };
 
   const ordered = [...services].sort((a, b) => b.revenue - a.revenue);
   const widest = Math.max(1, ...ordered.map(s => s.revenue));
@@ -153,7 +181,7 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
                       background: REPORTS_COLORS.PRIMARY,
                     }}
                   />
-                  {row.service_name}
+                  {rowName(row)}
                 </span>
               </td>
               <td className="px-[18px] py-[11px] text-end text-sm tabular-nums text-[var(--v2-text-primary)] whitespace-nowrap">

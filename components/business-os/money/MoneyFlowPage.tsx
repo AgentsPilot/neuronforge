@@ -48,8 +48,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, FileSpreadsheet, Download, Plus, Receipt } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { ChevronDown, ChevronLeft, ChevronRight, FileSpreadsheet, Download, Plus, Receipt } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 /* The money icon and its green, from where every money surface reads them. */
@@ -108,13 +110,34 @@ function scheduleOf(item: MoneyItem, t: (key: string) => string): ScheduleRow[] 
       /* Paid: the day it arrived. Not yet: the day it is due. */
       date: period.paidAt ?? period.dueDate ?? null,
       dateKind: period.paidAt ? 'paid' : 'due',
-      /* A period's status is a narrower set than an entry's. `pending` has no
-         `money_status` of its own and IS money awaiting payment, which is the
-         one this page already names everywhere else. */
-      status:
-        period.status === 'paid' || period.status === 'overdue' || period.status === 'cancelled'
+      /*
+        A period's status is a narrower set than an entry's. `pending` has no
+        `money_status` of its own and IS money awaiting payment, which is the
+        one this page already names everywhere else.
+
+        AND A RETURNED PERIOD STILL READS `paid`, because it was. The refund is
+        a second event recorded against the invoice or the charge, and the route
+        joins it onto the period as `refundedAmount` precisely so a schedule can
+        say so. Without this, an order with ₪2,250 returned on one of its two
+        ₪4,500 stages listed both as plainly "paid" — which is the same claim
+        the bar used to make before it was given a refunded band.
+
+        Fully back is `refunded`; partly back is `partially_refunded`. The same
+        distinction `MoneyDetailDrawer` draws, for the same reason: a partial
+        refund leaves the business holding some of it, so the period still
+        stands as a collection.
+      */
+      status: (() => {
+        const returned = Number(period.refundedAmount ?? 0);
+        if (period.status === 'paid' && returned > 0) {
+          return returned >= period.amount ? 'refunded' : 'partially_refunded';
+        }
+        return period.status === 'paid' ||
+          period.status === 'overdue' ||
+          period.status === 'cancelled'
           ? period.status
-          : 'awaiting_payment',
+          : 'awaiting_payment';
+      })(),
       amount: period.amount,
       /* `MoneyPeriod.currency` is optional and documents this exact fallback:
          a plan need not bill in the currency of the row it sits under, but
@@ -149,6 +172,15 @@ const TONE = {
   in: '#2DD4A7',
   wait: '#F0B429',
   late: '#F0654F',
+  /**
+   * Money that arrived and went back.
+   *
+   * Its own tone because it is neither earned nor lost: the work was done and
+   * the client was charged, and then it was returned. Drawn as a drained
+   * green — recognisably the same family as `in`, visibly not it — so the bar
+   * reads as "this much came in, and this much of it left again".
+   */
+  back: '#1C7F69',
   /** Deliberately quiet. Lost money must not shout louder than earned money. */
   lost: '#5B6880',
 } as const;
@@ -163,6 +195,14 @@ type PeriodKey = 'week' | 'month' | 'year' | 'all';
  * same reason.
  */
 const EXPORT_CAP = 2000;
+
+/**
+ * Rows per page.
+ *
+ * Ten, because the list lives behind a door and a door that opens onto fifty
+ * cards is the scroll this page was built to end.
+ */
+const PAGE_SIZE = 10;
 
 /*
   The period figures are the SAME SHAPE as the all-time ones, because they come
@@ -205,6 +245,38 @@ export function MoneyFlowPage({
   openCreate?: boolean;
 } = {}) {
   const { t, language, isRTL } = useLanguage();
+  const router = useRouter();
+
+  /*
+    WHERE "OPEN THE ORDER" GOES: the CRM drawer, on the booking, expanded.
+
+    ───────────────────────────────────────────────────────────────────────────
+    Not the orders page, which is the page this one replaces. `section=bookings`
+    plus `booking=<id>` is what `BookingsTab` reads as `focusBookingId`: it adds
+    the id to its OPEN set and scrolls the card into view, so the booking lands
+    unfolded rather than as one collapsed row among the client's others.
+
+    Owned by the page and handed down, which is how the orders page does it —
+    `PaymentsView` builds this route and `MoneyRow` takes `onOpenBooking`. The
+    row and the drawer therefore cannot send the reader to different places,
+    and the drawer does not have to import from the page that renders it.
+
+    A contact is required, not optional: the drawer IS a contact's record, so
+    without one there is nothing to open. The caller hides the button instead.
+  */
+  const openBooking = useCallback(
+    (item: MoneyItem) => {
+      if (!item.bookingId || !item.contactId) return;
+
+      const params = new URLSearchParams({
+        contact: item.contactId,
+        section: 'bookings',
+        booking: item.bookingId,
+      });
+      router.push(`/business-os/crm?${params.toString()}`);
+    },
+    [router]
+  );
 
   /*
    * A row's currency varies per item, which the context's `formatCurrency`
@@ -240,6 +312,15 @@ export function MoneyFlowPage({
    * everything else below. Both are one click from the same place.
    */
   const [listOpen, setListOpen] = useState<'orders' | 'loose' | null>(null);
+  /** Which page of the open list, zero-based. */
+  const [page, setPage] = useState(0);
+  /** How many rows each door holds under the current filter, from the route. */
+  const [kindCounts, setKindCounts] = useState<{ booking: number; standalone: number }>({
+    booking: 0,
+    standalone: 0,
+  });
+  /** Rows matching the filter within the OPEN kind — what paginates. */
+  const [total, setTotal] = useState(0);
   /** The row opened in the drawer, which is a different gesture from expanding
       it in place: the strip in the list answers "how far along is this", the
       drawer answers "what happened to it". */
@@ -283,20 +364,33 @@ export function MoneyFlowPage({
         offset: String(window.offset),
         filter,
         sort: 'date',
+        /*
+          THE PAGE WINDOW IS CUT PER KIND, OR THE VIEW LIES.
+
+          The route's own warning: with 19 bookings and 3 loose invoices, a
+          mixed page 2 holds ten bookings and nothing else, so "invoices
+          without an order" renders empty while the pager still offers three
+          pages. Asking for the kind that is OPEN is the only arrangement where
+          the count, the pages and the rows agree.
+
+          `all` while both doors are shut, which costs nothing: the summary
+          figures ignore this parameter by design, and no list is being drawn.
+        */
+        kind: listOpen === 'orders' ? 'booking' : listOpen === 'loose' ? 'standalone' : 'all',
       });
       if (from) params.set('from', from);
       if (to) params.set('to', to);
       if (search.trim()) params.set('search', search.trim());
       return params;
     },
-    [period, filter, search]
+    [period, filter, search, listOpen]
   );
 
   const load = useCallback(async () => {
     setLoading(true);
     setFailed(false);
     try {
-      const params = queryFor({ limit: 30, offset: 0 });
+      const params = queryFor({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
 
       const response = await fetch(`/api/payments/money?${params}`, { cache: 'no-store' });
       const body = await response.json();
@@ -307,6 +401,10 @@ export function MoneyFlowPage({
       }
 
       setItems(body.data.items ?? []);
+      setTotal(body.data.total ?? 0);
+      /* Both doors state a count while only ONE list is loaded, so the route
+         reports each kind beside the page it was asked for. */
+      setKindCounts(body.data.kindCounts ?? { booking: 0, standalone: 0 });
       setTotals(body.data.totals ?? null);
       setPeriodTotals(body.data.periodTotals ?? null);
     } catch {
@@ -315,7 +413,7 @@ export function MoneyFlowPage({
     } finally {
       setLoading(false);
     }
-  }, [queryFor]);
+  }, [queryFor, page]);
 
   /*
     The row actions, built from the shared definitions. `refresh` is this
@@ -345,6 +443,13 @@ export function MoneyFlowPage({
   useEffect(() => {
     setSelected(new Set());
   }, [period, filter, search]);
+
+  /* Back to page one whenever the question changes — including which door is
+     open. Page 3 of the orders is not page 3 of the loose invoices, and a
+     result set that now has one page shows nothing at an offset of twenty. */
+  useEffect(() => {
+    setPage(0);
+  }, [period, filter, search, listOpen]);
 
   /**
    * EVERY ROW THE FILTER MATCHES, not the thirty on screen.
@@ -430,7 +535,32 @@ export function MoneyFlowPage({
   const outstanding = shown?.outstanding ?? 0;
   const overdue = shown?.overdue ?? 0;
   const notYetDue = Math.max(0, outstanding - overdue);
-  const bookValue = collected + outstanding;
+  const refunded = shown?.refunded ?? 0;
+  const cancelled = shown?.cancelled ?? 0;
+
+  /*
+    THE WHOLE BOOK: every amount that was ever asked for.
+
+    Four states, exhaustive and mutually exclusive, so each one is a quarter of
+    this and nothing is counted twice:
+
+      collected   came in and stayed   (already NET of refunds)
+      refunded    came in and went back
+      outstanding still coming
+      cancelled   never coming
+
+    `collected` being net is exactly why `refunded` can be added beside it
+    rather than double-counting: the two together are the gross that arrived.
+
+    NOT called revenue. On one real account this is 45,720 of which 17,675 was
+    cancelled and 2,925 went back — a business half this size would be claimed
+    by that word.
+  */
+  const everything = collected + refunded + outstanding + cancelled;
+
+  /** What the pager counts. The same expression the three sibling lists use,
+      so the four cannot disagree about where the last page is. */
+  const totalPages = Math.ceil(total / PAGE_SIZE);
 
   const periods: { key: PeriodKey; label: string }[] = [
     { key: 'week', label: t('reports.period_week') || 'Week' },
@@ -447,8 +577,16 @@ export function MoneyFlowPage({
     behind it. Nothing here re-derives that — a second opinion about what an
     order is would be exactly the drift this page must not introduce.
   */
-  const orders = useMemo(() => items.filter(i => i.kind === 'booking'), [items]);
-  const loose = useMemo(() => items.filter(i => i.kind !== 'booking'), [items]);
+  /*
+    NO CLIENT-SIDE SPLIT ANY MORE.
+
+    This used to filter one mixed response into two lists, which works only
+    while every row fits in one response. With a page window it is exactly the
+    bug the route warns about — a page of ten bookings leaves the other door's
+    list empty while its pager still offers pages. The route is asked for the
+    open kind instead, so `items` IS that list, and each door's count comes
+    from `kindCounts`, which the route computes before the kind is chosen.
+  */
 
   const chips: { key: typeof filter; label: string; tone?: string }[] = [
     { key: 'all', label: t('money.filter_all') || 'All' },
@@ -472,12 +610,18 @@ export function MoneyFlowPage({
           constant, because this page IS that page — a reader who knows where
           their money lives should not have to learn a new mark for it.
         */}
-        <h1 className="m-0 flex items-center gap-3 text-[26px] font-extrabold tracking-tight text-[var(--v2-text-primary)]">
+        {/* The title gives up size before the actions beside it give up room:
+            at 26px with a 40px mark it took most of a 360px line on its own. */}
+        <h1 className="m-0 flex items-center gap-2.5 text-[21px] font-extrabold tracking-tight text-[var(--v2-text-primary)] sm:gap-3 sm:text-[26px]">
           <span
-            className="grid h-10 w-10 flex-none place-items-center rounded-lg"
+            className="grid h-9 w-9 flex-none place-items-center rounded-lg sm:h-10 sm:w-10"
             style={{ backgroundColor: 'rgba(34, 197, 139, 0.2)' }}
           >
-            <Receipt className="h-5 w-5" style={{ color: REPORTS_COLORS.PRIMARY }} aria-hidden="true" />
+            <Receipt
+              className="h-4 w-4 sm:h-5 sm:w-5"
+              style={{ color: REPORTS_COLORS.PRIMARY }}
+              aria-hidden="true"
+            />
           </span>
           {t('money.title') || 'Your money'}
         </h1>
@@ -556,11 +700,17 @@ export function MoneyFlowPage({
         Hebrew, right in English — so what it moves is under it as it moves.
       */}
       <section className="mb-4 rounded-[22px] border border-[var(--v2-border)] bg-[var(--v2-bg)] p-3 sm:p-4">
+        {/*
+          Four windows in a pill. On a 360px screen "All time" spelled out in
+          any language pushed the group past the width, so the buttons give up
+          padding first and the group scrolls as a last resort rather than
+          stretching the card it sits on.
+        */}
         <div className="mb-3 flex items-center justify-end px-1">
           <div
             role="group"
             aria-label={t('reports.period_label') || 'Reporting period'}
-            className="flex items-center gap-0.5 rounded-full border border-[var(--v2-border)] bg-[var(--v2-surface)] p-1"
+            className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full border border-[var(--v2-border)] bg-[var(--v2-surface)] p-1"
           >
             {periods.map(p => (
               <button
@@ -568,7 +718,7 @@ export function MoneyFlowPage({
                 type="button"
                 aria-pressed={period === p.key}
                 onClick={() => setPeriod(p.key)}
-                className={`rounded-full px-4 py-1.5 text-[13px] font-semibold transition-colors ${
+                className={`whitespace-nowrap rounded-full px-3 py-1.5 text-[12.5px] font-semibold transition-colors sm:px-4 sm:text-[13px] ${
                   period === p.key
                     ? 'bg-[var(--v2-surface-hover)] text-[var(--v2-text-primary)]'
                     : 'text-[var(--v2-text-muted)] hover:text-[var(--v2-text-secondary)]'
@@ -581,48 +731,112 @@ export function MoneyFlowPage({
         </div>
 
       {/* ── act 1: what is actually yours ───────────────────────────── */}
-      <section className="mb-3.5 rounded-[20px] border border-[var(--v2-border)] bg-[var(--v2-surface)] p-7">
+      <section className="mb-3.5 rounded-[20px] border border-[var(--v2-border)] bg-[var(--v2-surface)] p-5 sm:p-7">
         <p className="m-0 mb-1.5 text-[13px] text-[var(--v2-text-muted)]">
           {t('money.came_in') || 'Actually came in'}
         </p>
         <p className="m-0 text-[52px] font-extrabold leading-none tracking-tight text-[var(--v2-text-primary)] max-sm:text-[40px]">
           {loading ? '—' : asMoney(collected)}
         </p>
+        {/*
+          AGAINST THE SAME TOTAL THE BAR DRAWS.
+
+          This read "out of {collected + owed}", which was a THIRD total on a
+          card that now states one: with the bar spanning the whole book, the
+          sentence said 21,520 out of 25,120 (86%) above a green band filling
+          47% of the width. Two true figures that contradict each other on
+          sight, which is worse than either being wrong.
+        */}
         <p className="m-0 mt-2.5 text-[13.5px] leading-relaxed text-[var(--v2-text-muted)]">
-          {(t('money.of_book') || 'out of {total} of work sold').replace('{total}', asMoney(bookValue))}
+          {(t('money.of_book') || 'out of {total} ever asked for').replace('{total}', asMoney(everything))}
         </p>
 
         {/*
-          THE BAR. The late part sits INSIDE the owed part, not beside it, so
-          "do these add up" cannot be asked. See the module note.
+          THE BAR, AND NOW THE WHOLE BOOK.
+
+          ───────────────────────────────────────────────────────────────────
+          It used to draw collected and owed only, and the two figures that
+          fell out — refunded and cancelled — sat in a card below with nothing
+          to measure them against. So the obvious question had no answer on
+          screen: "are those part of the total, and WHICH total?"
+
+          Every shekel is in exactly one of four states, and they are
+          exhaustive, so drawing all four gives the page one total that
+          everything belongs to:
+
+            came in and stayed   ·  came in and went back
+            still coming         ·  never coming
+
+          The late part still sits INSIDE the owed part rather than beside it,
+          so "do these add up" cannot be asked of that pair either.
+
+          The key leads with the TOTAL, because that is the number the other
+          four are answering a question about.
+          ───────────────────────────────────────────────────────────────────
         */}
-        {bookValue > 0 && (
+        {everything > 0 && (
           <>
             <div
               className="mt-5 flex h-10 gap-0.5 overflow-hidden rounded-[10px] bg-[var(--v2-border)]"
               role="img"
-              aria-label={`${asMoney(collected)} ${t('payments.collected') || 'collected'}, ${asMoney(outstanding)} ${t('payments.outstanding') || 'outstanding'}, ${asMoney(overdue)} ${t('payments.overdue_total') || 'overdue'}`}
+              aria-label={`${asMoney(everything)} ${t('money.everything') || 'billed in total'}: ${asMoney(collected)} ${t('payments.collected') || 'collected'}, ${asMoney(outstanding)} ${t('payments.outstanding') || 'outstanding'}, ${asMoney(refunded)} ${t('payments.refunded') || 'refunded'}, ${asMoney(cancelled)} ${t('payments.cancelled_total') || 'cancelled'}`}
             >
-              {collected > 0 && <span style={{ flex: collected, background: TONE.in }} />}
+              {/*
+                `minWidth` on every band, because a band that rounds to nothing
+                is a lie by omission. ₪800 of ₪45,720 is 1.7% — four pixels on
+                a phone, and less once four bands share the gaps. The figure is
+                real and the key names it, so the bar must show SOMETHING for
+                it. 3px distorts the proportions by less than a hair at this
+                width and is the difference between "small" and "absent".
+              */}
+              {collected > 0 && (
+                <span style={{ flex: collected, minWidth: 3, background: TONE.in }} />
+              )}
               {outstanding > 0 && (
                 <span className="flex min-w-0 gap-0.5" style={{ flex: outstanding }}>
-                  {notYetDue > 0 && <span style={{ flex: notYetDue, background: TONE.wait }} />}
-                  {overdue > 0 && <span style={{ flex: overdue, background: TONE.late }} />}
+                  {notYetDue > 0 && (
+                    <span style={{ flex: notYetDue, minWidth: 3, background: TONE.wait }} />
+                  )}
+                  {overdue > 0 && (
+                    <span style={{ flex: overdue, minWidth: 3, background: TONE.late }} />
+                  )}
                 </span>
+              )}
+              {/* Money that came in and went back. Its own band rather than a
+                  gap in the green, because it DID arrive and the business did
+                  the work. */}
+              {refunded > 0 && (
+                <span style={{ flex: refunded, minWidth: 3, background: TONE.back }} />
+              )}
+              {cancelled > 0 && (
+                <span style={{ flex: cancelled, minWidth: 3, background: TONE.lost }} />
               )}
             </div>
 
-            <div className="mt-3.5 flex flex-wrap gap-4 text-[13px]">
+            <div className="mt-3.5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
+              <span className="inline-flex items-center gap-2 text-[var(--v2-text-muted)]">
+                {t('money.everything') || 'Billed in total'}
+                <b className="font-extrabold text-[var(--v2-text-primary)]">{asMoney(everything)}</b>
+              </span>
+              {/* Separates the total from its parts. Hidden once the row wraps,
+                  where a rule between lines 1 and 2 divides nothing. */}
+              <span className="hidden h-3.5 w-px bg-[var(--v2-border)] sm:block" aria-hidden="true" />
               <Key tone={TONE.in} label={t('payments.collected') || 'Collected'} value={asMoney(collected)} />
               <Key tone={TONE.wait} label={t('payments.outstanding') || 'Still owed'} value={asMoney(outstanding)} />
               {overdue > 0 && (
                 <Key tone={TONE.late} label={t('money.of_which_late') || 'of which late'} value={asMoney(overdue)} />
               )}
+              {refunded > 0 && (
+                <Key tone={TONE.back} label={t('payments.refunded') || 'Refunded'} value={asMoney(refunded)} />
+              )}
+              {cancelled > 0 && (
+                <Key tone={TONE.lost} label={t('payments.cancelled_total') || 'Cancelled'} value={asMoney(cancelled)} />
+              )}
             </div>
 
             <p className="mt-3 border-t border-[var(--v2-border)] pt-3 text-[13px] leading-relaxed text-[var(--v2-text-muted)]">
-              {t('money.nested_note') ||
-                'The red sits inside the yellow, not beside it: money that is late is money you are owed, so it is counted once.'}
+              {t('money.whole_book_note') ||
+                'Every amount you were ever owed is in one of these four, and in only one of them. The red sits inside the yellow because money that is late is money you are owed, counted once.'}
             </p>
           </>
         )}
@@ -703,18 +917,39 @@ export function MoneyFlowPage({
               {asMoney((shown?.cancelled ?? 0) + (shown?.refunded ?? 0))}
             </span>
           </div>
-          <div className="mt-3.5 flex flex-wrap gap-x-7 gap-y-3 text-[13.5px] text-[var(--v2-text-muted)]">
-            <div>
+          {/*
+            EACH FIGURE STATES ITS OWN RELATIONSHIP TO THE CARD ABOVE.
+
+            "Is this part of the total, and which total?" is the question this
+            card provokes, and the two halves have DIFFERENT answers — which is
+            why one shared sentence underneath could never settle it:
+
+              cancelled  is in none of the figures above. Not collected, not
+                         owed, not the value of the work sold.
+              refunded   is ALREADY SUBTRACTED from what came in. Taking it off
+                         again deducts the same money twice.
+
+            So each carries its own line, the same device the chasing card uses
+            when it says "already counted in what you are owed, above".
+          */}
+          <div className="mt-3.5 flex flex-wrap gap-x-7 gap-y-4 text-[13.5px] text-[var(--v2-text-muted)]">
+            <div className="max-w-[240px]">
               {t('payments.cancelled_total') || 'Cancelled'}
               <b className="mt-0.5 block text-[19px] font-extrabold text-[var(--v2-text-primary)]">
                 {money(c => c.cancelled)}
               </b>
+              <span className="mt-1 block text-[12px] leading-snug text-[var(--v2-text-muted)]">
+                {t('money.cancelled_note') || 'In none of the figures above.'}
+              </span>
             </div>
-            <div>
+            <div className="max-w-[240px]">
               {t('payments.refunded') || 'Refunded'}
               <b className="mt-0.5 block text-[19px] font-extrabold text-[var(--v2-text-primary)]">
                 {money(c => c.refunded)}
               </b>
+              <span className="mt-1 block text-[12px] leading-snug text-[var(--v2-text-muted)]">
+                {t('money.refunded_note') || 'Already taken off what came in.'}
+              </span>
             </div>
           </div>
           <p className="m-0 mt-3.5 text-[12.5px] leading-relaxed text-[var(--v2-text-muted)]">
@@ -743,7 +978,7 @@ export function MoneyFlowPage({
         <ListDoor
           title={t('payments.view.orders') || 'Orders'}
           blurb={t('money.orders_door') || 'Work you sold, and the money against it'}
-          count={orders.length}
+          count={kindCounts.booking}
           tone={TONE.in}
           open={listOpen === 'orders'}
           onToggle={() => setListOpen(listOpen === 'orders' ? null : 'orders')}
@@ -753,7 +988,7 @@ export function MoneyFlowPage({
           blurb={
             t('money.loose_door') || 'Bills raised on their own, with no booking behind them'
           }
-          count={loose.length}
+          count={kindCounts.standalone}
           tone={TONE.wait}
           open={listOpen === 'loose'}
           onToggle={() => setListOpen(listOpen === 'loose' ? null : 'loose')}
@@ -812,13 +1047,13 @@ export function MoneyFlowPage({
             <div className="rounded-2xl border border-[var(--v2-border)] bg-[var(--v2-surface)] p-8 text-center text-[14px] text-[var(--v2-text-muted)]">
               {t('common.loading') || 'Loading…'}
             </div>
-          ) : (listOpen === 'orders' ? orders : loose).length === 0 ? (
+          ) : items.length === 0 ? (
             <div className="rounded-2xl border border-[var(--v2-border)] bg-[var(--v2-surface)] p-8 text-center text-[14px] text-[var(--v2-text-muted)]">
               {t('money.nothing_here') || 'Nothing here for this period.'}
             </div>
           ) : (
             <Section
-              items={listOpen === 'orders' ? orders : loose}
+              items={items}
               note={
                 listOpen === 'loose'
                   ? t('money.loose_note') ||
@@ -830,9 +1065,100 @@ export function MoneyFlowPage({
               selected={selected}
               setSelected={setSelected}
               onOpenDetail={setDetail}
+              onOpenBooking={openBooking}
               formatCurrency={formatCurrency}
               t={t}
             />
+          )}
+
+          {/*
+            THE PAGER, AND IT SAYS WHERE YOU ARE.
+
+            "1-10 of 73" rather than bare arrows, because the count is the
+            answer to a question the door already raised: the door says 73 and
+            this says which ten of them are on screen. Hidden when everything
+            fits, where a pager is furniture that teaches nothing.
+
+            The window is cut per kind by the route, so these numbers describe
+            the open list and nothing else.
+          */}
+          {totalPages > 1 && (
+            <div
+              className="mt-3 flex items-center justify-between border border-[var(--v2-border)] bg-[var(--v2-surface)] p-4"
+              style={{ borderRadius: 'var(--v2-radius-card)' }}
+            >
+              <div className="text-sm text-[var(--v2-text-muted)]">
+                {t('payments.pagination.showing')
+                  ?.replace('{from}', String(page * PAGE_SIZE + 1))
+                  .replace('{to}', String(Math.min((page + 1) * PAGE_SIZE, total)))
+                  .replace('{total}', String(total)) ||
+                  `${page * PAGE_SIZE + 1}-${Math.min((page + 1) * PAGE_SIZE, total)} of ${total}`}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => Math.max(0, p - 1))}
+                  disabled={page === 0 || loading}
+                  className="h-8 px-2"
+                >
+                  <ChevronLeft className={`h-4 w-4 ${isRTL ? 'rotate-180' : ''}`} />
+                  <span className="ms-1 hidden sm:inline">
+                    {t('payments.pagination.prev') || 'Previous'}
+                  </span>
+                </Button>
+
+                <div className="hidden items-center gap-1 sm:flex">
+                  {(() => {
+                    /*
+                     * A five-page window that keeps the current page in view:
+                     * clamped to the start near the start, to the end near the
+                     * end, centred in between. Copied from the siblings so the
+                     * four pagers behave identically, not only look alike.
+                     */
+                    const currentPage = page + 1;
+                    return Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum: number;
+                      if (totalPages <= 5) pageNum = i + 1;
+                      else if (currentPage <= 3) pageNum = i + 1;
+                      else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + i;
+                      else pageNum = currentPage - 2 + i;
+
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={currentPage === pageNum ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setPage(pageNum - 1)}
+                          disabled={loading}
+                          className={`h-8 w-8 p-0 ${
+                            currentPage === pageNum
+                              ? 'bg-[#22C58B] text-white hover:bg-[#1ea677]'
+                              : ''
+                          }`}
+                        >
+                          {pageNum}
+                        </Button>
+                      );
+                    });
+                  })()}
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => (p + 1 < totalPages ? p + 1 : p))}
+                  disabled={page + 1 >= totalPages || loading}
+                  className="h-8 px-2"
+                >
+                  <span className="me-1 hidden sm:inline">
+                    {t('payments.pagination.next') || 'Next'}
+                  </span>
+                  <ChevronRight className={`h-4 w-4 ${isRTL ? 'rotate-180' : ''}`} />
+                </Button>
+              </div>
+            </div>
           )}
 
           <p className="mt-5 text-[12.5px] leading-relaxed text-[var(--v2-text-muted)]">
@@ -846,6 +1172,7 @@ export function MoneyFlowPage({
         item={detail}
         schedule={detail ? scheduleOf(detail, t) : []}
         onClose={() => setDetail(null)}
+        onOpenBooking={openBooking}
         formatCurrency={formatCurrency}
         t={t}
         isRTL={isRTL}
@@ -953,6 +1280,7 @@ function Section({
   selected,
   setSelected,
   onOpenDetail,
+  onOpenBooking,
   formatCurrency,
   t,
   setApart = false,
@@ -968,6 +1296,8 @@ function Section({
   setSelected: (next: Set<string>) => void;
   /** Hand a row up to the page, which owns the drawer. */
   onOpenDetail: (item: MoneyItem) => void;
+  /** Hand a row up to the page, which owns the route to the booking. */
+  onOpenBooking: (item: MoneyItem) => void;
   formatCurrency: (amount: number, currency: string) => string;
   t: (key: string) => string;
   setApart?: boolean;
@@ -1030,6 +1360,7 @@ function Section({
             open={open === item.key}
             onToggle={() => setOpen(open === item.key ? null : item.key)}
             onOpenDetail={() => onOpenDetail(item)}
+            onOpenBooking={() => onOpenBooking(item)}
             picked={selected.has(item.key)}
             onPick={() => {
               const next = new Set(selected);
@@ -1079,6 +1410,7 @@ function OrderCard({
   open,
   onToggle,
   onOpenDetail,
+  onOpenBooking,
   picked,
   onPick,
   formatCurrency,
@@ -1089,6 +1421,8 @@ function OrderCard({
   onToggle: () => void;
   /** Open this row in the drawer. */
   onOpenDetail: () => void;
+  /** Open the booking in the CRM drawer, expanded. */
+  onOpenBooking: () => void;
   /** Chosen for an export of exactly the picked rows. */
   picked: boolean;
   onPick: () => void;
@@ -1196,13 +1530,21 @@ function OrderCard({
             <span className="mt-0.5 block text-[13px] text-[var(--v2-text-muted)]">{under}</span>
           )}
 
-          {/* The hero's bar, at row scale. Same idea, same colours. */}
+          {/* The hero's bar, at row scale. Same idea, same colours, and the
+              same `minWidth`: this one is 1.5px tall inside a card that is
+              half a phone wide, so a small share rounds away soonest here. */}
           {whole > 0 && (
             <span className="my-2.5 flex h-1.5 gap-0.5 overflow-hidden rounded-full bg-[var(--v2-border)]">
-              {flow.collected > 0 && <i style={{ flex: flow.collected, background: TONE.in }} />}
-              {flow.overdue > 0 && <i style={{ flex: flow.overdue, background: TONE.late }} />}
-              {waiting > 0 && <i style={{ flex: waiting, background: TONE.wait }} />}
-              {flow.cancelled > 0 && <i style={{ flex: flow.cancelled, background: TONE.lost }} />}
+              {flow.collected > 0 && (
+                <i style={{ flex: flow.collected, minWidth: 3, background: TONE.in }} />
+              )}
+              {flow.overdue > 0 && (
+                <i style={{ flex: flow.overdue, minWidth: 3, background: TONE.late }} />
+              )}
+              {waiting > 0 && <i style={{ flex: waiting, minWidth: 3, background: TONE.wait }} />}
+              {flow.cancelled > 0 && (
+                <i style={{ flex: flow.cancelled, minWidth: 3, background: TONE.lost }} />
+              )}
             </span>
           )}
 
@@ -1270,13 +1612,14 @@ function OrderCard({
             >
               {t('money.open_detail') || 'See the whole story'}
             </button>
-            {item.bookingId && (
-              <a
-                href={`/business-os/orders?booking=${item.bookingId}`}
+            {item.bookingId && item.contactId && (
+              <button
+                type="button"
+                onClick={onOpenBooking}
                 className="rounded-[9px] border border-[var(--v2-border)] bg-[var(--v2-surface-hover)] px-3.5 py-2 text-[13px] font-semibold text-[var(--v2-text-primary)]"
               >
                 {t('money.open_order') || 'Open the order'}
-              </a>
+              </button>
             )}
             {item.contactId && (
               <a

@@ -1451,7 +1451,7 @@ All components support dark mode via CSS variables:
 
 - [Agent Creation V2](./CONVERSATIONAL_UI_NEW_V2_COMPLETE.md)
 - [V2 Design System](../app/v2/globals-v2.css)
-- [Plugin System](../lib/plugins/v2/core/UniversalPlugin.ts)
+- Plugin System — `lib/plugins/v2/` was deleted by G-2 of [GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md](/docs/requirements/GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md); the live V2 system is `lib/plugins/definitions/` plus `lib/server/plugin-manager-v2.ts`
 - [API Routes](../app/api/plugins/)
 
 ---

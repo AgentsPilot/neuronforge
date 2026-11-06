@@ -4,14 +4,18 @@
  */
 
 // lib/plugins/strategies/gmailDataStrategy.ts
-import { gmailStrategy } from './gmailPluginStrategy'
+import { createLogger } from '@/lib/logger'
 import { extractPdfTextFromBase64 } from '@/lib/utils/extractPdfTextFromBase64'
+
+const logger = createLogger({ module: 'plugins/gmailDataStrategy' })
 
 export interface GmailDataStrategy {
   pluginKey: string
   name: string
-  connect(params: { supabase: any; popup: Window; userId: string }): Promise<void>
-  handleOAuthCallback?(params: { code: string; state: string; supabase?: any }): Promise<any>
+  // `connect` and `handleOAuthCallback` were inherited by spreading the V1
+  // gmailPluginStrategy, which G-2 deleted. No caller invoked either on this
+  // object; plugin connects go through app/oauth/callback/[plugin] and
+  // PluginManagerV2.
   run(params: { connection: any; userId: string; input_variables: Record<string, any> }): Promise<any>
   refreshToken?(connection: any): Promise<any>
   processGenericInputs(input_variables: Record<string, any>): any
@@ -26,16 +30,23 @@ export interface GmailDataStrategy {
 
 /** @deprecated Use v2 plugin system instead */
 export const gmailDataStrategy: GmailDataStrategy = {
-  ...gmailStrategy, // Inherit OAuth connection functionality
+  pluginKey: 'google-mail',
+  name: 'Gmail',
 
   // Generic run function that adapts to any agent's input schema
   async run({ connection, userId, input_variables }) {
-    console.log('Gmail Data Plugin: Starting generic email fetch...', {
-      userId,
-      hasAccessToken: !!connection.access_token,
-      tokenExpiry: connection.expires_at,
-      inputVariables: input_variables
-    })
+    // `input_variables` is deliberately not on this line. It carries the
+    // user's own search text; the normalised copy (which holds it verbatim as
+    // `originalInputs`) is logged at `debug` below, and production never emits
+    // `debug` — lib/logger.ts pins the level to `info` there.
+    logger.info(
+      {
+        userId,
+        hasAccessToken: !!connection.access_token,
+        tokenExpiry: connection.expires_at
+      },
+      'Gmail Data Plugin: starting generic email fetch'
+    )
 
     try {
       // Check if token is expired
@@ -43,7 +54,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
         const expiryDate = new Date(connection.expires_at)
         const now = new Date()
         if (expiryDate.getTime() < now.getTime()) {
-          console.log('Token expired, needs refresh')
+          logger.info({ userId }, 'Gmail access token expired, refresh needed')
           throw new Error('Access token expired, refresh needed')
         }
       }
@@ -51,7 +62,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
       // Process inputs generically - works with any agent schema
       const processedInputs = this.processGenericInputs(input_variables)
       
-      console.log('Processed inputs:', processedInputs)
+      logger.debug({ userId, processedInputs }, 'Processed Gmail inputs')
 
       // Fetch emails from Gmail API
       const emailsUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages')
@@ -67,21 +78,31 @@ export const gmailDataStrategy: GmailDataStrategy = {
 
       if (!listResponse.ok) {
         const errorText = await listResponse.text()
-        console.error('Gmail API list failed:', {
-          status: listResponse.status,
-          statusText: listResponse.statusText,
-          body: errorText
-        })
+        logger.error(
+          {
+            userId,
+            statusCode: listResponse.status,
+            statusText: listResponse.statusText
+          },
+          'Gmail API list failed'
+        )
+        // The body is Google's verbatim reply to a request whose `q` is the
+        // user's search text, and a 400 can quote the parameter it rejected. It
+        // stays at `debug`, which production does not print, for the same
+        // reason the search text itself does.
+        logger.debug({ body: errorText }, 'Gmail API list error body')
         throw new Error(`Gmail API error: ${listResponse.status} ${listResponse.statusText}`)
       }
 
       const listData = await listResponse.json()
       
-      console.log('Gmail API response:', {
-        messagesFound: listData.messages?.length || 0,
-        resultSizeEstimate: listData.resultSizeEstimate,
-        searchQuery: processedInputs.query
-      })
+      logger.info(
+        {
+          messagesFound: listData.messages?.length || 0,
+          resultSizeEstimate: listData.resultSizeEstimate
+        },
+        'Gmail API list returned'
+      )
 
       if (!listData.messages || listData.messages.length === 0) {
         return {
@@ -99,7 +120,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
 
       for (const message of emailsToFetch) {
         try {
-          console.log(`Fetching FULL details for email: ${message.id}`)
+          logger.debug({ messageId: message.id }, 'Fetching full email details')
           
           // Get full email content including attachments
           const detailResponse = await fetch(
@@ -156,10 +177,13 @@ export const gmailDataStrategy: GmailDataStrategy = {
 
             emailDetails.push(emailInfo)
           } else {
-            console.warn(`Failed to fetch email ${message.id}: ${detailResponse.status}`)
+            logger.warn(
+              { messageId: message.id, statusCode: detailResponse.status },
+              'Failed to fetch email'
+            )
           }
         } catch (emailError) {
-          console.warn(`Error fetching email ${message.id}:`, emailError)
+          logger.warn({ err: emailError, messageId: message.id }, 'Error fetching email')
         }
       }
 
@@ -178,16 +202,18 @@ export const gmailDataStrategy: GmailDataStrategy = {
         fetchedAt: new Date().toISOString()
       }
 
-      console.log('Gmail data fetch successful:', {
-        emailsReturned: emailDetails.length,
-        attachmentsProcessed: totalAttachments,
-        searchQuery: processedInputs.query
-      })
+      logger.info(
+        {
+          emailsReturned: emailDetails.length,
+          attachmentsProcessed: totalAttachments
+        },
+        'Gmail data fetch successful'
+      )
 
       return result
 
     } catch (error: any) {
-      console.error('Gmail data fetch failed:', error)
+      logger.error({ err: error, userId }, 'Gmail data fetch failed')
       
       return {
         summary: "Unable to fetch emails at this time. Please check your Gmail connection.",
@@ -384,7 +410,10 @@ export const gmailDataStrategy: GmailDataStrategy = {
       
       // Process ANY attachment, not just specific types
       if (part.filename && part.body?.attachmentId) {
-        console.log(`Processing attachment: ${part.filename} (${part.mimeType})`)
+        logger.debug(
+          { filename: part.filename, mimeType: part.mimeType },
+          'Processing attachment'
+        )
         
         try {
           // Download attachment
@@ -420,7 +449,10 @@ export const gmailDataStrategy: GmailDataStrategy = {
             attachments.push(attachment)
           }
         } catch (attachmentError) {
-          console.warn(`Failed to download attachment ${part.filename}:`, attachmentError)
+          logger.warn(
+            { err: attachmentError, filename: part.filename },
+            'Failed to download attachment'
+          )
           // Still add attachment info even if download failed
           attachments.push({
             filename: part.filename,
@@ -457,10 +489,10 @@ export const gmailDataStrategy: GmailDataStrategy = {
           // Clean extracted text from any corruption
           extractedText = this.cleanExtractedText(extractedText)
           
-          console.log(`PDF text extracted from ${filename}: ${extractedText.length} characters`)
+          logger.debug({ filename, characters: extractedText.length }, 'PDF text extracted')
           return extractedText
         } catch (pdfError) {
-          console.warn(`PDF extraction failed for ${filename}:`, pdfError)
+          logger.warn({ err: pdfError, filename }, 'PDF extraction failed')
           return `PDF text extraction failed: ${pdfError instanceof Error ? pdfError.message : String(pdfError)}`
         }
       }
@@ -470,10 +502,10 @@ export const gmailDataStrategy: GmailDataStrategy = {
         try {
           let textContent = atob(paddedData)
           textContent = this.cleanExtractedText(textContent)
-          console.log(`Text extracted from ${filename}: ${textContent.length} characters`)
+          logger.debug({ filename, characters: textContent.length }, 'Text extracted')
           return textContent
         } catch (textError) {
-          console.warn(`Text extraction failed for ${filename}:`, textError)
+          logger.warn({ err: textError, filename }, 'Text extraction failed')
           return `Text extraction failed: ${textError instanceof Error ? textError.message : String(textError)}`
         }
       }
@@ -483,10 +515,10 @@ export const gmailDataStrategy: GmailDataStrategy = {
         try {
           let csvContent = atob(paddedData)
           csvContent = this.cleanExtractedText(csvContent)
-          console.log(`CSV extracted from ${filename}: ${csvContent.length} characters`)
+          logger.debug({ filename, characters: csvContent.length }, 'CSV extracted')
           return csvContent
         } catch (csvError) {
-          console.warn(`CSV extraction failed for ${filename}:`, csvError)
+          logger.warn({ err: csvError, filename }, 'CSV extraction failed')
           return `CSV extraction failed: ${csvError instanceof Error ? csvError.message : String(csvError)}`
         }
       }
@@ -497,7 +529,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
       }
 
     } catch (error) {
-      console.warn(`General extraction error for ${filename}:`, error)
+      logger.warn({ err: error, filename }, 'General attachment extraction error')
       return `Content extraction failed: ${error && typeof error === 'object' && 'message' in error ? (error as any).message : String(error)}`
     }
   },
@@ -540,7 +572,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
     try {
       // Add safety check
       if (!data || typeof data !== 'string') {
-        console.warn('decodeBase64Url: Invalid data parameter:', data)
+        logger.warn({ dataType: typeof data }, 'decodeBase64Url: invalid data parameter')
         return ''
       }
       
@@ -550,14 +582,14 @@ export const gmailDataStrategy: GmailDataStrategy = {
       const padding = '='.repeat((4 - base64.length % 4) % 4)
       return atob(base64 + padding)
     } catch (error) {
-      console.warn('Failed to decode base64url:', error)
+      logger.warn({ err: error }, 'Failed to decode base64url')
       return ''
     }
   },
 
   // Token refresh functionality
   async refreshToken(connection) {
-    console.log('Refreshing Gmail access token...')
+    logger.info('Refreshing Gmail access token')
     
     if (!connection.refresh_token) {
       throw new Error('No refresh token available for Gmail connection')
@@ -583,7 +615,10 @@ export const gmailDataStrategy: GmailDataStrategy = {
 
       if (!response.ok) {
         const errorText = await response.text()
-        console.error('Token refresh failed:', errorText)
+        logger.error(
+          { statusCode: response.status, body: errorText },
+          'Gmail token refresh failed'
+        )
         throw new Error(`Token refresh failed: ${response.status}`)
       }
 
@@ -592,7 +627,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
       const expiresAt = new Date()
       expiresAt.setSeconds(expiresAt.getSeconds() + (tokens.expires_in || 3600))
 
-      console.log('Gmail token refreshed successfully')
+      logger.info('Gmail token refreshed successfully')
 
       return {
         access_token: tokens.access_token,
@@ -601,7 +636,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
       }
 
     } catch (error) {
-      console.error('Gmail token refresh error:', error)
+      logger.error({ err: error }, 'Gmail token refresh error')
       throw error
     }
   }

@@ -1958,6 +1958,25 @@ export function buildJourneySteps(
   const emailStatus = confirmationEmail?.status || 'sent'; // Assume sent if no data (auto-sent on booking)
   const emailDetails = confirmationEmail?.subject || undefined;  // Show email subject
 
+  /*
+   * ── "CONFIRMED" CLAIMS AN AGREEMENT THAT DOES NOT EXIST YET ───────────────
+   *
+   * A quoted service with no pre-meeting writes a booking the moment the owner
+   * records it, purely so there is somewhere to hang a price. At that point
+   * there is no hour, no figure and no quote — and this node read "אישור הזמנה
+   * נשלח", over an email that told the client their order was confirmed.
+   *
+   * Narrower than `isUnscheduled` on purpose: a course or a product is
+   * dateless too, and for those the order IS confirmed, because a price and an
+   * invoice stand behind it. Only the quoted-and-not-yet-quoted case changes.
+   *
+   * The KEY stays `confirmation` — `isConfirmationStep` in BookingsTab hangs
+   * the delivery status, the resend control and the email detail off it, and
+   * all of those are still exactly right. Only the words change.
+   */
+  const awaitingItsQuote =
+    isQuotedBooking && isUnscheduled && !booking.start_time;
+
   steps.push({
     id: `${booking.id}-confirmation`,
     key: 'confirmation',
@@ -2003,7 +2022,10 @@ export function buildJourneySteps(
       hasRecord: Boolean(confirmationEmail),
       sentAt: confirmationEmail?.sentAt,
       deliveredAt: confirmationEmail?.deliveredAt,
-      openedAt: confirmationEmail?.openedAt
+      openedAt: confirmationEmail?.openedAt,
+      /* Nothing is agreed yet, so the node says the order was CREATED rather
+         than confirmed — see `awaitingItsQuote` above. */
+      awaitingQuote: awaitingItsQuote
     }
   });
 
@@ -2866,14 +2888,56 @@ export function buildSessionPlan(input: {
      subsets of the same select. A charge with no id cannot be matched to a
      period and is skipped rather than guessed at. */
   payments?: Array<{ id?: string | null; refunded_amount?: number | string | null }>;
+  /**
+   * The booking's invoices, so an INVOICED period can say what came back.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The mirror of `payments` above, and the other half of the same fault.
+   *
+   * `payments` was added on 2026-10-26 for a plan billed to a CARD, where the
+   * refund lands on the transaction. But a plan billed by INVOICE — one
+   * invoice per period, which is what the instalment flow raises — has
+   * `transaction_id` null on every period, so the lookup above never matched
+   * and those periods reported no refund at all.
+   *
+   * Live case 2026-11-04: booking d37068e6, $32.50 refunded in full on invoice
+   * dcd4146f. The period read `paid` with nothing returned, so its row went on
+   * offering Refund — which opened on 0, because the SERVER knew the money was
+   * already back — and went on offering to send a receipt for it.
+   *
+   * Exactly the inverse of the bug fixed the same day in
+   * `app/api/business-os/proposals/route.ts`, which read the invoice and missed
+   * the charge. One money record each, and between them every shape was broken
+   * on one surface or the other. Both builders now read BOTH.
+   *
+   * Matched by the period's own `invoice_id` — never inferred from an amount.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  invoices?: Array<{
+    id?: string | null;
+    amount?: number | string | null;
+    refunded_amount?: number | string | null;
+    refunded_at?: string | null;
+  }>;
 }): SessionPaymentPlan | undefined {
-  const { planPeriods, service, servicePrice, serviceCurrency, collected, payments } = input;
+  const { planPeriods, service, servicePrice, serviceCurrency, collected, payments, invoices } =
+    input;
 
   /** What each charge returned, by its own id. */
   const refundedByTransaction = new Map<string, number>();
   for (const pay of payments ?? []) {
     const amount = Number(pay.refunded_amount ?? 0) || 0;
     if (pay.id && amount > 0) refundedByTransaction.set(pay.id, amount);
+  }
+
+  /** And what each invoice returned, read the same way. */
+  const refundedByInvoice = new Map<string, number>();
+  for (const inv of invoices ?? []) {
+    const back = Number(inv.refunded_amount ?? 0) || 0;
+    /* A refund with no figure recorded is a whole one — the same reading
+       `packageSessionLines` takes, for rows predating the ledger's amount. */
+    const amount = back > 0 ? back : inv.refunded_at ? Number(inv.amount ?? 0) || 0 : 0;
+    if (inv.id && amount > 0) refundedByInvoice.set(inv.id, amount);
   }
 
   /*
@@ -2970,9 +3034,13 @@ export function buildSessionPlan(input: {
           /* What came back off THIS period. The row reads it as
              `stage.refundedAmount` to cross the line through and to stop
              offering a refund on money already returned. */
+          /* Whichever record holds THIS period's money: its charge, or the
+             invoice it was billed through. A period has one or the other. */
           refundedAmount: p.transaction_id
             ? refundedByTransaction.get(p.transaction_id) ?? undefined
-            : undefined,
+            : p.invoice_id
+              ? refundedByInvoice.get(p.invoice_id) ?? undefined
+              : undefined,
           dueDate: p.due_date,
           paidAt: p.paid_at ?? null,
         }))
@@ -3288,6 +3356,22 @@ export function CRMContactDrawerV2({
    * nothing else.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * The replacement offer is still being looked up.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Both dialogs open IMMEDIATELY and the offer arrives over the network a
+   * moment later, so for that moment there is no replacement question on
+   * screen — and nothing stopping the owner confirming. They called a session
+   * off believing no replacement was possible, because the control that would
+   * have said otherwise had not rendered yet.
+   *
+   * The dialogs hold their confirm button while this is true and say what they
+   * are waiting for, which is the only honest answer: the question is coming.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [replacementLoading, setReplacementLoading] = useState(false);
+
   const [replacementOffer, setReplacementOffer] = useState<{
     containerId: string;
     proposedStart: string;
@@ -3807,6 +3891,16 @@ export function CRMContactDrawerV2({
        */
       const money = booking as SchedulingBooking & {
         invoice?: { amount?: number | null; paid_at?: string | null } | null;
+        /* Every invoice on this booking, not just the one describing it: a
+           plan bills each period through its own, and that is where an
+           invoiced period's refund lives. Preserved by `SchedulingRepository`
+           alongside the collapsed `invoice` above. */
+        invoices?: Array<{
+          id?: string | null;
+          amount?: number | string | null;
+          refunded_amount?: number | string | null;
+          refunded_at?: string | null;
+        }>;
         payments?: Array<{
           /* The charge's own id and what came back off it. The query has
              always selected both — `payments:payment_transactions(id, amount,
@@ -3864,6 +3958,9 @@ export function CRMContactDrawerV2({
            the input. Passed at BOTH call sites: the note above records that
            these two builders have already drifted once. */
         payments: money.payments,
+        /* The invoiced half, passed at BOTH call sites for the reason the note
+           on `payments` records: these two builders have drifted once already. */
+        invoices: money.invoices,
         service: bookingWithService.service,
         servicePrice,
         serviceCurrency,
@@ -4104,7 +4201,27 @@ export function CRMContactDrawerV2({
          */
         /* `include_attempts`: every arranged appointment, not just the current
            one, so the journey can draw a row per attempt. See `listAttempts`. */
-        const bookingsPromise = fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50&include_attempts=true`)
+        /*
+         * 200, NOT 50 — and the number matters because the search depends on it.
+         *
+         * ─────────────────────────────────────────────────────────────────────
+         * The bookings tab filters CLIENT-SIDE: the box narrows the list that
+         * arrived, and nothing goes back to the server. With a 50-row window
+         * ordered newest-first, a client with fifty-five bookings had five that
+         * never reached the browser — not hidden behind a pager, absent — and
+         * the search box reported "no bookings match" for a record that exists.
+         * A search that cannot see the row is worse than no search at all,
+         * because it answers.
+         *
+         * 200 rather than the route's 500 ceiling: it clears any real client
+         * history (the busiest account here is nowhere near it) while keeping
+         * the window bounded, since this is one PostgREST select with five
+         * embedded resources and an unbounded one is how a drawer becomes a
+         * timeout. The refresh path below asks for the same number, or a reload
+         * would silently shrink the list the owner is searching.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const bookingsPromise = fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=200&include_attempts=true`)
           .then(response => (response.ok ? response.json() : { success: false }))
           .catch(error => {
             logger.warn({ err: error, contactId }, 'Could not load bookings');
@@ -4382,9 +4499,11 @@ export function CRMContactDrawerV2({
 
       // Fetch bookings and emails in parallel
       const [bookingsResponse, emailsResponse, proposalsResponse] = await Promise.all([
-        /* The silent refresh asks for the same shape as the first load, or the
-           journey would lose its attempt rows the moment anything reloaded. */
-        fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50&include_attempts=true`, { cache: 'no-store' }),
+        /* The silent refresh asks for the same shape AND the same window as the
+           first load, or the journey would lose its attempt rows and the search
+           its oldest records the moment anything reloaded. See the first load's
+           note on why the number is 200. */
+        fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=200&include_attempts=true`, { cache: 'no-store' }),
         fetch(`/api/crm/contacts/${contactId}/emails?limit=100`, { cache: 'no-store' }),
         fetch(`/api/business-os/proposals?contact_id=${contactId}`, { cache: 'no-store' })
       ]);
@@ -4526,6 +4645,14 @@ export function CRMContactDrawerV2({
               refunded_amount?: number | string | null;
               refunded_at?: string | null;
             };
+            /* The twin of the primary path's declaration: every invoice on the
+               booking, which is where an invoiced period's refund lives. */
+            invoices?: Array<{
+              id?: string | null;
+              amount?: number | string | null;
+              refunded_amount?: number | string | null;
+              refunded_at?: string | null;
+            }>;
             payments?: Array<{
               id: string;
               status: string;
@@ -4637,6 +4764,8 @@ export function CRMContactDrawerV2({
             planPeriods,
             /* The twin of the call above; both must pass this. */
             payments: bookingMoney.payments,
+            /* The twin of the call above; both must pass this. */
+            invoices: bookingMoney.invoices,
             /* `?? undefined`: the join yields `null` for a booking whose service
                was deleted, and the helper's parameter is optional, not nullable. */
             service: booking.service ?? undefined,
@@ -5808,6 +5937,7 @@ export function CRMContactDrawerV2({
                    * land in.
                    */
                   setReplacementOffer(null);
+                  setReplacementLoading(true);
 
                   if (meetingId && (status === 'cancelled' || status === 'no_show')) {
                     const forMeeting = meetingId;
@@ -5837,6 +5967,8 @@ export function CRMContactDrawerV2({
                         }
                       } catch (err) {
                         logger.warn({ err, bookingId }, 'Could not look up a replacement session');
+                      } finally {
+                        setReplacementLoading(false);
                       }
                     })();
                   }
@@ -5964,6 +6096,7 @@ export function CRMContactDrawerV2({
                    * session — the count is simply read as it stands.
                    */
                   setReplacementOffer(null);
+                  setReplacementLoading(true);
 
                   void (async () => {
                     try {
@@ -5983,6 +6116,8 @@ export function CRMContactDrawerV2({
                       }
                     } catch (err) {
                       logger.warn({ err, bookingId }, 'Could not look up a replacement session');
+                    } finally {
+                      setReplacementLoading(false);
                     }
                   })();
                 }}
@@ -6795,6 +6930,9 @@ export function CRMContactDrawerV2({
          */
         chargeable={Boolean(pendingOutcomeMeetingId) && pendingOutcomeChargeable}
         /* Only for a session of a package — see `replacementOffer`. */
+        /* Hold the confirm until the offer has answered — see
+           `replacementLoading`. */
+        replacementLoading={replacementLoading}
         replacement={
           replacementOffer && pendingOutcomeMeetingId
             ? {
@@ -7206,6 +7344,9 @@ export function CRMContactDrawerV2({
          * room for another, and `setReplacementOffer(null)` on every open
          * means a stale one cannot survive into the next dialog.
          */
+        /* Hold the confirm until the offer has answered — see
+           `replacementLoading`. */
+        replacementLoading={replacementLoading}
         replacement={
           replacementOffer
             ? {

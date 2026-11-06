@@ -839,6 +839,6 @@ describe('T-30 (data export DE-10a; SA-9, W10-10): the Data export box above the
     const drawer = await openDrawer('Oren Levi', 'bos-panel-not-bos');
     const box = within(drawer).getByTestId('drawer-box-export');
     expect(box.nextElementSibling).toBe(within(drawer).getByTestId('danger-area'));
-    expect(within(box).getByTestId('data-export-placeholder').textContent).toBe("Admin export is coming back as 'Send export to owner'.");
+    expect([within(box).getByTestId('data-export-purpose').textContent, within(box).getByTestId('data-export-send-open').textContent]).toEqual(['Send the owner their own data, by email to their login address. You never see the files.', 'Send export to owner…']);
   });
 });

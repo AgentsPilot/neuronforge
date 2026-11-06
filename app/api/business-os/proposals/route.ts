@@ -178,7 +178,12 @@ export async function GET(request: NextRequest) {
         /* `meeting_id` so a package's session rows can each show their own
            money. Six stages share the container's `booking_id` now, so that
            column can no longer say which session a stage belongs to. */
-        .select('id, payment_plan_id, meeting_id, installment_number, amount, currency, status, label, trigger, due_date, invoice_id, completed_at, paid_at')
+        /* `transaction_id` because an instalment period has NO invoice — its
+           money is a processor charge, and the refund is recorded there. See
+           the flattening below, which used to read the invoice alone. */
+        .select(
+          'id, payment_plan_id, meeting_id, installment_number, amount, currency, status, label, trigger, due_date, invoice_id, transaction_id, completed_at, paid_at'
+        )
         .eq('user_id', user.id)
         .in('payment_plan_id', planIds)
         .order('installment_number', { ascending: true });
@@ -209,6 +214,50 @@ export async function GET(request: NextRequest) {
       .flat()
       .map(stage => stage.invoice_id)
       .filter((id): id is string => typeof id === 'string' && Boolean(id));
+
+    /*
+     * ── AND THE CHARGES BEHIND THE STAGES THAT HAVE NO INVOICE ──────────────
+     *
+     * A milestone is billed through an invoice; an instalment PERIOD is taken
+     * straight off a card, so its only record is a `payment_transactions` row.
+     * The flattening below read `invoice_id` and nothing else, so for those
+     * stages `refunded_amount` was always null — which reads downstream as
+     * "nothing came back".
+     *
+     * Two things broke on that single value, because both gates divide by it:
+     * `StageRowActions` keeps Refund while `remaining > 0`, so a fully
+     * refunded period still offered one (and the dialog then showed 0, because
+     * the SERVER knew); and it withholds the receipt once `refunded > 0`, so a
+     * refunded period still offered to send one.
+     */
+    const stageTransactionIds = Object.values(stagesByPlan)
+      .flat()
+      .map(stage => stage.transaction_id)
+      .filter((id): id is string => typeof id === 'string' && Boolean(id));
+
+    let refundByTransaction: Record<
+      string,
+      { refunded_amount: number | null; refund_status: string | null; refunded_at: string | null }
+    > = {};
+
+    if (stageTransactionIds.length > 0) {
+      const { data: charges } = await supabaseServer
+        .from('payment_transactions')
+        .select('id, refunded_amount, refund_status, refunded_at')
+        .eq('user_id', user.id)
+        .in('id', stageTransactionIds);
+
+      refundByTransaction = Object.fromEntries(
+        (charges ?? []).map(c => [
+          c.id,
+          {
+            refunded_amount: c.refunded_amount ?? null,
+            refund_status: c.refund_status ?? null,
+            refunded_at: c.refunded_at ?? null,
+          },
+        ])
+      );
+    }
 
     const invoiceIds = Array.from(
       new Set([
@@ -292,14 +341,23 @@ export async function GET(request: NextRequest) {
               const stageInvoice =
                 typeof stage.invoice_id === 'string' ? invoicesById[stage.invoice_id] : undefined;
 
+              /* Whichever record actually holds the money: a milestone's
+                 invoice, or an instalment period's charge. Exactly one of the
+                 two keys is ever set on a stage. */
+              const stageCharge =
+                typeof stage.transaction_id === 'string'
+                  ? refundByTransaction[stage.transaction_id]
+                  : undefined;
+              const refundRecord = stageInvoice ?? stageCharge;
+
               return {
                 ...stage,
                 /* Flattened onto the stage because that is where the drawer
                    reads it: a refund belongs to the milestone whose money came
                    back, not to the job as a whole. */
-                refunded_amount: stageInvoice?.refunded_amount ?? null,
-                refund_status: stageInvoice?.refund_status ?? null,
-                refunded_at: stageInvoice?.refunded_at ?? null,
+                refunded_amount: refundRecord?.refunded_amount ?? null,
+                refund_status: refundRecord?.refund_status ?? null,
+                refunded_at: refundRecord?.refunded_at ?? null,
               };
             })
           : [],

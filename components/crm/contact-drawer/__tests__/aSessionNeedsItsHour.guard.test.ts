@@ -396,37 +396,32 @@ describe('the charge question is hard to miss', () => {
    * client sees as two emails about one hour.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  it('pulses and colours the label while the answer is still off', () => {
-    expect(modal).toContain('booking-toggle-attention');
-    expect(modal).toContain("{ color: '#D97706' }");
-  });
-
-  it('both switched by one condition, so they cannot drift apart', () => {
-    const uses = modal.match(/extraToggle\.attention && !extraToggle\.checked/g);
-    expect(uses?.length).toBe(2);
-  });
-
-  it('settles the moment it is turned on', () => {
-    /* An attention cue that keeps going after it has been read stops being a
-       cue and becomes something to ignore. */
-    expect(modal).toContain('!extraToggle.checked');
-  });
-
-  it('keeps pulsing until the question is answered', () => {
+  it('makes the waiver a visible answer rather than an unticked box', () => {
     /*
-     * Three cycles first, on the reasoning that a cue which never stops
-     * becomes something to ignore. Changed on the owner's instruction: the
-     * question is worth money and this dialog is saved in a hurry, so it runs
-     * until the switch is touched rather than until a timer runs out.
+     * ── WHAT REPLACED THE PULSE ──────────────────────────────────────────
+     *
+     * This pinned an animated amber label on an unticked switch, with the
+     * cue settling the moment it was touched. The switch is gone: the
+     * question is two explicit answers in the body, with the amount on the
+     * one that charges, so the waiver can no longer be taken by leaving
+     * something alone — and a cue for "you have not answered" has nothing
+     * left to point at.
+     *
+     * The REASON it existed is unchanged and is what is pinned now: giving
+     * an hour away must be a decision the owner can see themselves making.
+     * Amber marks the waiver, never the charge.
      */
-    expect(modal).toContain('animation: bookingTogglePulse 1.1s ease-in-out infinite;');
+    expect(modal).toMatch(/charge \? '#2DD4BF' : '#D97706'/);
+    expect(modal).toContain('crm.booking.package.charge_no');
   });
 
-  it('and respects a reader who cannot take movement', () => {
-    /* The emphasis without the motion — for some people movement is the one
-       thing that makes a screen unusable. */
-    expect(modal).toContain('@media (prefers-reduced-motion: reduce)');
+  it('neither answer is the one you get by doing nothing', () => {
+    /* Both are rendered and both are pressable, so the dialog cannot be
+       saved on an answer nobody chose. */
+    expect(modal).toMatch(/\(\[true, false\] as const\)\.map\(charge =>/);
+    expect(modal).toMatch(/aria-checked=\{on\}/);
   });
+
 
   it('is only asked where the package bills per session', () => {
     const drawerSrc = read('components/crm/contact-drawer/CRMContactDrawerV2.tsx');

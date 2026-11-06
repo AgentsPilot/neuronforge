@@ -38,7 +38,12 @@ const ALLOWED_FILES: Record<string, string> = {
   'components/wizard/hooks/useWorkflowData.ts': 'C9: dead code (AgentWizard imported only by a .tsxold); fails closed after DE-0b',
   'components/orchestration-NOT-USED/components/configuration/PluginConnectionManager.tsx':
     'C10: dead code; fails closed after DE-0b',
-  'lib/plugins/v2/core/UniversalOAuthHandler.ts': 'C11: dead code (plugins/v2/registry imported nowhere); fails closed after DE-0b',
+  // C11 (lib/plugins/v2/core/UniversalOAuthHandler.ts) is gone: G-2 deleted the whole
+  // lib/plugins/v2/ tree (GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md §12).
+  // Its rationale said "plugins/v2/registry imported nowhere", which was never true —
+  // pluginRegistry.ts imported it, so the module WAS evaluated in production. The
+  // conclusion (dead) held because nothing dispatched to `universalPlugins`; the
+  // stated reason did not.
 };
 
 /**

@@ -968,7 +968,7 @@ This applies to **every** new environment variable, not only flags. The admin En
 3. **Read it by its literal name** (`process.env.NAME`), or through a string constant declared in the same file or exported from one imported file. Any other computed read (`process.env[someVariable]`) fails the guard until it is resolvable or pinned with a reason in the guard's list.
 4. **Run the guard:** `npx jest lib/admin/environment/__tests__/catalogueDrift.guard.test.ts`. It runs in the PR Jest gate anyway, and fails when code reads a name the catalogue lacks, when an entry is read by nothing and has no marker, when a marker is stale, or when a new unresolved read appears that is not pinned in the guard's list. That last case covers a computed read, a new use of the whole object (`const e = process.env`, `const { env } = process`, passing `process.env` to a function) and a `...rest` destructuring from `process.env`; a pinned one that disappears fails too.
 
-Plugin definition placeholders (`${NAME}` in `lib/plugins/definitions/*.json`) and `…EnvVar` fields in `lib/plugins/v2/configs/*.json` count as reads too.
+Plugin definition placeholders (`${NAME}` in `lib/plugins/definitions/*.json`) count as reads too. The guard used to scan `…EnvVar` fields in `lib/plugins/v2/configs/*.json` as well; G-2 of [GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md](/docs/requirements/GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md) deleted that directory and the scanner with it, because no surviving reader honours that syntax — `plugin-manager-v2.ts` substitutes `${VAR}` placeholders only.
 
 ---
 

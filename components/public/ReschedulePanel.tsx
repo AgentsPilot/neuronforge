@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 
 import { BrandButton } from '@/components/public/BrandButton';
@@ -30,6 +30,19 @@ interface RescheduleConfig {
   bookingId: string;
   serviceId: string;
   userId: string;
+  /**
+   * Which of the two things this panel is doing.
+   *
+   * `move` changes an appointment's time. `makeup` books a REPLACEMENT for a
+   * session that was missed: the missed hour stays on the record with whatever
+   * it cost, and an extra session is added. Every string here used to describe
+   * the first, so after a make-up the client was told their appointment had
+   * been rescheduled and then found both sessions on their list.
+   *
+   * Absent on an older cached response, which reads as `move` — the behaviour
+   * before this existed.
+   */
+  mode?: 'move' | 'makeup';
   currentStartTime: string;
   serviceConfig: {
     durationMinutes: number;
@@ -104,6 +117,17 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
   const [config, setConfig] = useState<RescheduleConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * Booking a replacement for a missed session rather than moving an
+   * appointment — see `RescheduleConfig.mode`. Read from the config rather
+   * than from the POST's answer, because the heading and the button need it
+   * BEFORE anything is submitted, and `config` is still held on the success
+   * screen so the done copy stays right too.
+   */
+  const isMakeUp = config?.mode === 'makeup';
+  /* Set from the POST's answer, not the config: whether a replacement is
+     charged depends on how the package is sold, which the write resolves. */
+  const [makeUpCharged, setMakeUpCharged] = useState(false);
   /**
    * When the appointment actually is.
    *
@@ -184,6 +208,8 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  /* Only the first config decides the opening month — see the effect below. */
+  const monthSettled = useRef(false);
   /**
    * Whether the whole month picker is open.
    *
@@ -350,6 +376,9 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
 
       if (data.success) {
         setRescheduled(true);
+        /* Whether the replacement carries a charge — decided from how the
+           package was sold, never asked, so it has to be said out loud. */
+        setMakeUpCharged(Boolean(data.charged));
         onChanged?.();
         /*
          * A moved SESSION answers with its own new hour — there is no booking
@@ -379,6 +408,64 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
     for (let day = 1; day <= daysInMonth; day++) days.push(day);
     return days;
   };
+
+  /*
+   * ── THE CALENDAR OPENS WHERE THE WORK IS, NOT ON TODAY ────────────────────
+   *
+   * It opened on the current month always. A client moving a session three
+   * months out therefore landed in November for an appointment in January:
+   * two presses of the chevron away from anything relevant, with nothing
+   * saying so. Pressing it is how one of them ended up in February — a month
+   * entirely past the booking horizon, where every day is correctly
+   * unselectable and the page simply reported "no times" over and over.
+   *
+   * So the grid starts on the month of the hour being moved, which is what
+   * the client has in mind, and falls back to the first month that actually
+   * holds a free day. `openDates` is only computed for the first few weeks,
+   * so it is used when it answers and the appointment's own month when it
+   * does not.
+   *
+   * Once only. After that the chevrons are the client's to drive, and
+   * re-running this would drag them back every time the config refreshed.
+   */
+  useEffect(() => {
+    if (!config || monthSettled.current) return;
+
+    const firstOpen = config.openDates?.length
+      ? new Date(`${[...config.openDates].sort()[0]}T12:00:00`)
+      : null;
+
+    const session = config.currentStartTime ? new Date(config.currentStartTime) : null;
+    const sessionAhead = session && !Number.isNaN(session.getTime()) && session > new Date();
+
+    const land = sessionAhead ? session : (firstOpen ?? null);
+    if (!land || Number.isNaN(land.getTime())) return;
+
+    monthSettled.current = true;
+    setCurrentMonth(new Date(land.getFullYear(), land.getMonth(), 1));
+  }, [config]);
+
+  /**
+   * The last month that can hold a bookable day.
+   *
+   * Past it every date fails `isDateSelectable` on the advance window, so the
+   * grid is guaranteed empty — which is exactly what a client walked into.
+   * The chevron stops here instead of letting them wander.
+   */
+  const lastBookableMonth = (() => {
+    const max = new Date();
+    max.setDate(max.getDate() + (config?.serviceConfig.advanceBookingDays ?? 30));
+    return new Date(max.getFullYear(), max.getMonth(), 1);
+  })();
+
+  const thisMonth = (() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  })();
+
+  const viewedMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+  const canGoBack = viewedMonth > thisMonth;
+  const canGoForward = viewedMonth < lastBookableMonth;
 
   const isDateSelectable = (day: number) => {
     if (!config) return false;
@@ -613,8 +700,14 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
           standalone={!embedded}
           inShell={embedded}
           tone="success"
-          title={t('rescheduledTitle')}
-          description={t('rescheduledDesc')}
+          title={isMakeUp ? t('makeUpDoneTitle') : t('rescheduledTitle')}
+          description={
+            isMakeUp
+              ? makeUpCharged
+                ? t('makeUpDoneChargedDesc')
+                : t('makeUpDoneDesc')
+              : t('rescheduledDesc')
+          }
           /* Embedded, the updated booking is the card directly above this
              one, so a button to "view the updated booking" would send a client
              to the page they are already reading. */
@@ -654,8 +747,8 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
       {!embedded && (
       <PortalHero
         brand={brand}
-        title={t('reschedule')}
-        subtitle={t('selectNewTime')}
+        title={isMakeUp ? t('makeUpTitle') : t('reschedule')}
+        subtitle={isMakeUp ? t('makeUpSubtitle') : t('selectNewTime')}
         back={{ href: `/book/manage/${token}`, label: t('backToBooking') }}
       >
         {/* What is being replaced, as one line. It is context here, not the
@@ -766,10 +859,14 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
           <button
             type="button"
             aria-label={t('back')}
+            /* No month before this one can hold a bookable day — the past is
+               not reschedulable — so the chevron stops rather than walking
+               into a grid that is guaranteed empty. */
+            disabled={!canGoBack}
             onClick={() =>
               setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))
             }
-            className="p-2 transition-opacity hover:opacity-60"
+            className="p-2 transition-opacity hover:opacity-60 disabled:cursor-not-allowed disabled:opacity-25"
             style={{ borderRadius: 'var(--ap-radius-sm)' }}
           >
             {/* The chevrons follow the reading direction, not the axis. */}
@@ -786,10 +883,20 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
 
           <button
             type="button"
+            /*
+             * THE HORIZON IS A WALL, NOT A SUGGESTION.
+             *
+             * `advance_booking_days` already refuses every date beyond it, so
+             * a month past it renders a full grid of unselectable days and
+             * answers "no times" for each one. A client who pressed this three
+             * times landed in a February they could never book, with nothing
+             * on screen explaining why. Now they cannot get there.
+             */
+            disabled={!canGoForward}
             onClick={() =>
               setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))
             }
-            className="p-2 transition-opacity hover:opacity-60"
+            className="p-2 transition-opacity hover:opacity-60 disabled:cursor-not-allowed disabled:opacity-25"
             style={{ borderRadius: 'var(--ap-radius-sm)' }}
           >
             {brand.dir === 'rtl' ? (
@@ -998,7 +1105,11 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
             onClick={handleReschedule}
           >
             {!rescheduling && <Clock className="h-4 w-4" aria-hidden />}
-            {rescheduling ? t('rescheduling') : t('confirmNewTime')}
+            {rescheduling
+              ? t('rescheduling')
+              : isMakeUp
+                ? t('makeUpConfirm')
+                : t('confirmNewTime')}
           </BrandButton>
         </div>
       </div>

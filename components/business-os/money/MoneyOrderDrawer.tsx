@@ -47,19 +47,30 @@ import { itemFlow, type MoneyEntry, type MoneyItem } from '@/lib/payments/moneyI
   surfaces having their own copies is how one of them stayed broken.
 */
 import { MoneyEntryActions, type EntryActionHandlers } from '@/components/payments/MoneyEntryActions';
+/* The drawer's own phrasing for "payment 2 of 3", off the raw numbers the
+   webhook carried. `serviceLabel` holds the ENGLISH sentence the processor
+   wrote, so naming an entry by it puts English in a Hebrew panel. */
+import { planPeriodText } from '@/components/payments/MoneyDetailDrawer';
 
 /** The same four tones the page uses everywhere, so nothing changes colour. */
 const TONE = {
   in: '#2DD4A7',
   wait: '#F0B429',
   late: '#F0654F',
+  /** Came in and went back. The page's own tone for it, so nothing changes
+      colour between the row, the hero bar and this panel. */
+  back: '#1C7F69',
   lost: '#5B6880',
 } as const;
 
 const toneFor = (status: string) => {
+  /* Partly back is still a collection: the business kept some of it, and the
+     figure beside it is real. Fully back is its own state — `TONE.back`, not
+     `lost`, which means "never came". This money came and then left. */
   if (status === 'paid' || status === 'partially_refunded') return TONE.in;
+  if (status === 'refunded') return TONE.back;
   if (status === 'overdue' || status === 'failed') return TONE.late;
-  if (status === 'cancelled' || status === 'refunded') return TONE.lost;
+  if (status === 'cancelled') return TONE.lost;
   return TONE.wait;
 };
 
@@ -77,6 +88,7 @@ export function MoneyOrderDrawer({
   item,
   schedule,
   onClose,
+  onOpenBooking,
   formatCurrency,
   t,
   isRTL = false,
@@ -86,6 +98,14 @@ export function MoneyOrderDrawer({
   /** Built by the page with `scheduleOf`, so it is the row's own list. */
   schedule: ScheduleRow[];
   onClose: () => void;
+  /**
+   * Open this row's booking in the CRM drawer, expanded.
+   *
+   * The page owns the route — the same handler the row's own button calls —
+   * so the two cannot send the reader to different places, and this file does
+   * not import from the page that renders it.
+   */
+  onOpenBooking: (item: MoneyItem) => void;
   formatCurrency: (amount: number, currency: string) => string;
   t: (key: string) => string;
   isRTL?: boolean;
@@ -105,7 +125,20 @@ export function MoneyOrderDrawer({
 
   const flow = itemFlow(item);
   const waiting = Math.max(0, flow.outstanding - flow.overdue);
-  const whole = flow.collected + flow.outstanding + flow.cancelled;
+  /*
+    THE BAR SPANS THE GROSS, REFUND INCLUDED.
+
+    ───────────────────────────────────────────────────────────────────────────
+    This summed collected + owed + cancelled, and `collected` is NET of
+    refunds — so a part-refunded order drew a bar that was 100% green beneath a
+    headline naming the gross. Measured on one account: ₪9,000 of work, ₪2,250
+    returned on INV-00028, and this panel said "₪9,000" over a full green bar
+    with the ₪2,250 nowhere on it, above a schedule marking both payments paid.
+
+    Refunded is the fourth state, exactly as the page's hero bar draws it.
+    ───────────────────────────────────────────────────────────────────────────
+  */
+  const whole = flow.collected + flow.outstanding + flow.cancelled + flow.refunded;
 
   /* The facts a support conversation needs, and only the ones this row has. */
   const lead = item.entries[0];
@@ -177,11 +210,23 @@ export function MoneyOrderDrawer({
 
           {whole > 0 && (
             <>
+              {/* `minWidth` for the same reason the page's bar carries it: a
+                  band that rounds to nothing claims the money is not there,
+                  and this bar is only 2.5px tall on a phone to begin with. */}
               <div className="mt-4 flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-[var(--v2-border)]">
-                {flow.collected > 0 && <i style={{ flex: flow.collected, background: TONE.in }} />}
-                {flow.overdue > 0 && <i style={{ flex: flow.overdue, background: TONE.late }} />}
-                {waiting > 0 && <i style={{ flex: waiting, background: TONE.wait }} />}
-                {flow.cancelled > 0 && <i style={{ flex: flow.cancelled, background: TONE.lost }} />}
+                {flow.collected > 0 && (
+                  <i style={{ flex: flow.collected, minWidth: 3, background: TONE.in }} />
+                )}
+                {flow.overdue > 0 && (
+                  <i style={{ flex: flow.overdue, minWidth: 3, background: TONE.late }} />
+                )}
+                {waiting > 0 && <i style={{ flex: waiting, minWidth: 3, background: TONE.wait }} />}
+                {flow.refunded > 0 && (
+                  <i style={{ flex: flow.refunded, minWidth: 3, background: TONE.back }} />
+                )}
+                {flow.cancelled > 0 && (
+                  <i style={{ flex: flow.cancelled, minWidth: 3, background: TONE.lost }} />
+                )}
               </div>
 
               <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-[12.5px] text-[var(--v2-text-muted)]">
@@ -204,6 +249,16 @@ export function MoneyOrderDrawer({
                     tone={TONE.wait}
                     label={t('payments.outstanding') || 'Still owed'}
                     value={formatCurrency(waiting, item.currency)}
+                  />
+                )}
+                {/* Named, not just drawn: the schedule below marks a refunded
+                    payment "paid", because it WAS, and this is the only line
+                    that says some of it came back. */}
+                {flow.refunded > 0 && (
+                  <Figure
+                    tone={TONE.back}
+                    label={t('payments.refunded') || 'Refunded'}
+                    value={formatCurrency(flow.refunded, item.currency)}
                   />
                 )}
                 {flow.cancelled > 0 && (
@@ -293,7 +348,10 @@ export function MoneyOrderDrawer({
                         buttons does not say which money it would act on. */}
                     {item.entries.length > 1 && (
                       <p className="m-0 mb-2 text-[12.5px] font-semibold text-[var(--v2-text-primary)]">
-                        {entry.invoiceNumber ?? entry.serviceLabel ?? item.title}
+                        {entry.invoiceNumber ??
+                          planPeriodText(entry, t) ??
+                          entry.serviceLabel ??
+                          item.title}
                       </p>
                     )}
                     <MoneyEntryActions entry={entry} t={t} isRTL={isRTL} inline {...actions} />
@@ -325,13 +383,16 @@ export function MoneyOrderDrawer({
 
         {/* ── where to go next ─────────────────────────────────────────── */}
         <footer className="flex flex-wrap gap-2 border-t border-[var(--v2-border)] p-4">
-          {item.bookingId && (
-            <a
-              href={`/business-os/orders?booking=${item.bookingId}`}
+          {/* The CRM drawer on this booking, expanded — not the orders page.
+              A contact is required because the drawer IS a contact's record. */}
+          {item.bookingId && item.contactId && (
+            <button
+              type="button"
+              onClick={() => onOpenBooking(item)}
               className="rounded-[9px] border border-[var(--v2-border)] bg-[var(--v2-surface-hover)] px-3.5 py-2 text-[13px] font-semibold text-[var(--v2-text-primary)]"
             >
               {t('money.open_order') || 'Open the order'}
-            </a>
+            </button>
           )}
           {item.contactId && (
             <a

@@ -1,6 +1,6 @@
 # Workplan: Test Strategy & CI Tiering
 
-> **Last Updated**: 2026-10-02
+> **Last Updated**: 2026-11-04
 > **Status**: 🟡 **Slice 1 code complete, uncommitted** on `chore/ci-jest-gate` (see §0 and the implementation record in §10). SA approved the §0 refresh with conditions SC-1..SC-10 on 2026-10-02, and all ten are applied. Awaiting SA code review. The original plan (§1–§11, against `d00006ac`) was SA-reviewed on 2026-09-21; its figures are superseded by §0.
 > **Branch**: Slice 1 is on `chore/ci-jest-gate`, cut from `origin/main` @ `894150f5`. The original branch `chore/test-tiering` (cut from `d00006ac`, workplan commit `be145ceb`, never pushed) is superseded.
 > **Related**: [CI_BUILD_GATE_WORKPLAN.md](/docs/workplans/CI_BUILD_GATE_WORKPLAN.md) · [ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md](/docs/ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md) §11 (dev-cycle definition, backlogged)
@@ -1121,10 +1121,119 @@ None that needs a decision now. Two facts are worth stating plainly:
 
 ---
 
+### SA design review — the no-network refusal count (G8) — 2026-11-03
+
+Context: `tests/jest-no-network.ts` (PR #583) refuses any non-loopback socket a test
+opens, but it is only a **floor** — the offending suites still make the call, it fails in
+microseconds into the same swallowing `catch` the production code already has, so nothing
+goes red and the remaining offenders never announce themselves. Two attempts had been made
+to **flip** it into a hard failure of the case that made the refusal; both were written and
+neither shipped. Two candidate designs were put to SA under rule 7 (new pattern):
+(1) AsyncLocalStorage attribution, (2) a refusal-**count** ceiling in the shape of the
+floors already in this document (G7, and #583).
+
+**Ruling: design (2). Design (1) is rejected, and the flip is abandoned rather than
+parked.** Two independent grounds, the first measured during the review:
+
+1. **`enterWith` does not cover the test body.** jest-circus runs each hook and each case
+   in its own async context, so a store entered from a `beforeEach` is gone by the time the
+   case runs — `getStore()` returns `undefined` inside the very case that entered it.
+   Covering the body needs `als.run()` wrapped around the test function, i.e.
+   monkeypatching `it`/`test` in the hottest shared path in the suite.
+2. **Even perfect attribution buys only a better message.** `net` is a core module shared
+   by every test file a worker runs, so the guard installs **once per worker**. A socket
+   opened by a promise an earlier file left floating opens when that file has already been
+   torn down — there is no live case left to fail. Measured on the full gate, the flip
+   produced exactly one attributed failure,
+   `app/admin/business-os-llm/__tests__/ledgerPanel.render.test.tsx`, which passes 21/21
+   alone: a blameless suite. Shipping it trades a random timeout for a random false
+   accusation, which is the bug class the guard exists to end.
+
+**Runtime** (the standing "no added CI time" rule): the recorder writes one JSONL line per
+refusal and the check reads a few files in the existing aggregator job, so it adds nothing
+measurable and stays inside the `next build` critical path. Ruled acceptable before build.
+
+### SA code review — G8 and the recorder — 2026-11-03 (two passes)
+
+🔄 **Fix Required on pass 1, approved after the fixes were re-proved.** Every finding was
+the same shape, and it is the shape that matters for this check: **a count gate can only
+be wrong in one direction — every way it fails makes it PASS.** Five paths were found that
+reported a clean run without having looked.
+
+| # | Finding | Fix |
+|---|---|---|
+| CR-N1 | The shard marker was accepted on `allowTestNetwork === true`, so a **missing** key, or the string `"true"`, read as "not set" and the run passed with the guard possibly disabled | Inverted to `!== false`: anything that does not positively say `false` is treated as if it said `true` |
+| CR-N2 | A **malformed** `maxRefusedConnections` (e.g. string-typed) read as "absent", i.e. report-only — and would have passed **forever**, because the G3 ratchet ignores a non-integer too | Validated in G2 as a non-negative integer, and G8 decides report-only with an `in` check on the key rather than on its value |
+| CR-N3 | **Nothing proved the recorder ran.** One renamed env var, one `setupFiles` edit or one unwritable directory would have produced a clean zero | The guard writes an `alive-*` proof-of-life once per worker; a shard with records enabled and no `alive-*` file **fails** |
+| CR-N4 | An **unrecognised filename** in a shard's record directory was silently skipped | Reported as a failure — an unreadable record is an unknown count, not a clean one |
+| CR-N5 | An unguarded `JSON.parse` in `scripts/find-test-leaks.mjs` would throw on a partial line, and the `finally` would then **delete every record the run had collected** | Guarded per line, unreadable lines counted and reported |
+
+Also verified across the two passes: the workflow wiring and the absolute record path, that
+the existing artifact upload carries the new directory (and that `upload-artifact` prunes
+empty directories, which is why the marker is load-bearing twice over), the truncation
+sentinel, the sign asymmetry against the floors beside it (a **raise or removal** of the
+ceiling is a hard FAIL, not a note), the diagnostics labelling (transport = ground truth,
+file = possibly wrong, with the command that settles it), and that
+`tests/jest-no-network.guard.test.ts` keeps its exemption from being counted.
+
+**Accepted, not conditions.** G8's gate-side logic has **no committed test** — the 15
+fail-closed fixture cases, including all five above, were run ad hoc against the real
+script. SA agreed this is not a merge condition, and it is recorded here as owed work:
+a future edit to `jest-gate-check.mjs` is not protected by them.
+
+**Deliberately left unpinned.** `maxRefusedConnections` is absent on merge, so G8 is
+report-only — permanent behaviour, not scaffolding. The count cannot be measured honestly
+on Windows, where ~29 suites fail early on CRLF-sensitive source scans and never reach
+their leaking code. Pin it from ≥3 real gate runs on `main` (take the max) and record the
+date, commit, run count and the margin's reasoning in `$refusalsComment`.
+
+#### Four corrections to this document's own recorded evidence (all measured 2026-11-03/04)
+
+1. **`Error.stackTraceLimit` is 100 in the test environment, not 0**, and the stack **does**
+   hold repo frames. But for a Supabase leak they name the **transport**
+   (`lib/supabaseFetch.ts`), identical for every such leak — so §11's conclusion ("the call
+   site cannot be read from it") stands while its premise did not. G8 records the frames as
+   `transport` and labels the file as possibly-wrong.
+2. **A leaked read costs exactly one refusal, and the retry never fires under Jest.**
+   `isTransientConnectionError` opens with `error instanceof Error`; undici builds the error
+   in the **host** realm while the test runs in Jest's sandbox realm, so the check is false
+   even though `cause.code` is genuinely `ECONNREFUSED`. Warm, a retryable GET and a
+   non-retryable POST cost the same ~25 ms. An earlier 347 ms vs 34 ms reading was undici's
+   one-time init charged to whichever call ran first. This is why the ceiling needs a margin:
+   the figure is stable for a fragile reason.
+3. **ts-jest is transpile-only** (already noted in the 2026-10-02 entry, re-confirmed here):
+   a deliberate type error left the suite green, so a green gate proves nothing about types.
+   Run `tsc` separately — and prove it can fail, because an OOM prints a V8 stack trace and
+   **no diagnostics**, which reads as "clean" to a grep.
+4. **`jest-environment-node` gives every test file its own `process` object and empties its
+   `process.env` at teardown** (probed: 0 keys once that file has finished). Two
+   consequences. A test **cannot** configure the guard — an assignment inside a case lands in
+   a private copy the installed closure never reads. And the guard **must** read
+   `NO_NETWORK_RECORD_DIR` on every refusal, never capture it at install, or recording dies
+   after the first file in each worker and the total reads **low**.
+
+#### Post-merge: the gate caught a defect in the guard's own test
+
+PR #621's first CI run failed `Gate tests shard 2` on the guard's own suite — the one part
+of the change that had never run anywhere but a single-suite invocation. `records a refusal
+only when asked` set the record directory and the override from inside a case and asserted
+its own records, which works **only when that file installs the guard**, i.e. when run
+alone. Replaced in `c738de6c` by a source scan (using the repo's existing
+`blankStringLiterals` + `stripComments` scaffold, so a mention in a comment or string cannot
+satisfy it) pinning that the directory and the exemption are read **inside** the guarded
+closure and nowhere before it. Proven able to fail by injecting the regression. A scan pins
+the shape, not the behaviour, and the comments say so.
+
+**The same run proved G8 works end to end: 1 refused connection, `test.supabase.co:443`,
+report-only, diagnostics rendered.** That is the number to pin from.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-11-04 | SA review notes for the no-network refusal count (G8) | Recorded in §11, owed since the review. Design review ruled for the **count ceiling** and **abandoned the flip** — AsyncLocalStorage attribution rejected on measurement (`enterWith` does not cover the test body) and on architecture (the originating file is torn down when an inherited socket opens, so there is no case left to fail). Code review pass 1 found **five wrong-PASS paths** (CR-N1..N5), every one the same shape: a count gate can only be wrong in the direction that makes it pass. All fixed and re-proved across 15 fail-closed fixture cases; approved on pass 2. Merged as PR #621 (`27f13ab7`), plus `c738de6c` after CI caught the guard's own test passing only when run alone. **Ceiling deliberately unpinned**, so G8 is report-only until a number comes from ≥3 real gate runs; the first run reported **1** refused connection (`test.supabase.co:443`). Four corrections to this document's own evidence are recorded in §11 (`Error.stackTraceLimit` is 100 not 0; the `supabaseFetch` retry never fires under Jest, so a leak costs exactly one refusal; ts-jest proves nothing about types; each test file has its own `process.env`, emptied at teardown). Owed: G8's gate-side logic still has no committed test. |
 | 2026-10-04 | PR #210 merged; G7 floors pinned | #210 merged as `9e242c87`. First CI run: all 11 checks green on Linux; guard identical to local (G1 835 = 813 + 11 + 11; G5 813 suites, 15,813 tests, 0 failures). SC-1: the verdict finished at 162s, Build at 248s, i.e. 86s ahead and 65% of Build (inside 85%; 12s over the 150s ceiling, whose purpose, finishing before Build, held). Follow-up PR raises the floors 721 / 13,187 to **800 / 15,500**, about 2% under the Linux figures: a bulk-deletion backstop that does not fail a PR for deleting one obsolete test (G1/G5 stay exact). Not proven on GitHub before merge: the re-run (CR-2) and T12/T13 shard-failure proofs; the user's throwaway-PR block proof after making `Gate tests (jest)` required covers the failure path. |
 | 2026-10-04 | Realigned onto `origin/main` @ `7eac5b98` (139 commits) | TL. Main had already fixed three of Slice 1's rows independently: `creditPeriod` (via the credit-deduction slices), `runRecord.adoption` (`f1919a48`), the step-3 snapshot (`ede40761`, the same #151 cause the bisect found), so main's versions were kept and Slice 1's edits to those files dropped. `featureFlags` was touched on main (`c8639a2e`) but was still red, so Slice 1's fix was re-applied. `package.json` was re-edited to add `test:gate` beside main's new `test:bos-llm`. No lockfile change. Re-measured: full suite **835 suites / 16,160 tests**, failing = exactly the 11 quarantined suites. Gate: 3 local shards exit 0 (122s / 315s / 113s on the shared dev box), guard **G1 835 = 813 + 11 + 11**, G2–G7 PASS, G7 floors 721 / 13,187 still below the real 813 / 15,813 (pin from the first Linux run, as before). Since 894150f5, #199 and BD-26 added targeted Jest subsets to `bos-llm-typecheck.yml` and `bos-entitlements.yml`; no full-suite gate exists, so no overlap with `tests.yml`. |
 | 2026-10-02 | SA code review of Slice 1 | 🔄 Fix Required, two one-liners, no SA re-review: CR-1 (file-level timeout on `InviteFriendsSection.render`) and CR-2 (`overwrite: true` on the shard upload, so "re-run failed jobs" works). Workflow wiring, fail-closed paths, the scope script, the gate config, guard G1–G7, all 9 test edits and the one-entry snapshot verified. Deviations 1–6 approved. Rulings: 4a, only `InviteFriendsSection` gets the timeout now, and the other two are pre-approved if they time out on the PR; 4b, `enum-drift`/`marketingGate` are partial skips (`focused`), G6 correct; 4c, the logging rule does not cover the dependency-free CI script. |

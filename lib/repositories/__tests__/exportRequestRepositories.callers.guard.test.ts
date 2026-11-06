@@ -19,7 +19,13 @@
  * (`BusinessOsDataExportJobRepository.ts` `findDeletionFacts`: one read method
  * on each class, user_id only, same client; SA Q-9 D-1) and its test, to the
  * two class rules only: each table keeps its own repository as its only
- * reader. MX-5 adds the admin route in its own diff here.
+ * reader. MX-5 added the admin "Send export to owner" route
+ * (`app/api/admin/users/[id]/export-sends/route.ts`: owner id from the
+ * admin-gated path, admin id from requireAdmin; `startForAdmin` and the
+ * admin-origin history reads) and its test, to the two class rules only, and
+ * the "Export requested" send moved out of the owner route
+ * (`lib/business-os/data-export/exportRequestedSend.ts`, SA-Q3 d: one read by
+ * request id AND user_id) and its test, to the request-repository rule only.
  *
  * Naming the class is not the only way in. A file could call one of the three
  * SQL functions by name, or query a table with `.from(...)`. So those strings
@@ -58,6 +64,12 @@ const WORKER_DEPS = 'lib/business-os/data-export/moduleExportWorkerDeps.ts';
 /** MX-4a: the deletion receipt facts (`findDeletionFacts`, XC-12) read both new tables through their repositories. Class rules only. */
 const RECEIPT_FACTS = 'lib/repositories/BusinessOsDataExportJobRepository.ts';
 const RECEIPT_FACTS_TEST = 'lib/repositories/__tests__/BusinessOsDataExportJobRepository.test.ts';
+/** MX-5: the admin "Send export to owner" route (GET + POST) and its test. Class rules only. */
+const ADMIN_ROUTE = 'app/api/admin/users/[id]/export-sends/route.ts';
+const ADMIN_ROUTE_TEST = 'app/api/admin/users/[id]/export-sends/__tests__/route.test.ts';
+/** MX-5 (SA-Q3 d): the "Export requested" send, moved from the owner route, and its test. Request-repository rule only. */
+const REQUESTED_SEND = 'lib/business-os/data-export/exportRequestedSend.ts';
+const REQUESTED_SEND_TEST = 'lib/business-os/data-export/__tests__/exportRequestedSend.test.ts';
 
 /** The SQL files of 20261095 that name every function. */
 const SQL_FILES = [MIGRATION, ROLLBACK, MIGRATION_TEST, PRECHECK, CHECKER];
@@ -73,12 +85,38 @@ const RULES: ReadonlyArray<Rule> = [
   {
     name: 'BusinessOsExportRequestRepository',
     pattern: /\bBusinessOsExportRequestRepository\b/,
-    allowed: [REQUEST_REPOSITORY, REQUEST_TEST, SELF, OWNER_ROUTE, OWNER_ROUTE_TEST, OWNER_ROUTE_QA_TEST, WORKER_DEPS, RECEIPT_FACTS, RECEIPT_FACTS_TEST],
+    allowed: [
+      REQUEST_REPOSITORY,
+      REQUEST_TEST,
+      SELF,
+      OWNER_ROUTE,
+      OWNER_ROUTE_TEST,
+      OWNER_ROUTE_QA_TEST,
+      WORKER_DEPS,
+      RECEIPT_FACTS,
+      RECEIPT_FACTS_TEST,
+      ADMIN_ROUTE,
+      ADMIN_ROUTE_TEST,
+      REQUESTED_SEND,
+      REQUESTED_SEND_TEST,
+    ],
   },
   {
     name: 'BusinessOsExportModuleJobRepository',
     pattern: /\bBusinessOsExportModuleJobRepository\b/,
-    allowed: [JOB_REPOSITORY, JOB_TEST, SELF, OWNER_ROUTE, OWNER_ROUTE_TEST, OWNER_ROUTE_QA_TEST, WORKER_DEPS, RECEIPT_FACTS, RECEIPT_FACTS_TEST],
+    allowed: [
+      JOB_REPOSITORY,
+      JOB_TEST,
+      SELF,
+      OWNER_ROUTE,
+      OWNER_ROUTE_TEST,
+      OWNER_ROUTE_QA_TEST,
+      WORKER_DEPS,
+      RECEIPT_FACTS,
+      RECEIPT_FACTS_TEST,
+      ADMIN_ROUTE,
+      ADMIN_ROUTE_TEST,
+    ],
   },
   {
     name: 'the start function name',

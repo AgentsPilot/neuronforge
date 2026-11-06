@@ -26,9 +26,12 @@
 //   MX-4b (H-1): an optional keyset cursor `before` returns only rows strictly
 //   older in that same order. The cursor time goes back to the database
 //   exactly as it came out (pattern-checked, never through `Date`, SA C-4),
-//   quoted inside the `.or()`.
+//   quoted inside the `.or()`. MX-5: an optional `origin` filter keeps the
+//   admin box to support's sends (BQ-E8-3); without it nothing changes.
 // - `findOwnerLimitAnchor` (MX-4b, N-1) reads, on user_id and origin `owner`,
 //   the row the start function would anchor its `daily_limit` answer on.
+//   `findAdminLimitAnchor` (MX-5) is the same read on origin `admin`, for the
+//   admin's own 2 per owner per 24 hours. Both are one private read.
 // - `hasAdminOriginRequest` (MX-4a receipt facts, XC-12) is a head count on
 //   user_id and origin `admin`.
 // - `markRequestedEmailSent` (MX-1b) is a compare-and-set on id + user_id +
@@ -55,7 +58,7 @@ import {
   type ExportRequestOrigin,
   type StartOutcome,
 } from '@/lib/business-os/data-export/moduleExportPolicy';
-import { ownerLimitAnchorOffset } from '@/lib/business-os/data-export/nextOwnerExportAt';
+import { adminLimitAnchorOffset, ownerLimitAnchorOffset } from '@/lib/business-os/data-export/nextOwnerExportAt';
 import {
   HISTORY_PAGE_SIZE,
   historyCursorSchema,
@@ -313,14 +316,18 @@ export class BusinessOsExportRequestRepository {
    * (SA C-4: re-serialising through `Date` would drop the microseconds and skip
    * or repeat rows at the page edge), and both values are double-quoted inside
    * the `.or()` because a timestamp holds `:` and `+`.
+   *
+   * MX-5 (BQ-E8-3): with `origin`, only that origin's requests (the admin box
+   * lists support's sends only). Without it, every origin, as before.
    */
   async listRecentForUser(
     userId: string,
-    options: { limit?: number; before?: ExportHistoryCursor } = {}
+    options: { limit?: number; before?: ExportHistoryCursor; origin?: ExportRequestOrigin } = {}
   ): Promise<RepositoryResult<ExportRequestSummary[]>> {
     const cursor = options.before === undefined ? null : historyCursorSchema.safeParse(options.before);
-    if (!uuid.safeParse(userId).success || (cursor !== null && !cursor.success)) {
-      return { data: null, error: coded(EXPORT_REQUEST_ERROR.INVALID_INPUT, 'Invalid input: user id or cursor') };
+    const originOk = options.origin === undefined || (EXPORT_REQUEST_ORIGINS as readonly string[]).includes(options.origin);
+    if (!uuid.safeParse(userId).success || (cursor !== null && !cursor.success) || !originOk) {
+      return { data: null, error: coded(EXPORT_REQUEST_ERROR.INVALID_INPUT, 'Invalid input: user id, cursor or origin') };
     }
     const requested = Number.isInteger(options.limit) ? (options.limit as number) : HISTORY_REQUEST_LIMIT;
     const limit = Math.min(Math.max(requested, 1), HISTORY_REQUEST_LIMIT_MAX);
@@ -329,6 +336,7 @@ export class BusinessOsExportRequestRepository {
         .from('business_os_export_requests')
         .select(EXPORT_REQUEST_HISTORY_COLUMNS)
         .eq('user_id', userId);
+      if (options.origin !== undefined) query = query.eq('origin', options.origin);
       if (cursor?.success) {
         const { requestedAt, id } = cursor.data;
         query = query.or(`requested_at.lt."${requestedAt}",and(requested_at.eq."${requestedAt}",id.lt."${id}")`);
@@ -375,16 +383,38 @@ export class BusinessOsExportRequestRepository {
    * still decides (K-8).
    */
   async findOwnerLimitAnchor(userId: string, since: string): Promise<RepositoryResult<{ requestedAt: string | null }>> {
+    return this.findLimitAnchor('owner', userId, since);
+  }
+
+  /**
+   * MX-5 (workplan §4.3): the same read as `findOwnerLimitAnchor`, on this
+   * owner's `admin`-origin requests, at OFFSET `ADMIN_DAILY_LIMIT_PER_OWNER - 1`.
+   * The admin box's "you can send again at" hint; the POST still decides.
+   */
+  async findAdminLimitAnchor(userId: string, since: string): Promise<RepositoryResult<{ requestedAt: string | null }>> {
+    return this.findLimitAnchor('admin', userId, since);
+  }
+
+  /**
+   * The one limit-anchor read (SA S-3 of MX-5): the offset and the log's
+   * method name both follow from the origin, never from a caller's number.
+   */
+  private async findLimitAnchor(
+    origin: ExportRequestOrigin,
+    userId: string,
+    since: string
+  ): Promise<RepositoryResult<{ requestedAt: string | null }>> {
     if (!uuid.safeParse(userId).success || !historyCursorTimestampSchema.safeParse(since).success) {
       return { data: null, error: coded(EXPORT_REQUEST_ERROR.INVALID_INPUT, 'Invalid input: user id or window start') };
     }
-    const offset = ownerLimitAnchorOffset(MODULE_EXPORT_POLICY);
+    const method = origin === 'owner' ? 'findOwnerLimitAnchor' : 'findAdminLimitAnchor';
+    const offset = origin === 'owner' ? ownerLimitAnchorOffset(MODULE_EXPORT_POLICY) : adminLimitAnchorOffset(MODULE_EXPORT_POLICY);
     try {
       const { data, error } = await this.supabase
         .from('business_os_export_requests')
         .select(OWNER_LIMIT_ANCHOR_COLUMNS)
         .eq('user_id', userId)
-        .eq('origin', 'owner')
+        .eq('origin', origin)
         .gt('requested_at', since)
         .not('business_os_export_module_jobs.status', 'in', `(${MODULE_JOB_NOT_COUNTED.join(',')})`)
         .order('requested_at', { ascending: false })
@@ -399,7 +429,7 @@ export class BusinessOsExportRequestRepository {
       return { data: { requestedAt: row.data.requested_at }, error: null };
     } catch (err) {
       const safe = toError(err);
-      this.logger.error({ err: safe, method: 'findOwnerLimitAnchor', userId }, 'Failed to read the export limit anchor');
+      this.logger.error({ err: safe, method, userId }, 'Failed to read the export limit anchor');
       return { data: null, error: safe };
     }
   }

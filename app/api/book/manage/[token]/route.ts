@@ -36,6 +36,37 @@ function settleable(meetingStatus: string | null | undefined): boolean {
   return meetingStatus !== 'held' && meetingStatus !== 'cancelled';
 }
 
+/**
+ * Is this MISSED session the client's to rearrange?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `settleable` above says a no-show is unresolved, which is true of the state
+ * and not of the decision. The owner's dialog asks what happens next and has
+ * three answers — leave it, invite the client to pick, or book a make-up
+ * themselves — and only the middle one puts the next move in the client's
+ * hands.
+ *
+ * Nothing recorded that answer, so the portal offered EVERY missed session a
+ * Change-date button. An owner who charged for a no-show and deliberately
+ * added no make-up found the client invited to rearrange it anyway, over an
+ * hour they had already paid for.
+ *
+ * `rebook_invited_at` is that answer, stamped by the outcome route at the
+ * moment the invitation is sent. No stamp, no offer: the owner is handling it,
+ * or has already settled it.
+ *
+ * Every other status is unchanged — this narrows the missed case alone.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function clientMayRearrange(
+  meetingStatus: string | null | undefined,
+  rebookInvitedAt: string | null | undefined
+): boolean {
+  if (!settleable(meetingStatus)) return false;
+  if (meetingStatus === 'no_show') return Boolean(rebookInvitedAt);
+  return true;
+}
+
 // GET /api/book/manage/[token]
 // Returns booking details for the token holder
 /**
@@ -108,7 +139,9 @@ async function packageMeetings(
   if (!rows?.length) {
     const { data: sessionRows } = await supabaseServer
       .from('scheduling_meetings')
-      .select('id, start_time, end_time, meeting_status, session_number, occurrence_number, booking_id, replaces_meeting_id')
+      .select(
+        'id, start_time, end_time, meeting_status, session_number, occurrence_number, booking_id, replaces_meeting_id, rebook_invited_at'
+      )
       .in('booking_id', containerIds)
       .eq('user_id', booking.user_id)
       .not('session_number', 'is', null)
@@ -245,7 +278,17 @@ async function packageMeetings(
            * to rearrange their day — and the session is theirs to rebook.
            */
           canModify:
+            /*
+             * `open` was `settleable(...)`, which keeps a missed session open
+             * on the state alone. The OWNER's answer decides it now: only a
+             * no-show they invited the client to rearrange is the client's to
+             * move — see `clientMayRearrange`.
+             */
             open &&
+            clientMayRearrange(
+              row.meeting_status as string | null,
+              row.rebook_invited_at as string | null
+            ) &&
             !alreadyReplaced.has(row.id as string) &&
             hoursAway !== null &&
             (hoursAway <= 0 || hoursAway > noticeHours),
@@ -301,12 +344,34 @@ async function packageMeetings(
       endTime: row.end_time as string | null,
       status: row.status as string,
       /*
+       * The OLD package shape, whose sessions are bookings rather than
+       * meetings. It carries the same four facts the new shape does, because
+       * the page reads one type for both — and without them a child booking
+       * rendered with no outcome, no replacement and no session id.
+       */
+      meetingStatus: (row.meeting_status as string | null) ?? null,
+      /* A child booking is never a make-up: `replaces_meeting_id` lives on a
+         MEETING, and this shape has none. */
+      alreadyReplaced: false,
+      /* Nor does it record attempts — a move rewrites the booking's own time. */
+      wasMoved: false,
+      /* And it IS its own booking, so it is addressed by token alone. */
+      meetingId: '',
+      /*
        * The same three conditions the single booking is judged by: it has to be
-       * standing, dated, and far enough away.
+       * standing, dated, and far enough away — and, for a missed one, invited.
        */
       canModify:
         row.status === 'confirmed' &&
-        settleable(row.meeting_status as string | null) &&
+        /*
+         * `null` for the invitation, not a column read: `rebook_invited_at`
+         * lives on `scheduling_meetings`, and these rows are BOOKINGS. Naming
+         * it in the select above would have PostgREST reject the whole query.
+         *
+         * So a missed child booking is closed to the client, which is the same
+         * answer the new shape gives when no invitation was recorded.
+         */
+        clientMayRearrange(row.meeting_status as string | null, null) &&
         hoursAway !== null &&
         hoursAway > noticeHours,
       /** Why not, when not — so the row can say it rather than go quiet. */
@@ -706,7 +771,7 @@ export async function GET(
         .eq('user_id', booking.user_id),
       supabaseServer
         .from('payment_plan_installments')
-        .select('installment_number, label, status, amount, currency, due_date, paid_at, invoice_id')
+        .select('installment_number, label, status, amount, currency, due_date, paid_at, invoice_id, transaction_id')
         .in('booking_id', moneyIds)
         .eq('user_id', booking.user_id),
     ]);
@@ -849,6 +914,26 @@ export async function GET(
       if (id && amount > 0) refundByInvoice.set(id, amount);
     }
 
+    /*
+     * ── AND THE PERIODS CHARGED WITHOUT AN INVOICE ──────────────────────────
+     *
+     * The note above says a period with no invoice had nothing charged, so
+     * nothing could come back. That is true of a milestone nobody has billed
+     * yet, and false of a period taken straight off the card: it has a
+     * `transaction_id`, no invoice, and its refund is flattened onto the
+     * charge. Those periods told the client nothing came back.
+     *
+     * The booking-level `refundedTotal` above already counts this money, so
+     * the page's own total disagreed with the list beneath it — the client saw
+     * a refund announced and no row owning it.
+     */
+    const refundByCharge = new Map<string, number>();
+
+    for (const charge of directPayments ?? []) {
+      const amount = Number(charge.refunded_amount ?? 0);
+      if (charge.id && amount > 0) refundByCharge.set(String(charge.id), amount);
+    }
+
     const plan =
       installments && installments.length > 0
         ? {
@@ -909,10 +994,13 @@ export async function GET(
                  * ─────────────────────────────────────────────────────────
                  */
                 paidAt: (row.paid_at as string | null) ?? null,
+                /* Whichever record holds this period's money. One or the other. */
                 refunded:
                   typeof row.invoice_id === 'string'
                     ? refundByInvoice.get(row.invoice_id) ?? null
-                    : null,
+                    : typeof row.transaction_id === 'string'
+                      ? refundByCharge.get(row.transaction_id) ?? null
+                      : null,
               })),
           }
         : null;

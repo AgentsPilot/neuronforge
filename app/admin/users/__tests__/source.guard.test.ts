@@ -50,9 +50,9 @@ const SCREEN_FILES = [
   ...DATA_EXPORT_FILES(),
 ];
 
-/** Data export DE-10a: the Data export box, its reason dialog and its copy. */
+/** Data export DE-10a: the Data export box, its send dialog (MX-5) and its copy. */
 function DATA_EXPORT_FILES(): string[] {
-  return [`${ROOT}/components/DataExportBlock.tsx`, `${ROOT}/dataExportCopy.ts`];
+  return [`${ROOT}/components/DataExportBlock.tsx`, `${ROOT}/components/DataExportSendDialog.tsx`, `${ROOT}/dataExportCopy.ts`];
 }
 
 /**
@@ -626,12 +626,18 @@ describe('the screen logs through the client logger, never the server one (follo
 describe('the Data export box (data export DE-10a; export MX-3.1 placeholder, BQ-E6.1-1)', () => {
   const block = () => codeOf(read(`${ROOT}/components/DataExportBlock.tsx`));
 
-  it('MX-3.1: the placeholder makes no request and reads nothing from the browser seam', () => {
+  it('MX-5: the box makes no request and reads nothing from the browser seam; only its dialog reads, and only export-sends', () => {
     const code = block();
     expect(code).not.toMatch(/fetch\(/);
     expect(code).not.toContain('@/lib/client/businessOsDataExport');
     expect(code).not.toMatch(/data-exports/);
-    expect(code).toContain('{DATA_EXPORT_COPY.placeholder}');
+    expect(code).toContain('{DATA_EXPORT_COPY.purpose}');
+    const dialog = codeOf(read(`${ROOT}/components/DataExportSendDialog.tsx`));
+    expect(dialog).not.toContain('@/lib/client/businessOsDataExport');
+    expect(dialog).not.toMatch(/data-exports/);
+    expect(dialog).toContain('`/api/admin/users/${encodeURIComponent(accountId)}/export-sends`');
+    expect(dialog.match(/fetch\(/g)).toHaveLength(2);
+    expect(dialog.match(/fetch\(url,/g)).toHaveLength(2);
   });
 
   it('the box never touches the danger area: no danger-area id, no cleanup panel, no delete dialog', () => {
