@@ -1976,12 +1976,65 @@ function mapWritableData(
  * user's data is worse than a failed write, and it is what stringifying quietly
  * produces.
  */
+/**
+ * The value as a phone number, or null when it cannot be one.
+ *
+ * Permissive by design — see the note at the call site. `+`, spaces, dashes,
+ * dots and brackets are formatting and are ignored; what must survive is seven
+ * digits. A leading minus is not formatting: it is the signature of a
+ * spreadsheet having done arithmetic on something that was never a sum.
+ */
+function usablePhoneOrNull(value: string | number | boolean): string | null {
+  const text = String(value).trim();
+  if (text === '') return null;
+
+  /* Arithmetic, not a phone. `-7475` is what a sheet returns for a dash-
+     separated number it decided to evaluate. */
+  if (text.startsWith('-')) return null;
+
+  const digits = text.replace(/\D/g, '');
+  if (digits.length < 7) return null;
+
+  return text;
+}
+
 function resolveWriteValue(
   entity: ResolvedEntity,
   field: ResolvedField,
   value: unknown,
   timezone: string | undefined
 ): unknown {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A PHONE COLUMN DOES NOT TAKE A NUMBER THAT CANNOT BE A PHONE.
+   *
+   * Measured on a live import, 2026-11-05: of 39 contacts filed from a
+   * spreadsheet, THIRTY-ONE carried a phone like `-7475`, `-10022`, `-4022`.
+   * Negative integers. They went from the cell, through the importer's
+   * mapping, into the CRM unexamined, because nothing between the sheet and
+   * the column ever asked whether the value could be a telephone number.
+   *
+   * Whatever produced them in the sheet — a dash-separated number the
+   * spreadsheet evaluated as subtraction is the likeliest — is the owner's
+   * data to fix. What is ours is that we wrote it down and showed it to them
+   * as a client's phone number.
+   *
+   * The rule is deterministic and deliberately permissive, because the world's
+   * phone formats are not ours to police: keep a leading `+`, ignore spaces,
+   * dashes, dots and brackets, and require at least seven digits. Anything
+   * else becomes NULL — the honest record of "we were not given a usable
+   * number" — rather than junk that looks like one.
+   *
+   * NULL rather than a refusal on purpose. An unusable phone must not cost the
+   * owner the contact: the name and the email are the valuable part, and an
+   * import that threw away whole rows over a malformed phone would be the
+   * worse failure.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (field.name === 'phone' && value !== null && typeof value !== 'object') {
+    return usablePhoneOrNull(value);
+  }
+
   if (value === null || typeof value !== 'object') return value;
 
   if (isDateExpr(value)) {

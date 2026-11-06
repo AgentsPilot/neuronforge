@@ -9,6 +9,7 @@ import { CancelReasonDialog } from '@/components/scheduling/CancelReasonDialog';
 import { businessClock, businessDateKey, businessInstant, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 import { windowsForDate, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
 import { closedDayVerdict } from '@/lib/scheduling/closedDay';
+import { holdsSlot } from '@/lib/business-os/bookingStatus';
 import { createLogger } from '@/lib/logger';
 import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import type { WeeklyAvailability } from './AvailabilityEditor';
@@ -494,6 +495,50 @@ export function SchedulingCalendarView({
   /** Why a date is closed, for the header badge. No hour: see `closedDayVerdict`. */
   const closedFor = (date: Date) => closedDayVerdict(timeOff, columnDateKey(date));
 
+  /**
+   * Is this hour already somebody's?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CELL USED TO ACCEPT A CLICK ON ANY HOUR AT ALL.
+   *
+   * Only `isBlockedExternal` — the owner's other calendar — stopped one. An
+   * hour holding one of OUR bookings looked exactly like a free one, so the
+   * owner clicked 10:00 on Tuesday, chose a service, chose a client, and was
+   * refused at the last step:
+   *
+   *     This time overlaps an existing booking
+   *
+   * The public booking page never offered that hour; the owner's own calendar
+   * did. Three steps of work, then a refusal that was right all along.
+   *
+   * `holdsSlot` is the same rule the rest of the product uses, so a cancelled
+   * or missed appointment correctly frees its hour again rather than blocking
+   * the diary for ever.
+   *
+   * NOT a judgement about working hours. An owner books outside their usual
+   * hours all the time and that stays unremarkable — this is only about an
+   * hour that is genuinely occupied.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const isHourTaken = (date: Date, hour: number): boolean => {
+    const cellStart = new Date(date);
+    cellStart.setHours(hour, 0, 0, 0);
+    const cellEnd = new Date(cellStart);
+    cellEnd.setHours(hour + 1, 0, 0, 0);
+
+    return getBookingsForDay(date).some(booking => {
+      if (!holdsSlot(booking)) return false;
+
+      const start = new Date(booking.start_time).getTime();
+      const end = new Date(booking.end_time ?? booking.start_time).getTime();
+      if (Number.isNaN(start) || Number.isNaN(end)) return false;
+
+      /* existing_start < cell_end AND existing_end > cell_start — the same
+         comparison the server's overlap check makes. */
+      return start < cellEnd.getTime() && end > cellStart.getTime();
+    });
+  };
+
   const isHourAvailable = (date: Date, hour: number): boolean => {
     if (!availability) return false;
 
@@ -815,6 +860,8 @@ export function SchedulingCalendarView({
                     const isToday = date.toDateString() === new Date().toDateString();
                     const isAvailable = isHourAvailable(date, hour);
                     const isBlockedExternal = isHourBlockedByExternal(date, hour);
+                    /* Occupied by one of our own bookings — see `isHourTaken`. */
+                    const isTaken = isHourTaken(date, hour);
                     /*
                       Drawn like an external busy slot — the hatch already means
                       "not an open hour" on this grid — but in amber rather than
@@ -827,9 +874,11 @@ export function SchedulingCalendarView({
                     return (
                       <div
                         key={dayIndex}
-                        onClick={() => !isBlockedExternal && onSlotClick?.(date, hour)}
+                        onClick={() =>
+                          !isBlockedExternal && !isTaken && onSlotClick?.(date, hour)
+                        }
                         className={`border-e border-white/5 last:border-e-0 transition-all duration-200 group relative ${
-                          isBlockedExternal
+                          isBlockedExternal || isTaken
                             ? 'cursor-not-allowed'
                             : 'cursor-pointer'
                         } ${

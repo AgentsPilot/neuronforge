@@ -1198,7 +1198,10 @@ export class SchedulingBookingRepository {
        */
       let meetingQuery = this.supabase
         .from('scheduling_meetings')
-        .select('booking_id')
+        /* `start_time` too: it is the hour that actually clashes. A package's
+           container booking has none of its own, so without this the caller
+           has nothing true to name — see the substitution below. */
+        .select('booking_id, start_time, end_time')
         .eq('user_id', userId)
         /* existing_start < new_end AND existing_end > new_start */
         .lt('start_time', endTime)
@@ -1232,7 +1235,45 @@ export class SchedulingBookingRepository {
 
       if (error) throw error;
 
-      return { data: data || [], error: null };
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE CLASHING HOUR, NOT THE CONTAINER'S MISSING ONE.
+       *
+       * What was found is a MEETING; what is returned is its parent BOOKING.
+       * For a package that parent carries no `start_time` at all — the hours
+       * live on its sessions — so a caller naming `start_time` had nothing,
+       * and the owner was shown
+       *
+       *     This time overlaps an existing booking at 1970-01-01T00:00:00.000Z
+       *
+       * because `new Date(null)` is the epoch. The refusal was right and the
+       * sentence was nonsense, which reads as a broken product rather than a
+       * busy diary.
+       *
+       * So where the booking has no hour of its own, the clashing session's is
+       * put in its place. A booking that HAS one keeps it: that is its own
+       * appointment and already the right answer.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const clashingMeeting = new Map<string, { start_time?: string; end_time?: string }>();
+      for (const meeting of busy ?? []) {
+        const id = (meeting as { booking_id?: string | null }).booking_id;
+        if (typeof id === 'string' && !clashingMeeting.has(id)) {
+          clashingMeeting.set(id, meeting as { start_time?: string; end_time?: string });
+        }
+      }
+
+      const resolved = (data ?? []).map(booking => {
+        const row = booking as Record<string, unknown>;
+        if (row.start_time) return booking;
+
+        const session = clashingMeeting.get(String(row.id));
+        if (!session?.start_time) return booking;
+
+        return { ...row, start_time: session.start_time, end_time: session.end_time ?? row.end_time };
+      });
+
+      return { data: resolved as typeof data, error: null };
     } catch (error) {
       logger.error({ err: error, userId, startTime, endTime }, 'Failed to check booking overlap');
       return { data: null, error: error as Error };

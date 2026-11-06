@@ -24,6 +24,14 @@ export interface RowsToObjectsConfig {
   /** When true, keep header text as-is. Otherwise lowercase. */
   preserve_case?: boolean
   /**
+   * The sheet row the FIRST element of `data` came from, 1-based.
+   *
+   * A read of `A2:Z200` passes 2. Without it `source_row` would number from
+   * the array rather than from the sheet, and a write-back would mark the
+   * wrong line. Defaults to 1 — a read that started at the top.
+   */
+  row_offset?: number
+  /**
    * 1-based row number where headers are located (default: 1).
    * Rows before header_row are skipped. Data starts from header_row + 1.
    * Example: header_row: 4 means row 4 has headers, rows 1-3 are skipped.
@@ -103,13 +111,51 @@ export function rowsToObjects(data: any[], config: RowsToObjectsConfig = {}): an
 
   const preserveCase = config.preserve_case === true
 
-  return dataRows.map((row: any[]) => {
+  /*
+   * Where each object came from, in the sheet's own numbering.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WITHOUT IT, NOTHING DOWNSTREAM CAN WRITE BACK.
+   *
+   * A row becomes an object here and its position is lost. That is fine for
+   * reading and fatal for marking: the spreadsheet importer files a contact
+   * and then has no way to say WHICH row it filed, so an owner re-reads the
+   * same sheet every day with nothing on it to show what was already taken.
+   *
+   * The scatter does expose a 0-based `index`, but the template resolver does
+   * only `{{path}}` lookups — no arithmetic — so `{{index + 2}}` cannot be
+   * written, and the offset between an array position and a sheet row depends
+   * on where the read started anyway. The row number has to travel WITH the
+   * object.
+   *
+   * `source_row` is 1-based, like the row numbers down the left of the sheet,
+   * and it accounts for both the header and any rows the read skipped —
+   * `row_offset` is what the caller read from. Default 1, which is the plain
+   * "I read from the top" case.
+   *
+   * Written only when it does not collide with a real column. A sheet whose
+   * header literally says "source_row" means its own data, and silently
+   * overwriting that would be the worse failure.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const rowOffset = typeof config.row_offset === 'number' ? config.row_offset : 1
+  const headerRows = config.headers ? 0 : headerRowIndex + 1
+  const takenKeys = new Set(
+    headers.map((h: string, i: number) => {
+      const trimmed = (h || `column_${i}`).toString().trim()
+      return preserveCase ? trimmed : trimmed.toLowerCase()
+    })
+  )
+  const stampRow = !takenKeys.has('source_row')
+
+  return dataRows.map((row: any[], rowIndex: number) => {
     const obj: Record<string, any> = {}
     headers.forEach((header: string, index: number) => {
       const trimmed = (header || `column_${index}`).toString().trim()
       const key = preserveCase ? trimmed : trimmed.toLowerCase()
       obj[key] = row[index] !== undefined ? row[index] : null
     })
+    if (stampRow) obj.source_row = rowOffset + headerRows + rowIndex
     return obj
   })
 }
