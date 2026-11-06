@@ -59,6 +59,20 @@ jest.mock('@/lib/logger', () => {
   return { createLogger: () => logger };
 });
 
+/*
+ * `installedAutomations` reads `agent_executions` through `supabaseServer`
+ * DIRECTLY (install.ts:865) rather than through a repository, so there is no
+ * repository seam to stub, and that read sits OUTSIDE both of the file's try
+ * blocks, so a bare `supabaseServer: {}` would throw rather than fail soft.
+ * In this suite the read was a real request to the placeholder Supabase URL.
+ * An unconfigured fake answers it the way a healthy empty table does, and
+ * `deadLetteredRuns` turns that into the same empty map the failed read
+ * produced -- so no case here changes. See tests/jest-no-network.ts.
+ */
+jest.mock('@/lib/supabaseServer', () => ({
+  supabaseServer: jest.requireActual('@/tests/helpers/fakePostgrest').createFakeSupabase().client,
+}));
+
 import { installedAutomations } from '../install';
 
 const USER = 'owner-1';

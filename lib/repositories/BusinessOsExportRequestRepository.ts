@@ -23,6 +23,15 @@
 // - `listRecentForUser` (MX-1b history) filters on user_id and orders
 //   `requested_at DESC, id DESC`: a total order, and the limit counts
 //   REQUESTS, so the history never cuts one request's module lines in half.
+//   MX-4b (H-1): an optional keyset cursor `before` returns only rows strictly
+//   older in that same order. The cursor time goes back to the database
+//   exactly as it came out (pattern-checked, never through `Date`, SA C-4),
+//   quoted inside the `.or()`. MX-5: an optional `origin` filter keeps the
+//   admin box to support's sends (BQ-E8-3); without it nothing changes.
+// - `findOwnerLimitAnchor` (MX-4b, N-1) reads, on user_id and origin `owner`,
+//   the row the start function would anchor its `daily_limit` answer on.
+//   `findAdminLimitAnchor` (MX-5) is the same read on origin `admin`, for the
+//   admin's own 2 per owner per 24 hours. Both are one private read.
 // - `hasAdminOriginRequest` (MX-4a receipt facts, XC-12) is a head count on
 //   user_id and origin `admin`.
 // - `markRequestedEmailSent` (MX-1b) is a compare-and-set on id + user_id +
@@ -45,9 +54,17 @@ import {
   CODE_SHAPE,
   EXPORT_REQUEST_ORIGINS,
   MODULE_EXPORT_POLICY,
+  MODULE_JOB_NOT_COUNTED,
   type ExportRequestOrigin,
   type StartOutcome,
 } from '@/lib/business-os/data-export/moduleExportPolicy';
+import { adminLimitAnchorOffset, ownerLimitAnchorOffset } from '@/lib/business-os/data-export/nextOwnerExportAt';
+import {
+  HISTORY_PAGE_SIZE,
+  historyCursorSchema,
+  historyCursorTimestampSchema,
+  type ExportHistoryCursor,
+} from '@/lib/business-os/data-export/exportHistoryCursor';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
 
 /** The start function of migration 20261095. */
@@ -79,7 +96,7 @@ export type ExportRequest = z.infer<typeof exportRequestRowSchema>;
 export const EXPORT_REQUEST_HISTORY_COLUMNS = 'id, origin, modules, requested_at';
 
 /** Requests per history read: default and ceiling (SA MX1B-9). */
-export const HISTORY_REQUEST_LIMIT = 20;
+export const HISTORY_REQUEST_LIMIT = HISTORY_PAGE_SIZE;
 export const HISTORY_REQUEST_LIMIT_MAX = 50;
 
 const historyRequestRowSchema = z.object({
@@ -97,6 +114,24 @@ export interface ExportRequestSummary {
   modules: string[];
   requestedAt: string;
 }
+
+/**
+ * The limit-anchor read (MX-4b N-1): `requested_at` plus the jobs that make the
+ * request count. A real column in the `!inner` embed, never an aggregate (the
+ * MX-4a C-1 rule: an aggregate-only `!inner` embed is silently inert).
+ */
+export const OWNER_LIMIT_ANCHOR_COLUMNS = 'requested_at, business_os_export_module_jobs!inner(status)';
+
+const notCounted = new Set<string>(MODULE_JOB_NOT_COUNTED);
+
+const ownerLimitAnchorRowSchema = z.object({
+  requested_at: historyCursorTimestampSchema,
+  // At least one job, and at least one of them counted: the embed filter did its work (fail closed).
+  business_os_export_module_jobs: z
+    .array(z.object({ status: z.string() }))
+    .min(1)
+    .refine((jobs) => jobs.some((job) => !notCounted.has(job.status)), { message: 'No counted job in the anchor row' }),
+});
 
 /** The modules of a new request: MX-0 ids, at least one, no duplicate. */
 const modulesSchema = z
@@ -128,6 +163,8 @@ export const EXPORT_REQUEST_ERROR = {
   UNKNOWN_ACCOUNT: 'unknown_account',
   /** The start function answered zero rows, several, or a row of another shape. */
   UNEXPECTED_RESULT: 'unexpected_result',
+  /** A read returned a row of another shape (MX-4b limit anchor: fail closed). */
+  UNEXPECTED_ROW: 'unexpected_row',
 } as const;
 
 /** A fresh Error carrying only code and message, so `details` never reaches a log. */
@@ -272,18 +309,39 @@ export class BusinessOsExportRequestRepository {
    * `id DESC` as the tie-break, so the page is a total order and stable between
    * reads. `limit` counts requests (default 20, clamped 1..50). Rows are parsed
    * one at a time: a bad row is logged by id and dropped (SA MX-1a comment 2).
+   *
+   * MX-4b (H-1): with `before` (the last request already shown), only rows
+   * strictly older in the same total order: `requested_at < t`, or the same
+   * `requested_at` and `id < id`. `t` is sent exactly as the database wrote it
+   * (SA C-4: re-serialising through `Date` would drop the microseconds and skip
+   * or repeat rows at the page edge), and both values are double-quoted inside
+   * the `.or()` because a timestamp holds `:` and `+`.
+   *
+   * MX-5 (BQ-E8-3): with `origin`, only that origin's requests (the admin box
+   * lists support's sends only). Without it, every origin, as before.
    */
-  async listRecentForUser(userId: string, options: { limit?: number } = {}): Promise<RepositoryResult<ExportRequestSummary[]>> {
-    if (!uuid.safeParse(userId).success) {
-      return { data: null, error: coded(EXPORT_REQUEST_ERROR.INVALID_INPUT, 'Invalid input: user id') };
+  async listRecentForUser(
+    userId: string,
+    options: { limit?: number; before?: ExportHistoryCursor; origin?: ExportRequestOrigin } = {}
+  ): Promise<RepositoryResult<ExportRequestSummary[]>> {
+    const cursor = options.before === undefined ? null : historyCursorSchema.safeParse(options.before);
+    const originOk = options.origin === undefined || (EXPORT_REQUEST_ORIGINS as readonly string[]).includes(options.origin);
+    if (!uuid.safeParse(userId).success || (cursor !== null && !cursor.success) || !originOk) {
+      return { data: null, error: coded(EXPORT_REQUEST_ERROR.INVALID_INPUT, 'Invalid input: user id, cursor or origin') };
     }
     const requested = Number.isInteger(options.limit) ? (options.limit as number) : HISTORY_REQUEST_LIMIT;
     const limit = Math.min(Math.max(requested, 1), HISTORY_REQUEST_LIMIT_MAX);
     try {
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('business_os_export_requests')
         .select(EXPORT_REQUEST_HISTORY_COLUMNS)
-        .eq('user_id', userId)
+        .eq('user_id', userId);
+      if (options.origin !== undefined) query = query.eq('origin', options.origin);
+      if (cursor?.success) {
+        const { requestedAt, id } = cursor.data;
+        query = query.or(`requested_at.lt."${requestedAt}",and(requested_at.eq."${requestedAt}",id.lt."${id}")`);
+      }
+      const { data, error } = await query
         .order('requested_at', { ascending: false })
         .order('id', { ascending: false })
         .limit(limit);
@@ -305,6 +363,73 @@ export class BusinessOsExportRequestRepository {
     } catch (err) {
       const safe = toError(err);
       this.logger.error({ err: safe, method: 'listRecentForUser', userId }, 'Failed to read the export requests');
+      return { data: null, error: safe };
+    }
+  }
+
+  /**
+   * MX-4b (N-1, SA C-5): the row the start function of migration 20261095
+   * anchors its owner `daily_limit` answer on, read with the same predicate:
+   * this account's `owner`-origin requests with `requested_at > since` that
+   * have at least one job NOT in MODULE_JOB_NOT_COUNTED, newest first, the row
+   * at OFFSET `OWNER_DAILY_LIMIT - 1`. `requestedAt: null` means under the
+   * limit. Admin-origin requests never count here: the SQL counts
+   * `req.origin = p_origin` only (XC-20, counted apart).
+   *
+   * `since` is the caller's `now - DAILY_WINDOW_HOURS` (`ownerLimitWindowStart`).
+   * The `!inner` embed selects a real column and is filtered on the embedded
+   * status; the returned row is parsed and must carry a counted job, otherwise
+   * `unexpected_row` (fail closed, MX-4a C-1 rule). A hint only: the POST
+   * still decides (K-8).
+   */
+  async findOwnerLimitAnchor(userId: string, since: string): Promise<RepositoryResult<{ requestedAt: string | null }>> {
+    return this.findLimitAnchor('owner', userId, since);
+  }
+
+  /**
+   * MX-5 (workplan §4.3): the same read as `findOwnerLimitAnchor`, on this
+   * owner's `admin`-origin requests, at OFFSET `ADMIN_DAILY_LIMIT_PER_OWNER - 1`.
+   * The admin box's "you can send again at" hint; the POST still decides.
+   */
+  async findAdminLimitAnchor(userId: string, since: string): Promise<RepositoryResult<{ requestedAt: string | null }>> {
+    return this.findLimitAnchor('admin', userId, since);
+  }
+
+  /**
+   * The one limit-anchor read (SA S-3 of MX-5): the offset and the log's
+   * method name both follow from the origin, never from a caller's number.
+   */
+  private async findLimitAnchor(
+    origin: ExportRequestOrigin,
+    userId: string,
+    since: string
+  ): Promise<RepositoryResult<{ requestedAt: string | null }>> {
+    if (!uuid.safeParse(userId).success || !historyCursorTimestampSchema.safeParse(since).success) {
+      return { data: null, error: coded(EXPORT_REQUEST_ERROR.INVALID_INPUT, 'Invalid input: user id or window start') };
+    }
+    const method = origin === 'owner' ? 'findOwnerLimitAnchor' : 'findAdminLimitAnchor';
+    const offset = origin === 'owner' ? ownerLimitAnchorOffset(MODULE_EXPORT_POLICY) : adminLimitAnchorOffset(MODULE_EXPORT_POLICY);
+    try {
+      const { data, error } = await this.supabase
+        .from('business_os_export_requests')
+        .select(OWNER_LIMIT_ANCHOR_COLUMNS)
+        .eq('user_id', userId)
+        .eq('origin', origin)
+        .gt('requested_at', since)
+        .not('business_os_export_module_jobs.status', 'in', `(${MODULE_JOB_NOT_COUNTED.join(',')})`)
+        .order('requested_at', { ascending: false })
+        .range(offset, offset);
+      if (error) throw error;
+      const rows = Array.isArray(data) ? data : [];
+      if (rows.length === 0) return { data: { requestedAt: null }, error: null };
+      const row = rows.length === 1 ? ownerLimitAnchorRowSchema.safeParse(rows[0]) : null;
+      if (!row || !row.success) {
+        throw coded(EXPORT_REQUEST_ERROR.UNEXPECTED_ROW, 'The limit anchor read returned a row of another shape');
+      }
+      return { data: { requestedAt: row.data.requested_at }, error: null };
+    } catch (err) {
+      const safe = toError(err);
+      this.logger.error({ err: safe, method, userId }, 'Failed to read the export limit anchor');
       return { data: null, error: safe };
     }
   }

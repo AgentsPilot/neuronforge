@@ -42,6 +42,7 @@ const mockStartForOwner = jest.fn();
 const mockFindById = jest.fn();
 const mockListRecent = jest.fn();
 const mockMarkSent = jest.fn();
+const mockLimitAnchor = jest.fn();
 const requestRepoCtor = jest.fn();
 jest.mock('@/lib/repositories/BusinessOsExportRequestRepository', () => ({
   BusinessOsExportRequestRepository: jest.fn().mockImplementation((...args: unknown[]) => {
@@ -51,6 +52,7 @@ jest.mock('@/lib/repositories/BusinessOsExportRequestRepository', () => ({
       findByIdForUser: (...a: unknown[]) => mockFindById(...a),
       listRecentForUser: (...a: unknown[]) => mockListRecent(...a),
       markRequestedEmailSent: (...a: unknown[]) => mockMarkSent(...a),
+      findOwnerLimitAnchor: (...a: unknown[]) => mockLimitAnchor(...a),
     };
   }),
 }));
@@ -117,6 +119,7 @@ beforeEach(() => {
   mockLogAndFlush.mockResolvedValue(undefined);
   mockListRecent.mockResolvedValue({ data: [], error: null });
   mockListJobs.mockResolvedValue({ data: [], error: null });
+  mockLimitAnchor.mockResolvedValue({ data: { requestedAt: null }, error: null });
 });
 
 const allLogText = () => JSON.stringify(logCalls);
@@ -340,9 +343,10 @@ describe('GET', () => {
       ],
       error: null,
     });
-    const response = await GET(get(`?userId=${OTHER}`));
+    const response = await GET(get());
     expect(response.status).toBe(200);
-    expect(mockListRecent).toHaveBeenCalledWith(USER.id);
+    // MX-4b: one row more than a page (20 + 1) is read, to know `hasMore`.
+    expect(mockListRecent).toHaveBeenCalledWith(USER.id, { limit: 21 });
     expect(mockListJobs).toHaveBeenCalledWith(USER.id, [REQUEST, REQUEST_OLD]);
     expect(mockRateLimit).toHaveBeenCalledWith(expect.anything(), 'export-request-history', expect.objectContaining({ limit: 120 }));
     expect(await response.json()).toEqual({
@@ -360,8 +364,109 @@ describe('GET', () => {
           },
           { requestId: REQUEST_OLD, requestedAt: '2026-10-26T09:00:00.000Z', origin: 'owner', modules: [{ module: 'bookings', status: 'failed', sentAt: null, emailCount: 0 }] },
         ],
+        hasMore: false,
+        nextExportAt: null,
       },
     });
+  });
+
+  // ── MX-4b: "Show older" (H-1) and "export again at" on open (N-1) ──────────
+
+  const summary = (n: number, requestedAt = T) => ({
+    id: `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`,
+    origin: 'owner' as const,
+    modules: ['clients'],
+    requestedAt,
+  });
+
+  it('T-10: no cursor, 21 rows read → the first 20 returned, hasMore true, and only their jobs are read', async () => {
+    const rows = Array.from({ length: 21 }, (_, i) => summary(21 - i));
+    mockListRecent.mockResolvedValue({ data: rows, error: null });
+    const response = await GET(get());
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.hasMore).toBe(true);
+    expect(body.data.requests.map((r: { requestId: string }) => r.requestId)).toEqual(rows.slice(0, 20).map((r) => r.id));
+    expect(mockListJobs).toHaveBeenCalledWith(USER.id, rows.slice(0, 20).map((r) => r.id));
+    expect(body.data).toHaveProperty('nextExportAt', null);
+  });
+
+  it('T-10: exactly 20 rows → hasMore false', async () => {
+    mockListRecent.mockResolvedValue({ data: Array.from({ length: 20 }, (_, i) => summary(i + 1)), error: null });
+    const body = await (await GET(get())).json();
+    expect(body.data.hasMore).toBe(false);
+    expect(body.data.requests).toHaveLength(20);
+  });
+
+  it('T-11: a valid cursor reaches the repository exactly as sent (microseconds kept, never re-serialised), with the session user only', async () => {
+    const micro = '2026-10-31T17:35:52.018123+00:00';
+    const response = await GET(get(`?before=${encodeURIComponent(micro)}&beforeId=${REQUEST}`));
+    expect(response.status).toBe(200);
+    expect(mockListRecent).toHaveBeenCalledWith(USER.id, { limit: 21, before: { requestedAt: micro, id: REQUEST } });
+    expect(mockListRecent).toHaveBeenCalledTimes(1);
+  });
+
+  it('an older page (a cursor) skips the limit-hint read and answers nextExportAt null (SA optimisation)', async () => {
+    mockLimitAnchor.mockResolvedValue({ data: { requestedAt: '2026-11-02T08:30:00.123+00:00' }, error: null });
+    const body = await (await GET(get(`?before=${encodeURIComponent(T)}&beforeId=${REQUEST}`))).json();
+    expect(mockLimitAnchor).not.toHaveBeenCalled();
+    expect(body.data.nextExportAt).toBeNull();
+  });
+
+  it.each([
+    ['half a cursor (before only)', `?before=${encodeURIComponent(T)}`],
+    ['half a cursor (beforeId only)', `?beforeId=${REQUEST}`],
+    ['a bad uuid', `?before=${encodeURIComponent(T)}&beforeId=not-a-uuid`],
+    ['a time that is not a timestamp', `?before=yesterday&beforeId=${REQUEST}`],
+    ['an over-long timestamp', `?before=${encodeURIComponent(`2026-10-31T17:35:52.018123+00:00${'0'.repeat(20)}`)}&beforeId=${REQUEST}`],
+    ['a quote that would break out of the filter', `?before=${encodeURIComponent('2026-10-31T17:35:52Z",id.gt."0')}&beforeId=${REQUEST}`],
+    ['an empty before', `?before=&beforeId=${REQUEST}`],
+    ['an extra key (userId)', `?userId=${OTHER}`],
+    ['an extra key beside a valid cursor', `?before=${encodeURIComponent(T)}&beforeId=${REQUEST}&limit=50`],
+    ['a repeated key', `?before=${encodeURIComponent(T)}&before=${encodeURIComponent(T)}&beforeId=${REQUEST}`],
+  ])('T-12: %s → 400 invalid_input, nothing read', async (_label, query) => {
+    const response = await GET(get(query));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ success: false, code: 'invalid_input' });
+    expect(mockListRecent).not.toHaveBeenCalled();
+    expect(mockLimitAnchor).not.toHaveBeenCalled();
+    expect(mockRateLimit).not.toHaveBeenCalled();
+  });
+
+  it('T-12: 401 without a session comes before the query check', async () => {
+    mockGetUser.mockResolvedValue(null);
+    expect((await GET(get('?before=x'))).status).toBe(401);
+  });
+
+  it('T-13: the limit anchor is read for the session user from now - 24 h, and nextExportAt is the anchor + 24 h', async () => {
+    jest.useFakeTimers({ now: new Date('2026-11-02T12:00:00.000Z') });
+    try {
+      mockLimitAnchor.mockResolvedValue({ data: { requestedAt: '2026-11-02T08:30:00.123+00:00' }, error: null });
+      const body = await (await GET(get())).json();
+      expect(mockLimitAnchor).toHaveBeenCalledWith(USER.id, '2026-11-01T12:00:00.000Z');
+      expect(body.data.nextExportAt).toBe('2026-11-03T08:30:00.123Z');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('T-13: no anchor (one counted request, or failed-only requests: the repository answers null) → nextExportAt null', async () => {
+    mockLimitAnchor.mockResolvedValue({ data: { requestedAt: null }, error: null });
+    expect((await (await GET(get())).json()).data.nextExportAt).toBeNull();
+  });
+
+  it.each([
+    ['an error result', () => mockLimitAnchor.mockResolvedValue({ data: null, error: Object.assign(new Error('x'), { code: 'unexpected_row' }) })],
+    ['a rejection', () => mockLimitAnchor.mockRejectedValue(new Error('boom'))],
+  ])('T-13: the limit anchor read fails (%s) → nextExportAt null and a warn; the history is still served', async (_label, arrange) => {
+    arrange();
+    mockListRecent.mockResolvedValue({ data: [summary(1)], error: null });
+    const response = await GET(get());
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.nextExportAt).toBeNull();
+    expect(body.data.requests).toHaveLength(1);
+    expect(allLogText()).toContain('limit_anchor_unreadable');
   });
 
   it.each([

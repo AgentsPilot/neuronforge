@@ -25,6 +25,8 @@ function world(initial: { flag?: boolean; cancelAt?: number | null; rowFlag?: bo
     logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
     now: () => NOW,
     switches: () => ({ pricesEnabled: true }),
+    // D6 (SA W-6 a): no deletion request open; the real reader would reach the network.
+    deletionPending: async () => 'none' as const,
     mode: () => 'test',
     repo: {
       findByUser: async () => ({ data: { ...row }, error: null }),

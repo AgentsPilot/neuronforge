@@ -11,6 +11,9 @@
  * ── The steps, in order ────────────────────────────────────────────────────
  *   1. payment hold, FAIL CLOSED (R-1): an account awaiting payment cannot buy;
  *      an unreadable hold refuses too;
+ *  1b. D6 / DL-1b (BQ-34, XC-19): an open account deletion request refuses
+ *      ("Keep your account first"); an unreadable closure state refuses too.
+ *      From the closure repository's reader, never an entitlement;
  *   2. the package from the catalogue: ANY rejection of the source refuses
  *      (QA E-2), not only `BoostCatalogueInvalidError`;
  *   3. the Stripe mode from the server key (R-10);
@@ -71,7 +74,10 @@ export type BoostCheckoutRefusal =
   | 'not_eligible'
   | 'cap_reached'
   | 'reservation_failed'
-  | 'checkout_unavailable';
+  | 'checkout_unavailable'
+  // D6 / DL-1b (BQ-34): an account deletion request is open, or its state could not be read.
+  | 'deletion_pending'
+  | 'deletion_state_unreadable';
 
 /** The HTTP status of each refusal, for the route. */
 export const BOOST_CHECKOUT_REFUSAL_STATUS: Readonly<Record<BoostCheckoutRefusal, number>> = {
@@ -84,6 +90,9 @@ export const BOOST_CHECKOUT_REFUSAL_STATUS: Readonly<Record<BoostCheckoutRefusal
   cap_reached: 409,
   reservation_failed: 500,
   checkout_unavailable: 502,
+  deletion_pending: 409,
+  // SA optimisation note: one code and one status for this fault, as the plan checkout.
+  deletion_state_unreadable: 503,
 };
 
 export type BoostCheckoutOutcome =
@@ -120,6 +129,11 @@ export interface BoostCheckoutDeps {
   packageSource: BoostPackageSource;
   cap: BoostPurchaseCap;
   repo: Pick<BusinessOsBoostPurchaseRepository, 'reserve' | 'attachCheckout' | 'abandon'>;
+  /**
+   * D6 / DL-1b (§8; XC-19): is an account deletion request open for this
+   * account? `readDeletionPending` in production. REQUIRED, no default (SA W-6 b).
+   */
+  deletionPending: (accountId: string) => Promise<'none' | 'open' | 'unreadable'>;
   /** Lazy: a missing key throws, and that is `payments_unavailable`. */
   stripe: () => BoostStripeClient;
   /** Throws on an unknown key (fail closed). */
@@ -155,6 +169,22 @@ export async function runBoostCheckout(deps: BoostCheckoutDeps, input: BoostChec
   if (hold.held) {
     log.warn({ userId: accountId, code: 'awaiting_payment' }, 'bos_boost_checkout_refused');
     return refuse('awaiting_payment');
+  }
+
+  // ── 1b. D6 / DL-1b: no Boost while a deletion request is open (BQ-34) ─────
+  let deletion: 'none' | 'open' | 'unreadable';
+  try {
+    deletion = await deps.deletionPending(accountId);
+  } catch {
+    deletion = 'unreadable';
+  }
+  if (deletion === 'open') {
+    log.warn({ userId: accountId, code: 'deletion_pending' }, 'bos_boost_checkout_refused');
+    return refuse('deletion_pending');
+  }
+  if (deletion !== 'none') {
+    log.error({ userId: accountId, code: 'deletion_state_unreadable' }, 'bos_boost_checkout_refused: deletion state unreadable');
+    return refuse('deletion_state_unreadable');
   }
 
   // ── 2. The package: ANY source rejection refuses (QA E-2) ────────────────

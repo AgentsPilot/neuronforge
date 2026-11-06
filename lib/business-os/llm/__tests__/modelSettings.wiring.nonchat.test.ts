@@ -86,6 +86,19 @@ import type { InsightRunIds } from '@/lib/business-os/insight/repository/Insight
 import type { DetectionResult } from '@/lib/business-os/insight/detectors/types';
 import { IntakeGenerationService } from '@/lib/services/IntakeGenerationService';
 
+/*
+ * The image price table is read from the DB on first use, and in this suite
+ * that read left the machine. A failed read yields the EMPTY map — the module
+ * says so: "empty before the first success, which prices every image from the
+ * in-code fallback" — so an empty map is exactly what these cases already saw,
+ * minus the request. The pure helpers stay real.
+ */
+jest.mock('@/lib/ai/imagePricing', () => ({
+  ...jest.requireActual('@/lib/ai/imagePricing'),
+  loadImagePrices: async () => new Map<string, number>(),
+  loadImagePricesWithin: async () => new Map<string, number>(),
+}));
+
 const U1 = profile.user_id;
 const G1 = '33333333-3333-4333-8333-333333333333';
 const R1 = '66666666-6666-4666-8666-666666666666';

@@ -946,6 +946,10 @@ describe('source guards', () => {
       // Not a caller: the P1-C6 / M-1 placement guard names the repository's
       // module path to assert the allow-listed billing files are its only billing importers.
       'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
+      // Account deletion DL-1b / D6 (workplan §4.3, §9): the deletion request and its
+      // pre-check read the SESSION user's billing row for the current mode (findByUser
+      // only) to tell a free account from a paid one. DELETE-owned file.
+      'lib/business-os/account-deletion/closureRequestDeps.ts',
       'lib/business-os/billing/__tests__/businessOsStripeCustomer.test.ts',
       // P-5a.2 (SA W-8): the switch-matrix test fakes the repository module by
       // name, for the real checkout route and the real holding-screen model.

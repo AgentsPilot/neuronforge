@@ -133,6 +133,8 @@ async function checkoutAdmits(tier: TierId, world: World): Promise<{ admitted: b
       invites: { findHoldFactsById: async () => ({ data: null, error: null }) },
     } as unknown as PlanCheckoutDeps['holdReaders'],
     readPlanSnapshot: async () => (world.openEndedFreeAccess ? OPEN_ENDED : ON_A_TIER),
+    // D6 / DL-1b (SA W-6 b): the required closure port; no request open.
+    deletionPending: async () => 'none' as const,
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     repo: {
       findByUser: async () => ({ data: world.billingRow, error: null }),

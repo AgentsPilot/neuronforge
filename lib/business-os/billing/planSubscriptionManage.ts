@@ -80,6 +80,31 @@
  * cancel may carry a reason CODE (`planLeaveReasons.ts`, SX C-10 / SA-4): it
  * reaches the audit facts only, never a log line as free text.
  *
+ * D6 / DL-1b (workplan docs/workplans/BUSINESS_OS_DELETION_DL1B_WORKPLAN.md §6;
+ * SA W-1, W-6, W-8): the `origin` input. Absent = `owner` (the plain routes,
+ * which pass none). It is set by server code only, never from a request:
+ *
+ *   deletion_request  (the request route, a CANCEL) never takes the immediate
+ *                     path: our row `failing` (step 5) or a fresh `past_due` /
+ *                     `unpaid` (step 6) → payment_failed_contact_us (BQ-11).
+ *                     "Already set to end" (step 7) is `isSetToEndThisPeriod`,
+ *                     not `hasCancelDate`: a `cancel_at` LATER than the period
+ *                     end renews once more, so it is refused as
+ *                     `custom_end_date` (W-1), and the write's own answer must
+ *                     pass the same test or it is `answer_differs`
+ *   owner + reactivate  reads `deletionPending` (the closure repository, XC-19)
+ *                     after every refusal from our own data and before any
+ *                     Stripe call: an open request → `deletion_pending` ("Keep
+ *                     your account first"); unreadable → billing_row_unreadable
+ *                     (fail closed). Otherwise the plain "Keep my plan" would
+ *                     renew the plan of a pending request (XC-2)
+ *   deletion_keep     (the Keep route, a REACTIVATE, after the closure row is
+ *                     already `kept`) changes no behaviour; only the audit
+ *                     facts say so (SA-4)
+ *
+ * `origin` reaches the audit facts only when it is not `owner` (absent there
+ * means owner), so the plain routes' audit rows are byte-identical.
+ *
  * @module lib/business-os/billing/planSubscriptionManage
  */
 
@@ -98,8 +123,19 @@ import type { PlanLeaveReasonCode } from '@/lib/business-os/billing/planLeaveRea
 import { BOS_USER_ID_METADATA_KEY } from '@/lib/business-os/billing/stripeMetadataKeys';
 import { hasCancelDate, isSetToEndThisPeriod, latestItemPeriodEnd } from '@/lib/business-os/billing/subscriptionCancelling';
 import { currentStripeMode, isLiveMode, type StripeMode } from '@/lib/business-os/billing/stripeMode';
+import { readDeletionPending, type DeletionPendingReader } from '@/lib/business-os/account-deletion/deletionPendingReader';
 
 export type PlanManageAction = 'cancel' | 'reactivate';
+
+/** D6 (W-5 of D2): who asks. Absent = `owner`. Never a request value (SA W-8). */
+export type PlanManageOrigin = 'owner' | 'deletion_request' | 'deletion_keep';
+
+/** D6 (CR-4): the one action each deletion origin may ask; `null` = any (the owner). */
+const ORIGIN_ACTION: Readonly<Record<PlanManageOrigin, PlanManageAction | null>> = {
+  owner: null,
+  deletion_request: 'cancel',
+  deletion_keep: 'reactivate',
+};
 
 /**
  * D2 (SX C-4; SA Q-3, W-4): the Stripe idempotency key of ONE attempt. The
@@ -132,7 +168,11 @@ export type PlanManageRefusalCode =
   | 'billing_record_mismatch'
   | 'upgrade_pending'
   | 'change_pending'
-  | 'stripe_error';
+  | 'stripe_error'
+  // D6 (§6 E-2): the plain reactivate while an account deletion request is open.
+  | 'deletion_pending'
+  // D6 (SA W-1): a deletion request on a plan whose end date is later than this period's end.
+  | 'custom_end_date';
 
 /** HTTP status and owner-facing message per refusal. Never a Stripe or database message. */
 export const PLAN_MANAGE_REFUSALS: Readonly<Record<PlanManageRefusalCode, { status: number; message: string }>> = {
@@ -147,6 +187,10 @@ export const PLAN_MANAGE_REFUSALS: Readonly<Record<PlanManageRefusalCode, { stat
   upgrade_pending: { status: 409, message: 'An upgrade is waiting for payment. Finish or wait for it first.' },
   change_pending: { status: 409, message: 'A plan change is in progress. Try again once it is finished.' },
   stripe_error: { status: 502, message: 'The payment provider did not respond. Please try again.' },
+  // D6 (§6 E-2; BQ-34): its own code, so the plan screen (DL-2) can give it its own line.
+  deletion_pending: { status: 409, message: 'Your account is set to be deleted. Keep your account first.' },
+  // D6 (SA W-1): only the deletion request can get this; the request route maps it to "contact support".
+  custom_end_date: { status: 409, message: 'Your plan has a custom end date. Please contact support.' },
 };
 
 /** Logged at `error` with `alert: true`; every other refusal is a warn. */
@@ -201,6 +245,12 @@ export interface PlanManageDeps {
   now?: () => Date;
   /** D2 (SA W-4): the attempt id of the idempotency key. Default `randomUUID` (node `crypto`). */
   newAttemptId?: () => string;
+  /**
+   * D6 (§6 E-2; SA W-6 a): is an account deletion request open? Read only for
+   * an `owner` reactivate. Default `readDeletionPending` (the closure
+   * repository); a test passes a fake, or the no-network guard refuses it.
+   */
+  deletionPending?: DeletionPendingReader;
 }
 
 export interface PlanManageInput {
@@ -211,6 +261,8 @@ export interface PlanManageInput {
   accountId: string;
   /** D2 (SX C-10, SA-4; SA Q-5): why the owner cancels, a code only. Ignored on reactivate. */
   reasonCode?: PlanLeaveReasonCode | null;
+  /** D6: who asks. Absent = `owner`. Set by server code, never from a request body (SA W-8). */
+  origin?: PlanManageOrigin;
 }
 
 // ── Results ─────────────────────────────────────────────────────────────────
@@ -235,6 +287,8 @@ export interface PlanManageAuditFacts {
   invoicesLeftOpen?: number | null;
   /** D2 (SA Q-4): the cancel's reason code, or null (always null on reactivate). */
   reasonCode: PlanLeaveReasonCode | null;
+  /** D6 (§6 E-3): present only for a deletion origin; absent = `owner`. */
+  origin?: Exclude<PlanManageOrigin, 'owner'>;
 }
 
 export type PlanManageRefusal = {
@@ -311,8 +365,23 @@ function refuser(log: PlanManageLogger, userId: string, action: PlanManageAction
 
 export async function managePlanSubscription(input: PlanManageInput, deps: PlanManageDeps): Promise<PlanManageResult> {
   const { action, userId, accountId } = input;
+  const origin: PlanManageOrigin = input.origin ?? 'owner';
+  const originFacts: { origin?: Exclude<PlanManageOrigin, 'owner'> } = origin === 'owner' ? {} : { origin };
   const log = deps.logger;
   const refuse = refuser(log, userId, action);
+
+  // D6 (SA code review CR-4, PLAN PAYMENTS ruling): an origin goes with ONE action.
+  // `deletion_request` cancels, `deletion_keep` reactivates; any other pairing would be
+  // misrouted silently by the origin checks below, so it is refused before any read,
+  // switch or Stripe call, as a code fault (error + alert).
+  const expectedAction = ORIGIN_ACTION[origin];
+  if (expectedAction !== null && expectedAction !== action) {
+    log.error(
+      { event: 'bos_billing_manage_refused', code: 'manage_unavailable', action, origin, userId, reason: 'origin_action_mismatch', alert: true },
+      'Plan cancel / reactivate refused: the origin does not go with this action'
+    );
+    return { ok: false, code: 'manage_unavailable' };
+  }
   const now = (deps.now ?? (() => new Date()))();
   const switches = (deps.switches ?? defaultSwitches)();
   const repo = deps.repo ?? businessOsBillingAccountRepository;
@@ -365,11 +434,27 @@ export async function managePlanSubscription(input: PlanManageInput, deps: PlanM
   }
   // P-7a.4: a failed renewal admits a CANCEL only (no Reactivate is offered there).
   if (offer.kind === 'failing' && action === 'reactivate') return refuse('payment_failed_contact_us', { source: 'record' });
+  // D6 (§6 E-1; BQ-11): a deletion request never ends a plan now. Update the card, or contact support.
+  if (offer.kind === 'failing' && origin === 'deletion_request') return refuse('payment_failed_contact_us', { source: 'record', origin });
   // `planManageOffer` answered renewing / cancelling / failing (or change_pending
   // on a reactivate, which follows only the live-row rules), so the row and its
   // subscription id exist.
   const ownRow = row as BusinessOsBillingAccount & { stripeSubscriptionId: string };
   const subscriptionId = ownRow.stripeSubscriptionId;
+
+  // D6 (§6 E-2; XC-2): the plain Keep my plan is refused while a deletion request
+  // is open, after every refusal from our own data and before any Stripe call.
+  // Fails closed. The deletion Keep (`deletion_keep`) has already closed the row.
+  if (action === 'reactivate' && origin === 'owner') {
+    let deletion: Awaited<ReturnType<DeletionPendingReader>>;
+    try {
+      deletion = await (deps.deletionPending ?? readDeletionPending)(userId);
+    } catch {
+      deletion = 'unreadable';
+    }
+    if (deletion === 'open') return refuse('deletion_pending', { source: 'closure', subscriptionId });
+    if (deletion !== 'none') return refuse('billing_row_unreadable', { source: 'closure', reason: 'deletion_state_unreadable', subscriptionId });
+  }
 
   // 6. Stripe's answer, fresh, for OUR row's subscription (never a request value).
   const stripe = deps.stripe ?? getStripeService();
@@ -393,7 +478,8 @@ export async function managePlanSubscription(input: PlanManageInput, deps: PlanM
   }
   if (PAYMENT_FAILED_STATUSES.includes(fresh.status) && fresh.endedAt === null) {
     // P-7a.4 (SA's P-7a.1 binding note): STRIPE's fresh status picks the mode, never our row.
-    if (action === 'cancel') {
+    // D6 (§6 E-1): never for a deletion request, which is refused instead (BQ-11).
+    if (action === 'cancel' && origin !== 'deletion_request') {
       return cancelNow({ deps, log, refuse, repo, stripe, ownRow, fresh, userId, livemode, now, reasonCode: input.reasonCode ?? null });
     }
     return refuse('payment_failed_contact_us', { source: 'stripe', subscriptionId, subscriptionStatus: fresh.status });
@@ -410,6 +496,17 @@ export async function managePlanSubscription(input: PlanManageInput, deps: PlanM
 
   const freshPeriodEnd = latestItemPeriodEnd(fresh.items);
   const wantCancelling = action === 'cancel';
+
+  // D6 (SA W-1): for a deletion request "set to end" means THIS period. A
+  // `cancel_at` later than the period end (an operator's custom date) renews
+  // once more: refused, never treated as already cancelling.
+  if (
+    origin === 'deletion_request' &&
+    hasCancelDate(fresh) &&
+    !isSetToEndThisPeriod({ cancelAtPeriodEnd: fresh.cancelAtPeriodEnd, cancelAt: fresh.cancelAt ?? null, periodEnd: freshPeriodEnd })
+  ) {
+    return refuse('custom_end_date', { source: 'stripe', subscriptionId, origin });
+  }
 
   // 7. Already what was asked: no write, no audit. C-2: heal our row if it disagrees.
   if (hasCancelDate(fresh) === wantCancelling) {
@@ -437,7 +534,7 @@ export async function managePlanSubscription(input: PlanManageInput, deps: PlanM
 
   // 9. THE write, under a key fresh for this attempt (D2, SX C-4). The key is never logged.
   const reasonCode = wantCancelling ? input.reasonCode ?? null : null;
-  const auditBase = { action, subscriptionId, livemode, mode: 'period_end' as const, reasonCode };
+  const auditBase = { action, subscriptionId, livemode, mode: 'period_end' as const, reasonCode, ...originFacts };
   const idempotencyKey = planManageAttemptKey(subscriptionId, action, (deps.newAttemptId ?? randomUUID)());
   let after: BusinessOsCancelFacts;
   try {
@@ -453,7 +550,11 @@ export async function managePlanSubscription(input: PlanManageInput, deps: PlanM
   }
 
   // Stripe's answer must be OUR subscription in the asked state; otherwise we cannot say what happened.
-  if (after.id !== subscriptionId || after.customerId !== ownRow.stripeCustomerId || after.livemode !== ownRow.livemode || hasCancelDate(after) !== wantCancelling) {
+  // D6 (SA W-1): a deletion request's answer must also say "ends this period".
+  const notThisPeriod =
+    origin === 'deletion_request' &&
+    !isSetToEndThisPeriod({ cancelAtPeriodEnd: after.cancelAtPeriodEnd, cancelAt: after.cancelAt, periodEnd: after.currentPeriodEnd });
+  if (after.id !== subscriptionId || after.customerId !== ownRow.stripeCustomerId || after.livemode !== ownRow.livemode || hasCancelDate(after) !== wantCancelling || notThisPeriod) {
     const audit: PlanManageAuditFacts = { ...auditBase, outcome: 'unknown', endsOn: null, renewsOn: null };
     return refuse(
       'stripe_error',

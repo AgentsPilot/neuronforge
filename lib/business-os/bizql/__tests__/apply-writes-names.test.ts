@@ -22,6 +22,21 @@ import { applyFrozenWrites } from '../mutate/applyWrites';
 import { executeMutate } from '../mutate/MutateExecutor';
 import type { MutateQuery } from '../types';
 
+/*
+ * `ActionLog` inserts into `business_chat_action_log` through `supabaseServer`,
+ * and in this suite that insert left the machine. A failed claim returns
+ * `{ proceed: true, entryId: null }` — the log's own documented behaviour:
+ * "proceeding without a log entry" — so that is exactly what these cases
+ * already saw, minus the request. Double-send protection is off either way.
+ */
+jest.mock('../mutate/ActionLog', () => ({
+  ...jest.requireActual('../mutate/ActionLog'),
+  getActionLog: () => ({
+    claim: async () => ({ proceed: true, entryId: null }),
+    complete: async () => undefined,
+  }),
+}));
+
 jest.mock('../mutate/MutateExecutor', () => ({
   executeMutate: jest.fn(async () => ({ preview: 'done' })),
 }));

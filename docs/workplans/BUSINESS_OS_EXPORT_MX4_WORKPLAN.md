@@ -1,6 +1,6 @@
 # Workplan: Business OS Export MX-4 (E7) — History, audit presentation, receipt facts, contents doc
 
-> **Last Updated**: 2026-11-01
+> **Last Updated**: 2026-11-02
 
 **Developer:** Dev (EXPORT session)
 **Step:** E7 (user's numbering) = doc slice MX-4
@@ -8,9 +8,9 @@
 **Plan:** [BUSINESS_OS_EXPORT_REDESIGN_PLAN.md](/docs/workplans/BUSINESS_OS_EXPORT_REDESIGN_PLAN.md) §3 (CC-1…CC-8, frozen interfaces, hotspot anchors), §4.6a R-5 / R-7, §4.7 (quoted in §2 below)
 **Earlier slices this builds on:** [MX-1b](/docs/workplans/BUSINESS_OS_EXPORT_MX1B_WORKPLAN.md) (drawer, history, D-13 / MX1B-5, MX1B-9), [MX-3](/docs/workplans/BUSINESS_OS_EXPORT_MX3_WORKPLAN.md) (worker, audit constants, SA-P5), [MX-3.1](/docs/workplans/BUSINESS_OS_EXPORT_MX3_1_WORKPLAN.md) (go-live #574; QA note on stale ZIP comments), PR #596 (5 modules on, lookups independent of the module switch, SA Option A)
 **Coordination:** `C:/Users/Barak/My Projects/AgentsPilot/SELF_SERVICE_EXIT_COORDINATION.md` (outside git). CC-1 read on 2026-11-01: E7 row started (last log line), CC-6 heads-up for `events.ts` / `eventAudience.ts` and the `findDeletionFacts` meaning change already posted. No lock held by either session that MX-4 needs. D7 has merged its "Export data" wording (`4bfb8ae8`)
-**Branch:** `feature/bos-export-mx4-history-receipt` (RM-created, worktree `neuronforge-mx4`, off `origin/main` `eb2ee76a`). Dev confirmed it with `git branch --show-current` on 2026-11-01 before writing this file. Not `main`
+**Branch:** `feature/bos-export-mx4-history-receipt` (RM-created, worktree `neuronforge-mx4`, off `origin/main` `eb2ee76a`). Dev confirmed it with `git branch --show-current` on 2026-11-01 before writing this file. Not `main`. **MX-4b:** `feature/bos-export-mx4b-history-paging` (worktree `neuronforge-mx4b`, off `origin/main` `26df15e5`, MX-4a merged in), confirmed by Dev on 2026-11-02
 **Date:** 2026-11-01
-**Status:** MX-4a Code Complete (2026-11-02), uncommitted — waits for SA code review and QA (C-2 live REST probe owed before merge). MX-4b not started
+**Status:** MX-4a merged (PR #610, 2026-11-02). MX-4b code part (tasks 5 and 6: history paging H-1, "export again at" on open N-1) Code Complete (2026-11-02), uncommitted — waits for SA code review and QA. MX-4b contents doc (task 10) is a separate part
 
 ---
 
@@ -311,8 +311,8 @@ SA Q-12 split the slice: tasks marked **(4a)** are MX-4a, **(4b)** are MX-4b.
 - [x] 2. **(4a)** ✅ Repository reads (D-1): `findLatestOwnerSentAt`, `hasAdminOriginRequest` + tests; callers guard class allow-lists
 - [x] 3. **(4a)** ✅ `findDeletionFacts` body (§4.2, Q-5 as ruled: an unparseable time errors) + JSDoc; repository tests T-1…T-9
 - [ ] 4. **(4a, TL)** Interface notice (C-8): TL posts the five SA bullets verbatim and records DELETE's acknowledgement before the PR opens
-- [ ] 5. **(4b)** History paging (H-1)
-- [ ] 6. **(4b)** "Export again at" on open (N-1)
+- [x] 5. **(4b)** ✅ History paging (H-1, C-4) + T-10…T-12, T-15, T-16
+- [x] 6. **(4b)** ✅ "Export again at" on open (N-1, C-5) + T-13, T-14, T-16; mirror pins in the migration test
 - [x] 7. **(4a)** ✅ Audit: A-1 events.ts wording, A-3 owner labels + header, A-5 exact detail keys (route test; the worker's are already pinned by T-W24)
 - [x] 8. **(4a)** ✅ XC-19 test (§7); `npm run test:bos-entitlements` green (Implementation notes)
 - [x] 9. **(4a)** ✅ Stale comments (§9); SecurityTab line changed on the user's BQ-E7-1 answer (2026-11-02, SA wording)
@@ -503,6 +503,100 @@ The ambiguities in §4.3 (R-A, R-B, R-C) are technical readings of an approved r
 - `npm run test:bos-entitlements` (C-9): **346 suites, 10,016 tests, all pass.**
 - tsc: `NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit -p .` ran to completion (exit 2, 1,916 pre-existing `error TS` lines in other files, no heap or fatal message). **0 errors in the 15 touched `.ts` / `.tsx` files** and the new test. The run started before the X-3 regex edit to the new test; the repo's existing lookbehind regexes (e.g. `catalogueDrift.guard.test.ts`) draw no diagnostic under the same target, and its flags are only `gm`.
 
+## Implementation notes — MX-4b (Dev, 2026-11-02)
+
+**Branch:** `feature/bos-export-mx4b-history-paging` (worktree `neuronforge-mx4b`, off `origin/main` `26df15e5`). Uncommitted. Scope: tasks 5 (H-1) and 6 (N-1) only; the contents doc (task 10) is another Dev's part and `docs/business-os/BUSINESS_OS_DATA_EXPORT_CONTENTS.md` was not touched here. No migration, no live rows written, `DownloadMyDataButton` and `findDeletionFacts` untouched.
+
+### What was built
+
+| Area | Files | Notes |
+|---|---|---|
+| Cursor (C-4) | `lib/business-os/data-export/exportHistoryCursor.ts` (new, pure) | `HISTORY_PAGE_SIZE` (20), the timestamp pattern (date, `T` or space, time, up to 6 fraction digits, `Z` or offset; character classes only, no backslash escapes), cap 40, `historyCursorSchema` (strict `{ requestedAt, id }`), `historyQuerySchema` (strict, `.partial()`, both or neither). Only digits and `-:.+TZ ` and a space pass, so a value cannot close the `.or()` quote |
+| Repository (H-1) | `BusinessOsExportRequestRepository.listRecentForUser(userId, { limit?, before? })` | Cursor Zod-parsed first (invalid → `invalid_input`, no call). Keyset after `.eq('user_id')`: `.or('requested_at.lt."<t>",and(requested_at.eq."<t>",id.lt."<id>")')`, values double-quoted, `<t>` the exact string the database returned (never through `Date`). Order and limit unchanged. `HISTORY_REQUEST_LIMIT` is now `HISTORY_PAGE_SIZE` (same 20) |
+| Repository (N-1) | `BusinessOsExportRequestRepository.findOwnerLimitAnchor(userId, since)` | `select('requested_at, business_os_export_module_jobs!inner(status)')` (a real column, MX-4a C-1 rule), `.eq('user_id')`, `.eq('origin', 'owner')`, `.gt('requested_at', since)`, `.not('business_os_export_module_jobs.status', 'in', '(failed,interrupted)')` (from `MODULE_JOB_NOT_COUNTED`), `.order('requested_at', desc)`, `.range(1, 1)` (offset = `ownerLimitAnchorOffset()` = `OWNER_DAILY_LIMIT - 1`). Returns `{ requestedAt: string \| null }`. The returned row is Zod-parsed and must carry at least one counted job, else new code `unexpected_row` (fail closed). New error code `EXPORT_REQUEST_ERROR.UNEXPECTED_ROW` |
+| Pure arithmetic | `lib/business-os/data-export/nextOwnerExportAt.ts` (new) | `ownerLimitAnchorOffset(policy)`, `ownerLimitWindowStart(nowMs, policy)`, `nextOwnerExportAt(anchor, policy)` = anchor + `DAILY_WINDOW_HOURS`, null for no anchor or an unparseable one; a sub-millisecond fraction rounds up 1 ms so the hint is never earlier than the database's own `retryAt` |
+| Route | `app/api/business-os/export-requests/route.ts` GET | Header line "The query string is ignored" replaced. Order: session (401) → query: repeated key or `historyQuerySchema` fail → 400 `invalid_input` → throttle → in parallel `listRecentForUser(user.id, { limit: 21, before? })` and the hint read → `hasMore = rows > 20`, page = first 20, jobs of exactly those ids. Answer `{ requests, hasMore, nextExportAt }`. The hint read (`readNextExportAt`) never throws: an error result or a throw → `nextExportAt: null` and a warn `limit_anchor_unreadable`; history still 200. POST untouched |
+| Seam | `lib/client/businessOsDataExport.ts` | `fetchModuleExportHistory({ before?: { requestedAt, requestId } })` builds `?before=…&beforeId=…` with `URLSearchParams` (a `+` offset is encoded). The ok verdict carries `hasMore` and `nextExportAt`; either missing or of the wrong type → `error` |
+| Hook | `components/business-os/data-export/useExportDrawer.ts` | `loadOlder()`, `isLoadingOlder`, `isOlderUnavailable`. History `ok` state carries `hasMore`. Append drops request ids already shown (C-4). A first-page reload discards an older read in flight (generation counter). On the open's read (and its Try again) a future `nextExportAt` sets the same `daily_limit` refusal and `blockedUntil` timer a refused click sets; an existing database refusal is kept. Reloads after a start or an `in_progress` refusal do not apply the hint |
+| Drawer + copy | `ExportDrawer.tsx`, `exportDrawerCopy.ts` | "Show older" button under the list only with `hasMore` (busy while loading); a failed older read shows `historyOlderUnavailable` with Try again, the list kept. Keys `historyShowOlder` / `historyOlderUnavailable` en/he/es (he/es drafts). "Export again at" reuses `copy.dailyLimit` with `{time}`: no new UI state, no new words |
+| Tests | see Verification | T-10…T-16 below; mirror pins in the migration test (C-5) |
+
+### C-5: the start function's counting predicate (migration `20261095`, quoted)
+
+```sql
+  v_limit := CASE WHEN p_origin = 'owner' THEN 2 ELSE 2 END;
+
+  v_retry_from := (
+    SELECT req.requested_at FROM public.business_os_export_requests AS req
+     WHERE req.user_id = p_user_id
+       AND req.origin = p_origin
+       AND req.requested_at > now() - interval '24 hours'
+       AND EXISTS (SELECT 1 FROM public.business_os_export_module_jobs AS job
+                    WHERE job.request_id = req.id AND job.status NOT IN ('failed', 'interrupted'))
+     ORDER BY req.requested_at DESC
+     OFFSET (v_limit - 1) LIMIT 1);
+  IF v_retry_from IS NOT NULL THEN
+    RETURN QUERY SELECT 'daily_limit'::text, NULL::uuid, v_retry_from + interval '24 hours';
+```
+
+**Admin requests do not count toward the owner's limit.** The predicate filters `req.origin = p_origin`, and the owner route always starts with `p_origin = 'owner'`, so only owner-origin requests are counted (admin ones are counted apart, XC-20). `findOwnerLimitAnchor` matches it with `.eq('origin', 'owner')`. The SQL orders by `requested_at` only; the repository does the same (with ties the value at the offset is the same either way).
+
+Pins: `supabase/migrations/__tests__/business-os-export-requests.migration.test.ts` gains "MX-4b N-1 mirror (SA C-5)": the predicate above is contained verbatim in the start body (one `v_retry_from` site), it carries `AND req.origin = p_origin`, `ownerLimitAnchorOffset()` equals the SQL owner literal minus 1 and `OWNER_DAILY_LIMIT - 1`, the window and retry use `DAILY_WINDOW_HOURS`, and a negative control (the origin line removed, or `OFFSET (v_limit)`) no longer matches. That file may not name the repository (callers guard), so the repository side is pinned call-for-call in `BusinessOsExportRequestRepository.test.ts` (origin `owner`, never `admin`; `range(1, 1)`; the `not in` filter; the real-column embed).
+
+### Tests added (T-10…T-16)
+
+| # | Where | What |
+|---|---|---|
+| T-10 | `route.test.ts` | 21 rows → 20 returned, `hasMore` true, jobs of those 20 only; exactly 20 → `hasMore` false; happy path now `{ requests, hasMore: false, nextExportAt: null }`, repository called with `(USER.id, { limit: 21 })` |
+| T-11 | `route.test.ts`, `route.qa.test.ts` | A microsecond `+00:00` cursor reaches the repository byte for byte, with the session user only (also end to end through the seam) |
+| T-12 | `route.test.ts` | 400 `invalid_input` and nothing read for: half a cursor (both ways), bad uuid, not a timestamp, over-long, a quote injection, empty `before`, `?userId=`, an extra key beside a valid cursor, a repeated key. 401 without a session before the query check |
+| T-13 | `route.test.ts` | Anchor read with `(USER.id, now - 24 h)`; anchor + 24 h returned; no anchor → null; error result or rejection → null + `limit_anchor_unreadable` warn, history still 200 |
+| T-14 | `nextOwnerExportAt.test.ts` (new) | Offset = `OWNER_DAILY_LIMIT - 1` (and follows the policy), window start, + window, sub-ms rounds up, unparseable → null, file purity |
+| T-15 | `businessOsDataExport.moduleExport.test.ts` | ok verdict with both fields; missing / wrong-type `hasMore` or `nextExportAt` → error; cursor query string keys and untouched time |
+| T-16 | `ModuleExport.render.test.tsx` | No button without `hasMore`; append in order with a repeated id dropped and the cursor taken from the last request untouched; failed older read keeps the list with retry; busy button ignores a second click; opened at the limit → Export off with the sentence, back on at the time (fake timers); a past hint or a failed read leaves Export on |
+| Repo | `BusinessOsExportRequestRepository.test.ts` | Keyset `.or()` exact string; no cursor no `.or()`; 7 refused cursors with zero calls; 5 accepted time shapes; `findOwnerLimitAnchor` exact calls, null, 5 fail-closed shapes, mixed statuses, invalid input, DB error without `details` in logs |
+
+### Deviations
+
+- **Y-1** New pure file `exportHistoryCursor.ts` (not in §10): the route tests mock the repository module wholesale, so the shared schema and page size cannot live in the repository. The repository imports it; `HISTORY_REQUEST_LIMIT` stays exported with the same value.
+- **Y-2** `hasMore` is worked out in the route (the existing `limit` option asked for 21), not inside the repository, so `listRecentForUser` keeps its return type. Edge: a row dropped by the per-row parse (already logged as an error) could make `hasMore` read false; the table CHECKs make such a row practically impossible.
+- **Y-3** The hook also returns `isOlderUnavailable` (needed for the inline retry line).
+- **Y-4** `nextExportAt` is read on every GET (also older pages), in parallel with the history read; the hook uses it only on the open's read and its Try again.
+- **Y-5** Callers of the changed seam verdict type: three other component tests (`DownloadMyDataButton.test.tsx`, both `ExportDrawer.stacking*.test.tsx`) and QA's `route.qa.test.ts` had their ok literals extended (and the QA mock gained `findOwnerLimitAnchor`, plus one cursor round-trip test). The old `GET ?userId=` happy-path call in `route.test.ts` is now a T-12 400 case.
+- **Y-6** One `sed -i` on `route.ts` stripped its CRs; restored to CRLF with a temp file and `os.replace`. Every touched file is uniformly CRLF (new files LF; `core.autocrlf` is true, so blobs are LF either way).
+- **Y-7** Callers guard not edited: no new file names either repository class or `.from()`s a table.
+- **Recommended before merge (as MX-4a C-2):** one read-only REST probe that the embedded `not.in` filter really filters parents: on an account with a failed-only owner request in the last 24 h, `GET /rest/v1/business_os_export_requests?select=requested_at,business_os_export_module_jobs!inner(status)&business_os_export_module_jobs.status=not.in.(failed,interrupted)&origin=eq.owner&user_id=eq.<uuid>` must not list that request. If the filter were ignored, a failed-only request could shift the offset and show a false "export again at" (the code checks the anchor row itself, not the rows above it). The POST still decides either way (K-8).
+
+### Verification (2026-11-02)
+
+- `npx jest lib/repositories/__tests__ app/api/business-os/export-requests components/business-os/data-export lib/client lib/business-os/data-export supabase/migrations/__tests__/business-os-export`: **177 suites, 4,237 tests, all pass.** (A first parallel run of a narrower set had 2 first-test timeouts in `ExportDrawer.stacking.qa.test.tsx` and `ModuleExport.render.test.tsx` under load; both suites pass alone (23/23) and in the full run above.)
+- `npm run lint:hooks`: exit 0, no warnings.
+- tsc, full: `NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit -p .` ran to completion (exit 2, 1,923 pre-existing `error TS` lines, semantic codes such as TS2339 / TS2345 present, no heap or fatal message). It **did fail on this slice**: 4 errors in `nextOwnerExportAt.test.ts` (the `as const` literal types in `OwnerLimitPolicy`), fixed by typing the policy as plain numbers.
+- tsc, scoped after the fix: a tsconfig extending the root with the 19 touched `.ts` / `.tsx` files plus one planted file (`const planted: number = nextOwnerExportAt(null)`): exit 2 with **exactly 1 error, the planted one**; 0 in the touched files and everything they import.
+- Line endings and the Tailwind hazard: no backslash followed by a hex digit in any added line or new file; no `console.*` in any touched source file.
+
+### CR-1 fix (Dev, 2026-11-02, after SA code review)
+
+| Change | Where | Notes |
+|---|---|---|
+| CR-1 guard 1 | `useExportDrawer.ts` | A new ref `isFirstPageInFlight`. `loadFirstPage` sets it, and the current generation's answer clears it. `loadOlder` does nothing while it is set, so no cursor is taken from a list that is about to be replaced |
+| CR-1 guard 2 | `useExportDrawer.ts` (append updater) | An older answer is appended only if the list still ends with the cursor's `requestId`; otherwise the answer is dropped. This also covers any future cause of a list swap |
+| CR-1 test | `ModuleExport.render.test.tsx` "SA CR-1: …" | Deferred promises: a list two pages deep, then a start whose first-page reload is held open, then a click on "Show older", then the first page resolves, then the older page. Expect the first page only, with no gap. **Run on the unfixed hook first: it failed** (received the older row appended after the new first page, the exact SA sequence); passes with the fix |
+| Optimisation (SA) | `route.ts` GET, `route.test.ts` | With a cursor, the limit-hint read is skipped and `nextExportAt` is `null` (new test: anchor not called, null returned). Replaces Y-4's "read on every GET" |
+| Contents doc | `docs/business-os/BUSINESS_OS_DATA_EXPORT_CONTENTS.md` §9.1, GET row only | The strict query step (400 `invalid_input` before the throttle), and `hasMore` / `nextExportAt` in the 200 answer |
+| Y-2 | — | Left as is (SA) |
+
+**Live probe of the embedded filter (TL, read-only, prod, service role; no keys or ids recorded):** select `requested_at,business_os_export_module_jobs!inner(status)`, `origin=eq.owner`, on the one account with owner requests:
+- `business_os_export_module_jobs.status=not.in.(failed,interrupted)` returned 200 with 1 row (Content-Range `0-0/1`, job statuses `[sent]`).
+- The discriminator `status=not.in.(sent)` returned 200 with 0 rows (`*/0`).
+
+So the embedded `not.in` filter does drop parent rows with no matching job, and the offset is taken over counted requests only. Prod has no failed-only owner request, so that case could not be tested directly. This closes the "recommended before merge" probe above.
+
+**Re-verification (2026-11-02):**
+- Same Jest scope as above: **177 suites, 4,239 tests, all pass** (+2: the CR-1 case, and the skipped hint read on an older page).
+- Scoped tsc, same tsconfig plus the planted file: exit 2 with exactly 1 error, the planted one; 0 in the touched files.
+- `npm run lint:hooks`: exit 0.
+
 ## SA Review Notes
 
 _SA will populate this section._
@@ -527,6 +621,8 @@ _RM will populate this section._
 |---|---|---|
 | 2026-11-01 | Created (EXPORT Dev, E7) | Workplan for MX-4 on `feature/bos-export-mx4-history-receipt` (off `origin/main` `eb2ee76a`). Plan §4.7 quoted. Core decision §4: `findDeletionFacts` combines the old ZIP reads with two new reads (owner module jobs `sent`, admin-origin requests), newest wins, `ownerExportDownloadedAt` follows the winner, all-or-nothing; alternatives R-A…R-D, placement D-1/D-2. Full history by keyset "Show older" (H-1); "export again at" on open from a server hint pinned to the start function's rule (N-1). Audit wording, owner labels, details guard; XC-19 test in entitlements `__tests__`. Contents doc rewrite outline for 5 modules on / 8 off and lookups independent of the switch. Findings: flags-xlsx requirement never committed (Q-7); user-visible "one zip file" line in `SecurityTab.tsx` (BQ-E7-1). Open questions Q-1…Q-12; live checks L-1…L-5. No migration, no lock |
 | 2026-11-02 | MX-4a code complete (EXPORT Dev), uncommitted | Built per SA review C-1…C-9 / Q-1…Q-12 (split, Q-12): `findDeletionFacts` re-sourced (four reads, newest wins, Q-5 errors on an unparseable time), `findLatestOwnerSentAt` (real-column `!inner` embed + origin checked in code, C-1) and `hasAdminOriginRequest`, callers guard class allow-lists; audit wording and owner labels; exact REQUESTED detail keys; XC-19 test; stale comments; **BQ-E7-1 answered (user 2026-11-02, SA wording)**: SecurityTab line replaced and pinned; DE-10b section; MX-1b merge commit; requirement and plan status. Task list split 4a / 4b. Jest 296 suites / 7,006 tests and `test:bos-entitlements` 346 / 10,016 green. Deviations X-1…X-5. C-2 probe, C-6 claims and C-8 notice are TL's |
+| 2026-11-02 | MX-4b code part complete (EXPORT Dev), uncommitted | MX-4a merged as PR #610. On `feature/bos-export-mx4b-history-paging` (off `26df15e5`): tasks 5 and 6 ticked. H-1 keyset "Show older" (strict cursor query, exact database time, quoted `.or()`, `hasMore` from 21 rows, duplicate ids dropped, failed older read keeps the list) per C-4; N-1 `nextExportAt` from `findOwnerLimitAnchor` + `nextOwnerExportAt` per C-5, with the start function's predicate quoted (owner-origin only; admin requests do not count) and pinned in the migration test. Jest 177 suites / 4,237 tests green, `lint:hooks` clean, tsc 0 errors in touched files (scoped run proven by a planted error). Deviations Y-1…Y-7; one embed-filter REST probe recommended before merge. Contents doc (task 10) not part of this change |
+| 2026-11-02 | MX-4b CR-1 fixed (EXPORT Dev), uncommitted | SA code review CR-1: "Show older" refused while a first-page read is open, and an older page appended only to the list its cursor came from. A deferred-promise T-16 case failed on the old hook and passes now. SA optimisation: an older page skips the limit-hint read (`nextExportAt: null`). Contents doc §9.1 GET row updated (strict query 400, `hasMore` / `nextExportAt`). TL's live probe of the embedded `not.in` filter recorded (filter drops parents). Jest 177 / 4,239 green, scoped tsc 0 in touched files, `lint:hooks` clean |
 
 ---
 
@@ -665,3 +761,80 @@ Temp `lib/repositories/__tests__/zz-qa-mx4a.test.ts` deleted. `git status` shows
 
 ### Final status
 - [x] All acceptance criteria pass, ready for commit
+
+---
+
+## SA Code Review — MX-4b — 2026-11-02
+
+**Reviewed by SA — 2026-11-02**
+**Status:** Code approved with one condition (CR-1). Diff reviewed uncommitted in worktree `neuronforge-mx4b`, branch `feature/bos-export-mx4b-history-paging`, off `main` `26df15e5` (20 modified + 3 new files).
+
+### Checks against the workplan review
+
+| Item | Result |
+|---|---|
+| C-4 cursor not through `Date` | The route hands `before` from the query straight to the repository; the hook takes `last.requestedAt` from the server answer; the seam builds the query with `URLSearchParams` (a `+` offset goes out as `%2B`). No `Date` anywhere on the cursor path. T-11 pins a microsecond `+00:00` value byte for byte, also through the seam |
+| C-4 `.or()` quoted, injection | Both values double-quoted. The time passes an anchored pattern (JS `$` without `m` matches only at end of input) of digits, `-:.+TZ` and a space, capped at 40; the id is a Zod uuid. Neither can hold `"`, `,`, `(`, `)` or a backslash, so a value cannot close its quote or add a condition. The repository parses the cursor again before the call (refusal = `invalid_input`, no query sent). Safe |
+| C-4 dedupe | The append drops ids already shown, and ids repeated inside the new page. Pinned in T-16 |
+| C-5 predicate | Quoted verbatim in the Implementation Notes; the mirror test asserts it is contained exactly in the start body, one `v_retry_from` site, `AND req.origin = p_origin`, OFFSET = owner literal − 1 = `ownerLimitAnchorOffset()`, window and retry from `DAILY_WINDOW_HOURS`. The negative controls are not vacuous: the first assertion proves the predicate is present, so a replace that did not apply would fail the control |
+| C-5 owner origin only | The SQL counts `req.origin = p_origin`, so admin requests do not count against the owner; the repository sends `.eq('origin', 'owner')`, pinned call for call. SQL orders by `requested_at` only and so does the repository: correct (with ties, the value at the offset is the same) |
+| PostgREST `!inner` + embedded `not.in` | Correct, if the TL probe confirms what the PostgREST docs describe. A filter on an embedded resource narrows the embedded rows; `!inner` then drops a parent whose filtered embed is empty, and LIMIT/OFFSET apply to the parents left after that. So a request with only `failed` / `interrupted` jobs is not a parent row, and does not shift the offset. The embed selects a real column (MX-4a C-1), and the Zod row check requires at least one counted job. That check covers the anchor row only, not the rows above it, so the probe still matters: a filter that was ignored would give a false "export again at". The POST still decides either way (K-8) |
+| Route order and rules | 401 (session) → 400 (repeated key, or strict `historyQuerySchema`) → throttle → reads. The 400 uses the standard error shape, with `details` only in development. The account comes from the session only, and `?userId=` is a 400. Pino `requestLogger` with correlationId, no `console.*` in any touched file. DB access only through the two repositories, each with `.eq('user_id')` first. A failed hint read is `nextExportAt: null` plus one warn, and the history is still served |
+| Hook race: first page vs older | A first-page reload bumps `historyCall`, so an older read **started before** it is discarded. An older read **started during** a first-page read is not discarded. See CR-1 |
+| Y-2 | Acceptable. A row dropped by the per-row parse is already logged as an error, and the table CHECKs make one practically impossible. The only effect is that "Show older" ends one page early, with nothing shown wrong. An optional fix is under Optimisation Suggestions |
+| Y-1, Y-3…Y-7 | Accepted. Y-1 is a pure file with Zod only and no I/O. It is a sound place for the shared schema, and it adds no new pattern |
+| Contents doc spot-check | §2: the 13 modules, their sections and on/off match `EXPORT_MODULES` exactly. §4: the `lookupSectionsFor` output for all 13 modules (run with tsx) matches the §4.4 table, and `STAYS_ID`, `CROSS_MODULE_TARGET_SECTIONS` (clients/services/pipeline_stages) and the 100,000 ceiling match. §5: a script compared every section block with `PURGE_DESCRIPTORS`. All 38 include sections match: table, included columns in order, and the count of excluded columns. 164 descriptors (38 include, 126 exclude), and every excluded table is named in §6. §9: cron `*/5 * * * *`, `RATE_LIMITS.read` 120/300 s and `create` 10/900 s, lease 420, 3 build attempts, 5 notice attempts, cutoff 90, budget 270, 45 s part timeout, 5 s margin, 600 ms gap, 7,000,000 bytes, 10 parts: all match. The three ⚠️ stale code strings are correctly quoted, not copied as fact. Header, ToC and Change History are present; Q-8 removed the ZIP sections and left a git-history pointer; the F-1 note is in Change History |
+| Line endings / Tailwind hazard | Every modified file is all-CRLF (CR count = line count, the same as its `HEAD` blob). The 3 new files are CRLF too. No backslash before a hex digit in any added line |
+| Jest (SA run) | `lib/repositories/__tests__ app/api/business-os/export-requests components/business-os/data-export lib/client lib/business-os/data-export supabase/migrations/__tests__/business-os-export-requests.migration.test.ts`: **177 suites, 4,237 tests, all pass** (51.6 s) |
+
+### Code Review Comments
+
+1. **CR-1 (must fix before the PR)** `components/business-os/data-export/useExportDrawer.ts:145-175` (`loadOlder`): an older page can be appended to the wrong list. `loadFirstPage` keeps the old `ok` list on screen while it reads (l.126), and that list can be several pages deep with `hasMore` true. So "Show older" stays enabled during the read. A click then captures `call = historyCall.current`, which is already the new generation, with the deep list's last request as the cursor. If the first page answers first, it replaces the list with 20 rows. The older answer then passes the `call` check and appends rows older than the deep cursor to those 20 rows. Every request in between silently disappears from the history until the next reload. The paths are the reload after a start (l.238) and after an `in_progress` refusal (l.243), and every open if the hook outlives a close. Fix (Dev's choice): (a) in the `setHistory` updater, append only when `previous.requests` still ends with the cursor's `requestId`, otherwise drop the answer; or (b) refuse `loadOlder` while a first-page read is in flight (a ref set and cleared by `loadFirstPage`). Option (a) also covers any future cause. Add one T-16 case with deferred promises: deep list, start → reload pending, click "Show older", first page resolves, then the older page resolves. The list must be the first page only (or first page plus its true next page), with no gap. QA checks it; no SA re-review needed. Priority: Medium.
+
+### Optimisation Suggestions
+
+- `app/api/business-os/export-requests/route.ts:224`: Y-4 reads the limit anchor on older pages too, and the hook ignores it there. One extra indexed read per "Show older". Harmless, but `nextExportAt: null` without the read when a cursor is present would save it (the seam already accepts null).
+- Y-2: `listRecentForUser` could also return the raw row count, or the route could ask for 21 and work out `hasMore` before the parse drops anything. Not needed now.
+- `docs/business-os/BUSINESS_OS_DATA_EXPORT_CONTENTS.md:1058` (§9.1, GET row): add the strict query step (400 `invalid_input` before the throttle) and the `hasMore` / `nextExportAt` fields, so §9.1 agrees with §9.6 and §9.2. This can be done with CR-1.
+- Follow-up, not this slice: the three stale strings the docs Dev flagged live in `lib/business-os/purge/descriptors.ts`: `EXPORT_COLUMN_REASON.OWNER_ID` (l.117, `export_metadata.user_id`), `DOCUMENT_STORAGE` ('Your files', DE-8b) and the two `STORAGE_DESCRIPTORS` buckets marked `include` with ZIP folders. Raise them as an MX-7 carry-over, because they are purge-classification strings with tests of their own.
+
+### Code Approved for QA: Yes, with CR-1 done before the PR
+
+---
+
+## QA Report — MX-4b — 2026-11-02
+
+**Test mode:** full · **Strategy:** A (Jest, in memory, mocked client) plus temporary QA suites, all deleted afterwards · **Focus:** api, security, ui, schema · **Skipped:** live rows (not allowed), browser check (the TL prompt asked for Jest evidence; the live REST probe of the embedded filter is TL's, recorded above) · **Input source:** TL prompt
+
+Diff checked uncommitted in worktree `neuronforge-mx4b`, off `main` `26df15e5`: 20 modified files and 3 new ones.
+
+### Test coverage
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 1 | T-10…T-16 present and assert what they claim | Pass | T-10: 21 rows give 20 back, `hasMore` true and jobs for those 20 only; exactly 20 give `hasMore` false. T-11: a microsecond `+00:00` cursor reaches the repository byte for byte, with `USER.id`. T-12: 10 × 400 `invalid_input` with zero reads and no throttle call (half cursor both ways, bad uuid, not a timestamp, over-long, quote injection, empty `before`, `?userId=`, extra key beside a valid cursor, repeated key); 401 without a session, ahead of the query check. T-13: anchor read with `now - 24 h`, result anchor + 24 h; no anchor gives null; error and rejection give null, a `limit_anchor_unreadable` warn, and the history is still 200. T-14: offset, window, sub-ms rounding up, unparseable gives null, purity. T-15: ok with both fields; 5 wrong shapes give `error`; cursor keys. T-16: see 5 and 6 |
+| 2 | C-4: the cursor never goes through `Date`; `.or()` quoted; dedupe | Pass | Code read: the route passes `before` straight on; the repository row schema is `z.string()`; `assembleExportHistory` copies `requestedAt`; the hook takes `last.requestedAt`; the seam uses `URLSearchParams`. The only `Date` uses are on `nextExportAt`, `blockedUntil` and the older POST email code. **QA end-to-end suite** (seam, fetch bridge, real GET, REAL repository, recording Supabase client), with `2026-10-31T17:35:52.018123+00:00`, `2026-10-31 17:35:52.018123+00` and `2026-10-31T17:35:52.000001-05:30`: the DB string comes out of the seam unchanged, and goes back as `requested_at.lt."<t>",and(requested_at.eq."<t>",id.lt."<id>")` exactly. `user_id` is applied before the keyset, the page reads 21 rows, and an older page makes no `range` (hint) call: 4/4. **QA render suite**: the hook through the real seam puts the microsecond `+00:00` time into the URL byte for byte. Dedupe is pinned by T-16 |
+| 3 | C-5 mirror and its negative controls | Pass | QA loaded the REAL migration test against an in-memory mutated copy of `20261095` (`fs.readFileSync` mocked, disk untouched). Mutations at the counting site: origin line dropped; origin replaced by `IS NOT NULL`; `OFFSET (v_limit)`; owner literal 3; `NOT IN ('failed')`; `ASC`; 12 h window; 12 h retry. **All 8 turn the mirror red** (1 failed / 4 passed each). The unmutated copy gives 5/5. Note: `AND req.origin = p_origin` appears twice in the start body (l.207 `in_progress`, l.219 counting). A mutation of the first site leaves the mirror green, which is correct because it is a different query. Dev's own control targets the second site (with `AND req.requested_at` as context), so it is not vacuous |
+| 4 | CR-1 guards | Pass, with one gap (E-1) | Hook backed up, then edited with the Edit tool and restored. SHA-256 of the file and of `git diff` were identical before and after (`d032579d…`, `7d0c14fe…`); 273/273 CRLF. Results of the "SA CR-1" test: both guards removed → **fails** (received `88888888…` appended after the new first page); guard 1 (`isFirstPageInFlight`) removed only → passes; guard 2 ("list still ends with the cursor id") removed only → passes. So the test proves that the pair closes the race, but neither guard is pinned on its own (E-1) |
+| 5 | N-1 behaviour | Pass | T-16: a future hint on open turns Export off with "You can export again at {time}", and fake timers turn it back on at that time; a past hint leaves Export on; a failed read leaves Export on. QA render suite adds: hint `null` → Export on, no alert; a seam 500 → on; a future hint on the **reload after a start** is not applied (only on the open). Route: a hint failure serves the history, `nextExportAt` null, warn logged (T-13); with a cursor the anchor read is skipped (route test, plus QA e2e: no `range` call) |
+| 6 | Copy keys, RTL | Pass | `historyShowOlder` / `historyOlderUnavailable` are in en/he/es (`exportDrawerCopy.test.ts` plus QA). QA Hebrew render: the button shows `he.historyShowOlder` inside the `dir="rtl"` container; a failed read shows the Hebrew line with Hebrew Try again, and the list is kept (2); the retry appends (3) and the button goes |
+| 7 | Contents doc | Pass | 1,212 lines, 1,212 CRLF, ends with `\r\n`. All 12 ToC anchors resolve to headings (script over 94 headings). `## Change History` is last, and the old 2026-10-17 row is kept above the new 2026-11-02 row. No backslash followed by a hex digit in the doc, in any added diff line, or in the 3 new files. The §9.1 GET row matches `route.ts`: 401 → strict query 400 `invalid_input` → throttle `RATE_LIMITS.read` 120/300 s, key `export-request-history` → 200 `{ requests, hasMore, nextExportAt }`, 21 read / 20 returned, hint on the first page only. §9.6 agrees |
+| 8 | Regression | Pass | Jest, 8 requested paths: **250 suites, 7,232 tests, all pass** (107 s), nothing to compare against `main`. `npm run test:bos-entitlements`: **346 suites, 10,045 tests, all pass**. (A first run while QA's temporary e2e file existed failed the callers guard, which named that file. The guard works; the rerun after deletion was green) |
+| 9 | Logging, DB access | Pass | No `console.*` in any added line or touched source file. The route uses the Pino `requestLogger` (correlationId child) and the seam uses `createLogger`. DB access in route and components only goes through the two repositories; both new reads `.eq('user_id')` first |
+| — | Every touched file uniformly CRLF | Pass | CR count = line count for all 23 files |
+
+### Issues found
+
+**Bugs:** none.
+
+**Edge cases (nice to fix):**
+1. **E-1** No CR-1 guard is pinned on its own: the "SA CR-1" test still passes with either guard removed. Add `expect(mockHistory).not.toHaveBeenCalledWith({ before: expect.anything() })` right after the click during the held reload; that pins guard 1. Guard 2 cannot be reached from the UI today, because every list swap bumps the generation. It is defence in depth, and only a hook-level test could pin it. Low. File: `components/business-os/data-export/__tests__/ModuleExport.render.test.tsx`.
+2. **E-2** The test "a nextExportAt already past, or none, leaves Export on" only exercises "past". QA covered `null` in its temporary suite (it passes). Split the test, or add the null case. Low. Same file.
+3. **E-3** The T-12 401 case asserts the status only. Add `mockListRecent` / `mockLimitAnchor` not called, as the 400 cases do. QA's e2e suite showed that no DB call is made. Low. File: `app/api/business-os/export-requests/__tests__/route.test.ts`.
+
+### Cleanup
+
+The temporary suites were deleted: `app/api/business-os/export-requests/__tests__/zz-qa-mx4b.e2e.test.ts`, `supabase/migrations/__tests__/zz-qa-mx4b-mut.test.ts` and `components/business-os/data-export/__tests__/zz-qa-mx4b.render.test.tsx`. `useExportDrawer.ts` was restored byte-identical. `git status` shows only Dev's 20 modified and 3 new files. No live rows, no build run, `.next` untouched.
+
+### Final status
+- [x] All acceptance criteria pass, ready for commit (E-1…E-3 optional, Low)

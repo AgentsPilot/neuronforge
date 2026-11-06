@@ -223,6 +223,9 @@ export const HELD_PAYMENT_REFUSAL_COPY: Readonly<Record<PlanCheckoutRefusalCode 
   billing_row_unreadable: 'refusalGeneric',
   subscription_check_incomplete: 'refusalGeneric',
   stripe_error: 'refusalGeneric',
+  // D6 / DL-1b (BQ-34): an existing line, no new wording; a held account rarely has a request open.
+  deletion_pending: 'refusalNotOpen',
+  deletion_state_unreadable: 'refusalGeneric',
   invalid_input: 'refusalGeneric',
 };
 

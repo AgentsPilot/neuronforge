@@ -50,15 +50,233 @@
  *     (`jest.gate.config.js`) and runs only where those credentials are set.
  *   - Anything, when ALLOW_TEST_NETWORK=1 — an escape hatch for diagnosing a
  *     live service by hand, never for CI.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * COUNTING THE REFUSALS, SO THEY CAN BE DRIVEN OUT
+ *
+ * A refusal is silent by design (above), so the suites that still leak never
+ * announce themselves. When NO_NETWORK_RECORD_DIR is set, every refusal is
+ * also APPENDED to a file there, and `.github/ci/jest-gate-check.mjs` (G8)
+ * fails the gate when the total across shards exceeds a ceiling that may only
+ * ratchet down. Unset — which is every developer machine — nothing is written
+ * and this file behaves exactly as it did before.
+ *
+ * The gate deliberately accuses no TEST. It cannot: this guard installs once
+ * per worker (see ONE INSTALL, MANY SANDBOXES below), so a socket opened by a
+ * promise an earlier file left floating is charged to whichever file happens to
+ * be running when it opens. An earlier attempt to fail the running case did
+ * exactly that to an innocent suite, and a failure pointing at the wrong file
+ * is the original sin of this whole bug class. So the count gates and the
+ * attribution only informs — which is why the two attribution fields below are
+ * NAMED for their own unreliability. To attribute a refusal beyond doubt, run
+ * the one suite alone (`npm run test:leaks -- <path>`): with no predecessor in
+ * the worker there is nothing to inherit.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 /* `node:` prefixed: this patches the CORE module's prototype, which is shared
    by every test file a worker runs, and that is the whole premise below. */
 import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /** Where the live-API tests live. Exempt, by design. */
 const INTEGRATION_TESTS = 'tests/plugins/integration-tests/';
+
+/*
+ * The guard's OWN test opens connections deliberately, to prove this file
+ * refuses them. They are still refused — that is what it asserts — but they are
+ * not COUNTED, or the ceiling would be measuring the guard's own test instead
+ * of the suite's leaks. Matched on the file name alone, so the path separator
+ * does not matter.
+ *
+ * Residual, and in the safe direction: a socket inherited from the file that
+ * ran immediately before the guard's test is exempted too, so the count can
+ * under-report by a hair. Under-reporting errs toward not failing the gate.
+ */
+const GUARDS_OWN_TEST = 'jest-no-network.guard.test';
+
+/*
+ * Lifts the exemption above, and nothing else.
+ *
+ * SET IT IN THE ENVIRONMENT, not from a test. A test file cannot set it: Jest
+ * gives each file its own `process.env` copy, while this closure reads the
+ * process environment, so an assignment made inside a case is invisible here.
+ * Measured the hard way — the guard's own test once set it and asserted its
+ * own records, and passed only when it happened to install the guard (i.e.
+ * when run alone), failing on CI where another file installs it first.
+ *
+ * Used for diagnosing this file by hand, where it does work, because the
+ * parent process sets it:
+ *
+ *     NO_NETWORK_RECORD_GUARDS_OWN_TEST=1 NO_NETWORK_RECORD_DIR=/tmp/x \
+ *       npx jest --runTestsByPath tests/jest-no-network.guard.test.ts
+ *
+ * It never changes whether a connection is refused, only whether a refusal is
+ * counted, so it cannot let a test reach the network.
+ *
+ * DELIBERATELY NOT reported in the shard marker, unlike ALLOW_TEST_NETWORK,
+ * and the asymmetry is the point: ALLOW_TEST_NETWORK can HIDE leaks, so G8 has
+ * to know whether it was set. This one can only ever add records, so if it
+ * leaked into CI the gate would go red — a false alarm, never a silent pass.
+ * Adding it to the marker would buy nothing and imply it were dangerous.
+ */
+const RECORD_GUARDS_OWN_TEST = 'NO_NETWORK_RECORD_GUARDS_OWN_TEST';
+
+/**
+ * How many refusals one worker will record before it stops.
+ *
+ * A leaked read contributes exactly ONE refusal here — measured in isolation
+ * and repeated — and the REASON matters more than the number, because it is
+ * not a property anyone should assume stays true.
+ *
+ * `lib/supabaseFetch.ts` looks like it should treble the count: it classifies
+ * ECONNREFUSED as transient and retries a GET twice, 50 ms then 150 ms. Under
+ * Jest it never retries at all. `isTransientConnectionError` opens with
+ * `error instanceof Error`, and undici builds `TypeError: fetch failed` with
+ * the HOST realm's `Error` while a test runs in Jest's own sandbox realm — so
+ * that check is false even though `cause.code` really is ECONNREFUSED, and the
+ * retry is skipped. In production it fires; in the gate it does not. Measured
+ * warm, a retryable GET and a non-retryable POST cost the same (~25 ms vs
+ * ~24 ms), which is what a skipped retry looks like; an earlier 347 ms vs
+ * 34 ms pair that suggested otherwise was the ~250 ms one-time undici
+ * initialisation charged to whichever call ran first.
+ *
+ * So do NOT read one-per-leak as a stable law. If that `instanceof` is ever
+ * corrected, or sandbox realms stop differing, an awaited leaked read becomes
+ * up to THREE refusals. Pin the ceiling from the maximum of several CI runs
+ * with a margin, as `$refusalsComment` in the quarantine file requires.
+ *
+ * For the same reason the count is not a leak COUNT. Every leak contributes at
+ * least one, so driving it to zero is exactly right — but a ratchet from 9 to 3
+ * must not be read as six leaks fixed.
+ *
+ * The cap is for the case that obeys none of this: a pathological loop could
+ * otherwise turn this into a hundred thousand synchronous writes. After
+ * `MAX_RECORDS_PER_WORKER` real records the worker writes one `truncated`
+ * record and stops; G8 FAILS on it, because a count that is known to be
+ * incomplete must never read as a pass.
+ *
+ * Per WORKER, not per file, though this module is re-run for every test file:
+ * the counter that matters belongs to the module instance of whichever file
+ * installed the guard, because that is the one the closure below captured. The
+ * later instances are created and never used.
+ */
+const MAX_RECORDS_PER_WORKER = 500;
+
+/*
+ * This file is `tests/jest-no-network.ts`, so the repo root is its parent.
+ * Taken from `__dirname` rather than `process.cwd()`, which a worker is under
+ * no obligation to set to the root.
+ */
+const REPO_ROOT = path.resolve(__dirname, '..');
+
+let recordsWritten = 0;
+
+/**
+ * The repo frames of the stack that opened the socket.
+ *
+ * This is the one part of a record that is not a guess: it is the code path
+ * that actually made the call, whoever "owns" it. It does not reach the calling
+ * test — the socket opens on an undici continuation, so the frames stop at the
+ * transport (for Supabase, `lib/supabaseFetch.ts`) — but it does say WHICH
+ * transport, which separates a Supabase leak from an LLM one at a glance.
+ *
+ * `node_modules` and this file's own frame are dropped; everything left is the
+ * repo's. The limit is raised around the capture because a stack is sliced to
+ * `Error.stackTraceLimit` frames and something upstream may have lowered it —
+ * measured at 100 here, but a zero would silently reduce every record to
+ * nothing, which is how a diagnostic rots without anyone noticing.
+ */
+function repoFrames(root: string): string[] {
+  const limit = Error.stackTraceLimit;
+  try {
+    /*
+     * Negated rather than `limit < 30`, so a limit that is not a number raises
+     * it too. `undefined < 30` is false, and V8 then captures no stack at all
+     * — the exact rot the paragraph above defends against, let through by the
+     * guard meant to prevent it.
+     */
+    if (!(limit >= 30)) Error.stackTraceLimit = 30;
+    const raw = new Error('network').stack ?? '';
+    return raw
+      .split('\n')
+      .slice(1)
+      .filter(line => line.includes(root) && !line.includes('node_modules'))
+      /* Normalise BEFORE filtering by file, so one spelling is matched. */
+      .map(line => line.trim().replace(root, '').replace(/\\/g, '/').replace(/\(\/+/, '('))
+      /* This file's own frame is never a lead — it is where every one of them
+         passes through. Matched exactly, so the guard's TEST still shows up. */
+      .filter(line => !line.includes('(tests/jest-no-network.ts:'))
+      .slice(0, 8);
+  } catch {
+    return [];
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+}
+
+/** This worker's own file, so concurrent appends cannot interleave a line. */
+function fileFor(dir: string, kind: 'refusals' | 'alive'): string {
+  const worker = process.env.JEST_WORKER_ID ?? '0';
+  return path.join(dir, `${kind}-w${worker}-${process.pid}.${kind === 'alive' ? 'json' : 'jsonl'}`);
+}
+
+/**
+ * Append one refusal to this worker's own file.
+ *
+ * Every failure here is swallowed. A test's outcome must not depend on whether
+ * a diagnostic file could be written — but a swallowed write must not be able
+ * to look like a clean run either, which is what `announceRecording` below is
+ * for. The counter is incremented only after a write that succeeded, so the cap
+ * counts records that exist rather than attempts — which does mean an
+ * unwritable directory retries the append once per refusal forever, bounded
+ * only by the refusals themselves. Theoretical: `announceRecording` writes to
+ * the same directory at install, so G8 already fails a run that could not
+ * write there.
+ */
+function record(dir: string, entry: Record<string, unknown>): void {
+  try {
+    if (recordsWritten > MAX_RECORDS_PER_WORKER) return;
+
+    /* One sentinel in place of the record that would have exceeded the cap. */
+    const line = JSON.stringify(
+      recordsWritten === MAX_RECORDS_PER_WORKER ? { truncated: true } : entry
+    );
+
+    fs.appendFileSync(fileFor(dir, 'refusals'), line + '\n');
+    recordsWritten++;
+  } catch {
+    /* never let the diagnostic change a test result */
+  }
+}
+
+/**
+ * Say, once per worker, that the recorder is actually running.
+ *
+ * Without this, a run in which the recorder never recorded is indistinguishable
+ * from a run with no leaks: both are zero records, and G8 would read the second
+ * meaning and pass. The shard's own marker cannot close that gap, because it is
+ * written by the workflow and only proves the workflow MEANT to record — it is
+ * one renamed environment variable, one edit to `setupFiles`, or one unwritable
+ * directory away from being a lie, and `record` swallows that last case by
+ * design.
+ *
+ * So the proof comes from the guard itself, in the same directory, and by the
+ * same filesystem write the records depend on. Every shard runs at least one
+ * worker, so G8 requiring one of these per shard means zero can only mean the
+ * recorder never ran — which it then fails on.
+ */
+function announceRecording(dir: string): void {
+  try {
+    fs.writeFileSync(
+      fileFor(dir, 'alive'),
+      JSON.stringify({ worker: process.env.JEST_WORKER_ID ?? '0', pid: process.pid }) + '\n'
+    );
+  } catch {
+    /* the absence IS the signal; G8 fails closed on it */
+  }
+}
 
 /**
  * Destinations that cannot leave this machine.
@@ -132,7 +350,9 @@ function destinationOf(args: unknown[]): { host?: string; port?: number } {
 }
 
 /** Just enough of a sandbox global to find the running test's path. */
-type Sandbox = { expect?: { getState?: () => { testPath?: string } } };
+type Sandbox = {
+  expect?: { getState?: () => { testPath?: string; currentTestName?: string } };
+};
 
 /**
  * The test file running right now, for the error message.
@@ -204,6 +424,47 @@ if (installed.__noNetworkGuard) {
       return (realConnect as (...a: unknown[]) => net.Socket).apply(this, args);
     }
 
+    /*
+     * Counted, when a run asked to count. Read from the environment on EVERY
+     * refusal, never captured at install time — and that is load-bearing, not
+     * style. This closure belongs to whichever test file ran first in the
+     * worker, and `jest-environment-node` gives every file its own `process`
+     * object and EMPTIES its `process.env` at teardown (measured: 0 keys once
+     * that file has finished). A value captured at install would therefore be
+     * read back off a dead object, nothing would be recorded after the first
+     * file, and the gate's total would read LOW — the direction that makes a
+     * ceiling pass when it should fail. Pinned by a source scan in
+     * tests/jest-no-network.guard.test.ts.
+     */
+    const recordDir = process.env.NO_NETWORK_RECORD_DIR;
+    const counts =
+      !testPath.includes(GUARDS_OWN_TEST) || process.env[RECORD_GUARDS_OWN_TEST] === '1';
+    if (recordDir && counts) {
+      let runningCase: string | null = null;
+      try {
+        runningCase = guarded.__currentSandbox?.expect?.getState?.()?.currentTestName ?? null;
+      } catch {
+        /* the state is not always readable; the destination still is */
+      }
+
+      record(recordDir, {
+        destination: `${host}:${port ?? '?'}`,
+        /* The call path. Not a guess — see repoFrames. */
+        transport: repoFrames(REPO_ROOT),
+        /*
+         * Named for their unreliability on purpose. One install per worker
+         * means an inherited socket is charged to whoever is running, so
+         * neither field may be read as "the offender" — see the header. The
+         * gate does not read them at all; it reads the count.
+         */
+        possiblyNotTheOriginFile: testPath
+          .replace(REPO_ROOT, '')
+          .replace(/\\/g, '/')
+          .replace(/^\//, ''),
+        possiblyNotTheOriginCase: runningCase,
+      });
+    }
+
     const error = Object.assign(
       new Error(
         `Blocked a network connection to ${host}:${port ?? '?'} from ${testPath}. ` +
@@ -237,4 +498,8 @@ if (installed.__noNetworkGuard) {
   guarded.__noNetworkGuard = true;
   guarded.__currentSandbox = global as Sandbox;
   net.Socket.prototype.connect = guarded;
+
+  /* Here, so it happens exactly once per worker — the same place, and the same
+     condition, as the install itself. */
+  if (process.env.NO_NETWORK_RECORD_DIR) announceRecording(process.env.NO_NETWORK_RECORD_DIR);
 }

@@ -3,17 +3,26 @@
  * Please use the v2 plugin system instead.
  */
 
+import { createLogger } from '@/lib/logger';
+
 // Import data/run strategies (execution logic)
 import { gmailDataStrategy } from './strategies/gmailDataStrategy';
 import { googleDriveDataStrategy } from './strategies/googleDriveDataStrategy';
 import { chatgptResearchStrategy } from './strategies/chatgptResearchStrategy';
 import { slackDataStrategy } from './strategies/slackDataStrategy';
-import { universalPlugins } from './v2/registry';
 
-// Import OAuth strategies (connection handling)
-import { gmailStrategy as gmailOAuthStrategy } from './strategies/gmailPluginStrategy';
-import { googleDriveStrategy as googleDriveOAuthStrategy } from './strategies/googleDrivePluginStrategy';
-import { slackStrategy } from './strategies/slackPluginStrategy';
+// No OAuth strategy imports: the V1 OAuth surface was deleted in G-2 of
+// docs/requirements/GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md. The
+// `universalPlugins` import that kept lib/plugins/v2/ alive went with it, as did
+// `slackStrategy`, which was already imported without ever being used.
+//
+// A FOURTH dead import survives on purpose: `slackDataStrategy` above is imported
+// and never used (there is no 'slack' registry entry — only a PLUGIN_VERSION_MAP
+// line). It stays because this line is the only importer of slackDataStrategy.ts,
+// which is in turn the only importer of slackPluginStrategy.ts, so removing it
+// orphans the whole Slack V1 pair and widens this slice into Slack. That is G-6.
+
+const logger = createLogger({ module: 'plugins/pluginRegistry' });
 
 // Input template types
 /** @deprecated Use v2 plugin system instead */
@@ -59,11 +68,13 @@ export interface PluginDefinition {
   generateInputFields?: (usage: 'input' | 'output') => any[];
   generateOutputSchema?: (usage: 'input' | 'output', prompt: string) => any;
   run: (args: any) => Promise<any>;
-  fetchContext?: (userId: string, input: Record<string, any>) => Promise<any>;
+  // No `fetchContext`: no entry implemented it and no caller invoked it — see AF-7.
   
-  // OAuth connection methods
-  connect?: (params: { supabase: any; popup: Window; userId: string }) => Promise<void>;
-  handleOAuthCallback?: (params: { code: string; state: string; supabase?: any }) => Promise<any>;
+  // `connect` and `handleOAuthCallback` were removed with the V1 OAuth surface
+  // (G-2). `refreshToken` stays: gmailDataStrategy implements it for real. No
+  // registry entry wires it today, so PluginCoordinator's refresh branch is
+  // still unreachable — see AF-6 below and in
+  // docs/requirements/GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md.
   refreshToken?: (connection: any) => Promise<any>;
 }
 
@@ -186,10 +197,17 @@ export const pluginRegistry: Record<string, PluginDefinition> = {
     },
 
     run: gmailDataStrategy.run,
-    fetchContext: gmailDataStrategy.fetchContext,
-    connect: gmailOAuthStrategy.connect,
-    handleOAuthCallback: gmailOAuthStrategy.handleOAuthCallback,
-    refreshToken: gmailOAuthStrategy.refreshToken,
+    // AF-7: `fetchContext: gmailDataStrategy.fetchContext` was removed for the same
+    // reason as the refreshToken wiring below — gmailDataStrategy has no such member,
+    // the deleted gmailPluginStrategy had none either (so the spread never supplied
+    // one), and nothing in app/ or lib/ ever calls `.fetchContext(`. It was `undefined`
+    // assigned to an optional field, and the only thing it produced was a TS2339.
+    // AF-6: this entry used to set `refreshToken: gmailOAuthStrategy.refreshToken`,
+    // a member that never existed, so the field was always `undefined` and
+    // PluginCoordinator's refresh branch never ran. Removed rather than repointed
+    // at gmailDataStrategy.refreshToken (which does exist): enabling a refresh path
+    // that has never executed is a behaviour change, not a deletion, and belongs to
+    // G-6 with its own review.
   },
 
   'google-drive': {
@@ -310,9 +328,8 @@ export const pluginRegistry: Record<string, PluginDefinition> = {
     },
 
     run: googleDriveDataStrategy.run,
-    connect: googleDriveOAuthStrategy.connect,
-    handleOAuthCallback: googleDriveOAuthStrategy.handleOAuthCallback,
-    refreshToken: googleDriveOAuthStrategy.refreshToken,
+    // AF-6: same dead `refreshToken` wiring as google-mail, removed for the same
+    // reason. Google Drive has no real refresh implementation to repoint at.
   },
 
   'chatgpt-research': {
@@ -555,7 +572,7 @@ export function detectRequiredPlugins(prompt: string): string[] {
   }
 
   const uniqueServices = [...new Set(detectedServices)];
-  console.log(`Detected required plugins: ${uniqueServices.join(',')}`);
+  logger.info({ detectedPlugins: uniqueServices }, 'Detected required plugins');
   return uniqueServices;
 }
 
@@ -583,13 +600,16 @@ export function validatePluginRequirements(prompt: string, connectedPlugins: str
 
   const allMissingServices = [...missingPlugins, ...unsupportedServices];
 
-  console.log('Plugin validation result:', {
-    requiredServices,
-    connectedPlugins,
-    missingPlugins,
-    unsupportedServices,
-    isValid: allMissingServices.length === 0
-  });
+  logger.info(
+    {
+      requiredServices,
+      connectedPlugins,
+      missingPlugins,
+      unsupportedServices,
+      isValid: allMissingServices.length === 0
+    },
+    'Plugin validation result'
+  );
 
   return {
     isValid: allMissingServices.length === 0,
@@ -616,10 +636,3 @@ export const PLUGIN_VERSION_MAP: Record<string, 'v1' | 'v2'> = {
   'google-drive-v2': 'v2',
   'slack': 'v1'
 }
-
-// console.log('Plugin Registry Loaded:', {
-//   totalPlugins: Object.keys(pluginRegistry).length,
-//   categories: [...new Set(Object.values(pluginRegistry).map(p => p.category))],
-//   pluginsWithInputTemplates: Object.values(pluginRegistry).filter(p => p.inputTemplates).length,
-//   pluginsWithOutputTemplates: Object.values(pluginRegistry).filter(p => p.outputTemplates).length
-// });

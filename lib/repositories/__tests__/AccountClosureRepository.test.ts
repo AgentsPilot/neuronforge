@@ -284,6 +284,39 @@ describe('transition', () => {
     expect(calls).toEqual([]);
   });
 
+  it('DL-1b (SA W-3, T-17): requesting → pending may write renewal_was_on and plan_ends_at', async () => {
+    const { c, calls } = client({ error: null, count: 1 });
+    const result = await repo(c).transition(CLOSURE, OWNER, 'requesting', 'pending', { renewal_was_on: false, plan_ends_at: T });
+    expect(result).toEqual({ data: true, error: null });
+    const payload = calls.find((call) => call.method === 'update')?.args[0] as Record<string, unknown>;
+    expect(payload).toMatchObject({ status: 'pending', renewal_was_on: false, plan_ends_at: T });
+    expect(payload).not.toHaveProperty('next_check_at');
+    const nullEnd = client({ error: null, count: 1 });
+    expect(await repo(nullEnd.c).transition(CLOSURE, OWNER, 'requesting', 'pending', { renewal_was_on: true, plan_ends_at: null })).toEqual({ data: true, error: null });
+  });
+
+  it.each([
+    ['requesting', 'grace'],
+    ['pending', 'grace'],
+    ['pending', 'kept'],
+    ['grace', 'kept'],
+    ['grace', 'locked'],
+    ['locked', 'kept'],
+  ] as const)('DL-1b (SA W-3, T-17): %s → %s refuses renewal_was_on and plan_ends_at before any database call', async (from, to) => {
+    const { c, calls } = client({ error: null, count: 1 });
+    const a = await repo(c).transition(CLOSURE, OWNER, from, to, { renewal_was_on: true } as never);
+    const b = await repo(c).transition(CLOSURE, OWNER, from, to, { plan_ends_at: T } as never);
+    expect((a.error as Error & { code?: string }).code).toBe(CLOSURE_ERROR.INVALID);
+    expect((b.error as Error & { code?: string }).code).toBe(CLOSURE_ERROR.INVALID);
+    expect(calls).toEqual([]);
+  });
+
+  it('DL-1b (SA W-3): a wrong renewal_was_on shape is refused with no database call', async () => {
+    const { c, calls } = client({ error: null, count: 1 });
+    expect((await repo(c).transition(CLOSURE, OWNER, 'requesting', 'pending', { renewal_was_on: 'yes' } as never)).error).toBeTruthy();
+    expect(calls).toEqual([]);
+  });
+
   it('error path', async () => {
     const { c } = client({ error: { code: '23514', message: 'check violation' }, count: null });
     const result = await repo(c).transition(CLOSURE, OWNER, 'grace', 'locked', { locked_at: T });

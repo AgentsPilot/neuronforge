@@ -65,7 +65,7 @@ async function openExportDrawer() {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockProbe.mockResolvedValue({ kind: 'ok', requests: [] });
+  mockProbe.mockResolvedValue({ kind: 'ok', requests: [], hasMore: false, nextExportAt: null });
 });
 
 describe('the export drawer inside a dialog (SR-9)', () => {

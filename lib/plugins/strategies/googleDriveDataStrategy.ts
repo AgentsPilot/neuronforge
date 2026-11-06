@@ -4,31 +4,26 @@
  */
 
 // lib/plugins/strategies/googleDriveDataStrategy.ts
+import { createLogger } from '@/lib/logger'
+
 import type { PluginStrategy } from '../pluginRegistry'
+
+const logger = createLogger({ module: 'plugins/googleDriveDataStrategy' })
 
 /** @deprecated Use v2 plugin system instead */
 export const googleDriveDataStrategy: PluginStrategy = {
   pluginKey: 'google-drive',
   name: 'Google Drive',
   
-  connect: async ({ supabase, popup, userId }) => {
-    // Delegate to the OAuth strategy
-    const { googleDriveStrategy } = await import('./googleDrivePluginStrategy')
-    return googleDriveStrategy.connect({ supabase, popup, userId })
-  },
-
-  handleOAuthCallback: async ({ code, state, supabase }) => {
-    // Delegate to the OAuth strategy
-    const { googleDriveStrategy } = await import('./googleDrivePluginStrategy')
-    if (!googleDriveStrategy?.handleOAuthCallback) {
-      throw new Error('googleDriveStrategy.handleOAuthCallback is not defined')
-    }
-    return googleDriveStrategy.handleOAuthCallback({ code, state, supabase })
-  },
+  // No connect / handleOAuthCallback: the V1 OAuth surface was deleted (G-2 of
+  // docs/requirements/GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md). These
+  // were `await import('./googleDrivePluginStrategy')` delegates, so their
+  // failure would have been at call time rather than at build time. Plugin
+  // connects go through app/oauth/callback/[plugin] and PluginManagerV2.
 
   // Main plugin functionality for agents
   run: async ({ connection, userId, input_variables }) => {
-    console.log('Running Google Drive plugin...', { userId, hasConnection: !!connection })
+    logger.info({ userId, hasConnection: !!connection }, 'Running Google Drive plugin')
     
     if (!connection?.access_token) {
       throw new Error('Google Drive connection not available or expired')
@@ -54,7 +49,7 @@ export const googleDriveDataStrategy: PluginStrategy = {
           throw new Error(`Unknown action: ${action}`)
       }
     } catch (error) {
-      console.error('Google Drive plugin error:', error)
+      logger.error({ err: error, userId }, 'Google Drive plugin error')
       throw error
     }
   }

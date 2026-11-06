@@ -200,6 +200,8 @@ function harness(options: { moveWriteFailsOnce?: boolean } = {}) {
       mirrorAudits.push(input);
     },
     afterPlanMove: (input: Parameters<typeof moveToFreeCohortAfterPlan>[0], moveLog: Logger) => moveToFreeCohortAfterPlan(input, moveLog, moveDeps),
+    // D6 (SA W-6 b): the required closure-keep port, a stub.
+    closureStripeKeep: async () => undefined,
   } as unknown as PlanBillingHandlerDeps;
   const handler = createPlanBillingHandler(handlerDeps);
 

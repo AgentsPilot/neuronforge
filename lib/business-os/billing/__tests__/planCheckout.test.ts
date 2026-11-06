@@ -228,6 +228,8 @@ function harness(options: Options = {}) {
       if (options.snapshot === 'throw') throw new Error('snapshot down');
       return options.snapshot ?? { unavailable: false, resolution: TIER_RESOLUTION };
     }),
+    // D6 / DL-1b (SA W-6 b): the required closure port; no request open unless a test says so.
+    deletionPending: jest.fn(async (): Promise<'none' | 'open' | 'unreadable'> => 'none'),
     logger,
     repo: repo as unknown as PlanCheckoutDeps['repo'],
     stripe: stripe as unknown as PlanCheckoutDeps['stripe'],
@@ -381,6 +383,32 @@ describe('startPlanCheckout — early refusals make NO Stripe call (C-4)', () =>
     expectRefused(result, code);
     expect(stripeCalls()).toEqual([]);
     expect(mockGetStripeService).not.toHaveBeenCalled();
+  });
+
+  // D6 / DL-1b (BQ-34, XC-19; T-10): no plan is sold while a deletion request is open.
+  it.each<[string, () => Promise<'none' | 'open' | 'unreadable'>, string]>([
+    ['a deletion request is open', async () => 'open', 'deletion_pending'],
+    ['the closure state is unreadable (fail closed)', async () => 'unreadable', 'deletion_state_unreadable'],
+    ['the closure read throws (fail closed)', async () => { throw new Error('down'); }, 'deletion_state_unreadable'],
+  ])('D6: %s → %s, after every database read and before any Stripe call', async (_label, reader, code) => {
+    const { deps, stripeCalls, log } = harness();
+    deps.deletionPending = jest.fn(reader);
+    expectRefused(await startPlanCheckout(INPUT, deps), code);
+    expect(deps.deletionPending).toHaveBeenCalledWith(INPUT.userId);
+    expect(stripeCalls()).toEqual([]);
+    expect(mockGetStripeService).not.toHaveBeenCalled();
+    expect(log).toContain('db:snapshot');
+  });
+
+  it('D6: the refusals answer 409 "Keep your account first" and 503', () => {
+    expect(PLAN_CHECKOUT_REFUSALS.deletion_pending).toEqual({ status: 409, message: 'Your account is set to be deleted. Keep your account first.' });
+    expect(PLAN_CHECKOUT_REFUSALS.deletion_state_unreadable.status).toBe(503);
+  });
+
+  it('D6: no request open → the flow is unchanged (the happy path runs with the reader answering none)', async () => {
+    const { deps } = harness();
+    expect((await startPlanCheckout(INPUT, deps)).ok).toBe(true);
+    expect(deps.deletionPending).toHaveBeenCalledTimes(1);
   });
 
   // Rewritten on purpose for P-4.1 M-3: `checkout_open` now only means the

@@ -1,6 +1,6 @@
 # Business OS credit pricing: the credit value and plan allowances
 
-> **Last Updated**: 2026-10-25
+> **Last Updated**: 2026-11-03
 
 ## Overview
 
@@ -18,6 +18,7 @@ The mechanism (how a charge is recorded, the ledger, the balance) is specified i
 3. [The allowance rule and the resulting allowances](#3-the-allowance-rule-and-the-resulting-allowances)
 4. [Benchmark (2026-09-30)](#4-benchmark-2026-09-30)
    - [4a. Benchmark (2026-10-25)](#4a-benchmark-2026-10-25)
+   - [4b. Benchmark (2026-11-03)](#4b-benchmark-2026-11-03)
 5. [Considerations and trade-offs](#5-considerations-and-trade-offs)
 6. [When and how to revisit](#6-when-and-how-to-revisit) (6.4 is the [D6 re-size runbook](#64-the-d6-re-size-runbook-existing-accounts))
 7. [Revision log](#7-revision-log)
@@ -283,6 +284,52 @@ A read-only production analysis (aggregates only; no account ids or emails recor
 
 **Caveats.** Test accounts only; about 25 days; 5 of the 7 images were on the retired model. **Provisional — revisit after the first month of paying customers** (the §6.1 triggers stand).
 
+### 4b. Benchmark (2026-11-03)
+
+A read-only check of D4 against production (SELECTs only; aggregates only, no account ids or emails recorded here), run on 2026-11-03, nine days after the re-size. Counted from the credit ledger, plus `token_usage` for AI spend the ledger does not see. **No number was changed on this data** (§7 has no row for it).
+
+**The window and the accounts.**
+
+| Fact | Figure |
+|---|---|
+| Ledger live since | 2026-09-29 ~15:40 UTC — about **35 days** at run time |
+| Accounts with a plan row | **11**: 1 trial, 9 Founding Partners, 1 Founding Partner also on an Autopilot tier; **8** have charges |
+| Nature | All test / demo accounts; **0 paying customers** |
+| Activity since the re-size (2026-10-25) | About **150 charges** in 9 days, mostly scheduled briefings and insights; **no new images** |
+| Excluded | The 20,000-credit `test_take_credits` charge (as in §4a) |
+
+**Recurring use per account, last 30 days** (setup and images excluded): **0 to 48** credits, mean ≈ **15** — below §4a's 39. Current-period use is under 6% of the allowance on every account but two: the trial at **734 of 1,000 (73%)**, and the Autopilot account at 254 of 5,000 (5%).
+
+**The trial at 73% is a testing artifact.** It ran onboarding **7 times** (135 onboarding turns, 634 credits; 7 builds, 93 credits). It still shows the cost of one onboarding.
+
+**Unit costs (credits, from the ledger), all charges to date.** They match §4a.
+
+| Action | Credits | Count |
+|---|---|---|
+| Chat turn | 2.10 average, 2.08 p50 | 55 |
+| Onboarding turn | 4.66 average, 4.53 p50 | 151 |
+| Onboarding build | 13.0 | 10 |
+| Website landing page | ~10.2 | 4 |
+| Insight run | 0.38 | 121 |
+| Briefing narration | 0.14–0.16 | 413 |
+| Image, `gpt-image-2.5-flare` | 43 and 54 — unchanged, still only 2 measured | 2 |
+
+**Finding 1 — one onboarding costs about 100 credits, not 40–60.** About 19 turns × 4.7 plus a build of ~13 (the trial's 7 runs). The trial's 1,000 still covers several onboardings, so it stays adequate; the heavy month model's setup figure (§2a D4, §3) should use ~100.
+
+**Finding 2 — agent runs are the largest recurring cost, and the ledger does not see them.** Automations installed from Business OS run through the agents path and are not charged in credits (credit deduction slice 13). `token_usage` rows for plan accounts outside the `business-os*` features over the window:
+
+| Account | Agent-run AI spend (credits at $0.001) | Per 30 days | Its own Business OS recurring use, 30 days |
+|---|---|---|---|
+| Founding Partner A | ~185 in 7 days (938 calls) | **~790** | ~32 |
+| Trial | ~35 in 1 day | — | ~8 |
+| Founding Partner B | under 1 | — | ~11 |
+
+One active automation account spends about **25×** its own Business OS use, and more than Essentials' whole heavy month model (~600). Adding that to the model gives Essentials a heavy month of about **1,400**, so the 3× rule would give about **4,200** — over twice today's 2,000. Autopilot (5,000) stays roughly covered.
+
+**Caveats.** One automation account over 7 days. Scheduled agent runs charge nothing anywhere (slice 13 investigation), and whether `token_usage` records them was **not** checked, so agent-run spend may be **understated**. Test accounts only.
+
+**Conclusion.** **Keep D4's numbers for now**: there are no paying customers, and Business OS use is below the 2026-10-25 model. **Re-run D4 before agent runs start to be charged** (slice 13b), with agent runs added to each plan's heavy month model, and expect Essentials to need ~4,000–5,000 or a separate rule for agent runs (§8).
+
 ---
 
 ## 5. Considerations and trade-offs
@@ -501,7 +548,9 @@ Each grant is audited like any admin grant. A held account (payment hold) is ref
 | **The 50% share once a non-AI service is priced** (BD-12) | Revisit when the first non-AI service is designed (§5, §6.1). *(2026-10-25: D2's 50% no longer sets the allowances; the question becomes adding the service to each plan's heavy month model, §5.)* |
 | **A chat / image per-action cap** as the practical abuse guard (D3) | To be considered in slice 12. *(2026-10-25: with real limits (D4) the allowance itself now bounds cost at $1 / $2 / $5; the per-action caps remain the guard against a burst.)* |
 | **D6 grants for existing accounts** *(added 2026-10-25)* | ⬜ An admin runs the §6.4 runbook **after** the matrix version 3 code is live, and records the date and the count of accounts granted in §7 |
-| **D4 is provisional** *(added 2026-10-25)* | ⬜ Re-run the benchmark after the **first month of paying customers** (§6.1), with more than two images measured on `gpt-image-2.5-flare` |
+| **D4 is provisional** *(added 2026-10-25)* | ⬜ Re-run the benchmark after the **first month of paying customers** (§6.1), with more than two images measured on `gpt-image-2.5-flare`. *(2026-11-03: re-checked on test accounts, §4b — numbers kept.)* |
+| **Agent runs in the heavy month model** *(added 2026-11-03)* | ⬜ Before agent runs are charged in credits (credit deduction slice 13b): add agent-run spend to each plan's heavy month model and re-apply the 3× rule (§3). §4b measured one automation account at ~790 credits per 30 days, which would put Essentials near ~4,200. Check first whether `token_usage` records scheduled agent runs |
+| **Setup figure in the heavy month model** *(added 2026-11-03)* | ⬜ Use ~100 credits per onboarding (§4b finding 1) instead of ~40–60 the next time the model is re-applied |
 | **Orphan system-config key `monthly_ai_allowance_usd`** | ⬜ Since slice 6a it has **no reader**: the owner card reads the plan's `credits.allowance` from the entitlements resolver, and the dollar allowance and its conversion by `pilot_credit_cost_usd` left the owner surface (FR-36). Left in place — removing a config row is a migration for no owner benefit. Remove in a later clean-up if ever wanted (slice 6 Q-12) |
 
 ---
@@ -522,3 +571,4 @@ Each grant is audited like any admin grant. A held account (payment hold) is ref
 | 2026-10-16 | Money M-5: where the cost report lives | §4.6 table: the operator cost report is the Charge checks page (`/admin/finance/charges`), moved from the Business OS AI "Costs & credits" tab. No figure changed |
 | 2026-10-25 | Credits re-size: decisions D4–D6 | New §2a (D4 allowances on measured usage, ≈ 3× a heavy month; D5 boosts at 400% markup, 200 credits per $1, prices kept; D6 relative expiring top-up, no grandfathering); §2 marks D2 / D3 superseded by D4 and D1 as history. §1 configuration table gains the re-size column (Test Flight 1,000, Essentials 2,000, Autopilot and Founding Partner 5,000; retail version 2; packages version 2 at 2,000 / 5,500 / 11,500). §3 is now the usage rule and its allowances, the old formula kept as §3.1 history. New §4a, the 2026-10-25 ledger benchmark (aggregates only). §4.5 note: first measured images on the new model. §5 rows updated (ceiling decided the other way; automatic work under 1% of 2,000; images; Founding Partner exposure $5; markup now only in the boost rate) and a new "Boosts are now meaningful" row. §6.1 note on reading the triggers under D4; §6.3 notes on expressing no grandfathering and on the boost guard's `RELEASED` and banned-figure list; new §6.4 D6 runbook with the read-only SQL. §7 two rows; §8 two new items |
 | 2026-10-25 | Credits re-size: SA review fixes to the §6.4 runbook | The form's end date is entered in the admin's local time (the ISO `Z` instant only when sending the op directly). `plan_basis` honours `cohort_expires_at` and the query now returns `tier`, `tier_expires_at`, `cohort`, `cohort_expires_at`, with a note that a tier in its settlement margin or grace is still on the tier and that the result must match the admin Businesses list before any grant. Accounts whose window has ended drop out of the query |
+| 2026-11-03 | Benchmark 2026-11-03: D4 re-checked, numbers kept | New §4b (aggregates only): 11 plan accounts, 0 paying, ~150 charges since the re-size; recurring use mean ≈ 15 credits / 30 days; unit costs match §4a; one onboarding ≈ 100 credits; agent runs (uncharged, slice 13) measured at ~790 credits / 30 days on one account, which would put Essentials' 3× allowance near ~4,200. §8 gains two items (agent runs in the heavy month model before slice 13b; setup figure ~100) and a note on the D4 item. No figure in config changed |

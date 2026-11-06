@@ -24,6 +24,7 @@ import {
   NOTICE_STATES,
   PART_STATES,
 } from '@/lib/business-os/data-export/moduleExportPolicy';
+import { nextOwnerExportAt, ownerLimitAnchorOffset, ownerLimitWindowStart } from '@/lib/business-os/data-export/nextOwnerExportAt';
 
 /** The function names, literal here: this test does not import the repositories (their callers guard). */
 const START_FUNCTION = 'business_os_export_request_start';
@@ -369,6 +370,56 @@ describe('20261095: the start function (§3.3, D-6, D-7, M-5)', () => {
     );
     expect(startBody).toContain("RETURN QUERY SELECT 'started'::text, v_request_id, NULL::timestamptz;");
     expect(startBody).not.toMatch(/\bRETURNING\b/);
+  });
+});
+
+describe('MX-4b N-1 mirror (SA C-5): "export again at" on open reads the start function\'s own counting rule', () => {
+  // The predicate, quoted from the start function. The request repository's
+  // findOwnerLimitAnchor sends the same filters (its own test pins the calls,
+  // since this file may not name the repository: the callers guard).
+  const COUNTING_PREDICATE = [
+    '  v_retry_from := (',
+    '    SELECT req.requested_at FROM public.business_os_export_requests AS req',
+    '     WHERE req.user_id = p_user_id',
+    '       AND req.origin = p_origin',
+    `       AND req.requested_at > now() - interval '${MODULE_EXPORT_POLICY.DAILY_WINDOW_HOURS} hours'`,
+    '       AND EXISTS (SELECT 1 FROM public.business_os_export_module_jobs AS job',
+    `                    WHERE job.request_id = req.id AND job.status NOT IN (${quoted(MODULE_JOB_NOT_COUNTED)}))`,
+    '     ORDER BY req.requested_at DESC',
+    '     OFFSET (v_limit - 1) LIMIT 1);',
+  ].join('\n');
+
+  it('the predicate is exactly the one mirrored (a change to it fails here first)', () => {
+    expect(startBody).toContain(COUNTING_PREDICATE);
+    expect(startBody.split('v_retry_from := (').length - 1).toBe(1);
+  });
+
+  it('only requests of the SAME origin count: an owner start never counts admin-origin requests (XC-20)', () => {
+    expect(COUNTING_PREDICATE).toContain('AND req.origin = p_origin');
+    // The owner route starts with origin 'owner' and no admin id, so p_origin is 'owner' on that path.
+    expect(startBody).toContain("v_limit := CASE WHEN p_origin = 'owner' THEN");
+  });
+
+  it('the OFFSET is the owner limit minus one, and ownerLimitAnchorOffset says the same', () => {
+    const owner = /v_limit := CASE WHEN p_origin = 'owner' THEN ([0-9]+) ELSE [0-9]+ END;/.exec(startBody);
+    expect(owner).not.toBeNull();
+    expect(ownerLimitAnchorOffset()).toBe(Number(owner![1]) - 1);
+    expect(ownerLimitAnchorOffset()).toBe(MODULE_EXPORT_POLICY.OWNER_DAILY_LIMIT - 1);
+  });
+
+  it('the window and the retry time are the same DAILY_WINDOW_HOURS the helpers use', () => {
+    const now = Date.parse('2026-11-02T12:00:00.000Z');
+    expect(Date.parse(ownerLimitWindowStart(now))).toBe(now - MODULE_EXPORT_POLICY.DAILY_WINDOW_HOURS * 3_600_000);
+    expect(startBody).toContain(`v_retry_from + interval '${MODULE_EXPORT_POLICY.DAILY_WINDOW_HOURS} hours'`);
+    expect(nextOwnerExportAt('2026-11-02T08:00:00.000Z')).toBe(
+      new Date(Date.parse('2026-11-02T08:00:00.000Z') + MODULE_EXPORT_POLICY.DAILY_WINDOW_HOURS * 3_600_000).toISOString()
+    );
+  });
+
+  it('negative control: a predicate that also counted admin requests, or another offset, would not match', () => {
+    const planted = startBody.replace('       AND req.origin = p_origin\n       AND req.requested_at', '       AND req.requested_at');
+    expect(planted).not.toContain(COUNTING_PREDICATE);
+    expect(startBody.replace('OFFSET (v_limit - 1)', 'OFFSET (v_limit)')).not.toContain(COUNTING_PREDICATE);
   });
 });
 

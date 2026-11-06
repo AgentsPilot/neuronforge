@@ -14,6 +14,8 @@
 //       with no runtime-error suite and no failure
 //   G6  no gate suite is wholly skipped
 //   G7  floors: gate suites >= minSuites and gate tests >= minTests
+//   G8  refused network connections <= maxRefusedConnections, which may only
+//       ratchet DOWN; fail closed on missing or untrustworthy evidence
 //
 // It lives in .github/ so a change to it is never skippable (see
 // non-deploying-change.sh). Usage (CI and local are the same):
@@ -40,6 +42,13 @@ import path from 'node:path';
 const QUARANTINE_FILE = '.github/ci/jest-quarantine.json';
 const INTEGRATION_DIR = 'tests/plugins/integration-tests/';
 const RESULT_NAME = /^gate-results-(\d+)-of-(\d+)\.json$/;
+// Written by tests/jest-no-network.ts (records) and the shard job (marker).
+const REFUSALS_DIR = 'no-network';
+const REFUSALS_NAME = /^refusals-w\d+-\d+\.jsonl$/;
+// One per worker, written by the guard at install time. Its ABSENCE is the
+// signal: see G8 and tests/jest-no-network.ts `announceRecording`.
+const ALIVE_NAME = /^alive-w\d+-\d+\.json$/;
+const MARKER_NAME = 'present.json';
 
 // ── arguments ───────────────────────────────────────────────────────────────
 function parseArgs(argv) {
@@ -96,6 +105,197 @@ function git(args) {
 
 const fmt = (n) => Number(n).toLocaleString('en-US');
 
+/**
+ * G8: how many network connections the gate refused, against a ceiling.
+ *
+ * WHY A COUNT AND NOT A FAILED TEST. `tests/jest-no-network.ts` installs once
+ * per worker, so a socket opened by a promise an earlier file left floating is
+ * charged to whichever file is running when it opens. An earlier attempt to
+ * fail the running case did exactly that to an innocent suite, and a failure
+ * pointing at the wrong file is the original sin of this bug class. So this
+ * accuses no test: it reads one number, and the attribution below only informs.
+ *
+ * FAIL CLOSED, because every way this check can be wrong makes it PASS:
+ *   - a shard whose marker is missing recorded nothing, and nothing reads as
+ *     zero refusals, which would ratchet the ceiling down on a lie;
+ *   - the marker only proves the WORKFLOW meant to record. The guard says for
+ *     itself that it ran, once per worker (`alive-*`), and a shard with none of
+ *     those did not record whatever its marker claims — one renamed env var,
+ *     one `setupFiles` edit or one unwritable directory is enough, and the
+ *     guard swallows a failed write by design;
+ *   - ALLOW_TEST_NETWORK=1 makes the guard return early and record nothing,
+ *     which is the one way to defeat this silently — hence the marker carries
+ *     it, and a marker that does not say `false` is not good enough;
+ *   - a ceiling that is present but not a whole number would read as "not
+ *     pinned yet" and pass forever, since G3's ratchet also ignores it;
+ *   - a record file whose name is unrecognised would be skipped in silence;
+ *   - a worker that hit its record cap reports `truncated`, and a count known
+ *     to be incomplete must never read as a pass.
+ *
+ * REPORT-ONLY WHEN THE CEILING IS ABSENT. That is permanent behaviour, not
+ * scaffolding: it is how the number is bootstrapped from a real CI run (the
+ * count cannot be measured honestly on a developer machine), and it keeps that
+ * path exercised. G3's own bootstrap branch works the same way.
+ */
+function checkRefusals(args, quarantine, shardCount) {
+  const dir = path.join(args.resultsDir, REFUSALS_DIR);
+  const problems = [];
+  const records = [];
+  let truncated = false;
+
+  if (shardCount < 1) {
+    record('G8 refused connections', false, 'the shard count could not be derived, so the evidence cannot be proved complete (see G5)');
+    return null;
+  }
+
+  for (let i = 1; i <= shardCount; i++) {
+    const shardDir = path.join(dir, `shard-${i}`);
+    const marker = path.join(shardDir, MARKER_NAME);
+    if (!existsSync(marker)) {
+      problems.push(`shard ${i} wrote no marker (${REFUSALS_DIR}/shard-${i}/${MARKER_NAME}): it was not recording, so its refusals are unknown`);
+      continue;
+    }
+    let present;
+    try {
+      present = JSON.parse(readFileSync(marker, 'utf8'));
+    } catch (err) {
+      problems.push(`shard ${i}'s marker is not valid JSON: ${err.message}`);
+      continue;
+    }
+    /*
+     * `!== false`, not `=== true`. The field is the one assertion that keeps
+     * the guard from being switched off silently, so anything other than an
+     * explicit `false` — a missing key, a quoted "true", a `printf` edit —
+     * must be a problem rather than a pass.
+     */
+    if (present.allowTestNetwork !== false) {
+      problems.push(
+        `shard ${i}'s marker does not state allowTestNetwork: false (got ${JSON.stringify(present.allowTestNetwork)}). ` +
+        'ALLOW_TEST_NETWORK=1 disables the guard entirely: it is for diagnosing a live service by hand, never for CI. ' +
+        'A marker that cannot confirm it was off is treated as if it was on.'
+      );
+    }
+
+    const files = readdirSync(shardDir);
+
+    /* The guard's own proof that it ran. Nothing else can give it. */
+    if (!files.some((f) => ALIVE_NAME.test(f))) {
+      problems.push(
+        `shard ${i} has a marker but no alive-* file, so tests/jest-no-network.ts never recorded: ` +
+        'its refusals are unknown, and zero records here does NOT mean zero leaks. ' +
+        'Check NO_NETWORK_RECORD_DIR reaches the test process and that the directory is writable.'
+      );
+    }
+
+    /* Anything unaccounted for, rather than quietly skipped. */
+    const unexpected = files.filter(
+      (f) => f !== MARKER_NAME && !ALIVE_NAME.test(f) && !REFUSALS_NAME.test(f)
+    );
+    if (unexpected.length) {
+      problems.push(`shard ${i} holds file(s) this check does not recognise, so they were not counted: ${unexpected.slice(0, 5).join(', ')}`);
+    }
+
+    for (const f of files.filter((f) => REFUSALS_NAME.test(f))) {
+      for (const line of readFileSync(path.join(shardDir, f), 'utf8').split('\n')) {
+        if (!line.trim()) continue;
+        let r;
+        try {
+          r = JSON.parse(line);
+        } catch {
+          problems.push(`${REFUSALS_DIR}/shard-${i}/${f} holds a line that is not valid JSON`);
+          continue;
+        }
+        if (r.truncated) truncated = true;
+        else records.push(r);
+      }
+    }
+  }
+
+  if (truncated) {
+    problems.push('a worker hit its record cap, so the true count is higher than the one below and cannot be compared to a ceiling');
+  }
+
+  const total = records.length;
+  const ceiling = quarantine.maxRefusedConnections;
+  /*
+   * ABSENT, specifically — not merely unusable. G2 fails a ceiling that is
+   * present and not a whole number, so this must not describe one as "no
+   * ceiling pinned yet" and pass; `in` keeps the two apart.
+   */
+  const pinned = 'maxRefusedConnections' in quarantine;
+  const bootstrap = !pinned;
+  if (pinned && !Number.isInteger(ceiling)) {
+    problems.push(`maxRefusedConnections is present but not a whole number (${JSON.stringify(ceiling)}), so nothing can be compared against it — see G2`);
+  }
+
+  if (Number.isInteger(ceiling) && total > ceiling) {
+    problems.push(
+      `${fmt(total)} refused connection(s), ceiling ${fmt(ceiling)}. A unit test must not reach the network: ` +
+      "stub the seam the call goes through — for Supabase, jest.mock('@/lib/supabaseServer', ...). " +
+      'The diagnostics below name the transport and, unreliably, a file.'
+    );
+  }
+
+  const detail = problems.length
+    ? problems.join('\n')
+    : bootstrap
+      ? `${fmt(total)} refused connection(s) across ${shardCount} shard(s). REPORT ONLY: ${QUARANTINE_FILE} has no "maxRefusedConnections", so there is nothing to compare against yet. Pin it from this number to start gating.`
+      : `${fmt(total)} refused connection(s) vs ceiling ${fmt(ceiling)} (margin ${fmt(ceiling - total)}), across ${shardCount} shard(s)`;
+
+  record('G8 refused connections', problems.length === 0, detail);
+  return { total, ceiling: bootstrap ? null : ceiling, records };
+}
+
+/**
+ * The leads to follow when G8 moves, printed whether or not it failed.
+ *
+ * A ceiling with nothing to chase is a wall, not a tool. Two kinds of lead,
+ * and the difference between them matters:
+ *
+ *   - THE TRANSPORT is ground truth. It is the repo frames of the stack that
+ *     actually opened the socket, so it says WHICH client leaked (Supabase,
+ *     an LLM provider) whoever owns the call. It stops at the transport —
+ *     the socket opens on an undici continuation, so the calling service is
+ *     not in the stack — which is why it is aggregated rather than listed.
+ *   - THE FILE is a guess, for the reason G8 above explains, and is labelled
+ *     as one. It is a starting point for the triage command, never a verdict.
+ */
+function refusalDiagnostics(refusals) {
+  if (!refusals || refusals.total === 0) return [];
+
+  const tally = (key) => {
+    const counts = new Map();
+    for (const r of refusals.records) {
+      const k = key(r);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
+  };
+
+  const lines = ['', `Refused connections (${fmt(refusals.total)}), by destination:`];
+  for (const [k, c] of tally((r) => r.destination ?? '?')) lines.push(`  ${fmt(c)} x ${k}`);
+
+  lines.push('', 'By the code path that opened the socket (ground truth — the transport, not the caller):');
+  for (const [k, c] of tally((r) => (r.transport ?? []).join(' <- ') || 'no repo frame')) {
+    lines.push(`  ${fmt(c)} x ${k}`);
+  }
+
+  lines.push(
+    '',
+    'By the file that was RUNNING at the time — THIS MAY BE THE WRONG FILE.',
+    'The guard installs once per worker, so a socket opened by a promise an',
+    'earlier file left floating is charged to whichever file is running when it',
+    'opens. Do not read these as the offender, and do not paste one into a bug',
+    'title. To settle it, run the suite ALONE, which leaves nothing to inherit:',
+    '',
+    '    npm run test:leaks -- <path>',
+    ''
+  );
+  for (const [k, c] of tally((r) => r.possiblyNotTheOriginFile ?? '?')) lines.push(`  ${fmt(c)} x ${k}`);
+
+  return lines;
+}
+
 // ── checks ──────────────────────────────────────────────────────────────────
 function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -146,6 +346,19 @@ function main() {
     for (const key of ['minSuites', 'minTests']) {
       if (!Number.isInteger(quarantine[key]) || quarantine[key] <= 0) problems.push(`${key} must be a positive integer`);
     }
+    /*
+     * The refusal ceiling is OPTIONAL — absent means "not pinned yet", and G8
+     * is then report-only. So it has to be validated when present, or a string,
+     * a float or a null would read as absent and leave G8 permanently
+     * report-only while appearing to gate. G3's ratchet ignores a non-integer
+     * too, so nothing downstream would ever object.
+     */
+    if ('maxRefusedConnections' in quarantine) {
+      const ceiling = quarantine.maxRefusedConnections;
+      if (!Number.isInteger(ceiling) || ceiling < 0) {
+        problems.push(`maxRefusedConnections must be a non-negative integer when present (got ${JSON.stringify(ceiling)}); remove the key to leave G8 report-only`);
+      }
+    }
     record('G2 quarantine entries', problems.length === 0, problems.length ? problems.join('\n') : `${entries.length} entries, each on disk with a reason`);
   }
 
@@ -176,6 +389,31 @@ function main() {
           const lowered = ['minSuites', 'minTests'].filter((k) => Number(quarantine[k]) < Number(base[k]));
           if (lowered.length) detail += `\nNote: ${lowered.join(', ')} lowered against the base; that needs SA sign-off in review.`;
         }
+
+        /*
+         * The refusal ceiling ratchets the OTHER WAY from the floors above:
+         * minSuites/minTests may only rise, maxRefusedConnections may only
+         * fall. And a raise is a hard FAIL here rather than a note, because
+         * editing the number up is precisely how a new leak would get waved
+         * through — which is the "nothing goes red" problem this check exists
+         * to end. Removing it entirely is the largest possible raise, so that
+         * fails too; introducing it where the base had none is a tightening.
+         */
+        const headCeiling = quarantine.maxRefusedConnections;
+        const baseCeiling = base.maxRefusedConnections;
+        if (Number.isInteger(baseCeiling)) {
+          if (!Number.isInteger(headCeiling)) {
+            ok = false;
+            detail += `\nmaxRefusedConnections was removed (base: ${baseCeiling}). It may only ratchet DOWN; removing it un-gates the check.`;
+          } else if (headCeiling > baseCeiling) {
+            ok = false;
+            detail += `\nmaxRefusedConnections raised ${baseCeiling} -> ${headCeiling}. It may only ratchet DOWN. Stub the leaking seam instead; a genuinely unavoidable raise takes the same route as a quarantine addition (SA review, visible override).`;
+          } else if (headCeiling < baseCeiling) {
+            detail += `\nmaxRefusedConnections ratcheted ${baseCeiling} -> ${headCeiling}.`;
+          }
+        } else if (Number.isInteger(headCeiling)) {
+          detail += `\nmaxRefusedConnections pinned at ${headCeiling} (the base had none).`;
+        }
       }
     } catch (err) {
       ok = false;
@@ -192,6 +430,10 @@ function main() {
 
   const totals = { suites: 0, failedSuites: 0, runtimeErrors: 0, pendingSuites: 0, tests: 0, passed: 0, failed: 0, pending: 0, todo: 0 };
   const failing = [];
+  // Derived in G5 from the result filenames, reused by G8 so the shard count is
+  // still written in exactly one place (the workflow matrix).
+  let shardCount = 0;
+  let refusals = null;
 
   if (!args.listOnly) {
     // G5 executed = listed, from N shard files, all present.
@@ -203,6 +445,7 @@ function main() {
     if (files.length === 0) problems.push('no result files: a shard did not run or did not upload');
     if (totalsN.size > 1) problems.push(`result files disagree on the shard count: ${[...totalsN].join(', ')}`);
     const n = totalsN.size === 1 ? [...totalsN][0] : 0;
+    shardCount = n;
     for (let i = 1; i <= n; i++) {
       if (!files.includes(`gate-results-${i}-of-${n}.json`)) problems.push(`missing result file for shard ${i}/${n}`);
     }
@@ -251,6 +494,9 @@ function main() {
     record('G7 floors', suitesOk && testsOk,
       `suites ${fmt(totals.suites)} vs floor ${fmt(quarantine.minSuites)} (margin ${fmt(totals.suites - quarantine.minSuites)}); ` +
       `tests ${fmt(totals.tests)} vs floor ${fmt(quarantine.minTests)} (margin ${fmt(totals.tests - quarantine.minTests)})`);
+
+    // G8 refused network connections: a ceiling that only ratchets down.
+    refusals = checkRefusals(args, quarantine, shardCount);
   }
 
   // ── report ────────────────────────────────────────────────────────────────
@@ -260,6 +506,11 @@ function main() {
     if (c.ok) console.log(line);
     else console.error(line);
   }
+  // Leads for G8, printed whether or not it failed: a number that moved is
+  // only useful with something to chase.
+  const diagnostics = refusalDiagnostics(refusals);
+  for (const line of diagnostics) console.log(line);
+
   console.log(allOk ? 'jest-gate-check: passed' : 'jest-gate-check: FAILED');
 
   if (process.env.GITHUB_STEP_SUMMARY) {
@@ -270,10 +521,16 @@ function main() {
       md.push(`| Suites | ${fmt(totals.suites)} | ${fmt(totals.suites - totals.failedSuites - totals.pendingSuites)} | ${fmt(totals.failedSuites)} | ${fmt(totals.pendingSuites)} |`);
       md.push(`| Tests | ${fmt(totals.tests)} | ${fmt(totals.passed)} | ${fmt(totals.failed)} | ${fmt(totals.pending + totals.todo)} |`, '');
     }
-    md.push(`Quarantine: **${quarantined.size}** suites (\`${QUARANTINE_FILE}\`), removals only. Floors: ${fmt(quarantine.minSuites)} suites, ${fmt(quarantine.minTests)} tests.`, '');
+    md.push(
+      `Quarantine: **${quarantined.size}** suites (\`${QUARANTINE_FILE}\`), removals only. ` +
+      `Floors: ${fmt(quarantine.minSuites)} suites, ${fmt(quarantine.minTests)} tests. ` +
+      `Refusal ceiling: ${Number.isInteger(quarantine.maxRefusedConnections) ? fmt(quarantine.maxRefusedConnections) : '_not pinned yet (report only)_'}.`,
+      ''
+    );
     md.push('| Check | Result | Detail |', '|---|---|---|');
     for (const c of checks) md.push(`| ${c.id} | ${c.ok ? 'pass' : '**FAIL**'} | ${c.detail.split('\n').join('<br>')} |`);
     if (failing.length) md.push('', '**Failing suites:**', ...failing.map((f) => `- \`${f}\``));
+    if (diagnostics.length) md.push('', '<details><summary>Refused network connections</summary>', '', '```', ...diagnostics, '```', '', '</details>');
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, md.join('\n') + '\n');
   }
 

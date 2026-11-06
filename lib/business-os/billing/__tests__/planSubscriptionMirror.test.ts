@@ -93,6 +93,8 @@ function setup(initial: BusinessOsBillingAccount | null = row(), fresh: Record<s
     }),
     // D3.1 (SX-2b): the after-plan move port, a stub here (its own suite is afterPlanMove.test.ts).
     afterPlanMove: jest.fn(async () => undefined),
+    // D6 (SA W-6 b): the required closure-keep port, a stub (its own suite is closureStripeKeep.test.ts).
+    closureStripeKeep: jest.fn(async () => undefined),
     stripe: () => ({ retrieveBusinessOsSubscription: retrieve }) as unknown as ReturnType<PlanSubscriptionMirrorDeps['stripe']>,
     billingAccounts: {
       findByStripeSubscription: jest.fn(async (id: string, livemode: boolean) => ({
@@ -569,5 +571,81 @@ describe('the mirror with the REAL after-plan move (ports stubbed): only an owne
     }
     // already_applied logged exactly twice: once per replay.
     expect(lines.filter((l) => l.ctx.skip === 'already_applied')).toHaveLength(2);
+  });
+});
+
+// ── D6 / DL-1b: a plan reactivated in Stripe keeps a pending deletion request (C-3, BQ-38) ──
+
+describe('D6 / DL-1b: the closure-keep port (C-3, BQ-38; workplan §7, T-12)', () => {
+  const PERIOD_END = Math.floor(Date.parse('2026-11-26T10:00:00.000Z') / 1000);
+  const items = [{ id: 'si_1', priceId: 'price_one', currentPeriodStart: PERIOD_END - 86400 * 30, currentPeriodEnd: PERIOD_END }];
+  const keepPort = (h: ReturnType<typeof setup>) => h.deps.closureStripeKeep as jest.Mock;
+
+  it.each<[string, Record<string, unknown>]>([
+    ['the flag cleared (a dashboard reactivation)', { cancelAtPeriodEnd: false, cancelAt: null, items }],
+    ['`cancel_at` alone cleared', { cancelAtPeriodEnd: false, cancelAt: null, items }],
+    ['`cancel_at` moved after the period end (renews once more)', { cancelAtPeriodEnd: false, cancelAt: PERIOD_END + 86400 * 5, items }],
+    ['trialing, renewing', { status: 'trialing', cancelAtPeriodEnd: false, cancelAt: null, items }],
+  ])('%s → the port is called once, with OUR row\'s account id and the event\'s ids (never metadata)', async (_label, fresh) => {
+    const h = setup(row({ cancelAtPeriodEnd: true }), fresh);
+    const e = event('customer-subscription-updated.json');
+    await mirrorPlanSubscription(e, h.log, h.deps);
+    expect(keepPort(h)).toHaveBeenCalledTimes(1);
+    expect(keepPort(h)).toHaveBeenCalledWith({ accountId: ACCOUNT, subscriptionId: SUB, livemode: false, stripeEventId: e.id }, h.log);
+  });
+
+  it.each<[string, Record<string, unknown>, string]>([
+    ['still set to end (flag)', { cancelAtPeriodEnd: true, cancelAt: PERIOD_END, items }, 'customer-subscription-updated.json'],
+    ['still set to end (`cancel_at` before the period end)', { cancelAtPeriodEnd: false, cancelAt: PERIOD_END - 86400, items }, 'customer-subscription-updated.json'],
+    ['a failed renewal (past_due)', { status: 'past_due', items }, 'customer-subscription-updated.json'],
+    ['ended', { status: 'canceled', endedAt: 1_801_211_893, items }, 'customer-subscription-deleted.json'],
+  ])('%s → the port is not called', async (_label, fresh, fixture) => {
+    const h = setup(row(), fresh);
+    await mirrorPlanSubscription(event(fixture), h.log, h.deps);
+    expect(keepPort(h)).not.toHaveBeenCalled();
+  });
+
+  it('the billing row no longer holds the subscription (not mirrored) → the port is not called', async () => {
+    const h = setup(row(), { cancelAtPeriodEnd: false, items });
+    (h.deps.billingAccounts.mirrorSubscriptionState as jest.Mock).mockResolvedValueOnce({ data: { mirrored: false }, error: null });
+    await mirrorPlanSubscription(event('customer-subscription-updated.json'), h.log, h.deps);
+    expect(keepPort(h)).not.toHaveBeenCalled();
+  });
+
+  it('the real port over a fake closure store: pending → kept once; a replay writes no second transition and no second audit', async () => {
+    const { keepClosureAfterStripeReactivation } = await import('@/lib/business-os/account-deletion/closureStripeKeep');
+    const store = { status: 'pending' as string };
+    const transitions: unknown[][] = [];
+    const audits: unknown[] = [];
+    const closureDeps = {
+      closures: {
+        findOpenForUser: jest.fn(async () => ({ data: ['requesting', 'pending', 'grace', 'locked'].includes(store.status) ? { id: 'c1', status: store.status as 'pending' } : null, error: null })),
+        transition: jest.fn(async (...args: unknown[]) => {
+          transitions.push(args);
+          if (store.status !== args[2]) return { data: false, error: null };
+          store.status = args[3] as string;
+          return { data: true, error: null };
+        }),
+      },
+      recordKept: jest.fn(async (facts: unknown) => {
+        audits.push(facts);
+      }),
+      now: () => NOW,
+    };
+    const h = setup(row({ cancelAtPeriodEnd: true }), { cancelAtPeriodEnd: false, cancelAt: null, items });
+    h.deps.closureStripeKeep = (input, log) => keepClosureAfterStripeReactivation(input, log, closureDeps);
+    const e = event('customer-subscription-updated.json');
+    for (let delivery = 0; delivery < 3; delivery++) await expect(mirrorPlanSubscription(e, h.log, h.deps)).resolves.toBeUndefined();
+    expect(store.status).toBe('kept');
+    expect(transitions).toEqual([['c1', ACCOUNT, 'pending', 'kept', { kept_at: NOW.toISOString(), kept_source: 'stripe' }]]);
+    expect(audits).toHaveLength(1);
+  });
+
+  it('a port that throws is not swallowed by the mirror itself: the handler wiring is what makes it never fail (planBillingHandler.test.ts)', async () => {
+    const h = setup(row({ cancelAtPeriodEnd: true }), { cancelAtPeriodEnd: false, items });
+    keepPort(h).mockRejectedValueOnce(new Error('closure_read_failed'));
+    await expect(mirrorPlanSubscription(event('customer-subscription-updated.json'), h.log, h.deps)).rejects.toThrow('closure_read_failed');
+    // The mirror's own write had already happened before the port ran.
+    expect(h.state.row?.cancelAtPeriodEnd).toBe(false);
   });
 });

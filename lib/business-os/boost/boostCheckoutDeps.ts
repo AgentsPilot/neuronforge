@@ -20,6 +20,7 @@ import { BOOST_PURCHASE_CAP_DEFAULT } from '@/lib/business-os/entitlements/confi
 import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import { businessOsBoostPurchaseRepository } from '@/lib/repositories/BusinessOsBoostPurchaseRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
+import { readDeletionPending } from '@/lib/business-os/account-deletion/deletionPendingReader';
 
 import type { BoostCheckoutDeps } from './boostCheckout';
 
@@ -29,6 +30,8 @@ export function boostCheckoutDeps(): BoostCheckoutDeps {
     packageSource: codeBoostPackageSource(),
     cap: BOOST_PURCHASE_CAP_DEFAULT,
     repo: businessOsBoostPurchaseRepository,
+    // D6 / DL-1b (BQ-34): the closure repository's reader, not an entitlement (XC-19).
+    deletionPending: (accountId) => readDeletionPending(accountId),
     stripe: getBusinessOsStripeClient,
     mode: currentStripeMode,
     now: () => new Date(),

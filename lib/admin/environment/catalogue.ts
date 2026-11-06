@@ -256,7 +256,6 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   // 6. Plugins & OAuth
   config('GOOGLE_CLIENT_ID', 'plugins', 'Google OAuth client used by the Google plugins (Gmail, Drive, Calendar, Sheets, Docs and others).', 'identifier'),
   secret('GOOGLE_CLIENT_SECRET', 'plugins', 'Secret for the Google OAuth client the Google plugins use.'),
-  config('NEXT_PUBLIC_GOOGLE_CLIENT_ID', 'plugins', 'The Google plugin client ID, built into the browser bundle.', 'identifier'),
   config('AIRTABLE_CLIENT_ID', 'plugins', 'OAuth client for the Airtable plugin; the plugin cannot connect without it and its secret.', 'identifier'),
   secret('AIRTABLE_CLIENT_SECRET', 'plugins', 'OAuth secret for the Airtable plugin.'),
   config('DISCORD_CLIENT_ID', 'plugins', 'OAuth client for the Discord plugin; the plugin cannot connect without it and its secret.', 'identifier'),

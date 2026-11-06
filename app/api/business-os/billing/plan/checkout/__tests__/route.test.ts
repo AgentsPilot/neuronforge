@@ -62,6 +62,8 @@ const state: {
 
 jest.mock('@/lib/auth', () => ({ getUser: async () => state.user }));
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: { marker: 'service-role-default' } }));
+// D6 / DL-1b (SA W-6): no account deletion request is open; the real reader would reach the network.
+jest.mock('@/lib/business-os/account-deletion/deletionPendingReader', () => ({ readDeletionPending: async () => 'none' }));
 jest.mock('@/lib/logger', () => {
   const make = (): Record<string, unknown> => {
     const logger: Record<string, unknown> = {};

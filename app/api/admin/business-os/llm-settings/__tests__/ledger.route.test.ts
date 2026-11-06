@@ -44,6 +44,16 @@ import {
   LEDGER_READING_TEXT,
 } from '@/lib/business-os/llm/ledgerCheckCopy';
 
+/*
+ * The audit write is non-blocking by mandate, so its failure is invisible —
+ * and in this suite it was a real request to the placeholder Supabase URL.
+ * `AuditTrailService` builds its own client with `createClient`, so mocking
+ * `@/lib/supabaseServer` does not stop it. See tests/jest-no-network.ts.
+ */
+jest.mock('@/lib/services/AuditTrailService', () =>
+  jest.requireActual('@/tests/helpers/silentAuditTrail')
+);
+
 /** Long enough ago that the observation window has opened. */
 const SAVED_AT = new Date(Date.now() - 10 * 60_000).toISOString();
 

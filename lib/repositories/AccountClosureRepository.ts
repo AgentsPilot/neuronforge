@@ -134,6 +134,10 @@ const patchValueSchemas = {
   closed_email_first_attempt_at: timestamp,
   next_check_at: nullableTimestamp,
   last_error_code: z.string().min(1).max(64).nullable(),
+  // DL-1b (workplan D-3; SA W-3): corrected at `requesting>pending` from the
+  // cancel engine's own answer (Stripe's truth); our billing row can lag.
+  renewal_was_on: z.boolean(),
+  plan_ends_at: nullableTimestamp,
 } as const;
 
 export type ClosurePatchColumn = keyof typeof patchValueSchemas;
@@ -144,7 +148,8 @@ export type ClosurePatch = Partial<{ [K in ClosurePatchColumn]: z.infer<(typeof 
  * outside the list refuses the call before any database call.
  */
 const TRANSITION_COLUMNS: Readonly<Record<string, ReadonlyArray<ClosurePatchColumn>>> = {
-  'requesting>pending': ['requested_email_sent_at', 'next_check_at'],
+  // DL-1b (SA W-3): `renewal_was_on` and `plan_ends_at` on this transition ONLY.
+  'requesting>pending': ['requested_email_sent_at', 'next_check_at', 'renewal_was_on', 'plan_ends_at'],
   'requesting>grace': ['grace_starts_at', 'lock_at', 'lock_timezone', 'requested_email_sent_at', 'next_check_at'],
   'pending>grace': ['grace_starts_at', 'lock_at', 'lock_timezone', 'next_check_at'],
   'pending>kept': ['kept_at', 'kept_source'],

@@ -199,6 +199,22 @@ export const AUDIT_EVENTS = {
   // the guard ids, the resolved login id if any, files_removed and the
   // correlationId. Never the email, the reason note or the fingerprint.
   ACCOUNT_DELETION_REFUSED: 'ACCOUNT_DELETION_REFUSED',
+  // Account deletion lifecycle DL-1b / D6 (workplan
+  // BUSINESS_OS_DELETION_DL1B_WORKPLAN.md §10; requirement XC-13; SA W-14).
+  // These three survive stage E: `user_id` is unset (the system user,
+  // `system_action: true`), so the E cleanup, which deletes audit_trail by
+  // user_id, leaves them. Uuids, codes and dates only: never an email, the
+  // statement text or a reason text.
+  // A deletion request was recorded: the closure row is `pending` (a paid plan
+  // set not to renew) or `grace` (a free account). Actor = the owner.
+  ACCOUNT_DELETION_REQUESTED: 'ACCOUNT_DELETION_REQUESTED',
+  // A deletion request was cancelled: the closure row is `kept`. `details.source`
+  // is `owner` (the Keep route), `stripe` (an operator reactivated the plan in
+  // Stripe, the webhook mirror, BQ-38) or, from DL-4, `admin`.
+  ACCOUNT_DELETION_KEPT: 'ACCOUNT_DELETION_KEPT',
+  // Stage C (the grace period) started, with its lock date. D6 writes it for a
+  // free account's request; DL-3 for a paid account at its period end.
+  ACCOUNT_GRACE_STARTED: 'ACCOUNT_GRACE_STARTED',
   // Account deletion lifecycle D3.1 / SX-2b (workplan
   // BUSINESS_OS_D3_1_FREE_COHORT_AFTER_CANCEL_WORKPLAN.md §7; SA S-8): an
   // owner-started cancel (Stripe `cancellation_requested`) ended a paid plan,
@@ -1401,6 +1417,24 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['GDPR', 'SOC2'],
     description: 'An account deletion was refused or failed; nothing or only storage files were removed',
+  },
+  // DL-1b / D6 (XC-13). 'info': owner acts that need no operator action (SA
+  // optimisation note on the audit-severity alerting rules); the record of
+  // each survives stage E.
+  [AUDIT_EVENTS.ACCOUNT_DELETION_REQUESTED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: "An owner asked for their account to be deleted; the plan was set not to renew, or the grace period started",
+  },
+  [AUDIT_EVENTS.ACCOUNT_DELETION_KEPT]: {
+    severity: 'info',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'An account deletion request was cancelled and the account kept (by its owner, an admin, or a reactivation in Stripe)',
+  },
+  [AUDIT_EVENTS.ACCOUNT_GRACE_STARTED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR'],
+    description: 'The grace period before an account is locked for deletion started, with its lock date',
   },
   // D3.1 / SX-2b (SA S-8). 'info': the configured outcome of an owner's own
   // cancel, needing no operator action; SOC2, as every Business OS billing event.

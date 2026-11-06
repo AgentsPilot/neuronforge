@@ -1,19 +1,16 @@
 /**
- * The self-service runners (data export DE-10b.2; SA V-1, V-2): the pre-check
- * mapping over a fake repository, and the delete reaching `runAccountAnonymise`
- * with no actor and the session email as its own confirmation.
+ * The self-service runner (data export DE-10b.2; SA V-1, V-2): the pre-check
+ * mapping over a fake repository. DL-1b (D-9, SA W-9): the self-service
+ * anonymise runner was removed; the module must not export it any more, and
+ * the check returns the raw guard rows, the verdict and the login match (W-4).
  */
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
 
 import { CLEANUP_FUNCTION_VERSION } from '@/lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated';
-import { errorKindFacts, runAccountDeletionCheck, runSelfAccountAnonymise } from '../selfServiceDeletion';
-import {
-  CleanupRpcError,
-  type AnonymiseOutcome,
-  type CleanupCheckResult,
-} from '@/lib/repositories/TestAccountCleanupRepository';
-import type { DeletionReceiptBase, DeletionReceiptInput } from '../receiptInput';
+import * as runners from '../selfServiceDeletion';
+import { errorKindFacts, runAccountDeletionCheck } from '../selfServiceDeletion';
+import { CleanupRpcError, type CleanupCheckResult } from '@/lib/repositories/TestAccountCleanupRepository';
 
 const SUBJECT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const EMAIL = 'jane@example.com';
@@ -76,6 +73,16 @@ describe('runAccountDeletionCheck', () => {
     expect(b).toMatchObject({ kind: 'checked', canDelete: false, blockers: [{ guard: 'unknown' }] });
   });
 
+  it('DL-1b (W-4): the raw rows keep G-12, with the verdict and the login match', async () => {
+    const filesOnly = await runAccountDeletionCheck({ email: EMAIL, subject: SUBJECT }, repo({ data: check({ verdict: 'BLOCKED', blockers: [guard('G-12', 'files', 3)] }), error: null }));
+    expect(filesOnly).toMatchObject({ kind: 'checked', verdictBlocked: true, resolvedThisLogin: true, rows: [{ guard: 'G-12', item: 'files', found: 3 }] });
+    const other = await runAccountDeletionCheck(
+      { email: EMAIL, subject: SUBJECT },
+      repo({ data: check({ targetUserId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }), error: null })
+    );
+    expect(other).toMatchObject({ kind: 'checked', verdictBlocked: false, resolvedThisLogin: false, rows: [] });
+  });
+
   it('a function from another version → unavailable (R-6)', async () => {
     const outcome = await runAccountDeletionCheck({ email: EMAIL, subject: SUBJECT }, repo({ data: check({ version: 'old' }), error: null }));
     expect(outcome).toEqual({ kind: 'unavailable', reason: 'function_out_of_date', error: null });
@@ -89,30 +96,10 @@ describe('runAccountDeletionCheck', () => {
   });
 });
 
-describe('runSelfAccountAnonymise', () => {
-  it('no actor, the session email as confirmation, the receipt for the resolved login', async () => {
-    const anonymiseCalls: Array<[unknown, string | null, DeletionReceiptInput]> = [];
-    const ANONYMISED: AnonymiseOutcome = {
-      kind: 'anonymised',
-      version: CLEANUP_FUNCTION_VERSION,
-      report: { receiptId: 'r', placeholderRef: '0123456789ab', receiptMode: 'anonymised', rowsRemoved: 1, tablesRemoved: 1, rowsBlanked: 0 },
-      serverMs: 5,
-    };
-    const fake = {
-      anonymiseCheck: jest.fn(async () => ({ data: check(), error: null })),
-      emptyStorage: jest.fn(),
-      anonymise: jest.fn(async (input: unknown, actor: string | null, receipt: DeletionReceiptInput) => {
-        anonymiseCalls.push([input, actor, receipt]);
-        return { data: ANONYMISED, error: null };
-      }),
-    };
-    const prepare = jest.fn(async () => ({ origin: 'owner' }) as unknown as DeletionReceiptBase);
-    const outcome = await runSelfAccountAnonymise({ email: EMAIL, subject: SUBJECT }, prepare, fake as never);
-    expect(outcome.kind).toBe('anonymised');
-    expect(prepare).toHaveBeenCalledWith(SUBJECT);
-    expect(anonymiseCalls[0][0]).toEqual({ email: EMAIL, subject: SUBJECT, confirmEmail: EMAIL });
-    expect(anonymiseCalls[0][1]).toBeNull();
-    expect(fake.emptyStorage).not.toHaveBeenCalled();
+describe('DL-1b (D-9, W-9): no self-service delete', () => {
+  it('the module no longer exports the anonymise runner', () => {
+    expect(Object.keys(runners).sort()).toEqual(['errorKindFacts', 'runAccountDeletionCheck']);
+    expect((runners as Record<string, unknown>).runSelfAccountAnonymise).toBeUndefined();
   });
 });
 

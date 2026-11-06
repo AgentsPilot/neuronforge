@@ -3,6 +3,10 @@
  * for every value of the switch except exactly 'true', without reading the
  * session; the delete route answers 404 for the same values. Mocked edges
  * only: nothing here reaches Supabase.
+ *
+ * DL-1b: the delete route is now the deletion REQUEST; with the switch off it
+ * still reads nothing, its ports (`closureRequestDeps`) included. The
+ * self-service anonymise runner no longer exists (D-9), so it is not mocked.
  */
 
 import { NextRequest } from 'next/server';
@@ -28,8 +32,12 @@ jest.mock('@/lib/security/rateLimit', () => {
 const mockEngine = jest.fn();
 jest.mock('@/lib/business-os/account-deletion/selfServiceDeletion', () => ({
   runAccountDeletionCheck: (...args: unknown[]) => mockEngine(...args),
-  runSelfAccountAnonymise: (...args: unknown[]) => mockEngine(...args),
   errorKindFacts: () => ({ kind: null, code: null, name: null }),
+}));
+// DL-1b: the request's production ports; building them counts as reading.
+jest.mock('@/lib/business-os/account-deletion/closureRequestDeps', () => ({
+  closureRequestDeps: (...args: unknown[]) => mockEngine(...args),
+  readDeletionBillingRow: (...args: unknown[]) => mockEngine(...args),
 }));
 const mockFacts = jest.fn();
 jest.mock('@/lib/repositories/BusinessOsDataExportJobRepository', () => ({
@@ -79,7 +87,7 @@ describe.each([[undefined], ['false'], ['1'], ['TRUE'], ['true '], ['yes']])('sw
     const res = await POST(
       new NextRequest('http://localhost/api/business-os/account/delete', {
         method: 'POST',
-        body: JSON.stringify({ statement: 'x', language: 'en', userId: 'someone-else' }),
+        body: JSON.stringify({ statement: 'x', language: 'en', reasonCode: 'other', userId: 'someone-else' }),
         headers: { 'content-type': 'application/json' },
       })
     );

@@ -38,6 +38,15 @@ describe('exportDrawerCopy', () => {
     expect(EXPORT_DRAWER_COPY.en.entryLabel).toBe('Export data');
   });
 
+  it('MX-4b: the "Show older" words exist in every language, with no placeholder', () => {
+    expect(EXPORT_DRAWER_COPY.en.historyShowOlder).toBe('Show older');
+    expect(EXPORT_DRAWER_COPY.en.historyOlderUnavailable).toBe('Older exports could not be loaded.');
+    for (const language of ['en', 'he', 'es'] as const) {
+      expect(holes(EXPORT_DRAWER_COPY[language].historyShowOlder)).toEqual([]);
+      expect(holes(EXPORT_DRAWER_COPY[language].historyOlderUnavailable)).toEqual([]);
+    }
+  });
+
   it('never says "delivered" in any language (XC-9)', () => {
     expect(JSON.stringify(EXPORT_DRAWER_COPY)).not.toMatch(/deliver|נמסר|entregad/i);
   });

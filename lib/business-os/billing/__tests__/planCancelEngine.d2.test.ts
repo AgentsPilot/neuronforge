@@ -73,6 +73,8 @@ function world(initial: Row = {}) {
     ({
       logger: { info: log('info'), warn: log('warn'), error: log('error') },
       now: () => new Date(state.clock),
+      // D6 (SA W-6 a): no deletion request open; the real reader would reach the network.
+      deletionPending: async () => 'none' as const,
       switches: () => ({ pricesEnabled: true }),
       mode: () => 'test',
       repo: {

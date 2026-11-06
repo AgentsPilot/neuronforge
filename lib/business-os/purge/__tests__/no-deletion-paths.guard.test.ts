@@ -322,10 +322,33 @@ const CLEANUP_REPOSITORY_IMPORTERS: ReadonlyArray<{ file: string; why: string }>
   { file: 'lib/business-os/account-deletion/__tests__/runAccountAnonymise.test.ts', why: 'Test of runAccountAnonymise.' },
   {
     file: 'lib/business-os/account-deletion/selfServiceDeletion.ts',
-    why: 'DE-10b.2 self-delete runners (pre-check and anonymise) on the SESSION user; the customer routes call these, never the repository.',
+    // DL-1b (D-9, SA W-9): the self-service anonymise runner was removed with its engine import.
+    why: 'Pre-check runner only (anonymise_check, read-only) on the SESSION user; the customer routes call it, never the repository. DL-1b removed the self-service anonymise.',
   },
-  { file: 'lib/business-os/account-deletion/__tests__/selfServiceDeletion.test.ts', why: 'Test of the self-service runners.' },
+  { file: 'lib/business-os/account-deletion/__tests__/selfServiceDeletion.test.ts', why: 'Test of the self-service pre-check runner.' },
 ];
+
+/**
+ * Assertion family 6 (account deletion lifecycle DL-1b, requirement XC-6;
+ * workplan BUSINESS_OS_DELETION_DL1B_WORKPLAN.md §12 G-1): no customer route
+ * under `app/api/business-os/**` names an anonymise runner. The deletion is a
+ * REQUEST now; the account closes through the lifecycle (DL-3 to DL-5), never
+ * from a route an owner can call. An identifier scan after `stripComments`,
+ * so a string literal naming one counts too. Test files are not product code.
+ */
+const ANONYMISE_RUNNER_NAMES = /\b(?:runAccountAnonymise|runSelfAccountAnonymise)\b/;
+const BUSINESS_OS_API_ROOT = 'app/api/business-os/';
+
+export function anonymiseRunnerOffenders(scanned: ReadonlyArray<{ file: string; code: string }>): string[] {
+  return scanned
+    .filter((s) => s.file.startsWith(BUSINESS_OS_API_ROOT) && !/(^|\/)__tests__\//.test(s.file) && !/\.test\.tsx?$/.test(s.file))
+    .filter((s) => ANONYMISE_RUNNER_NAMES.test(s.code))
+    .map((s) => s.file);
+}
+
+/** DL-1b: what the deletion request route no longer imports (XC-6: nothing is deleted by it). */
+const REQUEST_ROUTE = 'app/api/business-os/account/delete/route.ts';
+const REQUEST_ROUTE_REMOVED = ['runAccountAnonymise', 'runSelfAccountAnonymise', 'buildOwnerReceipt', 'findDeletionFacts', 'expireAuthCookies'] as const;
 
 /** Every file that imports the cleanup repository and is not on the allow-list. */
 export function cleanupRepositoryImportOffenders(scanned: ReadonlyArray<{ file: string; code: string }>): string[] {
@@ -690,6 +713,47 @@ describe('repo-wide guard: no deletion paths outside the purge engine (C-34)', (
       const file = 'app/api/business-os/account/delete/route.ts';
       const code = stripComments("import { TestAccountCleanupRepository } from '@/lib/repositories/TestAccountCleanupRepository';");
       expect(cleanupRepositoryImportOffenders([{ file, code }])).toEqual([file]);
+    });
+  });
+
+  describe('assertion family 6 — no anonymise from a Business OS route (DL-1b, XC-6)', () => {
+    it('no non-test file under app/api/business-os names an anonymise runner', () => {
+      expect(anonymiseRunnerOffenders(SCANNED)).toEqual([]);
+    });
+
+    it('the scan ran over the Business OS routes (floor), the request route among them', () => {
+      const routes = SCANNED.filter((s) => s.file.startsWith(BUSINESS_OS_API_ROOT) && s.file.endsWith('/route.ts'));
+      expect(routes.length).toBeGreaterThan(20);
+      expect(routes.map((s) => s.file)).toEqual(expect.arrayContaining([REQUEST_ROUTE, 'app/api/business-os/account/keep/route.ts']));
+    });
+
+    it.each([
+      ["import { runAccountAnonymise } from '@/lib/business-os/account-deletion/runAccountAnonymise';"],
+      ["const outcome = await runSelfAccountAnonymise(subject, prepare);"],
+      ["const name = 'runAccountAnonymise';"],
+    ])('negative fixture: %s in a synthetic Business OS route is detected', (line) => {
+      const file = 'app/api/business-os/foo/route.ts';
+      expect(anonymiseRunnerOffenders([{ file, code: stripComments(line) }])).toEqual([file]);
+    });
+
+    it('a comment naming a runner does not count, and a route outside business-os is not this rule', () => {
+      expect(anonymiseRunnerOffenders([{ file: 'app/api/business-os/foo/route.ts', code: stripComments('// runAccountAnonymise was here') }])).toEqual([]);
+      expect(anonymiseRunnerOffenders([{ file: 'app/api/admin/foo/route.ts', code: 'runAccountAnonymise()' }])).toEqual([]);
+    });
+
+    it('nothing is deleted by the request route: it imports none of the removed symbols', () => {
+      const hit = SCANNED.find((s) => s.file === REQUEST_ROUTE);
+      expect(hit).toBeDefined();
+      for (const name of REQUEST_ROUTE_REMOVED) {
+        expect({ name, present: new RegExp(`\\b${name}\\b`).test(hit!.code) }).toEqual({ name, present: false });
+      }
+    });
+
+    it('the self-service runner no longer exports the anonymise runner, nor imports the engine', () => {
+      const hit = SCANNED.find((s) => s.file === 'lib/business-os/account-deletion/selfServiceDeletion.ts');
+      expect(hit).toBeDefined();
+      expect(/\brunSelfAccountAnonymise\b/.test(hit!.code)).toBe(false);
+      expect(/\brunAccountAnonymise\b/.test(hit!.code)).toBe(false);
     });
   });
 

@@ -10,11 +10,20 @@
  *   - the ID-token verifier, as the only accepted `aud`.
  *
  * It reads `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` and NOTHING else. In
- * particular it never falls back to `NEXT_PUBLIC_GOOGLE_CLIENT_ID`: that is the
- * PLUGIN client (Gmail, Drive, …), it is already set in production, and reading
- * it would switch this feature on the moment it deploys, before Google has the
- * invite page's origins registered (SA Q-3). Unset or blank means off, so the
- * slice merges inert.
+ * particular it never falls back to `NEXT_PUBLIC_GOOGLE_CLIENT_ID`: that named the
+ * PLUGIN client (Gmail, Drive, …), and reading it would have switched this feature
+ * on the moment it deployed, before Google had the invite page's origins registered
+ * (SA Q-3). Unset or blank means off, so the slice merges inert.
+ *
+ * That variable was RETIRED by G-2 of
+ * docs/requirements/GOOGLE_OAUTH_CLIENT_CONSOLIDATION_REQUIREMENT.md, so there is
+ * nothing left to fall back to. The rule still matters, because the two clients are
+ * split by ROLE — sign-in vs plugin data access — and a future reader looking for
+ * "the Google client id" must not reach for the plugin one. Three suites assert the
+ * no-fallback behaviour with a decoy value and are the executable proof of this
+ * paragraph: app/api/public/invites/signup/__tests__/routes.test.ts,
+ * app/invite/__tests__/page.render.test.tsx and
+ * lib/business-os/invites/__tests__/googleIdToken.test.ts.
  *
  * The value must be the client id configured in Supabase's Google provider
  * (Auth → Providers → Google), so that the browser's `signInWithIdToken` accepts

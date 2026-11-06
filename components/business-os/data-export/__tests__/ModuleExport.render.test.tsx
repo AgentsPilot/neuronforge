@@ -13,12 +13,18 @@
 import '@testing-library/jest-dom';
 import React from 'react';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import type { ExportHistoryRequest, ModuleExportHistoryVerdict, ModuleExportStartVerdict } from '@/lib/client/businessOsDataExport';
+import type {
+  ExportHistoryRequest,
+  ModuleExportHistoryCursor,
+  ModuleExportHistoryVerdict,
+  ModuleExportStartVerdict,
+} from '@/lib/client/businessOsDataExport';
 
-const mockHistory = jest.fn<Promise<ModuleExportHistoryVerdict>, []>();
+type HistoryOptions = { before?: ModuleExportHistoryCursor } | undefined;
+const mockHistory = jest.fn<Promise<ModuleExportHistoryVerdict>, [HistoryOptions]>();
 const mockStartModule = jest.fn<Promise<ModuleExportStartVerdict>, [readonly string[]]>();
 jest.mock('@/lib/client/businessOsDataExport', () => ({
-  fetchModuleExportHistory: () => mockHistory(),
+  fetchModuleExportHistory: (options?: HistoryOptions) => mockHistory(options),
   startModuleExport: (modules: readonly string[]) => mockStartModule(modules),
 }));
 
@@ -67,7 +73,13 @@ function deferred<T>() {
 const fmt = (iso: string, language = 'en', timeZone = 'UTC') =>
   new Intl.DateTimeFormat(language, { ...EXPORT_TIME_FIELDS, timeZone }).format(new Date(iso));
 
-async function renderOn(variant: 'row' | 'button' = 'button', history: ModuleExportHistoryVerdict = { kind: 'ok', requests: HISTORY }) {
+/** A history page (MX-4b: every ok answer carries hasMore and nextExportAt). */
+const ok = (
+  requests: ExportHistoryRequest[],
+  extra: { hasMore?: boolean; nextExportAt?: string | null } = {}
+): ModuleExportHistoryVerdict => ({ kind: 'ok', requests, hasMore: extra.hasMore ?? false, nextExportAt: extra.nextExportAt ?? null });
+
+async function renderOn(variant: 'row' | 'button' = 'button', history: ModuleExportHistoryVerdict = ok(HISTORY)) {
   mockHistory.mockResolvedValue(history);
   const view = render(<DownloadMyDataButton variant={variant} />);
   await screen.findByRole('button', { name: mockLanguage?.language === 'he' ? he.entryLabel : en.entryLabel });
@@ -101,7 +113,7 @@ describe('the export drawer', () => {
     await renderOn('button', { kind: 'error' });
     await openDrawer();
     expect(await screen.findByTestId('export-history-error')).toHaveTextContent(en.historyUnavailable);
-    mockHistory.mockResolvedValue({ kind: 'ok', requests: HISTORY });
+    mockHistory.mockResolvedValue(ok(HISTORY));
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: en.tryAgain }));
     });
@@ -228,18 +240,174 @@ describe('the export drawer', () => {
   });
 
   it('an empty history says so', async () => {
-    await renderOn('button', { kind: 'ok', requests: [] });
-    mockHistory.mockResolvedValue({ kind: 'ok', requests: [] });
+    await renderOn('button', ok([]));
+    mockHistory.mockResolvedValue(ok([]));
     await openDrawer();
     expect(await screen.findByTestId('export-history-empty')).toHaveTextContent(en.historyEmpty);
   });
 
   it('a support-sent request carries its label (BQ-E5-1)', async () => {
     const adminSent: ExportHistoryRequest[] = [{ ...HISTORY[0], origin: 'admin' }];
-    await renderOn('button', { kind: 'ok', requests: adminSent });
-    mockHistory.mockResolvedValue({ kind: 'ok', requests: adminSent });
+    await renderOn('button', ok(adminSent));
+    mockHistory.mockResolvedValue(ok(adminSent));
     await openDrawer();
     expect(await screen.findByText(en.origin.admin)).toBeInTheDocument();
+  });
+});
+
+describe('MX-4b: "Show older" (H-1) and "export again at" on open (N-1), T-16', () => {
+  const OLDER = '44444444-4444-4444-8444-444444444444';
+  const OLDEST = '55555555-5555-4555-8555-555555555555';
+  // A database time with microseconds: it must go back as it came (SA C-4).
+  const T_MICRO = '2026-10-26T09:00:00.123456+00:00';
+  const request = (requestId: string, requestedAt: string): ExportHistoryRequest => ({
+    requestId,
+    requestedAt,
+    origin: 'owner',
+    modules: [{ module: 'clients', status: 'sent', sentAt: requestedAt, emailCount: 1 }],
+  });
+
+  it('no "Show older" without hasMore', async () => {
+    await renderOn('button', ok(HISTORY));
+    await openDrawer();
+    await screen.findByTestId('export-history-list');
+    expect(screen.queryByTestId('export-history-show-older')).toBeNull();
+  });
+
+  it('"Show older" appears with hasMore, sends the last request as the cursor untouched, appends, drops a repeated id, and hides when no more', async () => {
+    await renderOn('button', ok([request(REQUEST, T), request(OLDER, T_MICRO)], { hasMore: true }));
+    await openDrawer();
+    const button = await screen.findByTestId('export-history-show-older');
+    expect(button).toHaveTextContent(en.historyShowOlder);
+
+    // The older page repeats OLDER (a row at the page edge) and adds OLDEST.
+    mockHistory.mockResolvedValue(ok([request(OLDER, T_MICRO), request(OLDEST, '2026-10-25T09:00:00.000Z')], { hasMore: false }));
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(mockHistory).toHaveBeenLastCalledWith({ before: { requestedAt: T_MICRO, requestId: OLDER } });
+    const ids = screen
+      .getAllByTestId(/^export-history-request-/)
+      .map((element) => element.getAttribute('data-testid')?.replace('export-history-request-', ''));
+    expect(ids).toEqual([REQUEST, OLDER, OLDEST]);
+    expect(screen.queryByTestId('export-history-show-older')).toBeNull();
+  });
+
+  it('a failed older read keeps the list, says so, and Try again reads the same page again', async () => {
+    await renderOn('button', ok([request(REQUEST, T), request(OLDER, T_MICRO)], { hasMore: true }));
+    await openDrawer();
+    const button = await screen.findByTestId('export-history-show-older');
+    mockHistory.mockResolvedValue({ kind: 'error' });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(screen.getByTestId('export-history-older-error')).toHaveTextContent(en.historyOlderUnavailable);
+    expect(screen.getAllByTestId(/^export-history-request-/)).toHaveLength(2);
+    expect(screen.queryByTestId('export-history-error')).toBeNull();
+
+    mockHistory.mockResolvedValue(ok([request(OLDEST, '2026-10-25T09:00:00.000Z')]));
+    await act(async () => {
+      fireEvent.click(within(screen.getByTestId('export-history-older')).getByRole('button', { name: en.tryAgain }));
+    });
+    expect(mockHistory).toHaveBeenLastCalledWith({ before: { requestedAt: T_MICRO, requestId: OLDER } });
+    expect(screen.getAllByTestId(/^export-history-request-/)).toHaveLength(3);
+    expect(screen.queryByTestId('export-history-older-error')).toBeNull();
+  });
+
+  it('while an older page loads the button is busy and a second click reads nothing more', async () => {
+    await renderOn('button', ok([request(REQUEST, T)], { hasMore: true }));
+    await openDrawer();
+    const button = await screen.findByTestId('export-history-show-older');
+    const pending = deferred<ModuleExportHistoryVerdict>();
+    mockHistory.mockReturnValue(pending.promise);
+    const callsBefore = mockHistory.mock.calls.length;
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('aria-busy', 'true');
+    fireEvent.click(button);
+    expect(mockHistory.mock.calls.length).toBe(callsBefore + 1);
+    await act(async () => pending.resolve(ok([])));
+  });
+
+  it('SA CR-1: "Show older" during a first-page reload never appends to the new first page (no gap in the history)', async () => {
+    const DEEP = '66666666-6666-4666-8666-666666666666';
+    const NEW = '77777777-7777-4777-8777-777777777777';
+    const BEYOND = '88888888-8888-4888-8888-888888888888';
+    // A list two pages deep, with more still older.
+    await renderOn('button', ok([request(REQUEST, T), request(OLDER, T_MICRO)], { hasMore: true }));
+    await openDrawer();
+    mockHistory.mockResolvedValueOnce(ok([request(DEEP, '2026-10-20T09:00:00.000Z')], { hasMore: true }));
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId('export-history-show-older'));
+    });
+    expect(screen.getAllByTestId(/^export-history-request-/)).toHaveLength(3);
+
+    // A start: the history reloads, and that first-page read is held open.
+    const firstPage = deferred<ModuleExportHistoryVerdict>();
+    const olderPage = deferred<ModuleExportHistoryVerdict>();
+    mockHistory.mockImplementation((options) => (options?.before ? olderPage.promise : firstPage.promise));
+    tick('clients');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('export-submit'));
+    });
+    // The deep list is still on screen; a click on "Show older" now must not read past the deep cursor.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('export-history-show-older'));
+    });
+    await act(async () => firstPage.resolve(ok([request(NEW, '2026-10-28T09:00:00.000Z'), request(REQUEST, T)], { hasMore: true })));
+    await act(async () => olderPage.resolve(ok([request(BEYOND, '2026-10-10T09:00:00.000Z')], { hasMore: false })));
+    const ids = screen
+      .getAllByTestId(/^export-history-request-/)
+      .map((element) => element.getAttribute('data-testid')?.replace('export-history-request-', ''));
+    expect(ids).toEqual([NEW, REQUEST]);
+    expect(screen.getByTestId('export-history-show-older')).toBeInTheDocument();
+  });
+
+  it('opened at the limit: Export is off with the "export again at" sentence, and comes back on at that time', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-27T12:00:00.000Z') });
+    try {
+      await renderOn('button', ok(HISTORY, { nextExportAt: RETRY }));
+      await openDrawer();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByRole('alert')).toHaveTextContent(`You can export again at ${fmt(RETRY)}.`);
+      tick('clients');
+      expect(screen.getByTestId('export-submit')).toBeDisabled();
+      await act(async () => {
+        jest.advanceTimersByTime(Date.parse(RETRY) - Date.now() + 1);
+      });
+      expect(screen.getByTestId('export-submit')).toBeEnabled();
+      expect(screen.getByTestId('export-alert')).toBeEmptyDOMElement();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a nextExportAt already past, or none, leaves Export on and says nothing', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-29T12:00:00.000Z') });
+    try {
+      await renderOn('button', ok(HISTORY, { nextExportAt: RETRY }));
+      await openDrawer();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      tick('clients');
+      expect(screen.getByTestId('export-submit')).toBeEnabled();
+      expect(screen.getByTestId('export-alert')).toBeEmptyDOMElement();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a failed history read on open leaves Export on (the POST decides)', async () => {
+    await renderOn('button', { kind: 'error' });
+    await openDrawer();
+    await screen.findByTestId('export-history-error');
+    tick('clients');
+    expect(screen.getByTestId('export-submit')).toBeEnabled();
   });
 });
 

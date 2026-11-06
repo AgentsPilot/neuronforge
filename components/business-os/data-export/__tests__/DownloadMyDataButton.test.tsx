@@ -39,7 +39,7 @@ const he = EXPORT_DRAWER_COPY.he;
 beforeEach(() => {
   jest.clearAllMocks();
   mockLanguage = null;
-  mockHistory.mockResolvedValue({ kind: 'ok', requests: [] });
+  mockHistory.mockResolvedValue({ kind: 'ok', requests: [], hasMore: false, nextExportAt: null });
 });
 
 describe('always the export drawer (MX-3.1)', () => {
@@ -69,7 +69,7 @@ describe('always the export drawer (MX-3.1)', () => {
       fireEvent.click(screen.getByRole('button', { name: en.entryLabel }));
     });
     expect(screen.queryByTestId('export-history-error')).not.toBeInTheDocument();
-    await act(async () => resolve({ kind: 'ok', requests: [] }));
+    await act(async () => resolve({ kind: 'ok', requests: [], hasMore: false, nextExportAt: null }));
     expect(await screen.findByTestId('export-history-empty')).toBeInTheDocument();
   });
 
