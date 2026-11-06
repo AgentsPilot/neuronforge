@@ -1,4 +1,4 @@
--- Checker for 20261107_anon_write_exposure_slice1.sql (S11.2 slice 1).
+-- Checker for 20261108_anon_write_exposure_slice1.sql (S11.2 slice 1).
 --
 -- Read-only. Run it BEFORE the migration as well as after: before, C1 to C6
 -- must FAIL. A checker that cannot fail has proved nothing, and the failing
@@ -14,7 +14,7 @@
 --   agents and crm_contacts must still return [] (the control)
 -- An unpaired refusal cannot be told from an outage.
 --
--- @see supabase/migrations/20261107_anon_write_exposure_slice1.sql
+-- @see supabase/migrations/20261108_anon_write_exposure_slice1.sql
 
 SET default_transaction_read_only = on;
 
