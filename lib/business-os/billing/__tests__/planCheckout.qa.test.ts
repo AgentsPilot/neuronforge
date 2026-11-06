@@ -186,6 +186,8 @@ function harness(options: Options = {}) {
       // P-4.1: a tier basis, which BQ-P10 does not catch.
       return { unavailable: false, resolution: { basis: { kind: 'tier' as const, tier: FRIEND_TIER }, lifecycle: { accessEndsAt: null } } };
     }),
+    // D6 / DL-1b (SA W-6 b): the required closure port; no request open.
+    deletionPending: jest.fn(async () => 'none' as const),
     logger,
     repo: repo as unknown as PlanCheckoutDeps['repo'],
     stripe: stripe as unknown as PlanCheckoutDeps['stripe'],

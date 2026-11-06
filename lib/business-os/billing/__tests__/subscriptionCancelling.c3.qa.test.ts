@@ -195,6 +195,8 @@ function mirrorHarness(initial: BusinessOsBillingAccount, fresh: Record<string, 
     billingEvents: { recordEvent: jest.fn(async () => ({ data: { outcome: 'recorded' as const, eventRowId: '44444444-4444-4444-8444-000000000001' }, error: null })) },
     recordPlanChange: jest.fn(async () => undefined),
     afterPlanMove,
+    // D6 (SA W-6 b): the required closure-keep port, a stub.
+    closureStripeKeep: jest.fn(async () => undefined),
     stripe: () => ({
       retrieveBusinessOsSubscription: async () => ({
         id: SUB,
@@ -234,6 +236,8 @@ function engineHarness(rowFlag: boolean, status: string, fresh: Record<string, u
   const deps = {
     logger: { info: noop, warn: noop, error: noop },
     now: () => NOW,
+    // D6 (SA W-6 a): no deletion request open; the real reader would reach the network.
+    deletionPending: async () => 'none' as const,
     switches: () => ({ pricesEnabled: true }),
     mode: () => 'test',
     repo: {

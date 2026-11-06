@@ -118,6 +118,8 @@ function harness(options: {
     switches: () => ({ pricesEnabled: true }),
     mode: () => 'test',
     newAttemptId: () => ATTEMPT,
+    // D6 (SA W-6 a): no deletion request open; the real reader would reach the network.
+    deletionPending: async () => 'none' as const,
     repo: {
       findByUser: async () => ({ data: options.row ?? row(), error: null }),
       mirrorSubscriptionState: async (input: Row) => {

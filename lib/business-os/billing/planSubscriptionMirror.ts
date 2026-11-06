@@ -45,6 +45,18 @@
  *                failure (alerted there), which releases the claim: Stripe
  *                retries, steps 1 to 5 are idempotent, and the move runs again
  *
+ *   7  kept      D6 / DL-1b (account deletion C-3, BQ-38; workplan
+ *                BUSINESS_OS_DELETION_DL1B_WORKPLAN.md §7): on `.updated` or `.deleted`
+ *                + mirrored, when the FRESH read says the plan renews (status
+ *                `active` / `trialing`, not ended, and the derived
+ *                `cancelAtPeriodEnd` above false), the `closureStripeKeep` port
+ *                (DELETE-owned) turns a `pending` deletion request into `kept`
+ *                with source `stripe`. It decides everything itself and is
+ *                replay-safe. Handed our billing row's account id and the
+ *                event's own ids, never Stripe metadata. The handler's wiring
+ *                makes it never throw (a failure is logged and alerted there),
+ *                so it never fails this mirror or makes Stripe retry
+ *
  * Otherwise no money history and no audit (Q-1); a pending downgrade is
  * P-7b's. A read or write failure throws (claim released, retried).
  *
@@ -66,6 +78,7 @@ import type { RecordPlanChangeInput } from '@/lib/business-os/entitlements/recor
 import { BOS_USER_ID_METADATA_KEY } from '@/lib/business-os/billing/stripeMetadataKeys';
 import { cancelSourceOf, isSetToEndThisPeriod, latestItemPeriodEnd } from '@/lib/business-os/billing/subscriptionCancelling';
 import type { AfterPlanMovePort } from '@/lib/business-os/billing/afterPlanMove';
+import type { ClosureStripeKeepPort } from '@/lib/business-os/account-deletion/closureStripeKeep';
 
 export interface PlanSubscriptionMirrorDeps {
   billingAccounts: Pick<BusinessOsBillingAccountRepository, 'findByStripeSubscription' | 'mirrorSubscriptionState'>;
@@ -76,6 +89,12 @@ export interface PlanSubscriptionMirrorDeps {
   recordPlanChange: (input: RecordPlanChangeInput) => Promise<void>;
   /** D3.1 (SX-2b): the after-plan move, called on `.deleted` + mirrored (also on a replay). */
   afterPlanMove: AfterPlanMovePort;
+  /**
+   * D6 / DL-1b (C-3, BQ-38): a plan that renews again in Stripe keeps a pending
+   * deletion request. REQUIRED, no default (SA W-6 b): a no-op would silently
+   * drop C-3. Wired only in `planBillingHandler.ts`.
+   */
+  closureStripeKeep: ClosureStripeKeepPort;
   now: () => Date;
 }
 
@@ -157,6 +176,16 @@ export async function mirrorPlanSubscription(event: Stripe.Event, log: Logger, d
       ? 'Business OS plan subscription status mirrored'
       : 'Billing record no longer holds this subscription; nothing written'
   );
+
+  // D6 / DL-1b (C-3, BQ-38): Stripe says the plan renews (an operator's dashboard
+  // reactivation clears the flag, or `cancel_at`, or moves it past the period
+  // end): a pending deletion request is kept with source `stripe`.
+  if (mirrored.data.mirrored && (status === 'active' || status === 'trialing') && endedAtIso === null && !cancelAtPeriodEnd) {
+    await deps.closureStripeKeep(
+      { accountId: resolveAccountId(account.accountId), subscriptionId, livemode: event.livemode, stripeEventId: event.id },
+      log
+    );
+  }
 
   // C-4: the end is recorded from `.deleted` only, and only on the row that
   // still holds this subscription.

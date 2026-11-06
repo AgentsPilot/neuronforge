@@ -39,6 +39,9 @@ export const PLAN_PURCHASE_REFUSAL_KEYS: Readonly<Record<PlanCheckoutRefusalCode
   billing_row_unreadable: 'plan.refusal.generic',
   subscription_check_incomplete: 'plan.refusal.generic',
   stripe_error: 'plan.refusal.generic',
+  // D6 / DL-1b (BQ-34): existing lines, no new wording; DL-2 gives `deletion_pending` its own.
+  deletion_pending: 'plan.refusal.not_open',
+  deletion_state_unreadable: 'plan.refusal.generic',
   invalid_input: 'plan.refusal.generic',
 };
 

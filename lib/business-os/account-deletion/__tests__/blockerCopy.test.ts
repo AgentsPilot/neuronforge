@@ -81,6 +81,8 @@ describe('the customer blockers (TL-6, NBQ-5)', () => {
       'client_payments_pending',
       'admin_account',
       'contact_support',
+      // DL-1b (BQ-11): appended; never produced from a guard row.
+      'payment_failed',
     ]);
   });
 });

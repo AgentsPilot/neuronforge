@@ -4,14 +4,20 @@
  *
  * The customer routes never import `TestAccountCleanupRepository` (the
  * `no-deletion-paths` family-5 allow-list holds real importers only, and no
- * route file was added to it). They call these two runners, which sit next to
- * `runAccountAnonymise` and are the only self-service importers:
+ * route file was added to it). They call this runner, the only self-service
+ * importer:
  *
- *   runAccountDeletionCheck   the drawer pre-check: `anonymise_check`, which
- *                             the function sets read-only itself, plus the
- *                             version check (R-6)
- *   runSelfAccountAnonymise   the delete: `runAccountAnonymise` with no actor
- *                             and the session email as its own confirmation
+ *   runAccountDeletionCheck   the drawer pre-check and the deletion request's
+ *                             check: `anonymise_check`, which the function sets
+ *                             read-only itself, plus the version check (R-6)
+ *
+ * DL-1b (workplan BUSINESS_OS_DELETION_DL1B_WORKPLAN.md D-9; SA W-4, W-9): the
+ * self-service anonymise runner is GONE, with its import of the anonymise
+ * engine. No customer route deletes anything any more (requirement XC-6); the
+ * request route records a request and the lifecycle (DL-3 to DL-5) closes the
+ * account later. The check now also returns its RAW guard rows, the verdict
+ * and whether it resolved this login, so the request's XC-5 filter
+ * (`closureBlockers.ts`) never reads the drawer's G-12-less list (W-4).
  *
  * The email and the subject id come from the session (`getUser()`) in the
  * route, never from a body. G-2a proves in the database that they name the
@@ -29,9 +35,7 @@ import {
   checkAllowsRun,
   unavailableReasonOf,
   type CleanupUnavailableReason,
-  type PrepareReceipt,
 } from '@/lib/business-os/test-account-cleanup/runCleanupDelete';
-import { runAccountAnonymise, type AnonymiseRunOutcome } from '@/lib/business-os/account-deletion/runAccountAnonymise';
 import type { GuardRowLike } from '@/lib/business-os/account-deletion/blockerCopy';
 import { CleanupRpcError, TestAccountCleanupRepository } from '@/lib/repositories/TestAccountCleanupRepository';
 
@@ -53,13 +57,18 @@ export type AccountDeletionCheckOutcome =
       /** The informational rows (billing kept, consent kept, sent invoices). */
       notes: GuardRowLike[];
       guards: string[];
+      /** DL-1b (W-4): every guard row the check reported, G-12 included, unfiltered. */
+      rows: GuardRowLike[];
+      /** DL-1b (W-4): the check's verdict was BLOCKED. */
+      verdictBlocked: boolean;
+      /** DL-1b (W-4): the check resolved the session's own login. */
+      resolvedThisLogin: boolean;
       serverMs: number | null;
     }
   | { kind: 'unavailable'; reason: CleanupUnavailableReason; error: Error | null }
   | { kind: 'failed'; error: Error };
 
 type CheckRepo = Pick<TestAccountCleanupRepository, 'anonymiseCheck'>;
-type AnonymiseRepo = Pick<TestAccountCleanupRepository, 'anonymiseCheck' | 'emptyStorage' | 'anonymise'>;
 
 const toRow = (row: { guard: string; item: string; found: number | null }): GuardRowLike => ({
   guard: row.guard,
@@ -81,7 +90,8 @@ export async function runAccountDeletionCheck(
   if (check.version !== CLEANUP_FUNCTION_VERSION) return { kind: 'unavailable', reason: 'function_out_of_date', error: null };
 
   // G-2a proves this in the database; checked again so a parser miss can never show "ready" for another login.
-  const canDelete = checkAllowsRun(check) && check.targetUserId === input.subject.toLowerCase();
+  const resolvedThisLogin = check.targetUserId === input.subject.toLowerCase();
+  const canDelete = checkAllowsRun(check) && resolvedThisLogin;
   let blockers: GuardRowLike[] = [];
   if (!canDelete) {
     blockers = check.blockers.filter((row) => row.guard !== 'G-12').map(toRow);
@@ -95,20 +105,11 @@ export async function runAccountDeletionCheck(
     blockers,
     notes: check.notes.map(toRow),
     guards: [...new Set(check.blockers.map((row) => row.guard))],
+    rows: check.blockers.map(toRow),
+    verdictBlocked: check.verdict !== 'OK',
+    resolvedThisLogin,
     serverMs: check.serverMs,
   };
-}
-
-/**
- * The delete. No actor (`p_actor` NULL: the receipt's origin is `owner`), and
- * the session email is its own confirmation, so G-3 holds by construction.
- */
-export function runSelfAccountAnonymise(
-  input: SelfDeletionSubject,
-  prepareReceipt: PrepareReceipt,
-  repo: AnonymiseRepo = new TestAccountCleanupRepository()
-): Promise<AnonymiseRunOutcome> {
-  return runAccountAnonymise(repo, { email: input.email, subject: input.subject, confirmEmail: input.email }, null, prepareReceipt);
 }
 
 /** What a customer route may log about an engine error: its kind and code, never its message. */

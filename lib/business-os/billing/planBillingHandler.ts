@@ -35,6 +35,13 @@
  * championSubscribedNotification.ts`). This is the only place it is built
  * (SA C-5); boost never reaches it.
  *
+ * D6 / DL-1b (account deletion C-3, BQ-38): the production ports include
+ * `closureStripeKeep` (DELETE-owned, `closureStripeKeepDeps.ts`), next to
+ * `afterPlanMove`, wrapped by `closureStripeKeepNeverFailing` so it NEVER
+ * throws: a failure is logged `error` + alert and the mirror completes, so the
+ * event is never retried for it (PLAN PAYMENTS review point 1). The port is
+ * replay-safe on its own (point 2).
+ *
  * @module lib/business-os/billing/planBillingHandler
  */
 
@@ -65,6 +72,8 @@ import {
 } from '@/lib/business-os/billing/planCheckoutSessionEvents';
 import { mirrorPlanSubscription, type PlanSubscriptionMirrorDeps } from '@/lib/business-os/billing/planSubscriptionMirror';
 import { afterPlanMove } from '@/lib/business-os/billing/afterPlanMoveDeps';
+import type { ClosureStripeKeepPort } from '@/lib/business-os/account-deletion/closureStripeKeep';
+import { closureStripeKeep } from '@/lib/business-os/account-deletion/closureStripeKeepDeps';
 
 export type PlanBillingHandlerDeps = PlanPaymentDeps &
   PlanCheckoutSessionDeps &
@@ -130,6 +139,36 @@ export const PLAN_HANDLER_VERIFIED_EVENT_SHAPES: Readonly<Record<string, readonl
   ],
 };
 
+/**
+ * D6 / DL-1b: the closure keep never fails the mirror or makes Stripe retry
+ * (PLAN PAYMENTS review point 1). A throw is logged with ids and the port's own
+ * code only (never a free-text message) and alerted; DL-3's pass over
+ * `pending` rows re-reads Stripe and settles the row. Applied to the
+ * production port below; exported for the tests.
+ */
+export function closureStripeKeepNeverFailing(port: ClosureStripeKeepPort): ClosureStripeKeepPort {
+  return async (input, log) => {
+    try {
+      await port(input, log);
+    } catch (err) {
+      log.error(
+        {
+          event: 'bos_closure_stripe_keep_failed',
+          accountId: input.accountId,
+          subscriptionId: input.subscriptionId,
+          stripeEventId: input.stripeEventId,
+          livemode: input.livemode,
+          errorName: err instanceof Error ? err.name : null,
+          // Only the port's own codes (`closure_read_failed`, ...), never a free-text message.
+          errorCode: err instanceof Error && /^[a-z_]{1,64}$/.test(err.message) ? err.message : null,
+          alert: true,
+        },
+        'A pending deletion request was not kept after a Stripe reactivation; the mirror continues'
+      );
+    }
+  };
+}
+
 export function createPlanBillingHandler(deps: PlanBillingHandlerDeps): BusinessOsFlowHandler {
   return async function handlePlanBillingEvent(event, parentLog) {
     const log = parentLog.child({ flow: 'plan', eventType: event.type });
@@ -186,6 +225,9 @@ export const handlePlanBillingEvent: BusinessOsFlowHandler = createPlanBillingHa
   }),
   // D3.1 (SX-2b): the after-plan move the mirror calls on an ended subscription.
   afterPlanMove,
+  // D6 / DL-1b (C-3, BQ-38): a plan reactivated in Stripe keeps a pending deletion
+  // request. Wrapped so a failure never fails the mirror or makes Stripe retry.
+  closureStripeKeep: closureStripeKeepNeverFailing(closureStripeKeep),
   stripeMode: currentStripeMode,
   now: () => new Date(),
 });

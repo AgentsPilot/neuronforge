@@ -39,7 +39,8 @@ function counts(byTable: Partial<Record<string, number | null>>): LocalCount[] {
 }
 
 function checked(canDelete: boolean, blockers: GuardRowLike[]): AccountDeletionCheckOutcome {
-  return { kind: 'checked', canDelete, targetUserId: USER, blockers, notes: [], guards: [], serverMs: 1 };
+  // DL-1b (SA W-4): the check also returns its raw rows, the verdict and the login match.
+  return { kind: 'checked', canDelete, targetUserId: USER, blockers, notes: [], guards: [], rows: blockers, verdictBlocked: !canDelete, resolvedThisLogin: true, serverMs: 1 };
 }
 
 function deps(check: AccountDeletionCheckOutcome | Error, local: LocalCount[] = counts({})): ConnectExitDeps & { check: jest.Mock; countLocal: jest.Mock } {

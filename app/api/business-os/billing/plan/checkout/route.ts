@@ -49,6 +49,7 @@ import { isPlanCheckoutEnabled } from '@/lib/business-os/billing/planCheckoutFla
 import { createLogger } from '@/lib/logger';
 import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
+import { readDeletionPending } from '@/lib/business-os/account-deletion/deletionPendingReader';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -106,6 +107,8 @@ export async function POST(request: NextRequest) {
       {
         holdReaders: { lineage: businessOsAccountLineageRepository, invites: businessOsInviteRepository },
         readPlanSnapshot: (sessionAccountId) => getEntitlementService().getSnapshot(sessionAccountId),
+        // D6 / DL-1b (BQ-34): the session user's open deletion request, from the closure repository.
+        deletionPending: (sessionUserId) => readDeletionPending(sessionUserId),
         logger: requestLogger,
       }
     );

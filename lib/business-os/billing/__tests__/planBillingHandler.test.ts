@@ -30,6 +30,12 @@ const mockAfterPlanMove = jest.fn();
 jest.mock('@/lib/business-os/billing/afterPlanMoveDeps', () => ({
   afterPlanMove: (...args: unknown[]) => mockAfterPlanMove(...args),
 }));
+// D6 / DL-1b (C-3, BQ-38): the production closure-keep port, a sentinel so its
+// wiring can be inspected without reaching the closure table.
+const mockClosureStripeKeep = jest.fn();
+jest.mock('@/lib/business-os/account-deletion/closureStripeKeepDeps', () => ({
+  closureStripeKeep: (...args: unknown[]) => mockClosureStripeKeep(...args),
+}));
 // The production handler reads the server key mode; pinned to test here.
 jest.mock('@/lib/business-os/billing/stripeMode', () => ({
   ...jest.requireActual('@/lib/business-os/billing/stripeMode'),
@@ -178,5 +184,76 @@ describe('the production handler', () => {
     expect(mockMirror).not.toHaveBeenCalled();
     expect(mockAfterPlanMove).not.toHaveBeenCalled();
     expect(h.lines.find((l) => l.ctx.event === 'bos_billing_mode_mismatch')).toMatchObject({ level: 'error', ctx: { alert: true } });
+  });
+});
+
+describe('D6 / DL-1b: the closure-keep port in the production wiring (PLAN PAYMENTS review points 1 to 3)', () => {
+  const input = { accountId: '11111111-1111-4111-8111-111111111111', subscriptionId: 'sub_1', livemode: false, stripeEventId: 'evt_1' };
+
+  beforeEach(() => mockClosureStripeKeep.mockReset());
+
+  it('the production ports hand the mirror the closure-keep port (built here and nowhere else)', async () => {
+    const h = harness();
+    mockMirror.mockResolvedValue(undefined);
+    await handlePlanBillingEvent(event('customer.subscription.updated'), h.log);
+    const ports = mockMirror.mock.calls[0][2] as PlanBillingHandlerDeps;
+    expect(typeof ports.closureStripeKeep).toBe('function');
+    expect(mockClosureStripeKeep).not.toHaveBeenCalled(); // the handler itself never calls it
+    mockClosureStripeKeep.mockResolvedValueOnce(undefined);
+    await ports.closureStripeKeep(input, h.log);
+    expect(mockClosureStripeKeep).toHaveBeenCalledWith(input, h.log);
+  });
+
+  it('a throwing port never fails the event: logged error + alert, ids and the port code only, resolves', async () => {
+    const h = harness();
+    mockMirror.mockResolvedValue(undefined);
+    await handlePlanBillingEvent(event('customer.subscription.updated'), h.log);
+    const ports = mockMirror.mock.calls[0][2] as PlanBillingHandlerDeps;
+    mockClosureStripeKeep.mockRejectedValueOnce(new Error('closure_keep_failed'));
+    await expect(ports.closureStripeKeep(input, h.log)).resolves.toBeUndefined();
+    const line = h.lines.find((l) => l.ctx.event === 'bos_closure_stripe_keep_failed');
+    expect(line).toMatchObject({ level: 'error', ctx: { alert: true, errorCode: 'closure_keep_failed', ...input } });
+  });
+
+  it('a free-text error message is never logged (only a snake_case port code)', async () => {
+    const { closureStripeKeepNeverFailing } = await import('@/lib/business-os/billing/planBillingHandler');
+    const h = harness();
+    const wrapped = closureStripeKeepNeverFailing(async () => {
+      throw new Error('Database said: jane@example.com is not allowed');
+    });
+    await expect(wrapped(input, h.log)).resolves.toBeUndefined();
+    const line = h.lines.find((l) => l.ctx.event === 'bos_closure_stripe_keep_failed');
+    expect(line?.ctx.errorCode).toBeNull();
+    expect(JSON.stringify(h.lines)).not.toContain('jane@example.com');
+  });
+
+  it('the real mirror with the wrapped port: a throwing port still completes the mirror', async () => {
+    const { closureStripeKeepNeverFailing } = await import('@/lib/business-os/billing/planBillingHandler');
+    const { mirrorPlanSubscription } = jest.requireActual('@/lib/business-os/billing/planSubscriptionMirror') as typeof import('@/lib/business-os/billing/planSubscriptionMirror');
+    const h = harness();
+    const writes: unknown[] = [];
+    const deps = {
+      billingAccounts: {
+        findByStripeSubscription: async () => ({ data: { accountId: input.accountId, livemode: false, stripeSubscriptionId: 'sub_1' }, error: null }),
+        mirrorSubscriptionState: async (w: unknown) => {
+          writes.push(w);
+          return { data: { mirrored: true }, error: null };
+        },
+      },
+      billingEvents: { recordEvent: jest.fn() },
+      stripe: () => ({
+        retrieveBusinessOsSubscription: async () => ({ id: 'sub_1', status: 'active', customerId: 'cus_1', cancelAtPeriodEnd: false, cancelAt: null, endedAt: null, livemode: false, metadata: {}, items: [] }),
+      }),
+      recordPlanChange: jest.fn(),
+      afterPlanMove: jest.fn(),
+      closureStripeKeep: closureStripeKeepNeverFailing(async () => {
+        throw new Error('closure_read_failed');
+      }),
+      now: () => new Date('2026-11-04T10:00:00.000Z'),
+    } as unknown as PlanBillingHandlerDeps;
+    const updated = { id: 'evt_1', type: 'customer.subscription.updated', livemode: false, data: { object: { id: 'sub_1' } } } as unknown as Stripe.Event;
+    await expect(mirrorPlanSubscription(updated, h.log, deps)).resolves.toBeUndefined();
+    expect(writes).toHaveLength(1);
+    expect(h.lines.find((l) => l.ctx.event === 'bos_closure_stripe_keep_failed')?.ctx.alert).toBe(true);
   });
 });
