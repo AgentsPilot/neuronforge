@@ -42,6 +42,15 @@ const ROLLBACK = 'supabase/SQL Scripts/20261093_business_os_account_closures_rol
 const MIGRATION_TEST = 'supabase/migrations/__tests__/business-os-account-closures.migration.test.ts';
 const PRECHECK = 'scripts/precheck-account-closures.sql';
 const CHECKER = 'scripts/check-account-closures-migration.sql';
+// DL-1b (workplan BUSINESS_OS_DELETION_DL1B_WORKPLAN.md §12 G-2): the production
+// wiring of the request, Keep and Stripe-side Keep, and the one "deletion
+// pending" reader the checkouts and the cancel engine use. Routes, the engine,
+// the mirror and the checkouts reach the repository ONLY through these files.
+const REQUEST_DEPS = 'lib/business-os/account-deletion/closureRequestDeps.ts';
+const KEEP_DEPS = 'lib/business-os/account-deletion/closureKeepDeps.ts';
+const STRIPE_KEEP_DEPS = 'lib/business-os/account-deletion/closureStripeKeepDeps.ts';
+const PENDING_READER = 'lib/business-os/account-deletion/deletionPendingReader.ts';
+const PENDING_READER_TEST = 'lib/business-os/account-deletion/__tests__/deletionPendingReader.test.ts';
 
 interface Rule {
   name: string;
@@ -54,8 +63,8 @@ const RULES: ReadonlyArray<Rule> = [
   {
     name: 'AccountClosureRepository',
     pattern: /\bAccountClosureRepository\b/,
-    // The lock seam reads the closure state through it (W-4).
-    allowed: [CLOSURE_REPOSITORY, LOCK_REPOSITORY, CLOSURE_TEST, LOCK_TEST, SELF],
+    // The lock seam reads the closure state through it (W-4). DL-1b: the four wiring files and the reader's test.
+    allowed: [CLOSURE_REPOSITORY, LOCK_REPOSITORY, CLOSURE_TEST, LOCK_TEST, SELF, REQUEST_DEPS, KEEP_DEPS, STRIPE_KEEP_DEPS, PENDING_READER, PENDING_READER_TEST],
   },
   {
     name: 'AccountLockRepository',

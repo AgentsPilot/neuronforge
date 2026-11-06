@@ -640,6 +640,16 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['getEntitlementConfig', 'getEntitlementMode', 'getEntitlementService', 'planLabel', 'resolveAccountId'],
       why: 'Plan payments P-6a.2 (workplan §5.6, SA C-13): the owner payment banner read for the Business OS layout. It reads the session account snapshot (`getEntitlementService` through `resolveAccountId`) for the lifecycle state and grace end, `getEntitlementMode` only to know whether the effective mode is `enforce` (no "paused" wording before S-5, SA Q-5), and `planLabel` / `getEntitlementConfig` for the plan name. DISPLAY ONLY, like readPlanBadge: it refuses nothing, grants nothing and calls no `check()` / `decide()`.',
     },
+    {
+      file: 'app/api/business-os/account/delete/route.ts',
+      symbols: ['resolveAccountId'],
+      why: 'Account deletion DL-1b / D6 (workplan BUSINESS_OS_DELETION_DL1B_WORKPLAN.md §12 G-4): the deletion REQUEST route resolves the session account through the seam for the one "don\'t renew" engine call (its `bos_user_id` cross-check). It refuses nothing by plan: its refusals come from the closure, billing and cleanup-check facts, and it calls no `check()` / `decide()`.',
+    },
+    {
+      file: 'app/api/business-os/account/keep/route.ts',
+      symbols: ['resolveAccountId'],
+      why: 'Account deletion DL-1b / D6 (workplan §12 G-4): the Keep route resolves the session account through the seam for the engine\'s reactivate (`origin: deletion_keep`). It refuses nothing by plan: its refusals come from the closure row only, and it calls no `check()` / `decide()`.',
+    },
   ];
 
   /** Every symbol a file imports from the entitlements module. */

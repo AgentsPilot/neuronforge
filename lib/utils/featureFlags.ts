@@ -297,6 +297,12 @@ export function isBusinessOsCreditsBoostEnabled(): boolean {
  * `{ enabled: false }` while it is off (the Danger Zone keeps today's body),
  * and `POST /api/business-os/account/delete` answers 404.
  *
+ * DL-1b / D6 (account deletion lifecycle XC-15): this is now the REQUEST
+ * switch. On, the delete route records a deletion request (a paid plan set
+ * not to renew, or a free account's grace period); it no longer deletes
+ * anything. `POST /api/business-os/account/keep` is NOT behind it (XC-4): an
+ * open request can always be kept, whatever this says.
+ *
  * Rollback is unsetting it and redeploying. No data changes with it.
  *
  * @returns {boolean} True only when `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` is exactly `true`

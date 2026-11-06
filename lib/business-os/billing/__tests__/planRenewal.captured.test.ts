@@ -223,6 +223,8 @@ function harness(world: World, subscriptionNow: () => Stripe.Subscription | null
     }),
     // D3.1 (SX-2b): the after-plan move port, a stub (its own suite is afterPlanMove.test.ts).
     afterPlanMove: jest.fn(async () => undefined),
+    // D6 (SA W-6 b): the required closure-keep port, a stub (its own suite is closureStripeKeep.test.ts).
+    closureStripeKeep: jest.fn(async () => undefined),
     now: () => new Date('2026-10-15T09:00:00.000Z'),
   };
   return { deps, ports, retrieve };

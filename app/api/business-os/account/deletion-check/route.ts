@@ -19,6 +19,13 @@
  * Never in a response or a log line: the email, a guard's SQL text, a
  * database message. Logs carry ids, guard ids and counts.
  *
+ * DL-1b (workplan BUSINESS_OS_DELETION_DL1B_WORKPLAN.md §9; SA W-4, Q-15): the
+ * blockers are those of the deletion REQUEST, from the same XC-5 filter as the
+ * request route (`requestBlockers` over the check's RAW rows), plus
+ * `payment_failed` when our billing row shows a failed renewal (BQ-11). So the
+ * drawer never shows G-6 (a plan running), G-12 (files) or an engineering
+ * guard as a blocker. The wire shape is unchanged apart from that new code.
+ *
  * @module app/api/business-os/account/deletion-check
  */
 
@@ -30,7 +37,10 @@ import { isTestCleanupConfigured } from '@/lib/server/testCleanupSecret';
 import { isFingerprintKeyAvailable } from '@/lib/business-os/account-deletion/receiptFingerprint';
 import { readSessionSubject, selfDeleteThrottleKey } from '@/lib/business-os/account-deletion/sessionSubject';
 import { errorKindFacts, runAccountDeletionCheck } from '@/lib/business-os/account-deletion/selfServiceDeletion';
-import { toBlockerViews, willKeepBilling } from '@/lib/business-os/account-deletion/blockerCopy';
+import { toBlockerViews, willKeepBilling, type BlockerView } from '@/lib/business-os/account-deletion/blockerCopy';
+import { requestBlockers } from '@/lib/business-os/account-deletion/closureBlockers';
+import { isPaymentFailing } from '@/lib/business-os/account-deletion/closureRequest';
+import { readDeletionBillingRow } from '@/lib/business-os/account-deletion/closureRequestDeps';
 import type { DeletionCheckData } from '@/lib/business-os/account-deletion/schemas';
 import { BusinessOsDataExportJobRepository } from '@/lib/repositories/BusinessOsDataExportJobRepository';
 
@@ -102,6 +112,24 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // DL-1b (XC-5, BQ-11): the request's own blockers, so the drawer and the route agree.
+    const billing = await readDeletionBillingRow(subject.id);
+    if (billing.kind === 'mode_unknown') {
+      requestLogger.error({ subjectId: subject.id, reason: 'stripe_key_mode_unknown', alert: true }, 'Account deletion check: the Stripe key mode is unknown');
+      return answer(NOT_AVAILABLE(), correlationId);
+    }
+    if (billing.kind === 'unreadable') {
+      requestLogger.error({ subjectId: subject.id, reason: 'billing_row_unreadable' }, 'Account deletion check failed: the billing row could not be read');
+      return NextResponse.json(
+        { success: false, error: 'check_failed', message: 'We could not check your account right now. Please try again.', correlationId },
+        { status: 500, headers: { 'Cache-Control': NO_STORE } }
+      );
+    }
+    const filtered = requestBlockers({ rows: outcome.rows, verdictBlocked: outcome.verdictBlocked, resolvedThisLogin: outcome.resolvedThisLogin });
+    const blockers: BlockerView[] = toBlockerViews(filtered.blocking);
+    if (filtered.blocking.length > 0 && blockers.length === 0) blockers.push({ code: 'contact_support' });
+    if (isPaymentFailing(billing.row, new Date())) blockers.push({ code: 'payment_failed' });
+
     // The export facts are shown, never required (requirement §3.2). A read failure shows "none on record".
     const facts = await new BusinessOsDataExportJobRepository().findDeletionFacts(subject.id);
     if (facts.error) requestLogger.warn({ subjectId: subject.id }, 'Account deletion check: export facts could not be read');
@@ -109,7 +137,7 @@ export async function GET(request: NextRequest) {
     const data: DeletionCheckData = {
       enabled: true,
       available: true,
-      blockers: outcome.canDelete ? [] : toBlockerViews(outcome.blockers),
+      blockers,
       willKeepBilling: willKeepBilling(outcome.notes),
       exportFacts: {
         lastReadyAt: facts.data?.ownerLastExportReadyAt ?? null,
@@ -121,6 +149,7 @@ export async function GET(request: NextRequest) {
         subjectId: subject.id,
         canDelete: outcome.canDelete,
         guards: outcome.guards,
+        engineering: filtered.engineering,
         notes: [...new Set(outcome.notes.map((note) => note.guard))],
         blockers: data.blockers.map((blocker) => blocker.code),
         serverMs: outcome.serverMs,

@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: 2026-10-30
-> **Version**: 1.17.0
+> **Last Updated**: 2026-11-04
+> **Version**: 1.18.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-11-04 | 1.18.0 | Dev | `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` is now the account deletion lifecycle's **request** switch (DL-1b / D6, XC-15). Still server-only, **default off**, exact string `true`. On, `POST /api/business-os/account/delete` records a deletion request (nothing is deleted at once any more); off, it answers 404. The new `POST /api/business-os/account/keep` is **not** behind it (XC-4): an open request can always be kept. No new variable |
 | 2026-10-30 | 1.17.0 | Dev | Removed the module export switch (export redesign MX-3.1, user decision 2026-10-27): its env-table row and its detail section are gone, and so are its reader, its route 404 and its admin environment entry. The per-module export is live for every owner; the variable is removed from Vercel after deploy. The 1.15.0 row below is kept as history |
 | 2026-10-29 | 1.16.1 | Dev | `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` (account deletion lifecycle D4b / SX-3 part 2) now also gates the daily 3-day "Your plan ends on {date}" reminder cron `/api/cron/bos-plan-cancel-reminders`. No new variable. Needs migration 20261100 before it can send |
 | 2026-10-28 | 1.16.0 | Dev | Added `BUSINESS_OS_PLAN_CANCEL_EMAILS_ENABLED` (account deletion lifecycle D4a / SX-3): the plan cancel / keep emails. Server-only, **default off** (`true` or `1` turn it on, case-insensitive). While off the cancel and reactivate routes send and audit nothing extra. On without `RESEND_FROM_EMAIL`: nothing is sent, `BOS_PLAN_CANCEL_EMAIL_NOT_SENT` (`sender_not_configured`) is audited and an `error` with `alert: true` is logged. Reader `isPlanCancelEmailsEnabled()`. |
@@ -391,9 +392,11 @@ Data export DE-10b.2 ([workplan](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE10B2_
 | State | What happens |
 |---|---|
 | Off (default) | `GET /api/business-os/account/deletion-check` answers `200 { enabled: false }` before reading the session, so Settings → Danger Zone keeps today's body (Download my data + Contact us). `POST /api/business-os/account/delete` answers **404** before reading anything |
-| On | The Danger Zone shows the self-delete steps (warning, plain-word blockers, the typed statement). A matching statement closes and anonymises the signed-in user's own account with the DE-10b.1 `anonymise` mode |
+| On | The Danger Zone shows the deletion steps (warning, plain-word blockers, the typed statement). From DL-1b a matching statement records a deletion **request**: a paid plan is set not to renew (`pending`), a free account starts its 14-day grace period (`grace`). Nothing is deleted by the route; the account closes later through the lifecycle (DL-3 to DL-5) |
 
-Self-delete also needs `TEST_CLEANUP_SECRET` and `DELETION_RECEIPT_FINGERPRINT_KEY` on the same deployment; without either, the drawer says "not available right now" and the delete answers 503. The cleanup secret is Production-only, so on Preview the feature always reads "not available". Rollback: unset it and redeploy.
+**DL-1b / D6 (XC-15):** this is the request switch only. `POST /api/business-os/account/keep` (Keep my account, stages A to C) is **not** behind it, so an existing open request can always be kept, whatever the switch says. It stays off in every deployed environment until DL-5.
+
+The request also needs `TEST_CLEANUP_SECRET` and `DELETION_RECEIPT_FINGERPRINT_KEY` on the same deployment; without either, the drawer says "not available right now" and the request answers 503. The cleanup secret is Production-only, so on Preview the feature always reads "not available". Rollback: unset it and redeploy.
 
 ```bash
 # Vercel Production only, for the QA window and after the user decides to keep it on

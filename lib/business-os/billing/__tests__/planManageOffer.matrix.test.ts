@@ -122,6 +122,8 @@ async function writes(r: Row | null, action: 'cancel' | 'reactivate', pricesEnab
     logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
     now: () => NOW,
     switches: () => ({ pricesEnabled }),
+    // D6 (SA W-6 a): no deletion request open; the real reader would reach the network.
+    deletionPending: async () => 'none' as const,
     mode: () => 'test',
     repo: {
       findByUser: async () => ({ data: r, error: null }),

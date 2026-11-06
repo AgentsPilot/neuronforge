@@ -23,6 +23,9 @@
  *                                    tier, or a held admin invitee
  *   7  plan row (snapshot)         → refuse when unreadable, or when there is none (Q-4)
  *   8  billing row                 → refuse when unreadable
+ *   8b deletion request (D6)       → refuse while one is open (`deletion_pending`,
+ *                                    BQ-34) or when that cannot be read
+ *                                    (`deletion_state_unreadable`, fail closed)
  *   8a our-data decision, ONCE     → every account: BQ-P10 `free_access_no_end_date`
  *      (SA W-1, W-3)                 (W-3). Held: a live subscription on the record.
  *                                    Not held: `planPurchaseOffer` (M-1): switches,
@@ -154,7 +157,10 @@ export type PlanCheckoutRefusalCode =
   | 'retry_later'
   | 'stripe_error'
   | 'lock_unavailable'
-  | 'checkout_busy';
+  | 'checkout_busy'
+  // D6 / DL-1b (BQ-34, XC-19): an account deletion request is open.
+  | 'deletion_pending'
+  | 'deletion_state_unreadable';
 
 /** HTTP status and owner-facing message per refusal. Never a Stripe or database message. */
 export const PLAN_CHECKOUT_REFUSALS: Readonly<Record<PlanCheckoutRefusalCode, { status: number; message: string }>> = {
@@ -182,6 +188,9 @@ export const PLAN_CHECKOUT_REFUSALS: Readonly<Record<PlanCheckoutRefusalCode, { 
   stripe_error: { status: 502, message: 'The payment provider did not respond. Please try again.' },
   lock_unavailable: { status: 503, message: 'Checkout is not available right now. Please try again.' },
   checkout_busy: { status: 409, message: 'A checkout is already being opened for your account.' },
+  // D6 / DL-1b (BQ-34): a plan bought on a closing account would start during its grace period.
+  deletion_pending: { status: 409, message: 'Your account is set to be deleted. Keep your account first.' },
+  deletion_state_unreadable: { status: 503, message: 'We could not check your account right now. Please try again.' },
 };
 
 export type PlanCheckoutResult =
@@ -231,6 +240,12 @@ export interface PlanCheckoutDeps {
   holdReaders: PaymentHoldReaders;
   /** Reads the account's entitlement snapshot by ACCOUNT id (the route resolves it). */
   readPlanSnapshot: (accountId: string) => Promise<PlanSnapshotLike>;
+  /**
+   * D6 / DL-1b (§8; XC-19): is an account deletion request open for the
+   * SESSION user? The closure repository's reader (`readDeletionPending`),
+   * never an entitlement. REQUIRED, no default (SA W-6 b). Read at step 8b.
+   */
+  deletionPending: (userId: string) => Promise<'none' | 'open' | 'unreadable'>;
   logger: PlanCheckoutLogger;
   repo?: Pick<
     BusinessOsBillingAccountRepository,
@@ -374,6 +389,18 @@ export async function startPlanCheckout(input: PlanCheckoutInput, deps: PlanChec
   const existing = await repo.findByUser(userId, livemode);
   if (existing.error) return refuse('billing_row_unreadable', 'error');
   const row = existing.data;
+
+  // 8b. D6 / DL-1b (BQ-34): no plan is sold while an account deletion request is
+  // open ("Keep your account first"). A database read, so before any Stripe call;
+  // held and non-held accounts alike. Fails closed.
+  let deletion: 'none' | 'open' | 'unreadable';
+  try {
+    deletion = await deps.deletionPending(userId);
+  } catch {
+    deletion = 'unreadable';
+  }
+  if (deletion === 'open') return refuse('deletion_pending', 'warn');
+  if (deletion !== 'none') return refuse('deletion_state_unreadable', 'error');
 
   // 8a. Every refusal decided from our own data, ONCE, after every database
   // read and before any Stripe call (SA W-1), so a refused request never

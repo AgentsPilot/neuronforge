@@ -86,6 +86,8 @@ jest.mock('@/lib/business-os/boost/boostCheckoutDeps', () => ({
             } as never),
     },
     cap: { amountMinor: 15000, currency: 'USD', windowDays: 30 },
+    // D6 / DL-1b (SA W-6 b): the required closure port; no request open.
+    deletionPending: async () => 'none',
     repo: {
       reserve: async (input: unknown) => {
         state.reserveCalls.push(input);

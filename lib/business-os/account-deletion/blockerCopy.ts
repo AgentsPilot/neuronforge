@@ -24,6 +24,9 @@ export const BLOCKER_CODES = [
   'client_payments_pending',
   'admin_account',
   'contact_support',
+  // DL-1b (BQ-11, XC-5): the last plan payment failed. Decided from our billing row, never a guard row.
+  // Appended, so the order of the others is unchanged; its drawer copy is DL-2's.
+  'payment_failed',
 ] as const;
 export type BlockerCode = (typeof BLOCKER_CODES)[number];
 

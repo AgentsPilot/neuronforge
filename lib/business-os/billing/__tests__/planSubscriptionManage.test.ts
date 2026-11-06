@@ -104,6 +104,8 @@ function harness(options: {
   const deps = {
     logger: { info: log('info'), warn: log('warn'), error: log('error') },
     now: () => NOW,
+    // D6 (SA W-6 a): no deletion request open; the real reader would reach the network.
+    deletionPending: async () => 'none' as const,
     switches: () => ({ pricesEnabled: options.pricesEnabled ?? true }),
     mode: () => {
       calls.push('mode');

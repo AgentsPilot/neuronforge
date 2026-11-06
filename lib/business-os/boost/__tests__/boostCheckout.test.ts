@@ -65,6 +65,9 @@ function setup(overrides: Partial<{
   expire: jest.Mock;
   attach: unknown;
   abandon: unknown;
+  // D6 / DL-1b: the closure reader's answer.
+  deletion: 'none' | 'open' | 'unreadable';
+  deletionThrows: boolean;
 }> = {}) {
   const calls: string[] = [];
   const create = jest.fn(overrides.create ?? (async () => session()));
@@ -101,6 +104,11 @@ function setup(overrides: Partial<{
     },
     cap: { amountMinor: 15000, currency: 'USD', windowDays: 30 },
     repo: { reserve, attachCheckout, abandon } as never,
+    // D6 / DL-1b (SA W-6 b): the required closure port.
+    deletionPending: jest.fn(async (): Promise<'none' | 'open' | 'unreadable'> => {
+      if (overrides.deletionThrows) throw new Error('closure read threw');
+      return overrides.deletion ?? 'none';
+    }),
     stripe: () => {
       if (overrides.stripeThrows) throw new Error('stripe_key_missing');
       return { checkout: { sessions: { create: async (...args: unknown[]) => { calls.push('create'); return create(...(args as [])); }, expire } } } as never;
@@ -219,7 +227,36 @@ describe('refusals before the reservation write nothing', () => {
       cap_reached: 409,
       reservation_failed: 500,
       checkout_unavailable: 502,
+      // D6 / DL-1b (BQ-34).
+      deletion_pending: 409,
+      deletion_state_unreadable: 503,
     });
+  });
+});
+
+describe('D6 / DL-1b: no Boost while an account deletion request is open (BQ-34, XC-19; T-10)', () => {
+  it.each([
+    ['a request is open', { deletion: 'open' }, 'deletion_pending'],
+    ['the closure state is unreadable', { deletion: 'unreadable' }, 'deletion_state_unreadable'],
+    ['the closure read throws (fail closed)', { deletionThrows: true }, 'deletion_state_unreadable'],
+  ] as const)('%s → %s, before the package, the reservation and any Stripe call', async (_name, overrides, error) => {
+    const { deps, log, reserve, create } = setup(overrides as never);
+    expect(await runBoostCheckout(deps, INPUT, log)).toEqual({ ok: false, error });
+    expect(deps.packageSource.getActive).not.toHaveBeenCalled();
+    expect(reserve).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('no request → the flow is unchanged; the reader is asked for the session account', async () => {
+    const { deps, log, calls } = setup();
+    expect((await runBoostCheckout(deps, INPUT, log)).ok).toBe(true);
+    expect(deps.deletionPending).toHaveBeenCalledWith(INPUT.accountId);
+    expect(calls).toEqual(['reserve', 'create', 'attach']);
+  });
+
+  it('a held account is refused as awaiting_payment first (step 1 precedes 1b)', async () => {
+    const { deps, log } = setup({ deletion: 'open', hold: { data: { source: 'account_invite', first_paid_at: null, invite_id: null }, error: null } } as never);
+    expect(await runBoostCheckout(deps, INPUT, log)).toEqual({ ok: false, error: 'awaiting_payment' });
   });
 });
 
