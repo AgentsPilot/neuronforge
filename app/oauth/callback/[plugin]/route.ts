@@ -170,10 +170,11 @@ async function extractPluginProfileData(
         connection.plugin_key,
         profileData
       );
-      requestLogger.info({ profileData }, 'Stored plugin profile data');
+      requestLogger.info({ storedParams: Object.keys(profileData) }, 'Stored plugin profile data');
     } else {
+      // Key names only: the callback carries the one-time code and the state.
       requestLogger.warn(
-        { expectedParams: profileParams, received: Object.fromEntries(searchParams.entries()) },
+        { expectedParams: profileParams, receivedKeys: [...searchParams.keys()] },
         'OAuth callback missing expected profile params'
       );
     }
