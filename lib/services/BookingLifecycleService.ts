@@ -66,7 +66,8 @@ import { paymentReminderService } from '@/lib/services/PaymentReminderService';
 import { emitPaymentEvent } from '@/lib/services/PaymentEventService';
 import { voidInvoice } from '@/lib/payments/invoiceLifecycle';
 import { bookingPaymentState } from '@/lib/payments/bookingPaymentState';
-import { SERVICE_DATE_TERMS } from '@/lib/payments/invoiceTerms';
+import { fallbackInvoiceTerms } from '@/lib/payments/paymentTerms';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { isPlanStopped } from '@/lib/payments/planStatus';
 import { isSlotTakenError } from '@/lib/business-os/bookingStatus';
 import { isInstallmentPlan } from '@/lib/payments/PaymentPlanService';
@@ -1872,10 +1873,10 @@ export async function createBookingInvoice(
    * date or throw. So an unscheduled sale is payable on issue, which is what
    * buying something ordinarily means.
    *
-   * The TERMS change with it, and that matters beyond wording:
-   * `SERVICE_DATE_TERMS` is READ by the overdue chase, which holds an invoice
-   * carrying it while its session is still ahead. Writing it on a booking with
-   * no session would claim a rule nothing can evaluate.
+   * A sale with no session has no appointment to anchor anything to, which is
+   * why the distinction mattered when the deadline WAS the appointment. It no
+   * longer is: both cases now take the business's terms from the issue date,
+   * so the booked and the unbooked are billed by the same rule.
    * ───────────────────────────────────────────────────────────────────────────
    */
   const scheduledSale = Boolean(bookingData.start_time);
@@ -1896,17 +1897,71 @@ export async function createBookingInvoice(
     ? `${service.service_name} (1/${plan.count})`
     : service.service_name;
 
-  const dueDate = plan
-    ? plan.firstDueDate
-    : scheduledSale
-      ? businessDateKey(new Date(bookingData.start_time as string), zone)
-      : businessDateKey(new Date(), zone);
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A SERVICE THAT SAYS WHEN IT IS PAYABLE IS OBEYED, WHETHER OR NOT IT IS A PLAN.
+   *
+   * `first_payment_due` / `first_payment_days` were read ONLY inside the plan
+   * branch, and `isInstallmentPlan` requires `payment_type === 'installments'`
+   * AND a count above one. So the identical service setting produced two
+   * different answers depending on how the service happened to be billed: sold
+   * in instalments, "7 days after booking" was honoured; sold as one payment,
+   * it was discarded and the invoice fell due on the session date.
+   *
+   * `planStartDate` is the plan path's own anchor rule, reused rather than
+   * reimplemented, so the two cannot drift apart again.
+   *
+   * ONLY `days_after` IS ACTED ON HERE, AND THAT IS DELIBERATE. `on_booking` is
+   * the value `serviceShape.ts` stamps on every new service, so it sits on 50
+   * of the 52 services that exist as a default nobody chose. Treating it as an
+   * instruction would move all of them from "due on the session date" to "due
+   * immediately" and start the overdue chase before the session — a change to
+   * when every client is asked to pay, made on configuration no owner set.
+   * `days_after` is the opposite: nothing writes it by default, so a service
+   * carrying it was configured by hand and means it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const deferredStart =
+    !plan && service.first_payment_due === 'days_after'
+      ? planStartDate(
+          {
+            firstPaymentDue: 'days_after',
+            firstPaymentDays: Math.max(0, service.first_payment_days ?? 0),
+          },
+          new Date()
+        )
+      : null;
 
   /*
-   * A plan period's terms come from its own due date, not the service date.
-   * `SERVICE_DATE_TERMS` is read by the overdue chase, which holds an invoice
-   * carrying it while its session is still ahead — a rule that would wrongly
-   * excuse a first period due today on a service booked for next month.
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE BUSINESS'S OWN TERMS, WHERE THE SERVICE DOES NOT OVERRIDE THEM.
+   *
+   * "Due on the service date" was a THIRD rule, belonging to neither layer the
+   * owner can configure. It sat in front of `invoice_payment_terms_days` and
+   * made it unreachable on the one surface most businesses actually use, so an
+   * owner who had set 45 days watched every booking fall due on the day of the
+   * appointment and could find nothing that explained it.
+   *
+   * The precedence is now the one the settings describe, and nothing else:
+   *
+   *     the service's own terms  →  the business default  →  30
+   *
+   * `fallbackInvoiceTerms` is the same helper the quote, package and standalone
+   * paths use, so all four now answer this question identically.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const { data: businessTermsDays } = await businessProfileRepository.getPaymentTermsDays(userId);
+  const businessFallback = fallbackInvoiceTerms(businessTermsDays);
+
+  const dueDate = plan
+    ? plan.firstDueDate
+    : deferredStart
+      ? businessDateKey(deferredStart, zone)
+      : businessFallback.due_date;
+
+  /*
+   * A plan period's terms come from its own due date, measured from today, so a
+   * first period due now is chased now even where the service is months away.
    */
   const planTermsDays = plan
     ? Math.max(
@@ -1938,11 +1993,18 @@ export async function createBookingInvoice(
       },
     ],
     due_date: dueDate,
+    /*
+     * The terms always describe the date above, never a rule of their own.
+     *
+     * They are written as one expression with it for that reason: the words on
+     * the document and the date the chase obeys are the same decision, and the
+     * two drifted apart precisely when they were computed separately.
+     */
     payment_terms: plan
       ? termsValueForDays(planTermsDays)
-      : scheduledSale
-        ? SERVICE_DATE_TERMS
-        : 'due_on_receipt',
+      : deferredStart
+        ? termsValueForDays(Math.max(0, service.first_payment_days ?? 0))
+        : businessFallback.payment_terms,
     notes: `Booking for ${bookingData.contact_name}`,
     internal_notes: `Auto-generated for booking ${bookingId}`,
     /*
@@ -2069,11 +2131,20 @@ export async function createBookingInvoice(
           },
         ],
         /*
-         * The same rule as the local invoice above: due on the service date
-         * where there is one, on issue where there is not. `new Date(undefined)`
-         * is an Invalid Date, and Stripe would have been sent one.
+         * THE DATE THE LOCAL INVOICE ALREADY CARRIES, not the rule re-derived.
+         *
+         * This restated the rule — service date where there is one, issue date
+         * where there is not — and restating it is how the two drift. The
+         * moment the local invoice learned to honour a service's own terms,
+         * this line was still sending Stripe the session date, so the client
+         * would have been shown one deadline in the email and another on the
+         * Stripe page, for the same invoice.
+         *
+         * `dueDate` above is a `YYYY-MM-DD` business-day key; read at UTC noon
+         * so a zone either side of the line cannot roll it to the neighbouring
+         * day on the way to Stripe.
          */
-        dueDate: scheduledSale ? new Date(bookingData.start_time as string) : new Date(),
+        dueDate: new Date(`${dueDate}T12:00:00Z`),
         currency: service.currency.toLowerCase(),
         description: `Invoice for ${service.service_name}`,
         metadata: {

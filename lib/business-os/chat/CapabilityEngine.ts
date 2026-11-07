@@ -15,6 +15,8 @@ import {
   schedulingBookingRepository
 } from '@/lib/repositories/SchedulingRepository';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { fallbackInvoiceTerms } from '@/lib/payments/paymentTerms';
 import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import type { EntityType } from '@/lib/audit/types';
@@ -556,6 +558,18 @@ export class CapabilityEngine {
       return { success: false, error: 'Failed to generate invoice number' };
     }
 
+    /*
+     * No booking and no quote, so the business's own terms decide.
+     *
+     * This wrote `due_date: null` with `payment_terms: 'due_on_receipt'` — the
+     * words saying "pay now" over a column saying there is no deadline at all.
+     * An invoice with no due date never ages, so it was never chased, and the
+     * owner's `invoice_payment_terms_days` was consulted by nothing on this
+     * path. A date the caller supplied still wins; this only fills the silence.
+     */
+    const { data: businessDays } = await businessProfileRepository.getPaymentTermsDays(this.userId);
+    const fallback = fallbackInvoiceTerms(businessDays);
+
     const result = await paymentInvoiceRepository.create({
       user_id: this.userId,
       contact_id: (params.contact_id as string) || null,
@@ -569,8 +583,8 @@ export class CapabilityEngine {
         unit_price: amount,
         total: amount
       }],
-      due_date: (params.due_date as string) || null,
-      payment_terms: 'due_on_receipt',
+      due_date: (params.due_date as string) || fallback.due_date,
+      payment_terms: fallback.payment_terms,
       notes: null,
       internal_notes: null,
       sent_at: null,

@@ -88,3 +88,34 @@ export function presetForDays(days: number): PaymentTermsPreset | undefined {
 export function termsValueForDays(days: number): string {
   return presetForDays(days)?.value ?? `net${days}`;
 }
+
+/**
+ * The deadline for an invoice that has nothing of its own to go on.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE CASE THE BUSINESS DEFAULT EXISTS FOR, AND THE ONE THAT IGNORED IT.
+ *
+ * An invoice raised from the chat or straight onto the ledger has no booking
+ * and no quote — no service date to fall due on, and no agreed terms. Those
+ * were written with `due_date: null` and `payment_terms: 'due_on_receipt'`,
+ * which is two different answers at once: the words say "pay now", the column
+ * says there is no deadline at all. Nothing could age, so nothing was ever
+ * chased, and `invoice_payment_terms_days` — the setting that exists for
+ * precisely this case — was read by nobody on this path.
+ *
+ * Returns both fields together so they cannot disagree again: the date IS the
+ * terms expressed as a day, and a caller cannot take one without the other.
+ *
+ * Pure, and the business's number is passed IN rather than read here. This
+ * module is imported by the booking dialog in the browser; reaching for a
+ * repository would drag the server into it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function fallbackInvoiceTerms(
+  businessDays: number | null | undefined,
+  from: Date = new Date()
+): { due_date: string; payment_terms: string } {
+  const days = resolveTermsDays(null, businessDays);
+
+  return { due_date: dueDateFromTerms(days, from), payment_terms: termsValueForDays(days) };
+}

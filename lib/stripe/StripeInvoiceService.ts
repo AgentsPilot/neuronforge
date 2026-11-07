@@ -16,6 +16,30 @@
 import Stripe from 'stripe';
 import { createLogger } from '@/lib/logger';
 
+/**
+ * Whole days from today to the due date, counted in CALENDAR days at UTC.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Stripe is told a NUMBER OF DAYS, not a date, so the arithmetic that produces
+ * it decides what the client sees on the Stripe page — and it has to agree with
+ * the date on our own invoice, or one document contradicts the other.
+ *
+ * It was `Math.ceil((due - now) / 86400000)`, a raw millisecond division, which
+ * depends on the time of day the invoice happens to be raised: a due date two
+ * days out reads as 2 at 21:00 and as 3 at 06:00, so the same invoice raised in
+ * the morning fell due a day later at Stripe than it did with us.
+ *
+ * Counting calendar days removes the clock from it: both ends are taken at UTC
+ * midnight, so the answer is the number of date boundaries crossed, which is
+ * what "due in N days" means to the person reading it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function wholeDaysUntil(dueDate: Date, from: Date = new Date()): number {
+  const midnight = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+
+  return Math.round((midnight(dueDate) - midnight(from)) / 86_400_000);
+}
+
 const logger = createLogger({ service: 'StripeInvoiceService' });
 
 export interface InvoiceLineItem {
@@ -170,7 +194,27 @@ export class StripeInvoiceService {
           customer: customerId,
           collection_method: 'send_invoice',
           ...(params.autoAdvance === undefined ? {} : { auto_advance: params.autoAdvance }),
-          days_until_due: Math.max(1, Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
+          /*
+           * `0`, NOT `1`. An invoice due today is due TODAY at Stripe.
+           *
+           * This floored at 1, so every invoice falling due on the day it was
+           * raised was reported to the client as due tomorrow — and that is the
+           * common case, not the edge: due-on-receipt, and any service billed
+           * when it is booked. Our record said one date, the Stripe page the
+           * client pays against said another.
+           *
+           * A date already past clamps to 0 as well, which is the honest answer
+           * for something overdue: due now, not due tomorrow.
+           *
+           * Stripe takes either this or a `due_date` timestamp, and this is
+           * deliberately the one kept. A `due_date` in the past is REFUSED at
+           * creation, so expressing "due today" that way risks failing the
+           * invoice outright rather than dating it wrongly — a worse failure on
+           * the path that asks a client for money. `days_until_due` has no such
+           * floor: it is documented as a plain integer, and 0 means due on the
+           * day it is created.
+           */
+          days_until_due: Math.max(0, wholeDaysUntil(dueDate)),
           currency, // Set invoice currency to match line items
           description,
           footer,

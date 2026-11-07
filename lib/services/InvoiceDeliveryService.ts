@@ -55,6 +55,7 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import type { Locale } from '@/lib/i18n/config';
 import { recordEmailSend } from '@/lib/notifications/recordEmailSend';
 import { currentStripeMode } from '@/lib/business-os/billing/stripeMode';
+import { fallbackInvoiceTerms } from '@/lib/payments/paymentTerms';
 
 const logger = createLogger({ service: 'InvoiceDeliveryService' });
 const auditTrail = AuditTrailService.getInstance();
@@ -172,6 +173,39 @@ const VALID_LOCALES: Locale[] = ['en', 'es', 'he'];
  */
 export function alreadyWithTheClient(status: string | null | undefined): boolean {
   return status === 'sent' || status === 'overdue';
+}
+
+/**
+ * The status the DOCUMENT wears when it is being handed to the client.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A CLIENT MUST NEVER RECEIVE AN INVOICE STAMPED "DRAFT".
+ *
+ * A booking's invoice is written `status: 'draft'` and only becomes `sent` once
+ * the mail is away — deliberately, because an invoice marked sent that nobody
+ * received is the bug this module exists to prevent. But the attachment is
+ * built BEFORE that stamp, from the row as it stands, so every client was sent
+ * a document badged DRAFT / טיוטה / BORRADOR.
+ *
+ * Observed on INV-00049: created 21:00:40 as `draft`, stamped `sent` at
+ * 21:00:47. Seven seconds, and the PDF was rendered inside them. The row was
+ * right the whole time; only the paper was wrong.
+ *
+ * So the fix is NOT to mark the invoice sent earlier — that would reintroduce
+ * exactly the failure the draft state prevents. The document being attached to
+ * an email IS the act of delivery, so it is rendered as `sent` while the row
+ * stays `draft` until the send actually succeeds.
+ *
+ * Only `draft` is rewritten. `paid`, `cancelled` and `refunded` are facts about
+ * the money and must print as they are; `overdue` is a fact about the date.
+ *
+ * NOT used by the owner's own download route (`/api/payments/invoices/[id]/pdf`).
+ * An owner previewing an invoice they have not sent is looking at a draft, and
+ * should be told so.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function statusOnDelivery(status: string): string {
+  return status === 'draft' ? 'sent' : status;
 }
 
 // `hasBeenRefunded` now lives beside `isSettledInvoice` in `lib/payments/invoiceSettlement.ts`:
@@ -329,7 +363,9 @@ export async function sendInvoice(
             unit_price: Math.round(item.unit_price * 100), // Stripe works in cents.
             total: Math.round(item.total * 100),
           })),
-          dueDate: invoice.due_date ? new Date(invoice.due_date) : defaultDueDate(),
+          dueDate: invoice.due_date
+            ? new Date(invoice.due_date)
+            : defaultDueDate(invoiceSettings?.invoice_payment_terms_days),
           currency: invoice.currency.toLowerCase(),
           description: `Invoice ${invoice.invoice_number}`,
           metadata: {
@@ -515,7 +551,9 @@ export async function buildInvoiceAttachment(
        * which is what makes it a copy rather than a new document.
        */
       isCopy: markAsCopy,
-      invoice,
+      /* Rendered as delivered — see `statusOnDelivery`. `markAsCopy` above is
+         derived from the REAL status and is unaffected. */
+      invoice: { ...invoice, status: statusOnDelivery(invoice.status) },
       /*
        * The plan this invoice bills one period of.
        *
@@ -554,8 +592,20 @@ export async function buildInvoiceAttachment(
   }
 }
 
-function defaultDueDate(): Date {
-  return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+function defaultDueDate(businessDays: number | null | undefined): Date {
+  /*
+   * THIRTY DAYS WAS A NUMBER NOBODY CHOSE.
+   *
+   * Hardcoded here, while the owner's `invoice_payment_terms_days` sat in
+   * settings being read by the proposal path and nothing else. An invoice with
+   * no date of its own was therefore reported to Stripe on a deadline the
+   * business had never agreed to — and Stripe is the copy the client pays
+   * against.
+   *
+   * Noon UTC so a business either side of the line cannot have the day rolled
+   * to its neighbour on the way out.
+   */
+  return new Date(`${fallbackInvoiceTerms(businessDays).due_date}T12:00:00Z`);
 }
 
 /**
@@ -723,7 +773,9 @@ async function sendByEmail(
       invoiceNumber: invoice.invoice_number,
       amount: invoice.amount,
       currency: invoice.currency,
-      dueDate: invoice.due_date ? new Date(invoice.due_date) : defaultDueDate(),
+      dueDate: invoice.due_date
+        ? new Date(invoice.due_date)
+        : defaultDueDate(settings.invoice_payment_terms_days),
       lineItems,
       paymentOptions,
       branding: { ...branding, businessName, logoUrl: settings.logo_url || undefined },
@@ -752,7 +804,9 @@ async function sendByEmail(
        * which is what makes it a copy rather than a new document.
        */
       isCopy,
-      invoice,
+      /* Rendered as delivered — see `statusOnDelivery`. `isCopy` above is
+         derived from the REAL status and is unaffected. */
+      invoice: { ...invoice, status: statusOnDelivery(invoice.status) },
       /*
        * The same schedule `buildInvoiceAttachment` puts on the attached copy.
        *
