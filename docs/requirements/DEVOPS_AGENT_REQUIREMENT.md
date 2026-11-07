@@ -26,6 +26,8 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 - [DO-5 Specification — claude-harness-ops and env-drift-audit skills](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills)
 - [SA Review — DO-5](#sa-review--do-5)
 - [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)
+- [DO-7 Specification — description length guard](#do-7-specification--description-length-guard)
+- [DO-7 implementation notes](#do-7-implementation-notes)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
 - [7. Acceptance Criteria (DO-1)](#7-acceptance-criteria-do-1)
 - [8. Out of Scope / Future Roadmap](#8-out-of-scope--future-roadmap)
@@ -49,6 +51,7 @@ The user does a lot of environment work: GitHub repo and org settings, Supabase 
 | DO-4 | `github-ops` skill | ✅ MERGED 2026-10-31 (PR #590). See [QA Report — DO-4](#qa-report--do-4), [DO-4 Specification](#do-4-specification--github-ops-skill), [SA Review — DO-4](#sa-review--do-4), [DO-4 implementation notes](#do-4-implementation-notes) and [SA Code Review — DO-4](#sa-code-review--do-4) |
 | DO-5 | `claude-harness-ops` skill + `env-drift-audit` skill | 🟡 SA APPROVED WITH CHANGES 2026-10-31, split into **DO-5a** (`claude-harness-ops`, FU-3 plan, FU-4 and ClickUp closed) ✅ DO-5a MERGED 2026-10-31 (PR #592; see [DO-5a implementation notes](#do-5a-implementation-notes), [SA Code Review — DO-5a](#sa-code-review--do-5a) and [QA Report — DO-5a](#qa-report--do-5a); the `tools:` swap is not in it, so it is FU-3b), and **DO-5b** (`env-drift-audit`) 🟡 spec re-checked by BA 2026-10-31 (FU-5: H10, the Q-D5-9 note, the H3 boundary, the check list §D5.2.2(g), Q-D5b-1 to Q-D5b-4); SA short pass 2026-10-31 **APPROVED WITH CHANGES** (see [SA Review — DO-5b (short pass)](#sa-review--do-5b-short-pass)); DO-5b built (see [DO-5b implementation notes](#do-5b-implementation-notes)); **SA code review 2026-10-31: Code Approved for QA**, with four small skill fixes (repo reads use `origin/main:./<path>` from the worktree root; `devops.md` unchanged beyond the pointer line); **QA 2026-10-31: QA passed**, with two small non-blocking items, both fixed (see [QA Report — DO-5b](#qa-report--do-5b)); **user approved the diff 2026-11-01**, PR open with auto-merge. The FU-3 `tools:` swap lands only after the user's read-only server passes the H1 probe; otherwise it is follow-up FU-3b. Q-D5-2 (untrack the local settings file): ✅ PR #593 MERGED 2026-10-31; `origin/main` shows the file untracked and the `.gitignore` line. See [DO-5 Specification](#do-5-specification--claude-harness-ops-and-env-drift-audit-skills) and [SA Review — DO-5](#sa-review--do-5) |
 | DO-6 | `third-party-ops` skill — Stripe, Resend/SMTP, Google Cloud, LLM providers, QStash, AWS, messaging, DNS | ✅ MERGED 2026-11-05: all of DO-6a..6h merged, last DO-6h (PR #630). Inventory pass 2026-11-01; spec by BA, split into DO-6a..6h (see [DO-6 Specification](#do-6-specification--third-party-ops-skill)); **SA 2026-11-01: APPROVED WITH CHANGES** (7 required changes, see [SA Review — DO-6 (spec)](#sa-review--do-6-spec)); user decided Q-D6-1..3 (§D6.6). DO-6a built (see [DO-6a implementation notes](#do-6a-implementation-notes)); **SA code review 2026-11-01: Code Approved for QA**, 3 small SA fixes, one condition before commit (§D6.6 wording, see [SA Code Review — DO-6a](#sa-code-review--do-6a)). **QA 2026-11-01: QA passed with one Medium item to fix before commit** (see [QA Report — DO-6a](#qa-report--do-6a)): every §D6.4 criterion and SA change 1(f) pass, and §D6.6 already carries the corrected wording, but SA Code Review — DO-6a quotes the removed current-state phrases verbatim, so they were still in tracked text. **Main session 2026-11-01: quotes scrubbed** (SA review, QA report, §D6.5 Q-D6-3 "Suggested" reworded to "would use"); **user approved the diff 2026-11-01**; RM commit + PR. **DO-6a MERGED (#604). DO-6b (email) spec + SA short pass approved with changes; built 2026-11-01; SA code review approved, QA passed; main session fixed the QA Medium item (contact-route wording) and Lows 1, 3, 4; user approved the diff 2026-11-01. DO-6b MERGED (#605). DO-6c (Google) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6c implementation notes](#do-6c-implementation-notes)); SA code review approved, QA passed; main session fixed QA Lows 1 and 2; user approved the diff 2026-11-02. DO-6c MERGED (#608). DO-6d (LLM providers) spec + SA short pass approved with changes; built 2026-11-02 (see [DO-6d implementation notes](#do-6d-implementation-notes)); SA code review approved, QA passed (20 checks, 3 Lows); main session fixed Low 1; user approved the diff 2026-11-02; MERGED (#614). DO-6e (domains and app addresses, narrowed by the user) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6e implementation notes](#do-6e-implementation-notes)); SA code review approved with three fixes; QA 19 checks, two Mediums and a Low fixed by the main session; user approved the diff 2026-11-03; merged (#616). DO-6f (queues, AWS and small API-key providers) spec + SA short pass approved with changes; built 2026-11-03 (see [DO-6f implementation notes](#do-6f-implementation-notes)); SA code review approved with five fixes; QA 25 checks, one Medium and three Lows; all fixes applied by the main session; user approved the diff 2026-11-04; merged (#620). DO-6g (messaging apps: Meta and Slack) spec + SA short pass approved with changes; built 2026-11-04 (see [DO-6g implementation notes](#do-6g-implementation-notes)); SA code review approved with eight fixes; QA 24 checks, one High, one Medium and four Lows; all fixes applied by the main session; user approved the diff 2026-11-04; commit + PR. DO-6g merged (#622). DO-6h (plugin OAuth apps) spec + SA short pass approved with changes; built 2026-11-04 (see [DO-6h implementation notes](#do-6h-implementation-notes)); SA code review approved with eight fixes; QA 26 checks, one High, one Medium and four Lows; all fixes applied by the main session; user approved the diff 2026-11-05; commit + PR. DO-6h merged (#630). DO-6 complete.** |
+| DO-7 | Skill and agent `description` length guard: `.github/ci/check-claude-descriptions.mjs` + its own `claude-description-guard.yml` workflow (limit 1,024 chars, measured after YAML parsing), github-ops trimmed under the limit | 🟡 Spec by BA 2026-11-07. SA short pass 2026-11-07: approved with changes; built 2026-11-07; SA code review 2026-11-07: Code Approved for QA with 3 fixes; QA 2026-11-07: passed, one Medium (same as SA fix 1) and five Lows; fixes applied; user approved the diff 2026-11-07; commit + PR. See [DO-7 Specification](#do-7-specification--description-length-guard) and [DO-7 implementation notes](#do-7-implementation-notes) |
 
 This section is the single source of truth for slice status. Update it at every stage: scoping, SA review, PR, merge.
 
@@ -2677,6 +2680,51 @@ A change to a registration used **only** by non-production environments, as reco
 
 ---
 
+## DO-7 Specification — description length guard
+
+**Why.** Claude Code lists each skill and subagent to the model by its frontmatter `description:`, and cuts off a long one. `third-party-ops` reached about 2,373 chars and the listing stopped at about char 1,525, hiding every later trigger. PR #637 trimmed it, but nothing prevented a recurrence.
+
+**What.**
+
+| Item | Rule |
+|---|---|
+| Files | `.claude/skills/*/SKILL.md` and `.claude/agents/*.md`. Neither glob recurses, so `.claude/worktrees/` and the fixtures are never read |
+| Limit | 1,024 chars, one named constant. No allow-list |
+| Measure | The value after YAML parsing (block scalars folded), whitespace runs collapsed, ends trimmed, counted in characters (code points), not bytes. `when_to_use`, if present, counts together with it |
+| Script | `.github/ci/check-claude-descriptions.mjs` (Node built-ins only, no install), npm `check:claude-descriptions`. It lives in `.github/ci/`, next to `jest-gate-check.mjs`, so a change to it is never classed as skippable; a CI guard under `scripts/` would be. Fails closed on a missing frontmatter, a missing, empty or unparseable description, and a default run that finds 0 files. Each failure names the file, its length and the limit, plus a "trim it, long descriptions are cut off" hint |
+| Workflow | `.github/workflows/claude-description-guard.yml`. Its own workflow, because the existing gates skip `.claude/`-only PRs as non-deploying. No `paths:` filter and no scope step: it always checks every file. Node pinned from `.nvmrc`, no cache, no install. Has `merge_group`. Stable job name `Claude description length guard` |
+| Self-test | Committed fixtures under `.github/ci/fixtures/claude-descriptions/`, outside `.claude/`, so Claude Code never loads them. A CI step runs the checker on each fixture on its own and requires both the exit code and that file's own output line, not the exit code alone: a plain value and a `>` block over the limit must fail, a `\|` near-miss (raw text over the limit, parsed value under it) must pass, and a file with no `description` must fail closed. The step also requires the self-test's success line, so a script forced to exit 0 cannot pass it |
+| Same PR | github-ops trimmed to ≤ 1,024 (wording approved by SA) |
+| Required check | Owner setting, not decided by this slice |
+
+**Acceptance.** All files pass. The self-test passes, with each fixture's exit code and output line as above, and a padded copy of a real description fails with file and length. Block-scalar measurement is correct. A missing description fails. The workflow reports a conclusion on `.claude/`-only and on code-only PRs. Runtime fits inside the `next build` critical path.
+
+---
+
+## DO-7 implementation notes
+
+**Built 2026-11-07 by Dev**, against the DO-7 Specification as amended by the SA short pass (changes 1 to 8).
+
+| File | Action | Note |
+|---|---|---|
+| `.github/ci/check-claude-descriptions.mjs` | New | The reader and the check; `--self-test` mode |
+| `.github/ci/fixtures/claude-descriptions/*.md` | New | Four fixtures: plain over the limit, `>-` over the limit, `\|` near-miss, no `description`. No backslashes |
+| `.github/workflows/claude-description-guard.yml` | New | Self-test step, then the real check |
+| `.claude/skills/github-ops/SKILL.md` | Edited | Only the `description:` line, SA text verbatim (939 chars) |
+| `package.json` | Edited | One line: `check:claude-descriptions` |
+| This requirement | Edited | §0 DO-7 row, ToC, the DO-7 Specification, these notes, Change History |
+
+- **Measured on the branch:** 30 files, all under the limit. The nearest are third-party-ops 962, github-ops 939, claude-harness-ops 884 and the devops agent 862. All 30 values match a full YAML parser's, run once by hand as a cross-check.
+- **Deviation: `node:child_process` in the script.** SA change 6 named `node:fs` and `node:path` only. The self-test also uses `spawnSync` from `node:child_process`, a stable built-in module that `jest-gate-check.mjs` already imports. It runs each fixture in its own process, through the real command line, as change 4 asks, so an edit that makes the command line pass everything turns a fixture red. An edit that forces the whole script to exit 0 would make the self-test exit 0 too, so the workflow step also requires the self-test's success line (AC7). No other module is imported, and no experimental API is used. SA approved the deviation in code review.
+- **The self-test also fails** when a fixture on disk has no expectation, or an expectation has no fixture. The near-miss must print its exact parsed length (900), not just exit 0, and the two over-limit fixtures their exact length (1100).
+- **Column-0 lines that are not keys** fail closed: a comment (it would end a block early and hide the text after it), and a `- ` item unless it follows a key with an empty value. A tab before `#` in a plain value is not treated as a comment; that over-counts, the safe side.
+- **`when_to_use`** is joined to the description with one space before measuring. No file uses it today.
+- **A leading byte-order mark** is stripped before reading. No file has one.
+- **Line endings:** the reader converts CRLF to LF first. The Windows working tree is CRLF and the fixtures are LF, so the local runs cover both. LF copies of three real files and CRLF copies of the fixtures gave the same results. **Known gap (QA Low 3):** no fixture is CRLF or non-ASCII, so the self-test would not catch a regression in the CRLF step or the code-point count. Both fail safe: without the CRLF step a CRLF file fails closed, and counting bytes over-counts.
+- **Fail-proof:** a real description padded past the limit made the default run exit 1 and name the file and its length; the file was then restored with no diff. Scratch files for each fail-closed shape (multi-line plain, multi-line quoted, `>2`, ` #` and `: ` in a plain value, a backslash in double quotes, a duplicate key, an empty value, no frontmatter) each failed with their reason. A run from a folder with no `.claude/` exits 1 on 0 files.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -2740,6 +2788,8 @@ A change to a registration used **only** by non-production environments, as reco
 | 2026-11-04 | DO-6h build | New `oauth-apps.md`, SKILL.md §5 row and triggers, one phrase in `domains.md` §7 step 5; spec with SA changes 1–12 applied. See [DO-6h implementation notes](#do-6h-implementation-notes). |
 | 2026-11-05 | DO-6h SA code review + QA | SA approved for QA with eight text fixes: P-OA-4b names its trigger and the connect a failed refresh opens, and the rotation keeps the old secret on the registration until every target is proved, plus wording fixes. QA: 26 checks; one High (the rotation now carries the sibling overlap rule), one Medium (review and notes wording) and four Lows, all text, all applied by the main session; final verdict PASS. |
 | 2026-11-06 | DO-6h merged; DO-6 closed | DO-6h merged (PR #630). Every DO-6 slice (6a..6h) is on `main`, so the §0 DO-6 row is now ✅. |
+| 2026-11-07 | DO-7 spec, SA short pass, build | BA spec for a skill and agent `description` length guard; SA approved with 8 changes (script and fixtures under `.github/ci/`, a fail-closed reader, `when_to_use` counted, self-test checks the output line, 0 files fails, Node pinned from `.nvmrc`, the devops figure corrected, github-ops wording). Dev built the script, fixtures, workflow, npm script and the github-ops trim. See [DO-7 implementation notes](#do-7-implementation-notes). Awaiting SA code review. |
+| 2026-11-07 | DO-7 SA code review + QA | SA approved for QA with 3 fixes; QA passed with one Medium (the same as SA fix 1) and five Lows. Applied: the workflow self-test step now also requires the success line, so a script forced to exit 0 goes red; comments and these notes corrected to match; the byte-order-mark regex written as an escape; column-0 comments and stray `- ` items fail closed; the over-limit fixtures assert their exact length. QA Low 3 is recorded as a known gap, and Low 5 is left as is. |
 
 ---
 
