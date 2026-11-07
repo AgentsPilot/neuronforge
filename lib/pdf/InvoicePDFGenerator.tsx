@@ -30,6 +30,7 @@ import type { InvoiceSettings } from '@/lib/repositories/BusinessProfileReposito
 import { createLogger } from '@/lib/logger';
 import { formatAddressLines } from '@/lib/geo/address';
 import { registerThemeFont } from './themeFonts';
+import { SERVICE_DATE_TERMS } from '@/lib/payments/invoiceTerms';
 import { taxLineFor } from '@/lib/payments/taxLine';
 import { documentTitle } from '@/lib/payments/documentType';
 
@@ -74,6 +75,10 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     bank: 'Bank',
     account: 'Account',
     routing: 'Routing',
+    terms: 'Payment terms',
+    termsServiceDate: 'Due on the day of the service',
+    termsOnReceipt: 'Due on receipt',
+    termsDays: 'Payment within {days} days',
     notes: 'Notes',
     planTitle: 'Payment plan',
     planPaid: 'paid',
@@ -114,6 +119,10 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     bank: 'Banco',
     account: 'Cuenta',
     routing: 'CLABE/Ruta',
+    terms: 'Condiciones de pago',
+    termsServiceDate: 'A pagar el día del servicio',
+    termsOnReceipt: 'A pagar al recibir',
+    termsDays: 'Pago en un plazo de {days} días',
     notes: 'Notas',
     planTitle: 'Plan de pagos',
     planPaid: 'pagado',
@@ -154,6 +163,10 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     bank: 'בנק',
     account: 'חשבון',
     routing: 'סניף',
+    terms: 'תנאי תשלום',
+    termsServiceDate: 'לתשלום ביום מתן השירות',
+    termsOnReceipt: 'לתשלום עם קבלת החשבונית',
+    termsDays: 'לתשלום תוך {days} ימים',
     notes: 'הערות',
     planTitle: 'תוכנית תשלומים',
     planPaid: 'שולם',
@@ -510,6 +523,39 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
   // glyphs, and the invoice would render as empty boxes.
   const fontFamily = isRTL ? 'Rubik' : (branding?.bodyFont || 'Helvetica');
   const headingFontFamily = isRTL ? 'Rubik' : (branding?.headingFont || branding?.bodyFont || 'Helvetica');
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TERMS THE INVOICE WAS ACTUALLY WRITTEN UNDER.
+   *
+   * The payment box printed `invoice_payment_instructions` and nothing else —
+   * free text the owner typed once, which drifts from the settings beside it.
+   * One live document carried THREE different answers: a due date two days out,
+   * a business default of 45 days, and a typed sentence promising 60. The
+   * client reads the sentence; the chase obeys the date.
+   *
+   * `invoice_payment_terms_days` was passed into this document and never
+   * rendered, despite a comment at the call site claiming the payment box
+   * "prints how long the client has". It did not. This is that line.
+   *
+   * Derived from the INVOICE's own `payment_terms`, not from the settings, so
+   * it states the rule this document was issued under rather than whatever the
+   * business has configured today.
+   *
+   * `receipt` and `net_30` are spelt both ways in live data (`due_on_receipt`,
+   * `net30`), so both are matched. An unrecognised value prints nothing rather
+   * than a guess: the due date above it is already the binding fact.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const termsSentence = ((): string | null => {
+    const terms = invoice.payment_terms;
+    if (!terms) return null;
+    if (terms === SERVICE_DATE_TERMS) return labels.termsServiceDate;
+    if (terms === 'due_on_receipt' || terms === 'receipt') return labels.termsOnReceipt;
+
+    const days = /^net_?(\d+)$/.exec(terms);
+    return days ? labels.termsDays.replace('{days}', days[1]) : null;
+  })();
 
   // Prepare data
   const lineItems = invoice.line_items || [];
@@ -1110,12 +1156,19 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
             number — so a business that filled in only its account number got
             the details on the web page and none in the PDF. The email carried
             none either, which meant none in anything the client was sent. */}
-        {(businessSettings.invoice_bank_name ||
+        {(termsSentence ||
+          businessSettings.invoice_bank_name ||
           businessSettings.invoice_bank_account ||
           businessSettings.invoice_bank_routing ||
           businessSettings.invoice_payment_instructions) && (
           <View style={styles.paymentSection}>
             <SmartText style={styles.paymentHeader} isRTL={isRTL}>{labels.paymentInfo}</SmartText>
+            {/* First in the box: what this document actually obliges the client to do. */}
+            {termsSentence && (
+              <SmartText style={styles.paymentDetails} isRTL={isRTL}>
+                {`${labels.terms}: ${termsSentence}`}
+              </SmartText>
+            )}
             {businessSettings.invoice_bank_name && (
               <SmartText style={styles.paymentDetails} isRTL={isRTL}>
                 {`${labels.bank}: ${businessSettings.invoice_bank_name}`}

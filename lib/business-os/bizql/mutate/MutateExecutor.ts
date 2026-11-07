@@ -32,6 +32,8 @@ import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { deleteContact as removeContact } from '@/lib/services/ContactLifecycleService';
 import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
 import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
+import { fallbackInvoiceTerms } from '@/lib/payments/paymentTerms';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import {
   paymentInvoiceRepository,
   paymentTransactionRepository,
@@ -544,6 +546,22 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         }
       }
 
+      /*
+       * A deadline, because an invoice without one is never chased.
+       *
+       * Nothing here set `due_date`, so unless the plan happened to carry one
+       * the invoice was stored with none — it could not age, could not go
+       * overdue, and the owner's `invoice_payment_terms_days` was read by
+       * nobody on this path. That setting exists for exactly this case: an
+       * invoice with no booking and no quote to take its date from.
+       *
+       * Spread BEFORE `...data`, so a plan that states its own due date still
+       * wins. This only fills a silence.
+       */
+      const { data: businessDays } = await businessProfileRepository.getPaymentTermsDays(
+        ctx.userId
+      );
+
       return paymentInvoiceRepository.create({
         user_id: ctx.userId,
         invoice_number: numbered.data!,
@@ -551,6 +569,7 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         currency: 'USD',
         client_name: clientName,
         client_email: clientEmail,
+        ...fallbackInvoiceTerms(businessDays),
         ...data,
       } as Parameters<typeof paymentInvoiceRepository.create>[0]) as Promise<
         RepoResult<unknown>

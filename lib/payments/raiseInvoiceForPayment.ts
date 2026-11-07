@@ -44,6 +44,8 @@
 
 import { createLogger } from '@/lib/logger';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
+import { fallbackInvoiceTerms } from '@/lib/payments/paymentTerms';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { getStripeInvoiceService } from '@/lib/stripe/StripeInvoiceService';
 import { supabaseServer } from '@/lib/supabaseServer';
 
@@ -135,7 +137,21 @@ export async function raiseInvoiceForPayment(
       customerEmail: email,
       customerName: invoice.client_name || email,
       lineItems,
-      dueDate: invoice.due_date ? new Date(invoice.due_date as string) : new Date(),
+      /*
+       * The business's terms, not "today".
+       *
+       * `new Date()` made an invoice with no date of its own due the instant it
+       * reached Stripe — overdue by the next sweep, for a client who had never
+       * been given a deadline. Stripe is the copy the client pays against, so
+       * an invented date here is the one they actually see.
+       */
+      dueDate: invoice.due_date
+        ? new Date(invoice.due_date as string)
+        : new Date(
+            `${fallbackInvoiceTerms(
+              (await businessProfileRepository.getPaymentTermsDays(userId)).data
+            ).due_date}T12:00:00Z`
+          ),
       currency: String(invoice.currency ?? 'usd').toLowerCase(),
       description: invoice.invoice_number ? `Invoice ${invoice.invoice_number}` : undefined,
       metadata: { invoice_id: invoice.id as string },
