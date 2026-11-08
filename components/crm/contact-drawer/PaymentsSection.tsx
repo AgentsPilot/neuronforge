@@ -8,7 +8,10 @@ import { createLogger } from '@/lib/logger';
 import { buildMoneyItems, totalMoney, type MoneyEntry, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
 import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import { buildEntryActions } from '@/lib/payments/entryActions';
-import { MoneyDetailDrawer } from '@/components/payments/MoneyDetailDrawer';
+/* The money page's drawer, not the orders page's.
+   One design for one record: this tab and the money page open the same order
+   and were showing it two different ways. */
+import { MoneyOrderDrawer } from '@/components/business-os/money/MoneyOrderDrawer';
 import { MoneyRow } from '@/components/payments/MoneyRow';
 import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
 import type { SessionCardData } from './types';
@@ -522,6 +525,10 @@ export function PaymentsSection({
                   // this section has to follow or the contact's money becomes
                   // read-only while the reports page can act on it.
                   onSelect={() => setDetail(item)}
+                  /* Every row here is this contact's. Repeating the name six
+                     times down a 576px drawer truncated the service beside it
+                     to say something the reader already knew. */
+                  hideClient
                 />
                 </div>
               ))}
@@ -539,9 +546,15 @@ export function PaymentsSection({
         </div>
       )}
 
-      <MoneyDetailDrawer
+      <MoneyOrderDrawer
         item={detail}
         onClose={() => setDetail(null)}
+        /*
+          No `onOpenBooking` and no `onOpenContact`, so the footer carries
+          neither button. Both are money-page destinations: the reader here is
+          already inside the client's record, and offering to take them to the
+          client's card is a button that leads to the page they are on.
+        */
         t={t}
         isRTL={isRTL}
         formatCurrency={formatCurrency}

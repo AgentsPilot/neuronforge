@@ -87,85 +87,10 @@ import { RefundModal } from '@/components/payments/RefundModal';
   numbers precisely so the browser can say it in the reader's language.
 */
 import { planPeriodText } from '@/components/payments/MoneyDetailDrawer';
-import { MoneyOrderDrawer } from './MoneyOrderDrawer';
-
-/**
- * WHAT NESTS INSIDE A ROW, for the card and the drawer alike.
- *
- * A plan's SCHEDULE when there is one, not its entries. The two are not the
- * same list: a three-instalment plan paid once has three periods and one entry,
- * so showing entries made a package of three look like a single payment and put
- * the other two nowhere. Entries otherwise — money that settled no plan is only
- * ever itself.
- *
- * Module-level because two surfaces now draw it. Inside the card it would have
- * to be copied into the drawer, and the two would answer "what is in this
- * order" differently the first time either changed.
- */
-function scheduleOf(item: MoneyItem, t: (key: string) => string): ScheduleRow[] {
-  if (item.plan) {
-    return item.plan.periods.map(period => ({
-      key: period.id,
-      label: `${t('payments.period') || 'Payment'} ${period.installmentNumber}`,
-      /* Paid: the day it arrived. Not yet: the day it is due. */
-      date: period.paidAt ?? period.dueDate ?? null,
-      dateKind: period.paidAt ? 'paid' : 'due',
-      /*
-        A period's status is a narrower set than an entry's. `pending` has no
-        `money_status` of its own and IS money awaiting payment, which is the
-        one this page already names everywhere else.
-
-        AND A RETURNED PERIOD STILL READS `paid`, because it was. The refund is
-        a second event recorded against the invoice or the charge, and the route
-        joins it onto the period as `refundedAmount` precisely so a schedule can
-        say so. Without this, an order with ₪2,250 returned on one of its two
-        ₪4,500 stages listed both as plainly "paid" — which is the same claim
-        the bar used to make before it was given a refunded band.
-
-        Fully back is `refunded`; partly back is `partially_refunded`. The same
-        distinction `MoneyDetailDrawer` draws, for the same reason: a partial
-        refund leaves the business holding some of it, so the period still
-        stands as a collection.
-      */
-      status: (() => {
-        const returned = Number(period.refundedAmount ?? 0);
-        if (period.status === 'paid' && returned > 0) {
-          return returned >= period.amount ? 'refunded' : 'partially_refunded';
-        }
-        return period.status === 'paid' ||
-          period.status === 'overdue' ||
-          period.status === 'cancelled'
-          ? period.status
-          : 'awaiting_payment';
-      })(),
-      amount: period.amount,
-      /* `MoneyPeriod.currency` is optional and documents this exact fallback:
-         a plan need not bill in the currency of the row it sits under, but
-         when it says nothing it is billing in that one. */
-      currency: period.currency ?? item.currency,
-    }));
-  }
-
-  return item.entries.map(entry => ({
-    key: entry.key,
-    label: entry.invoiceNumber ?? planPeriodText(entry, t) ?? entry.serviceLabel ?? item.title,
-    date: entry.date,
-    dateKind: entry.dateKind,
-    status: entry.status,
-    amount: entry.amount,
-    currency: entry.currency,
-  }));
-}
-
-interface ScheduleRow {
-  key: string;
-  label: string;
-  date: string | null;
-  dateKind: string;
-  status: string;
-  amount: number;
-  currency: string;
-}
+/* `scheduleOf` lives with the drawer, which is the other surface that draws
+   it. The contact record needs it too and must not import a whole page to
+   get it. */
+import { MoneyOrderDrawer, scheduleOf } from './MoneyOrderDrawer';
 
 /** The four states money can be in, and the one colour each gets everywhere. */
 const TONE = {
@@ -244,7 +169,7 @@ export function MoneyFlowPage({
 }: {
   openCreate?: boolean;
 } = {}) {
-  const { t, language, isRTL } = useLanguage();
+  const { t, language, isRTL, timeZoneOptions } = useLanguage();
   const router = useRouter();
 
   /*
@@ -273,6 +198,20 @@ export function MoneyFlowPage({
         section: 'bookings',
         booking: item.bookingId,
       });
+      router.push(`/business-os/crm?${params.toString()}`);
+    },
+    [router]
+  );
+
+  /** The client's record, opened on their money. From this page that is
+      somewhere else to go; from inside the contact drawer it would be the
+      page the reader is already on, which is why the drawer takes it as a
+      prop rather than building it. */
+  const openContact = useCallback(
+    (item: MoneyItem) => {
+      if (!item.contactId) return;
+
+      const params = new URLSearchParams({ contact: item.contactId, section: 'payments' });
       router.push(`/business-os/crm?${params.toString()}`);
     },
     [router]
@@ -339,13 +278,22 @@ export function MoneyFlowPage({
     Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
   ).date;
 
+  /*
+    THE BUSINESS'S CLOCK, NOT THE READER'S LAPTOP.
+
+    `timeZoneOptions` is why every other money surface takes a `formatDate`
+    rather than calling `toLocaleDateString` where it renders: without it a
+    date is drawn in whatever zone the browser happens to sit in, so an owner
+    in Israel reading on a laptop still set to US time sees the day before on
+    every row. Same formatter the orders list builds.
+  */
   const formatDate = useCallback(
     (date: string) =>
       new Date(date).toLocaleDateString(
         language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US',
-        { year: 'numeric', month: 'short', day: 'numeric' }
+        timeZoneOptions({ year: 'numeric', month: 'short', day: 'numeric' })
       ),
-    [language]
+    [language, timeZoneOptions]
   );
 
   /*
@@ -1067,6 +1015,7 @@ export function MoneyFlowPage({
               onOpenDetail={setDetail}
               onOpenBooking={openBooking}
               formatCurrency={formatCurrency}
+              formatDate={formatDate}
               t={t}
             />
           )}
@@ -1170,10 +1119,11 @@ export function MoneyFlowPage({
 
       <MoneyOrderDrawer
         item={detail}
-        schedule={detail ? scheduleOf(detail, t) : []}
         onClose={() => setDetail(null)}
         onOpenBooking={openBooking}
+        onOpenContact={openContact}
         formatCurrency={formatCurrency}
+        formatDate={formatDate}
         t={t}
         isRTL={isRTL}
         {...entryActions}
@@ -1282,6 +1232,7 @@ function Section({
   onOpenDetail,
   onOpenBooking,
   formatCurrency,
+  formatDate,
   t,
   setApart = false,
 }: {
@@ -1299,6 +1250,8 @@ function Section({
   /** Hand a row up to the page, which owns the route to the booking. */
   onOpenBooking: (item: MoneyItem) => void;
   formatCurrency: (amount: number, currency: string) => string;
+  /** The business's clock, built once by the page. See its definition. */
+  formatDate: (date: string) => string;
   t: (key: string) => string;
   setApart?: boolean;
 }) {
@@ -1369,6 +1322,7 @@ function Section({
               setSelected(next);
             }}
             formatCurrency={formatCurrency}
+            formatDate={formatDate}
             t={t}
           />
         ))}
@@ -1414,6 +1368,7 @@ function OrderCard({
   picked,
   onPick,
   formatCurrency,
+  formatDate,
   t,
 }: {
   item: MoneyItem;
@@ -1427,6 +1382,7 @@ function OrderCard({
   picked: boolean;
   onPick: () => void;
   formatCurrency: (amount: number, currency: string) => string;
+  formatDate: (date: string) => string;
   t: (key: string) => string;
 }) {
   const flow = itemFlow(item);
@@ -1584,7 +1540,7 @@ function OrderCard({
                   {/* `dateKind` says WHICH date this is — an unlabelled one is worse than none. */}
                   <em className="mt-px block text-[12px] not-italic text-[var(--v2-text-muted)]">
                     {t(`payments.date_${row.dateKind}`) || row.dateKind} ·{' '}
-                    {row.date ? new Date(row.date).toLocaleDateString() : '—'}
+                    {row.date ? formatDate(row.date) : '—'}
                   </em>
                 </span>
                 <span className="whitespace-nowrap text-[12.5px] text-[var(--v2-text-muted)]">
