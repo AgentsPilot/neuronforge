@@ -136,6 +136,7 @@ export interface PluginAuthConfig {
   user_scopes?: string[]; // For providers like Slack that separate bot and user scopes
   requires_pkce?: boolean; // Indicates if plugin requires PKCE for OAuth
   token_expiry_seconds?: number; // Token expiration time in seconds
+  oauth_callback_profile_params?: string[]; // Callback query params stored as profile data
 }
 
 // JSON Schema for action output structure (machine-readable)

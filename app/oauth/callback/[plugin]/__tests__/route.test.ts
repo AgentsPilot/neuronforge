@@ -121,3 +121,69 @@ describe('GET /oauth/callback/[plugin] — callback parameter values never reach
     expect(logged).not.toContain(PLANTED_STATE);
   });
 });
+
+describe('GET /oauth/callback/[plugin] — what reaches the popup page', () => {
+  const INTERNAL_DETAIL = 'Failed to save connection: planted-db-detail-9e27';
+  const env = process.env as Record<string, string | undefined>;
+  const originalNodeEnv = env.NODE_ENV;
+
+  afterEach(() => {
+    env.NODE_ENV = originalNodeEnv;
+  });
+
+  it('returns a generic error, not the thrown message, when the callback fails', async () => {
+    mockHandleOAuthCallback.mockRejectedValue(new Error(INTERNAL_DETAIL));
+
+    const html = await (await callback({ code: PLANTED_CODE, state: PLANTED_STATE })).text();
+
+    expect(html).not.toContain('planted-db-detail-9e27');
+    expect(html).toContain("error: 'OAuth callback failed'");
+    expect(html).not.toContain('details:');
+  });
+
+  it('adds the thrown message as details in development only', async () => {
+    env.NODE_ENV = 'development';
+    mockHandleOAuthCallback.mockRejectedValue(new Error(INTERNAL_DETAIL));
+
+    const html = await (await callback({ code: PLANTED_CODE, state: PLANTED_STATE })).text();
+
+    expect(html).toContain("error: 'OAuth callback failed'");
+    expect(html).toContain("details: 'Failed to save connection: planted-db-detail-9e27'");
+  });
+
+  it.each([
+    ['a carriage return', '\r'],
+    ['a line separator', '\u2028'],
+    ['a paragraph separator', '\u2029'],
+  ])('escapes %s in a provider error_description', async (_label, ch) => {
+    const html = await (
+      await callback({ error: 'access_denied', error_description: `before${ch}after` })
+    ).text();
+
+    const script = html.slice(html.indexOf('<script>'), html.indexOf('</script>'));
+    expect(script).not.toContain(ch);
+    expect(script).toContain('before');
+    expect(script).toContain('after');
+  });
+
+  it('runs, and hands the opener the provider text unchanged', async () => {
+    const LS = String.fromCharCode(0x2028);
+    const PS = String.fromCharCode(0x2029);
+    const description = `a\rb${LS}c${PS}d\ne'f"g\\h</script>i`;
+    const html = await (
+      await callback({ error: 'access_denied', error_description: description })
+    ).text();
+
+    const start = html.indexOf('<script>') + '<script>'.length;
+    const script = html.slice(start, html.lastIndexOf('</script>'));
+    const posted: Array<{ error?: string }> = [];
+    const stubWindow = {
+      opener: { postMessage: (msg: { error?: string }) => posted.push(msg) },
+      close: () => undefined,
+    };
+    new Function('window', 'setTimeout', 'document', script)(stubWindow, () => undefined, {});
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0].error).toBe(`access_denied: ${description}`);
+  });
+});
