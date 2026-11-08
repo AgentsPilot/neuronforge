@@ -32,8 +32,15 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { useEffect } from 'react';
-import { X, ExternalLink } from 'lucide-react';
+import { useState } from 'react';
+import { X, ExternalLink, Ban } from 'lucide-react';
+
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+/* Stopping a plan is the one action that belongs to the ORDER rather than to
+   any one payment in it, so it lives here beside the schedule and not in
+   `MoneyEntryActions`. Carried over from `MoneyDetailDrawer` so the contact
+   record keeps it when it moves to this design. */
+import { CancelPlanModal } from '@/components/payments/CancelPlanModal';
 
 import { itemFlow, type MoneyEntry, type MoneyItem } from '@/lib/payments/moneyItems';
 /*
@@ -74,7 +81,85 @@ const toneFor = (status: string) => {
   return TONE.wait;
 };
 
+/**
+ * WHAT NESTS INSIDE A ROW, for the card and the drawer alike.
+ *
+ * A plan's SCHEDULE when there is one, not its entries. The two are not the
+ * same list: a three-instalment plan paid once has three periods and one entry,
+ * so showing entries made a package of three look like a single payment and put
+ * the other two nowhere. Entries otherwise — money that settled no plan is only
+ * ever itself.
+ *
+ * Module-level because two surfaces now draw it. Inside the card it would have
+ * to be copied into the drawer, and the two would answer "what is in this
+ * order" differently the first time either changed.
+ */
+export function scheduleOf(item: MoneyItem, t: (key: string) => string): ScheduleRow[] {
+  if (item.plan) {
+    return item.plan.periods.map(period => ({
+      key: period.id,
+      label: `${t('payments.period') || 'Payment'} ${period.installmentNumber}`,
+      /* Paid: the day it arrived. Not yet: the day it is due. */
+      date: period.paidAt ?? period.dueDate ?? null,
+      dateKind: period.paidAt ? 'paid' : 'due',
+      /*
+        A period's status is a narrower set than an entry's. `pending` has no
+        `money_status` of its own and IS money awaiting payment, which is the
+        one this page already names everywhere else.
+
+        AND A RETURNED PERIOD STILL READS `paid`, because it was. The refund is
+        a second event recorded against the invoice or the charge, and the route
+        joins it onto the period as `refundedAmount` precisely so a schedule can
+        say so. Without this, an order with ₪2,250 returned on one of its two
+        ₪4,500 stages listed both as plainly "paid" — which is the same claim
+        the bar used to make before it was given a refunded band.
+
+        Fully back is `refunded`; partly back is `partially_refunded`. The same
+        distinction `MoneyDetailDrawer` draws, for the same reason: a partial
+        refund leaves the business holding some of it, so the period still
+        stands as a collection.
+      */
+      status: (() => {
+        const returned = Number(period.refundedAmount ?? 0);
+        if (period.status === 'paid' && returned > 0) {
+          return returned >= period.amount ? 'refunded' : 'partially_refunded';
+        }
+        return period.status === 'paid' ||
+          period.status === 'overdue' ||
+          period.status === 'cancelled'
+          ? period.status
+          : 'awaiting_payment';
+      })(),
+      amount: period.amount,
+      /* `MoneyPeriod.currency` is optional and documents this exact fallback:
+         a plan need not bill in the currency of the row it sits under, but
+         when it says nothing it is billing in that one. */
+      currency: period.currency ?? item.currency,
+    }));
+  }
+
+  return item.entries.map(entry => ({
+    key: entry.key,
+    label: entry.invoiceNumber ?? planPeriodText(entry, t) ?? entry.serviceLabel ?? item.title,
+    date: entry.date,
+    dateKind: entry.dateKind,
+    status: entry.status,
+    amount: entry.amount,
+    currency: entry.currency,
+  }));
+}
+
 interface ScheduleRow {
+  key: string;
+  label: string;
+  date: string | null;
+  dateKind: string;
+  status: string;
+  amount: number;
+  currency: string;
+}
+
+export interface ScheduleRow {
   key: string;
   label: string;
   date: string | null;
@@ -86,42 +171,69 @@ interface ScheduleRow {
 
 export function MoneyOrderDrawer({
   item,
-  schedule,
   onClose,
   onOpenBooking,
+  onOpenContact,
   formatCurrency,
+  formatDate,
+  onActionError,
+  onPlanCancelled,
   t,
   isRTL = false,
   ...actions
 }: {
   item: MoneyItem | null;
-  /** Built by the page with `scheduleOf`, so it is the row's own list. */
-  schedule: ScheduleRow[];
   onClose: () => void;
   /**
-   * Open this row's booking in the CRM drawer, expanded.
+   * WHERE THIS DRAWER CAN SEND THE READER, decided by whoever opened it.
    *
-   * The page owns the route — the same handler the row's own button calls —
-   * so the two cannot send the reader to different places, and this file does
-   * not import from the page that renders it.
+   * ───────────────────────────────────────────────────────────────────────────
+   * Both are OPTIONAL, and absent means the button is not drawn. They are
+   * money-page destinations: from there, "the booking" and "the client" are
+   * somewhere else worth going.
+   *
+   * Opened from inside the CRM contact record they are nonsense — the reader
+   * is already standing on the client's card, and offering to take them there
+   * is a button that leads to the page they are on. So that caller passes
+   * neither and the footer carries only the bill.
+   *
+   * Callbacks rather than hrefs because the page owns its routes: the row's
+   * own button and this one then cannot send the reader to different places.
+   * ───────────────────────────────────────────────────────────────────────────
    */
-  onOpenBooking: (item: MoneyItem) => void;
+  onOpenBooking?: (item: MoneyItem) => void;
+  onOpenContact?: (item: MoneyItem) => void;
   formatCurrency: (amount: number, currency: string) => string;
+  /**
+   * The business's own clock, built by the caller.
+   *
+   * A prop rather than a `toLocaleDateString` where it renders, which is what
+   * this did: with no locale and no timezone, every date drew in whatever zone
+   * the browser sat in, so an owner read on a laptop set to another country
+   * saw the day before on every line. Every other money surface takes this for
+   * exactly that reason.
+   */
+  formatDate: (date: string) => string;
+  /**
+   * Say a refused action out loud.
+   *
+   * A refund the processor declines, an account it cannot resolve, a 502: the
+   * contact drawer surfaces these as a banner, and without a channel for them
+   * a refusal is silent and reads as a button that did nothing.
+   */
+  onActionError?: (message: string) => void;
+  /** Re-read the list after a plan is stopped, so the row stops saying "active". */
+  onPlanCancelled?: () => void;
   t: (key: string) => string;
   isRTL?: boolean;
 } & EntryActionHandlers) {
-  // Escape closes it. A panel that can only be dismissed by aiming at a small
-  // × is a panel people leave open and then scroll the page behind.
-  useEffect(() => {
-    if (!item) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [item, onClose]);
+  const [cancellingPlan, setCancellingPlan] = useState(false);
 
   if (!item) return null;
+
+  /* Built here rather than taken as a prop: every caller would otherwise pass
+     the same call, and one of them would eventually pass something else. */
+  const schedule = scheduleOf(item, t);
 
   const flow = itemFlow(item);
   const waiting = Math.max(0, flow.outstanding - flow.overdue);
@@ -158,36 +270,36 @@ export function MoneyOrderDrawer({
   }
 
   return (
-    <>
-      {/* The page behind stays visible and dimmed: this is one row of it, not
-          a different screen. */}
-      <div
-        className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[2px]"
-        onClick={onClose}
-        aria-hidden="true"
-      />
+    /*
+      THE SHARED `Sheet`, NOT A HAND-ROLLED PANEL.
 
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label={item.contactName || item.title}
-        /*
-          RIGHT, PHYSICALLY, IN EVERY LANGUAGE.
+      ─────────────────────────────────────────────────────────────────────────
+      This was `fixed inset-y-0 right-0 z-50` with its own backdrop and its own
+      Escape listener. That is serviceable as a top-level panel on a page, and
+      it breaks the moment the drawer is opened from INSIDE another drawer —
+      the CRM contact record — where nothing guarantees it stacks above its
+      host, and focus is left unmanaged behind it.
 
-          This was `inset-inline-end`, which mirrors with the text direction and
-          so opened on the LEFT in Hebrew. The content inside still mirrors —
-          that is what `dir` is for — but the panel itself is furniture, and
-          furniture does not move: a drawer that comes from a different edge
-          depending on the reader's language is a different drawer to learn.
-        */
-        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[520px] flex-col bg-[var(--v2-surface)] shadow-2xl"
+      `Sheet` portals, stacks, traps focus and closes on Escape and on the
+      overlay. `MoneyDetailDrawer` is on it for the same reason, and the shell
+      below is that drawer's class for class: two drawers in one product that
+      open at different widths and pad differently read as two products.
+      ─────────────────────────────────────────────────────────────────────────
+    */
+    <Sheet open={!!item} onOpenChange={open => !open && onClose()}>
+      <SheetContent
+        side={isRTL ? 'left' : 'right'}
+        className="w-full sm:max-w-xl p-0 bg-[var(--v2-surface)] border-[var(--v2-border)] overflow-hidden flex flex-col [&>button]:hidden"
+        dir={isRTL ? 'rtl' : 'ltr'}
       >
         {/* ── who and what ─────────────────────────────────────────────── */}
         <header className="flex items-start gap-3 border-b border-[var(--v2-border)] p-5">
           <div className="min-w-0 flex-1">
-            <p className="m-0 text-[19px] font-extrabold tracking-tight text-[var(--v2-text-primary)]">
+            {/* `SheetTitle` rather than a `<p>`: Radix names the dialog from it
+                for screen readers, and warns when a content has none. */}
+            <SheetTitle className="m-0 text-start text-[19px] font-extrabold tracking-tight text-[var(--v2-text-primary)]">
               {item.contactName || item.title}
-            </p>
+            </SheetTitle>
             {item.contactName && (
               <p className="m-0 mt-0.5 text-[13px] text-[var(--v2-text-muted)]">{item.title}</p>
             )}
@@ -314,7 +426,7 @@ export function MoneyOrderDrawer({
                       <span aria-hidden="true">·</span>
                       <span>
                         {t(`payments.date_${row.dateKind}`) || row.dateKind}{' '}
-                        {row.date ? new Date(row.date).toLocaleDateString() : '—'}
+                        {row.date ? formatDate(row.date) : '—'}
                       </span>
                     </div>
                   </div>
@@ -322,6 +434,22 @@ export function MoneyOrderDrawer({
               );
             })}
           </ol>
+
+          {/* Offered only while the plan can still charge the client, and only
+              when it is bound to Stripe — there is nothing to stop otherwise.
+              Beside the schedule because it acts on the whole plan, not on any
+              one payment in it. */}
+          {item.plan?.subscriptionId &&
+            (item.plan.status === 'active' || item.plan.status === 'past_due') && (
+              <button
+                type="button"
+                onClick={() => setCancellingPlan(true)}
+                className="mt-3 flex items-center gap-1.5 text-[12.5px] text-red-500 hover:underline"
+              >
+                <Ban className="h-3.5 w-3.5" aria-hidden="true" />
+                {t('payments.plan.stop')}
+              </button>
+            )}
 
           {/*
             ── what you can do ──────────────────────────────────────────
@@ -385,7 +513,7 @@ export function MoneyOrderDrawer({
         <footer className="flex flex-wrap gap-2 border-t border-[var(--v2-border)] p-4">
           {/* The CRM drawer on this booking, expanded — not the orders page.
               A contact is required because the drawer IS a contact's record. */}
-          {item.bookingId && item.contactId && (
+          {onOpenBooking && item.bookingId && item.contactId && (
             <button
               type="button"
               onClick={() => onOpenBooking(item)}
@@ -394,13 +522,14 @@ export function MoneyOrderDrawer({
               {t('money.open_order') || 'Open the order'}
             </button>
           )}
-          {item.contactId && (
-            <a
-              href={`/business-os/crm?contact=${item.contactId}`}
+          {onOpenContact && item.contactId && (
+            <button
+              type="button"
+              onClick={() => onOpenContact(item)}
               className="rounded-[9px] border border-[var(--v2-border)] bg-[var(--v2-surface-hover)] px-3.5 py-2 text-[13px] font-semibold text-[var(--v2-text-primary)]"
             >
               {t('money.open_client') || "The client's card"}
-            </a>
+            </button>
           )}
           {lead?.stripeHostedUrl && (
             <a
@@ -414,8 +543,26 @@ export function MoneyOrderDrawer({
             </a>
           )}
         </footer>
-      </aside>
-    </>
+      </SheetContent>
+
+      {/* Inside the Sheet so it stacks ABOVE the drawer rather than behind it —
+          the same z-order the refund dialog uses. */}
+      {item.plan?.subscriptionId && (
+        <CancelPlanModal
+          isOpen={cancellingPlan}
+          onClose={() => setCancellingPlan(false)}
+          planId={item.plan.subscriptionId}
+          periodsRemaining={Math.max(0, item.plan.installmentCount - item.plan.periodsPaid)}
+          collectedAmount={item.entries.reduce(
+            (sum, entry) => sum + (entry.status === 'paid' ? entry.amount - entry.refunded : 0),
+            0
+          )}
+          currency={item.currency}
+          onSuccess={() => onPlanCancelled?.()}
+          onError={message => onActionError?.(message)}
+        />
+      )}
+    </Sheet>
   );
 }
 

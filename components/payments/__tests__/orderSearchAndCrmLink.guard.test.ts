@@ -208,10 +208,19 @@ describe('the client name opens the CRM', () => {
   });
 
   it('keeps the click off the row, which opens the order instead', () => {
-    const from = row.indexOf('THE NAME IS THE WAY INTO THE CRM');
+    /*
+     * Anchored on the CODE the rule is about, not on the comment above it.
+     *
+     * This sliced 1,800 characters after the comment's heading, so the
+     * assertion held only while nothing was written between the two. Adding a
+     * `hideClient` branch — the name is dropped in a list that is already one
+     * client's — pushed `stopPropagation` past the window and failed a rule
+     * that was still being obeyed. The ternary is what must carry it.
+     */
+    const from = row.indexOf('item.contactName && item.contactId && onOpenContact ?');
     expect(from).toBeGreaterThan(-1);
 
-    expect(row.slice(from, from + 1800)).toMatch(/event\.stopPropagation\(\)/);
+    expect(row.slice(from, from + 800)).toMatch(/event\.stopPropagation\(\)/);
   });
 
   it('carries the booking so the drawer opens on this order', () => {

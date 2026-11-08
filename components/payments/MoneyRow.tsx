@@ -95,6 +95,22 @@ interface MoneyRowProps {
    * without one.
    */
   onOpenBooking?: (contactId: string, bookingId: string) => void;
+  /**
+   * Drop the client's name from the leading column.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * For a list that is ALREADY one client's: inside the CRM contact record
+   * every row repeats the same name, and it is the widest thing in the column,
+   * so it truncates the service and the reference behind it to make room for a
+   * fact the reader cannot avoid knowing. "אופיר ע…" six times down a drawer
+   * 576px wide, with "ייעוץ איש…" cut off beside it.
+   *
+   * Hidden, the service takes the first line and the column stops fighting
+   * itself. Default is to show it: every other list mixes clients, and there
+   * the name is the first thing the eye needs.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  hideClient?: boolean;
 }
 
 /** One row control: an icon that says what it is on hover and to a screen reader. */
@@ -148,6 +164,7 @@ export function MoneyRow({
   onToggleExpand,
   onOpenContact,
   onOpenBooking,
+  hideClient = false,
 }: MoneyRowProps) {
   const tone = STATUS_TONE[item.status] ?? REPORTS_COLORS.UNATTRIBUTED;
   const chip = statusChipStyle(item.status);
@@ -483,27 +500,47 @@ export function MoneyRow({
             standalone invoice typed for a walk-in has a name and no record to
             open, and a link that cannot go anywhere is worse than no link.
           */}
-          {item.contactName && item.contactId && onOpenContact ? (
-            <button
-              type="button"
-              onClick={event => {
-                event.stopPropagation();
-                onOpenContact(item.contactId!, item.bookingId ?? null);
-              }}
-              title={t('payments.open_in_crm') || 'Open in CRM'}
-              className="block max-w-full truncate text-start text-[13px] font-semibold text-[var(--v2-text-primary)] underline decoration-transparent decoration-dotted underline-offset-2 transition-colors hover:decoration-[var(--v2-text-muted)]"
-            >
-              <bdi>{item.contactName}</bdi>
-            </button>
+          {/*
+            In a one-client list the name is dropped and the SERVICE leads, so
+            the column spends its width on what distinguishes one row from the
+            next instead of on the one fact they all share.
+          */}
+          {hideClient ? (
+            <>
+              <div className="truncate text-[13px] font-semibold text-[var(--v2-text-primary)]">
+                {item.title}
+              </div>
+              {/* Non-breaking space keeps the row's height identical whether or
+                  not there is a reference, so a list does not jitter. */}
+              <div className="truncate text-[11.5px] text-[var(--v2-text-secondary)]">
+                {reference || '\u00A0'}
+              </div>
+            </>
           ) : (
-            <div className="truncate text-[13px] font-semibold text-[var(--v2-text-primary)]">
-              {item.contactName ?? item.title}
-            </div>
+            <>
+              {item.contactName && item.contactId && onOpenContact ? (
+                <button
+                  type="button"
+                  onClick={event => {
+                    event.stopPropagation();
+                    onOpenContact(item.contactId!, item.bookingId ?? null);
+                  }}
+                  title={t('payments.open_in_crm') || 'Open in CRM'}
+                  className="block max-w-full truncate text-start text-[13px] font-semibold text-[var(--v2-text-primary)] underline decoration-transparent decoration-dotted underline-offset-2 transition-colors hover:decoration-[var(--v2-text-muted)]"
+                >
+                  <bdi>{item.contactName}</bdi>
+                </button>
+              ) : (
+                <div className="truncate text-[13px] font-semibold text-[var(--v2-text-primary)]">
+                  {item.contactName ?? item.title}
+                </div>
+              )}
+              <div className="truncate text-[11.5px] text-[var(--v2-text-secondary)]">
+                {item.contactName ? item.title : '\u00A0'}
+                {reference && <span className="text-[var(--v2-text-muted)]"> · {reference}</span>}
+              </div>
+            </>
           )}
-          <div className="truncate text-[11.5px] text-[var(--v2-text-secondary)]">
-            {item.contactName ? item.title : '\u00A0'}
-            {reference && <span className="text-[var(--v2-text-muted)]"> · {reference}</span>}
-          </div>
           <div className="truncate text-[11px] tabular-nums text-[var(--v2-text-muted)]">
             {item.date ? formatDate(item.date) : t(`payments.method.${item.method}`) || item.method}
           </div>
