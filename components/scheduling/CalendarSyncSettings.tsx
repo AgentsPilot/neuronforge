@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { RefreshCw, AlertCircle, Loader2, CheckCircle2, Clock, XCircle } from 'lucide-react';
+import { useState, useEffect, type ReactNode } from 'react';
+import { Globe, Loader2, XCircle } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { PluginIcon } from '@/components/PluginIcon';
 import { useAuth } from '@/components/UserProvider';
@@ -56,6 +56,8 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
 
   // Disconnect confirmation dialog (same as Footer)
   const [disconnectPrompt, setDisconnectPrompt] = useState<string | null>(null);
+  /** Which row's ⋯ menu is open. One at a time, by construction. */
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
 
   // Get calendar plugins from connected plugins
   const calendarPlugins: ConnectedPlugin[] = connectedPlugins
@@ -114,6 +116,42 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
       if (result.success) {
         setConnectionStatus({ plugin: pluginKey, status: 'success' });
 
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * CONNECTING IS ENABLING.
+         *
+         * Connecting a calendar and switching sync on were two separate
+         * actions, and the second had no visible home — so an owner connected
+         * Google, saw a green dot, and nothing was ever blocked. Measured on a
+         * live account: `calendar_sync_enabled` false, provider null, and
+         * `calendar_last_synced_at` null, against a healthy `google-calendar`
+         * connection with calendar scope.
+         *
+         * Nobody connects a calendar HERE, in the availability settings, for
+         * any purpose other than using it. So the connection turns it on.
+         *
+         * Only when nothing is syncing yet: a second calendar connected later
+         * must not quietly steal the sync from the one already running, since
+         * `calendar_sync_provider` holds one provider and the owner would have
+         * no idea the first had stopped. That row offers "sync from this one
+         * instead", which is the same decision made deliberately.
+         *
+         * Enabling is awaited inside the route, which also performs the first
+         * read — so by the time the panel refreshes, the meetings are already
+         * stored and the row can state a real number.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        const provider =
+          pluginKey === 'google-calendar'
+            ? ('google_calendar' as const)
+            : pluginKey === 'outlook'
+              ? ('outlook' as const)
+              : null;
+
+        if (provider && !syncEnabled) {
+          await handleEnableSync(provider);
+        }
+
         setTimeout(async () => {
           setConnectionStatus(null);
           setConnectingPlugin(null);
@@ -123,7 +161,7 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
         setConnectionStatus({
           plugin: pluginKey,
           status: 'error',
-          message: result.error || 'Connection failed'
+          message: result.error || t('scheduling.calendar_sync.cal_connect_failed')
         });
 
         setTimeout(() => {
@@ -358,179 +396,307 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
   }
 
   // Render a plugin icon button (same style as Footer)
-  const renderPluginButton = (pluginKey: string, plugin: ConnectedPlugin | undefined, isConnected: boolean, showDisconnect: boolean = false) => {
-    const isLoading = connectingPlugin === pluginKey || refreshingToken === pluginKey || disconnectingPlugin === pluginKey;
-    const hasSuccess = connectionStatus?.plugin === pluginKey && connectionStatus.status === 'success';
-    const hasError = connectionStatus?.plugin === pluginKey && connectionStatus.status === 'error';
-    const isExpired = plugin?.is_expired;
-    const hasDisconnectPrompt = disconnectPrompt === pluginKey;
+  /**
+   * The connection, drawn: your calendar → AgentsPilot → your booking page.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY A PICTURE AND NOT A STATUS WORD.
+   *
+   * The thing an owner needs to know is not a setting, it is whether their
+   * meetings reach the booking page. A dashed first link says "we cannot see
+   * your diary" without a sentence, and it says it the same way the dashboard
+   * already says things: stations, a line between them, and the line stopping
+   * where the work stops.
+   *
+   * Each ROW draws its own line, which is what makes two connected calendars
+   * legible: one flows, the other is dashed and labelled "blocking nothing".
+   * That state — connected, syncing nothing — was invisible before, and it is
+   * exactly what sent an owner hunting for a switch that was never pressed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const renderDiagram = (mode: 'off' | 'live' | 'bad', pluginKey?: string) => {
+    const node = (content: ReactNode, cls: string) => (
+      <span className={`csd-nd ${cls}`}>{content}</span>
+    );
 
-    const handleClick = () => {
-      if (isLoading) return;
-      if (!isConnected) {
-        handleConnectPlugin(pluginKey);
-      } else if (isExpired) {
-        handleRefreshToken(pluginKey);
-      } else if (showDisconnect) {
-        handleDisconnectPrompt(pluginKey);
-      }
-    };
+    return (
+      <span className="csd" aria-hidden="true">
+        {node(
+          pluginKey ? <PluginIcon pluginId={pluginKey} className="w-4 h-4" alt="" /> : '?',
+          mode === 'live' ? 'on' : mode === 'bad' ? 'bad' : 'off'
+        )}
+        <span className={`csd-pp ${mode === 'live' ? 'flow' : mode === 'bad' ? 'bad' : 'cut'}`}>
+          {mode === 'live' && <i />}
+        </span>
+        {/*
+          * OUR OWN MARK, NOT A LIGHTNING BOLT. `PluginIcon` already maps
+          * `business-os` to the app's favicon precisely for this: the platform
+          * is not a third party and has no vendor logo, but it does have a
+          * face, and the row reads as three real things rather than two logos
+          * and a glyph.
+          */}
+        {node(<PluginIcon pluginId="business-os" className="w-4 h-4" alt="" />, mode === 'live' ? 'on' : '')}
+        <span className={`csd-pp ${mode === 'live' ? 'flow' : 'cut'}`}>
+          {mode === 'live' && <i />}
+        </span>
+        {node(<Globe className="w-3.5 h-3.5" />, mode === 'live' ? 'on' : '')}
+      </span>
+    );
+  };
 
-    const getTitle = () => {
-      if (isConnected) {
-        if (isExpired) {
-          return `${getPluginDisplayName(pluginKey)} - Token expired. Click to refresh`;
-        }
-        if (showDisconnect) {
-          return `${getPluginDisplayName(pluginKey)} - Click to disconnect`;
-        }
-        return `${getPluginDisplayName(pluginKey)} - Connected${plugin?.username ? ` as ${plugin.username}` : ''}`;
-      }
-      return `Connect ${getPluginDisplayName(pluginKey)}`;
-    };
+  /** Relative, because "14:32" asks the reader to subtract. */
+  const sinceLabel = (iso: string | null) => formatLastSynced(iso);
+
+  /**
+   * How long ago the last successful read was, in minutes.
+   *
+   * The cron runs every five. Thirty minutes means six missed passes, which is
+   * not a blip — it is a connection that has stopped answering, and the owner's
+   * hours are no longer being blocked by anything new.
+   */
+  const minutesSinceSync = (() => {
+    if (!status?.lastSyncedAt) return null;
+    const ms = Date.now() - new Date(status.lastSyncedAt).getTime();
+    return Number.isFinite(ms) ? Math.floor(ms / 60000) : null;
+  })();
+
+  /** One row per connected calendar. The row IS the control surface. */
+  const renderCalendarRow = (provider: 'google_calendar' | 'outlook') => {
+    const pluginKey = PROVIDER_PLUGIN[provider];
+    const plugin = calendarPlugins.find(p => p.key === pluginKey);
+    if (!plugin) return null;
+
+    const name = getPluginDisplayName(pluginKey);
+    const isLive = Boolean(syncEnabled) && activeProvider === provider;
+    const stale = isLive && minutesSinceSync !== null && minutesSinceSync > 30;
+    const busy = enablingProvider === provider || disconnectingPlugin === pluginKey || (disabling && isLive);
+    const menuOpen = openMenu === pluginKey;
 
     return (
       <div
-        key={pluginKey}
-        className={`relative w-12 h-12 bg-[var(--v2-surface)] flex items-center justify-center flex-shrink-0 transition-all duration-200 border ${
-          isConnected
-            ? isExpired
-              ? 'border-orange-300 dark:border-orange-700'
-              : 'border-green-300 dark:border-green-700'
-            : 'border-[var(--v2-border)]'
-        } ${!isLoading ? 'cursor-pointer hover:border-[var(--v2-primary)] hover:shadow-lg' : 'cursor-default'}`}
-        style={{ borderRadius: 'var(--v2-radius-button)', boxShadow: 'var(--v2-shadow-card)' }}
-        onClick={handleClick}
-        title={getTitle()}
+        key={provider}
+        className={`csd-row${isLive && !stale ? ' live' : ''}${stale ? ' warn' : ''}`}
       >
-        <PluginIcon pluginId={pluginKey} className="w-6 h-6" alt={pluginKey === 'google-calendar' ? 'Google Calendar' : 'Outlook'} />
+        <div className="csd-main">
+          {renderDiagram(stale ? 'bad' : isLive ? 'live' : 'off', pluginKey)}
 
-        {/* Status indicator */}
-        {isConnected && !isLoading && !hasSuccess && !hasError && (
-          isExpired ? (
-            <div
-              className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full border-2 shadow-sm overflow-hidden animate-pulse"
-              style={{ borderColor: 'var(--v2-bg)' }}
-            >
-              <div className="absolute inset-0 flex">
-                <div className="w-1/2 bg-green-500"></div>
-                <div className="w-1/2 bg-orange-500"></div>
-              </div>
-            </div>
-          ) : (
-            <div
-              className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 shadow-sm"
-              style={{ borderColor: 'var(--v2-bg)' }}
-            />
-          )
-        )}
-
-        {/* Loading overlay */}
-        {isLoading && (
-          <div
-            className="absolute inset-0 bg-[var(--v2-surface)]/95 flex items-center justify-center backdrop-blur-sm"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          >
-            <Loader2 className="w-5 h-5 text-[var(--v2-primary)] animate-spin" />
-          </div>
-        )}
-
-        {/* Success overlay */}
-        {hasSuccess && (
-          <div
-            className="absolute inset-0 bg-green-500/95 flex items-center justify-center animate-fade-in"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          >
-            <CheckCircle2 className="w-6 h-6 text-white" />
-          </div>
-        )}
-
-        {/* Error overlay */}
-        {hasError && (
-          <div
-            className="absolute inset-0 bg-red-500/95 flex items-center justify-center animate-fade-in"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          >
-            <AlertCircle className="w-6 h-6 text-white" />
-          </div>
-        )}
-
-        {/* Disconnect prompt indicator (pulsing red) */}
-        {hasDisconnectPrompt && (
-          <div
-            className="absolute inset-0 bg-red-500/20 flex items-center justify-center animate-pulse"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          >
-            <XCircle className="w-5 h-5 text-red-500" />
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  /**
-   * The connected calendars, each with a disconnect button.
-   *
-   * Disconnecting used to be a click on the plugin icon, discoverable only by
-   * hovering it and reading the tooltip — so the only visible exit was "Disable
-   * Sync", which stops collecting but leaves the account attached. Naming the
-   * accounts also answers "which Google account is this?", which the icon alone
-   * never could.
-   */
-  const renderConnectedList = (tone: 'teal' | 'green') => {
-    const entries = [
-      { key: 'google-calendar', plugin: googlePlugin, connected: googleConnected },
-      { key: 'outlook', plugin: outlookPlugin, connected: outlookConnected },
-    ].filter(e => e.connected);
-
-    if (entries.length === 0) return null;
-
-    const divider = tone === 'green'
-      ? 'border-green-200 dark:border-green-800'
-      : 'border-teal-200 dark:border-teal-800';
-
-    return (
-      <div className={`mt-3 pt-3 border-t ${divider} flex flex-col gap-1.5`}>
-        <span className="text-xs font-medium text-[var(--v2-text-secondary)]">
-          {t('scheduling.calendar_sync.connected_accounts')}
-        </span>
-        {entries.map(({ key, plugin }) => {
-          const isActive = syncEnabled && PROVIDER_PLUGIN[activeProvider ?? 'google_calendar'] === key;
-          const busy = disconnectingPlugin === key;
-
-          return (
-            <div key={key} className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-2 min-w-0">
-                <PluginIcon pluginId={key} className="w-4 h-4 shrink-0" alt="" />
-                <span className="text-sm text-[var(--v2-text-primary)] truncate">
-                  {getPluginDisplayName(key)}
-                  {plugin?.username ? ` · ${plugin.username}` : ''}
-                </span>
-                {isActive && (
-                  <span className="text-xs text-[var(--v2-text-secondary)] whitespace-nowrap">
-                    · {t('scheduling.calendar_sync.active_badge')}
+          <div className="csd-say">
+            <p className="csd-l1">
+              {(stale
+                ? t('scheduling.calendar_sync.cal_stale')
+                : isLive
+                  ? t('scheduling.calendar_sync.cal_blocking')
+                  : t('scheduling.calendar_sync.cal_idle')
+              ).replace('{name}', name)}
+            </p>
+            <p className="csd-l2">
+              {stale ? (
+                t('scheduling.calendar_sync.cal_stale_sub')
+              ) : isLive ? (
+                <>
+                  {plugin.username && <span>{plugin.username}</span>}
+                  {plugin.username && <span className="csd-sep">·</span>}
+                  <span className="csd-ok">
+                    {t('scheduling.calendar_sync.cal_meetings').replace(
+                      '{count}',
+                      String(status?.stats.total ?? 0)
+                    )}
                   </span>
-                )}
-              </span>
+                  <span className="csd-sep">·</span>
+                  <span>
+                    {t('scheduling.calendar_sync.cal_checked').replace(
+                      '{when}',
+                      sinceLabel(status?.lastSyncedAt ?? null)
+                    )}
+                  </span>
+                </>
+              ) : (
+                t('scheduling.calendar_sync.cal_idle_sub')
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="csd-acts">
+          {busy && <Loader2 className="w-4 h-4 animate-spin text-[var(--v2-text-muted)]" />}
+
+          {/*
+            * The idle row carries ONE visible action, because it has one
+            * obvious thing an owner would want from it. The live row's actions
+            * are all rare, so they sit behind the ⋯ rather than competing with
+            * the line that actually has to be read.
+            */}
+          {!isLive && !busy && (
+            <button
+              onClick={() => handleEnableSync(provider)}
+              className="csd-btn"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {t('scheduling.calendar_sync.cal_use_instead')}
+            </button>
+          )}
+
+          <button
+            onClick={() => setOpenMenu(menuOpen ? null : pluginKey)}
+            aria-expanded={menuOpen}
+            aria-label={name}
+            className="csd-kebab"
+            style={{ borderRadius: 'var(--v2-radius-button)' }}
+          >
+            ⋯
+          </button>
+
+          {menuOpen && (
+            <div className="csd-menu" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+              {isLive && (
+                <button onClick={() => { setOpenMenu(null); handleRefreshExternal(); }}>
+                  {t('scheduling.calendar_sync.cal_menu_check')}
+                </button>
+              )}
+              {isLive && (
+                <button onClick={() => { setOpenMenu(null); handleDisableSync(); }}>
+                  {t('scheduling.calendar_sync.cal_menu_pause')}
+                </button>
+              )}
               <button
-                onClick={() => handleDisconnectPrompt(key)}
-                disabled={busy}
-                className="text-xs font-medium text-red-500 hover:text-red-600 disabled:opacity-50 whitespace-nowrap"
+                className="danger"
+                onClick={() => { setOpenMenu(null); handleDisconnectPrompt(pluginKey); }}
               >
-                {busy ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  t('scheduling.calendar_sync.disconnect_button')
-                )}
+                {t('scheduling.calendar_sync.cal_menu_disconnect')}
               </button>
             </div>
-          );
-        })}
+          )}
+        </div>
       </div>
     );
   };
 
-  // Disconnect Confirmation Modal (same as Footer)
+  /** The two calendars we support, minus the ones already connected. */
+  const unconnected = (
+    [
+      ['google_calendar', 'google-calendar'],
+      ['outlook', 'outlook'],
+    ] as Array<['google_calendar' | 'outlook', string]>
+  ).filter(([, key]) => !calendarPlugins.some(p => p.key === key));
+
+  const styles = (
+    <style jsx global>{`
+      .csd-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+        padding: 11px 14px;
+        border: 1px solid var(--v2-border);
+        border-radius: var(--v2-radius-card);
+        background: var(--v2-surface);
+      }
+      .csd-row + .csd-row { margin-top: 8px; }
+      .csd-row.live { border-color: rgba(20, 184, 166, 0.38); }
+      .csd-row.warn { border-color: rgba(240, 167, 66, 0.45); }
+
+      .csd-main { display: flex; align-items: center; gap: 13px; min-width: 0; flex: 1 1 240px; }
+      .csd { display: flex; align-items: center; flex-shrink: 0; }
+
+      .csd-nd {
+        width: 28px; height: 28px;
+        border-radius: 8px;
+        display: grid; place-items: center;
+        font-size: 13px;
+        background: var(--v2-bg);
+        border: 1.5px solid var(--v2-border);
+        color: var(--v2-text-muted);
+      }
+      .csd-nd.on { border-color: #14B8A6; box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12); }
+      .csd-nd.off { border-style: dashed; }
+      .csd-nd.bad { border-color: #F0A742; box-shadow: 0 0 0 3px rgba(240, 167, 66, 0.12); }
+
+      .csd-pp {
+        width: 22px; height: 2px;
+        margin: 0 3px;
+        border-radius: 2px;
+        background: var(--v2-border);
+        position: relative;
+        overflow: hidden;
+      }
+      .csd-pp.flow { background: rgba(20, 184, 166, 0.3); }
+      .csd-pp.flow i {
+        position: absolute; top: -2px;
+        width: 6px; height: 6px; border-radius: 50%;
+        background: #2DD4BF;
+        animation: csdDrift 2.2s linear infinite;
+      }
+      @keyframes csdDrift { from { inset-inline-start: -6px; } to { inset-inline-start: 100%; } }
+      .csd-pp.cut { height: 0; background: transparent; border-top: 2px dashed var(--v2-border); }
+      .csd-pp.bad { height: 0; background: transparent; border-top: 2px dashed #F0A742; }
+
+      .csd-say { min-width: 0; }
+      .csd-l1 { margin: 0; font-size: 13.5px; color: var(--v2-text-primary); line-height: 1.35; }
+      .csd-l2 { margin: 1px 0 0; font-size: 12px; color: var(--v2-text-muted); }
+      .csd-ok { color: #14B8A6; }
+      .csd-sep { margin: 0 5px; opacity: 0.5; }
+
+      .csd-acts { display: flex; align-items: center; gap: 7px; flex-shrink: 0; position: relative; }
+      .csd-btn {
+        /* Inline-flex, or the mark and its label stack: PluginIcon renders an
+           <img>, which is block-level inside a plain button. */
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px; font-weight: 500;
+        padding: 6px 11px;
+        border: 1px solid var(--v2-border);
+        background: var(--v2-bg);
+        color: var(--v2-text-primary);
+        white-space: nowrap;
+        transition: border-color 0.15s, color 0.15s;
+      }
+      .csd-btn:hover { border-color: #14B8A6; color: #14B8A6; }
+      .csd-kebab {
+        width: 28px; height: 28px;
+        border: 1px solid var(--v2-border);
+        background: transparent;
+        color: var(--v2-text-muted);
+        font-size: 14px;
+        display: grid; place-items: center;
+      }
+      .csd-kebab:hover { border-color: #14B8A6; color: #14B8A6; }
+
+      .csd-menu {
+        position: absolute;
+        top: 34px;
+        inset-inline-end: 0;
+        min-width: 168px;
+        z-index: 20;
+        overflow: hidden;
+        background: var(--v2-surface);
+        border: 1px solid var(--v2-border);
+        box-shadow: 0 12px 28px -12px rgba(0, 0, 0, 0.5);
+      }
+      .csd-menu button {
+        display: block; width: 100%;
+        text-align: start;
+        padding: 9px 13px;
+        font-size: 12.5px;
+        background: transparent;
+        border: 0;
+        color: var(--v2-text-primary);
+        cursor: pointer;
+      }
+      .csd-menu button + button { border-top: 1px solid var(--v2-border); }
+      .csd-menu button:hover { background: var(--v2-surface-hover); }
+      .csd-menu button.danger { color: #EF4444; }
+
+      .csd-add { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 9px; }
+      .csd-add span { font-size: 11.5px; color: var(--v2-text-muted); }
+
+      @media (prefers-reduced-motion: reduce) {
+        .csd-pp.flow i { animation: none; inset-inline-start: 42%; }
+      }
+    `}</style>
+  );
+
   const renderDisconnectModal = () => {
     if (!disconnectPrompt) return null;
 
@@ -633,181 +799,99 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
     );
   };
 
-  // State 1: No calendar connected - neutral banner
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * TWO SHAPES, NOT THREE SCREENS.
+   *
+   * Nothing connected: one row saying what it costs the owner, and the two
+   * calendars we support. Anything connected: one row per calendar, each
+   * drawing its own line.
+   *
+   * There is no "connected but not syncing" SCREEN any more, because there is
+   * no such step: `handleConnectPlugin` turns sync on as part of connecting.
+   * The state still EXISTS — a second calendar, or one the owner paused — and
+   * it shows as a dashed row rather than as a different layout.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   if (!anyCalendarConnected) {
     return (
       <>
-        <div
-          className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4"
-          style={{ borderRadius: 'var(--v2-radius-card)' }}
-          dir={isRTL ? 'rtl' : 'ltr'}
-        >
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-[var(--v2-text-secondary)]" />
-                <h3 className="font-semibold text-[var(--v2-text-primary)]">
-                  {t('scheduling.calendar_sync.not_connected')}
-                </h3>
-              </div>
-              <p className="text-sm text-[var(--v2-text-secondary)] mt-1">
-                {t('scheduling.calendar_sync.connect_desc')}
-              </p>
-            </div>
-            <div className="flex gap-3">
-              {renderPluginButton('google-calendar', googlePlugin, false)}
-              {renderPluginButton('outlook', outlookPlugin, false)}
+        <div className="csd-row" dir={isRTL ? 'rtl' : 'ltr'}>
+          <div className="csd-main">
+            {renderDiagram('off')}
+            <div className="csd-say">
+              <p className="csd-l1">{t('scheduling.calendar_sync.cal_none_title')}</p>
+              <p className="csd-l2">{t('scheduling.calendar_sync.cal_none_sub')}</p>
             </div>
           </div>
+          <div className="csd-acts">
+            {unconnected.map(([provider, key]) => (
+              <button
+                key={key}
+                onClick={() => handleConnectPlugin(key)}
+                disabled={connectingPlugin !== null}
+                className="csd-btn"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {connectingPlugin === key ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <PluginIcon pluginId={key} className="w-3.5 h-3.5" alt="" />
+                )}
+                {getPluginDisplayName(key)}
+              </button>
+            ))}
+          </div>
         </div>
+        {connectionStatus?.message && connectionStatus.status === 'error' && (
+          <p className="mt-2 text-sm text-red-500">{connectionStatus.message}</p>
+        )}
+        {styles}
         {renderDisconnectModal()}
       </>
     );
   }
-
-  // State 2: Calendar connected but sync not enabled - light green banner
-  // Note: User can only sync with ONE calendar - show both connected icons but only enable buttons for each
-  if (anyCalendarConnected && !syncEnabled) {
-    return (
-      <>
-        <div
-          className="bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800 p-4"
-          style={{ borderRadius: 'var(--v2-radius-card)' }}
-          dir={isRTL ? 'rtl' : 'ltr'}
-        >
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              {/* Show all calendar icons - connected ones with green dot, not connected without */}
-              <div className="flex gap-2">
-                {renderPluginButton('google-calendar', googlePlugin, googleConnected)}
-                {renderPluginButton('outlook', outlookPlugin, outlookConnected)}
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-teal-600 dark:text-teal-400" />
-                  <h3 className="font-semibold text-teal-900 dark:text-teal-100">
-                    {t('scheduling.calendar_sync.enable_sync')}
-                  </h3>
-                </div>
-                <p className="text-sm text-teal-700 dark:text-teal-300 mt-1">
-                  {t('scheduling.calendar_sync.enable_sync_desc')}
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              {googleConnected && !googlePlugin?.is_expired && (
-                <button
-                  onClick={() => handleEnableSync('google_calendar')}
-                  disabled={enablingProvider !== null}
-                  className="flex items-center gap-2 px-4 py-2 border border-[#14B8A6] text-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 text-sm font-medium transition-all disabled:opacity-50"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {enablingProvider === 'google_calendar' ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <PluginIcon pluginId="google-calendar" className="w-4 h-4" alt="Google Calendar" />
-                  )}
-                  {t('scheduling.calendar_sync.enable_google')}
-                </button>
-              )}
-              {outlookConnected && !outlookPlugin?.is_expired && (
-                <button
-                  onClick={() => handleEnableSync('outlook')}
-                  disabled={enablingProvider !== null}
-                  className="flex items-center gap-2 px-4 py-2 border border-[#14B8A6] text-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 text-sm font-medium transition-all disabled:opacity-50"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {enablingProvider === 'outlook' ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <PluginIcon pluginId="outlook" className="w-4 h-4" alt="Outlook" />
-                  )}
-                  {t('scheduling.calendar_sync.enable_outlook')}
-                </button>
-              )}
-            </div>
-          </div>
-          {renderConnectedList('teal')}
-        </div>
-        {renderDisconnectModal()}
-      </>
-    );
-  }
-
-  // State 3: Sync enabled - green banner
-  // Show both icons, active one with green highlight, other as normal connected
-  const activePlugin = activeProvider === 'google_calendar' ? googlePlugin : outlookPlugin;
-  const activePluginKey = activeProvider === 'google_calendar' ? 'google-calendar' : 'outlook';
-  const inactivePluginKey = activeProvider === 'google_calendar' ? 'outlook' : 'google-calendar';
-  const inactivePlugin = activeProvider === 'google_calendar' ? outlookPlugin : googlePlugin;
-  const inactiveConnected = activeProvider === 'google_calendar' ? outlookConnected : googleConnected;
 
   return (
     <>
-      <div
-        className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4"
-        style={{ borderRadius: 'var(--v2-radius-card)' }}
-        dir={isRTL ? 'rtl' : 'ltr'}
-      >
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            {/* Show both calendar icons - active with green, other as connected/not connected */}
-            <div className="flex gap-2">
-              {renderPluginButton('google-calendar', googlePlugin, googleConnected)}
-              {renderPluginButton('outlook', outlookPlugin, outlookConnected)}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400" />
-                <h3 className="font-semibold text-green-900 dark:text-green-100">
-                  {activeProvider === 'google_calendar'
-                    ? t('scheduling.calendar_sync.synced_google')
-                    : t('scheduling.calendar_sync.synced_outlook')
-                  }
-                </h3>
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-4 text-sm">
-                <span className="text-green-700 dark:text-green-300">
-                  {status?.stats.synced}/{status?.stats.total} {t('scheduling.calendar_sync.bookings_synced')}
-                </span>
-                {status?.stats.failed !== undefined && status.stats.failed > 0 && (
-                  <span className="text-amber-600 dark:text-amber-400">
-                    {status.stats.failed} {t('scheduling.calendar_sync.failed')}
-                  </span>
+      <div dir={isRTL ? 'rtl' : 'ltr'}>
+        {renderCalendarRow('google_calendar')}
+        {renderCalendarRow('outlook')}
+
+        {unconnected.length > 0 && (
+          <div className="csd-add">
+            <span>{t('scheduling.calendar_sync.cal_add')}</span>
+            {unconnected.map(([provider, key]) => (
+              <button
+                key={key}
+                onClick={() => handleConnectPlugin(key)}
+                disabled={connectingPlugin !== null}
+                className="csd-btn"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {connectingPlugin === key ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <PluginIcon pluginId={key} className="w-3 h-3" alt="" />
                 )}
-                <span className="text-green-600 dark:text-green-400">
-                  {t('scheduling.calendar_sync.last_synced')}: {formatLastSynced(status?.lastSyncedAt || null)}
-                </span>
-              </div>
-            </div>
+                {getPluginDisplayName(key)}
+              </button>
+            ))}
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleRefreshExternal}
-              disabled={refreshingCalendar}
-              className="flex items-center px-3 py-1.5 text-sm font-medium text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 transition-all disabled:opacity-50"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={t('scheduling.calendar_sync.refresh_tooltip')}
-            >
-              {refreshingCalendar ? (
-                <Loader2 className="w-4 h-4 animate-spin me-2" />
-              ) : (
-                <RefreshCw className="w-4 h-4 me-2" />
-              )}
-              {t('scheduling.calendar_sync.refresh_button')}
-            </button>
-            <button
-              onClick={handleDisableSync}
-              disabled={disabling}
-              className="flex items-center px-3 py-1.5 text-sm font-medium text-red-500 border border-red-500 bg-red-500/10 hover:bg-red-500/20 transition-all disabled:opacity-50"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              {disabling ? <Loader2 className="w-4 h-4 animate-spin" /> : t('scheduling.calendar_sync.disable')}
-            </button>
-          </div>
-        </div>
-        {renderConnectedList('green')}
+        )}
+
+        {connectionStatus?.message && (
+          <p
+            className={`mt-2 text-sm ${
+              connectionStatus.status === 'error' ? 'text-red-500' : 'text-[#14B8A6]'
+            }`}
+          >
+            {connectionStatus.message}
+          </p>
+        )}
       </div>
+      {styles}
       {renderDisconnectModal()}
     </>
   );
