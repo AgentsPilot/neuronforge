@@ -305,9 +305,29 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
     }
   };
 
+  /**
+   * Start syncing one calendar.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * EVERY FAILURE USED TO BE SILENT. The catch was empty and only the success
+   * branch did anything, so a refused request left the panel exactly as it was
+   * — same row, same buttons, no message. The owner pressed, nothing changed,
+   * and there was nothing to read.
+   *
+   * The route does not answer until the first read of the calendar has
+   * finished, so by the time `onSyncChanged` fires the meetings are stored and
+   * the row can state a real number. It can also report that the setting was
+   * saved but the calendar could not be reached, which is a different problem
+   * from the setting failing and has to say so: the cron will retry that one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const handleEnableSync = async (provider: 'google_calendar' | 'outlook') => {
+    const pluginKey = PROVIDER_PLUGIN[provider];
+
     try {
       setEnablingProvider(provider);
+      setConnectionStatus(null);
+
       const response = await fetch('/api/scheduling/calendar-sync/enable', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -315,13 +335,35 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
       });
 
       const data = await response.json();
-      if (data.success) {
-        fetchSyncStatus();
-        // Trigger calendar refresh to show external events
-        onSyncChanged?.();
+
+      if (!data.success) {
+        setConnectionStatus({
+          plugin: pluginKey,
+          status: 'error',
+          message: data.error || t('scheduling.calendar_sync.cal_enable_failed'),
+        });
+        return;
       }
+
+      await fetchSyncStatus();
+      onSyncChanged?.();
+
+      setConnectionStatus({
+        plugin: pluginKey,
+        status: data.syncError ? 'error' : 'success',
+        message: data.syncError
+          ? t('scheduling.calendar_sync.cal_enabled_unread')
+          : t('scheduling.calendar_sync.cal_enabled_ok').replace(
+              '{count}',
+              String(data.events ?? 0)
+            ),
+      });
     } catch {
-      // Silent fail
+      setConnectionStatus({
+        plugin: pluginKey,
+        status: 'error',
+        message: t('scheduling.calendar_sync.cal_enable_failed'),
+      });
     } finally {
       setEnablingProvider(null);
     }
