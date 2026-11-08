@@ -5,6 +5,7 @@ import { createLogger } from '@/lib/logger';
 import type { Logger } from 'pino';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { UserPluginConnections } from '@/lib/server/user-plugin-connections';
+import type { PluginDefinition, UserConnection } from '@/lib/types/plugin-types';
 
 const logger = createLogger({ module: 'OAuthCallbackAPI' });
 
@@ -17,13 +18,16 @@ function escapeJs(value: string): string {
     .replace(/'/g, "\\'")
     .replace(/</g, '\\x3c')
     .replace(/>/g, '\\x3e')
-    .replace(/\n/g, '\\n');
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 /** Build an HTML page that posts a message to the opener window and closes itself. */
 function buildPostMessageResponse(
   plugin: string,
-  payload: { success: boolean; error?: string; data?: Record<string, string> }
+  payload: { success: boolean; error?: string; details?: string; data?: Record<string, string> }
 ): NextResponse {
   const safePlugin = escapeJs(plugin);
   const safeOrigin = escapeJs(APP_URL);
@@ -34,6 +38,10 @@ function buildPostMessageResponse(
 
   const errorBlock = payload.error
     ? `,\n              error: '${escapeJs(payload.error)}'`
+    : '';
+
+  const detailsBlock = payload.details
+    ? `,\n              details: '${escapeJs(payload.details)}'`
     : '';
 
   const bodyHtml = payload.success
@@ -50,7 +58,7 @@ function buildPostMessageResponse(
               window.opener.postMessage({
                 type: 'plugin-connected',
                 plugin: '${safePlugin}',
-                success: ${payload.success}${errorBlock}${dataBlock}
+                success: ${payload.success}${errorBlock}${detailsBlock}${dataBlock}
               }, '${safeOrigin}');
               setTimeout(() => window.close(), ${payload.success ? 500 : 100});
 ${noOpenerFallback}
@@ -141,7 +149,9 @@ export async function GET(
 
     return buildPostMessageResponse(plugin, {
       success: false,
-      error: error instanceof Error ? error.message : 'OAuth callback failed',
+      error: 'OAuth callback failed',
+      details:
+        process.env.NODE_ENV === 'development' && error instanceof Error ? error.message : undefined,
     });
   }
 }
@@ -149,8 +159,8 @@ export async function GET(
 /** Extract and save plugin-specific profile data based on oauth_callback_profile_params in the plugin definition. */
 async function extractPluginProfileData(
   searchParams: URLSearchParams,
-  connection: any,
-  pluginDefinition: any,
+  connection: UserConnection,
+  pluginDefinition: PluginDefinition,
   userConnections: UserPluginConnections,
   requestLogger: Logger
 ): Promise<void> {
