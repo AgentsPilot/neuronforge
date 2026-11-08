@@ -17,6 +17,37 @@ const globalForUserConnections = globalThis as unknown as {
   userConnectionsInstance: UserPluginConnections | null;
 };
 
+interface OAuthState {
+  user_id: string;
+  plugin_key: string;
+  code_verifier?: string;
+}
+
+/**
+ * Decode the callback's state value. Any failure throws a generic "Invalid
+ * state": the SyntaxError from JSON.parse quotes the start of its input, and
+ * that message reaches the logs, the audit row and the client.
+ */
+function parseOAuthState(state: string): OAuthState {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decodeURIComponent(state));
+  } catch {
+    throw new Error('Invalid state');
+  }
+  const candidate = parsed as Partial<OAuthState> | null;
+  if (
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    typeof candidate.user_id !== 'string' ||
+    typeof candidate.plugin_key !== 'string' ||
+    (candidate.code_verifier !== undefined && typeof candidate.code_verifier !== 'string')
+  ) {
+    throw new Error('Invalid state');
+  }
+  return candidate as OAuthState;
+}
+
 /** The same settings with the dead-grant mark removed. */
 function withoutRefreshFailure(settings: unknown): Record<string, unknown> {
   const { refresh_failed_at, refresh_failed_detail, ...rest } = (settings ??
@@ -231,8 +262,7 @@ export class UserPluginConnections {
       }
 
       // Parse state
-      const parsedState = JSON.parse(decodeURIComponent(state));
-      const { user_id, plugin_key, code_verifier } = parsedState;
+      const { user_id, plugin_key, code_verifier } = parseOAuthState(state);
 
       logger.debug({ pluginKey: plugin_key, userId: user_id }, 'OAuth callback for plugin');
 
@@ -316,12 +346,12 @@ export class UserPluginConnections {
       let failedPluginKey: string | null = null;
       try {
         if (state) {
-          const parsedState = JSON.parse(decodeURIComponent(state));
+          const parsedState = parseOAuthState(state);
           failedUserId = parsedState.user_id;
           failedPluginKey = parsedState.plugin_key;
         }
-      } catch (stateError) {
-        logger.error({ err: stateError }, 'Failed to parse state');
+      } catch {
+        logger.error('Failed to parse state');
       }
 
       this.audit({
