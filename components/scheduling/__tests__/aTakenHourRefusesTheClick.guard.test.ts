@@ -55,13 +55,23 @@ describe('the click is refused on a taken hour', () => {
   });
 
   it('guards the click with it, beside the external-calendar guard', () => {
-    expect(code).toMatch(/!isBlockedExternal && !isTaken && onSlotClick\?\.\(date, hour\)/);
+    /*
+     * Named `isBookable` rather than spelled inline, and tightened with
+     * `!isPast` so a past hour cannot be clicked either. The guarantee is
+     * unchanged: BOTH blocks are consulted, and the same expression governs
+     * the click. Written as two assertions so the name cannot drift from the
+     * terms behind it.
+     */
+    expect(code).toMatch(/const isBookable = !isBlockedExternal && !isTaken/);
+    expect(code).toMatch(/isBookable && onSlotClick\?\.\(date, hour\)/);
   });
 
   it('shows a cursor that matches what the cell will do', () => {
     /* A pointer over an hour that will not accept a click teaches the owner to
        distrust the cursor everywhere else. */
-    expect(code).toMatch(/isBlockedExternal \|\| isTaken\s*\n?\s*\?\s*'cursor-not-allowed'/);
+    /* The cursor reads the SAME expression the click does, so what the cell
+       looks like and what it will do cannot disagree. */
+    expect(code).toMatch(/isBookable \? 'cursor-pointer' : 'cursor-not-allowed'/);
   });
 });
 
