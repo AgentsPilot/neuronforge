@@ -1,5 +1,6 @@
 // lib/server/user-plugin-connections.ts
 
+import { createHash } from 'crypto';
 import { NextRequest } from 'next/server';
 import { PluginAuthConfig, UserConnection, ConnectionStatus } from '@/lib/types/plugin-types'
 import { createLogger } from '@/lib/logger';
@@ -55,6 +56,27 @@ function withoutRefreshFailure(settings: unknown): Record<string, unknown> {
   void refresh_failed_at;
   void refresh_failed_detail;
   return rest;
+}
+
+/**
+ * A token's identity, carrying none of the token.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TEMPORARY — remove once the stored-token question below is answered.
+ *
+ * The previous attempt at this recorded a four-character prefix, which cannot
+ * discriminate anything: every Google access token begins `ya29.a0Aehf…`, so
+ * `ya29` always matched `ya29` and two wrong conclusions survived a full day of
+ * measurement on the strength of it.
+ *
+ * Twelve hex characters of a SHA-256 is the opposite trade: it tells two tokens
+ * apart with certainty and reveals nothing about either. Not reversible, not a
+ * credential, safe in a log and safe in a row.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function tokenFingerprint(token: string): string {
+  if (!token) return 'absent';
+  return createHash('sha256').update(token).digest('hex').slice(0, 12);
 }
 
 export class UserPluginConnections {
@@ -544,6 +566,57 @@ export class UserPluginConnections {
         return unchanged;
       }
 
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * TEMPORARY PROBE — remove once this question is answered.
+       *
+       * THE QUESTION. On 2026-11-09 at 21:25:23 this ran against a live Gmail
+       * connection: the provider answered 200, we stored the token it
+       * returned, and the provider then rejected that very token at its own
+       * `tokeninfo` endpoint. The SAME refresh token, asked by hand with the
+       * same client, returned a token Gmail answered 200 to — five times over.
+       * The grant is healthy; what lands in the row is not.
+       *
+       * Eliminated by measurement rather than argument: truncation, column
+       * type, encryption, write corruption, read corruption (a known-good
+       * token was written and read back byte-identical and still valid),
+       * scopes, revocation, concurrent-token eviction, duplicate rows, a
+       * second refresh implementation, a second cron, and the retry storm.
+       *
+       * What is left needs three facts, recorded where they cannot be lost —
+       * the log line this replaces never reached either terminal, because the
+       * local server filters it and the deployed one is a different build.
+       *
+       *   · `previous_fp` compared against the PRECEDING pass's `incoming_fp`
+       *     answers the one question a single pass cannot: did the row still
+       *     hold what we last stored, or did something overwrite it in
+       *     between? Two consecutive passes settle it.
+       *   · `client_id_tail` — is this process using the OAuth client we
+       *     believe? Everything concluded about the client so far was inferred
+       *     from one token's audience, which is an inference, not a reading.
+       *   · `scope` — did the provider narrow the grant on the way through?
+       *
+       * It rides the upsert that was happening anyway, so the normal path
+       * costs no extra write.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const probe = {
+        at: new Date().toISOString(),
+        incoming_fp: tokenFingerprint(incoming),
+        incoming_length: incoming.length,
+        previous_fp: tokenFingerprint(String(connection.access_token ?? '')),
+        previous_length: String(connection.access_token ?? '').length,
+        client_id_tail: String(authConfig.client_id ?? '').slice(-6),
+        rotated_refresh_token: Boolean(tokens.refresh_token),
+        scope: String((tokens as { scope?: string }).scope ?? '(absent)'),
+        expires_in: tokens.expires_in,
+      };
+
+      logger.info(
+        { pluginKey: connection.plugin_key, userId: connection.user_id, ...probe },
+        'Refresh probe: what the provider sent'
+      );
+
       // Update connection via repository upsert
       const updatedConnectionData: UpsertPluginConnectionInput = {
         user_id: connection.user_id,
@@ -558,7 +631,7 @@ export class UserPluginConnections {
         profile_data: connection.profile_data || null,
         /* A successful refresh clears the dead-grant mark — whatever the owner
            did to fix it worked, and the readiness line must stop warning. */
-        settings: withoutRefreshFailure(connection.settings),
+        settings: { ...withoutRefreshFailure(connection.settings), refresh_probe: probe },
         /*
          * STAMPED HERE AND NOWHERE ELSE.
          *
@@ -581,6 +654,47 @@ export class UserPluginConnections {
       if (error || !data) {
         logger.error({ err: error, pluginKey: connection.plugin_key }, 'Failed to save refreshed token');
         return null;
+      }
+
+      /*
+       * Did the write persist what arrived? `data` is the row the upsert
+       * returned, so this is the PERSISTED value rather than a copy of the
+       * payload we sent. Logged always; written to the row only when the
+       * answer is no, which keeps the healthy path to one write and captures
+       * the anomaly exactly when it happens.
+       */
+      const storedBack = String((data as { access_token?: string }).access_token ?? '');
+      const persistedWhatArrived = storedBack === incoming;
+
+      if (!persistedWhatArrived) {
+        logger.error(
+          {
+            pluginKey: connection.plugin_key,
+            userId: connection.user_id,
+            incomingFp: probe.incoming_fp,
+            storedFp: tokenFingerprint(storedBack),
+            storedLength: storedBack.length,
+          },
+          'Refresh probe: the row does NOT hold the token the provider sent'
+        );
+
+        await this.repository
+          .upsert({
+            ...updatedConnectionData,
+            settings: {
+              ...updatedConnectionData.settings,
+              refresh_probe: {
+                ...probe,
+                persisted_what_arrived: false,
+                stored_fp: tokenFingerprint(storedBack),
+                stored_length: storedBack.length,
+              },
+            },
+          })
+          .catch(() => {
+            /* Diagnostics. Failing the refresh to record them would turn a
+               working connection into a broken one. */
+          });
       }
 
       logger.info({
