@@ -96,48 +96,48 @@ describe('it writes the field every surface already reads', () => {
 });
 
 /* ───────────────────────────────────────────────────────────────────────────
- * A REFRESH THAT RETURNS THE REFUSED TOKEN MEANS ASK AGAIN — corrected
- * 2026-11-09, the same day the first version of this block shipped.
+ * A REFRESH THAT RETURNS THE REFUSED TOKEN — corrected TWICE on 2026-11-09,
+ * which is why the history is kept here rather than tidied away.
  *
- * That version asserted the opposite: an unchanged token marked the grant
- * dead. It was measured, it was wrong, and measuring it further is what
- * showed why. On the live account, minutes after production had been handed
- * the refused value, the SAME refresh token with the SAME OAuth client
- * returned a new access token three times in a row — `tokeninfo` called each
- * one valid and Gmail answered 200 to each. The grant was healthy the whole
- * time.
+ * Reading 1: "the grant is dead" → wrote the reconnect marker. Wrong. The
+ * grant was healthy: the same refresh token, asked once from outside the
+ * system, returned a token `tokeninfo` called valid and Gmail answered 200
+ * for, five times over.
  *
- * The control that settles it: the account's Calendar connection refreshed 13
- * seconds earlier in the same cron pass and stored a token that worked. Same
- * column, same write path, same credentials. So nothing about storage was
- * broken, and "dead grant" was never a reading the evidence supported.
+ * Reading 2: "ask again" → retried the refresh three times. Wrong, and worse:
+ * the provider returned the refused token every time, and the change tripled
+ * the load that turned out to be the actual cause.
  *
- * Marking it would have sent the owner to re-authorise a working connection —
- * the fault `httpStatusOf`'s comment in the executor was written about, where
- * an owner spent a day being told to reconnect something healthy. These tests
- * exist so that conclusion does not come back.
+ * The cause was OURS, and it was not in this file. A failing run was retried
+ * every five minutes for ten days because `retry_count` was never incremented,
+ * so the dead-letter cap `(retry_count ?? 0) < MAX_ATTEMPTS` sat at `0 < 5`
+ * for ever. Each retry refreshed one grant twice: 100+ refreshes a day of a
+ * single refresh token. The control that proves it — another agent on the same
+ * account and the same plugin, scheduled once a day, completed throughout.
+ *
+ * Guarded in `lib/execution/__tests__/aFailingRunStopsRetrying.guard.test.ts`.
+ * What this file now guards is that this path adds no load and accuses nobody.
  * ─────────────────────────────────────────────────────────────────────────── */
 
-describe('a refresh that returns the refused token means ask again', () => {
-  it('asks the provider again rather than calling the grant dead', () => {
-    expect(EXECUTOR).toMatch(/SAME_TOKEN_REFRESH_ATTEMPTS/);
-    expect(EXECUTOR).toMatch(/asking the provider again/);
+describe('a refresh that returns the refused token is reported, not retried', () => {
+  it('reports the original failure and asks nothing more', () => {
+    expect(EXECUTOR).toMatch(/returned the token the provider refuses[\s\S]{0,400}throw firstError/);
+  });
+
+  it('does not loop: the refresh is asked for exactly once', () => {
+    /* Reading 2 lived here. A loop in this file is load against the provider
+       in return for nothing, which is the opposite of the fix. */
+    const block = EXECUTOR.slice(EXECUTOR.indexOf('const refusedToken ='));
+    const upToRetry = block.slice(0, block.indexOf('catch (secondError'));
+    expect(upToRetry).not.toMatch(/\bfor\s*\(/);
+    expect(upToRetry).not.toMatch(/\bwhile\s*\(/);
+    expect(EXECUTOR).not.toMatch(/SAME_TOKEN_REFRESH_ATTEMPTS/);
   });
 
   it('and never marks the grant on the strength of an unchanged token', () => {
-    /* The regression this file was rewritten to prevent. A repeated token is
-       evidence about the TOKEN; the grant is proven dead only by a refusal or
-       by a freshly issued token being itself rejected. */
+    /* Reading 1 lived here. A repeated token is evidence about the TOKEN. */
     const block = EXECUTOR.slice(EXECUTOR.indexOf('const refusedToken ='));
     expect(block.slice(0, block.indexOf('catch (secondError'))).not.toMatch(/recordDeadGrant/);
-  });
-
-  it('is bounded, so a stuck provider is not polled', () => {
-    expect(EXECUTOR).toMatch(/attempt <= SAME_TOKEN_REFRESH_ATTEMPTS/);
-  });
-
-  it('reports the ORIGINAL failure when the attempts are spent', () => {
-    expect(EXECUTOR).toMatch(/kept returning the token it refuses[\s\S]{0,400}throw firstError/);
   });
 
   it('compared by VALUE, because the clock cannot tell the difference', () => {
@@ -158,24 +158,53 @@ describe('a refused token does not get a fresh hour', () => {
     /*
      * The heart of the ten-day silence: `access_token` kept its old value
      * while `expires_at` and `last_refreshed_at` were recomputed from the
-     * response regardless, so the row claimed a fresh hour for a dead token
-     * every five minutes. Skipping the write lets the expiry lapse honestly
-     * and lets the next run try again.
+     * response regardless, so the row claimed a fresh hour for a dead token.
+     * Skipping the write lets the expiry lapse honestly.
      */
     const branch = CONNECTIONS.slice(
       CONNECTIONS.indexOf('if (options?.refusedToken && incoming === options.refusedToken)')
     );
     const body = branch.slice(0, branch.indexOf('const updatedConnectionData'));
-    expect(body).toMatch(/return \{ \.\.\.connection, access_token: incoming \}/);
+    expect(body).toMatch(/return unchanged/);
     expect(body).not.toMatch(/upsert\(/);
     expect(body).not.toMatch(/last_refreshed_at/);
   });
 
   it('only when the caller knows a token was refused', () => {
     /* A refresh returning the same token is NORMAL and fine when that token
-       still works — Google does it whenever the current one has life left, and
-       the same account's Calendar token came back with 3396 of its 3599
-       seconds remaining. Narrow on purpose. */
+       still works — the same account's Calendar token came back with 3396 of
+       its 3599 seconds remaining. Narrow on purpose. */
     expect(CONNECTIONS).toMatch(/options\?\.refusedToken && incoming === options\.refusedToken/);
+  });
+});
+
+describe('one refresh per grant per minute, whoever asks', () => {
+  it('a grant refreshed moments ago is not refreshed again', () => {
+    /* The pre-flight and the executor each refresh inside one run and cannot
+       see each other, so one logical attempt cost two hits on the provider. */
+    expect(CONNECTIONS).toMatch(/REFRESH_COALESCE_MS/);
+    expect(CONNECTIONS).toMatch(/Date\.now\(\) - recent\.at < this\.REFRESH_COALESCE_MS/);
+  });
+
+  it('and a REFUSAL counts, not only a success', () => {
+    /* Otherwise a dead grant is asked twice per run for the same answer. */
+    expect(CONNECTIONS).toMatch(/recentRefreshes\.set\([\s\S]{0,120}connection: null/);
+  });
+
+  it('bounded, so a long-lived instance does not accumulate', () => {
+    expect(CONNECTIONS).toMatch(/recentRefreshes\.size > this\.TOKEN_CACHE_MAX_SIZE/);
+  });
+});
+
+describe('the temporary diagnostic is gone', () => {
+  it('no token shapes are written to the connection row', () => {
+    /*
+     * `last_refresh_debug` recorded a FOUR character prefix, so `ya29` always
+     * matched `ya29`. That blind spot is why two wrong causes survived a day
+     * of measurement. Removed now the cause is known; if this question ever
+     * needs asking again, record enough of the value to answer it.
+     */
+    expect(CONNECTIONS).not.toMatch(/last_refresh_debug/);
+    expect(code(read('lib/server/gmail-plugin-executor.ts'))).not.toMatch(/sentTokenPrefix/);
   });
 });
