@@ -87,27 +87,61 @@ import { RefundModal } from '@/components/payments/RefundModal';
   numbers precisely so the browser can say it in the reader's language.
 */
 import { planPeriodText } from '@/components/payments/MoneyDetailDrawer';
+import { STATUS_INK, STATUS_TONE, chipGround, scheduleTone } from '@/lib/payments/moneyStatusTone';
 /* `scheduleOf` lives with the drawer, which is the other surface that draws
    it. The contact record needs it too and must not import a whole page to
    get it. */
 import { MoneyOrderDrawer, scheduleOf } from './MoneyOrderDrawer';
 
 /** The four states money can be in, and the one colour each gets everywhere. */
+/**
+ * One colour per money state, read from the one place that decides it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THIS FILE USED TO PICK ITS OWN, AND THAT IS A SOLVED PROBLEM.
+ *
+ * `lib/payments/moneyStatusTone` exists because FOUR palettes once described
+ * the same fact and disagreed — its own header records the damage, including
+ * the part that matters most here: "the strip is also the filter: clicking its
+ * orange 'due' cell returned rows badged blue, which defeats the one thing a
+ * coloured filter is for."
+ *
+ * This page then added a fifth. Every value drifted (#2DD4A7 against the
+ * canonical #22C58B, and so on), but one was not a shade apart, it was a
+ * different meaning: REFUNDED was drawn as a DRAINED GREEN, on the reasoning
+ * that it should stay "recognisably the same family" as collected. At the
+ * strip's 40px that nuance is legible. In a 6px row bar it is simply green,
+ * and green on this page means money you kept — so a cancelled order whose $89
+ * had been returned in full drew a solid green bar, and the Refunded filter
+ * chip was green beside the Collected one.
+ *
+ * The canonical answer was already there and is the opposite: returned money
+ * takes the SAME GREY the strip's "returned to clients" cell uses, because it
+ * is neither earned nor chased.
+ *
+ * So the five names below stay — the layout code reads `TONE.in`, not a status
+ * string — but every value now comes from the shared map. A chip, a bar
+ * segment, a state dot and a breakdown row showing one state cannot disagree
+ * again, which is the whole point of the module.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 const TONE = {
-  in: '#2DD4A7',
-  wait: '#F0B429',
-  late: '#F0654F',
-  /**
-   * Money that arrived and went back.
-   *
-   * Its own tone because it is neither earned nor lost: the work was done and
-   * the client was charged, and then it was returned. Drawn as a drained
-   * green — recognisably the same family as `in`, visibly not it — so the bar
-   * reads as "this much came in, and this much of it left again".
-   */
-  back: '#1C7F69',
+  in: STATUS_TONE.paid,
+  wait: STATUS_TONE.awaiting_payment,
+  late: STATUS_TONE.overdue,
+  /** Came in and went back: neither earned nor lost, and never the green of
+      money that stayed. */
+  back: STATUS_TONE.refunded,
   /** Deliberately quiet. Lost money must not shout louder than earned money. */
-  lost: '#5B6880',
+  lost: STATUS_TONE.cancelled,
+} as const;
+
+/**
+ * The same states as WORDS. See `STATUS_INK`: several fills above are picked to
+ * be distinguishable as areas and are too light to read as text.
+ */
+const INK = {
+  lost: STATUS_INK.cancelled ?? STATUS_TONE.cancelled,
 } as const;
 
 type PeriodKey = 'week' | 'month' | 'year' | 'all';
@@ -234,9 +268,26 @@ export function MoneyFlowPage({
 
   const [period, setPeriod] = useState<PeriodKey>('month');
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'paid' | 'unpaid' | 'overdue' | 'cancelled'>('all');
+  const [filter, setFilter] = useState<
+    'all' | 'paid' | 'unpaid' | 'overdue' | 'refunded' | 'cancelled'
+  >('all');
   const [items, setItems] = useState<MoneyItem[]>([]);
   const [totals, setTotals] = useState<MoneyTotals | null>(null);
+  /*
+   * The route's own alarm, which this page was throwing away.
+   *
+   * `/api/payments/money` counts its reads against `GROUPING_CAP` and sets
+   * this when it had to stop short — its comment says why in one line: "a
+   * silently truncated money report is a wrong money report." It then logs a
+   * warning the owner never sees and returns the flag, and nothing here read
+   * it. The one safeguard against a partial report existed only in the server
+   * log.
+   *
+   * At 4% of the cap today it will stay false. That is exactly when to wire
+   * it: the alternative is discovering it is unwired on the day the figures
+   * are first wrong.
+   */
+  const [truncated, setTruncated] = useState(false);
   const [periodTotals, setPeriodTotals] = useState<PeriodTotals | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -354,6 +405,7 @@ export function MoneyFlowPage({
          reports each kind beside the page it was asked for. */
       setKindCounts(body.data.kindCounts ?? { booking: 0, standalone: 0 });
       setTotals(body.data.totals ?? null);
+      setTruncated(Boolean(body.data.truncated));
       setPeriodTotals(body.data.periodTotals ?? null);
     } catch {
       /* Soft: a page that shows nothing and says why beats one that throws. */
@@ -398,6 +450,32 @@ export function MoneyFlowPage({
   useEffect(() => {
     setPage(0);
   }, [period, filter, search, listOpen]);
+
+  /*
+   * ── AND WHEN THE ANSWER SHRINKS UNDER A PAGE THAT IS STILL OPEN ──────────
+   *
+   * The reset above covers the question CHANGING. It does not cover the result
+   * set getting shorter while the question stays the same, and that happens
+   * routinely: a refund or a void removes rows and the page reloads itself; an
+   * order stops matching the active filter; the data simply moves on.
+   *
+   * The route slices `sorted.slice(offset, offset + limit)`, so an offset past
+   * the end returns an empty array — a perfectly successful response with no
+   * rows. The list then empties with nothing to explain it, `failed` is false
+   * because nothing failed, and the only way back is a hard reload, because
+   * that is the one thing that resets `page`.
+   *
+   * Reported exactly that way, 2026-11-08: "something is refreshing silently
+   * and removes all data, only hard refresh fixes it."
+   *
+   * Clamping to the last page that exists fixes every cause at once, including
+   * the ones nobody has thought of, because it asks about the answer rather
+   * than about what might have changed it.
+   */
+  useEffect(() => {
+    const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+    if (page > lastPage) setPage(lastPage);
+  }, [total, page]);
 
   /**
    * EVERY ROW THE FILTER MATCHES, not the thirty on screen.
@@ -483,6 +561,30 @@ export function MoneyFlowPage({
   const outstanding = shown?.outstanding ?? 0;
   const overdue = shown?.overdue ?? 0;
   const notYetDue = Math.max(0, outstanding - overdue);
+
+  /*
+   * ── THE FIGURES ARE THE WAY INTO THE ROWS ───────────────────────────────
+   *
+   * Reading "₪4,500 cancelled" provokes exactly one question — WHICH orders? —
+   * and the only way to ask it was to notice the matching chip further down
+   * and trust that it meant the same thing. So the bar and its key now select
+   * that state directly.
+   *
+   * The list is OPENED if both doors are shut, because filtering something the
+   * reader cannot see does nothing and looks broken: the chips are explicitly
+   * scoped "to the list below only", and below there was nothing.
+   *
+   * `setPage(0)` is not needed here — the effect watching `filter` already
+   * does it, which is the same reset that stops a stranded offset showing an
+   * empty page.
+   */
+  const pickState = useCallback(
+    (next: typeof filter) => {
+      setFilter(next);
+      setListOpen(open => open ?? 'orders');
+    },
+    []
+  );
   const refunded = shown?.refunded ?? 0;
   const cancelled = shown?.cancelled ?? 0;
 
@@ -541,6 +643,10 @@ export function MoneyFlowPage({
     { key: 'paid', label: t('payments.collected') || 'Collected', tone: TONE.in },
     { key: 'unpaid', label: t('payments.outstanding') || 'Outstanding', tone: TONE.wait },
     { key: 'overdue', label: t('payments.overdue_total') || 'Overdue', tone: TONE.late },
+    /* The route has always answered `filter: 'refunded'` (`item.refunded > 0`);
+       nothing here ever asked. So the one state an owner most often wants to
+       review was the one state with no way to reach it. */
+    { key: 'refunded', label: t('payments.refunded') || 'Refunded', tone: TONE.back },
     { key: 'cancelled', label: t('payments.cancelled_total') || 'Cancelled', tone: TONE.lost },
   ];
 
@@ -678,6 +784,34 @@ export function MoneyFlowPage({
           </div>
         </div>
 
+      {/*
+        ── THE FIGURES BELOW ARE INCOMPLETE, AND SAY SO ──────────────────────
+
+        Above the first figure, not beside the list: what a short read breaks
+        is the TOTALS. A reader who scrolls to the rows has already believed
+        the number at the top.
+
+        Loud on purpose. Every other empty or partial state on this page is
+        phrased gently because it is ordinary — a filter matching nothing, a
+        quiet month. This one is not ordinary: it means the sums are wrong, and
+        the owner cannot tell by looking.
+      */}
+      {truncated && (
+        <div
+          role="alert"
+          className="mb-3.5 rounded-[14px] border px-4 py-3 text-[13px] leading-relaxed"
+          style={{ borderColor: `${TONE.late}66`, background: chipGround(TONE.late) }}
+        >
+          <b className="font-bold text-[var(--v2-text-primary)]">
+            {t('money.partial_title') || 'These figures are incomplete'}
+          </b>{' '}
+          <span className="text-[var(--v2-text-muted)]">
+            {t('money.partial_note') ||
+              'There is more money in this period than this page can read at once, so every total below is lower than the truth. Narrow the period to see a complete picture of a smaller span.'}
+          </span>
+        </div>
+      )}
+
       {/* ── act 1: what is actually yours ───────────────────────────── */}
       <section className="mb-3.5 rounded-[20px] border border-[var(--v2-border)] bg-[var(--v2-surface)] p-5 sm:p-7">
         <p className="m-0 mb-1.5 text-[13px] text-[var(--v2-text-muted)]">
@@ -726,7 +860,7 @@ export function MoneyFlowPage({
           <>
             <div
               className="mt-5 flex h-10 gap-0.5 overflow-hidden rounded-[10px] bg-[var(--v2-border)]"
-              role="img"
+              role="group"
               aria-label={`${asMoney(everything)} ${t('money.everything') || 'billed in total'}: ${asMoney(collected)} ${t('payments.collected') || 'collected'}, ${asMoney(outstanding)} ${t('payments.outstanding') || 'outstanding'}, ${asMoney(refunded)} ${t('payments.refunded') || 'refunded'}, ${asMoney(cancelled)} ${t('payments.cancelled_total') || 'cancelled'}`}
             >
               {/*
@@ -738,15 +872,30 @@ export function MoneyFlowPage({
                 width and is the difference between "small" and "absent".
               */}
               {collected > 0 && (
-                <span style={{ flex: collected, minWidth: 3, background: TONE.in }} />
+                <Band
+                  tone={TONE.in}
+                  amount={collected}
+                  title={`${asMoney(collected)} ${t('payments.collected') || 'Collected'}`}
+                  onPick={() => pickState('paid')}
+                />
               )}
               {outstanding > 0 && (
                 <span className="flex min-w-0 gap-0.5" style={{ flex: outstanding }}>
                   {notYetDue > 0 && (
-                    <span style={{ flex: notYetDue, minWidth: 3, background: TONE.wait }} />
+                    <Band
+                      tone={TONE.wait}
+                      amount={notYetDue}
+                      title={`${asMoney(notYetDue)} ${t('payments.outstanding') || 'Outstanding'}`}
+                      onPick={() => pickState('unpaid')}
+                    />
                   )}
                   {overdue > 0 && (
-                    <span style={{ flex: overdue, minWidth: 3, background: TONE.late }} />
+                    <Band
+                      tone={TONE.late}
+                      amount={overdue}
+                      title={`${asMoney(overdue)} ${t('payments.overdue_total') || 'Overdue'}`}
+                      onPick={() => pickState('overdue')}
+                    />
                   )}
                 </span>
               )}
@@ -754,10 +903,20 @@ export function MoneyFlowPage({
                   gap in the green, because it DID arrive and the business did
                   the work. */}
               {refunded > 0 && (
-                <span style={{ flex: refunded, minWidth: 3, background: TONE.back }} />
+                <Band
+                  tone={TONE.back}
+                  amount={refunded}
+                  title={`${asMoney(refunded)} ${t('payments.refunded') || 'Refunded'}`}
+                  onPick={() => pickState('refunded')}
+                />
               )}
               {cancelled > 0 && (
-                <span style={{ flex: cancelled, minWidth: 3, background: TONE.lost }} />
+                <Band
+                  tone={TONE.lost}
+                  amount={cancelled}
+                  title={`${asMoney(cancelled)} ${t('payments.cancelled_total') || 'Cancelled'}`}
+                  onPick={() => pickState('cancelled')}
+                />
               )}
             </div>
 
@@ -769,16 +928,46 @@ export function MoneyFlowPage({
               {/* Separates the total from its parts. Hidden once the row wraps,
                   where a rule between lines 1 and 2 divides nothing. */}
               <span className="hidden h-3.5 w-px bg-[var(--v2-border)] sm:block" aria-hidden="true" />
-              <Key tone={TONE.in} label={t('payments.collected') || 'Collected'} value={asMoney(collected)} />
-              <Key tone={TONE.wait} label={t('payments.outstanding') || 'Still owed'} value={asMoney(outstanding)} />
+              <Key
+                tone={TONE.in}
+                label={t('payments.collected') || 'Collected'}
+                value={asMoney(collected)}
+                onPick={() => pickState('paid')}
+                picked={filter === 'paid'}
+              />
+              <Key
+                tone={TONE.wait}
+                label={t('payments.outstanding') || 'Still owed'}
+                value={asMoney(outstanding)}
+                onPick={() => pickState('unpaid')}
+                picked={filter === 'unpaid'}
+              />
               {overdue > 0 && (
-                <Key tone={TONE.late} label={t('money.of_which_late') || 'of which late'} value={asMoney(overdue)} />
+                <Key
+                  tone={TONE.late}
+                  label={t('money.of_which_late') || 'of which late'}
+                  value={asMoney(overdue)}
+                  onPick={() => pickState('overdue')}
+                  picked={filter === 'overdue'}
+                />
               )}
               {refunded > 0 && (
-                <Key tone={TONE.back} label={t('payments.refunded') || 'Refunded'} value={asMoney(refunded)} />
+                <Key
+                  tone={TONE.back}
+                  label={t('payments.refunded') || 'Refunded'}
+                  value={asMoney(refunded)}
+                  onPick={() => pickState('refunded')}
+                  picked={filter === 'refunded'}
+                />
               )}
               {cancelled > 0 && (
-                <Key tone={TONE.lost} label={t('payments.cancelled_total') || 'Cancelled'} value={asMoney(cancelled)} />
+                <Key
+                  tone={TONE.lost}
+                  label={t('payments.cancelled_total') || 'Cancelled'}
+                  value={asMoney(cancelled)}
+                  onPick={() => pickState('cancelled')}
+                  picked={filter === 'cancelled'}
+                />
               )}
             </div>
 
@@ -821,8 +1010,14 @@ export function MoneyFlowPage({
         <section
           className="rounded-2xl border p-5"
           style={{
-            borderColor: overdue > 0 ? 'rgba(240,101,79,.45)' : 'var(--v2-border)',
-            background: overdue > 0 ? 'linear-gradient(180deg, rgba(240,101,79,.08), transparent 70%)' : 'var(--v2-surface)',
+            /* Mixed from the state's own colour rather than from the page's
+               retired private red, which these two kept long after the palette
+               moved to the shared map. */
+            borderColor: overdue > 0 ? `${TONE.late}73` : 'var(--v2-border)',
+            background:
+              overdue > 0
+                ? `linear-gradient(180deg, ${TONE.late}14, transparent 70%)`
+                : 'var(--v2-surface)',
           }}
         >
           <p className="m-0 mb-2 flex items-center gap-2 text-[13px] text-[var(--v2-text-muted)]">
@@ -861,7 +1056,11 @@ export function MoneyFlowPage({
             <h2 className="m-0 text-[15px] font-bold text-[var(--v2-text-primary)]">
               {t('money.fell_through') || 'What will not arrive'}
             </h2>
-            <span className="text-[14px] font-bold" style={{ color: TONE.lost }}>
+            {/* The INK for this state, not its fill. `TONE.lost` is a sand
+                chosen to be told apart as a bar segment; as a bold figure on a
+                pale surface it washes out. The dots in this card keep the
+                fill. */}
+            <span className="text-[14px] font-bold" style={{ color: INK.lost }}>
               {asMoney((shown?.cancelled ?? 0) + (shown?.refunded ?? 0))}
             </span>
           </div>
@@ -1332,13 +1531,91 @@ function Section({
 }
 
 /** One figure in the bar's key. */
-function Key({ tone, label, value }: { tone: string; label: string; value: string }) {
-  return (
-    <span className="inline-flex items-center gap-2 text-[var(--v2-text-muted)]">
+/**
+ * One state in the key, and the way into the rows behind it.
+ *
+ * A legend entry names a figure the reader has just been told is part of a
+ * total; the next question is always which orders make it up. Given `onPick`
+ * it becomes the control that answers, and without one it stays a label — the
+ * strip is drawn in places that have no list to filter.
+ */
+function Key({
+  tone,
+  label,
+  value,
+  onPick,
+  picked,
+}: {
+  tone: string;
+  label: string;
+  value: string;
+  onPick?: () => void;
+  picked?: boolean;
+}) {
+  const body = (
+    <>
       <i className="h-2.5 w-2.5 flex-none rounded-[3px]" style={{ background: tone }} />
       {label}
       <b className="font-bold text-[var(--v2-text-primary)]">{value}</b>
-    </span>
+    </>
+  );
+
+  if (!onPick) {
+    return (
+      <span className="inline-flex items-center gap-2 text-[var(--v2-text-muted)]">{body}</span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      aria-pressed={picked}
+      className={`inline-flex items-center gap-2 rounded-full px-2 py-1 transition-colors ${
+        picked ? 'text-[var(--v2-text-primary)]' : 'text-[var(--v2-text-muted)]'
+      } hover:bg-[var(--v2-surface-hover)]`}
+      style={picked ? { background: chipGround(tone) } : undefined}
+    >
+      {body}
+    </button>
+  );
+}
+
+/**
+ * One band of the bar, as the way into the orders it is made of.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The bar states a proportion, and the question it provokes is "which orders
+ * are that?" — so each band answers it rather than leaving the reader to find
+ * the matching chip and trust that it means the same thing.
+ *
+ * `moneyStatusTone`'s own header records what makes this dangerous when the
+ * two disagree: "the strip is also the filter: clicking its orange 'due' cell
+ * returned rows badged blue, which defeats the one thing a coloured filter is
+ * for." Both ends now read the same map, so a band and the chip it selects are
+ * the same colour by construction.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function Band({
+  tone,
+  amount,
+  title,
+  onPick,
+}: {
+  tone: string;
+  amount: number;
+  title: string;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      title={title}
+      aria-label={title}
+      className="group relative min-w-[3px] cursor-pointer border-0 p-0 transition-opacity hover:opacity-80"
+      style={{ flex: amount, background: tone }}
+    />
   );
 }
 
@@ -1387,22 +1664,122 @@ function OrderCard({
 }) {
   const flow = itemFlow(item);
   const waiting = Math.max(0, flow.outstanding - flow.overdue);
-  const whole = flow.collected + flow.outstanding + flow.cancelled;
+  /*
+   * REFUNDED IS PART OF THE WHOLE, AND LEAVING IT OUT BROKE THE BAR.
+   *
+   * `flow.collected` is NET of refunds, so money that came in and went back out
+   * is in none of the other three. The bar therefore spanned less than the
+   * figure printed above it: a $444.02 order drew a bar worth $333.03 and said
+   * nothing about the $110.99 that moved. The summary strip has always summed
+   * all four (`everything`); the row summed three.
+   *
+   * With refunded included this equals `item.amount` again, which is the
+   * property the headline and the bar have to share to be read together.
+   */
+  const whole = flow.collected + flow.refunded + flow.outstanding + flow.cancelled;
 
   const amount = formatCurrency(item.amount, item.currency);
 
-  /** What this row is, in one line a reader can act on. */
+  /**
+   * What this row is, in one line a reader can act on.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ORDERED BY WHAT IS STILL OWED, NOT BY WHAT WENT WRONG.
+   *
+   * This asked `cancelled > 0 && collected === 0` SECOND, before it ever looked
+   * at what was outstanding, and both halves were satisfied by accident:
+   *
+   *   `cancelled > 0`     is true if ANY ONE period is cancelled, so a single
+   *                       dead milestone spoke for the whole order.
+   *   `collected === 0`   was the safeguard, meant to say "nothing ever came
+   *                       in". But `collected` is NET of refunds, so money that
+   *                       came in and went back produces the same zero. The one
+   *                       guard against this mistake is what let it through.
+   *
+   * Live case 2026-11-08, booking da424f7c: a CONFIRMED booking on an ACCEPTED
+   * $333 quote, one of four milestones cancelled and the first refunded, read
+   * "Cancelled" with $222.01 still to collect. Nothing on that order was
+   * cancelled above the line, and the page said the job was dead while its own
+   * Collected filter still listed it (`item.status` is `refunded`).
+   *
+   * So: anything still owed outranks anything already finished, and `refunded`
+   * gets its own answer instead of impersonating "nothing arrived".
+   *
+   * Each line now carries ITS OWN FIGURE. The amount on the right stays the
+   * order's face value — it has to, or the header stops matching the rows
+   * beneath it and the number moves every time a filter is clicked — so this is
+   * where a reader is told how much is actually collected, owed or returned.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const state = (() => {
-    if (flow.overdue > 0) {
-      return { tone: TONE.late, text: `${formatCurrency(flow.overdue, item.currency)} ${t('payments.overdue_total') || 'Overdue'}` };
+    const money = (value: number) => formatCurrency(value, item.currency);
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE FIGURE ON THE CARD IS THE ORDER'S FACE VALUE, AND THIS LINE IS WHAT
+     * EXPLAINS IT.
+     *
+     * The amount on the right is everything this order was ever billed for. It
+     * is deliberately NOT "what you collected": it must not move when a filter
+     * is clicked, or the header stops matching the rows beneath it and the
+     * number changes meaning depending on where you came from.
+     *
+     * But a bare total answers nothing on its own. "$60.00" over a plan that
+     * took one payment and is late on the other says neither of those things,
+     * and this line used to name just ONE part of it — "$30.00 Overdue" beside
+     * a $60 figure, with the other $30 unexplained. Asked three times what the
+     * number meant, 2026-11-08, which is the real answer: it was unexplainable.
+     *
+     * So every part that exists is named, and they ADD UP to the figure above:
+     *
+     *     overdue + waiting + collected + refunded + never collected
+     *
+     * `waiting` is outstanding MINUS overdue, because overdue is a subset of
+     * outstanding rather than a rival to it — `MoneyCurrencyTotals.overdue`
+     * documents exactly this, and adding both would double-count every late
+     * payment and overshoot the total.
+     *
+     * Ordered by what the owner can act on: chase, then wait, then what is
+     * already settled. The tone follows the leading part, so the dot still
+     * says at a glance what this row most needs.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const waiting = Math.max(0, flow.outstanding - flow.overdue);
+
+    const parts: Array<{ tone: string; amount: number; label: string }> = [
+      { tone: TONE.late, amount: flow.overdue, label: t('payments.overdue_total') || 'Overdue' },
+      { tone: TONE.wait, amount: waiting, label: t('payments.awaiting_collection') || 'Still to collect' },
+      { tone: TONE.in, amount: flow.collected, label: t('payments.paid_one') || 'Paid' },
+      { tone: TONE.back, amount: flow.refunded, label: t('payments.refunded') || 'Refunded' },
+      { tone: TONE.lost, amount: flow.cancelled, label: t('money.never_collected') || 'never collected' },
+    ].filter(part => part.amount > 0);
+
+    /*
+     * The job itself was called off, which no amount can say: a cancelled
+     * booking whose payment settled and came back has its money in `refunded`,
+     * never in `cancelled`. It leads, and the money still follows it.
+     */
+    const off = item.bookingCancelled ? (t('payments.cancelled_total') || 'Cancelled') : null;
+
+    if (parts.length === 0) {
+      return off
+        ? { tone: TONE.lost, text: off }
+        : { tone: TONE.in, text: t('payments.paid_one') || 'Paid' };
     }
-    if (flow.cancelled > 0 && flow.collected === 0) {
-      return { tone: TONE.lost, text: t('payments.cancelled_total') || 'Cancelled' };
-    }
-    if (flow.outstanding > 0) {
-      return { tone: TONE.wait, text: t('payments.awaiting_collection') || 'Still to collect' };
-    }
-    return { tone: TONE.in, text: t('payments.paid_one') || 'Paid' };
+
+    /* The first keeps its capital; the rest read as a list under it. */
+    const said = parts
+      .map((part, index) =>
+        index === 0 && !off
+          ? `${money(part.amount)} ${part.label}`
+          : `${money(part.amount)} ${part.label.toLowerCase()}`
+      )
+      .join(' · ');
+
+    return {
+      tone: off ? TONE.lost : parts[0].tone,
+      text: off ? `${off} · ${said}` : said,
+    };
   })();
 
   /*
@@ -1439,7 +1816,11 @@ function OrderCard({
       className="overflow-hidden rounded-2xl border bg-[var(--v2-surface)]"
       style={{
         borderColor: open ? '#3B4A63' : 'var(--v2-border)',
-        opacity: flow.cancelled > 0 && flow.collected === 0 ? 0.72 : 1,
+        /* Dimmed when the order is FINISHED, not when one period of it died.
+           This shared the faulty test above, so the same refund that mislabelled
+           a live order also greyed it out — it read as dead at a glance, before
+           the words were even looked at. Anything still to collect is live. */
+        opacity: flow.outstanding === 0 && flow.collected === 0 ? 0.72 : 1,
       }}
     >
       {/*
@@ -1476,10 +1857,29 @@ function OrderCard({
           aria-hidden="true"
         />
         <span className="min-w-0 flex-1">
-          <span className="flex items-baseline justify-between gap-3.5">
+          <span className="flex items-start justify-between gap-3.5">
             <b className="text-[16px] font-bold text-[var(--v2-text-primary)]">{lead}</b>
-            <span className="whitespace-nowrap text-[16px] font-extrabold text-[var(--v2-text-primary)]">
+            <span className="whitespace-nowrap text-end text-[16px] font-extrabold text-[var(--v2-text-primary)]">
               {amount}
+              {/*
+                WHAT THIS FIGURE IS, SAID ON THE CARD.
+
+                It is the order's FACE VALUE: everything ever billed for this
+                job. It deliberately does not follow the active filter, or the
+                header stops matching the rows beneath it and the number means
+                something different depending on where the reader arrived from.
+
+                The cost of that stability is that a bare total answers nothing
+                on its own — $50.00 over a booking refunded in full is a true
+                figure and an unreadable one, and it was asked about four times
+                in one sitting (2026-11-08). The line beneath now adds up to it,
+                and this word says WHICH total it is, so the two together answer
+                "what is this, and what became of it" without the number having
+                to move.
+              */}
+              <span className="mt-0.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--v2-text-muted)]">
+                {t('money.billed_label') || 'billed'}
+              </span>
             </span>
           </span>
           {under && (
@@ -1493,6 +1893,11 @@ function OrderCard({
             <span className="my-2.5 flex h-1.5 gap-0.5 overflow-hidden rounded-full bg-[var(--v2-border)]">
               {flow.collected > 0 && (
                 <i style={{ flex: flow.collected, minWidth: 3, background: TONE.in }} />
+              )}
+              {/* Next to collected, because it IS collected money that left
+                  again — the same adjacency the summary strip uses. */}
+              {flow.refunded > 0 && (
+                <i style={{ flex: flow.refunded, minWidth: 3, background: TONE.back }} />
               )}
               {flow.overdue > 0 && (
                 <i style={{ flex: flow.overdue, minWidth: 3, background: TONE.late }} />
@@ -1524,15 +1929,41 @@ function OrderCard({
             {t('money.entries_title') || 'The payments in this order'}
           </p>
           <ol className="m-0 flex list-none flex-col gap-0.5 p-0">
-            {nested.map((row, index) => (
+            {nested.map((row, index) => {
+              /*
+                EACH PAYMENT WEARS ITS OWN STATE'S COLOUR.
+                ─────────────────────────────────────────────────────────────
+                These rows carried none: the number badge and the status word
+                were both `--v2-text-muted`, so a refunded payment and a
+                cancelled one were the same grey — while the bar directly above
+                them drew the two in different colours, and the drawer's copy of
+                this very schedule coloured its dots correctly.
+
+                The only tint here was a hand-mixed rgba for overdue, blended
+                from the page's old private red and left behind when the
+                palette moved to the shared map.
+
+                `scheduleTone` is the same function the drawer calls, so the two
+                renderings of one schedule cannot drift apart again.
+              */
+              const tone = scheduleTone(row.status);
+
+              return (
               <li
                 key={row.key}
                 className="flex flex-wrap items-center gap-3 rounded-[9px] px-3 py-2.5 text-[13.5px]"
                 style={{
-                  background: row.status === 'overdue' ? 'rgba(240,101,79,.12)' : 'var(--v2-surface-hover)',
+                  /* EVERY row wears its own state, faintly — not just the one
+                     that was overdue. The same ground the chips use, so a
+                     payment and the chip that filtered to it are the same
+                     colour. */
+                  background: chipGround(tone),
                 }}
               >
-                <span className="grid h-[21px] w-[21px] flex-none place-items-center rounded-full bg-[var(--v2-bg)] text-[11.5px] font-bold text-[var(--v2-text-muted)]">
+                <span
+                  className="grid h-[21px] w-[21px] flex-none place-items-center rounded-full text-[11.5px] font-bold"
+                  style={{ background: chipGround(tone), color: tone }}
+                >
                   {index + 1}
                 </span>
                 <span className="min-w-0 flex-1">
@@ -1543,7 +1974,7 @@ function OrderCard({
                     {row.date ? formatDate(row.date) : '—'}
                   </em>
                 </span>
-                <span className="whitespace-nowrap text-[12.5px] text-[var(--v2-text-muted)]">
+                <span className="whitespace-nowrap text-[12.5px]" style={{ color: tone }}>
                   {/*
                     `payments.money_status.*`, which is keyed by the same
                     `MoneyStatus` union the entries carry and is what MoneyRow
@@ -1552,11 +1983,28 @@ function OrderCard({
                   */}
                   {t(`payments.money_status.${row.status}`) || row.status}
                 </span>
-                <span className="min-w-[84px] whitespace-nowrap text-end font-bold text-[var(--v2-text-primary)]">
+                {/*
+                  MONEY THAT WILL NEVER ARRIVE IS STRUCK THROUGH.
+
+                  The mockup's own device for a cancelled period, and it says
+                  something no colour can: this figure is part of the total
+                  above and none of it is coming. Without it a cancelled $38.50
+                  sits in the same bold ink as a collected one, and the row
+                  reads like a payment that simply has a different label.
+                */}
+                <span
+                  className="min-w-[84px] whitespace-nowrap text-end font-bold"
+                  style={
+                    row.status === 'cancelled'
+                      ? { textDecoration: 'line-through', color: 'var(--v2-text-muted)' }
+                      : { color: 'var(--v2-text-primary)' }
+                  }
+                >
                   {formatCurrency(row.amount, row.currency)}
                 </span>
               </li>
-            ))}
+              );
+            })}
           </ol>
 
           <div className="mt-3.5 flex flex-wrap gap-2">

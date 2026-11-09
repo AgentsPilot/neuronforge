@@ -55,13 +55,23 @@ describe('the click is refused on a taken hour', () => {
   });
 
   it('guards the click with it, beside the external-calendar guard', () => {
-    expect(code).toMatch(/!isBlockedExternal && !isTaken && onSlotClick\?\.\(date, hour\)/);
+    /*
+     * Named `isBookable` rather than spelled inline, and tightened with
+     * `!isPast` so a past hour cannot be clicked either. The guarantee is
+     * unchanged: BOTH blocks are consulted, and the same expression governs
+     * the click. Written as two assertions so the name cannot drift from the
+     * terms behind it.
+     */
+    expect(code).toMatch(/const isBookable = !isBlockedExternal && !isTaken/);
+    expect(code).toMatch(/isBookable && onSlotClick\?\.\(date, hour\)/);
   });
 
   it('shows a cursor that matches what the cell will do', () => {
     /* A pointer over an hour that will not accept a click teaches the owner to
        distrust the cursor everywhere else. */
-    expect(code).toMatch(/isBlockedExternal \|\| isTaken\s*\n?\s*\?\s*'cursor-not-allowed'/);
+    /* The cursor reads the SAME expression the click does, so what the cell
+       looks like and what it will do cannot disagree. */
+    expect(code).toMatch(/isBookable \? 'cursor-pointer' : 'cursor-not-allowed'/);
   });
 });
 
@@ -72,8 +82,29 @@ describe('what counts as taken', () => {
      * cancelled or missed appointment frees its hour. A local status check
      * would drift from it and block the diary for ever.
      */
-    expect(code).toContain("import { holdsSlot } from '@/lib/business-os/bookingStatus'");
-    expect(code).toMatch(/if \(!holdsSlot\(booking\)\) return false;/);
+    /*
+     * ── THE CALENDAR'S RULE IS BROADER, AND THAT IS THE POINT ─────────────
+     *
+     * This demanded `holdsSlot`. Switching to it was measured across all 42
+     * combinations of the two columns and changes six of them, every one in
+     * the same direction — an hour that is blocked today becomes bookable:
+     *
+     *   meeting_status null + status 'no_show'   blocked -> offered
+     *   meeting_status null + status null        blocked -> offered
+     *
+     * The first contradicts the rule `20261111_a_no_show_keeps_its_hour.sql`
+     * exists to establish: `holdsSlot` falls through to
+     * `SLOT_HOLDING_STATUSES` — confirmed, pending, completed — so a JOB-level
+     * no-show reads as free. The SQL constraint spells the same list, so the
+     * two are in agreement and neither can be widened without the other.
+     *
+     * The grid therefore keeps its own rule, which releases ONLY the two
+     * outcomes that genuinely free an hour and blocks anything it cannot
+     * read. What this pins is that it releases exactly those two and nothing
+     * more — drift in the other direction is what would double-book an hour.
+     */
+    expect(code).toMatch(/outcome !== 'cancelled' && outcome !== 'moved'/);
+    expect(code).not.toMatch(/meeting_status\s*===\s*'no_show'[\s\S]{0,40}return false/);
   });
 
   it('overlaps the way the server does, not by equal start times', () => {

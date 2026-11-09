@@ -54,7 +54,13 @@ function mockSupabase(tables: Record<string, Row[]>) {
           return resolve({ data: out, error: null });
         },
       };
-      for (const m of ['select', 'in', 'gte', 'lt', 'order', 'limit', 'neq']) chain[m] = () => chain;
+      /* `or` and `lte` joined the list when the per-segment read moved to
+         `appointmentDetailsBetween`: it asks the meetings table with
+         `.or('meeting_status.is.null,meeting_status.neq.moved')`, and a chain
+         without it threw inside the try that returns null — so the comparison
+         silently disappeared rather than failing loudly. */
+      for (const m of ['select', 'in', 'gte', 'lte', 'lt', 'or', 'order', 'limit', 'neq'])
+        chain[m] = () => chain;
       chain.eq = (col: string, val: unknown) => {
         filters[col] = val;
         return chain;

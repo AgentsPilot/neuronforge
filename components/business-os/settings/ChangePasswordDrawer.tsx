@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
+import { signOutUser } from '@/lib/client/auth-actions';
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
 import { AlertCircle, CheckCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
 
 import { SettingsDrawer } from '@/components/business-os/settings/SettingsDrawer';
@@ -78,7 +80,16 @@ function ChangePasswordForm({ isChanging, onChangingChange }: ChangePasswordForm
   const [showPassword, setShowPassword] = useState(false);
   // The drawer's own messages: the page banner sits behind the open drawer.
   const [errorMessage, setErrorMessage] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
+  /*
+   * Changed, and on the way out.
+   *
+   * It used to clear the three fields and show a green line above them, so the
+   * drawer presented an empty form again — which reads as "nothing happened",
+   * and invites a second attempt at something already done. A password change
+   * is not an edit you repeat; it ENDS something. So the form is replaced by
+   * what happens next rather than reset for another go.
+   */
+  const [done, setDone] = useState(false);
 
   // The page's handler, moved as is: same checks, same order, same route, same
   // words. What changed is only where the result is shown.
@@ -87,7 +98,6 @@ function ChangePasswordForm({ isChanging, onChangingChange }: ChangePasswordForm
     if (isChanging) return;
 
     setErrorMessage('');
-    setSuccessMessage('');
 
     if (!passwordForm.current || !passwordForm.new) {
       setErrorMessage(t('settings.security.password_required'));
@@ -122,9 +132,28 @@ function ChangePasswordForm({ isChanging, onChangingChange }: ChangePasswordForm
         return;
       }
 
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A NEW PASSWORD ENDS EVERY SESSION, INCLUDING THIS ONE.
+       *
+       * Supabase leaves existing sessions alive after `updateUser`, so before
+       * this the old password's sessions kept working — on every device — and
+       * the person who just changed theirs, possibly because it was exposed,
+       * was told it was "updated" while the thing they were worried about
+       * carried on. `scope: 'global'` is the point of the change, not a
+       * courtesy.
+       *
+       * The fields are dropped from memory first: nothing below needs them,
+       * and a sign-out can take a few seconds.
+       * ───────────────────────────────────────────────────────────────────────
+       */
       setPasswordForm(EMPTY_FORM);
       setShowPassword(false);
-      setSuccessMessage(t('settings.security.password_updated'));
+      setDone(true);
+
+      await signOutUser({ scope: 'global', method: 'password-change' });
+      window.location.href = marketingLoginUrl();
+      return;
     } catch (error) {
       // `{ err }` only: never the form, never a field.
       logger.error({ err: error }, 'Failed to change the password');
@@ -133,6 +162,34 @@ function ChangePasswordForm({ isChanging, onChangingChange }: ChangePasswordForm
       onChangingChange(false);
     }
   };
+
+  /*
+   * The form is GONE once the password has changed.
+   *
+   * Leaving it on screen — even cleared — says the job is still open. This
+   * says what happened and what is about to happen, and the drawer closes
+   * itself by navigating: there is nothing left to do here, and the session
+   * that could do it is already being ended.
+   */
+  if (done) {
+    return (
+      <div
+        role="status"
+        className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 flex items-start gap-3"
+        style={{ borderRadius: 'var(--v2-radius-card)' }}
+      >
+        <CheckCircle className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm font-medium text-green-800 dark:text-green-300">
+            {t('settings.security.password_updated')}
+          </p>
+          <p className="text-sm text-green-700 dark:text-green-400 mt-1">
+            {t('settings.security.password_signing_out')}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handlePasswordChange} noValidate className="space-y-3">
@@ -146,17 +203,6 @@ function ChangePasswordForm({ isChanging, onChangingChange }: ChangePasswordForm
           <p className="text-sm text-red-700 dark:text-red-400">{errorMessage}</p>
         </div>
       )}
-      {successMessage && (
-        <div
-          role="status"
-          className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 flex items-center gap-2"
-          style={{ borderRadius: 'var(--v2-radius-card)' }}
-        >
-          <CheckCircle className="w-4 h-4 text-green-600 shrink-0" />
-          <p className="text-sm text-green-700 dark:text-green-400">{successMessage}</p>
-        </div>
-      )}
-
       <input
         type={showPassword ? 'text' : 'password'}
         value={passwordForm.current}

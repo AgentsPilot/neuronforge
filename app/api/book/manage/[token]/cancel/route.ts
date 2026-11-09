@@ -323,7 +323,20 @@ export async function POST(
         bookingId,
         booking.user_id,
         /* The record of WHO, the same way the owner's route stamps `owner`. */
-        'client'
+        'client',
+        /* No answer about the quote on this path: the client is calling off an
+           hour, not deciding the future of a proposal. */
+        undefined,
+        /*
+         * THE REASON THE CLIENT JUST GAVE (20261110).
+         *
+         * `reason_code` is required of them above — this route refuses the
+         * cancellation without one — and this call dropped both it and the
+         * note, so the answer was collected and thrown away. The job
+         * continues here, so the reason belongs to the APPOINTMENT, which is
+         * where `cancelMeeting` writes it.
+         */
+        { code: parsed.data.reason_code, note: reason }
       );
 
       if (meeting.error || !meeting.data) {

@@ -42,7 +42,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
    record keeps it when it moves to this design. */
 import { CancelPlanModal } from '@/components/payments/CancelPlanModal';
 
-import { itemFlow, type MoneyEntry, type MoneyItem } from '@/lib/payments/moneyItems';
+import { itemFlow, type MoneyEntry, type MoneyItem, isLatePeriod } from '@/lib/payments/moneyItems';
 /*
   THE ORDERS PAGE'S OWN ACTIONS, NOT A NEW SET.
 
@@ -58,27 +58,53 @@ import { MoneyEntryActions, type EntryActionHandlers } from '@/components/paymen
    webhook carried. `serviceLabel` holds the ENGLISH sentence the processor
    wrote, so naming an entry by it puts English in a Hebrew panel. */
 import { planPeriodText } from '@/components/payments/MoneyDetailDrawer';
+import { STATUS_INK, STATUS_TONE, scheduleTone } from '@/lib/payments/moneyStatusTone';
 
-/** The same four tones the page uses everywhere, so nothing changes colour. */
+/**
+ * The same tones every money surface uses, from the one map that decides them.
+ *
+ * These were copied hexes, which is how this panel came to carry the page's
+ * drift rather than the canonical palette — REFUNDED most of all, drawn as a
+ * drained green when `moneyStatusTone` has always given returned money a grey.
+ * See the note on `TONE` in `MoneyFlowPage` for what that cost.
+ */
 const TONE = {
-  in: '#2DD4A7',
-  wait: '#F0B429',
-  late: '#F0654F',
-  /** Came in and went back. The page's own tone for it, so nothing changes
-      colour between the row, the hero bar and this panel. */
-  back: '#1C7F69',
-  lost: '#5B6880',
+  in: STATUS_TONE.paid,
+  wait: STATUS_TONE.awaiting_payment,
+  late: STATUS_TONE.overdue,
+  back: STATUS_TONE.refunded,
+  lost: STATUS_TONE.cancelled,
 } as const;
 
 const toneFor = (status: string) => {
-  /* Partly back is still a collection: the business kept some of it, and the
-     figure beside it is real. Fully back is its own state — `TONE.back`, not
-     `lost`, which means "never came". This money came and then left. */
-  if (status === 'paid' || status === 'partially_refunded') return TONE.in;
-  if (status === 'refunded') return TONE.back;
-  if (status === 'overdue' || status === 'failed') return TONE.late;
-  if (status === 'cancelled') return TONE.lost;
-  return TONE.wait;
+  /*
+   * Asked of the shared map, so a breakdown row cannot disagree with the chip
+   * that filtered it to here or with the bar it sits under.
+   *
+   * Two states are decided here rather than there, and both are about THIS
+   * list: a PARTLY refunded period is still a collection — the business kept
+   * some of it and the figure beside it is real — so it reads as collected,
+   * while the shared map greys it for a chip that answers "was any of this
+   * returned". And `not_billed` is a period nobody has been asked for yet,
+   * which is this panel's own state and not a money status at all.
+   */
+  return scheduleTone(status);
+};
+
+/**
+ * The same state, as a WORD rather than an area.
+ *
+ * A fill is chosen to be told apart at a glance and is often too light to read
+ * as text — `cancelled` is a sand, `awaiting_payment` an orange. `STATUS_INK`
+ * carries the darker half of each of the mockup's pairs, so the status beside a
+ * dot is legible while the dot itself keeps the colour the bar and chip use.
+ *
+ * Falls back to the fill for any state with no ink of its own, which is the
+ * states already dark enough to be both.
+ */
+const inkFor = (status: string) => {
+  const key = status as keyof typeof STATUS_INK;
+  return STATUS_INK[key] ?? toneFor(status);
 };
 
 /**
@@ -124,11 +150,60 @@ export function scheduleOf(item: MoneyItem, t: (key: string) => string): Schedul
         if (period.status === 'paid' && returned > 0) {
           return returned >= period.amount ? 'refunded' : 'partially_refunded';
         }
-        return period.status === 'paid' ||
+        if (
+          period.status === 'paid' ||
           period.status === 'overdue' ||
           period.status === 'cancelled'
-          ? period.status
-          : 'awaiting_payment';
+        ) {
+          return period.status;
+        }
+
+        /*
+         * ── LATE IS DECIDED BY THE DATE, EXACTLY AS THE BAR DECIDES IT ──────
+         *
+         * A period is NEVER given the status `overdue` — nothing writes it, as
+         * `matchesFilter` already records ("periods never carry that status, so
+         * a plan months behind would otherwise be invisible to this filter
+         * while the overdue FIGURE counted it"). `itemFlow` therefore works
+         * lateness out from the due date with `isLatePeriod`, and that is what
+         * fills the bar's red band.
+         *
+         * This mapping did not, so the SAME money was drawn red in the bar and
+         * orange in the row beneath it. Live case 2026-11-08: a $60 plan,
+         * period 2 due 3 Nov, bar red and "$30.00 Overdue" in the state line,
+         * while the payment row said "Awaiting payment" in orange.
+         *
+         * The same function, so the two cannot answer differently again.
+         */
+        if (isLatePeriod(period)) return 'overdue';
+
+        /*
+         * ── NOBODY HAS BEEN ASKED FOR THIS YET ────────────────────────────
+         *
+         * The note above is right that `pending` is money awaiting payment,
+         * and for a DATED instalment it is: the date was fixed when the client
+         * agreed, and the invoice goes out on it.
+         *
+         * A MILESTONE is a different promise. It has no due date and falls due
+         * when the owner says the work happened, so until it is billed nobody
+         * has been asked for anything. Calling that "Awaiting payment" claims
+         * the client is late to act, and the row said so directly beneath its
+         * own empty due date: "Awaiting payment · Due —".
+         *
+         * Reported 2026-11-08 on an accepted quote whose remaining milestones
+         * read as unpaid bills that had never been raised.
+         *
+         * This is the distinction the page already draws for invoices, where
+         * `OUTSTANDING_STATUSES` excludes `draft` for the same reason: "nobody
+         * has been asked to pay them". It simply never reached the periods.
+         *
+         * The FIGURE is untouched — an unbilled phase is still money the owner
+         * is owed, which `moneyItems` is explicit about ("this is the owner's
+         * book of business"). Only the claim about the client changes.
+         */
+        if (!period.invoiceId && period.trigger === 'manual') return 'not_billed';
+
+        return 'awaiting_payment';
       })(),
       amount: period.amount,
       /* `MoneyPeriod.currency` is optional and documents this exact fallback:
@@ -420,7 +495,9 @@ export function MoneyOrderDrawer({
                       </span>
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[12.5px] text-[var(--v2-text-muted)]">
-                      <span style={{ color: tone }}>
+                      {/* The ink, not the fill: the dot beside it carries the
+                          fill, and a sand or orange word is unreadable. */}
+                      <span style={{ color: inkFor(row.status) }}>
                         {t(`payments.money_status.${row.status}`) || row.status}
                       </span>
                       <span aria-hidden="true">·</span>

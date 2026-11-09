@@ -8,6 +8,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { appointmentDetailsBetween } from '@/lib/scheduling/appointmentFacts';
 import { BaseDetector } from './BaseDetector';
 import { createLogger } from '@/lib/logger';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
@@ -69,16 +70,46 @@ export class RetNoShowSpikeDetector extends BaseDetector {
      * route already accepts it, and the stats route already counts it — the
      * fact was reachable all along.
      */
-    const { data, error } = await this.supabase
-      .from('scheduling_bookings')
-      .select('id, status, start_time, contact_id, payment_amount, service_id')
-      .eq('user_id', userId)
-      .gte('start_time', baselineFrom)
-      .lt('start_time', new Date(now).toISOString());
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * APPOINTMENTS AND THEIR OUTCOMES, NOT JOBS AND THEIR STATUS.
+     *
+     * This read `scheduling_bookings` and asked `status === 'no_show'`. Two
+     * things were wrong with that, and together they made the detector nearly
+     * blind:
+     *
+     *   1. `markNoShow()` writes `meeting_status`, not `status` — the whole
+     *      point of the booking/meeting separation, so that calling off an
+     *      appointment does not call off the work. Measured on the live
+     *      database: 51 meetings carry `meeting_status: 'no_show'` and only 2
+     *      bookings carry `status: 'no_show'`. This saw 2 of 51.
+     *
+     *   2. A job whose hours live on its sessions has no `start_time`, and
+     *      NULL never satisfies `gte`, so every package session fell out of
+     *      the window before any of this ran.
+     *
+     * `appointmentDetailsBetween` answers both: it reads the meetings, adds
+     * the bookings that have an hour and no meeting row, and carries each
+     * job's client, service and price along for the grouping below.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const appointments = await appointmentDetailsBetween(
+      this.supabase,
+      userId,
+      baselineFrom,
+      new Date(now).toISOString()
+    );
 
-    if (error) throw error;
-
-    const rows = (data ?? []) as unknown as BookingRow[];
+    /* Shaped to what the rest of this detector already reads. `status` is the
+       APPOINTMENT's outcome now, which is the column that is actually written. */
+    const rows = appointments.map(a => ({
+      id: a.meetingId ?? a.bookingId,
+      status: a.status,
+      start_time: a.startTime,
+      contact_id: a.contactId,
+      payment_amount: a.paymentAmount,
+      service_id: a.serviceId,
+    })) as unknown as BookingRow[];
 
     // Only appointments that have HAPPENED can be no-shows. A confirmed
     // booking next week is neither attended nor missed.
@@ -239,7 +270,16 @@ export class RetNoShowSpikeDetector extends BaseDetector {
 }
 
 /** Statuses that mean the appointment is in the past and its outcome is known. */
-const CONCLUDED = new Set(['completed', 'no_show']);
+/*
+ * An appointment that has HAPPENED, in the vocabulary of `meeting_status`.
+ *
+ * `completed` is kept for the orphan rows: a booking with no meeting row has
+ * its job status mapped to `held` by `appointmentDetailsBetween`, but an older
+ * one may still arrive as `completed`. `held` is what the meetings table
+ * actually writes, and without it every attended appointment was excluded from
+ * the denominator — which inflates the no-show rate rather than hiding it.
+ */
+const CONCLUDED = new Set(['completed', 'held', 'no_show']);
 
 const WINDOW_DAYS = 30;
 const BASELINE_DAYS = 60;

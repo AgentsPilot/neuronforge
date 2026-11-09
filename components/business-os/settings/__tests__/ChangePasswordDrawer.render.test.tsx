@@ -39,6 +39,14 @@ jest.mock('@/lib/business-os/LanguageContext', () => {
 jest.mock('@/lib/supabaseClient', () => ({ supabase: {} }));
 
 const mockChangePassword = jest.fn();
+const mockSignOut = jest.fn().mockResolvedValue({ ok: true, outcome: 'ok', clearedLocally: true });
+jest.mock('@/lib/client/auth-actions', () => ({
+  signOutUser: (...args: unknown[]) => mockSignOut(...args),
+}));
+jest.mock('@/lib/utils/marketingUrl', () => ({
+  marketingLoginUrl: () => 'https://marketing.test/login',
+}));
+
 jest.mock('@/lib/client/change-password', () => ({
   changePassword: (...args: unknown[]) => mockChangePassword(...args),
 }));
@@ -211,18 +219,42 @@ describe('the change', () => {
     await waitFor(() => expect(mockChangePassword).toHaveBeenCalledTimes(1));
   });
 
-  it('success: the message shows inside the drawer and the fields are cleared', async () => {
+  it('success: the form is replaced, and every session ends', async () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THIS TEST CHANGED WITH THE BEHAVIOUR, DELIBERATELY.
+     *
+     * It used to assert the three fields were CLEARED and a green line shown
+     * above them. That left an empty form on screen, which reads as "nothing
+     * happened" and invites a second attempt at something already done.
+     *
+     * And it left the session alive. Supabase keeps existing sessions after
+     * `updateUser`, so the old password's sessions kept working on every
+     * device — while the person who had just changed theirs, possibly because
+     * it was exposed, was told it was "updated".
+     *
+     * So: the form goes, the drawer says what is happening, the sign-out is
+     * GLOBAL, and the browser leaves for the sign-in page.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     mockChangePassword.mockResolvedValue({ success: true });
     render(<Harness />);
     const dialog = await openDrawer();
     fill(dialog, CURRENT, NEXT, NEXT);
     submit(dialog);
-    expect((await within(dialog).findByRole('status')).textContent).toContain(COPY['settings.security.password_updated']);
-    const f = fields(dialog);
-    expect(f.current.value).toBe('');
-    expect(f.next.value).toBe('');
-    expect(f.confirm.value).toBe('');
-    expect(screen.getByRole('dialog')).toBe(dialog);
+
+    const status = await within(dialog).findByRole('status');
+    expect(status.textContent).toContain(COPY['settings.security.password_updated']);
+    expect(status.textContent).toContain(COPY['settings.security.password_signing_out']);
+
+    /* The fields are not cleared — they are gone. */
+    expect(within(dialog).queryByLabelText('Current Password')).toBeNull();
+
+    await waitFor(() =>
+      expect(mockSignOut).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'global', method: 'password-change' })
+      )
+    );
   });
 
   it("a refusal shows the server's message inside the drawer and keeps the fields", async () => {

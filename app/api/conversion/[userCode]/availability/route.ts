@@ -19,6 +19,11 @@ import { windowsForDate, hasAnyAvailability } from '@/lib/scheduling/availabilit
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { busyMeetings, overlapsBusy } from '@/lib/scheduling/busyMeetings';
+import { externalBusy } from '@/lib/scheduling/externalBusy';
+import { businessInstant, safeTimezone, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
+/* How far ahead a business takes bookings — one number, read by the repository
+   that stamps it and every strip that obeys it. */
+import { bookableDaysFor } from '@/lib/scheduling/bookingWindow';
 
 const logger = createLogger({ module: 'ConversionBookingAvailabilityAPI' });
 
@@ -46,6 +51,14 @@ interface Service {
   collection: 'online' | 'invoice' | null;
   /** Whether this is bought outright or quoted first. Decides where the journey ends. */
   sale_mode: 'direct' | 'proposal';
+  /**
+   * How much warning the business needs, and how far ahead it will take a
+   * booking. Both were configured, respected by the sibling surfaces, and
+   * ignored here — so a smart link could sell an hour starting in ten minutes,
+   * or one eight months out.
+   */
+  min_notice_hours: number | null;
+  advance_booking_days: number | null;
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -67,8 +80,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Look up business profile by userCode
-    // Note: timezone column doesn't exist in business_profiles, use 'UTC' as default
+    // Look up business profile by userCode.
+    // `business_profiles.timezone` does not exist — naming it would make
+    // PostgREST reject this whole select. The zone is read from
+    // `user_preferences` below.
     const { data: businessProfile, error: profileError } = await supabaseServer
       .from('business_profiles')
       .select('user_id, scheduling_availability, company_name, user_code')
@@ -136,6 +151,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
        * confirmation for work whose price nobody had stated.
        */
       sale_mode: s.sale_mode === 'proposal' ? 'proposal' : 'direct',
+      min_notice_hours: s.min_notice_hours ?? null,
+      advance_booking_days: s.advance_booking_days ?? null,
       // How this service may be paid over time.
       //
       // The config endpoint beside this one already returned it, and this one
@@ -146,8 +163,27 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       paymentPlan: plansByService[s.id]
     }));
 
-    // Default timezone (column doesn't exist in business_profiles)
-    const timezone = 'UTC';
+    /*
+     * ── THE BUSINESS'S OWN CLOCK ────────────────────────────────────────────
+     *
+     * This read `'UTC'`, with a comment correctly noting that
+     * `business_profiles.timezone` does not exist — and then stopped there.
+     * So every hour on a smart link was quoted in UTC while the owner's
+     * availability windows mean local time: a business open 09:00–17:00 in
+     * Jerusalem had its day published starting at 11:00 its own time, and the
+     * sibling subdomain page, which reads the real zone, published it at 09:00.
+     *
+     * `user_preferences` is where the zone lives (CLAUDE.md § Currency &
+     * Timezone). `safeTimezone` keeps UTC as the fallback, so a business that
+     * has never been asked behaves exactly as before.
+     */
+    const { data: ownerPrefs } = await supabaseServer
+      .from('user_preferences')
+      .select('timezone')
+      .eq('user_id', ownerId)
+      .maybeSingle();
+
+    const timezone = safeTimezone(ownerPrefs?.timezone);
 
     // If no service_id or date requested, return business info and services
     if (!serviceId || !date) {
@@ -188,7 +224,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       businessProfile.scheduling_availability,
       timezone,
       date,
-      daysAhead
+      daysAhead,
+      selectedService.min_notice_hours ?? 24,
+      bookableDaysFor(selectedService.advance_booking_days)
     );
 
     return NextResponse.json({
@@ -224,7 +262,12 @@ async function calculateAvailableSlots(
   availability: unknown,
   timezone: string,
   startDate: string,
-  daysAhead: number
+  daysAhead: number,
+  /** Hours of warning the business needs. 24 where the service is silent, which
+   *  is the default the portal's reschedule route already applies. */
+  noticeHours: number,
+  /** How far ahead it takes bookings, already resolved by `bookableDaysFor`. */
+  advanceDays: number
 ): Promise<TimeSlot[]> {
   const slots: TimeSlot[] = [];
   const now = new Date();
@@ -276,11 +319,35 @@ async function calculateAvailableSlots(
     endDate.toISOString()
   );
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND THE OWNER'S OWN CALENDAR.
+   *
+   * A synced Google or Outlook event holds the owner's time as surely as an
+   * appointment booked here. Every sibling surface reads them — the subdomain
+   * booking page, the owner's free-slots, the portal's reschedule — and this
+   * one did not, so the SAME hour for the SAME business was correctly withheld
+   * at `/site/{subdomain}/book` and offered at `/c/{userCode}/book`.
+   *
+   * `PublicBookingPage` renders at both addresses and picks its endpoint by
+   * which one it is serving, so the difference was invisible from the UI: one
+   * page, two rules.
+   *
+   * Overlap semantics, so an all-day or multi-hour event running into the
+   * window counts. Failure is non-fatal: a calendar we cannot read must not
+   * take the booking page down, and the slot stays offered rather than the
+   * page breaking.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const ownerCalendar = await externalBusy(userId, startDate, endDate.toISOString());
+
+  /* Same half-open test as the meetings, so a calendar event ending at 10:00
+     does not withhold the 10:00 slot. */
+  const overlapsExternal = (start: Date, end: Date) =>
+    overlapsBusy(start, end, ownerCalendar);
+
   // Generate slots for each day
   for (let i = 0; i < daysAhead; i++) {
-    const currentDate = new Date(startDate);
-    currentDate.setDate(currentDate.getDate() + i);
-
     /*
      * This DATE's windows: the weekday's hours with time off applied.
      *
@@ -292,27 +359,23 @@ async function calculateAvailableSlots(
      * `toISOString()`, which would name the UTC day and, for a business ahead of
      * UTC, subtract a day from every closed-day comparison.
      */
-    const dateKey = [
-      currentDate.getFullYear(),
-      String(currentDate.getMonth() + 1).padStart(2, '0'),
-      String(currentDate.getDate()).padStart(2, '0'),
-    ].join('-');
+    /* Walked as a STRING, so the day cannot drift: derived from a Date's parts
+       it was the SERVER's day, and a business ahead of UTC lost its first. */
+    const dateKey = shiftBusinessDateKey(startDate.slice(0, 10), i);
 
     // A day is a LIST of windows — a morning and an evening are two, with a gap
     // the client cannot book. Reading only the first would quietly hide the
     // second; reading `.start` off the list, which is what this did, hid both.
     for (const window of windowsForDate(availability, dateKey, timeOff)) {
-      const [startHour, startMin] = window.start.split(':').map(Number);
-      const [endHour, endMin] = window.end.split(':').map(Number);
-
       // Generate time slots (30-minute intervals)
       const slotInterval = 30; // minutes
       const blockMinutes = durationMinutes ?? slotInterval;
-      let currentTime = new Date(currentDate);
-      currentTime.setHours(startHour, startMin, 0, 0);
 
-      const dayEnd = new Date(currentDate);
-      dayEnd.setHours(endHour, endMin, 0, 0);
+      /* `09:00` means nine o'clock WHERE THE BUSINESS IS. `setHours` on a Date
+         means nine o'clock where the server is, which on Vercel is UTC — so
+         the published day was shifted by the owner's whole offset. */
+      let currentTime = businessInstant(dateKey, window.start, timezone);
+      const dayEnd = businessInstant(dateKey, window.end, timezone);
 
       while (currentTime.getTime() + blockMinutes * 60 * 1000 <= dayEnd.getTime()) {
         const slotEnd = new Date(currentTime.getTime() + blockMinutes * 60 * 1000);
@@ -326,10 +389,20 @@ async function calculateAvailableSlots(
            a start as a clash. */
         const hasConflict = overlapsBusy(currentTime, slotEnd, busy);
 
+        /*
+         * The same four gates the other surfaces apply. This endpoint checked
+         * two of them, so a smart link offered hours the subdomain withheld:
+         * an hour the owner is busy in elsewhere, an hour too soon to prepare
+         * for, and an hour further out than the business takes bookings.
+         */
+        const hasExternalConflict = overlapsExternal(currentTime, slotEnd);
+        const tooSoon = currentTime.getTime() < now.getTime() + noticeHours * 60 * 60 * 1000;
+        const tooFar = currentTime.getTime() > now.getTime() + advanceDays * 24 * 60 * 60 * 1000;
+
         slots.push({
           start: currentTime.toISOString(),
           end: slotEnd.toISOString(),
-          available: !isPast && !hasConflict
+          available: !isPast && !hasConflict && !hasExternalConflict && !tooSoon && !tooFar
         });
 
         // Move to next slot
