@@ -26,6 +26,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import { ISSUED_INVOICE_STATUSES } from '@/lib/repositories/PaymentRepository';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+/* Shared with the `invoice_unpaid` gap and the booking-unpaid card: one
+   definition of whether the milestone chaser can still reach an invoice. */
+import { chaserCanStillReach } from '@/lib/payments/overdueMilestones';
 
 /** Instalment states that still owe money. */
 const INSTALMENT_OUTSTANDING = new Set(['pending', 'scheduled', 'overdue', 'failed']);
@@ -193,6 +196,19 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
      */
     const todayKey = new Date().toISOString().slice(0, 10);
 
+    /* This business's milestone days, so "past the chaser's reach" is measured
+       against what IT is set to rather than the module default.
+       `overdueMilestones` owns that default; this must not be a third copy. */
+    const { data: reminderProfile } = await this.supabase
+      .from('business_profiles')
+      .select('payment_overdue_reminder_days')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const chaserMilestones = ((
+      reminderProfile as { payment_overdue_reminder_days?: number[] } | null
+    )?.payment_overdue_reminder_days ?? null) as number[] | null;
+
     let invoiceOwed = 0;
     for (const row of invoicesResult.data ?? []) {
       const outstanding = toNumber(row.amount) - toNumber(row.refunded_amount);
@@ -200,8 +216,27 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
       invoiceOwed += outstanding;
       entityIds.push(String(row.id));
 
+      /*
+       * CHASEABLE means the chaser has already given up on it.
+       *
+       * `dueKey < todayKey` alone said "late", and late by one day belongs to
+       * the milestone chaser. This card's paired process installs an AGENT
+       * whose find starts after day 7, so a business whose clients settle on
+       * day 5 was offered an agent with nothing to do — the finding right, the
+       * offer empty.
+       *
+       * `chaserCanStillReach` is the same predicate the `invoice_unpaid` gap
+       * uses, so the day arithmetic stays in one place.
+       */
       const dueKey = row.due_date ? String(row.due_date).slice(0, 10) : null;
-      if (dueKey && dueKey < todayKey) invoiceIds.push(String(row.id));
+      if (dueKey && dueKey < todayKey) {
+        const daysOverdue = Math.round(
+          (Date.parse(`${todayKey}T00:00:00Z`) - Date.parse(`${dueKey}T00:00:00Z`)) / 86_400_000
+        );
+        if (daysOverdue > 0 && !chaserCanStillReach(daysOverdue, chaserMilestones)) {
+          invoiceIds.push(String(row.id));
+        }
+      }
 
       if (row.contact_id) contacts.add(String(row.contact_id));
     }

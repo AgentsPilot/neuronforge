@@ -234,8 +234,10 @@ export const es = {
     'automation.reminder_days': '{n} días antes',
     'automation.reminder_saved': 'Guardado',
     'automation.reminder_needs_one': 'Elige al menos uno. Un recordatorio sin destinatario no hace nada.',
+    'automation.reconnect': 'Reconectar',
+    'automation.reconnect_failed': 'No se pudo reconectar. Inténtalo de nuevo.',
     'automation.chase_invoices': 'Reclamar facturas impagadas',
-    'automation.chase_invoices_hint': 'Los recordatorios posteriores al vencimiento de una factura, por defecto a los 3, 7 y 14 días. También se envía un aviso de cortesía antes del vencimiento, que es un ajuste aparte. Nunca se envían dos recordatorios de la misma factura con menos de tres días de diferencia, y todos se detienen en cuanto se paga.',
+    'automation.chase_invoices_hint': 'Todo lo que este negocio dice a un cliente sobre una factura, bajo una sola respuesta. Un aviso de cortesía antes del vencimiento y después recordatorios en los días configurados en tu cuenta una vez que se retrasa. A partir de ahí el cobro se detiene, salvo que añadas el agente de cobros, que escribe una vez por semana un único mensaje con todo lo que el cliente sigue debiendo. Nunca se envían dos recordatorios de la misma factura con menos de tres días de diferencia, y todos se detienen en cuanto se paga.',
     'automation.chase_intake': 'Recordar el formulario a los clientes',
     'automation.chase_intake_hint': 'Un aviso cuando un formulario sigue sin devolverse y la cita aún está lo bastante lejos como para que valga la pena pedirlo.',
     'gaps.via.agent': 'formulario, archivado por el agente',
@@ -715,7 +717,7 @@ export const es = {
 
     // Insight Content by Detector ID
     'insight.cash_ar_overdue.title': '{amount} sin cobrar en {count} facturas',
-    'insight.cash_ar_overdue.description': 'La más antigua tiene {weeks} semanas de retraso — aproximadamente {percent}% de los ingresos de este mes esperando llegar. Puedo enviar a cada cliente un recordatorio cálido y personal ahora mismo.',
+    'insight.cash_ar_overdue.description': 'La más antigua tiene {weeks} semanas de retraso, aproximadamente {percent}% de los ingresos de este mes esperando llegar. Los recordatorios de los días 1, 3 y 7 ya se enviaron y estas facturas los han superado, así que no hay nada más programado para ellas. El agente de cobros puede continuar desde aquí: un mensaje por semana a cada cliente, con todo lo que sigue debiendo.',
     'insight.cash_ar_overdue.chip.invoices': '{count} sin pagar',
     'insight.cash_ar_overdue.chip.total': '{amount} total',
     'insight.cash_ar_overdue.chip.oldest': 'Más antigua {days} días',
@@ -5151,6 +5153,7 @@ export const es = {
     'leads.inbox.tile.connect_cancelled': 'La ventana de inicio de sesión se cerró antes de terminar.',
     'leads.inbox.tile.connected': 'Conectado',
     'leads.inbox.tile.already': 'Ya configurado',
+    'leads.inbox.tile.reconnect': 'Reconectar',
     'leads.inbox.tile.set_up_change': 'Configurado · cambiar',
     'leads.inbox.reading': 'Leyendo tu correo reciente…',
     'leads.inbox.newer': 'Más recientes',

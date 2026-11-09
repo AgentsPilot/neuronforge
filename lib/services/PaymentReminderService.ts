@@ -75,6 +75,24 @@ export interface PaymentReminder {
 }
 
 export interface ReminderConfig {
+  /**
+   * SUPERSEDED FOR PERMISSION. `business_profiles.payment_reminder_enabled`.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * It used to gate everything sent BEFORE the due date, and it defaults to
+   * TRUE with no UI anywhere — so a business that had agreed to nothing was
+   * emailing its clients "due in three days" and "due today" for every invoice
+   * raised. Only the past-due half ever asked.
+   *
+   * `chaseOverdue` is the one switch now, for every reminder type. This field
+   * is still read and still written (`updateUserReminderConfig` persists it,
+   * and the day lists live beside it on the same row), so nothing that sets it
+   * breaks — it simply no longer decides whether a client hears from us.
+   *
+   * Left in place rather than dropped: removing the column would take the day
+   * lists with it, and a migration is not needed to stop reading a boolean.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
   enabled: boolean;
   daysBefore: number[]; // Days before due date to send reminders
   overdueDays: number[]; // Days after due date to send overdue reminders
@@ -86,14 +104,20 @@ export interface ReminderConfig {
    *
    * ─────────────────────────────────────────────────────────────────────────
    * `business_profiles.chase_invoices_enabled` — the answer the owner gave the
-   * advisor's "Chase unpaid invoices" card, and now the only switch on the
-   * overdue path.
+   * advisor's "Chase unpaid invoices" card, and THE ONLY SWITCH on anything an
+   * invoice says to a client.
    *
-   * SEPARATE FROM `enabled`, DELIBERATELY. A reminder sent BEFORE the due date
-   * is a courtesy: here is what is coming, on this day. A reminder sent AFTER
-   * it says you are late. The first needs no permission and ships on; the
-   * second is written in the owner's name to their client about a debt, and the
-   * platform asks first.
+   * IT USED TO GOVERN THE PAST-DUE HALF ONLY. The reasoning was that a reminder
+   * sent BEFORE the due date is a courtesy — here is what is coming, on this
+   * day — while one sent after it says you are late, and only the second is
+   * written in the owner's name about a debt.
+   *
+   * That distinction does not survive contact with the other switch, which
+   * defaults to TRUE and has no UI. "Needs no permission" became "nobody was
+   * ever asked", and the courtesy went out in the owner's name and under the
+   * owner's branding exactly like the chase. One umbrella now: this schedule
+   * through day 7, the `chase_overdue_invoices` agent for the tail, both behind
+   * this one answer.
    *
    * WHY THE SWITCH MOVED HERE
    *
@@ -279,28 +303,37 @@ export class PaymentReminderService {
       const config = await this.getUserReminderConfig(userId);
 
       /*
-       * Which switch applies depends on which side of the due date this is.
+       * ───────────────────────────────────────────────────────────────────────
+       * ONE SWITCH FOR EVERYTHING AN INVOICE SAYS TO A CLIENT.
        *
-       * A past-due chase answers to `chase_invoices_enabled` ALONE, not to both
-       * switches. If it needed `payment_reminder_enabled` as well, a business
-       * that turned pre-due reminders off in settings would have the advisor
-       * card still reading "Working on its own" while nothing was sent — the
-       * card stating something it cannot know, which is the exact defect this
-       * work exists to remove.
+       * This split by which side of the due date the reminder fell on:
+       * `chase_invoices_enabled` after it, `payment_reminder_enabled` before.
+       * Each gated the thing the owner had been shown, which sounds right and
+       * was not, because the second switch DEFAULTS TO TRUE AND HAS NO UI
+       * ANYWHERE.
        *
-       * So: before the date, `enabled`. After it, `chaseOverdue`. One switch
-       * each, and each is the one the owner was actually shown.
+       * So an owner who had agreed to nothing was already writing to their
+       * clients: "due in three days", then "due today", for every invoice
+       * raised, in their name and under their branding. Only the past-due half
+       * ever asked. The registry these cards belong to states the principle
+       * that was being broken outright — "writing to their client on their
+       * behalf is an act performed in their name, and consent to that has to be
+       * given rather than assumed. An owner who discovers the platform has been
+       * emailing their clients is an owner who leaves."
+       *
+       * One umbrella now, two mechanisms under it: this schedule through day 7,
+       * and the `chase_overdue_invoices` agent for the tail from day 8. Both
+       * answer here, and nothing about an invoice reaches a client otherwise.
+       *
+       * The consequence is deliberate and worth naming: a business with the
+       * card off stops sending the pre-due reminders it sends today. That is
+       * the point. It never agreed to them.
+       * ───────────────────────────────────────────────────────────────────────
        */
-      const permitted = params.reminderType === 'overdue' ? config.chaseOverdue : config.enabled;
-
-      if (!permitted) {
+      if (!config.chaseOverdue) {
         return {
           data: null,
-          error: new Error(
-            params.reminderType === 'overdue'
-              ? 'Chasing unpaid invoices has not been turned on'
-              : 'Payment reminders are disabled'
-          )
+          error: new Error('Chasing unpaid invoices has not been turned on')
         };
       }
 
@@ -425,7 +458,11 @@ export class PaymentReminderService {
   ): Promise<PaymentReminderServiceResult<PaymentReminder[]>> {
     try {
       const config = await this.getUserReminderConfig(userId);
-      if (!config.enabled) {
+      /* The same single switch — see `scheduleReminder` for why the pre-due
+         half no longer has one of its own. Checked here as well as there so a
+         declined business costs no round trips building a schedule that
+         `scheduleReminder` would refuse one row at a time. */
+      if (!config.chaseOverdue) {
         return { data: [], error: null };
       }
 
@@ -509,7 +546,11 @@ export class PaymentReminderService {
   ): Promise<PaymentReminderServiceResult<PaymentReminder[]>> {
     try {
       const config = await this.getUserReminderConfig(userId);
-      if (!config.enabled) {
+      /* The same single switch — see `scheduleReminder` for why the pre-due
+         half no longer has one of its own. Checked here as well as there so a
+         declined business costs no round trips building a schedule that
+         `scheduleReminder` would refuse one row at a time. */
+      if (!config.chaseOverdue) {
         return { data: [], error: null };
       }
 

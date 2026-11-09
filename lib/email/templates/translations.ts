@@ -2318,6 +2318,103 @@ export const emailTranslations = {
   },
 
   // ==========================================
+  // EVERYTHING OUTSTANDING, IN ONE MESSAGE
+  //
+  // The agent that works the tail chases a CLIENT, not an invoice. A client
+  // holding three late invoices used to receive three separate emails in the
+  // same run, each correctly deduped against its own invoice and none able to
+  // see the other two. They do not experience three debts; they experience
+  // three emails in one minute from a business they already owe.
+  //
+  // So this is a statement: every item, once, with its own way to pay. Used
+  // only when there are at least two — a single item reads better as the
+  // ordinary chase above, which names the invoice in its subject.
+  // ==========================================
+  outstandingStatement: {
+    /*
+     * The count leads, because that is the fact the single-invoice subject
+     * cannot carry and the one that makes this email worth opening. The total
+     * follows it where there IS one total — see `subjectMixed` for why there
+     * is not always.
+     */
+    subject: {
+      en: (count: number, money: string) => `${count} unpaid invoices, ${money} outstanding`,
+      es: (count: number, money: string) => `${count} facturas impagadas, ${money} pendientes`,
+      he: (count: number, money: string) => `${count} חשבוניות שלא שולמו, ${money} לתשלום`
+    },
+    /*
+     * NO TOTAL WHEN THE CURRENCIES DIFFER.
+     *
+     * A client billed in two currencies has two debts, and adding them is the
+     * one thing CLAUDE.md forbids outright. The subject drops the figure rather
+     * than inventing a converted one; the body still shows a subtotal per
+     * currency.
+     */
+    subjectMixed: {
+      en: (count: number) => `${count} unpaid invoices on your account`,
+      es: (count: number) => `${count} facturas impagadas en tu cuenta`,
+      he: (count: number) => `${count} חשבוניות שלא שולמו בחשבונך`
+    },
+    openingFriendly: {
+      en: (clientName: string) => `Hi ${clientName}, I hope you're well.`,
+      es: (clientName: string) => `Hola ${clientName}, espero que estés bien.`,
+      he: (clientName: string) => `שלום ${clientName}, מקווה ששלומך טוב.`
+    },
+    opening: {
+      en: (clientName: string) => `Hi ${clientName},`,
+      es: (clientName: string) => `Hola ${clientName},`,
+      he: (clientName: string) => `שלום ${clientName},`
+    },
+    /*
+     * States what the email is, and nothing about lateness.
+     *
+     * Same rule as the single chase: the number of days is a fact about the
+     * business's records, not about the client's intentions, and opening with
+     * it turns a summary into a demand. It appears once per row, plainly.
+     */
+    askFriendly: {
+      en: (count: number) => `I wanted to send you a summary of what is still outstanding on your account — ${count} invoices in all.`,
+      es: (count: number) => `Quería enviarte un resumen de lo que queda pendiente en tu cuenta: ${count} facturas en total.`,
+      he: (count: number) => `רציתי לשלוח לך סיכום של מה שעדיין פתוח בחשבון שלך: ${count} חשבוניות בסך הכול.`
+    },
+    askFirm: {
+      en: (count: number) => `This is a summary of the ${count} invoices still outstanding on your account.`,
+      es: (count: number) => `Este es un resumen de las ${count} facturas que siguen pendientes en tu cuenta.`,
+      he: (count: number) => `לפניך סיכום של ${count} החשבוניות שעדיין פתוחות בחשבון שלך.`
+    },
+    colInvoice: { en: 'Invoice', es: 'Factura', he: 'חשבונית' },
+    colDue: { en: 'Due', es: 'Vencimiento', he: 'תאריך לתשלום' },
+    colAmount: { en: 'Amount', es: 'Importe', he: 'סכום' },
+    /* The age, per row, after the date and in the quietest type on the page. */
+    dueDaysAgo: {
+      en: (when: string, days: number) => `${when} (${days} ${days === 1 ? 'day' : 'days'} ago)`,
+      es: (when: string, days: number) => `${when} (hace ${days} ${days === 1 ? 'día' : 'días'})`,
+      he: (when: string, days: number) => `${when} (לפני ${days} ${days === 1 ? 'יום' : 'ימים'})`
+    },
+    /* One per currency. Never one across them. */
+    total: {
+      en: (money: string) => `Total outstanding: ${money}`,
+      es: (money: string) => `Total pendiente: ${money}`,
+      he: (money: string) => `סך הכול לתשלום: ${money}`
+    },
+    payHint: {
+      en: 'Each invoice number above links to its own payment page.',
+      es: 'Cada número de factura enlaza con su propia página de pago.',
+      he: 'כל מספר חשבונית מקושר לדף התשלום שלה.'
+    },
+    /*
+     * Plural, and per LINE. The single-invoice version can say "ignore this if
+     * you have already paid"; a statement of five cannot, because the honest
+     * case is that one of the five has been paid and the rest have not.
+     */
+    ignoreIfPaid: {
+      en: 'If any of these have already been paid, please ignore that line and accept my apologies.',
+      es: 'Si alguna de estas ya se ha pagado, ignora esa línea y acepta mis disculpas.',
+      he: 'אם אחת מהן כבר שולמה, התעלם מאותה שורה ואני מתנצל.'
+    }
+  },
+
+  // ==========================================
   // NUDGING SOMEBODY WHO WENT QUIET
   //
   // None of these states the silence back to the recipient. "We noticed you

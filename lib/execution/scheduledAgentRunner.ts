@@ -758,7 +758,11 @@ async function executeOne(
         /* The code travels with the sentence so the dashboard can say it in
            the owner's language — the sentence itself comes from a plugin
            definition and those are English-only. */
-        (execution as { failedStepCode?: string })?.failedStepCode
+        (execution as { failedStepCode?: string })?.failedStepCode,
+        /* And the plugin, so a surface can name it and offer to reconnect it.
+           Without this a dead connection reaches the owner anonymous: "A
+           connected app needs to be reconnected", with no way to act. */
+        (execution as { failedStepPlugin?: string })?.failedStepPlugin
       );
       result.failed += 1;
 

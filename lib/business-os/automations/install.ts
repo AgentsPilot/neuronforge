@@ -287,6 +287,14 @@ export interface StoppedAgent {
   /** The concrete next action, where the execution layer knew one. */
   whatToDo?: string;
   /**
+   * The plugin whose connection failed, where that is what went wrong.
+   *
+   * The key, not the name — `connectPlugin` takes a key, and this is what
+   * turns "reconnect it" from a sentence into a button. Absent for every
+   * failure that is not a connection, which is most of them.
+   */
+  plugin?: string;
+  /**
    * WHICH OF THE FOUR THINGS AN OWNER CAN DO about this — see
    * `failureCategoryOf`.
    *
@@ -1002,6 +1010,7 @@ export async function deadLetteredRuns(
       title: typeof failure.title === 'string' ? failure.title : '',
       message: failure.message,
       whatToDo: typeof failure.what_to_do === 'string' ? failure.what_to_do : undefined,
+      plugin: typeof failure.plugin === 'string' ? failure.plugin : undefined,
       lastTriedAt: run.created_at as string,
     });
   }

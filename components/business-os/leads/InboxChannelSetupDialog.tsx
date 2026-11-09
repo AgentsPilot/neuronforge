@@ -246,6 +246,9 @@ export function InboxChannelSetupDialog({
     connectCancelled:
       t('leads.inbox.tile.connect_cancelled') || 'The sign-in window closed before it finished.',
     alreadySetUp: t('leads.inbox.tile.already') || 'Already set up',
+    /* Set up, and the provider has refused the grant. Shares the channels
+       card's wording so the same state reads the same in both places. */
+    reconnect: t('leads.inbox.tile.reconnect') || 'Reconnect',
     setUpChange: t('leads.inbox.tile.set_up_change') || 'Set up · change',
     noMailbox:
       t('leads.inbox.no_mailbox') ||
@@ -611,7 +614,24 @@ export function InboxChannelSetupDialog({
               <div className="flex gap-2 flex-wrap mt-4">
                 {SUPPORTED_PROVIDERS.map(p => {
                   const usable = (live?.connectable ?? []).includes(p);
-                  const done = (live?.channels ?? []).some(c => c.provider === p);
+                  /*
+                   * ── A CHANNEL THAT EXISTS IS NOT THE SAME AS ONE THAT WORKS ──
+                   *
+                   * `done` asked only whether a channel ROW existed, so a
+                   * mailbox whose grant the provider had revoked still read
+                   * "Set up · change" — the owner's own screenshot, beside an
+                   * agent that had failed every run for four days.
+                   *
+                   * `mailbox_disconnected` is the channel's own verdict and it
+                   * now accounts for a refused grant, not merely an absent
+                   * connection. A broken channel falls back to the connect
+                   * path, which is exactly what the owner needs to press.
+                   */
+                  const channelRow = (live?.channels ?? []).find(c => c.provider === p);
+                  const brokenChannel = Boolean(
+                    channelRow?.problems?.includes('mailbox_disconnected')
+                  );
+                  const done = Boolean(channelRow) && !brokenChannel;
                   const chosen = provider === p;
 
                   /* An unconnected mailbox signs in, right here. A connected
@@ -679,14 +699,18 @@ export function InboxChannelSetupDialog({
                       >
                         {connecting
                           ? copy.connecting
-                          : done
-                            ? /* Says what pressing it DOES, not only what the
-                                 mailbox is: "already set up" described a state
-                                 and offered nothing. */
-                              copy.setUpChange
-                            : usable
-                              ? copy.connected
-                              : copy.connect}
+                          : brokenChannel
+                            ? /* Set up, and refused. Says the one thing that is
+                                 both true and actionable. */
+                              copy.reconnect
+                            : done
+                              ? /* Says what pressing it DOES, not only what the
+                                   mailbox is: "already set up" described a state
+                                   and offered nothing. */
+                                copy.setUpChange
+                              : usable
+                                ? copy.connected
+                                : copy.connect}
                       </div>
                     </button>
                   );

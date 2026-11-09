@@ -446,6 +446,20 @@ export class UserPluginConnections {
         /* A successful refresh clears the dead-grant mark — whatever the owner
            did to fix it worked, and the readiness line must stop warning. */
         settings: withoutRefreshFailure(connection.settings),
+        /*
+         * STAMPED HERE AND NOWHERE ELSE.
+         *
+         * The column has always existed and nothing has ever written it, so
+         * every connection reported NEVER no matter how often it refreshed.
+         * `updated_at` moves on a refresh too, but it also moves on a connect,
+         * a disconnect and a profile change, so it cannot answer the question
+         * this column is named after.
+         *
+         * It misled a real investigation on 2026-11-09: a Gmail connection
+         * refreshing daily read `last_refreshed_at: NEVER`, and the agent was
+         * reported dead when it had been completing its runs for two days.
+         */
+        last_refreshed_at: new Date().toISOString(),
         status: 'active'
       };
 

@@ -1220,6 +1220,16 @@ export class WorkflowPilot {
               )?.metadata?.errorCode
             : undefined) ||
           undefined,
+        /* Chosen by the same rule as the code above, and from the same output,
+           so the three always describe ONE step rather than three. */
+        failedStepPlugin:
+          (failedStepId && context?.stepOutputs?.get(failedStepId)?.plugin) ||
+          (context
+            ? [...context.stepOutputs.values()].find(
+                o => o?.metadata?.success === false && o?.plugin
+              )?.plugin
+            : undefined) ||
+          undefined,
         failedStepError:
           (failedStepId && context?.stepOutputs?.get(failedStepId)?.metadata?.error) ||
           /* A scatter reports itself failed while the real reason sits on the
