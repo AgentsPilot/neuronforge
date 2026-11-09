@@ -164,6 +164,52 @@ export abstract class BasePluginExecutor {
 
         if (!refreshed) throw firstError;
 
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * A REFRESH THAT RETURNS THE SAME TOKEN IS NOT A RECOVERY.
+         *
+         * Measured in production on 2026-11-09. Every five minutes, for ten
+         * days:
+         *
+         *     changed          false        has_access_token  true
+         *     incoming_length  256          previous_length   256
+         *     expires_in       3599         stored vs Gmail   401
+         *
+         * The provider handed back the very token it had just refused, and we
+         * wrote it down with a fresh hour on the clock. Nothing ever looked
+         * expired, so nothing escalated: the owner saw a healthy connection,
+         * the agent filed nothing, and the loop could not end by itself.
+         *
+         * Retrying with a token the provider rejected seconds ago cannot
+         * succeed. The honest reading is the one the grant-revoked path
+         * already has — this connection needs re-authorising — so it is
+         * recorded the same way and the original error is reported, instead of
+         * spending a second call to be told the same thing.
+         *
+         * Compared by VALUE because that is the only thing that distinguishes
+         * "a new token arrived" from "the clock moved". `expires_at` cannot:
+         * it is recomputed from the response either way.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        if (String(refreshed.access_token ?? '') === String(connection.access_token ?? '')) {
+          this.logger.warn(
+            { actionName, pluginKey: this.pluginName },
+            'The refresh returned the token the provider had just rejected; recording the grant as dead'
+          );
+
+          await this.userConnections
+            .recordDeadGrant(
+              refreshed,
+              `${this.pluginName}: refreshing returned the same token ${actionName} was refused`
+            )
+            .catch(() => {
+              /* Annotating is a courtesy; failing the action over it would turn
+                 a reportable problem into an unreportable one. */
+            });
+
+          throw firstError;
+        }
+
         this.logger.info(
           { actionName, pluginKey: this.pluginName },
           'Provider rejected a token our expiry still called valid; refreshed and retrying once'
