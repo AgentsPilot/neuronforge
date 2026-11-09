@@ -1,4 +1,4 @@
--- Rollback for 20261109_moving_a_makeup_keeps_its_lineage.sql
+-- Rollback for 20261112_moving_a_makeup_keeps_its_lineage.sql
 --
 -- Restores `move_meeting` exactly as 20261087 left it: the INSERT drops
 -- `replaces_meeting_id` again, so a moved make-up once more stops being a

@@ -56,7 +56,7 @@
 --
 -- Pre-check: scripts/precheck-makeup-lineage.sql
 -- Checker:   scripts/check-makeup-lineage-migration.sql
--- Rollback:  supabase/SQL Scripts/20261109_moving_a_makeup_keeps_its_lineage_rollback.sql
+-- Rollback:  supabase/SQL Scripts/20261112_moving_a_makeup_keeps_its_lineage_rollback.sql
 -- ---------------------------------------------------------------------------
 
 BEGIN;

@@ -78,7 +78,23 @@ describe('what the token route answers with', () => {
     expect(route).toMatch(/windowsForDate\(/);
     expect(route).toMatch(/schedulingTimeOffRepository\.list\(/);
     expect(route).toMatch(/busyMeetings\(/);
-    expect(route).toMatch(/externalCalendarEventRepository\.getBusySlots\(/);
+    /*
+     * ── NOW VIA THE SHARED HELPER, WHICH IS THE POINT ─────────────────────
+     *
+     * This looked for the repository call inline. The route no longer makes
+     * one: it calls `externalBusy()`, and that helper makes the
+     * `getBusySlots` call with the overlap semantics every caller needs. An
+     * inlined copy per route is what the helper was extracted to end, and is
+     * the same move `busyMeetings` and `MEETING_HOLDS_SLOT_FILTER` made.
+     *
+     * What this pins is unchanged: the reschedule path consults the external
+     * calendar, so a client is never offered an hour that is busy in the
+     * owner's Google Calendar while the public booking page refuses it.
+     */
+    expect(route).toMatch(/externalBusy\(/);
+    expect(strip(read('lib/scheduling/externalBusy.ts'))).toMatch(
+      /externalCalendarEventRepository\.getBusySlots\(/
+    );
     expect(route).toMatch(/generateTimeSlots\(/);
   });
 
@@ -158,7 +174,8 @@ describe('which days the calendar offers', () => {
   it('counts time off and the external calendar, not just the weekly hours', () => {
     /* A weekday rule alone would still offer a day blocked for a holiday. */
     expect(body).toMatch(/schedulingTimeOffRepository\.list\(/);
-    expect(body).toMatch(/externalCalendarEventRepository\.getBusySlots\(/);
+    /* Via `externalBusy()` — see the note on the route's own assertion. */
+    expect(body).toMatch(/externalBusy\(/);
     expect(body).toMatch(/busyMeetings\(/);
   });
 

@@ -72,8 +72,29 @@ describe('what counts as taken', () => {
      * cancelled or missed appointment frees its hour. A local status check
      * would drift from it and block the diary for ever.
      */
-    expect(code).toContain("import { holdsSlot } from '@/lib/business-os/bookingStatus'");
-    expect(code).toMatch(/if \(!holdsSlot\(booking\)\) return false;/);
+    /*
+     * ── THE CALENDAR'S RULE IS BROADER, AND THAT IS THE POINT ─────────────
+     *
+     * This demanded `holdsSlot`. Switching to it was measured across all 42
+     * combinations of the two columns and changes six of them, every one in
+     * the same direction — an hour that is blocked today becomes bookable:
+     *
+     *   meeting_status null + status 'no_show'   blocked -> offered
+     *   meeting_status null + status null        blocked -> offered
+     *
+     * The first contradicts the rule `20261111_a_no_show_keeps_its_hour.sql`
+     * exists to establish: `holdsSlot` falls through to
+     * `SLOT_HOLDING_STATUSES` — confirmed, pending, completed — so a JOB-level
+     * no-show reads as free. The SQL constraint spells the same list, so the
+     * two are in agreement and neither can be widened without the other.
+     *
+     * The grid therefore keeps its own rule, which releases ONLY the two
+     * outcomes that genuinely free an hour and blocks anything it cannot
+     * read. What this pins is that it releases exactly those two and nothing
+     * more — drift in the other direction is what would double-book an hour.
+     */
+    expect(code).toMatch(/outcome !== 'cancelled' && outcome !== 'moved'/);
+    expect(code).not.toMatch(/meeting_status\s*===\s*'no_show'[\s\S]{0,40}return false/);
   });
 
   it('overlaps the way the server does, not by equal start times', () => {

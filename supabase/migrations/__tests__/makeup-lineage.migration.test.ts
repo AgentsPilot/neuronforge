@@ -21,8 +21,8 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 const ROOT = process.cwd();
-const MIGRATION = join(ROOT, 'supabase', 'migrations', '20261109_moving_a_makeup_keeps_its_lineage.sql');
-const ROLLBACK = join(ROOT, 'supabase', 'SQL Scripts', '20261109_moving_a_makeup_keeps_its_lineage_rollback.sql');
+const MIGRATION = join(ROOT, 'supabase', 'migrations', '20261112_moving_a_makeup_keeps_its_lineage.sql');
+const ROLLBACK = join(ROOT, 'supabase', 'SQL Scripts', '20261112_moving_a_makeup_keeps_its_lineage_rollback.sql');
 const PRECHECK = join(ROOT, 'scripts', 'precheck-makeup-lineage.sql');
 const CHECKER = join(ROOT, 'scripts', 'check-makeup-lineage-migration.sql');
 const REPAIR = join(ROOT, 'supabase', 'SQL Scripts', '20261109_restore_moved_makeup_lineage_data.sql');

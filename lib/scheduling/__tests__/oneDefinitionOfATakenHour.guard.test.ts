@@ -96,9 +96,23 @@ describe('one definition of a taken hour', () => {
       ?.map(s => s.replace(/'/g, ''))
       .sort();
 
-    const predicate = constraintSql.slice(constraintSql.indexOf('ADD CONSTRAINT'));
+    /*
+     * ── THE BOOKINGS CONSTRAINT, NAMED ────────────────────────────────────
+     *
+     * This sliced from the FIRST `ADD CONSTRAINT`, which is the MEETINGS table
+     * — and that one has no job status at all. `indexOf('status IN (')` then
+     * matched inside `meeting_status IN ('held', 'no_show')`, so the test
+     * compared the meeting outcomes against the job statuses and reported the
+     * two halves as disagreeing when they do not.
+     *
+     * Only the bookings constraint carries `status IN (…)`, so it is named
+     * rather than taken by position.
+     */
+    const predicate = constraintSql.slice(
+      constraintSql.indexOf('scheduling_bookings_no_overlap\n  EXCLUDE')
+    );
     const inSql = predicate
-      .slice(predicate.indexOf('status IN ('))
+      .slice(predicate.indexOf(' status IN ('))
       .slice(0, 120)
       .match(/'([a-z_]+)'/g)
       ?.map(s => s.replace(/'/g, ''))
