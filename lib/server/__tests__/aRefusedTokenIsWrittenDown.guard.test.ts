@@ -208,3 +208,51 @@ describe('the temporary diagnostic is gone', () => {
     expect(code(read('lib/server/gmail-plugin-executor.ts'))).not.toMatch(/sentTokenPrefix/);
   });
 });
+
+describe('a flag-setter may not write a credential', () => {
+  const REPO = code(read('lib/repositories/PluginConnectionRepository.ts'));
+
+  it('recordRefreshFailure writes settings and nothing else', () => {
+    /*
+     * It used to `upsert` the WHOLE connection object it was handed, token
+     * columns included. A function whose only job is to set
+     * `settings.refresh_failed_at` was therefore a credential writer, and
+     * because the object came from a caller that had read it earlier, it could
+     * write an OLD token and an OLD expiry back over a newer one.
+     *
+     * Measured on a live account on 2026-11-09: the row held a verified
+     * working token at 22:00:40, and at 22:05:22 the refresh path read a token
+     * written at 21:28 — two generations old. The agent was failing on a
+     * credential that kept being restored underneath it.
+     */
+    const body = CONNECTIONS.slice(CONNECTIONS.indexOf('private async recordRefreshFailure('));
+    const fn = body.slice(0, body.indexOf('\n  }'));
+
+    expect(fn).toMatch(/updateSettings\(/);
+    expect(fn).not.toMatch(/access_token/);
+    expect(fn).not.toMatch(/refresh_token/);
+    expect(fn).not.toMatch(/expires_at/);
+    expect(fn).not.toMatch(/upsert\(/);
+  });
+
+  it('and the write it uses cannot reach a credential column', () => {
+    /* Narrow by construction, like `updateProfileData` and `updateStatus`
+       beside it, rather than narrow by the caller remembering. */
+    const body = REPO.slice(REPO.indexOf('async updateSettings('));
+    const fn = body.slice(0, body.indexOf('\n  }'));
+
+    expect(fn).toMatch(/\.update\(\{/);
+    expect(fn).toMatch(/settings,/);
+    expect(fn).not.toMatch(/access_token/);
+    expect(fn).not.toMatch(/refresh_token/);
+    expect(fn).not.toMatch(/expires_at/);
+  });
+
+  it('scoped to one user and one plugin, so it cannot move the row', () => {
+    const body = REPO.slice(REPO.indexOf('async updateSettings('));
+    const fn = body.slice(0, body.indexOf('\n  }'));
+
+    expect(fn).toMatch(/\.eq\('user_id', userId\)/);
+    expect(fn).toMatch(/\.eq\('plugin_key', pluginKey\)/);
+  });
+});
