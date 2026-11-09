@@ -295,6 +295,60 @@ export class PluginConnectionRepository {
   }
 
   /**
+   * Replace a connection's `settings` and nothing else.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS EXISTS, AND WHY IT IS NARROW.
+   *
+   * `recordRefreshFailure` had one job — set `settings.refresh_failed_at` — and
+   * did it by upserting the WHOLE connection object it was handed, token
+   * columns included:
+   *
+   *     access_token:  connection.access_token
+   *     expires_at:    connection.expires_at
+   *     refresh_token: connection.refresh_token
+   *
+   * Hand that a connection read even seconds earlier and it writes an older
+   * token and an older expiry back over a newer one. A flag-setter became a
+   * credential-writer, and nothing in its name or its call sites said so.
+   *
+   * Measured on a live account on 2026-11-09: the row held a verified working
+   * token at 22:00:40, and at 22:05:22 the refresh path read a token written
+   * at 21:28 — two generations old. Something had reverted it.
+   *
+   * So the write is now a fixed field list that cannot reach a credential,
+   * which removes the whole class rather than one caller. The same shape as
+   * `updateProfileData` and `updateStatus` beside it: a narrow patch, scoped
+   * by `user_id` + `plugin_key`, that cannot widen or move the row
+   * (tenant-isolation-guard Step 3).
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async updateSettings(
+    userId: string,
+    pluginKey: string,
+    settings: Record<string, unknown>
+  ): Promise<AgentRepositoryResult<boolean>> {
+    try {
+      if (!userId || !pluginKey) throw new Error('userId and pluginKey are required');
+
+      const { error } = await this.supabase
+        .from('plugin_connections')
+        .update({
+          settings,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId)
+        .eq('plugin_key', pluginKey);
+
+      if (error) throw error;
+      return { data: true, error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId, pluginKey }, 'Failed to update connection settings');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Save a refreshed OAuth access token for ONE connection of ONE user.
    *
    * Legacy AgentKit refresh (PluginCoordinator, DE-0b S1). Runs as the service
@@ -308,7 +362,26 @@ export class PluginConnectionRepository {
   async updateRefreshedToken(
     userId: string,
     pluginKey: string,
-    token: { accessToken: string; expiresAt: string | null }
+    token: {
+      accessToken: string;
+      expiresAt: string | null;
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * ONLY WHEN THE PROVIDER ACTUALLY ROTATED IT.
+       *
+       * Google returns a refresh token on consent and almost never again, so
+       * for nearly every refresh this is absent and the column must keep what
+       * it has. Writing it unconditionally from a caller's object is how a
+       * reconnect gets undone: on 2026-11-09 an owner created a new grant at
+       * 22:34:27 and a refresh 55 seconds later wrote an OLD refresh token
+       * over it, resurrecting a dead grant and discarding the new one
+       * permanently. Fingerprints: new `54a0579a5792` replaced by old
+       * `b3cded934a48`.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      refreshToken?: string | null;
+      lastRefreshedAt?: string;
+    }
   ): Promise<AgentRepositoryResult<boolean>> {
     try {
       if (!userId || !pluginKey) throw new Error('userId and pluginKey are required');
@@ -320,6 +393,11 @@ export class PluginConnectionRepository {
           {
             access_token: token.accessToken,
             expires_at: token.expiresAt,
+            /* Absent keys are omitted by the client, so the column is left
+               alone rather than nulled. */
+            ...(token.refreshToken ? { refresh_token: token.refreshToken } : {}),
+            ...(token.lastRefreshedAt ? { last_refreshed_at: token.lastRefreshedAt } : {}),
+            status: 'active',
             updated_at: new Date().toISOString(),
           },
           { count: 'exact' }

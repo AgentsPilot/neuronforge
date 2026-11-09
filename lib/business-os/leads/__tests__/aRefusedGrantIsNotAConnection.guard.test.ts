@@ -123,7 +123,15 @@ describe('a refresh that worked says so', () => {
     const service = code(read('lib/server/user-plugin-connections.ts'));
     const refresh = service.slice(service.indexOf('async refreshToken('));
 
-    expect(refresh).toMatch(/last_refreshed_at: new Date\(\)\.toISOString\(\)/);
+    /*
+     * Passed to the narrow patch rather than placed in a whole-row upsert.
+     * The upsert was replaced on 2026-11-09: writing every column on a refresh
+     * let a caller's stale object overwrite `refresh_token` and destroy a
+     * grant an owner had just created, and it silently rewrote `connected_at`
+     * on every Google connection on the account.
+     */
+    expect(refresh).toMatch(/lastRefreshedAt: new Date\(\)\.toISOString\(\)/);
+    expect(refresh).toMatch(/updateRefreshedToken\(/);
   });
 
   it('and only on a refresh, never on a first connect', () => {
@@ -131,6 +139,42 @@ describe('a refresh that worked says so', () => {
        one fact the column exists to carry. */
     const service = code(read('lib/server/user-plugin-connections.ts'));
 
-    expect(service.match(/last_refreshed_at:/g) ?? []).toHaveLength(1);
+    expect(service.match(/lastRefreshedAt:/g) ?? []).toHaveLength(1);
+    /* And the connect path must not stamp it at all. */
+    const connect = service.slice(0, service.indexOf('async refreshToken('));
+    expect(connect).not.toMatch(/last_refreshed_at/);
+  });
+
+  it('a refresh writes FOUR facts and touches nothing else', () => {
+    /*
+     * The defect this replaced, in one sentence: a token renewal upserted the
+     * whole connection, so `refresh_token`, `scope`, `email`, `profile_data`
+     * and `connected_at` were all rewritten from whatever object the caller
+     * held. Measured on a live account — a grant created at 22:34:27 was
+     * overwritten by a stale caller 55 seconds later and lost.
+     */
+    const service = code(read('lib/server/user-plugin-connections.ts'));
+    const from = service.indexOf('async refreshToken(');
+    /* Bounded to THIS method: the next member declaration ends it. Slicing to
+       a named later method swept in neighbours and tested the wrong code. */
+    const next = service.slice(from + 1).search(/\n  (?:async |private |public |\/\*\*)/);
+    const refresh = service.slice(from, from + 1 + next);
+
+    expect(refresh).not.toMatch(/upsert\(/);
+    expect(refresh).not.toMatch(/profile_data/);
+    expect(refresh).not.toMatch(/connected_at/);
+  });
+
+  it('and refreshes the grant the ROW names, not the caller\'s copy', () => {
+    /*
+     * Four call sites hand this a connection, each read at some earlier
+     * moment. A stale one refreshes a SUPERSEDED grant, which is how every
+     * reconnect was undone before it could be used.
+     */
+    const service = code(read('lib/server/user-plugin-connections.ts'));
+    const refresh = service.slice(service.indexOf('async refreshToken('));
+
+    expect(refresh).toMatch(/findActiveByUserAndPlugin\(/);
+    expect(refresh).toMatch(/stale connection/);
   });
 });

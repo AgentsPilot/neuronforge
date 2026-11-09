@@ -444,6 +444,72 @@ export class UserPluginConnections {
       userId: connection.user_id
     }, 'Token Refresh: Attempting to refresh token');
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE ROW IS THE AUTHORITY ON WHICH GRANT TO REFRESH — NOT THE CALLER.
+     *
+     * This function used to refresh whatever `connection` it was handed. Four
+     * call sites pass one, each having read it at some earlier moment, and a
+     * stale one does irreversible damage: it refreshes a SUPERSEDED grant and
+     * then writes that grant's tokens back over the row.
+     *
+     * Measured on a live account on 2026-11-09. The owner deleted the dead
+     * connection and re-authorised at 22:34:27, producing refresh token
+     * `54a0579a5792` and an access token Gmail answered 200 to. Fifty-five
+     * seconds later a refresh ran holding an object from 21:28, refreshed the
+     * OLD grant, and wrote `b3cded934a48` and a dead access token over the new
+     * row. The new grant was gone, unrecoverably, and the owner's reconnect
+     * had achieved nothing. It had happened on every previous reconnect too,
+     * which is why none of them ever held.
+     *
+     * So the refresh token is read from the row at the moment of use. It costs
+     * one indexed read and it makes a stale caller harmless: the worst a stale
+     * object can now do is name the right plugin.
+     *
+     * The caller's object is still used for everything else — it carries the
+     * ids and the settings — but never again for deciding WHICH grant to
+     * renew.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const { data: live } = await this.repository.findActiveByUserAndPlugin(
+      connection.user_id,
+      connection.plugin_key
+    );
+
+    if (live?.refresh_token && live.refresh_token !== connection.refresh_token) {
+      logger.warn(
+        {
+          pluginKey: connection.plugin_key,
+          userId: connection.user_id,
+          callerFp: tokenFingerprint(String(connection.refresh_token ?? '')),
+          rowFp: tokenFingerprint(String(live.refresh_token)),
+          rowId: live.id,
+        },
+        'The caller handed us a stale connection; refreshing the grant the ROW names instead'
+      );
+
+      /*
+       * Recorded on the row as well, because the log line it replaces was
+       * unreachable: the local server filters it and the deployed one is a
+       * different build. Fingerprints only — never token material. This is how
+       * we learn whether stale callers are still happening now that they can no
+       * longer do damage, and it is the thing to delete once they stop.
+       */
+      await this.repository
+        .updateSettings(connection.user_id, connection.plugin_key, {
+          ...((live.settings ?? {}) as Record<string, unknown>),
+          stale_caller_seen_at: new Date().toISOString(),
+          stale_caller_fp: tokenFingerprint(String(connection.refresh_token ?? '')),
+          stale_caller_row_fp: tokenFingerprint(String(live.refresh_token)),
+        })
+        .catch(() => {
+          /* Diagnostics. Never fail a refresh to record them. */
+        });
+    }
+
+    /* The row wins wherever it has an answer. */
+    connection = live ? { ...connection, ...live } : connection;
+
     if (!connection.refresh_token) {
       logger.warn({
         pluginKey: connection.plugin_key
@@ -617,83 +683,66 @@ export class UserPluginConnections {
         'Refresh probe: what the provider sent'
       );
 
-      // Update connection via repository upsert
-      const updatedConnectionData: UpsertPluginConnectionInput = {
-        user_id: connection.user_id,
-        plugin_key: connection.plugin_key,
-        plugin_name: connection.plugin_name,
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token || connection.refresh_token,
-        expires_at: expiresAt,
-        scope: connection.scope || null,
-        username: connection.username || '',
-        email: connection.email || null,
-        profile_data: connection.profile_data || null,
-        /* A successful refresh clears the dead-grant mark — whatever the owner
-           did to fix it worked, and the readiness line must stop warning. */
-        settings: { ...withoutRefreshFailure(connection.settings), refresh_probe: probe },
-        /*
-         * STAMPED HERE AND NOWHERE ELSE.
-         *
-         * The column has always existed and nothing has ever written it, so
-         * every connection reported NEVER no matter how often it refreshed.
-         * `updated_at` moves on a refresh too, but it also moves on a connect,
-         * a disconnect and a profile change, so it cannot answer the question
-         * this column is named after.
-         *
-         * It misled a real investigation on 2026-11-09: a Gmail connection
-         * refreshing daily read `last_refreshed_at: NEVER`, and the agent was
-         * reported dead when it had been completing its runs for two days.
-         */
-        last_refreshed_at: new Date().toISOString(),
-        status: 'active'
-      };
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A NARROW PATCH, NOT A WHOLE-ROW UPSERT.
+       *
+       * This was an `upsert` of a complete connection object, so a refresh
+       * rewrote EVERY column from whatever the caller held: `refresh_token`,
+       * `scope`, `email`, `profile_data`, `username`, and — because the upsert
+       * defaults it — `connected_at`. A token renewal was silently rewriting
+       * the owner's connection date.
+       *
+       * It also made a stale caller catastrophic rather than merely wrong. On
+       * 2026-11-09 a refresh 55 seconds after a reconnect wrote an old refresh
+       * token over a new grant and destroyed it; the row's `connected_at`
+       * moved to the refresh time, which is how the whole-row write was
+       * spotted at all.
+       *
+       * A refresh produces exactly four facts. It writes those four and
+       * touches nothing else. `refresh_token` goes only when the provider
+       * actually rotated it — see `updateRefreshedToken`.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const { data: patched, error } = await this.repository.updateRefreshedToken(
+        connection.user_id,
+        connection.plugin_key,
+        {
+          accessToken: incoming,
+          expiresAt,
+          refreshToken: tokens.refresh_token ?? null,
+          lastRefreshedAt: new Date().toISOString(),
+        }
+      );
 
-      const { data, error } = await this.repository.upsert(updatedConnectionData);
-
-      if (error || !data) {
+      if (error || !patched) {
         logger.error({ err: error, pluginKey: connection.plugin_key }, 'Failed to save refreshed token');
         return null;
       }
 
       /*
-       * Did the write persist what arrived? `data` is the row the upsert
-       * returned, so this is the PERSISTED value rather than a copy of the
-       * payload we sent. Logged always; written to the row only when the
-       * answer is no, which keeps the healthy path to one write and captures
-       * the anomaly exactly when it happens.
+       * The row as it now stands, read back rather than assembled in memory —
+       * so the caller receives what is actually stored, and the dead-grant
+       * marker below is cleared from the row's OWN settings rather than from a
+       * caller's possibly stale copy.
        */
-      const storedBack = String((data as { access_token?: string }).access_token ?? '');
-      const persistedWhatArrived = storedBack === incoming;
+      const { data: saved } = await this.repository.findActiveByUserAndPlugin(
+        connection.user_id,
+        connection.plugin_key
+      );
 
-      if (!persistedWhatArrived) {
-        logger.error(
-          {
-            pluginKey: connection.plugin_key,
-            userId: connection.user_id,
-            incomingFp: probe.incoming_fp,
-            storedFp: tokenFingerprint(storedBack),
-            storedLength: storedBack.length,
-          },
-          'Refresh probe: the row does NOT hold the token the provider sent'
-        );
+      const data = saved ?? { ...connection, access_token: incoming, expires_at: expiresAt };
 
+      /* A successful refresh clears the dead-grant mark — whatever the owner
+         did to fix it worked, and the readiness line must stop warning. Only
+         when it is actually set, so the healthy path writes once, not twice. */
+      const liveSettings = (saved?.settings ?? {}) as Record<string, unknown>;
+      if (liveSettings.refresh_failed_at || liveSettings.refresh_failed_detail) {
         await this.repository
-          .upsert({
-            ...updatedConnectionData,
-            settings: {
-              ...updatedConnectionData.settings,
-              refresh_probe: {
-                ...probe,
-                persisted_what_arrived: false,
-                stored_fp: tokenFingerprint(storedBack),
-                stored_length: storedBack.length,
-              },
-            },
-          })
+          .updateSettings(connection.user_id, connection.plugin_key, withoutRefreshFailure(liveSettings))
           .catch(() => {
-            /* Diagnostics. Failing the refresh to record them would turn a
-               working connection into a broken one. */
+            /* The mark is a warning, not a credential. Failing the refresh to
+               clear it would turn a recovered connection into a broken one. */
           });
       }
 
@@ -966,24 +1015,34 @@ export class UserPluginConnections {
   private async recordRefreshFailure(connection: UserConnection, detail: string): Promise<void> {
     try {
       const settings = (connection.settings ?? {}) as Record<string, unknown>;
-      await this.repository.upsert({
-        user_id: connection.user_id,
-        plugin_key: connection.plugin_key,
-        plugin_name: connection.plugin_name,
-        access_token: connection.access_token,
-        refresh_token: connection.refresh_token,
-        expires_at: connection.expires_at,
-        scope: connection.scope || null,
-        username: connection.username || '',
-        email: connection.email || null,
-        profile_data: connection.profile_data || null,
-        settings: {
-          ...settings,
-          refresh_failed_at: new Date().toISOString(),
-          refresh_failed_detail: detail,
-        },
-        status: 'active',
-      } as never);
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * SETTINGS ONLY. THIS MUST NOT TOUCH A CREDENTIAL.
+       *
+       * This was a full `upsert` of the connection object it was handed, token
+       * columns included — `access_token`, `refresh_token`, `expires_at`. A
+       * function whose entire job is to set one flag was writing credentials,
+       * and because the object came from a caller that had read it at some
+       * earlier point, it could write an OLD token and an OLD expiry back over
+       * a newer one.
+       *
+       * Measured on a live account on 2026-11-09: the row held a verified
+       * working token at 22:00:40, and at 22:05:22 the refresh path read a
+       * token written at 21:28 — two generations old. The agent had been
+       * failing on an expired credential that kept being restored underneath
+       * it.
+       *
+       * `updateSettings` is a fixed field list that cannot reach a credential,
+       * so no caller of this function can resurrect a token however stale the
+       * object it holds.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      await this.repository.updateSettings(connection.user_id, connection.plugin_key, {
+        ...settings,
+        refresh_failed_at: new Date().toISOString(),
+        refresh_failed_detail: detail,
+      });
     } catch (err) {
       logger.warn(
         { err, pluginKey: connection.plugin_key },

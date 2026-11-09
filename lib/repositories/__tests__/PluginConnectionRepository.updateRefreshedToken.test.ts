@@ -61,9 +61,23 @@ describe('PluginConnectionRepository.updateRefreshedToken (DE-0b S1)', () => {
     expect(calls[0]).toEqual(['from', 'plugin_connections']);
     const update = calls.find(([m]) => m === 'update')!;
     const patch = update[1] as Record<string, unknown>;
-    expect(Object.keys(patch).sort()).toEqual(['access_token', 'expires_at', 'updated_at']);
+    /*
+     * `status` joined the fixed list on 2026-11-09, when this method became the
+     * write for EVERY token refresh rather than only the legacy AgentKit one. A
+     * refresh that succeeded proves the connection is usable, and the surfaces
+     * that gate on `status` must stop calling it broken.
+     *
+     * `refresh_token` and `last_refreshed_at` are absent here BY DESIGN: this
+     * call passed neither, and an absent key is omitted from the patch so the
+     * column keeps what it has. That omission is the fix — writing a refresh
+     * token unconditionally is what destroyed a freshly created grant.
+     */
+    expect(Object.keys(patch).sort()).toEqual(['access_token', 'expires_at', 'status', 'updated_at']);
     expect(patch.access_token).toBe(TOKEN.accessToken);
     expect(patch.expires_at).toBe(TOKEN.expiresAt);
+    expect(patch.status).toBe('active');
+    expect(patch).not.toHaveProperty('refresh_token');
+    expect(patch).not.toHaveProperty('last_refreshed_at');
     expect(update[2]).toEqual({ count: 'exact' });
     expect(calls.filter(([m]) => ['eq', 'neq', 'or', 'in'].includes(m))).toEqual([
       ['eq', 'user_id', 'user-1'],
@@ -71,6 +85,44 @@ describe('PluginConnectionRepository.updateRefreshedToken (DE-0b S1)', () => {
     ]);
     // Nothing is read back: no select, so the token never returns.
     expect(calls.some(([m]) => m === 'select' || m === 'upsert' || m === 'insert')).toBe(false);
+  });
+
+  it('writes refresh_token ONLY when the provider rotated it', async () => {
+    /*
+     * The whole point. Google returns a refresh token on consent and almost
+     * never again, so for nearly every refresh this must leave the column
+     * alone. Writing it from a caller's object is how a reconnect was undone:
+     * a new grant created at 22:34:27 on 2026-11-09 had an OLD refresh token
+     * written over it 55 seconds later and was lost for good.
+     */
+    const { client, calls } = recordingClient({ error: null, count: 1 });
+    await new PluginConnectionRepository(client).updateRefreshedToken('user-1', 'google-mail', {
+      accessToken: 'tok',
+      expiresAt: null,
+      refreshToken: null,
+    });
+    const patch = calls.find(([m]) => m === 'update')![1] as Record<string, unknown>;
+    expect(patch).not.toHaveProperty('refresh_token');
+
+    const rotated = recordingClient({ error: null, count: 1 });
+    await new PluginConnectionRepository(rotated.client).updateRefreshedToken('user-1', 'google-mail', {
+      accessToken: 'tok',
+      expiresAt: null,
+      refreshToken: 'brand-new',
+    });
+    const p2 = rotated.calls.find(([m]) => m === 'update')![1] as Record<string, unknown>;
+    expect(p2.refresh_token).toBe('brand-new');
+  });
+
+  it('stamps last_refreshed_at when the caller gives one', async () => {
+    const { client, calls } = recordingClient({ error: null, count: 1 });
+    await new PluginConnectionRepository(client).updateRefreshedToken('user-1', 'google-mail', {
+      accessToken: 'tok',
+      expiresAt: null,
+      lastRefreshedAt: '2026-11-09T23:00:00.000Z',
+    });
+    const patch = calls.find(([m]) => m === 'update')![1] as Record<string, unknown>;
+    expect(patch.last_refreshed_at).toBe('2026-11-09T23:00:00.000Z');
   });
 
   it('a null expiry is written as null', async () => {

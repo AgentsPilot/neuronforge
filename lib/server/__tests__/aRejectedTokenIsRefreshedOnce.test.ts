@@ -180,8 +180,16 @@ describe('a grant the provider refused reaches the owner', () => {
   });
 
   it('clears the mark when a later refresh succeeds', () => {
-    /* Whatever the owner did to fix it worked; the warning has to stop. */
-    expect(conns).toMatch(/withoutRefreshFailure\(connection\.settings\)/);
+    /*
+     * Whatever the owner did to fix it worked; the warning has to stop.
+     *
+     * Cleared from the ROW's own settings now, not from `connection.settings`.
+     * A caller's copy can be stale, and on 2026-11-09 a stale one written back
+     * over a freshly created grant destroyed it — so the refresh no longer
+     * writes anything derived from the object it was handed.
+     */
+    expect(conns).toMatch(/withoutRefreshFailure\(liveSettings\)/);
+    expect(conns).toMatch(/liveSettings\.refresh_failed_at \|\| liveSettings\.refresh_failed_detail/);
   });
 
   it('makes a refused grant read as expired, whatever the clock says', () => {
