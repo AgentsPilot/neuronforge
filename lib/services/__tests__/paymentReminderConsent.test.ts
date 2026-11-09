@@ -9,6 +9,22 @@
  * one invoice on the same day.
  *
  * These are the rules that keep it to one.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AND THEN THERE REALLY WAS ONE.
+ *
+ * The arrangement above still left two switches, split by which side of the due
+ * date a reminder fell on: `chase_invoices_enabled` after it,
+ * `payment_reminder_enabled` before. Each gated the thing the owner had been
+ * shown, which sounds right and was not — the second defaults to TRUE and has
+ * no UI anywhere, so an owner who had agreed to nothing was emailing their
+ * clients "due in three days" and "due today" for every invoice raised, in
+ * their name and under their branding. Only the past-due half ever asked.
+ *
+ * `chase_invoices_enabled` now governs every reminder type.
+ * `payment_reminder_enabled` is still read and written — the day lists live
+ * beside it — and no longer decides whether a client hears from us.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { PaymentReminderService } from '../PaymentReminderService';
@@ -107,10 +123,38 @@ describe('who may be chased about a past-due invoice', () => {
     expect(error?.message ?? '').not.toMatch(/disabled|not been turned on/);
   });
 
-  it('still governs pre-due reminders with the settings toggle', async () => {
-    // A reminder before the date is a courtesy — here is what is coming, on
-    // this day. It needs no permission, and turning it off must still work.
+  it('governs the pre-due courtesy as well', async () => {
+    /*
+     * The case that justifies the change. `payment_reminder_enabled` is true
+     * here, as it is on every account on the platform, and the owner has not
+     * answered the card — so nothing may go out, not even the courtesy.
+     *
+     * It used to send. "Needs no permission" became "nobody was ever asked".
+     */
     const { data, error } = await service({
+      payment_reminder_enabled: true,
+      chase_invoices_enabled: false,
+    }).scheduleReminder('user-1', {
+      contactId: 'c1',
+      invoiceId: 'i1',
+      reminderType: 'upcoming_due',
+      scheduledAt: new Date().toISOString(),
+    });
+
+    expect(data).toBeNull();
+    expect(error?.message).toMatch(/not been turned on/);
+  });
+
+  it('and the old pre-due switch no longer decides anything on its own', async () => {
+    /*
+     * The mirror of the test above. With the card answered, a `false` on the
+     * superseded column does not silence the courtesy: the owner agreed to the
+     * schedule on the card, and that card names both halves.
+     *
+     * Reaching the write is the proof — this mock serves only
+     * `business_profiles`, so the assertion is that it was not REFUSED.
+     */
+    const { error } = await service({
       payment_reminder_enabled: false,
       chase_invoices_enabled: true,
     }).scheduleReminder('user-1', {
@@ -120,8 +164,7 @@ describe('who may be chased about a past-due invoice', () => {
       scheduledAt: new Date().toISOString(),
     });
 
-    expect(data).toBeNull();
-    expect(error?.message).toMatch(/disabled/);
+    expect(error?.message ?? '').not.toMatch(/disabled|not been turned on/);
   });
 });
 

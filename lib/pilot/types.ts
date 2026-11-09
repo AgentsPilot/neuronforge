@@ -1001,6 +1001,19 @@ export interface WorkflowExecutionResult {
   failedStepError?: string;
   /** The failing step's error CODE — the half that can be translated. */
   failedStepCode?: string;
+  /**
+   * The PLUGIN the failing step was using.
+   *
+   * `StepOutput` has carried it all along and it never left this result, so a
+   * dead connection reached the dashboard anonymous: `translateAuthIssue` looks
+   * for a plugin, finds nothing, and writes "A connected app needs to be
+   * reconnected" instead of naming Gmail.
+   *
+   * It is also the one thing a Reconnect control needs — `connectPlugin` takes
+   * a plugin key and nothing else — so without it a surface can describe the
+   * problem and cannot offer the fix.
+   */
+  failedStepPlugin?: string;
 
   // Execution summary for calibration (aggregated metadata, NO actual client data)
   execution_summary?: CalibrationExecutionSummary;

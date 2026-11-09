@@ -46,14 +46,35 @@ export class PluginConnectionRepository {
   async findByUserAndPlugins(
     userId: string,
     pluginNames: readonly string[]
-  ): Promise<AgentRepositoryResult<Array<{ plugin_name: string; status: string | null }>>> {
+  ): Promise<
+    AgentRepositoryResult<
+      Array<{
+        plugin_name: string;
+        status: string | null;
+        settings: Record<string, unknown> | null;
+      }>
+    >
+  > {
     try {
       /* An empty list would become `in.()`, which PostgREST rejects. */
       if (pluginNames.length === 0) return { data: [], error: null };
 
+      /*
+       * `settings` joins the two columns this used to read, for one fact inside
+       * it: `refresh_failed_at`, written when a provider REFUSES a refresh.
+       *
+       * `status` cannot answer that. `PluginConnectionRepository.upsert` sets
+       * `status: 'active'` unconditionally, overriding whatever a caller
+       * passes, so a revoked grant keeps reading active for ever and every
+       * surface downstream calls it healthy. The marker is the only thing that
+       * knows, and it is deliberately written only for `grant_revoked` and
+       * never for a transient failure.
+       *
+       * Still narrow: three columns, not `*`. The tokens stay unread.
+       */
       const { data, error } = await this.supabase
         .from('plugin_connections')
-        .select('plugin_name, status')
+        .select('plugin_name, status, settings')
         .eq('user_id', userId)
         .in('plugin_name', pluginNames as string[]);
 

@@ -41,6 +41,10 @@ import {
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
+/* The settled test the money module owns — status AND `paid_at`, "because they
+   can disagree: a processor webhook may stamp `paid_at` before the status
+   transition lands". A statement must not list money that has arrived. */
+import { isSettledInvoice } from '@/lib/payments/invoiceSettlement';
 import { paymentReminderRepository } from '@/lib/repositories/PaymentReminderRepository';
 import { leadResponseRepository } from '@/lib/repositories/LeadResponseRepository';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
@@ -48,6 +52,7 @@ import { resolveEmailBranding } from '@/lib/email/branding';
 import { sendEmail, type SendEmailResult } from '@/lib/notifications/emailTransport';
 import {
   generateChaseInvoiceEmail,
+  generateOutstandingStatementEmail,
   generateFollowupNudgeEmail,
   generateBookingReminderEmail,
   type EmailTone,
@@ -287,6 +292,45 @@ export async function sendInvoiceChase(
   userId: string,
   ctx?: Context
 ): Promise<Outcome> {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * MAY WE WRITE TO THIS BUSINESS'S CLIENTS AT ALL?
+   *
+   * This function read no consent whatsoever. Three senders reach it, and the
+   * scheduled chaser checks `chase_invoices_enabled` for itself — so the gap
+   * was invisible from that side and complete from this one: an owner who never
+   * answered the card, but installed the `chase_overdue_invoices` agent from an
+   * insight, had the platform chasing their clients on their behalf with the
+   * consent switch off.
+   *
+   * The agent's own `worksAlongside: 'chase_invoices'` says the two are halves
+   * of one schedule. Only one half was asking.
+   *
+   * ASKED FIRST, before the invoice is even read. The question is not "is this
+   * invoice chaseable" but "may we write to these people", and a business that
+   * has not said yes is not a business whose records we need to open.
+   *
+   * FAILS CLOSED. An unreadable profile is not permission: the column defaults
+   * to absent, and absent is not consent — the same direction
+   * `getUserReminderConfig` fails in, and for the same reason.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const { data: consent, error: consentError } = await supabaseServer
+    .from('business_profiles')
+    .select('chase_invoices_enabled')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (consentError) {
+    return { sent: false, reason: 'could not read whether this business chases invoices' };
+  }
+
+  if (!(consent as { chase_invoices_enabled?: boolean } | null)?.chase_invoices_enabled) {
+    /* A no-op, not a failure: the owner has simply not asked for this, and a
+       run that reports it as an error teaches them to ignore the report. */
+    return { sent: false, skipped: true, reason: 'chasing unpaid invoices is not switched on' };
+  }
+
   const { data: invoice } = await paymentInvoiceRepository.findById(invoiceId, userId);
   if (!invoice) return { sent: false, reason: 'invoice no longer exists' };
 
@@ -378,17 +422,46 @@ export async function sendInvoiceChase(
     Date.now() - CHASE_COOLDOWN_DAYS * 86_400_000
   ).toISOString();
 
-  const { data: alreadyChased, error: historyError } = await paymentReminderRepository
-    .findRecentByInvoice(invoiceId, 'overdue', cooldownSince, [
-      /* Cancelled and failed deliberately absent: one the owner called off is
-         not in the client's inbox, and one that failed never arrived. */
-      'pending',
-      'processing',
-      'sent',
-    ]);
+  /*
+   * ── AND IT IS ASKED OF THE CLIENT, NOT THE INVOICE ─────────────────────────
+   *
+   * The window above was right and the UNIT was wrong. Keyed on `invoice_id`, a
+   * client holding three late invoices passed three times in one run: each
+   * invoice had genuinely not been chased, and the person had been written to
+   * twice already.
+   *
+   * Keyed on the contact, the first invoice sends one statement covering all
+   * three and the other two skip as no-ops. That is where the consolidation
+   * comes from — there is no grouping step anywhere, just the right key.
+   *
+   * An invoice with no contact falls back to its own id: an ad-hoc invoice
+   * carrying an address and no CRM row is still chaseable, and keying it on a
+   * null would suppress every other such invoice on the account.
+   */
+  const RECENT_STATUSES = [
+    /* Cancelled and failed deliberately absent: one the owner called off is
+       not in the client's inbox, and one that failed never arrived. */
+    'pending',
+    'processing',
+    'sent',
+  ] as const;
+
+  const { data: alreadyChased, error: historyError } = invoice.contact_id
+    ? await paymentReminderRepository.findRecentByContact(
+        invoice.contact_id,
+        'overdue',
+        cooldownSince,
+        RECENT_STATUSES
+      )
+    : await paymentReminderRepository.findRecentByInvoice(
+        invoiceId,
+        'overdue',
+        cooldownSince,
+        RECENT_STATUSES
+      );
 
   if (historyError) {
-    return { sent: false, reason: 'could not read this invoice chase history' };
+    return { sent: false, reason: 'could not read this client chase history' };
   }
 
   if (alreadyChased && alreadyChased.length > 0) {
@@ -400,29 +473,115 @@ export async function sendInvoiceChase(
   const dueDate = new Date(invoice.due_date as string);
   const daysOverdue = Math.max(0, Math.floor((Date.now() - dueDate.getTime()) / 86_400_000));
 
-  const { subject, html } = generateChaseInvoiceEmail({
-    clientName: invoice.client_name?.trim() || 'there',
-    businessName: context.businessName,
-    invoiceNumber: invoice.invoice_number ?? '',
-    amount: Number(invoice.amount ?? 0),
-    currency: invoice.currency ?? 'USD',
-    dueDate,
-    daysOverdue,
-    /* The portal where this invoice has a booking behind it, the invoice page
-       where it does not — never `invoice.stripe.com`. A chase that lands on
-       Stripe's own page shows the client a bill with no sign of the business
-       chasing them, and for an invoice raised outside Stripe there was no
-       hosted URL at all, so the chase offered no way to pay. */
-    payUrl: await invoicePayLink({
-      invoiceId: invoice.id,
-      bookingId: (invoice as { booking_id?: string | null }).booking_id ?? null,
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * EVERYTHING ELSE THIS CLIENT IS BEHIND ON, PAST THE CHASER'S REACH.
+   *
+   * One email per client, so it has to say everything — otherwise the cooldown
+   * above would suppress the second debt rather than include it, and a client
+   * owing three invoices would be chased for one of them and never the rest.
+   *
+   * THE WINDOW IS THE CHASER'S COMPLEMENT: more than seven days past due. An
+   * invoice at day three still belongs to `PaymentReminderService`, which will
+   * name it on its own milestone; adding it here would chase one debt twice on
+   * one morning in two different voices.
+   *
+   * The invoice the caller named is always included whatever its age — it has
+   * already passed the not-yet-due refusal above, and the caller asked for it.
+   *
+   * Read at SEND time rather than taken from the agent's find, so anything
+   * settled in between is simply absent from the statement. An unreadable list
+   * falls back to the single invoice: one correct email beats none.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const payLinkFor = (row: { id: string; booking_id?: string | null }) =>
+    invoicePayLink({
+      invoiceId: row.id,
+      bookingId: row.booking_id ?? null,
       userId,
+      /* The portal where the invoice has a booking behind it, the invoice page
+         where it does not — never `invoice.stripe.com`. A chase that lands on
+         Stripe's own page shows the client a bill with no sign of the business
+         chasing them, and for an invoice raised outside Stripe there was no
+         hosted URL at all, so the chase offered no way to pay. */
       baseUrl: platformOrigin(),
-    }),
-    branding: context.branding,
-    locale: context.locale,
-    tone: context.tone,
-  });
+    });
+
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const tailBoundary = new Date(Date.now() - CHASE_COOLDOWN_DAYS * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  const siblings = invoice.contact_id
+    ? (
+        await paymentInvoiceRepository.list(userId, {
+          contactId: invoice.contact_id,
+          status: 'sent,overdue',
+          limit: 50,
+        })
+      ).data ?? []
+    : [];
+
+  const statementRows = [
+    invoice,
+    ...siblings.filter(
+      row =>
+        row.id !== invoice.id &&
+        !isSettledInvoice(row) &&
+        !INVOICE_SETTLED.has((row.status ?? '').toLowerCase()) &&
+        Boolean(row.due_date) &&
+        /* Past the chaser's last word, and genuinely in the past. */
+        String(row.due_date).slice(0, 10) < tailBoundary &&
+        String(row.due_date).slice(0, 10) < todayKey
+    ),
+  ];
+
+  const items = await Promise.all(
+    statementRows.map(async row => ({
+      invoiceNumber: row.invoice_number ?? '',
+      amount: Number(row.amount ?? 0),
+      currency: row.currency ?? 'USD',
+      dueDate: row.due_date ? new Date(row.due_date as string) : null,
+      daysOverdue: row.due_date
+        ? Math.max(
+            0,
+            Math.floor((Date.now() - new Date(row.due_date as string).getTime()) / 86_400_000)
+          )
+        : 0,
+      payUrl: await payLinkFor(row as { id: string; booking_id?: string | null }),
+    }))
+  );
+
+  /*
+   * ONE ITEM KEEPS THE ORDINARY CHASE.
+   *
+   * A statement of one is a table with a single row, and the single-invoice
+   * template says it better: it can name the invoice in the subject line, which
+   * is the half a client reads before deciding whether to open anything.
+   */
+  const { subject, html } =
+    items.length > 1
+      ? generateOutstandingStatementEmail({
+          clientName: invoice.client_name?.trim() || 'there',
+          businessName: context.businessName,
+          items,
+          branding: context.branding,
+          locale: context.locale,
+          tone: context.tone,
+        })
+      : generateChaseInvoiceEmail({
+          clientName: invoice.client_name?.trim() || 'there',
+          businessName: context.businessName,
+          invoiceNumber: invoice.invoice_number ?? '',
+          amount: Number(invoice.amount ?? 0),
+          currency: invoice.currency ?? 'USD',
+          dueDate,
+          daysOverdue,
+          payUrl: items[0]?.payUrl ?? null,
+          branding: context.branding,
+          locale: context.locale,
+          tone: context.tone,
+        });
 
   // Chasing an unpaid invoice is transactional: it is about a debt the
   // recipient already owes, not an attempt to sell them anything.
@@ -459,24 +618,48 @@ export async function sendInvoiceChase(
    * row is one possible duplicate in seven days; the cost of treating a
    * successful send as a failure is a retry that definitely duplicates.
    */
+  /*
+   * ONE ROW PER ITEM THE STATEMENT LISTED, not one per email.
+   *
+   * The cooldown above reads by contact, so a single row would be enough to
+   * suppress the next week — but the per-INVOICE history is what the milestone
+   * chaser reads (`findRecentByInvoice`) and what the admin queue page shows.
+   * Recording only the invoice that happened to trigger the send would leave
+   * the other two looking never-chased, and the chaser would be free to name
+   * one of them the next morning.
+   */
   if (outcome.sent && invoice.contact_id) {
-    const { error: recordError } = await paymentReminderRepository.create({
-      user_id: userId,
-      invoice_id: invoiceId,
-      contact_id: invoice.contact_id,
-      reminder_type: 'overdue',
-      channel: 'email',
-      scheduled_at: new Date().toISOString(),
-      sent_at: new Date().toISOString(),
-      status: 'sent',
-      metadata: { daysOverdue, via: 'invoice_chase' },
-    } as never);
+    const sentAt = new Date().toISOString();
+    const numbered = new Map(statementRows.map(row => [row.invoice_number ?? '', row.id]));
 
-    if (recordError) {
-      logger.error(
-        { err: recordError, invoiceId },
-        'Chased an invoice but could not record it; a duplicate is possible within the cooldown'
-      );
+    for (const item of items) {
+      const rowId = numbered.get(item.invoiceNumber) ?? invoiceId;
+
+      const { error: recordError } = await paymentReminderRepository.create({
+        user_id: userId,
+        invoice_id: rowId,
+        contact_id: invoice.contact_id,
+        reminder_type: 'overdue',
+        channel: 'email',
+        scheduled_at: sentAt,
+        sent_at: sentAt,
+        status: 'sent',
+        /* `consolidated` says this invoice was named in a statement rather than
+           chased on its own, so the history can be read back honestly: three
+           rows, one email. */
+        metadata: {
+          daysOverdue: item.daysOverdue,
+          via: 'invoice_chase',
+          consolidated: items.length > 1 ? items.length : undefined,
+        },
+      } as never);
+
+      if (recordError) {
+        logger.error(
+          { err: recordError, invoiceId: rowId },
+          'Chased an invoice but could not record it; a duplicate is possible within the cooldown'
+        );
+      }
     }
   }
 

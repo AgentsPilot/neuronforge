@@ -28,6 +28,10 @@ import { PluginIcon } from '@/components/PluginIcon';
 import { AgentInputsDialog, type AgentInput } from './AgentInputsDialog';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+/* The same two the calendar panel uses to connect a plugin from inside
+   Business OS: the signed-in owner, and the client that owns the OAuth popup. */
+import { useAuth } from '@/components/UserProvider';
+import { getPluginAPIClient } from '@/lib/client/plugin-api-client';
 import {
   formatInterval,
   nextTickAfter,
@@ -98,6 +102,16 @@ interface InstalledAgent {
     /** Which of the four things the owner can do; the server has already
         turned it into the sentence in `message`. */
     category?: 'reconnect' | 'busy' | 'data' | 'unknown';
+    /**
+     * The plugin whose connection failed. The KEY, because that is what
+     * `connectPlugin` takes — and what turns `category: 'reconnect'` from a
+     * sentence into a control.
+     *
+     * Business OS has no connections screen, and only a mailbox has a reconnect
+     * route anywhere (through the channels card), so an agent blocked on Google
+     * Sheets could be told to reconnect and had nowhere to do it.
+     */
+    plugin?: string;
     lastTriedAt: string;
   } | null;
 
@@ -267,6 +281,11 @@ interface AvailableAgent {
 
 export function RunningAgentsCard() {
   const { t, isRTL, language } = useLanguage();
+  const { user, refreshPlugins } = useAuth();
+  /** The plugin whose OAuth popup is open. One at a time. */
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
+  /** What the last reconnect attempt said, where it said anything. */
+  const [reconnectError, setReconnectError] = useState<string | null>(null);
   const [agents, setAgents] = useState<InstalledAgent[] | null>(null);
   const [available, setAvailable] = useState<AvailableAgent[] | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
@@ -318,6 +337,58 @@ export function RunningAgentsCard() {
    * It re-reads THIS CARD and nothing else. The dashboard is not refreshed and
    * the page is not reloaded.
    */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * RECONNECT, FROM THE ROW THAT IS BLOCKED ON IT.
+   *
+   * A stopped agent said "Reconnect the app and try again" and named no place,
+   * because there was none to name: Business OS has no connections screen, and
+   * only a MAILBOX has a reconnect route anywhere — through the channels card.
+   * An agent blocked on Google Sheets was told to reconnect something it had no
+   * way to reach.
+   *
+   * `connectPlugin` takes a plugin key and nothing else, which is why
+   * `stopped.plugin` had to be carried all the way from the failing step: the
+   * pilot knew it, and it was dropped before anything could use it.
+   *
+   * Not a new pattern. This is the same client, the same popup and the same
+   * states the availability panel already uses to connect a calendar from
+   * inside Business OS.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const handleReconnect = useCallback(
+    async (pluginKey: string) => {
+      if (!user) return;
+
+      setReconnecting(pluginKey);
+      setReconnectError(null);
+
+      try {
+        const result = await getPluginAPIClient().connectPlugin(user.id, pluginKey);
+
+        if (!result.success) {
+          /* Said out loud rather than swallowed. A popup blocker is the common
+             case and the owner can fix it in a second, but only if told. */
+          setReconnectError(result.error || t('automation.reconnect_failed') || 'Could not reconnect');
+          return;
+        }
+
+        /* The connection list the rest of the app reads, and then this card:
+           a reconnected agent must stop reading as stopped. */
+        await refreshPlugins?.();
+        await load();
+      } catch (err) {
+        setReconnectError(
+          err instanceof Error ? err.message : t('automation.reconnect_failed') || 'Could not reconnect'
+        );
+      } finally {
+        setReconnecting(null);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [user, refreshPlugins, t]
+  );
+
   const load = useCallback(async () => {
     try {
       const response = await fetch('/api/business-os/automation-agents');
@@ -912,6 +983,45 @@ export function RunningAgentsCard() {
                         {agent.stopped.whatToDo && (
                           <span style={{ color: 'var(--v2-text-muted)' }}>
                             {agent.stopped.whatToDo}
+                          </span>
+                        )}
+                        {/*
+                          THE FIX, BESIDE THE DESCRIPTION OF THE PROBLEM.
+
+                          Only where the failure is a connection AND we know
+                          which one: a button that cannot name its plugin has
+                          nothing to open. Both conditions come from the server,
+                          which is the only side that saw the failing step.
+                        */}
+                        {agent.stopped.category === 'reconnect' && agent.stopped.plugin && (
+                          <button
+                            type="button"
+                            onClick={() => handleReconnect(agent.stopped!.plugin!)}
+                            disabled={reconnecting !== null}
+                            className="inline-flex items-center gap-1.5 mt-1 px-2 py-1 rounded-md text-xs font-medium disabled:opacity-60"
+                            style={{
+                              background: 'var(--v2-surface-hover)',
+                              color: 'var(--v2-text-primary)',
+                              border: '1px solid var(--v2-border)',
+                              alignSelf: 'flex-start',
+                            }}
+                          >
+                            {reconnecting === agent.stopped.plugin ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <PluginIcon
+                                pluginId={agent.stopped.plugin}
+                                className="w-3 h-3"
+                                /* Decorative: the label says what it is. */
+                                alt=""
+                              />
+                            )}
+                            {t('automation.reconnect') || 'Reconnect'}
+                          </button>
+                        )}
+                        {reconnectError && agent.stopped.plugin === reconnecting && (
+                          <span style={{ color: 'var(--v2-status-error-text)' }}>
+                            {reconnectError}
                           </span>
                         )}
                       </span>

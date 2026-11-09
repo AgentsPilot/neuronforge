@@ -68,6 +68,28 @@ export interface ChaseInvoiceData extends CommonData {
   payUrl?: string | null;
 }
 
+/** One outstanding item on a statement. */
+export interface OutstandingItem {
+  invoiceNumber: string;
+  amount: number;
+  currency: string;
+  dueDate?: Date | null;
+  daysOverdue: number;
+  /** Its own payment page. Resolved by `invoicePayLink`, never a Stripe URL. */
+  payUrl?: string | null;
+}
+
+export interface OutstandingStatementData extends CommonData {
+  /** The business's timezone, so a due DATE is not shifted across midnight. */
+  timezone?: string;
+  /**
+   * Two or more. One item reads better as `generateChaseInvoiceEmail`, which
+   * can name the invoice in its subject line; a statement of one is a table
+   * with a single row and no reason to exist.
+   */
+  items: OutstandingItem[];
+}
+
 /**
  * Why this person is being written to.
  *
@@ -199,6 +221,157 @@ export function generateChaseInvoiceEmail(data: ChaseInvoiceData): { subject: st
         : getEmailTranslation(t.subjectDue, locale)(invoiceNumber, money),
     html,
   };
+}
+
+/* ------------------------------------------------------------- statement */
+
+/**
+ * Everything this client still owes, in one message.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS BESIDE THE SINGLE CHASE
+ *
+ * The overdue agent chases a CLIENT; the deterministic chaser chases an
+ * INVOICE. The agent was built on the invoice-shaped send, scattering one email
+ * per row, so a client holding three late invoices received three emails in the
+ * same run — each correctly deduped against its own invoice, and none of them
+ * able to see the other two.
+ *
+ * A client does not experience three debts. They experience three emails in one
+ * minute from a business they already owe money to, which is how a reminder
+ * becomes harassment without anybody deciding it should.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * GROUPED BY CURRENCY, NEVER SUMMED ACROSS IT
+ *
+ * A business may price one client in another currency (CLAUDE.md § Currency).
+ * Two currencies are two debts and there is no rate here to join them with, so
+ * this renders a subtotal per currency and the subject drops the figure
+ * entirely rather than inventing a converted one.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function generateOutstandingStatementEmail(
+  data: OutstandingStatementData
+): { subject: string; html: string } {
+  const { clientName, businessName, items, branding } = data;
+  const timezone = data.timezone ?? 'UTC';
+  const locale = data.locale ?? 'en';
+  const tone = data.tone ?? 'friendly';
+  const palette = emailPalette(branding);
+  const t = emailTranslations.outstandingStatement;
+
+  const opening =
+    tone === 'friendly'
+      ? getEmailTranslation(t.openingFriendly, locale)(clientName)
+      : getEmailTranslation(t.opening, locale)(clientName);
+
+  const ask =
+    tone === 'firm'
+      ? getEmailTranslation(t.askFirm, locale)(items.length)
+      : getEmailTranslation(t.askFriendly, locale)(items.length);
+
+  /* Oldest first, which is the order the agent's own find uses and the order a
+     client reading a statement expects. */
+  const ordered = [...items].sort((a, b) => {
+    const at = a.dueDate ? a.dueDate.getTime() : 0;
+    const bt = b.dueDate ? b.dueDate.getTime() : 0;
+    return at - bt;
+  });
+
+  /* `palette.line` is the branded rule colour — the same one every other
+     panel in this folder divides with. Taking it from the palette rather than a
+     literal is what keeps a dark branded card legible. */
+  const cell = `padding:8px 0;border-bottom:1px solid ${palette.line};font-size:14px;`;
+
+  const header = `
+    <tr>
+      <th align="left" style="${cell}color:${palette.inkMuted};font-weight:600;">${getEmailTranslation(t.colInvoice, locale)}</th>
+      <th align="left" style="${cell}color:${palette.inkMuted};font-weight:600;">${getEmailTranslation(t.colDue, locale)}</th>
+      <th align="right" style="${cell}color:${palette.inkMuted};font-weight:600;">${getEmailTranslation(t.colAmount, locale)}</th>
+    </tr>`;
+
+  const rows = ordered
+    .map(item => {
+      /* The number is the link, so every item carries its own way to pay and
+         the email needs no single button that could only serve one of them. */
+      const label = item.payUrl
+        ? `<a href="${item.payUrl}" style="color:${palette.brand};text-decoration:underline;">${item.invoiceNumber}</a>`
+        : item.invoiceNumber;
+
+      const when = item.dueDate
+        ? formatEmailDate(item.dueDate, timezone, { locale, includeTime: false })
+        : '';
+
+      /* The age sits after the date and nowhere else. */
+      const due = when
+        ? item.daysOverdue > 0
+          ? getEmailTranslation(t.dueDaysAgo, locale)(when, item.daysOverdue)
+          : when
+        : '';
+
+      return `
+    <tr>
+      <td style="${cell}color:${palette.ink};">${label}</td>
+      <td style="${cell}color:${palette.inkMuted};">${due}</td>
+      <td align="right" style="${cell}color:${palette.ink};white-space:nowrap;">${formatCurrency(item.amount, item.currency)}</td>
+    </tr>`;
+    })
+    .join('');
+
+  /*
+   * A subtotal per currency, in the order the currencies first appear.
+   *
+   * `Map` rather than an object so the insertion order is guaranteed, and so a
+   * currency code that happens to collide with an Object prototype key cannot
+   * produce a subtotal nobody asked for.
+   */
+  const byCurrency = new Map<string, number>();
+  for (const item of ordered) {
+    byCurrency.set(item.currency, (byCurrency.get(item.currency) ?? 0) + item.amount);
+  }
+
+  const totals = [...byCurrency.entries()]
+    .map(
+      ([currency, sum]) =>
+        `<p style="margin:0 0 4px;font-size:15px;color:${palette.ink};font-weight:600;">${getEmailTranslation(
+          t.total,
+          locale
+        )(formatCurrency(sum, currency))}</p>`
+    )
+    .join('');
+
+  const html = wrapInBrandedTemplate(
+    `
+      <p style="margin:0 0 16px;font-size:16px;color:${palette.ink};">${opening}</p>
+      <p style="margin:0 0 16px;font-size:16px;color:${palette.ink};">${ask}</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 16px;border-collapse:collapse;">
+        ${header}
+        ${rows}
+      </table>
+      ${totals}
+      <p style="margin:16px 0 0;font-size:14px;color:${palette.inkMuted};">
+        ${getEmailTranslation(t.payHint, locale)}
+      </p>
+      <p style="margin:16px 0 0;font-size:14px;color:${palette.inkMuted};">
+        ${getEmailTranslation(t.ignoreIfPaid, locale)}
+      </p>
+      <p style="margin:24px 0 0;font-size:16px;color:${palette.ink};">${businessName}</p>
+    `,
+    // Locale rides on `branding`, which is where the wrapper reads it from.
+    { ...branding, locale }
+  );
+
+  /* One currency, one figure in the subject. More than one, no figure at all —
+     see `subjectMixed`. */
+  const subject =
+    byCurrency.size === 1
+      ? getEmailTranslation(t.subject, locale)(
+          ordered.length,
+          formatCurrency([...byCurrency.values()][0], [...byCurrency.keys()][0])
+        )
+      : getEmailTranslation(t.subjectMixed, locale)(ordered.length);
+
+  return { subject, html };
 }
 
 /* ----------------------------------------------------------------- nudge */

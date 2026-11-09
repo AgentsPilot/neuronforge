@@ -25,6 +25,16 @@ function mockSupabase(tables: Record<string, Row[]>) {
       };
       for (const m of ['select', 'eq', 'in', 'gte', 'order', 'limit', 'neq']) chain[m] = () => chain;
       chain.lt = (_c: string, v: string) => { before = v; return chain; };
+      /*
+       * The business's own milestone days, which the detector reads to decide
+       * whether the deterministic chaser can still reach an invoice — only the
+       * ones it cannot are offered to the agent.
+       *
+       * `null` on purpose: `overdueMilestones` owns the default, so a profile
+       * that has never been asked behaves exactly as the platform default, and
+       * this mock does not become a second copy of `[1,3,7]`.
+       */
+      chain.maybeSingle = async () => ({ data: null, error: null });
       return chain;
     },
   };
@@ -38,10 +48,20 @@ function mockSupabase(tables: Record<string, Row[]>) {
  * what is actually late. An invoice raised thirty days ago on forty-five-day
  * terms is outstanding and is not overdue.
  *
- * Defaults to ten days past due, so the existing cases still describe money
- * that is genuinely late. `dueDays: -14` makes one that is not.
+ * Defaults to TWENTY days past due, which is both genuinely late AND past the
+ * last milestone of the default schedule — `overdueMilestones`' own
+ * `[3, 7, 14]`, which a profile that has never been asked falls back to.
+ *
+ * It was ten, and ten is the interesting number: late, and still inside the
+ * chaser's reach. The action is now narrowed twice over — late, and past what
+ * the deterministic chaser will ever send again — so ten days produced a
+ * finding with no chase offer, which is correct and is not what these cases are
+ * about. "Is a reachable invoice withheld from the agent" has a case of its own
+ * below.
+ *
+ * `dueDays: -14` makes one that is not late at all.
  */
-function invoices(n: number, days: number, amount = 500, dueDays = 10): Row[] {
+function invoices(n: number, days: number, amount = 500, dueDays = 20): Row[] {
   return Array.from({ length: n }, (_, i) => ({
     id: `inv-${days}-${i}`, created_at: ago(days),
     due_date: ago(dueDays).slice(0, 10),
@@ -88,6 +108,35 @@ describe('CashRevenueAtRiskDetector', () => {
     // is one call.
     expect(result!.affectedCount).toBe(3);
     expect(result!.affectedEntityIds).toHaveLength(3);
+  });
+
+  it('counts a late invoice the chaser can still reach, and does NOT offer the agent', async () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE SECOND HALF OF THE SAME SPLIT.
+     *
+     * Ten days past due, against the default milestones `[3, 7, 14]`. The money
+     * is late, so the finding counts it — and the deterministic chaser has a
+     * day 14 still to come, so this invoice is its business and not the agent's.
+     *
+     * This card's paired process installs an AGENT whose find starts after the
+     * chaser's last milestone. Offering it here promised work whose first query
+     * would return nothing: a business whose clients settle on day 5 was being
+     * sold a collection agent with an empty list.
+     *
+     * `chaserCanStillReach` is the predicate; the `invoice_unpaid` gap has used
+     * it for the same question since it was written.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const d = detector(mockSupabase({ payment_invoices: invoices(3, 30, 500, 10) }));
+    const result = await d.evaluate('user-1');
+
+    expect(result).not.toBeNull();
+    /* Counted: the money is late and has not arrived. */
+    expect(result!.estimatedImpactUsd).toBe(1500);
+    /* Not offered: the chaser will speak again on day 14. */
+    expect(result!.affectedEntityIds).toHaveLength(0);
+    expect(result!.pairedProcessId).toBeUndefined();
   });
 
   it('counts money not yet due, and does NOT offer to chase it', async () => {

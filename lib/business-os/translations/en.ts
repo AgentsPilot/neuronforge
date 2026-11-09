@@ -239,8 +239,10 @@ export const en = {
     'automation.reminder_days': '{n} days before',
     'automation.reminder_saved': 'Saved',
     'automation.reminder_needs_one': 'Pick at least one. A reminder with nobody to send it to does nothing.',
+    'automation.reconnect': 'Reconnect',
+    'automation.reconnect_failed': 'Could not reconnect. Please try again.',
     'automation.chase_invoices': 'Chase unpaid invoices',
-    'automation.chase_invoices_hint': 'The reminders after an invoice falls due, by default 3, 7 and 14 days late. A courtesy reminder also goes out before the due date, which is a separate setting. No two reminders for one invoice are ever sent within three days of each other, and all of them stop the moment it is paid.',
+    'automation.chase_invoices_hint': 'Everything this business says to a client about an invoice, under one answer. A courtesy note before it falls due, then reminders on the days your account is set to once it is late. After that the chasing stops, unless you add the collection agent, which writes once a week with everything the client still owes in a single message. No two reminders for one invoice are ever sent within three days of each other, and all of them stop the moment it is paid.',
     'automation.chase_intake': 'Remind clients about their form',
     'automation.chase_intake_hint': 'One nudge when an client form has gone unanswered and the appointment is still far enough off to be worth asking.',
     'gaps.via.agent': 'form submission, filed by the agent',
@@ -743,7 +745,7 @@ export const en = {
 
     // Insight Content by Detector ID
     'insight.cash_ar_overdue.title': '{amount} is sitting unpaid across {count} invoices',
-    'insight.cash_ar_overdue.description': 'The oldest is {weeks} weeks past due — about {percent}% of this month\'s income still waiting to land. I can send each client a warm, personal reminder right now.',
+    'insight.cash_ar_overdue.description': 'The oldest is {weeks} weeks past due, about {percent}% of this month\'s income still waiting to land. The reminders on days 1, 3 and 7 have already gone out, and these are past that, so nothing further is scheduled for them. The collection agent can take them from here: one message a week to each client, listing everything they still owe.',
     'insight.cash_ar_overdue.chip.invoices': '{count} unpaid',
     'insight.cash_ar_overdue.chip.total': '{amount} total',
     'insight.cash_ar_overdue.chip.oldest': 'Oldest {days} days',
@@ -5519,6 +5521,7 @@ export const en = {
     'leads.inbox.tile.connect_cancelled': 'The sign-in window closed before it finished.',
     'leads.inbox.tile.connected': 'Connected',
     'leads.inbox.tile.already': 'Already set up',
+    'leads.inbox.tile.reconnect': 'Reconnect',
     'leads.inbox.tile.set_up_change': 'Set up · change',
     'leads.inbox.reading': 'Reading your recent mail…',
     'leads.inbox.newer': 'Newer',

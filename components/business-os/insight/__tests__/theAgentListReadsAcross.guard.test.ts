@@ -162,7 +162,7 @@ describe('one colour per state, and green belongs to running', () => {
     expect(card).toMatch(/agent\.stopped\.whatToDo/);
     /* No `t(...)` around it: translating a translated sentence would look up a
        key that is really an English paragraph and render the paragraph. */
-    expect(card).not.toMatch(/t\(agent\.stopped/);
+    expect(card).not.toMatch(/\bt\(agent\.stopped/);
   });
 });
 

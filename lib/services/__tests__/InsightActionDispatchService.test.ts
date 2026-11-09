@@ -95,7 +95,14 @@ jest.mock('@/lib/repositories/CRMContactRepository', () => ({
 const leadResponseState: { rows: Array<{ id: string; kind: string }> } = { rows: [] };
 
 /** The one profile column the booking reminder asks about. */
-const profileState = { meeting_reminder_enabled: false };
+/*
+ * `chase_invoices_enabled` is granted here because these tests are about the
+ * DRAIN: one send per row, no double dispatch, a failed send left retryable.
+ * Whether the owner agreed to chasing at all is `paymentReminderConsent`'s
+ * subject, and leaving it absent would make every invoice action skip for the
+ * one reason none of these tests is checking.
+ */
+const profileState = { meeting_reminder_enabled: false, chase_invoices_enabled: true };
 
 jest.mock('@/lib/supabaseServer', () => ({
   supabaseServer: {
@@ -204,6 +211,7 @@ describe('drainInsightActions', () => {
     contactState.data = null;
     leadResponseState.rows = [];
     profileState.meeting_reminder_enabled = false;
+    profileState.chase_invoices_enabled = true;
     bookingState.data = futureBooking();
     standingReminder.hasRow = false;
     sendEmail.mockClear();

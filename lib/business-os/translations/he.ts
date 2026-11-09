@@ -3202,8 +3202,10 @@ export const he = {
     'automation.reminder_days': '{n} ימים לפני',
     'automation.reminder_saved': 'נשמר',
     'automation.reminder_needs_one': 'צריך לבחור לפחות אחד. תזכורת בלי נמען לא עושה כלום.',
+    'automation.reconnect': 'התחבר מחדש',
+    'automation.reconnect_failed': 'ההתחברות מחדש לא הצליחה. נסה שוב.',
     'automation.chase_invoices': 'תזכורת על חשבוניות שלא שולמו',
-    'automation.chase_invoices_hint': 'התזכורות שנשלחות אחרי שחשבונית מאחרת, כברירת מחדל אחרי 3, 7 ו-14 ימים. לפני מועד התשלום נשלחת גם תזכורת אחת מקדימה, בהגדרה נפרדת. שתי תזכורות על אותה חשבונית לא נשלחות בהפרש של פחות משלושה ימים, והכול נפסק ברגע שהיא משולמת.',
+    'automation.chase_invoices_hint': 'כל מה שהעסק אומר ללקוח על חשבונית, תחת תשובה אחת. הודעה מקדימה לפני מועד התשלום, ואחר כך תזכורות בימים שהוגדרו בחשבון שלך מרגע שהחשבונית מאחרת. לאחר מכן הגבייה נפסקת, אלא אם תוסיף את סוכן הגבייה, שכותב פעם בשבוע הודעה אחת עם כל מה שהלקוח עדיין חייב. שתי תזכורות על אותה חשבונית לא נשלחות בהפרש של פחות משלושה ימים, והכול נפסק ברגע שהיא משולמת.',
     'automation.chase_intake': 'תזכורת ללקוחות על הטופס',
     'automation.chase_intake_hint': 'תזכורת אחת כשטופס לא הוחזר והפגישה עדיין רחוקה מספיק כדי שיהיה טעם לבקש.',
     'gaps.via.agent': 'פנייה מטופס, תויקה על ידי הסוכן',
@@ -3683,7 +3685,7 @@ export const he = {
 
     // Insight Content by Detector ID
     'insight.cash_ar_overdue.title': '{amount} יושב ללא תשלום ב-{count} חשבוניות',
-    'insight.cash_ar_overdue.description': 'הוותיקה ביותר ב-{weeks} שבועות איחור — בערך {percent}% מההכנסה של החודש עדיין מחכה. אני יכול לשלוח לכל לקוח תזכורת חמה ואישית עכשיו.',
+    'insight.cash_ar_overdue.description': 'הוותיקה ביותר ב-{weeks} שבועות איחור, בערך {percent}% מההכנסה של החודש עדיין מחכה. התזכורות בימים 1, 3 ו-7 כבר נשלחו, והחשבוניות האלה מאוחרות מזה, כך שלא מתוכנן עבורן שום דבר נוסף. סוכן הגבייה יכול להמשיך מכאן: הודעה אחת בשבוע לכל לקוח, עם כל מה שהוא עדיין חייב.',
     'insight.cash_ar_overdue.chip.invoices': '{count} לא שולמו',
     'insight.cash_ar_overdue.chip.total': '{amount} סה״כ',
     'insight.cash_ar_overdue.chip.oldest': 'ותיקה {days} ימים',
@@ -5209,6 +5211,7 @@ export const he = {
     'leads.inbox.tile.connect_cancelled': 'חלון ההתחברות נסגר לפני שהסתיים.',
     'leads.inbox.tile.connected': 'מחובר',
     'leads.inbox.tile.already': 'כבר מוגדר',
+    'leads.inbox.tile.reconnect': 'התחבר מחדש',
     'leads.inbox.tile.set_up_change': 'מוגדר · שינוי',
     'leads.inbox.reading': 'קורא את המיילים האחרונים שלך...',
     'leads.inbox.newer': 'חדשים יותר',

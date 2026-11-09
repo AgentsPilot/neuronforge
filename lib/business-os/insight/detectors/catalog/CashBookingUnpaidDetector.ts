@@ -26,6 +26,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+/* The one definition of "the chaser can no longer reach this", shared with the
+   `invoice_unpaid` gap so the day arithmetic is not restated. */
+import { chaserCanStillReach } from '@/lib/payments/overdueMilestones';
 
 /** Payment states that mean the money arrived. Anything else is outstanding. */
 const SETTLED = new Set(['paid', 'refunded', 'partially_refunded']);
@@ -199,7 +202,50 @@ export class CashBookingUnpaidDetector extends BaseDetector {
        */
       .lt('due_date', new Date().toISOString().slice(0, 10));
 
-    const invoiceIds = (invoiceRows ?? []).map(row => String(row.id));
+    /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * ONLY WHERE THE CHASER HAS ALREADY GIVEN UP.
+     *
+     * The rows above are already narrowed to invoices genuinely past due, which
+     * is most of the way there. What was missing is the AGE: one day past due is
+     * the milestone chaser's own territory, and this card's paired process now
+     * installs an AGENT, whose find deliberately starts after day 7.
+     *
+     * So a business whose clients settle on day 5 — the chaser working exactly
+     * as intended, nothing ever reaching the tail — was still being offered an
+     * agent whose first query would return nothing. The card kept firing, which
+     * is right (an appointment is coming and the money has not arrived), and the
+     * offer beside it promised work that did not exist.
+     *
+     * `chaserCanStillReach` is the predicate `invoice_unpaid` already uses for
+     * the same question, so the day arithmetic lives in one place. The profile
+     * read mirrors that gap's: `overdueMilestones` owns the default, and this
+     * must not become a third copy of `[1,3,7]`.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    const { data: reminderProfile } = await this.supabase
+      .from('business_profiles')
+      .select('payment_overdue_reminder_days')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const milestones = ((reminderProfile as { payment_overdue_reminder_days?: number[] } | null)
+      ?.payment_overdue_reminder_days ?? null) as number[] | null;
+
+    const todayKey = new Date().toISOString().slice(0, 10);
+
+    const invoiceIds = (invoiceRows ?? [])
+      .filter(row => {
+        const dueKey = row.due_date ? String(row.due_date).slice(0, 10) : null;
+        if (!dueKey) return false;
+
+        const daysOverdue = Math.round(
+          (Date.parse(`${todayKey}T00:00:00Z`) - Date.parse(`${dueKey}T00:00:00Z`)) / 86_400_000
+        );
+
+        return daysOverdue > 0 && !chaserCanStillReach(daysOverdue, milestones);
+      })
+      .map(row => String(row.id));
 
     const result = this.createDetectionResult({
       severity,

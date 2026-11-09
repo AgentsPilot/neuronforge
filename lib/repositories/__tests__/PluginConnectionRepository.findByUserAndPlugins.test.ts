@@ -7,6 +7,9 @@
  * files the enquiry nowhere and looks like success.
  */
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { PluginConnectionRepository } from '@/lib/repositories/PluginConnectionRepository';
 
@@ -63,14 +66,38 @@ describe('PluginConnectionRepository.findByUserAndPlugins', () => {
     expect(calls.ins).toContainEqual(['plugin_name', ['google-mail', 'outlook']]);
   });
 
-  it('reads the name and the status, not the whole connection row', async () => {
+  it('reads what decides availability, not the whole connection row', async () => {
     /* A connection row carries tokens and profile data; a caller deciding
        whether a provider is available needs neither. */
     const { client, calls } = mockSupabase({ data: [] });
 
     await new PluginConnectionRepository(client).findByUserAndPlugins('u1', ['google-mail']);
 
-    expect(calls.select).toBe('plugin_name, status');
+    expect(calls.select).toBe('plugin_name, status, settings');
+  });
+
+  it('and `settings` is here for one fact inside it', () => {
+    /*
+     * `refresh_failed_at`, written when a provider REFUSES a refresh.
+     *
+     * `status` cannot answer that question: `upsert` writes `'active'`
+     * unconditionally, overriding its caller, so a revoked grant reads active
+     * for ever. Both channel surfaces called such a mailbox healthy while every
+     * agent run against it failed.
+     *
+     * Asserted as a column list rather than a behaviour because the cost of
+     * widening this read is the thing worth guarding: `*` would pull the access
+     * and refresh tokens into four surfaces that have no business holding them.
+     */
+    const source = readFileSync(
+      join(__dirname, '..', 'PluginConnectionRepository.ts'),
+      'utf8'
+    );
+    const body = source.slice(source.indexOf('async findByUserAndPlugins'));
+    const read = body.slice(0, body.indexOf('if (error) throw error;'));
+
+    expect(read).not.toMatch(/select\('\*'\)/);
+    expect(read).not.toMatch(/access_token|refresh_token/);
   });
 
   it('issues no query at all for an empty set', async () => {
