@@ -22,7 +22,7 @@
  */
 
 import { Fragment, useCallback, useEffect, useState } from 'react';
-import { Bot, Check, ChevronLeft, ChevronRight, Loader2, Pause, Play, Trash2 } from 'lucide-react';
+import { Bot, Check, ChevronLeft, ChevronRight, FastForward, Loader2, Pause, Play, Trash2 } from 'lucide-react';
 
 import { PluginIcon } from '@/components/PluginIcon';
 import { AgentInputsDialog, type AgentInput } from './AgentInputsDialog';
@@ -279,11 +279,145 @@ interface AvailableAgent {
   connectEither?: { plugin: string; automationId: string; connected: boolean }[];
 }
 
+/**
+ * The stop rule in the owner's own language, counted properly.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This was one template, `'{days} days'`, used for every number — so a
+ * one-day agent reported "1 days" in a table the owner reads to understand
+ * their own business.
+ *
+ * Hebrew needs more than a singular. It has a DUAL: two days is `יומיים`, one
+ * word, not `2 ימים`; two months is `חודשיים`. Both are reachable here —
+ * `stopAfterChoices` offers 2 days, and the months branch starts at exactly
+ * two — so both are spelled out rather than left to a plural that is merely
+ * understandable.
+ *
+ * Every form falls back to the plural template it replaced, so a dictionary
+ * missing one of these degrades to today's wording instead of rendering a key.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function stopAfterWords(days: number, t: (key: string) => string): string {
+  const plural = (key: string, token: string, n: number) =>
+    (t(key) || `{${token}} ${token}`).replace(`{${token}}`, String(n));
+
+  if (days >= 60 && days % 30 === 0) {
+    const months = days / 30;
+    if (months === 2) {
+      const dual = t('automation.stop_after_months_two');
+      if (dual && dual !== 'automation.stop_after_months_two') return dual;
+    }
+    return plural('automation.stop_after_months', 'months', months);
+  }
+
+  if (days === 1) {
+    const one = t('automation.stop_after_day_one');
+    if (one && one !== 'automation.stop_after_day_one') return one;
+  }
+
+  if (days === 2) {
+    const dual = t('automation.stop_after_days_two');
+    if (dual && dual !== 'automation.stop_after_days_two') return dual;
+  }
+
+  return plural('automation.stop_after_days', 'days', days);
+}
+
+/**
+ * Which of an agent's plugins the owner could reconnect, and when to offer it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE BUTTON USED TO NEED A PERFECT FAILURE RECORD.
+ *
+ * It rendered only when the stored failure carried both `category: 'reconnect'`
+ * and a plugin key. Neither is guaranteed: every failure written before those
+ * fields existed has neither, and a failure recorded by an older deploy has
+ * neither either. So the owner of a mailbox agent that had been failing for ten
+ * days was offered nothing at all, which is precisely when they needed it.
+ *
+ * The agent already knows what it uses. `plugins` is on every row, always
+ * populated, and needs no failure metadata to be correct — so that is what
+ * drives the control now.
+ *
+ * ── WHEN ────────────────────────────────────────────────────────────────────
+ *
+ * Only for an agent that is NOT working: stopped, or blocked. A healthy agent
+ * showing a Reconnect button invites an owner to re-authorise something that
+ * works, and the one thing worse than a missing repair is a repair offered for
+ * no reason — it teaches them the control means nothing.
+ *
+ * ── WHICH ───────────────────────────────────────────────────────────────────
+ *
+ * `business-os` is this platform's own capability plugin: there is no account
+ * to sign into and no OAuth popup to open, so offering it would be a button
+ * that cannot work. Everything else an agent names is a third-party connection
+ * the owner can genuinely re-authorise.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const PLATFORM_PLUGINS = new Set(['business-os']);
+
+function reconnectable(agent: InstalledAgent): string[] {
+  /*
+   * ── IT HAS TO BE A CONNECTION PROBLEM, NOT MERELY A PROBLEM ────────────────
+   *
+   * This asked "is the agent unwell", which is too loose by half. An agent
+   * stopped by OUR fault renders "this one is on us, we can see it and it will
+   * keep trying" — and offered a Reconnect button underneath, inviting the
+   * owner to re-authorise a connection that was never the problem. They would
+   * sign into Gmail, nothing would change, and the control would have taught
+   * them it means nothing.
+   *
+   * Two states genuinely call for it, and no others:
+   *
+   *   stopped, category `reconnect`   the provider refused us. This is the
+   *                                   category `failureCategoryOf` exists to
+   *                                   name, and it is finally computed.
+   *   blocked on a missing plugin     switched on and unable to run because
+   *                                   something is not connected at all.
+   *
+   * Everything else — busy, data, unknown, a business requirement unmet —
+   * shows the sentence and no button.
+   */
+  const refused = agent.stopped?.category === 'reconnect';
+  const unconnected = agent.blocked && (agent.missingPlugins ?? []).length > 0;
+
+  if (!refused && !unconnected) return [];
+
+  /*
+   * The one we KNOW failed, where the failure named it. Otherwise everything
+   * this agent could sign into — better to offer two true buttons than to
+   * guess which of them the provider refused.
+   */
+  if (refused && agent.stopped?.plugin) return [agent.stopped.plugin];
+
+  const candidates = unconnected ? agent.missingPlugins : (agent.plugins ?? []);
+
+  return candidates.filter(p => !PLATFORM_PLUGINS.has(p));
+}
+
+/** The provider's own name, for a button that has to say what it opens. */
+function friendlyPlugin(pluginKey: string): string {
+  const named: Record<string, string> = {
+    'google-mail': 'Gmail',
+    'google-calendar': 'Google Calendar',
+    'google-sheets': 'Google Sheets',
+    'google-drive': 'Google Drive',
+    'google-docs': 'Google Docs',
+    outlook: 'Outlook',
+  };
+
+  /* Falls back to the key rather than inventing a name: a wrong product name on
+     a button that opens a sign-in is worse than an unpolished one. */
+  return named[pluginKey] ?? pluginKey;
+}
+
 export function RunningAgentsCard() {
   const { t, isRTL, language } = useLanguage();
   const { user, refreshPlugins } = useAuth();
   /** The plugin whose OAuth popup is open. One at a time. */
   const [reconnecting, setReconnecting] = useState<string | null>(null);
+  /** Agents whose run was just brought forward, so the row can say so. */
+  const [ranAt, setRanAt] = useState<Record<string, number>>({});
   /** What the last reconnect attempt said, where it said anything. */
   const [reconnectError, setReconnectError] = useState<string | null>(null);
   const [agents, setAgents] = useState<InstalledAgent[] | null>(null);
@@ -520,7 +654,7 @@ export function RunningAgentsCard() {
   );
 
   const control = useCallback(
-    async (agentId: string, action: 'pause' | 'resume' | 'remove') => {
+    async (agentId: string, action: 'pause' | 'resume' | 'remove' | 'run') => {
       setBusy(prev => ({ ...prev, [agentId]: true }));
 
       try {
@@ -529,6 +663,17 @@ export function RunningAgentsCard() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(action === 'remove' ? { agentId } : { agentId, action }),
         });
+
+        /*
+         * `run` says WHEN, not "done": the server brings the clock forward and
+         * the scheduler claims it on its next pass, within five minutes. Said
+         * out loud, because a button that reports success while nothing
+         * visibly happens reads as broken — and the owner pressing this is
+         * usually about to go and watch for the run.
+         */
+        if (action === 'run' && response.ok) {
+          setRanAt(prev => ({ ...prev, [agentId]: Date.now() }));
+        }
 
         /* Re-read rather than patching local state: the server owns the
            status, and a list that disagrees with it is worse than a slow one. */
@@ -993,10 +1138,11 @@ export function RunningAgentsCard() {
                           nothing to open. Both conditions come from the server,
                           which is the only side that saw the failing step.
                         */}
-                        {agent.stopped.category === 'reconnect' && agent.stopped.plugin && (
+                        {reconnectable(agent).map(pluginKey => (
                           <button
                             type="button"
-                            onClick={() => handleReconnect(agent.stopped!.plugin!)}
+                            key={pluginKey}
+                            onClick={() => handleReconnect(pluginKey)}
                             disabled={reconnecting !== null}
                             className="inline-flex items-center gap-1.5 mt-1 px-2 py-1 rounded-md text-xs font-medium disabled:opacity-60"
                             style={{
@@ -1006,20 +1152,23 @@ export function RunningAgentsCard() {
                               alignSelf: 'flex-start',
                             }}
                           >
-                            {reconnecting === agent.stopped.plugin ? (
+                            {reconnecting === pluginKey ? (
                               <Loader2 className="w-3 h-3 animate-spin" />
                             ) : (
                               <PluginIcon
-                                pluginId={agent.stopped.plugin}
+                                pluginId={pluginKey}
                                 className="w-3 h-3"
                                 /* Decorative: the label says what it is. */
                                 alt=""
                               />
                             )}
-                            {t('automation.reconnect') || 'Reconnect'}
+                            {(t('automation.reconnect_named') || 'Reconnect {plugin}').replace(
+                              '{plugin}',
+                              friendlyPlugin(pluginKey)
+                            )}
                           </button>
-                        )}
-                        {reconnectError && agent.stopped.plugin === reconnecting && (
+                        ))}
+                        {reconnectError && reconnecting === null && (
                           <span style={{ color: 'var(--v2-status-error-text)' }}>
                             {reconnectError}
                           </span>
@@ -1073,10 +1222,29 @@ export function RunningAgentsCard() {
                   {/* Last run. Said plainly when it has never run: an agent that
                       has never run looks identical to one that runs silently. */}
                   <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule, color: 'var(--v2-text-secondary)' }}>
-                    {when(agent.lastRun) ?? (
-                      <span style={{ color: 'var(--v2-text-muted)' }}>
-                        {t('automation.never_run') || 'has not run yet'}
+                    {/*
+                      A RUN JUST ASKED FOR BEATS THE LAST ONE.
+
+                      "Run now" moves the clock and the scheduler picks it up
+                      within five minutes, so for those few minutes the truest
+                      thing this cell can say is that one is coming — not a
+                      timestamp from yesterday, which reads as the press having
+                      done nothing.
+
+                      Local and deliberately not persisted: it describes what
+                      the owner just did in this tab, and the next read of the
+                      list replaces it with the real result.
+                    */}
+                    {ranAt[agent.agentId] ? (
+                      <span style={{ color: 'var(--v2-primary)' }}>
+                        {t('automation.run_queued') || 'running shortly'}
                       </span>
+                    ) : (
+                      when(agent.lastRun) ?? (
+                        <span style={{ color: 'var(--v2-text-muted)' }}>
+                          {t('automation.never_run') || 'has not run yet'}
+                        </span>
+                      )
                     )}
                   </td>
 
@@ -1129,11 +1297,7 @@ export function RunningAgentsCard() {
 
                   {/* The owner's end of life, in the unit they chose it in. */}
                   <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule, color: 'var(--v2-text-secondary)' }}>
-                    {agent.stopAfterDays
-                      ? agent.stopAfterDays >= 60 && agent.stopAfterDays % 30 === 0
-                        ? (t('automation.stop_after_months') || '{months} months').replace('{months}', String(agent.stopAfterDays / 30))
-                        : (t('automation.stop_after_days') || '{days} days').replace('{days}', String(agent.stopAfterDays))
-                      : '—'}
+                    {agent.stopAfterDays ? stopAfterWords(agent.stopAfterDays, t) : '—'}
                   </td>
 
                   {/*
@@ -1168,6 +1332,46 @@ export function RunningAgentsCard() {
                               ? <Pause className="w-3.5 h-3.5" />
                               : <Play className="w-3.5 h-3.5" />}
                           </button>
+                          {/*
+                            RUN IT NOW — only while it is active, because the
+                            scheduler selects on `status = 'active'` and a
+                            button that cannot work should not be offered.
+
+                            It brings the clock forward rather than executing
+                            here: the point of pressing it is to reproduce a
+                            SCHEDULED run, and a second execution path would
+                            not. A daily agent could otherwise only be
+                            diagnosed once a day, which is how one channel
+                            failure went ten days unexplained.
+                          */}
+                          {agent.status === 'active' && (
+                            <button
+                              type="button"
+                              onClick={() => control(agent.agentId, 'run')}
+                              title={t('automation.run_now') || 'Run it now'}
+                              aria-label={t('automation.run_now') || 'Run it now'}
+                              className="p-1.5 rounded-lg hover:bg-[var(--v2-bg)] transition-colors"
+                              style={{ color: 'var(--v2-text-secondary)' }}
+                            >
+                              {/*
+                                FAST-FORWARD, NOT A LIGHTNING BOLT.
+
+                                The bolt said "something sudden and powerful",
+                                which is not what pressing this does. The action
+                                moves a SCHEDULED run forward in time — the
+                                agent still runs on the scheduler, with its own
+                                lease and retries — and fast-forward is the one
+                                symbol everybody already reads as "skip ahead to
+                                the thing that was coming".
+
+                                Deliberately not `Play`: that triangle sits two
+                                buttons away meaning RESUME, and two play-shaped
+                                controls side by side in one row would be read
+                                as the same control twice.
+                              */}
+                              <FastForward className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => setRemoving(agent.agentId)}

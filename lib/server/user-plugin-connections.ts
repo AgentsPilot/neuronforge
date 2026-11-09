@@ -431,6 +431,41 @@ export class UserPluginConnections {
 
       const expiresAt = calculateExpiresAt(tokens.expires_in);
 
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * WHAT WE ARE ABOUT TO STORE, AS A SHAPE.
+       *
+       * A mailbox agent failed for ten days with "your connection has expired"
+       * while this very function reported success every five minutes. The
+       * stored token was refused by Google and `expires_at` kept marching
+       * forward, so every surface read the connection as healthy.
+       *
+       * Everything about that is invisible from the outside: the value must
+       * never be logged, and `expires_at` alone cannot distinguish a fresh
+       * token from an old one carrying a fresh expiry. The length, a four-
+       * character prefix and whether the value actually CHANGED are enough to
+       * tell those apart, and none of them is a credential.
+       *
+       * `changed: false` with a moving `expires_at` is the signature to look
+       * for: it means the column kept its old value while the clock was reset.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const incoming = String(tokens.access_token ?? '');
+      logger.info(
+        {
+          pluginKey: connection.plugin_key,
+          userId: connection.user_id,
+          incomingLength: incoming.length,
+          incomingPrefix: incoming.slice(0, 4),
+          previousLength: String(connection.access_token ?? '').length,
+          changed: incoming !== String(connection.access_token ?? ''),
+          hasAccessToken: Boolean(tokens.access_token),
+          expiresIn: tokens.expires_in,
+          expiresAt,
+        },
+        'Refresh: about to store a token'
+      );
+
       // Update connection via repository upsert
       const updatedConnectionData: UpsertPluginConnectionInput = {
         user_id: connection.user_id,
@@ -445,7 +480,35 @@ export class UserPluginConnections {
         profile_data: connection.profile_data || null,
         /* A successful refresh clears the dead-grant mark — whatever the owner
            did to fix it worked, and the readiness line must stop warning. */
-        settings: withoutRefreshFailure(connection.settings),
+        settings: {
+          ...withoutRefreshFailure(connection.settings),
+          /*
+           * ─────────────────────────────────────────────────────────────────
+           * TEMPORARY DIAGNOSTIC — remove once the stored-token bug is found.
+           *
+           * The log line beside this one never reached either terminal: the
+           * local dev server filters, the deployed one is a different build,
+           * and we could not tell which process was even doing the refresh.
+           * So the same facts are written where they cannot be filtered or
+           * lost — next to the token they describe.
+           *
+           * Shapes only. A length, four characters, and whether the value
+           * actually changed. None of them is a credential, and together they
+           * separate "stored a new token" from "reset the clock on an old
+           * one", which is the question.
+           * ─────────────────────────────────────────────────────────────────
+           */
+          last_refresh_debug: {
+            at: new Date().toISOString(),
+            incoming_length: incoming.length,
+            incoming_prefix: incoming.slice(0, 4),
+            previous_length: String(connection.access_token ?? '').length,
+            previous_prefix: String(connection.access_token ?? '').slice(0, 4),
+            changed: incoming !== String(connection.access_token ?? ''),
+            has_access_token: Boolean(tokens.access_token),
+            expires_in: tokens.expires_in,
+          },
+        },
         /*
          * STAMPED HERE AND NOWHERE ELSE.
          *
@@ -697,6 +760,33 @@ export class UserPluginConnections {
    * annotate is still a connection that failed, and the caller reports that
    * either way.
    */
+  /**
+   * A grant the provider refuses, recorded from OUTSIDE the refresh call.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `recordRefreshFailure` below fires when the REFRESH is refused, and that
+   * misses the case this exists for: Google still issues access tokens from the
+   * refresh token, and the API then rejects every one of them.
+   *
+   * Seen live. A mailbox channel failed six runs a day for ten days with "Your
+   * Gmail connection has expired" while its connection read `status: active`
+   * and `refresh_failed_at: none` — because every refresh SUCCEEDED. The
+   * channel card showed a green dot and the setup wizard said "set up"
+   * throughout.
+   *
+   * The one place that can tell is the executor's retry: it refreshes after a
+   * 401, retries once, and watches that retry fail with a brand-new token. Its
+   * own comment names the conclusion — "a second 401 after a fresh token means
+   * the GRANT is gone, not the token" — and it had no way to write it down.
+   *
+   * Same marker as a refused refresh, deliberately: the owner's remedy is
+   * identical (re-authorise), and every surface already reads this one field.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async recordDeadGrant(connection: UserConnection, detail: string): Promise<void> {
+    await this.recordRefreshFailure(connection, detail);
+  }
+
   private async recordRefreshFailure(connection: UserConnection, detail: string): Promise<void> {
     try {
       const settings = (connection.settings ?? {}) as Record<string, unknown>;

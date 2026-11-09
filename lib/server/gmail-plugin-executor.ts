@@ -199,7 +199,27 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!listResponse.ok) {
       const errorData = await listResponse.text();
-      this.logger.error({ status: listResponse.status, errorData }, 'Gmail search failed');
+      /*
+       * WHICH TOKEN WAS SENT, as a shape.
+       *
+       * Pairs with 'Refresh: about to store a token'. If the prefix here does
+       * not match the prefix stored seconds earlier, the executor is holding a
+       * connection it loaded before the refresh — which is invisible from the
+       * database, where only the newest value survives.
+       *
+       * Four characters and a length. Never the value.
+       */
+      const sent = String(connection.access_token ?? '');
+      this.logger.error(
+        {
+          status: listResponse.status,
+          errorData,
+          sentTokenLength: sent.length,
+          sentTokenPrefix: sent.slice(0, 4),
+          connectionExpiresAt: connection.expires_at,
+        },
+        'Gmail search failed'
+      );
       throw new Error(`Gmail search failed: ${listResponse.status} - ${errorData}`);
     }
 
