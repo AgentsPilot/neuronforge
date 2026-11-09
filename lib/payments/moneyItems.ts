@@ -434,11 +434,67 @@ const STATUS_SEVERITY: MoneyStatus[] = [
   'cancelled',
 ];
 
-function rollUpStatus(entries: MoneyEntry[]): MoneyStatus {
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AN ORDER WITH MONEY STILL TO COLLECT DOES NOT REPORT `paid`.
+ *
+ * This read the ENTRIES alone, and an entry only exists once something has
+ * been billed. So a two-stage plan that took its first payment and has not
+ * raised the second has exactly one entry — the paid invoice — and the row
+ * reported `paid` while the rest was still owed, some of it late.
+ *
+ * Measured on the live database, 2026-11-09: 18 orders are in that state, 9 of
+ * them holding an OVERDUE stage. `item.amount` already counts the whole job
+ * (see the builder below), so those rows carried a face value no entry
+ * accounted for beside a status saying it had all come in.
+ *
+ * WHY THE ENTRIES STILL DECIDE FIRST
+ *
+ * They are the stronger evidence wherever they say anything pressing. A failed
+ * charge or an overdue invoice is a fact about money that was actually asked
+ * for; the plan only describes what is scheduled. So the entries win, and the
+ * plan is consulted ONLY when they have nothing left to report — `paid`,
+ * `draft` or `cancelled`, the three that claim there is nothing outstanding.
+ *
+ * WHICH PERIODS COUNT AS STILL OWED
+ *
+ * Exactly the predicate the plan-only builder uses, deliberately, so the two
+ * cannot disagree about what "owing" means:
+ *
+ *   - not settled — `SETTLED_PERIOD_STATUSES` is `['paid', 'cancelled']`, and
+ *     a VOIDED stage is settled in this sense. Nobody owes an instalment that
+ *     was written off, so a cancelled quotation that took one stage and voided
+ *     the rest keeps reporting `paid`: on the money axis that is true, and the
+ *     fact that the JOB was called off is `bookingCancelled`, a separate field
+ *     precisely because the two axes disagree routinely.
+ *   - not already billed — a period with an invoice is represented by that
+ *     invoice's entry, which the roll-up above has already weighed. Counting it
+ *     here would let the plan overrule the entry that supersedes it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function rollUpStatus(entries: MoneyEntry[], plan?: MoneyPlan): MoneyStatus {
+  let fromEntries: MoneyStatus = 'awaiting_payment';
   for (const status of STATUS_SEVERITY) {
-    if (entries.some(e => e.status === status)) return status;
+    if (entries.some(e => e.status === status)) {
+      fromEntries = status;
+      break;
+    }
   }
-  return 'awaiting_payment';
+
+  // The entries already report something the owner must act on.
+  if (fromEntries !== 'paid' && fromEntries !== 'draft' && fromEntries !== 'cancelled') {
+    return fromEntries;
+  }
+
+  const owed = (plan?.periods ?? []).filter(
+    period => !SETTLED_PERIOD_STATUSES.includes(period.status) && !billedAsAnEntry(period)
+  );
+  if (owed.length === 0) return fromEntries;
+
+  /* Late money leads, as it does in `STATUS_SEVERITY`. Anything else has
+     simply not been asked for yet, which is what `awaiting_payment` means
+     here — the same word the plan-only builder uses for the same state. */
+  return owed.some(period => period.status === 'overdue') ? 'overdue' : 'awaiting_payment';
 }
 
 export interface BuildMoneyItemsInput {
@@ -721,7 +777,9 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
          them leaves a trace in `flow.cancelled`. */
       bookingCancelled: String(booking.status ?? '') === 'cancelled',
       title: booking.title,
-      status: rollUpStatus(bookingEntries),
+      /* The plan goes in too: without it a part-paid order reports `paid`
+         while its later stages are still owed. See `rollUpStatus`. */
+      status: rollUpStatus(bookingEntries, plan),
       method: plan ? 'plan' : methods.size > 1 ? 'mixed' : [...methods][0],
       /*
        * THE WHOLE JOB, NOT THE INVOICED PART OF IT.

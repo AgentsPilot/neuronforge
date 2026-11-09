@@ -1869,6 +1869,7 @@ export const he = {
     'payments.export.description': 'תיאור',
     'payments.export.refund_status': 'סטטוס החזר',
     'payments.export.refunded_amount': 'סכום שהוחזר',
+    'payments.export.never_collected': 'לא נגבה',
     'payments.export.transaction_id': 'מזהה עסקה',
     'payments.export.all_tooltip': 'ייצוא כל ההזמנות',
     // Stripe Connect
@@ -5241,7 +5242,7 @@ export const he = {
     'money.came_in': 'באמת נכנס',
     'money.of_book': 'מתוך {total} שאי פעם נדרשו',
     'money.of_which_late': 'מתוכם באיחור',
-    'money.everything': 'סך הכול חויב',
+    'money.everything': 'שווי ההזמנות הכולל',
     'money.whole_book_note': 'כל סכום שאי פעם הגיע לכם נמצא באחד מארבעת אלה, ורק באחד מהם. האדום נמצא בתוך הצהוב כי כסף שמאחר הוא כסף שחייבים לכם, והוא נספר פעם אחת.',
     'money.nested_note': 'האדום נמצא בתוך הצהוב ולא לידו: כסף שמאחר הוא כסף שחייבים לכם, ולכן הוא נספר פעם אחת.',
     'money.needs_you': 'דורש מעקב',
@@ -5255,7 +5256,7 @@ export const he = {
     'money.partial_title': 'הנתונים כאן חלקיים',
     'money.partial_note':
       'יש בתקופה הזו יותר תנועות ממה שהדף יכול לקרוא בבת אחת, כך שכל סכום למטה נמוך מהאמת. צמצמו את התקופה כדי לראות תמונה מלאה של טווח קטן יותר.',
-    'money.billed_label': 'חויב',
+    'money.billed_label': 'שווי ההזמנה',
     'money.refunded_note': 'חלק מסך הכול שלמעלה. נכנס וחזר החוצה.',
     'money.list_title': 'כל הכסף, לפי העבודה שהוא שייך לה',
     'money.search_placeholder': 'חיפוש לקוח, חשבונית או סכום',

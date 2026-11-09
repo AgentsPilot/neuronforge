@@ -3733,6 +3733,7 @@ export const es = {
     'payments.export.description': 'Descripción',
     'payments.export.refund_status': 'Estado de Reembolso',
     'payments.export.refunded_amount': 'Monto Reembolsado',
+    'payments.export.never_collected': 'Nunca cobrado',
     'payments.export.transaction_id': 'ID de Transacción',
     'payments.export.all_tooltip': 'Exportar todos los pedidos',
     // Stripe Connect
@@ -5183,7 +5184,7 @@ export const es = {
     'money.came_in': 'Realmente entró',
     'money.of_book': 'de {total} solicitados en total',
     'money.of_which_late': 'de lo cual vencido',
-    'money.everything': 'Facturado en total',
+    'money.everything': 'Valor total de los pedidos',
     'money.whole_book_note': 'Cada importe que alguna vez te debieron está en uno de estos cuatro, y solo en uno. El rojo va dentro del amarillo porque el dinero vencido es dinero que te deben, contado una sola vez.',
     'money.nested_note': 'El rojo está dentro del amarillo, no al lado: el dinero vencido es dinero que te deben, así que se cuenta una sola vez.',
     'money.needs_you': 'Necesita seguimiento',
@@ -5197,7 +5198,7 @@ export const es = {
     'money.partial_title': 'Estas cifras están incompletas',
     'money.partial_note':
       'Hay más movimientos en este periodo de los que esta página puede leer de una vez, así que cada total de abajo es menor que la realidad. Reduce el periodo para ver una imagen completa de un intervalo más corto.',
-    'money.billed_label': 'facturado',
+    'money.billed_label': 'valor del pedido',
     'money.refunded_note': 'Parte del total de arriba. Entró y volvió a salir.',
     'money.list_title': 'Todo el dinero, por el trabajo al que pertenece',
     'money.search_placeholder': 'Busca un cliente, una factura o un importe',
