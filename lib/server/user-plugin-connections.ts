@@ -62,6 +62,35 @@ export class UserPluginConnections {
   // Cache for token validation to avoid redundant logs and calculations
   private tokenValidationCache = new Map<string, { isValid: boolean, checkedAt: number }>();
   private readonly TOKEN_CACHE_TTL = 1000; // 1 second cache
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE REFRESH PER GRANT PER MINUTE, WHOEVER ASKS.
+   *
+   * A single agent run refreshes the same grant at least twice: the pre-flight
+   * (`connectionsReady`) verifies the token with the provider and refreshes on
+   * rejection, and then the executor refreshes again on the 401. That is two
+   * hits for one logical attempt, and neither caller can see the other.
+   *
+   * It was not the pair that did the damage — it was the pair multiplied by a
+   * retry loop that could not terminate. `retry_count` was never incremented,
+   * so a failing run came back every five minutes for ten days: around 50 runs
+   * a day, 100+ refreshes of one refresh token. The grant stayed broken for as
+   * long as the load continued, while another agent on the same account and
+   * the same plugin, running once a day, completed normally throughout.
+   *
+   * The retry loop is fixed where it belongs, in the scheduler. This is the
+   * backstop, placed on the singleton so it holds for every caller rather than
+   * for the one that remembered: a grant refreshed in the last minute is not
+   * refreshed again, and the caller is handed what that refresh produced.
+   *
+   * A minute is safe by construction. These tokens live an hour, so nothing
+   * legitimately needs refreshing twice inside sixty seconds — the only thing
+   * that ever asks is two layers of one attempt not knowing about each other.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private recentRefreshes = new Map<string, { at: number; connection: UserConnection | null }>();
+  private readonly REFRESH_COALESCE_MS = 60_000;
   private readonly TOKEN_CACHE_MAX_SIZE = 100;
 
   constructor(repository?: PluginConnectionRepository) {
@@ -400,6 +429,21 @@ export class UserPluginConnections {
       return null;
     }
 
+    const coalesceKey = `${connection.user_id}:${connection.plugin_key}`;
+    const recent = this.recentRefreshes.get(coalesceKey);
+
+    if (recent && Date.now() - recent.at < this.REFRESH_COALESCE_MS) {
+      logger.info(
+        {
+          pluginKey: connection.plugin_key,
+          userId: connection.user_id,
+          agoMs: Date.now() - recent.at,
+        },
+        'This grant was refreshed moments ago; reusing that result instead of asking the provider again'
+      );
+      return recent.connection;
+    }
+
     try {
       // Refresh token via OAuthTokenService
       const outcome = await refreshAccessTokenDetailed(connection.refresh_token, authConfig);
@@ -435,6 +479,10 @@ export class UserPluginConnections {
           reason: outcome.reason,
           commonCauses: 'refresh token expired (Google ~6mo), token revoked, or OAuth credentials changed'
         }, 'Token refresh failed');
+        /* A refusal counts. Without this the pre-flight and the executor each
+           ask a dead grant inside one run, which is two refusals and twice the
+           load for the same answer. */
+        this.recentRefreshes.set(coalesceKey, { at: Date.now(), connection: null });
         return null;
       }
 
@@ -442,40 +490,7 @@ export class UserPluginConnections {
 
       const expiresAt = calculateExpiresAt(tokens.expires_in);
 
-      /*
-       * ───────────────────────────────────────────────────────────────────────
-       * WHAT WE ARE ABOUT TO STORE, AS A SHAPE.
-       *
-       * A mailbox agent failed for ten days with "your connection has expired"
-       * while this very function reported success every five minutes. The
-       * stored token was refused by Google and `expires_at` kept marching
-       * forward, so every surface read the connection as healthy.
-       *
-       * Everything about that is invisible from the outside: the value must
-       * never be logged, and `expires_at` alone cannot distinguish a fresh
-       * token from an old one carrying a fresh expiry. The length, a four-
-       * character prefix and whether the value actually CHANGED are enough to
-       * tell those apart, and none of them is a credential.
-       *
-       * `changed: false` with a moving `expires_at` is the signature to look
-       * for: it means the column kept its old value while the clock was reset.
-       * ───────────────────────────────────────────────────────────────────────
-       */
       const incoming = String(tokens.access_token ?? '');
-      logger.info(
-        {
-          pluginKey: connection.plugin_key,
-          userId: connection.user_id,
-          incomingLength: incoming.length,
-          incomingPrefix: incoming.slice(0, 4),
-          previousLength: String(connection.access_token ?? '').length,
-          changed: incoming !== String(connection.access_token ?? ''),
-          hasAccessToken: Boolean(tokens.access_token),
-          expiresIn: tokens.expires_in,
-          expiresAt,
-        },
-        'Refresh: about to store a token'
-      );
 
       /*
        * ───────────────────────────────────────────────────────────────────────
@@ -524,7 +539,9 @@ export class UserPluginConnections {
           },
           'Refresh returned the token the provider had just refused; leaving the stored expiry alone'
         );
-        return { ...connection, access_token: incoming };
+        const unchanged = { ...connection, access_token: incoming };
+        this.recentRefreshes.set(coalesceKey, { at: Date.now(), connection: unchanged });
+        return unchanged;
       }
 
       // Update connection via repository upsert
@@ -541,35 +558,7 @@ export class UserPluginConnections {
         profile_data: connection.profile_data || null,
         /* A successful refresh clears the dead-grant mark — whatever the owner
            did to fix it worked, and the readiness line must stop warning. */
-        settings: {
-          ...withoutRefreshFailure(connection.settings),
-          /*
-           * ─────────────────────────────────────────────────────────────────
-           * TEMPORARY DIAGNOSTIC — remove once the stored-token bug is found.
-           *
-           * The log line beside this one never reached either terminal: the
-           * local dev server filters, the deployed one is a different build,
-           * and we could not tell which process was even doing the refresh.
-           * So the same facts are written where they cannot be filtered or
-           * lost — next to the token they describe.
-           *
-           * Shapes only. A length, four characters, and whether the value
-           * actually changed. None of them is a credential, and together they
-           * separate "stored a new token" from "reset the clock on an old
-           * one", which is the question.
-           * ─────────────────────────────────────────────────────────────────
-           */
-          last_refresh_debug: {
-            at: new Date().toISOString(),
-            incoming_length: incoming.length,
-            incoming_prefix: incoming.slice(0, 4),
-            previous_length: String(connection.access_token ?? '').length,
-            previous_prefix: String(connection.access_token ?? '').slice(0, 4),
-            changed: incoming !== String(connection.access_token ?? ''),
-            has_access_token: Boolean(tokens.access_token),
-            expires_in: tokens.expires_in,
-          },
-        },
+        settings: withoutRefreshFailure(connection.settings),
         /*
          * STAMPED HERE AND NOWHERE ELSE.
          *
@@ -598,6 +587,18 @@ export class UserPluginConnections {
         pluginKey: connection.plugin_key,
         expiresAt
       }, 'Token Refresh Success - New token saved');
+
+      this.recentRefreshes.set(coalesceKey, { at: Date.now(), connection: data });
+
+      /* Bounded like `tokenValidationCache` beside it: one entry per grant that
+         refreshed in the last minute is tiny, but a long-lived serverless
+         instance must not accumulate for ever. */
+      if (this.recentRefreshes.size > this.TOKEN_CACHE_MAX_SIZE) {
+        const cutoff = Date.now() - this.REFRESH_COALESCE_MS;
+        for (const [key, entry] of this.recentRefreshes) {
+          if (entry.at < cutoff) this.recentRefreshes.delete(key);
+        }
+      }
 
       // NOTE: We deliberately do NOT log token refreshes to audit trail
       // Token refreshes are automatic background operations, not user actions

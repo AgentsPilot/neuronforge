@@ -59,6 +59,7 @@ import {
   scheduledExecutionRepository,
   type ScheduledExecution,
 } from '@/lib/repositories/ScheduledExecutionRepository';
+import { isAuthFailure } from '@/lib/pilot/shadow/userFacing';
 import { isAgentSchedulerEnabled } from '@/lib/utils/featureFlags';
 import { currentPlanIfStale } from './committedPlan';
 import { nextTickAfter } from '@/lib/business-os/schedule/interval';
@@ -720,7 +721,29 @@ async function executeOne(
      * ───────────────────────────────────────────────────────────────────────
      */
     if (succeeded === false) {
-      const retry = (run.retry_count ?? 0) < MAX_ATTEMPTS;
+      const why = causeOfFailure(execution);
+      const code = (execution as { failedStepCode?: string })?.failedStepCode;
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * AN AUTHENTICATION FAILURE IS TERMINAL ON THE FIRST ATTEMPT.
+       *
+       * This was the attempt count alone, with no regard for the cause, so a
+       * dead connection was retried exactly like a timeout. A 401 does not
+       * become a 200 by being asked again five minutes later; what it does is
+       * cost another token refresh.
+       *
+       * Measured on a live account: this agent failed every five minutes from
+       * 30 October to 9 November — around 50 runs a day, each refreshing the
+       * same Google grant twice — and the load is what kept the grant broken.
+       * Another agent on the same account using the same plugin, scheduled
+       * once a day, completed normally the whole time.
+       *
+       * So the cause decides. Retries still exist, and still matter, for the
+       * failures that genuinely pass: a timeout, a 500, a rate limit.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const retry = !isAuthFailure(why, code) && (run.retry_count ?? 0) < MAX_ATTEMPTS;
       /*
        * ───────────────────────────────────────────────────────────────────────
        * `causeOfFailure`, WHICH WAS WRITTEN FOR THIS AND NEVER CALLED.
@@ -749,8 +772,6 @@ async function executeOne(
        * to parse step names out of English prose would be the wrong repair.
        * ───────────────────────────────────────────────────────────────────────
        */
-      const why = causeOfFailure(execution);
-
       await scheduledExecutionRepository.markFailed(
         run.id,
         why,
@@ -758,7 +779,7 @@ async function executeOne(
         /* The code travels with the sentence so the dashboard can say it in
            the owner's language — the sentence itself comes from a plugin
            definition and those are English-only. */
-        (execution as { failedStepCode?: string })?.failedStepCode,
+        code,
         /* And the plugin, so a surface can name it and offer to reconnect it.
            Without this a dead connection reaches the owner anonymous: "A
            connected app needs to be reconnected", with no way to act. */
@@ -793,7 +814,8 @@ async function executeOne(
     log.info({ executionId }, 'Scheduled run completed');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const retry = (run.retry_count ?? 0) < MAX_ATTEMPTS;
+    /* Same rule as the branch above: the cause decides, not only the count. */
+    const retry = !isAuthFailure(message) && (run.retry_count ?? 0) < MAX_ATTEMPTS;
 
     await scheduledExecutionRepository.markFailed(run.id, message, retry);
     result.failed += 1;

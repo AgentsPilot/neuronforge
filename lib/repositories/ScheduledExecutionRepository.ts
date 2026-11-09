@@ -26,6 +26,7 @@
 
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
+import { isAuthFailure } from '@/lib/pilot/shadow/userFacing';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const logger = createLogger({ service: 'ScheduledExecutionRepository' });
@@ -295,9 +296,7 @@ export class ScheduledExecutionRepository {
        * names the app rather than saying "A connected app".
        * ───────────────────────────────────────────────────────────────────────
        */
-      const looksLikeAuth =
-        code === 'auth_failed' ||
-        /token|expired|permission|oauth|unauthori|reconnect|credential/i.test(message);
+      const looksLikeAuth = isAuthFailure(message, code);
 
       const issue = toUserFacing(
         looksLikeAuth ? { source: 'auth', plugin, message } : plugin ? { plugin, message } : message
@@ -333,11 +332,38 @@ export class ScheduledExecutionRepository {
     const attempts = (data as { retry_count?: number } | null)?.retry_count ?? 1;
     const delaySeconds = Math.min(3600, 60 * 2 ** attempts);
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE COUNTER THIS ROW IS RETRIED ON, WRITTEN BACK.
+     *
+     * `retry_count` was read three lines up and never written anywhere in the
+     * codebase: the only other mention is `retry_count: 0` at creation. So it
+     * was always 0, and the two mechanisms built on it were both dead:
+     *
+     *   · `scheduledAgentRunner`'s dead-letter cap is
+     *     `(run.retry_count ?? 0) < MAX_ATTEMPTS`, i.e. permanently `0 < 5`,
+     *     so a run was retried for ever and could never dead-letter.
+     *
+     *   · the backoff above is `60 * 2 ** attempts` with `attempts` stuck at
+     *     1, so the delay was always 120s and never grew.
+     *
+     * Measured on a live account: a mailbox agent failed every five minutes
+     * from 30 October to 9 November — about 50 runs a day, `last_run` frozen
+     * on the day it broke. Each run refreshed the same Google grant twice, so
+     * one refresh token was being refreshed 100+ times a day. That load is
+     * what killed the token: another agent on the SAME account and the SAME
+     * plugin, running once a day, completed normally throughout.
+     *
+     * One write restores both. Nothing else needs to change for the cap and
+     * the backoff to start working.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     await this.close(id, {
       status: 'pending',
       error_message: message.slice(0, 2000),
       claimed_by: null,
       claimed_at: null,
+      retry_count: attempts + 1,
       next_retry_at: new Date(Date.now() + delaySeconds * 1000).toISOString(),
     });
   }

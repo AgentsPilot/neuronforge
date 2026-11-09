@@ -342,6 +342,33 @@ function translateScatterItemFieldIssue(raw: any): UserFacingIssue {
   };
 }
 
+/**
+ * Does this failure say a connection needs re-authorising?
+ *
+ * Lives beside `toUserFacing` because the two answer the same question for
+ * different audiences, and they used to answer it independently. The sentence
+ * an owner reads came from here; whether the run was retried at all was
+ * decided in `scheduledAgentRunner` from the attempt count alone, with no
+ * regard for the cause.
+ *
+ * That cost ten days. A mailbox agent failing on a 401 was retried every five
+ * minutes from 30 October to 9 November, and each retry refreshed the same
+ * Google grant twice — 100+ refreshes a day of one refresh token. The load is
+ * what kept the grant broken: another agent on the same account and the same
+ * plugin, scheduled once a day, completed normally throughout. A 401 does not
+ * become a 200 by being asked again five minutes later.
+ *
+ * A text test rather than a status code, because the message is all that
+ * survives the trip up from a plugin executor. `code` is preferred when the
+ * thrower set one.
+ */
+export function isAuthFailure(message: string, code?: string): boolean {
+  return (
+    code === 'auth_failed' ||
+    /token|expired|permission|oauth|unauthori|reconnect|credential/i.test(message)
+  );
+}
+
 export function toUserFacing(raw: any): UserFacingIssue {
   // String inputs: try to recognize known message formats.
   if (typeof raw === 'string') {
