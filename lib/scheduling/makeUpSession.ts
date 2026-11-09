@@ -81,6 +81,7 @@
 import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
+import { replacedHourAlreadyPaid } from '@/lib/scheduling/replacementCharge';
 
 const logger = createLogger({ module: 'MakeUpSession' });
 
@@ -265,6 +266,42 @@ async function chargeIfSoldPerSession(args: {
       logger.info(
         { containerId: args.containerId, missedMeetingId: args.missedMeetingId },
         'The missed hour was charged, so its make-up carries no stage'
+      );
+      return false;
+    }
+
+    /*
+     * ── AND THE HOURS ABOVE IT, WHICH ONE HOP CANNOT SEE ────────────────────
+     *
+     * The read above asks about the missed hour's OWN stage, which is the right
+     * question on this path: the client reaches it only after the owner has
+     * recorded the no-show, so that stage has settled.
+     *
+     * It is not the whole question. A make-up carries no stage of its own when
+     * the hour it stands in for was paid, so a make-up that is itself missed
+     * and made up again presents a row with no stage and no money — and one hop
+     * reads that as "nothing was charged" and bills it. The money is two hops
+     * up. Package 83e8460c reached exactly that state and the client was
+     * charged twice for one delivered hour.
+     *
+     * `replacedHourAlreadyPaid` walks the chain and judges ancestors only, for
+     * the reason set out in its module note.
+     */
+    const upstream = await replacedHourAlreadyPaid({
+      userId: args.userId,
+      replacedMeetingId: args.missedMeetingId,
+    });
+
+    if (upstream.alreadyPaid) {
+      logger.info(
+        {
+          containerId: args.containerId,
+          missedMeetingId: args.missedMeetingId,
+          paidMeetingId: upstream.paidMeetingId,
+          hops: upstream.hops,
+          uncertain: upstream.uncertain,
+        },
+        'An hour up the chain is already paid, so this make-up carries no stage'
       );
       return false;
     }

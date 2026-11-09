@@ -14,9 +14,9 @@ import { getUser } from '@/lib/auth';
 import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
 import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { busyMeetings, overlapsBusy } from '@/lib/scheduling/busyMeetings';
-/* The owner's synced calendar holds their time too — the same read the
-   sibling availability routes make. */
-import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
+/* The owner's synced calendar holds their time too — one definition, read by
+   every surface that asks whether an hour is free. */
+import { externalBusy } from '@/lib/scheduling/externalBusy';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
 import { windowsForDate, hasAnyAvailability, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
@@ -24,6 +24,7 @@ import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOf
 import { supabaseServer } from '@/lib/supabaseServer';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { safeTimezone, businessInstant, businessDateKey, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
+import { bookableDaysFor } from '@/lib/scheduling/bookingWindow';
 
 const logger = createLogger({ module: 'WebsiteBookingAvailabilityAPI' });
 
@@ -45,6 +46,14 @@ interface Service {
    * elsewhere rather than inventing a different number here.
    */
   advance_booking_days?: number | null;
+  /**
+   * How much warning the business needs before an appointment.
+   *
+   * Honoured when a client MOVES an appointment and ignored when one books it,
+   * because the column never reached this list. Absent means null, and the
+   * caller falls back to the same 24 the reschedule route uses.
+   */
+  min_notice_hours?: number | null;
   is_scheduled?: boolean;
   collection?: 'online' | 'invoice' | null;
   /** Bought outright, or quoted first. The booking modal's resolver reads it. */
@@ -263,8 +272,9 @@ export async function GET(request: NextRequest) {
       currency: s.currency || 'USD',
       // The two facts the widget builds its journey from.
       is_scheduled: s.is_scheduled !== false,
-      /* How far ahead the strip may run. */
+      /* How far ahead the strip may run, and how soon it may start. */
       advance_booking_days: s.advance_booking_days ?? null,
+      min_notice_hours: s.min_notice_hours ?? null,
       collection: s.collection ?? null,
       sale_mode: s.sale_mode ?? 'direct',
       paymentPlan: plansByService[s.id],
@@ -372,37 +382,44 @@ export async function GET(request: NextRequest) {
        * not take down the booking page, so an error leaves the meetings as the
        * answer rather than returning none.
        */
-      let externalEvents: Array<{ start_time: string; end_time: string }> = [];
-      try {
-        const { data: busySlots } = await externalCalendarEventRepository.getBusySlots(
-          ownerId,
-          startDate,
-          endDate
-        );
-        externalEvents = (busySlots || []).map(slot => ({
-          start_time: slot.start,
-          end_time: slot.end,
-        }));
-      } catch (calendarError) {
-        requestLogger.error(
-          { err: calendarError, ownerId },
-          'Could not read the owner calendar; offering slots from the meetings alone'
-        );
-      }
+      const externalEvents = await externalBusy(ownerId, startDate, endDate);
 
       const busy = [...meetings, ...externalEvents];
 
-      // Mark overlapping slots as unavailable
-      if (busy.length > 0) {
-        slots = slots.map(slot => {
-          const hasConflict = overlapsBusy(slot.start, slot.end, busy);
+      /*
+       * ── WHEN, AS WELL AS WHETHER ──────────────────────────────────────────
+       *
+       * Occupancy was the ONLY test this route applied: every slot left
+       * `calculateDaySlots` as `available: true` and stayed that way unless
+       * something overlapped it. So on the subdomain booking page a client
+       * could pick:
+       *
+       *   · an hour that has already gone — 09:00 this morning, at two in the
+       *     afternoon, with nothing to say it had passed;
+       *   · an hour inside the notice the business asked for, which the portal's
+       *     reschedule route has always refused;
+       *   · an hour beyond `advance_booking_days`, which this route returns to
+       *     the client and then ignores itself.
+       *
+       * The business set all three. One of its two booking pages applied none.
+       */
+      const selectedService = formattedServices.find(s => s.id === serviceId);
+      const noticeHours = selectedService?.min_notice_hours ?? 24;
+      const advanceDays = bookableDaysFor(selectedService?.advance_booking_days);
+      const now = Date.now();
+      const earliest = now + noticeHours * 60 * 60 * 1000;
+      const latest = now + advanceDays * 24 * 60 * 60 * 1000;
 
-          return {
-            ...slot,
-            available: !hasConflict
-          };
-        });
-      }
+      slots = slots.map(slot => {
+        const startsAt = new Date(slot.start).getTime();
+        const withinWindow = startsAt >= earliest && startsAt <= latest;
+        const hasConflict = busy.length > 0 && overlapsBusy(slot.start, slot.end, busy);
+
+        return {
+          ...slot,
+          available: slot.available && withinWindow && !hasConflict,
+        };
+      });
     }
 
     requestLogger.info(
@@ -511,47 +528,53 @@ async function calculateDaySlots(
     return slots;
   }
 
-  // First window only, for now: the loop below walks hours and minutes as
-  // scalars rather than as instants, so it cannot resume after a gap without
-  // being rewritten. A business with a split day gets its morning here and its
-  // full set on the public booking page. Named rather than silent, because a
-  // missing afternoon looks identical to a closed one.
-  const daySettings = windows[0];
+  /*
+   * EVERY window, not just the first.
+   *
+   * This read `windows[0]`, and said so — a business with a split day got its
+   * morning here and its full day on the sibling booking page. Same business,
+   * same date, two different sets of hours depending on which address the
+   * client arrived at, with the afternoon simply missing from one of them.
+   *
+   * The scalar walk below is per-window, so resuming after the midday gap is
+   * the loop it already was, run again from the second window's opening time.
+   */
+  for (const daySettings of windows) {
+    const [startHour, startMin] = daySettings.start.split(':').map(Number);
+    const [endHour, endMin] = daySettings.end.split(':').map(Number);
 
-  const [startHour, startMin] = daySettings.start.split(':').map(Number);
-  const [endHour, endMin] = daySettings.end.split(':').map(Number);
+    let currentHour = startHour;
+    let currentMin = startMin;
 
-  let currentHour = startHour;
-  let currentMin = startMin;
+    while (currentHour < endHour || (currentHour === endHour && currentMin + durationMinutes <= endMin)) {
+      /* The wall clock the owner typed, as the instant the business means by it. */
+      const slotStart = businessInstant(
+        dateStr,
+        `${String(currentHour).padStart(2, '0')}:${String(currentMin).padStart(2, '0')}`,
+        timezone
+      );
+      const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60 * 1000);
 
-  while (currentHour < endHour || (currentHour === endHour && currentMin + durationMinutes <= endMin)) {
-    /* The wall clock the owner typed, as the instant the business means by it. */
-    const slotStart = businessInstant(
-      dateStr,
-      `${String(currentHour).padStart(2, '0')}:${String(currentMin).padStart(2, '0')}`,
-      timezone
-    );
-    const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60 * 1000);
+      /*
+       * Whether the slot ends after closing, compared as wall-clock minutes
+       * rather than by reading `slotEnd`'s hours — those would come back in the
+       * server's zone and let a slot run past closing time.
+       */
+      const endMins = currentHour * 60 + currentMin + durationMinutes;
+      if (endMins <= endHour * 60 + endMin) {
+        slots.push({
+          start: slotStart.toISOString(),
+          end: slotEnd.toISOString(),
+          available: true
+        });
+      }
 
-    /*
-     * Whether the slot ends after closing, compared as wall-clock minutes
-     * rather than by reading `slotEnd`'s hours — those would come back in the
-     * server's zone and let a slot run past closing time.
-     */
-    const endMins = currentHour * 60 + currentMin + durationMinutes;
-    if (endMins <= endHour * 60 + endMin) {
-      slots.push({
-        start: slotStart.toISOString(),
-        end: slotEnd.toISOString(),
-        available: true
-      });
-    }
-
-    // Move to next slot (30-minute intervals)
-    currentMin += 30;
-    if (currentMin >= 60) {
-      currentHour += 1;
-      currentMin -= 60;
+      // Move to next slot (30-minute intervals)
+      currentMin += 30;
+      if (currentMin >= 60) {
+        currentHour += 1;
+        currentMin -= 60;
+      }
     }
   }
 

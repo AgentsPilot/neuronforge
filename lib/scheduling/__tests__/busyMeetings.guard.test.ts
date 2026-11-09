@@ -20,7 +20,7 @@ const read = (p: string) =>
 
 describe('the filter cannot be written as a NOT IN', () => {
   /*
-   * In SQL, `NULL NOT IN ('no_show','cancelled')` is NULL — not true. An
+   * In SQL, `NULL NOT IN ('cancelled','moved')` is NULL — not true. An
    * unmarked meeting would therefore fail the filter and vanish from the
    * result, and since NULL is the normal state of every FUTURE appointment,
    * every future slot would read as free. The whole diary would be bookable.
@@ -38,9 +38,44 @@ describe('the filter cannot be written as a NOT IN', () => {
     /* A new outcome added to the enum and not considered here is a slot whose
        occupancy nobody decided. Freeing or holding is a choice; forgetting is
        not. */
-    const held = ['held'];
-    const frees = ['no_show', 'cancelled', 'moved'];
-    expect([...held, ...frees].sort()).toEqual([...MEETING_STATUSES].sort());
+    const holds = ['held', 'no_show'];
+    const frees = ['cancelled', 'moved'];
+    expect([...holds, ...frees].sort()).toEqual([...MEETING_STATUSES].sort());
+  });
+
+  it('and nobody writes the filter out by hand', () => {
+    /*
+     * `busyMeetings` itself had the string typed out for its second query —
+     * the bookings with no meeting row. A copy is how one half of a definition
+     * moves and the other does not: widening it to hold a missed hour updated
+     * the constant and left that line reading the old rule, so those bookings
+     * would have gone on offering an hour the rest of the product had just
+     * withdrawn. Found only by grep, which is why it is pinned.
+     */
+    const helper = read('lib/scheduling/busyMeetings.ts').replace(/\/\*[\s\S]*?\*\//g, '');
+
+    expect(helper).not.toContain("'meeting_status.is.null");
+    expect(helper.match(/\.or\(MEETING_HOLDS_SLOT_FILTER\)/g)).toHaveLength(2);
+  });
+
+  it('and the hour a client missed is one of the taken ones', () => {
+    /*
+     * It was in `frees` until now. The hour was spent either way: the owner
+     * kept it clear and waited, nothing else could fill it, and the session is
+     * charged — `replacementCharge.ts` is about precisely that. The full
+     * account is on `MEETING_HOLDS_SLOT_FILTER`.
+     */
+    expect(MEETING_HOLDS_SLOT_FILTER).toContain('eq.no_show');
+
+    for (const holding of ['held', 'no_show'] as const) {
+      expect({ holding, holds: holdsSlot({ status: 'confirmed', meeting_status: holding }) })
+        .toEqual({ holding, holds: true });
+    }
+
+    for (const freeing of ['cancelled', 'moved'] as const) {
+      expect({ freeing, holds: holdsSlot({ status: 'confirmed', meeting_status: freeing }) })
+        .toEqual({ freeing, holds: false });
+    }
   });
 });
 

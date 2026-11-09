@@ -637,6 +637,29 @@ function sessionCardsFromMeetings(
   if (numbered.length === 0) return [];
 
   /*
+   * ── IS THERE STILL A JOB TO ARRANGE THESE HOURS FOR? ─────────────────────
+   *
+   * `jobCalledOff` rather than a hand-rolled `status === 'cancelled'`, because
+   * the two disagree constantly and the narrow one is wrong. A package whose
+   * owner called it off keeps `status: 'confirmed'` and `meeting_status:
+   * 'held'` — the consultation genuinely happened — and records the decision
+   * on `cancel_reason` / `cancelled_by` instead.
+   *
+   * Measured 2026-11-08 on package 6a1b47f5: confirmed/held, cancel_reason
+   * `client_no_show`, cancelled_by `owner`, quote `stopped`. The narrow test
+   * answered FALSE, so every missed session went on offering a replacement
+   * while the card's own header said "Called off" — the header and the rows
+   * beneath it disagreeing about the same job, which is the fault
+   * `bookingStatus` exports one predicate to prevent.
+   *
+   * The stopped QUOTE counts too: a job can be stopped at the proposal without
+   * anything being written onto the booking, and `BookingsTab` already folds
+   * `quoteState === 'stopped'` into its own copy of this question.
+   */
+  const soldBy = proposals.find(proposal => proposal.package_booking_id === card.booking.id);
+  const purchaseCalledOff = jobCalledOff(card.booking) || soldBy?.status === 'stopped';
+
+  /*
    * ── WHICH SESSIONS HAVE ALREADY BEEN MADE UP ────────────────────────────
    *
    * Read the other way round from how it is written: a replacement names the
@@ -732,6 +755,13 @@ function sessionCardsFromMeetings(
                 : attempt.meeting_status === 'held'
                   ? 'completed'
                   : card.booking.status,
+          /*
+           * And the PURCHASE's state, which the override above has just made
+           * unreachable. A control asking "is there still a job to arrange
+           * this hour for?" cannot read `status` any more — that now answers
+           * about the hour itself.
+           */
+          purchase_cancelled: purchaseCalledOff,
           /* The SESSION's number, which is what the row is labelled with. */
           occurrence_number: session,
           /*
@@ -901,8 +931,26 @@ function foldPackageMeetings(
        * one nobody ever got round to — which are different facts.
        * ───────────────────────────────────────────────────────────────────────
        */
+      /*
+       * ── THE CONTAINER, NOT THE CARD IT WAS ABSORBED INTO ──────────────────
+       *
+       * The note above says "read off the CONTAINER", and that was true while
+       * the container WAS this card. After absorption it is not: a quote's
+       * sessions are hosted on the QUOTE's booking, whose own pre-meeting was
+       * held — so this asked a `confirmed/held` booking whether the package
+       * had been called off and was told no.
+       *
+       * Live on 2026-11-08: quote 60228ffb, host ed5e6a15 (held), container
+       * a7bc8084 (cancelled). The step turned green on a stopped job, which is
+       * precisely the outcome the note above was written to prevent.
+       *
+       * Falls back to the card for an unabsorbed container, where the two are
+       * the same booking.
+       */
+      const containerBooking = containerId ? byId.get(containerId)?.booking : undefined;
+      const packageSource = containerBooking ?? card.booking;
       const packageCalledOff =
-        card.booking.status === 'cancelled' || card.booking.meeting_status === 'cancelled';
+        packageSource.status === 'cancelled' || packageSource.meeting_status === 'cancelled';
 
       const packageStep: BookingJourneyStep = {
         id: `${card.booking.id}-package`,
@@ -4221,7 +4269,29 @@ export function CRMContactDrawerV2({
          * would silently shrink the list the owner is searching.
          * ─────────────────────────────────────────────────────────────────────
          */
-        const bookingsPromise = fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=200&include_attempts=true`)
+        /*
+         * ── `no-store`, BECAUSE THIS IS THE PRIMARY LOAD PATH ───────────────
+         *
+         * The refresh below asks for the SAME url with `cache: 'no-store'`, and
+         * so do the emails and proposals beside it. This one did not, so the
+         * first load of a drawer could be served from the HTTP cache — and what
+         * it serves is the booking as it was BEFORE the last mutation.
+         *
+         * Every row action keyed on the booking's own state then reads the
+         * stale value. Live case 2026-11-08, booking a7bc8084: a job cancelled
+         * at 19:03 still rendered `status: 'confirmed'`, so `bookingCancelled`
+         * was false on all nine sessions and a called-off job went on offering
+         * to book replacements. The MEETINGS come from their own fetch and were
+         * fresh, which is why the replacement rule worked and this one did not
+         * — the two halves of one row disagreeing about the same job.
+         *
+         * It is also why a hard refresh "fixed" it: that is the one thing that
+         * bypasses this cache.
+         */
+        const bookingsPromise = fetch(
+          `/api/scheduling/bookings?contact_id=${contactId}&limit=200&include_attempts=true`,
+          { cache: 'no-store' }
+        )
           .then(response => (response.ok ? response.json() : { success: false }))
           .catch(error => {
             logger.warn({ err: error, contactId }, 'Could not load bookings');
@@ -4235,7 +4305,12 @@ export function CRMContactDrawerV2({
          * the journey renders without the quote step, which is the same thing
          * it does for every business that does not quote at all.
          */
-        const proposalsPromise = fetch(`/api/business-os/proposals?contact_id=${contactId}`)
+        /* `no-store` for the reason the bookings fetch above now carries: its
+           twin in the refresh path has it, and a cached quote shows a job as
+           live after it has been stopped. */
+        const proposalsPromise = fetch(`/api/business-os/proposals?contact_id=${contactId}`, {
+          cache: 'no-store',
+        })
           .then(response => (response.ok ? response.json() : { proposals: [] }))
           .catch(error => {
             logger.warn({ err: error, contactId }, 'Could not load proposals');
@@ -4247,7 +4322,10 @@ export function CRMContactDrawerV2({
             return list;
           });
 
-        const emailsPromise = fetch(`/api/crm/contacts/${contactId}/emails?limit=100`)
+        /* The third of the same set; its refresh twin is `no-store` too. */
+        const emailsPromise = fetch(`/api/crm/contacts/${contactId}/emails?limit=100`, {
+          cache: 'no-store',
+        })
           .then(response => (response.ok ? response.json() : { emails: [] }))
           .catch(error => {
             logger.warn({ err: error, contactId }, 'Could not load emails');
@@ -7242,6 +7320,47 @@ export function CRMContactDrawerV2({
                     throw new Error(data.error || 'Failed to cancel the booking');
                   }
                   toast.success(t('crm.booking.cancelled_done') || 'Booking cancelled');
+
+                  /*
+                   * ── THE CARDS LEARN IT NOW, NOT WHEN THE REFETCH LANDS ────
+                   *
+                   * The controls that must disappear when a package is called
+                   * off are already gated on it — `bookingCancelled` on the
+                   * session row's menu, and the add-a-meeting control, both in
+                   * `BookingsTab` — and both read `session.booking.status`,
+                   * which is this state.
+                   *
+                   * The refetch below is not awaited (deliberately: it is
+                   * silent and the owner should not wait on it), so until it
+                   * lands every session row is still holding the package as it
+                   * was a moment ago. That is how a cancelled package went on
+                   * offering "Book a replacement" and "Add a meeting" on a live
+                   * account, and the owner read a control that looked live.
+                   *
+                   * So the one fact the cancel just established is written
+                   * straight into state. The refetch stays, and becomes
+                   * confirmation rather than the only source of it.
+                   *
+                   * Both fields, because the gates read both — the whole
+                   * booking cancel writes `status` and `meeting_status`.
+                   */
+                  if (pendingCancelBookingId && !pendingOutcomeMeetingId) {
+                    setSessions(previous =>
+                      previous.map(card =>
+                        card.booking.id === pendingCancelBookingId
+                          ? {
+                              ...card,
+                              booking: {
+                                ...card.booking,
+                                status: 'cancelled',
+                                meeting_status: 'cancelled',
+                              },
+                            }
+                          : card
+                      )
+                    );
+                  }
+
                   fetchSessions(contact.id, { silent: true });
                   fetchActivities(contact.id, { silent: true });
 

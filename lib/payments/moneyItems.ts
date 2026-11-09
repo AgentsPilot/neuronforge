@@ -120,6 +120,17 @@ export interface MoneyTransaction {
 /** What the caller knows about a booking, for the row's heading. */
 export interface MoneyBooking {
   id: string;
+  /**
+   * The JOB's own state, which the money cannot be asked for.
+   *
+   * `flow.cancelled` counts money that was billed and called off, so it only
+   * knows a cancellation that VOIDED something. Cancel a booking whose payment
+   * has already settled and the refund lands in `refunded` instead, leaving
+   * nothing anywhere to say the job itself was called off.
+   *
+   * Optional, so a caller that has not been updated still type-checks.
+   */
+  status?: string | null;
   title: string;
   startTime?: string | null;
   contactId?: string | null;
@@ -334,6 +345,14 @@ export interface MoneyItem {
   key: string;
   /** `booking` when a booking groups this; `standalone` for money with none. */
   kind: 'booking' | 'standalone';
+  /**
+   * This order's job was called off.
+   *
+   * Separate from `status`, which describes the MONEY. The two disagree
+   * routinely and both are true: a cancelled job can hold a payment that
+   * settled and was then returned, which is `cancelled` and `refunded` at once.
+   */
+  bookingCancelled?: boolean;
   title: string;
   status: MoneyStatus;
   /** `mixed` when a booking's entries were collected in more than one way. */
@@ -697,6 +716,10 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
     items.push({
       key: bookingId,
       kind: 'booking',
+      /* Read from the booking rather than inferred from the money: a refunded
+         payment and a voided invoice are different events, and only one of
+         them leaves a trace in `flow.cancelled`. */
+      bookingCancelled: String(booking.status ?? '') === 'cancelled',
       title: booking.title,
       status: rollUpStatus(bookingEntries),
       method: plan ? 'plan' : methods.size > 1 ? 'mixed' : [...methods][0],
@@ -817,6 +840,9 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
     items.push({
       key: bookingId,
       kind: 'booking',
+      /* The twin of the builder above; both must set it or a plan-only order
+         loses the fact that its job was called off. */
+      bookingCancelled: String(booking.status ?? '') === 'cancelled',
       title: booking.title,
       // Every period here is unbilled by definition, so nothing has been asked
       // for yet — which is what `awaiting_payment` means on this list.
@@ -841,7 +867,24 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
   for (const entry of standalone) {
     items.push({
       key: entry.key,
-      kind: 'standalone',
+      /*
+       * ── AN INSTALMENT IS AN ORDER, EVEN WITH ITS BOOKING LINK MISSING ─────
+       *
+       * `kind` splits the page in two: work sold, and money with no booking
+       * behind it. It was decided by the booking link alone, so a plan period
+       * the processor charged without one was filed under "Invoices without an
+       * order" — where a row titled "Payment 1 of 2" plainly contradicts the
+       * heading above it. Reported from the page itself on 2026-11-08.
+       *
+       * The entry already knows better: `planPeriod` is what `planPeriodText`
+       * reads to title that very row. A period belongs to the plan that
+       * scheduled it whether or not anything joined it to a booking, so the
+       * question is "is this part of a plan", not "did the link survive".
+       *
+       * `bookingId` stays null below — this does not invent a booking, and the
+       * row's own open-the-booking action already refuses when there is none.
+       */
+      kind: entry.planPeriod ? 'booking' : 'standalone',
       // What was SOLD leads: "ייעוץ אישי" identifies a row, "INV-00012" does
       // not. The number moves to the second line as a reference.
       //

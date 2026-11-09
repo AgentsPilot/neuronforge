@@ -20,8 +20,8 @@ import { generateTimeSlots } from '@/lib/scheduling/availableSlots';
 import { windowsForDate } from '@/lib/scheduling/availabilityWindows';
 import { safeTimezone } from '@/lib/scheduling/businessTime';
 import { busyMeetings } from '@/lib/scheduling/busyMeetings';
+import { externalBusy } from '@/lib/scheduling/externalBusy';
 import { bookMakeUpSession } from '@/lib/scheduling/makeUpSession';
-import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
@@ -650,15 +650,7 @@ export async function GET(
       const dayEnd = date + 'T23:59:59.999Z';
 
       const existingBookings = await busyMeetings(supabaseServer, booking.user_id, dayStart, dayEnd);
-      const { data: busySlots } = await externalCalendarEventRepository.getBusySlots(
-        booking.user_id,
-        dayStart,
-        dayEnd
-      );
-      const externalEvents = (busySlots || []).map(slot => ({
-        start_time: slot.start,
-        end_time: slot.end,
-      }));
+      const externalEvents = await externalBusy(booking.user_id, dayStart, dayEnd);
 
       return {
         slots: generateTimeSlots(date, dayWindows, duration, existingBookings, externalEvents, timezone),
@@ -733,15 +725,7 @@ export async function GET(
         windowStart,
         windowEnd
       );
-      const { data: busySlots } = await externalCalendarEventRepository.getBusySlots(
-        booking.user_id,
-        windowStart,
-        windowEnd
-      );
-      const externalEvents = (busySlots || []).map(slot => ({
-        start_time: slot.start,
-        end_time: slot.end,
-      }));
+      const externalEvents = await externalBusy(booking.user_id, windowStart, windowEnd);
 
       const open: string[] = [];
       for (let offset = 0; offset < days; offset++) {

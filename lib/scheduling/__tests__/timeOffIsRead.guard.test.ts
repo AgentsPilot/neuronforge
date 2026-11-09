@@ -71,10 +71,12 @@ describe('the smart-link booking page', () => {
     expect(smartLink).toContain('schedulingTimeOffRepository.list(userId');
   });
 
-  it('builds the date key from local parts, not toISOString', () => {
+  it('walks the days as date keys, not as instants', () => {
     // `toISOString()` names the UTC day, which for a business ahead of UTC
-    // subtracts a day from every closed-day comparison.
-    expect(smartLink).toContain('currentDate.getFullYear()');
+    // subtracts a day from every closed-day comparison. Reading a Date's local
+    // parts avoided that and traded it for the server's zone, which on Vercel
+    // is the same bug: `shiftBusinessDateKey` never leaves the calendar at all.
+    expect(smartLink).toContain('shiftBusinessDateKey(startDate.slice(0, 10), i)');
     expect(smartLink).not.toMatch(/const dateKey = .*toISOString/);
   });
 });

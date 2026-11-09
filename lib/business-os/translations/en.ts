@@ -2463,6 +2463,9 @@ export const en = {
     'crm.session.no_payment': 'No payment info',
     'crm.session.intake_completed': 'Client form completed',
     'crm.booking.status.confirmed': 'Upcoming',
+    /* The status filter's own chip. Every other chip reuses the status
+       label beside it, so a chip and the badge it filters to agree. */
+    'crm.booking.filter.all': 'All',
     'crm.booking.status.completed': 'Completed',
     'crm.booking.status.cancelled': 'Cancelled',
     'crm.booking.status.auto_completed': 'Marked automatically',
@@ -2820,6 +2823,12 @@ export const en = {
       'Money was already collected for this work. Refund it if it is owed',
     'crm.next.notice.dismiss': 'Dismiss',
     'crm.next.badge.quote_stopped': 'Stopped',
+    /* A BADGE IS A LABEL, NOT A SENTENCE.
+       Without a short form the badge falls back to `crm.next.called_off` —
+       "The work was called off" — and a sentence in a chip wraps onto two
+       lines and crowds the reason beside it. Its sibling `quote_stopped`
+       has had one all along. */
+    'crm.next.badge.called_off': 'Called off',
     'crm.next.unknown': '',
 
     'crm.next.action.mark_held': 'Mark as held',
@@ -3201,6 +3210,9 @@ export const en = {
     'scheduling.today': 'Today',
     'scheduling.bookings_this_week': 'bookings',
     'scheduling.bookings_count': 'bookings',
+    'scheduling.expand_calendar': 'Expand the calendar',
+    'scheduling.expand_list': 'Expand the list',
+    'scheduling.view_both': 'Show both',
     'scheduling.view_grid': 'Grid View',
     'scheduling.view_list': 'List View',
     'scheduling.bookings_list': 'Bookings',
@@ -3218,6 +3230,9 @@ export const en = {
     'scheduling.day.sun': 'Sun',
     'scheduling.status.confirmed': 'Confirmed',
     'scheduling.status.cancelled': 'Cancelled',
+    'scheduling.status.moved': 'Moved',
+    'scheduling.status.held': 'Held',
+    'scheduling.outcome_toggle_hint': 'These no longer hold their hour. Hide one to free room for the rest.',
     'scheduling.status.completed': 'Completed',
     'scheduling.status.no_show': 'No Show',
     'scheduling.status.pending': 'Pending',
@@ -3726,6 +3741,10 @@ export const en = {
     'payments.money_status.partially_refunded': 'Partly refunded',
     'payments.money_status.refunded': 'Refunded',
     'payments.money_status.awaiting_payment': 'Awaiting payment',
+    /* A milestone nobody has billed yet: no date, no invoice, nothing asked
+       of the client. Distinct from `awaiting_payment`, which says they are
+       late to act on a bill that HAS gone out. */
+    'payments.money_status.not_billed': 'When the work is done',
     'payments.money_status.overdue': 'Overdue',
     'payments.money_status.failed': 'Payment failed',
     'payments.money_status.draft': 'Draft',
@@ -4801,6 +4820,7 @@ export const en = {
     'settings.security.confirm_password_placeholder': 'Confirm new password',
     'settings.security.update_password': 'Update Password',
     'settings.security.password_updated': 'Password updated successfully!',
+    'settings.security.password_signing_out': 'Signing you out of every device. Please sign in again with your new password.',
     'settings.security.password_error': 'Failed to change password. Please try again.',
     'settings.security.password_mismatch': 'New passwords do not match.',
     'settings.security.password_short': 'Password must be at least 8 characters.',
@@ -5541,6 +5561,18 @@ export const en = {
        the pair does not add to anything, so nobody tries. */
     'money.fell_through_note': 'Both are already inside the total above. Neither is money you have.',
     'money.cancelled_note': 'Part of the total above. It was billed and will not arrive.',
+    /* The half of a cancelled order's face value that was never taken. Not a
+       refund, because it never arrived. */
+    'money.never_collected': 'never collected',
+    /* The route caps how much it reads and returns `truncated` when it had
+       to stop short. Said plainly: the sums below are wrong, not merely
+       shortened. */
+    'money.partial_title': 'These figures are incomplete',
+    'money.partial_note':
+      'There is more money in this period than this page can read at once, so every total below is lower than the truth. Narrow the period to see a complete picture of a smaller span.',
+    /* Names the figure on an order card: the total ever billed for the job,
+       which is why it does not move when a filter is clicked. */
+    'money.billed_label': 'billed',
     'money.refunded_note': 'Part of the total above. It arrived, then went back.',
     'money.list_title': 'All the money, by the work it belongs to',
     'money.search_placeholder': 'Search a client, invoice or amount',

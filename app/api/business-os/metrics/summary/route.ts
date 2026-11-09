@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { MEETING_HOLDS_SLOT_FILTER } from '@/lib/business-os/bookingStatus';
+import { appointmentOutcomes } from '@/lib/scheduling/appointmentFacts';
 
 const logger = createLogger({ module: 'BusinessMetricsSummaryAPI' });
 
@@ -68,36 +68,36 @@ export async function GET(request: NextRequest) {
       { count: activeClients },
       { data: businessProfile },
     ] = await Promise.all([
-      // Sessions today (confirmed bookings)
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .gte('start_time', todayStart)
-        .lt('start_time', todayEnd)
-        .in('status', ['confirmed', 'completed'])
-        /*
-         * And the meeting is still on.
-         *
-         * The status pair means "not cancelled", and it used to exclude a
-         * no-show as well because `markNoShow()` wrote `status: 'no_show'`. It
-         * writes `meeting_status` now, so without this line the owner's
-         * "sessions today" counts appointments nobody attended — a number they
-         * would read first thing each morning and not be able to explain.
-         */
-        .or(MEETING_HOLDS_SLOT_FILTER),
+      /*
+       * Sessions today — APPOINTMENTS, not jobs.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * This counted `scheduling_bookings` by `start_time`. A job whose hours
+       * live on its sessions carries no `start_time`, and NULL never satisfies
+       * `gte`, so every package session was missing from the figure. An owner
+       * with a six-session package running today was told nothing was on.
+       *
+       * `appointmentOutcomes` reads `scheduling_meetings` and adds the bookings
+       * that have an hour and no meeting row, so nothing is dropped and nothing
+       * is counted twice.
+       *
+       * `open + held` keeps exactly what the status pair plus
+       * `MEETING_HOLDS_SLOT_FILTER` kept before: an appointment nobody has
+       * ruled on yet, or one that was attended. A no-show or a cancellation
+       * stays excluded, which is the whole point of the filter this replaces —
+       * this is the number the owner reads first thing, and it must not tell
+       * them to expect somebody who is not coming.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      appointmentOutcomes(supabaseServer, user.id, todayStart, todayEnd).then(
+        o => ({ count: o.open + o.held })
+      ),
 
-      // Sessions this week
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .gte('start_time', weekStart)
-        .lt('start_time', weekEnd)
-        .in('status', ['confirmed', 'completed'])
-        /* Same as today's count above — the two are shown side by side, so
-           they have to count the same way. */
-        .or(MEETING_HOLDS_SLOT_FILTER),
+      /* Sessions this week, counted the same way as today's above — the two
+         sit side by side and must agree about what an appointment is. */
+      appointmentOutcomes(supabaseServer, user.id, weekStart, weekEnd).then(
+        o => ({ count: o.open + o.held })
+      ),
 
       // Pending invoices (for count + amount). `currency` is selected because
       // the total below cannot be computed without it — see the note there.

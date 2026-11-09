@@ -8,6 +8,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { appointmentDetailsBetween, occupiesItsHour } from '@/lib/scheduling/appointmentFacts';
 import { BaseDetector } from './BaseDetector';
 import { createLogger } from '@/lib/logger';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
@@ -50,7 +51,6 @@ const WINDOW_DAYS = 28;
  * calendar as busy on the strength of appointments nobody attended — the
  * flattering direction, which is the one to be careful about.
  */
-const OCCUPIES_A_SLOT = ['confirmed', 'completed'];
 
 /**
  * Has the owner told us when they work?
@@ -217,21 +217,40 @@ export class OpsUtilizationLowDetector extends BaseDetector {
 
     const from = new Date(Date.now() - WINDOW_DAYS * 86_400_000).toISOString();
 
-    const { data, error } = await this.supabase
-      .from('scheduling_bookings')
-      .select('start_time, end_time, status')
-      .eq('user_id', userId)
-      .in('status', OCCUPIES_A_SLOT)
-      .gte('start_time', from)
-      .lte('start_time', new Date().toISOString());
-
-    if (error) {
-      logger.warn({ err: error, userId }, 'Could not read bookings; not reporting utilisation');
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * HOURS COME FROM APPOINTMENTS, NOT FROM JOBS.
+     *
+     * This summed `scheduling_bookings` ranged on `start_time`. A job whose
+     * hours live on its sessions carries none, and NULL never satisfies `gte`,
+     * so every package session contributed ZERO booked hours — a diary full of
+     * six-session packages reported as an empty one, and this detector exists
+     * precisely to tell an owner their diary is empty.
+     *
+     * An appointment also has the end time this needs, which the job only has
+     * for its first session.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    let appointments;
+    try {
+      appointments = await appointmentDetailsBetween(
+        this.supabase,
+        userId,
+        from,
+        new Date().toISOString()
+      );
+    } catch (err) {
+      /* The guarantee this detector has always made: SAY NOTHING rather than
+         guess. An unreadable calendar is not an empty one, and reporting 0%
+         utilisation off a failed read is the one wrong answer worth refusing. */
+      logger.warn({ err, userId }, 'Could not read appointments; not reporting utilisation');
       return null;
     }
 
+    const occupying = appointments.filter(occupiesItsHour);
+
     let bookedHours = 0;
-    for (const row of (data ?? []) as Array<{ start_time?: string; end_time?: string }>) {
+    for (const row of occupying.map(a => ({ start_time: a.startTime, end_time: a.endTime }))) {
       const start = Date.parse(String(row.start_time));
       const end = Date.parse(String(row.end_time));
       if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue;

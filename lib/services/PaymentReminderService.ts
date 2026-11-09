@@ -1606,6 +1606,8 @@ export class PaymentReminderService {
     user_id: string;
     subscription_id?: string | null;
     payment_plan_id?: string | null;
+    /** THIS sale. `payment_plan_id` names the service's plan, not the sale. */
+    booking_id?: string | null;
   }): Promise<boolean> {
     /*
      * ── NO SUBSCRIPTION AT ALL IS NOT THE SAME AS AN UNCERTAIN ONE ──────────
@@ -1633,22 +1635,99 @@ export class PaymentReminderService {
     if (!stage.subscription_id) {
       if (!stage.payment_plan_id) return false;
 
+      /*
+       * ── ASKED PER SALE, BECAUSE `.maybeSingle()` MADE IT UNANSWERABLE ──────
+       *
+       * The question above is about THIS sale: is there a subscription
+       * collecting THIS client's periods? It was asked of
+       * `payment_plan_id` — which names the SERVICE's plan, not the sale — with
+       * `.maybeSingle()`.
+       *
+       * A subscription row is written per sale. So the second time a service is
+       * sold by card, that lookup matches two rows, `.maybeSingle()` fails with
+       * "JSON object requested, multiple (or no) rows returned", and the catch
+       * below answers `false` — leave the period alone. Permanently: every
+       * later period of every invoice-based plan on that service is skipped on
+       * every run, for ever, and the degradation is silent and one-way. The
+       * busier the service, the sooner it starts.
+       *
+       * That is the whole of "the future payments are not getting charged".
+       * Nothing is wrong at Stripe and nothing is wrong with the card: the
+       * invoice that would have asked for the money is never raised.
+       *
+       * Measured 2026-11-08 by replaying this exact query against the three
+       * stuck periods — bookings c6d50600, d11a212c and 051609a7, each period 2
+       * of 2, due 1-3 Nov and still pending. All three threw. The two that DID
+       * get billed (2cbeebf7, 30ed740a) are on a service whose plan has no
+       * subscription rows at all, where the lookup returns empty rather than
+       * failing. 16 rows on one of those plan templates, 2 on another.
+       *
+       * So: every row, no `.maybeSingle()`, and the multiplicity that broke it
+       * is now the evidence used to answer. Fail-closed is preserved exactly
+       * where it was earned — an unattached subscription might be this sale's.
+       */
       try {
-        const { data: subscription, error } = await this.supabase
+        const { data: rows, error } = await this.supabase
           .from('payment_plan_subscriptions')
-          .select('id')
+          .select('id, booking_id')
           .eq('payment_plan_id', stage.payment_plan_id)
-          .eq('user_id', stage.user_id)
-          .maybeSingle();
+          .eq('user_id', stage.user_id);
 
         if (error) throw error;
 
+        const subscriptions = rows ?? [];
+
         /* No subscription anywhere for this plan: nothing can ever charge it,
            so the period has to be asked for. */
-        return !subscription;
+        if (subscriptions.length === 0) return true;
+
+        /* This sale has its own: Stripe is taking it from the card. Invoicing
+           it here is the double-billing this guard exists to prevent. */
+        if (
+          stage.booking_id &&
+          subscriptions.some(row => row.booking_id === stage.booking_id)
+        ) {
+          return false;
+        }
+
+        /*
+         * An UNATTACHED subscription cannot be ruled out. On a smart link the
+         * client pays before the booking exists, so `booking_id` is null on the
+         * row until the sale is linked — and that row may be this one.
+         * `bindPlanSubscription` documents the window. Fail closed.
+         */
+        if (subscriptions.some(row => !row.booking_id)) return false;
+
+        /*
+         * NOT CONSULTED HERE: the status of a subscription found for this sale.
+         *
+         * The branch below, reached when the period names its subscription,
+         * bills a period whose plan has STOPPED — that is the stranded-period
+         * rule. This branch answers "skip" without asking, so the two are
+         * asymmetric.
+         *
+         * Safe today because stopping a plan cancels its remaining periods, so
+         * a stopped sale has no `pending` period for this scan to reach:
+         * verified 2026-11-08, 0 pending periods under any stopped
+         * subscription, and 0 periods of this exact shape. Deliberately left
+         * alone rather than made symmetric, because the failure here is
+         * double-billing — a cancelled row whose Stripe schedule is still live
+         * would be invoiced for money the card is also taking. A path that
+         * ever stops a plan WITHOUT cancelling its periods needs this branch to
+         * check the status, and should bring the Connect-account check with it.
+         */
+        /*
+         * Every subscription on this plan belongs to a DIFFERENT sale, so this
+         * sale has none however many times the service has been sold by card:
+         * it is invoice-based and its period must be asked for.
+         *
+         * Only when this sale can be named. With no `booking_id` there is
+         * nothing to compare and nothing is proved, which fails closed.
+         */
+        return Boolean(stage.booking_id);
       } catch (err) {
         logger.warn(
-          { err, paymentPlanId: stage.payment_plan_id },
+          { err, paymentPlanId: stage.payment_plan_id, bookingId: stage.booking_id },
           'Could not tell whether this plan has a subscription; leaving the period alone'
         );
         return false;
@@ -1850,7 +1929,13 @@ export class PaymentReminderService {
         /* `payment_plan_id` so `planCanNoLongerCharge` can tell an
            INVOICE-BASED plan — one with no subscription anywhere — from a card
            plan whose subscription id simply did not reach this row. */
-        .select('id, user_id, contact_id, due_date, proposal_id, subscription_id, payment_plan_id')
+        /* `booking_id` identifies the SALE, which is what the subscription
+           question is really about — see `planCanNoLongerCharge`. Without it
+           that check cannot tell this sale's subscription from another sale's
+           of the same service. */
+        .select(
+          'id, user_id, contact_id, due_date, proposal_id, subscription_id, payment_plan_id, booking_id'
+        )
         .eq('status', 'pending')
         .eq('trigger', 'date')
         .is('invoice_id', null)

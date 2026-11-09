@@ -216,14 +216,21 @@ export function jobCalledOff(booking: BookingFacts): boolean {
  * The statuses that still occupy their time.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * A booking that WILL NOT HAPPEN does not hold a slot. Two statuses mean
- * exactly that — `cancelled` and `no_show` — and only the first was ever
- * released.
+ * These are the JOB's statuses, not the meeting's. A booking that will not
+ * happen at all does not hold a slot, and `cancelled` is the status that means
+ * it.
  *
- * So marking a client as a no-show left their appointment sitting on the
- * calendar. The owner had just decided that meeting is not taking place, and
- * invited the person to pick another time, while the original slot stayed shut
- * to everyone including them.
+ * `no_show` is absent, and that is now about the OLD shape only. Attendance
+ * moved to `meeting_status` — `markNoShow` writes nothing here, so a missed
+ * appointment today reads `status: 'confirmed'` and is decided by the meeting,
+ * where it HOLDS its hour (see `MEETING_HOLDS_SLOT_FILTER`).
+ *
+ * What is left on this side is rows written before that separation, whose
+ * `status` literally is `'no_show'`. They stay out, deliberately: this list is
+ * also `.in('status', …)` in a dozen queries that count jobs rather than
+ * hours — metrics, detectors, invoices — and those rows are historical, so
+ * putting them in would change what is counted without changing any hour
+ * anybody can book.
  *
  * `completed` stays in the list. It is necessarily in the past, so it is never
  * offered anyway, and keeping it means the calendar cannot be double-booked
@@ -254,13 +261,39 @@ export const SLOT_HOLDING_STATUSES = ['confirmed', 'pending', 'completed'] as co
  *     .in('status', SLOT_HOLDING_STATUSES)
  *     .or(MEETING_HOLDS_SLOT_FILTER)
  *
- * Written as `is null OR eq held` rather than `not in (no_show, cancelled)`
+ * Written as `is null OR eq …` rather than `not in (cancelled, moved)`
  * deliberately: in SQL, `NULL NOT IN (…)` is NULL, not true, so the negated
  * form would silently drop every unmarked meeting — which is almost all of
  * them — and free slots that are genuinely taken.
+ *
+ * ── WHY `no_show` IS IN THE LIST ────────────────────────────────────────────
+ *
+ * Because the hour was spent. The client booked it, the owner kept it free and
+ * waited, and nobody else could have had it. Calling that time "available"
+ * afterwards describes a day the business did not have.
+ *
+ * The money says the same thing plainly: a missed session is CHARGED —
+ * `replacementCharge.ts` exists for exactly that case, and `makeUpSession.ts`
+ * keeps the missed row precisely because "the missed hour stays missed, which
+ * is the true record and the thing the money hangs on". An hour the client has
+ * paid for cannot also be an hour we are selling to somebody else.
+ *
+ * The original reasoning for freeing it was that the owner, having just marked
+ * the no-show, is inviting that client to pick another time — and the old hour
+ * sat there blocked. True, but it does not follow: the time they pick is a
+ * DIFFERENT hour, and the one they missed is in the past, where nothing can be
+ * booked anyway. What freeing it actually bought was a hazard, and
+ * `syncMeeting` names it (`SchedulingRepository`, on writing a second row): a
+ * future meeting left marked `no_show` was read as free, "so availability
+ * offers that hour to somebody else and two clients arrive for it".
+ *
+ * `cancelled` and `moved` are the two that genuinely free an hour: the work was
+ * called off, or the appointment is now somewhere else. Nobody was kept waiting
+ * and nobody is charged.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-export const MEETING_HOLDS_SLOT_FILTER = 'meeting_status.is.null,meeting_status.eq.held';
+export const MEETING_HOLDS_SLOT_FILTER =
+  'meeting_status.is.null,meeting_status.eq.held,meeting_status.eq.no_show';
 
 /**
  * Whether a booking in this state still occupies its time.
@@ -293,22 +326,30 @@ export function holdsSlot(booking: unknown): boolean {
   const { status, meeting_status: meetingStatus } = booking as BookingFacts;
 
   /*
-   * A meeting that will not happen does not hold its time, whatever the job
-   * says. `moved` is in the list for the same reason: the appointment is now
-   * at a different hour, so this one is an abandoned time that must go back on
-   * sale. Falling through instead returned true off the job's `confirmed`
-   * status and kept the old hour blocked forever.
+   * A meeting that will not happen AND was never waited for does not hold its
+   * time, whatever the job says. Two outcomes mean that: the work was called
+   * off, or the appointment is now at a different hour and this row is the
+   * abandoned one. Falling through instead returned true off the job's
+   * `confirmed` status and kept the old hour blocked forever.
    */
-  if (meetingStatus === 'no_show' || meetingStatus === 'cancelled' || meetingStatus === 'moved') {
+  if (meetingStatus === 'cancelled' || meetingStatus === 'moved') {
     return false;
   }
 
   /*
-   * `held` keeps its slot: it is necessarily in the past, so it is never
-   * offered anyway, and keeping it means the calendar cannot be double-booked
+   * `held` and `no_show` both keep their slot, and for one reason: the hour was
+   * spent either way. One was attended; the other the owner sat through alone,
+   * having turned away anything else that could have filled it — and charged
+   * for, which is what `replacementCharge.ts` is about.
+   *
+   * Both are also necessarily in the past once recorded, so neither is ever
+   * offered; what this buys is a calendar that cannot be double-booked
    * retrospectively — the same reason `completed` is in the list above.
+   *
+   * `no_show` used to return false here. See `MEETING_HOLDS_SLOT_FILTER` for
+   * why that was wrong and what it cost.
    */
-  if (meetingStatus === 'held') return true;
+  if (meetingStatus === 'held' || meetingStatus === 'no_show') return true;
 
   return typeof status === 'string' && (SLOT_HOLDING_STATUSES as readonly string[]).includes(status);
 }

@@ -37,6 +37,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { appointmentDetailsBetween } from '@/lib/scheduling/appointmentFacts';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
 import { createLogger } from '@/lib/logger';
@@ -146,19 +147,87 @@ export class RetCancelPatternDetector extends BaseDetector {
 
     const since = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString();
 
-    const { data, error } = await this.supabase
-      .from('scheduling_bookings')
-      .select(
-        'id, contact_id, start_time, updated_at, cancel_reason, cancellation_reason, cancelled_by, service_id'
-      )
-      .eq('user_id', userId)
-      .eq('status', 'cancelled')
-      .gte('updated_at', since)
-      .order('updated_at', { ascending: false });
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * BOTH SHAPES OF CANCELLATION, EACH ASKED WHERE IT RECORDS ITSELF.
+     *
+     * A whole JOB called off writes its reason on `scheduling_bookings`. ONE
+     * SESSION of a package called off writes it on `scheduling_meetings` — a
+     * column that only exists as of 20261110, because until then that answer
+     * was collected from the client and thrown away.
+     *
+     * Reading only the booking therefore saw the larger half of a split: on the
+     * live database, 147 cancelled jobs against 169 cancelled sessions. The
+     * sessions are the ones a package client produces, so the pattern most
+     * worth naming was the one missing.
+     *
+     * `moved` is NOT in either half, and that is the trap this file was warned
+     * about: a reschedule writes `meeting_status = 'moved'`, and counting it
+     * here would report every client who shifted an hour as one who left.
+     * The query below asks for `cancelled` exactly.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const [jobs, sessions] = await Promise.all([
+      this.supabase
+        .from('scheduling_bookings')
+        .select(
+          'id, contact_id, start_time, updated_at, cancel_reason, cancellation_reason, cancelled_by, service_id'
+        )
+        .eq('user_id', userId)
+        .eq('status', 'cancelled')
+        .gte('updated_at', since)
+        .order('updated_at', { ascending: false }),
 
-    if (error) throw error;
+      this.supabase
+        .from('scheduling_meetings')
+        .select(
+          'id, start_time, updated_at, cancel_reason, cancellation_reason, cancelled_by, booking:scheduling_bookings(id, contact_id, service_id)'
+        )
+        .eq('user_id', userId)
+        .eq('meeting_status', 'cancelled')
+        .gte('updated_at', since)
+        .order('updated_at', { ascending: false }),
+    ]);
 
-    const rows = (data ?? []) as unknown as CancelledRow[];
+    if (jobs.error) throw jobs.error;
+
+    if (sessions.error) {
+      /* Said out loud rather than thrown: the jobs half still answers, and a
+         narrower pattern beats none. Throwing would lose both. */
+      logger.warn(
+        { err: sessions.error, userId },
+        'Could not read cancelled sessions; reporting the pattern from jobs alone'
+      );
+    }
+
+    type SessionRow = {
+      id: string;
+      start_time: string | null;
+      cancel_reason: string | null;
+      cancellation_reason: string | null;
+      cancelled_by: string | null;
+      booking: { id: string; contact_id: string | null; service_id: string | null } | null;
+    };
+
+    /* Flattened into the booking shape the tally below already reads, so one
+       set of rules applies to both halves. The session's own id is kept — two
+       sessions of one package are two cancellations, not one. */
+    const sessionRows = ((sessions.data ?? []) as unknown as SessionRow[])
+      .filter(row => row.booking)
+      .map(row => ({
+        id: row.id,
+        contact_id: row.booking!.contact_id,
+        service_id: row.booking!.service_id,
+        start_time: row.start_time,
+        cancel_reason: row.cancel_reason,
+        cancellation_reason: row.cancellation_reason,
+        cancelled_by: row.cancelled_by,
+      }));
+
+    const rows = [
+      ...((jobs.data ?? []) as unknown as CancelledRow[]),
+      ...(sessionRows as unknown as CancelledRow[]),
+    ];
     if (rows.length < MIN_CANCELLATIONS) {
       this.logDetection(userId, null);
       return null;
@@ -327,14 +396,27 @@ export class RetCancelPatternDetector extends BaseDetector {
     since: string
   ): Promise<{ dimension: string; name: string; rate: SegmentRate } | null> {
     try {
-      const { data, error } = await this.supabase
-        .from('scheduling_bookings')
-        .select('id, status, start_time, service_id')
-        .eq('user_id', userId)
-        .gte('start_time', since)
-        .lt('start_time', new Date().toISOString());
-
-      if (error) throw error;
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * APPOINTMENTS, so a package's sessions are in the slice.
+       *
+       * This read `scheduling_bookings` ranged on `start_time`. A job whose
+       * hours live on its sessions has none, and NULL never satisfies `gte`,
+       * so every package session was missing from both the numerator and the
+       * denominator of every day-of-week and per-service rate below.
+       *
+       * Safe on the one thing this file is right to worry about: a RESCHEDULE
+       * is not a cancellation, and `appointmentDetailsBetween` drops `moved`
+       * outright rather than letting it read as `cancelled` — the exact
+       * conflation the meetings migration warned about.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const appointments = await appointmentDetailsBetween(
+        this.supabase,
+        userId,
+        since,
+        new Date().toISOString()
+      );
 
       /*
        * Only appointments whose outcome is known. A booking still sitting in
@@ -342,9 +424,16 @@ export class RetCancelPatternDetector extends BaseDetector {
        * attended one, and counting it as "not cancelled" would quietly deflate
        * every rate here.
        */
-      const settled = ((data ?? []) as SettledRow[]).filter(r =>
-        RESOLVED.has((r.status ?? '').toLowerCase())
-      );
+      const settled = appointments
+        .map(a => ({
+          id: a.meetingId ?? a.bookingId,
+          /* The APPOINTMENT's outcome, which is the column written when a
+             session is called off. */
+          status: a.status,
+          start_time: a.startTime,
+          service_id: a.serviceId,
+        }))
+        .filter(r => RESOLVED.has((r.status ?? '').toLowerCase())) as unknown as SettledRow[];
 
       const timezone = await this.resolveBusinessTimezone(userId);
 
@@ -417,4 +506,10 @@ interface SettledRow {
  * is an unmarked meeting, and treating it as attended would understate every
  * cancellation rate on exactly the accounts that forget to mark them.
  */
-const RESOLVED = new Set(['cancelled', 'completed', 'no_show']);
+/*
+ * `held` joins the set because that is what the meetings table writes for an
+ * attended appointment; `completed` stays for an older booking-shaped row.
+ * Without it every attended session fell out of the denominator, which inflates
+ * a cancellation rate rather than hiding it.
+ */
+const RESOLVED = new Set(['cancelled', 'completed', 'held', 'no_show']);

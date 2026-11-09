@@ -52,7 +52,27 @@ describe('one definition of a taken hour', () => {
 
   it('the constraint reads the meeting, not only the job', () => {
     const predicate = constraintSql.slice(constraintSql.indexOf('ADD CONSTRAINT'));
-    expect(predicate).toContain("meeting_status IS NULL OR meeting_status = 'held'");
+    expect(predicate).toContain("meeting_status IS NULL OR meeting_status IN ('held', 'no_show')");
+  });
+
+  it('and a missed hour is a taken hour on both sides', () => {
+    /*
+     * `no_show` used to free its slot, in all four places at once — so this was
+     * agreement, not drift, and a guard comparing the halves could not see it.
+     * It is pinned now because the hour was SPENT: the owner kept it clear and
+     * waited, and the session is charged (`replacementCharge.ts`). Selling it
+     * again describes a day the business did not have.
+     *
+     * The migration also carries a precheck for the hours already sold twice
+     * while it read as free: scripts/precheck-no-show-holds-its-hour.sql.
+     */
+    const predicate = constraintSql.slice(constraintSql.indexOf('ADD CONSTRAINT'));
+    expect(predicate).toContain("'no_show'");
+    expect(statusRules).toContain('meeting_status.eq.no_show');
+    expect(statusRules).toMatch(/meetingStatus === 'held' \|\| meetingStatus === 'no_show'/);
+
+    /* And the two that genuinely free an hour still do. */
+    expect(statusRules).toMatch(/meetingStatus === 'cancelled' \|\| meetingStatus === 'moved'/);
   });
 
   it('and spells it the way SQL actually works', () => {
@@ -64,7 +84,7 @@ describe('one definition of a taken hour', () => {
     const predicate = constraintSql.slice(constraintSql.indexOf('ADD CONSTRAINT'));
     expect(predicate).not.toMatch(/meeting_status\s+NOT\s+IN/i);
     expect(statusRules).toContain(
-      "export const MEETING_HOLDS_SLOT_FILTER = 'meeting_status.is.null,meeting_status.eq.held';"
+      "'meeting_status.is.null,meeting_status.eq.held,meeting_status.eq.no_show';"
     );
   });
 

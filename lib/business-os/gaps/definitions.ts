@@ -13,6 +13,7 @@
  */
 
 import { supabaseServer } from '@/lib/supabaseServer';
+import { appointmentDetailsBetween } from '@/lib/scheduling/appointmentFacts';
 import { createLogger } from '@/lib/logger';
 import type { GapDefinition, GapItem } from './types';
 import { CLIENT_CANCELLED_PREFIX } from '@/lib/services/bookingCancellationReason';
@@ -249,15 +250,32 @@ const quoteUnwritten: GapDefinition = {
           );
           if (byService.size === 0) return { rows: [], byService };
 
+          /*
+           * The meeting is where the job gets scoped, so nothing is owed until
+           * it has happened — and WHICH meetings happened is a question for the
+           * appointments, not for the job.
+           *
+           * Ranging the booking on `start_time` missed every package: a job
+           * whose hours live on its sessions has none, so a quote owed after a
+           * six-session scoping was never raised. Matches the badge's
+           * `meetingAhead`, which reads the same table.
+           */
+          const held = await appointmentDetailsBetween(
+            supabaseServer,
+            userId,
+            daysAgo(now, 90),
+            now.toISOString()
+          );
+          const scopedJobs = [...new Set(held.map(a => a.bookingId))];
+
+          if (scopedJobs.length === 0) return { rows: [], byService };
+
           const { data: bookings } = await supabaseServer
             .from('scheduling_bookings')
             .select('id, contact_id, service_id, start_time')
             .eq('user_id', userId)
+            .in('id', scopedJobs)
             .in('service_id', [...byService.keys()])
-            // The meeting is where the job gets scoped, so nothing is owed
-            // until it has happened. Matches the badge's `meetingAhead`.
-            .lt('start_time', now.toISOString())
-            .gte('start_time', daysAgo(now, 90))
             // Cancelling is the one mark that ends a quoted job.
             .neq('status', 'cancelled')
             .order('start_time', { ascending: true })
@@ -1253,18 +1271,31 @@ const bookingRefunded: GapDefinition = {
   action: 'cancel_booking',
   find: (userId, now) =>
     safely('booking_refunded', async () => {
+      /*
+       * Only what has not happened yet, and the APPOINTMENTS are what know.
+       *
+       * This ranged the job on `start_time`, which a package does not have —
+       * so a refunded package with sessions still ahead raised nothing, for
+       * exactly the bookings worth the most. After the appointment there is
+       * nothing left to cancel, and a card asking about last Tuesday is the
+       * noise that teaches an owner to stop reading it; that rule is unchanged,
+       * it is just asked of the sessions now.
+       */
+      const ahead = await appointmentDetailsBetween(
+        supabaseServer,
+        userId,
+        new Date(now).toISOString()
+      );
+      const aheadJobs = [...new Set(ahead.map(a => a.bookingId))];
+      if (aheadJobs.length === 0) return [];
+
       const { data } = await supabaseServer
         .from('scheduling_bookings')
         .select('id, contact_id, start_time, updated_at, created_at, service:scheduling_services(service_name), contact:crm_contacts(first_name, last_name, email)')
         .eq('user_id', userId)
+        .in('id', aheadJobs)
         .eq('status', 'confirmed')
         .eq('payment_status', 'refunded')
-        /*
-         * Only what has not happened yet. After the appointment there is
-         * nothing left to cancel, and a card asking about last Tuesday is the
-         * noise that teaches an owner to stop reading it.
-         */
-        .gte('start_time', new Date(now).toISOString())
         .order('start_time', { ascending: true })
         .limit(50);
 

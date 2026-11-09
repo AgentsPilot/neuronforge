@@ -51,6 +51,7 @@ import { isSlotTakenError } from '@/lib/business-os/bookingStatus';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { busyMeetings } from '@/lib/scheduling/busyMeetings';
 import { nextSessionSlots } from '@/lib/scheduling/nextSessionSlot';
+import { replacedHourAlreadyPaid } from '@/lib/scheduling/replacementCharge';
 
 /**
  * What to call the stage a newly added session bills.
@@ -240,6 +241,40 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
     if (!sessionRows?.length) return NONE;
 
+    /*
+     * ── A PACKAGE THAT HAS BEEN CALLED OFF HAS NO NEXT HOUR ─────────────────
+     *
+     * Read here, and not only for the timezone further down, because this
+     * answer is what the dialog shows: with no status check at all, a cancelled
+     * package offered the same four hours as a live one. The owner cancelled
+     * the whole block and the session rows still carried "Book a replacement"
+     * and the add-a-meeting control, which is what was reported on a live
+     * account (package a7bc8084, cancelled by its owner, still offering
+     * 29 December).
+     *
+     * `meeting_status` as well as `status`: the whole-booking cancel writes
+     * both, and the drawer's own gates read both, so an answer that trusted one
+     * of them would disagree with the screen.
+     *
+     * Not an error. This endpoint's contract is "where a replacement WOULD go,
+     * and whether one is allowed", and the honest answer for a cancelled block
+     * is simply no.
+     */
+    const { data: container } = await supabaseServer
+      .from('scheduling_bookings')
+      .select('timezone, status, meeting_status')
+      .eq('id', containerId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (container?.status === 'cancelled' || container?.meeting_status === 'cancelled') {
+      requestLogger.info(
+        { containerId },
+        'No replacement offered: the package has been cancelled'
+      );
+      return NONE;
+    }
+
     const { data: proposal } = await supabaseServer
       .from('proposals')
       .select('sessions')
@@ -350,13 +385,9 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
     /* The container's zone decides what "that day" means — a slot at 23:00 UTC
        is a different weekday in Jerusalem, and the closed-day rule is about
-       the owner's calendar, not the server's. */
-    const { data: containerForZone } = await supabaseServer
-      .from('scheduling_bookings')
-      .select('timezone')
-      .eq('id', containerId)
-      .eq('user_id', user.id)
-      .maybeSingle();
+       the owner's calendar, not the server's. Read once, above, with the status
+       this endpoint now also refuses on. */
+    const containerForZone = container;
 
     const proposedStarts: string[] = [];
     for (const iso of candidates) {
@@ -436,6 +467,38 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       return NextResponse.json(
         { success: false, code: 'not_a_package', error: 'This is a meeting, not a purchase.' },
         { status: 400 }
+      );
+    }
+
+    /*
+     * ── AND IT HAS TO STILL BE RUNNING ──────────────────────────────────────
+     *
+     * Every other refusal here is about the SHAPE of the package — is it a
+     * purchase, does it have meetings, is the block full, is the day closed.
+     * None of them asked whether the block still exists, so a cancelled
+     * package accepted new sessions, and on a per-session block each one
+     * raised a stage against a plan the owner had already stopped.
+     *
+     * Refused here rather than only in the drawer because three surfaces reach
+     * this route: the cancel dialog, the no-show dialog and the client's own
+     * portal. A gate in one of them is not a rule.
+     *
+     * 409, not 400: nothing about the request is malformed. The package's state
+     * moved on, which is exactly what a conflict is, and it is the same status
+     * the slot-taken and closed-day refusals use for the same reason.
+     */
+    if (container.status === 'cancelled' || container.meeting_status === 'cancelled') {
+      requestLogger.info(
+        { containerId, status: container.status },
+        'Refused: a cancelled package cannot take another session'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'package_cancelled',
+          error: 'This package has been cancelled. Reopen it, or send a new quote, to arrange another session.',
+        },
+        { status: 409 }
       );
     }
 
@@ -842,7 +905,55 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     /** What this session costs the client, when the owner charged for it. */
     let chargedLabel: string | null = null;
 
-    if (input.charge && perSession && proposal?.created_plan_id) {
+    /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * ONE PAYMENT PER HOUR THE CLIENT ACTUALLY GETS, DECIDED HERE AND NOT UPSTREAM
+     *
+     * `charge` is what the CALLER asked for, and three of them reach this route:
+     * the cancel dialog, the no-show dialog and the client's own portal. The
+     * cancel dialog asks for a charge on nothing but "does this block bill per
+     * session" (CRMContactDrawerV2), which is right for an ordinary session and
+     * wrong for a MAKE-UP: the hour a make-up stands in for was already paid on
+     * the session it replaces, so the make-up carries no stage, and billing its
+     * replacement charges the client twice for one delivered hour.
+     *
+     * That is not hypothetical. Package 83e8460c: session 1 missed and charged
+     * at 399.99 and paid, its make-up correctly free, the make-up moved and then
+     * cancelled, and the replacement billed 400.02 for the same hour.
+     *
+     * So the chain has the last word. `replacedHourAlreadyPaid` walks
+     * `replaces_meeting_id` upward and answers from the ancestors only — never
+     * from the hour being replaced, whose own stage is about to be voided or
+     * kept by an outcome the caller has not posted yet. See the module note;
+     * that distinction is what keeps a waived no-show still billing its make-up,
+     * which is the documented behaviour and the dialog's promise.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    let chargeRefusedAsAlreadyPaid = false;
+
+    if (input.charge && perSession && replacedId) {
+      const verdict = await replacedHourAlreadyPaid({
+        userId: user.id,
+        replacedMeetingId: replacedId,
+      });
+
+      if (verdict.alreadyPaid) {
+        chargeRefusedAsAlreadyPaid = true;
+        requestLogger.info(
+          {
+            containerId,
+            meetingId: addedId,
+            replacedId,
+            paidMeetingId: verdict.paidMeetingId,
+            hops: verdict.hops,
+            uncertain: verdict.uncertain,
+          },
+          'No stage for this replacement: the hour it stands in for is already paid'
+        );
+      }
+    }
+
+    if (input.charge && perSession && proposal?.created_plan_id && !chargeRefusedAsAlreadyPaid) {
       const { data: existing } = await supabaseServer
         .from('payment_plan_installments')
         .select('amount, currency, installment_number, label')

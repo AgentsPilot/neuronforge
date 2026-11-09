@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SchedulingCalendarView } from '@/components/scheduling/SchedulingCalendarView';
@@ -223,6 +223,16 @@ export function SchedulingDialog({
   const [loading, setLoading] = useState(true);
   const [services, setServices] = useState<SchedulingService[]>([]);
   const [bookings, setBookings] = useState<SchedulingBooking[]>([]);
+  /*
+   * THE DIARY IS A DIFFERENT LIST FROM THE UPCOMING SET.
+   *
+   * `bookings` answers "what is coming up" and feeds the quick-pick slots and
+   * the booking dialog's clash check; scoping it to the week on screen would
+   * make the quick picks offer hours that are taken the moment somebody paged
+   * back. The calendar answers "what is in THIS week", which is a query of its
+   * own and must be fetched as one.
+   */
+  const [calendarBookings, setCalendarBookings] = useState<SchedulingBooking[]>([]);
   const [availability, setAvailability] = useState<WeeklyAvailability>(DEFAULT_AVAILABILITY);
   /*
    * The zone the business works in — not the one the reader is sitting in.
@@ -376,11 +386,59 @@ export function SchedulingDialog({
     }
   };
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CALENDAR IS FETCHED BY THE WEEK IT IS SHOWING.
+   *
+   * This asked for `/api/scheduling/bookings` with no parameters at all, which
+   * the repository answers with its default: fifty rows, newest first, no date
+   * range. On the current week that passes unnoticed, because the current week
+   * is the newest — page back and the grid thins out, not because nothing was
+   * booked but because those rows were never fetched.
+   *
+   * `meetings_from`/`meetings_to` and NOT `start_date`/`end_date`: those two
+   * filter the booking's own `start_time`, which is NULL on every package, so
+   * a week asked for that way drops every package it contains.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const calendarWeek = useRef<{ from: string; to: string } | null>(null);
+
+  const fetchCalendarWeek = useCallback(async (week: { from: string; to: string }) => {
+    const params = new URLSearchParams({
+      meetings_from: week.from,
+      meetings_to: week.to,
+      /* A week, not a page. The default is fifty. */
+      limit: '500',
+    });
+
+    const response = await fetch(`/api/scheduling/bookings?${params.toString()}`);
+    const data = await response.json();
+    if (data.success) setCalendarBookings(data.bookings);
+  }, []);
+
+  const handleWeekChange = useCallback(
+    (start: Date, endExclusive: Date) => {
+      const week = { from: start.toISOString(), to: endExclusive.toISOString() };
+      calendarWeek.current = week;
+      void fetchCalendarWeek(week).catch(error =>
+        logger.error({ err: error }, 'Failed to load the calendar week')
+      );
+    },
+    [fetchCalendarWeek]
+  );
+
   const refreshBookingsSilently = async () => {
     try {
+      /*
+       * Both lists, because they answer different questions and a change can
+       * move either: the week on screen, and the upcoming set the quick picks
+       * and the booking dialog read.
+       */
       const response = await fetch('/api/scheduling/bookings');
       const data = await response.json();
       if (data.success) setBookings(data.bookings);
+
+      if (calendarWeek.current) await fetchCalendarWeek(calendarWeek.current);
     } catch (error) {
       logger.error({ err: error }, 'Failed to refresh bookings');
     }
@@ -776,12 +834,13 @@ export function SchedulingDialog({
               </div>
             ) : (
               <SchedulingCalendarView
-                bookings={bookings}
+                bookings={calendarBookings}
                 services={services}
                 onBookingClick={handleBookingClick}
                 onBookingUpdated={refreshBookingsSilently}
                 onSlotClick={handleSlotClick}
                 availability={availability}
+                onWeekChange={handleWeekChange}
               />
             )}
           </div>

@@ -177,6 +177,195 @@ async function appointmentsBetween(
 }
 
 /** How many appointments fall in `[from, to)`. */
+/**
+ * An appointment with its job's facts attached.
+ *
+ * The counting helpers above answer "how many". A detector asks harder
+ * questions — which client, which service, how much — and those live on the
+ * JOB, not on the appointment. So this returns the pairing.
+ */
+export interface AppointmentDetail {
+  /** Null for a booking that predates the meetings table and has no row there. */
+  meetingId: string | null;
+  bookingId: string;
+  startTime: string;
+  endTime: string | null;
+  /**
+   * What happened at the APPOINTMENT: null (nobody has said), 'held',
+   * 'no_show', 'cancelled'. Never the job's status — see `bookingStatus`.
+   */
+  status: string | null;
+  /** What happened to the JOB. A cancelled job can still hold a held session. */
+  bookingStatus: string;
+  contactId: string | null;
+  serviceId: string | null;
+  paymentAmount: number | null;
+}
+
+/**
+ * Every appointment in a window, with the job behind each one.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE SAME READ AS `appointmentsBetween`, RETURNING ROWS INSTEAD OF A TALLY.
+ *
+ * Written because four detectors were each doing their own
+ * `scheduling_bookings` read ranged on `start_time`, and a job whose hours live
+ * on its sessions carries no `start_time` — NULL never satisfies `gte`, so
+ * every package session was invisible to all four. Utilisation, no-show trends
+ * and cancellation patterns were all computed from a partial diary, quietly.
+ *
+ * `moved` is excluded here exactly as it is there: a rescheduled attempt is not
+ * an appointment, it is the ghost of one, and counting it reports every move as
+ * an event that happened.
+ *
+ * Orphans are included for the same reason too — a booking with an hour and no
+ * meeting row is a real appointment from before the table existed, and dropping
+ * it would trade one undercount for another.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+/**
+ * Does this appointment still occupy its hour?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Stated as an EXCLUSION, not a whitelist, because the outcome arrives in two
+ * vocabularies. A meeting carries `meeting_status`: null while nobody has
+ * ruled, then 'held', 'no_show' or 'cancelled'. A booking with no meeting row
+ * carries its own status instead — 'confirmed' or 'pending'.
+ *
+ * Listing the positives therefore drops every confirmed appointment that has no
+ * meeting row, which reports a full diary as an empty one: the exact failure
+ * the detectors were being fixed for, reintroduced from the other side. Caught
+ * by `OpsUtilizationLowDetector.measure.test` before it shipped.
+ *
+ * `moved` never reaches here — `appointmentDetailsBetween` drops it — so a
+ * rescheduled attempt neither holds an hour nor reads as a cancellation.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function occupiesItsHour(appointment: Pick<AppointmentDetail, 'status'>): boolean {
+  const outcome = (appointment.status ?? '').toLowerCase();
+  return outcome !== 'no_show' && outcome !== 'cancelled';
+}
+
+export async function appointmentDetailsBetween(
+  client: SupabaseClient,
+  userId: string,
+  from: string,
+  to?: string
+): Promise<AppointmentDetail[]> {
+  let meetingQuery = client
+    .from('scheduling_meetings')
+    .select(
+      'id, start_time, end_time, meeting_status, booking:scheduling_bookings(id, status, contact_id, service_id, payment_amount)'
+    )
+    .eq('user_id', userId)
+    .gte('start_time', from)
+    .or('meeting_status.is.null,meeting_status.neq.moved');
+
+  if (to) meetingQuery = meetingQuery.lt('start_time', to);
+
+  const { data: meetingRows, error: meetingError } = await meetingQuery;
+
+  if (meetingError) {
+    /*
+     * THROWS, unlike the counting reads above, and the difference is the point.
+     *
+     * A tally that comes back short makes a figure slightly wrong. A DETECTOR
+     * that comes back empty concludes the diary is empty and says so to the
+     * owner — "your utilisation is 0%" is a sentence this must never produce
+     * from a failed read. Callers that would rather say nothing catch this and
+     * return null; the ones that already threw keep throwing.
+     */
+    logger.error({ err: meetingError, userId, from, to }, 'Could not read meetings for a detector');
+    throw meetingError;
+  }
+
+  type Embedded = {
+    id: string;
+    start_time: string;
+    end_time: string | null;
+    meeting_status: string | null;
+    booking:
+      | {
+          id: string;
+          status: string;
+          contact_id: string | null;
+          service_id: string | null;
+          payment_amount: number | null;
+        }
+      | null;
+  };
+
+  const details: AppointmentDetail[] = [];
+
+  for (const row of (meetingRows ?? []) as unknown as Embedded[]) {
+    /* PostgREST returns a to-one embed as an object, but a cascade-deleted
+       parent would leave null. Without a job there is nothing to attribute. */
+    if (!row.booking) continue;
+
+    details.push({
+      meetingId: row.id,
+      bookingId: row.booking.id,
+      startTime: row.start_time,
+      endTime: row.end_time,
+      status: row.meeting_status,
+      bookingStatus: row.booking.status,
+      contactId: row.booking.contact_id,
+      serviceId: row.booking.service_id,
+      paymentAmount: row.booking.payment_amount,
+    });
+  }
+
+  let orphanQuery = client
+    .from('scheduling_bookings')
+    .select(
+      'id, start_time, end_time, status, meeting_status, contact_id, service_id, payment_amount, scheduling_meetings(id)'
+    )
+    .eq('user_id', userId)
+    .gte('start_time', from)
+    .in('status', COUNTABLE_BOOKING_STATUSES);
+
+  if (to) orphanQuery = orphanQuery.lt('start_time', to);
+
+  const { data: bookingRows, error: bookingError } = await orphanQuery;
+
+  if (bookingError) {
+    /* Same reasoning as the meetings read above: a partial answer here is a
+       confident wrong one downstream. */
+    logger.error({ err: bookingError, userId, from, to }, 'Could not read bookings for a detector');
+    throw bookingError;
+  }
+
+  type OrphanRow = {
+    id: string;
+    start_time: string;
+    end_time: string | null;
+    status: string;
+    meeting_status: string | null;
+    contact_id: string | null;
+    service_id: string | null;
+    payment_amount: number | null;
+    scheduling_meetings?: unknown[];
+  };
+
+  for (const row of (bookingRows ?? []) as unknown as OrphanRow[]) {
+    if ((row.scheduling_meetings ?? []).length) continue;
+
+    details.push({
+      meetingId: null,
+      bookingId: row.id,
+      startTime: row.start_time,
+      endTime: row.end_time,
+      status: row.meeting_status ?? (row.status === 'completed' ? 'held' : row.status),
+      bookingStatus: row.status,
+      contactId: row.contact_id,
+      serviceId: row.service_id,
+      paymentAmount: row.payment_amount,
+    });
+  }
+
+  return details;
+}
+
 export async function appointmentsInRange(
   client: SupabaseClient,
   userId: string,
