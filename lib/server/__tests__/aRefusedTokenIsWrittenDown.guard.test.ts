@@ -94,3 +94,39 @@ describe('it writes the field every surface already reads', () => {
     expect(code(read('lib/business-os/leads/inboxChannel.ts'))).toContain('refresh_failed_at');
   });
 });
+
+describe('a refresh that changes nothing is not a recovery', () => {
+  it('an unchanged token after a rejection marks the grant dead', () => {
+    /*
+     * Measured in production, every five minutes for ten days:
+     *
+     *     changed false · has_access_token true · expires_in 3599 · Gmail 401
+     *
+     * The provider returned the very token it had just refused, and we stored
+     * it with a fresh hour on the clock. Nothing looked expired, so nothing
+     * escalated — the owner saw a healthy connection while the agent filed
+     * nothing, and the loop had no way to end by itself.
+     */
+    expect(EXECUTOR).toMatch(
+      /String\(refreshed\.access_token \?\? ''\) === String\(connection\.access_token \?\? ''\)/
+    );
+    expect(EXECUTOR).toMatch(/recordDeadGrant\([\s\S]{0,300}refreshing returned the same token/);
+  });
+
+  it('and reports the original failure instead of retrying into it', () => {
+    /* A token the provider rejected seconds ago cannot succeed on a second
+       call; spending one buys a slower identical answer. */
+    const block = EXECUTOR.slice(
+      EXECUTOR.indexOf("=== String(connection.access_token")
+    );
+    expect(block.slice(0, block.indexOf('}'))).toBeTruthy();
+    expect(EXECUTOR).toMatch(/refreshing returned the same token[\s\S]{0,400}throw firstError/);
+  });
+
+  it('compared by VALUE, because the clock cannot tell the difference', () => {
+    /* `expires_at` is recomputed from the response whether or not a new token
+       arrived — which is exactly how this hid for ten days. */
+    const block = EXECUTOR.slice(EXECUTOR.indexOf('refreshAfterRejection(connection, pluginDefinition)'));
+    expect(block.slice(0, 2000)).not.toMatch(/expires_at.*===/);
+  });
+});
