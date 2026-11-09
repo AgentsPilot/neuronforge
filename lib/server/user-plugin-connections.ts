@@ -376,7 +376,18 @@ export class UserPluginConnections {
   }
 
   // Refresh expired token
-  async refreshToken(connection: UserConnection, authConfig: PluginAuthConfig): Promise<UserConnection | null> {
+  async refreshToken(
+    connection: UserConnection,
+    authConfig: PluginAuthConfig,
+    /*
+     * The token the provider has just REFUSED, when the caller knows it.
+     *
+     * Only `base-plugin-executor` can know this: it is the one place that has
+     * a 401 in hand. Passing it changes nothing about the request and one
+     * thing about the write — see the branch below.
+     */
+    options?: { refusedToken?: string }
+  ): Promise<UserConnection | null> {
     logger.info({
       pluginKey: connection.plugin_key,
       userId: connection.user_id
@@ -465,6 +476,56 @@ export class UserPluginConnections {
         },
         'Refresh: about to store a token'
       );
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A TOKEN THE PROVIDER JUST REFUSED DOES NOT GET A FRESH HOUR.
+       *
+       * This is the write that hid a ten-day outage, and it hid it by being
+       * two writes at once. `access_token` kept its old value — Google handed
+       * back the very token Gmail had refused — while `expires_at` and
+       * `last_refreshed_at` were recomputed from the response regardless. So
+       * the row said "refreshed seconds ago, good for another hour" about a
+       * token that was already dead, every five minutes, and no surface could
+       * see otherwise: `expires_at` is the thing they all read.
+       *
+       * Measured on a live account on 2026-11-09: the stored token answered
+       * `invalid_token` at Google's own `tokeninfo` 79 seconds after this
+       * function wrote it, with `changed: false` beside it. The same account's
+       * Calendar connection refreshed 13 seconds earlier in the same pass and
+       * stored a token that was valid — so the write path, the column and the
+       * credentials were all fine. Only this one grant kept handing back what
+       * had just been refused.
+       *
+       * So when the caller tells us which token was refused and the provider
+       * returns that same value, nothing is written. The row keeps the expiry
+       * it already had, which lets it lapse honestly and lets the next run
+       * try again. Re-stamping it would buy another hour of silence.
+       *
+       * The connection is still RETURNED, carrying that value, because the
+       * caller compares it: identical means "ask again", and that decision
+       * belongs to the one place holding the 401.
+       *
+       * Note this is deliberately narrow. A refresh that returns the same
+       * token is perfectly normal and perfectly fine when the token still
+       * works — Google does it whenever the current one has life left, and
+       * that same account's Calendar token came back with 3396 of its 3599
+       * seconds remaining. It is only a problem for a token we KNOW was just
+       * refused, which is exactly what `refusedToken` names.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (options?.refusedToken && incoming === options.refusedToken) {
+        logger.warn(
+          {
+            pluginKey: connection.plugin_key,
+            userId: connection.user_id,
+            incomingLength: incoming.length,
+            incomingPrefix: incoming.slice(0, 4),
+          },
+          'Refresh returned the token the provider had just refused; leaving the stored expiry alone'
+        );
+        return { ...connection, access_token: incoming };
+      }
 
       // Update connection via repository upsert
       const updatedConnectionData: UpsertPluginConnectionInput = {
