@@ -7,6 +7,22 @@ import { createLogger } from '@/lib/logger';
 import { applyParamConstraintGuard } from './param-constraint-guard';
 import { AccessStrategyResolver } from './access-strategy';
 
+/**
+ * How many times to ask for a token when the provider keeps returning the one
+ * it has just refused.
+ *
+ * Three, because three is what was measured: on a live Gmail grant on
+ * 2026-11-09 the second and third refresh both returned a token the API then
+ * accepted, while production — which asked once — was handed the refused value
+ * every five minutes for ten days. Each attempt is one call to the provider's
+ * token endpoint and happens only after a 401, so this is not a polling path.
+ *
+ * Raising it would not make a stuck provider less stuck; it would only make an
+ * agent run take longer to fail. The attempts exist to clear a transient
+ * answer, not to outlast a broken one.
+ */
+const SAME_TOKEN_REFRESH_ATTEMPTS = 3;
+
 export abstract class BasePluginExecutor {
   protected userConnections: UserPluginConnections;
   protected pluginManager: PluginManagerV2;
@@ -157,16 +173,18 @@ export abstract class BasePluginExecutor {
       try {
         result = await this.executeSpecificAction(connection, actionName, parameters);
       } catch (firstError: any) {
-        const refreshed =
+        const refusedToken = String(connection.access_token ?? '');
+
+        let refreshed =
           this.httpStatusOf(firstError) === 401
-            ? await this.refreshAfterRejection(connection, pluginDefinition)
+            ? await this.refreshAfterRejection(connection, pluginDefinition, refusedToken)
             : null;
 
         if (!refreshed) throw firstError;
 
         /*
          * ───────────────────────────────────────────────────────────────────
-         * A REFRESH THAT RETURNS THE SAME TOKEN IS NOT A RECOVERY.
+         * A REFRESH THAT RETURNS THE REFUSED TOKEN MEANS ASK AGAIN.
          *
          * Measured in production on 2026-11-09. Every five minutes, for ten
          * days:
@@ -177,35 +195,64 @@ export abstract class BasePluginExecutor {
          *
          * The provider handed back the very token it had just refused, and we
          * wrote it down with a fresh hour on the clock. Nothing ever looked
-         * expired, so nothing escalated: the owner saw a healthy connection,
-         * the agent filed nothing, and the loop could not end by itself.
+         * expired, so nothing escalated.
          *
-         * Retrying with a token the provider rejected seconds ago cannot
-         * succeed. The honest reading is the one the grant-revoked path
-         * already has — this connection needs re-authorising — so it is
-         * recorded the same way and the original error is reported, instead of
-         * spending a second call to be told the same thing.
+         * This block first read that as a dead grant and recorded it as one.
+         * That was WRONG, and measuring it is what showed why: on the same
+         * account, minutes later, the same refresh token with the same OAuth
+         * client returned a NEW access token that `tokeninfo` called valid and
+         * that Gmail answered 200 for, three times in a row. The grant was
+         * healthy throughout. Calling it dead would have sent the owner to
+         * re-authorise a connection that worked — the exact fault this file's
+         * `httpStatusOf` comment was written about, where "an owner spent a
+         * day being told to reconnect" something healthy.
+         *
+         * So the same evidence that identified the loop also says how to leave
+         * it: ask again. A second or third refresh has been observed to return
+         * a working token, and the cost of trying is one HTTP call against the
+         * provider's token endpoint.
+         *
+         * Bounded, because a provider that keeps returning the same value will
+         * keep returning it, and an unbounded loop here would be a retry storm
+         * dressed up as patience. When the attempts are spent, the ORIGINAL
+         * 401 is reported and the grant is left alone: the honest reading is
+         * "the provider would not give us a usable token just now", which is
+         * transient, not revoked. Nothing is marked, so no surface tells the
+         * owner to reconnect, and the next run tries again — which it can,
+         * because `refreshToken` no longer re-stamps the expiry on a refused
+         * token.
          *
          * Compared by VALUE because that is the only thing that distinguishes
          * "a new token arrived" from "the clock moved". `expires_at` cannot:
          * it is recomputed from the response either way.
+         *
+         * A genuinely dead grant still has two paths that catch it, both
+         * unchanged: a refresh the provider REFUSES (`grant_revoked`, recorded
+         * by `recordRefreshFailure`) and a freshly issued token that is itself
+         * rejected (recorded below). Neither is weakened by this.
          * ───────────────────────────────────────────────────────────────────
          */
-        if (String(refreshed.access_token ?? '') === String(connection.access_token ?? '')) {
+        for (
+          let attempt = 2;
+          attempt <= SAME_TOKEN_REFRESH_ATTEMPTS &&
+          String(refreshed.access_token ?? '') === refusedToken;
+          attempt++
+        ) {
           this.logger.warn(
-            { actionName, pluginKey: this.pluginName },
-            'The refresh returned the token the provider had just rejected; recording the grant as dead'
+            { actionName, pluginKey: this.pluginName, attempt },
+            'The refresh returned the token just refused; asking the provider again'
           );
 
-          await this.userConnections
-            .recordDeadGrant(
-              refreshed,
-              `${this.pluginName}: refreshing returned the same token ${actionName} was refused`
-            )
-            .catch(() => {
-              /* Annotating is a courtesy; failing the action over it would turn
-                 a reportable problem into an unreportable one. */
-            });
+          const again = await this.refreshAfterRejection(refreshed, pluginDefinition, refusedToken);
+          if (!again) break;
+          refreshed = again;
+        }
+
+        if (String(refreshed.access_token ?? '') === refusedToken) {
+          this.logger.warn(
+            { actionName, pluginKey: this.pluginName, attempts: SAME_TOKEN_REFRESH_ATTEMPTS },
+            'The provider kept returning the token it refuses; reporting the original failure and leaving the grant alone'
+          );
 
           throw firstError;
         }
@@ -397,14 +444,17 @@ export abstract class BasePluginExecutor {
    */
   private async refreshAfterRejection(
     connection: any,
-    pluginDefinition: any
+    pluginDefinition: any,
+    /* The value the provider refused, so the refresh does not hand it a fresh
+       expiry if it comes straight back. See `refreshToken`. */
+    refusedToken?: string
   ): Promise<any | null> {
     try {
       if (!connection?.refresh_token) return null;
       const authConfig = pluginDefinition?.plugin?.auth_config;
       if (!authConfig) return null;
 
-      return await this.userConnections.refreshToken(connection, authConfig);
+      return await this.userConnections.refreshToken(connection, authConfig, { refusedToken });
     } catch (err) {
       this.logger.warn(
         { err, pluginKey: this.pluginName },

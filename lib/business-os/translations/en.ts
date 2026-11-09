@@ -3977,6 +3977,7 @@ export const en = {
     'payments.export.description': 'Description',
     'payments.export.refund_status': 'Refund Status',
     'payments.export.refunded_amount': 'Refunded Amount',
+    'payments.export.never_collected': 'Never collected',
     'payments.export.transaction_id': 'Transaction ID',
     'payments.export.all_tooltip': 'Export all orders',
     // Stripe Connect
@@ -5556,7 +5557,10 @@ export const en = {
     'money.of_book': 'out of {total} ever asked for',
     'money.of_which_late': 'of which late',
     // The bar's total: every amount ever asked for, in four exhaustive states.
-    'money.everything': 'Billed in total',
+    /* Not "billed", for the reason on `money.billed_label`: money cancelled
+       before an invoice was raised was never billed, and it is inside this
+       total. The sum of what every order is worth. */
+    'money.everything': 'Total order value',
     'money.whole_book_note': 'Every amount you were ever owed is in one of these four, and in only one of them. The red sits inside the yellow because money that is late is money you are owed, counted once.',
     // Explains the nesting in the bar, which is the one device the page has to teach.
     'money.nested_note': 'The red sits inside the yellow, not beside it: money that is late is money you are owed, so it is counted once.',
@@ -5581,7 +5585,17 @@ export const en = {
       'There is more money in this period than this page can read at once, so every total below is lower than the truth. Narrow the period to see a complete picture of a smaller span.',
     /* Names the figure on an order card: the total ever billed for the job,
        which is why it does not move when a filter is clicked. */
-    'money.billed_label': 'billed',
+    /*
+     * NOT "billed": the figure beside it is the order's face value, and on a
+     * job that was called off part of it was never invoiced at all. Measured
+     * on one account: a $2,800.08 quote where 3 of 7 instalments became
+     * invoices ($1,200.03) and the other 4 were cancelled before any were
+     * raised — the card called the whole thing billed.
+     *
+     * "Order value" is true whatever became of it, which is what a figure that
+     * deliberately never moves needs its label to be.
+     */
+    'money.billed_label': 'order value',
     'money.refunded_note': 'Part of the total above. It arrived, then went back.',
     'money.list_title': 'All the money, by the work it belongs to',
     'money.search_placeholder': 'Search a client, invoice or amount',

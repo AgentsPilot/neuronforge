@@ -27,7 +27,7 @@
  */
 
 import { toCsvFile } from '@/lib/payments/csv';
-import type { MoneyItem } from '@/lib/payments/moneyItems';
+import { itemFlow, type MoneyItem } from '@/lib/payments/moneyItems';
 
 /** The columns and their cells, headings first. */
 export function buildMoneyCsvRows(
@@ -46,23 +46,44 @@ export function buildMoneyCsvRows(
       t('payments.export.status') || 'Status',
       t('payments.export.amount') || 'Amount',
       t('payments.export.refunded_amount') || 'Refunded',
+      /*
+       * THE GAP BETWEEN THE FACE VALUE AND THE BANK, NAMED.
+       *
+       * `Amount` is the order's face value — everything it was ever billed for,
+       * including stages that were later voided. So a quotation agreed at
+       * 2,800.08 that took three stages and had the other four written off
+       * exported as `2,800.08 / paid`, with nothing in the file accounting for
+       * the 1,600.05 that never arrived. Measured on booking 83e8460c.
+       *
+       * `Status` cannot carry it either: it describes the MONEY, and on that
+       * axis `paid` is true — every stage anybody was actually asked for came
+       * in. The written-off part is a figure, so it gets a column.
+       */
+      t('payments.export.never_collected') || 'Never collected',
       t('payments.export.currency') || 'Currency',
       t('payments.export.date') || 'Date',
     ],
-    ...items.map(item => [
-      item.contactName ?? '',
-      item.title,
-      item.method,
-      item.status,
-      item.amount.toFixed(2),
-      item.refunded ? item.refunded.toFixed(2) : '',
-      item.currency,
-      /* The date the ROW shows, not the raw instant. This exported
-         `item.date` whole, so a cell read `2026-10-14T09:00:00.000Z` — a
-         timestamp in UTC, for a row whose date on screen is the business's
-         own and may be the day before or after. */
-      item.date ? formatDate(item.date) : '',
-    ]),
+    ...items.map(item => {
+      /* Once per row: `itemFlow` walks every entry and every plan period. */
+      const lost = itemFlow(item).cancelled;
+      return [
+        item.contactName ?? '',
+        item.title,
+        item.method,
+        item.status,
+        item.amount.toFixed(2),
+        item.refunded ? item.refunded.toFixed(2) : '',
+        /* Blank rather than `0.00` when nothing was written off, so the column
+           reads as an exception and a spreadsheet still sums it. */
+        lost ? lost.toFixed(2) : '',
+        item.currency,
+        /* The date the ROW shows, not the raw instant. This exported
+           `item.date` whole, so a cell read `2026-10-14T09:00:00.000Z` — a
+           timestamp in UTC, for a row whose date on screen is the business's
+           own and may be the day before or after. */
+        item.date ? formatDate(item.date) : '',
+      ];
+    }),
   ];
 }
 
