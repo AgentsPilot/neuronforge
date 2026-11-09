@@ -133,7 +133,14 @@ describe('every action survived the move', () => {
     expect(actions).toMatch(
       /const calledOff =\s*\n?\s*status === 'cancelled' \|\| meetingStatus === 'cancelled'/
     );
-    expect(actions).toMatch(/if \(onReschedule && !held && !calledOff\)/);
+    /*
+     * The gate may gain further NEGATIVE terms and still be the same rule: it
+     * grew `&& !alreadyReplaced` when a missed session stopped being offered a
+     * second make-up. What this pins is that `held` and `calledOff` are both
+     * consulted — the comment above says as much about `calledOff`'s own
+     * terms — not that nothing may ever be added beside them.
+     */
+    expect(actions).toMatch(/if \(onReschedule && !held && !calledOff(?: && !\w+)*\)/);
   });
 
   it('but a MISSED one still moves', () => {

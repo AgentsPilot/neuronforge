@@ -50,18 +50,25 @@ describe('a row that still has money owed is never called cancelled', () => {
     expect(state.length).toBeGreaterThan(0);
   });
 
-  it('asks about outstanding money before anything already finished', () => {
-    const outstanding = state.indexOf('flow.outstanding > 0');
-    const cancelled = state.indexOf('flow.cancelled > 0');
-    const refunded = state.indexOf('flow.refunded > 0');
+  it('orders the parts by what the owner can act on', () => {
+    /*
+     * The chain became a LIST: one entry per state, named in the order a
+     * reader should meet them — chase, then wait, then what is already
+     * settled. Asserted by position in that list rather than by branch order,
+     * which is what it replaced.
+     */
+    const at = (needle: string) => state.indexOf(needle);
 
-    expect(outstanding).toBeGreaterThan(-1);
-    expect(cancelled).toBeGreaterThan(-1);
-    expect(refunded).toBeGreaterThan(-1);
+    expect(at('flow.overdue')).toBeGreaterThan(-1);
+    expect(at('waiting')).toBeGreaterThan(-1);
+    expect(at('flow.collected')).toBeGreaterThan(-1);
+    expect(at('flow.refunded')).toBeGreaterThan(-1);
+    expect(at('flow.cancelled')).toBeGreaterThan(-1);
 
-    /* The whole defect, in one assertion. */
-    expect(outstanding).toBeLessThan(cancelled);
-    expect(outstanding).toBeLessThan(refunded);
+    /* Owed money is named before money already settled — the whole defect. */
+    expect(at('amount: flow.overdue')).toBeLessThan(at('amount: flow.collected'));
+    expect(at('amount: waiting')).toBeLessThan(at('amount: flow.collected'));
+    expect(at('amount: flow.collected')).toBeLessThan(at('amount: flow.cancelled'));
   });
 
   it('never decides "cancelled" from collections being net zero', () => {
@@ -102,25 +109,21 @@ describe('a row that still has money owed is never called cancelled', () => {
     /*
      * `flow.cancelled` only knows a cancellation that VOIDED something. Cancel
      * a booking whose payment has settled and the refund lands in `refunded`
-     * instead, so the cancellation appeared nowhere: the same act read
-     * "Cancelled" or "Refunded" depending only on whether money had moved.
-     * Live case 2026-11-08, booking 0d2ba38f, $89 paid then returned.
+     * instead, so the cancellation appeared nowhere. Live case 2026-11-08,
+     * booking 0d2ba38f, $89 paid then returned.
      *
-     * The booking's own status is the only thing that knows, so the row has to
-     * be given it and has to lead with it.
+     * The booking's own status is the only thing that knows, and it LEADS the
+     * line rather than replacing it.
      */
     expect(state).toContain('item.bookingCancelled');
-    const branch = state.indexOf('item.bookingCancelled');
-    expect(branch).toBeLessThan(state.indexOf('flow.overdue > 0'));
+    expect(state).toMatch(/text: off \? `\$\{off\} · \$\{said\}` : said/);
   });
 
   it('still shows the money beside the cancellation, never instead of it', () => {
     /* Both facts are true and a reader needs both: the job is off, and $89
-       went back. A bare "Cancelled" on an order that moved money hides it. */
-    const block = state.slice(state.indexOf('item.bookingCancelled'), state.indexOf('flow.overdue > 0'));
-    expect(block).toContain('flow.refunded');
-    expect(block).toContain('flow.outstanding');
-    expect(block).toContain('flow.collected');
+       went back. The cancellation is a PREFIX to the parts, never a
+       replacement for them. */
+    expect(state).toContain('`${off} · ${said}`');
   });
 
   it('carries the booking status through the route and the builders', () => {
@@ -183,16 +186,17 @@ describe('a row that still has money owed is never called cancelled', () => {
     expect(state).not.toMatch(/amount: flow\.outstanding\b/);
   });
 
-  it('names both halves of a cancelled order, so the figure adds up', () => {
+  it('names every part of a cancelled order, so the figure adds up', () => {
     /*
-     * The amount on the right is the order's face value. On a cancelled order
-     * it is money that came back PLUS money never taken, and naming only the
-     * refund left the rest unexplained: a $77 order read "Cancelled · $38.50
+     * The amount on the card is the order's face value. On a cancelled order
+     * it is money that came back PLUS money never taken, and naming only one
+     * left the rest unexplained: a $77 order read "Cancelled · $38.50
      * refunded" and the obvious question was what the other $38.50 was.
      */
     expect(state).toContain('money.never_collected');
-    const block = state.slice(state.indexOf('item.bookingCancelled'), state.indexOf('flow.overdue > 0'));
-    expect(block).toMatch(/flow\.cancelled > 0/);
+    expect(state).toContain('Math.max(0, flow.outstanding - flow.overdue)');
+    /* Overdue is a SUBSET of outstanding; naming both raw would overshoot. */
+    expect(state).not.toMatch(/amount: flow\.outstanding\b/);
   });
 
   it('calls a late period late, so the row matches the bar above it', () => {
