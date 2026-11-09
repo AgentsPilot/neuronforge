@@ -540,6 +540,8 @@ export const en = {
     'automation.run_every': 'How often should I check?',
     'automation.stop_after': 'How long should I keep trying?',
     'automation.stop_after_day_one': '1 day',
+    'automation.stop_after_days_two': '2 days',
+    'automation.stop_after_months_two': '2 months',
     'automation.stop_after_days': '{days} days',
     'automation.stop_after_months': '{months} months',
     'automation.cadence.daily': 'Every day',

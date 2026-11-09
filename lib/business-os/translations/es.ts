@@ -529,6 +529,8 @@ export const es = {
     'automation.run_every': '¿Cada cuánto lo reviso?',
     'automation.stop_after': '¿Cuánto tiempo sigo intentándolo?',
     'automation.stop_after_day_one': '1 día',
+    'automation.stop_after_days_two': '2 días',
+    'automation.stop_after_months_two': '2 meses',
     'automation.stop_after_days': '{days} días',
     'automation.stop_after_months': '{months} meses',
     'automation.cadence.daily': 'Cada día',
