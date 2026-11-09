@@ -58,8 +58,16 @@ describe('the plugin key survives every hop', () => {
   });
 
   it('and the card ends up with it', () => {
+    /*
+     * The key still travels all the way, and still earns its keep: it is what
+     * lets `translateAuthIssue` NAME the app in the sentence instead of writing
+     * "A connected app needs to be reconnected".
+     *
+     * It no longer gates the BUTTON — see the test below. A control that only
+     * appears when the failure record is perfect is absent exactly when the
+     * record is old, which is when an owner has been stuck longest.
+     */
     expect(card).toContain('plugin?: string');
-    expect(card).toContain('agent.stopped.plugin');
   });
 });
 
@@ -71,13 +79,52 @@ describe('the button', () => {
     expect(card).toMatch(/getPluginAPIClient\(\)\.connectPlugin\(user\.id, pluginKey\)/);
   });
 
-  it('appears only for a connection failure we can actually name', () => {
-    /* A button that cannot name its plugin has nothing to open, and a failure
-       that is not a connection has nothing to reconnect. Both conditions are
-       the server's, which is the only side that saw the failing step. */
-    expect(card).toMatch(
-      /agent\.stopped\.category === 'reconnect' && agent\.stopped\.plugin/
-    );
+  it('does not require the failure to have named the plugin', () => {
+    /*
+     * It used to require `category: 'reconnect'` AND a plugin key. The category
+     * is dependable now — it is derived on read, so even a failure recorded by
+     * an older deploy gets one — but the PLUGIN key is not: nothing wrote it
+     * before today. A mailbox agent that had failed for ten days was therefore
+     * offered nothing, which is exactly when the owner needed it.
+     *
+     * So the key is used when present and the agent's own plugin list fills in
+     * when it is not. `plugins` is on every row and always populated.
+     */
+    expect(card).toContain('reconnectable(agent).map(');
+    expect(card).toMatch(/candidates = unconnected \? agent\.missingPlugins : \(agent\.plugins \?\? \[\]\)/);
+  });
+
+  it('and only for a CONNECTION problem, not any problem', () => {
+    /*
+     * "Is the agent unwell" was too loose by half. An agent stopped by our own
+     * fault renders "this one is on us… it will keep trying" — and carried a
+     * Reconnect button underneath it, inviting the owner to re-authorise
+     * something that was never broken. They sign in, nothing changes, and the
+     * control has taught them it means nothing.
+     */
+    expect(card).toMatch(/const refused = agent\.stopped\?\.category === 'reconnect'/);
+    expect(card).toMatch(/const unconnected = agent\.blocked && \(agent\.missingPlugins \?\? \[\]\)\.length > 0/);
+    expect(card).toMatch(/if \(!refused && !unconnected\) return \[\]/);
+  });
+
+  it('and names the one the provider actually refused, where it is known', () => {
+    /* Offering every plugin an agent touches when we know which one failed is
+       noise; guessing when we do not is worse. */
+    expect(card).toMatch(/if \(refused && agent\.stopped\?\.plugin\) return \[agent\.stopped\.plugin\]/);
+  });
+
+  it('never offering the platform plugin, which has no account to sign into', () => {
+    expect(card).toContain("PLATFORM_PLUGINS = new Set(['business-os'])");
+    expect(card).toMatch(/filter\(p => !PLATFORM_PLUGINS\.has\(p\)\)/);
+  });
+
+  it('and the button names what it opens', () => {
+    expect(card).toContain('automation.reconnect_named');
+    for (const lang of ['en', 'he', 'es']) {
+      expect(read(`lib/business-os/translations/${lang}.ts`)).toContain(
+        "'automation.reconnect_named':"
+      );
+    }
   });
 
   it('says what went wrong when it cannot connect', () => {

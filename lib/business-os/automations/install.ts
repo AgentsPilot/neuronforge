@@ -295,6 +295,14 @@ export interface StoppedAgent {
    */
   plugin?: string;
   /**
+   * The provider's own error code, where the run produced one.
+   *
+   * Carried so `failureCategoryOf` can read the STRUCTURED half rather than
+   * guess the category from prose. Absent on most failures, which is why that
+   * function reads the message as well.
+   */
+  code?: string;
+  /**
    * WHICH OF THE FOUR THINGS AN OWNER CAN DO about this — see
    * `failureCategoryOf`.
    *
@@ -392,13 +400,47 @@ function ownerFacingFailure(
 ): StoppedAgent | null {
   if (!stopped) return null;
 
-  const key = `automation.failure.${stopped.category}`;
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CATEGORY IS WORKED OUT HERE, BECAUSE NOTHING EVER WROTE IT.
+   *
+   * `failureCategoryOf` was written for exactly this, exported, and never
+   * called. So `stopped.category` was always undefined, the key below was
+   * always `automation.failure.undefined`, and this function always fell
+   * through to the raw message — which comes from a plugin definition and is
+   * English only.
+   *
+   * The result: an owner on a Hebrew dashboard read "We tried to use Gmail but
+   * the connection isn't working. This usually means the access has expired.
+   * Reconnect the app and try again." while three languages of correct copy sat
+   * unused in the dictionaries.
+   *
+   * Derived on READ rather than stamped on write, deliberately: every failure
+   * already recorded — ten days of them on the account that found this — gets
+   * its sentence too, instead of only those failing from now on.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const category = stopped.category ?? failureCategoryOf(stopped.code, stopped.message);
+
+  const key = `automation.failure.${category}`;
   const sentence = say(key);
+  const localised = sentence && sentence !== key ? sentence : null;
 
   return {
     ...stopped,
+    category,
     title: say('automation.failure.title') || stopped.title,
-    message: sentence && sentence !== key ? sentence : stopped.message,
+    message: localised ?? stopped.message,
+    /*
+     * DROPPED once the sentence above is the owner's own language.
+     *
+     * `what_to_do` comes from `toUserFacing`, which writes English and only
+     * English ("Reconnect the app and try again."). Appending it to a Hebrew
+     * sentence produced exactly the two-language paragraph this whole
+     * translation path exists to prevent — and it is redundant anyway: every
+     * category sentence already says what to do.
+     */
+    whatToDo: localised ? undefined : stopped.whatToDo,
   };
 }
 
@@ -828,6 +870,44 @@ function scheduleInWords(
   const named = cadenceForCron(cron);
   if (named) return say(`automation.cadence.${named}`);
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ASK THE READER WE ALREADY HAVE, BEFORE GIVING UP.
+   *
+   * This fell straight to `return cron`, and the note above justified it: a raw
+   * expression on screen is obviously wrong and gets reported, where an
+   * invented phrase would be believed. Sound reasoning — and it was answering
+   * the wrong question, because `intervalFromCron` can read far more shapes
+   * than the two named above and was never consulted.
+   *
+   * So an owner watching their quotes agent saw a raw three-hourly expression
+   * sitting in the `Every` column, in a table of plain English, about a
+   * schedule the platform itself had written. `intervalFromCron` reads that
+   * shape today and returns three hours; it simply was not asked.
+   *
+   * (The expression is not quoted here on purpose: a cron step contains the
+   * two characters that close a block comment, and writing one inside this
+   * note ends it early. It cost a build.)
+   *
+   * The protection survives intact: this returns null for anything it cannot
+   * describe EXACTLY — a 25-minute step that drifts across the hour, a named
+   * weekday, a ranged minute — and those still fall through to the raw cron,
+   * still obviously wrong, still reported. Nothing is invented; a reader that
+   * already exists is simply used.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /* The same reading the editor is given — see `schedule` above, where
+     `allowNamedCadence` is granted for the same reason: an adopted agent was
+     offered a cadence word, so reading its expression back as that cadence
+     keeps the promise it was installed under. */
+  const derived = intervalFromCron(cron, { allowNamedCadence: NAMED_CADENCE_CRON });
+  if (derived) {
+    const words = say(`automation.every_n_${derived.unit}`);
+    return words.includes('{n}')
+      ? words.replace('{n}', String(derived.every))
+      : `${words} ${derived.every}`;
+  }
+
   return cron;
 }
 
@@ -991,7 +1071,28 @@ export async function deadLetteredRuns(
 
   for (const run of data ?? []) {
     const id = run.agent_id as string;
-    /* Newest first, so the first row for an agent is the only one that counts. */
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE NEWEST SETTLED RUN, NOT SIMPLY THE NEWEST ROW.
+     *
+     * This took the newest row of any kind and gave up unless it was `failed`.
+     * A run in flight is `pending` or `processing` — and `markFailed(retry)`
+     * puts a row BACK to `pending` for its backoff — so for the whole of every
+     * retry window the newest row was not a failure, the agent reported
+     * nothing at all, and the card showed a clean line.
+     *
+     * An owner watched a mailbox agent that had failed every run for ten days
+     * go quiet in the UI the moment a retry started, and reasonably read that
+     * as fixed. The failure had not gone anywhere; the row in front of it had.
+     *
+     * A run that has not finished says nothing about whether the agent works,
+     * so it is skipped rather than treated as good news. The first row here
+     * that reached an OUTCOME is the one that counts: `completed` clears the
+     * failure, `failed` reports it.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (run.status !== 'failed' && run.status !== 'completed') continue;
+
     if (seen.has(id)) continue;
     seen.add(id);
 
@@ -1011,6 +1112,10 @@ export async function deadLetteredRuns(
       message: failure.message,
       whatToDo: typeof failure.what_to_do === 'string' ? failure.what_to_do : undefined,
       plugin: typeof failure.plugin === 'string' ? failure.plugin : undefined,
+      /* The provider's own code, where the run produced one. Read here so the
+         category can be derived from the structured half rather than guessed
+         from prose. */
+      code: typeof failure.code === 'string' ? failure.code : undefined,
       lastTriedAt: run.created_at as string,
     });
   }
@@ -1716,6 +1821,74 @@ export async function pauseAutomation(userId: string, agentId: string): Promise<
  * advanced clock, which is a silent skip.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * Run this agent at the next tick, rather than at its next scheduled time.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS
+ *
+ * There was no way to make an agent run. A daily agent that fails can only be
+ * diagnosed once a day, and the failure is gone by the time anybody reads the
+ * log. One live channel took TEN DAYS to pin down for exactly that reason: six
+ * failures a day, every day, and a single chance each evening to be watching
+ * when it happened.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IT MOVES THE CLOCK. IT DOES NOT EXECUTE.
+ *
+ * The temptation is to call the runner here and have the agent run inside this
+ * request. That would be a SECOND execution path, and a second path is the
+ * thing that made the ten-day bug so hard to see: the channel agent worked
+ * under its old cron and failed under the scheduler, because the two did not
+ * do the same thing. A "run now" that behaves differently from a scheduled run
+ * cannot reproduce a scheduled run's failure, which is the only reason anybody
+ * presses it.
+ *
+ * So this sets `next_run` to now and lets the scheduler claim it on its next
+ * pass — within five minutes, through the same lease, the same connection
+ * pre-flight, the same retries and the same recording. What the owner watches
+ * is the real thing.
+ *
+ * NOTHING ELSE IS TOUCHED. Not `status`, not `schedule_cron`, not the cadence:
+ * the next run after this one lands where the schedule always said it would,
+ * because the scheduler recomputes `next_run` from the cron once it finishes.
+ * Pressing this does not quietly reschedule an agent.
+ *
+ * A PAUSED AGENT IS REFUSED rather than silently resumed. The scheduler selects
+ * on `status = 'active'`, so moving the clock on a paused agent would do
+ * nothing at all and report success — the worst combination.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function runAutomationNow(userId: string, agentId: string): Promise<boolean> {
+  if (!(await isControllableAgent(userId, agentId))) {
+    logger.warn({ userId, agentId }, 'Refused to run: not one of this owner\'s scheduled agents');
+    return false;
+  }
+
+  const { data: agent } = await agentRepository.findById(agentId, userId);
+
+  if (!agent) return false;
+
+  if ((agent as { status?: string }).status !== 'active') {
+    /* Paused. The scheduler would never pick it up, so reporting success here
+       would promise a run that cannot happen. */
+    logger.info({ userId, agentId }, 'Refused to run: the agent is paused');
+    return false;
+  }
+
+  const { error } = await agentRepository.update(agentId, userId, {
+    next_run: new Date().toISOString(),
+  } as never);
+
+  if (error) {
+    logger.error({ err: error, userId, agentId }, 'Could not bring the run forward');
+    return false;
+  }
+
+  logger.info({ userId, agentId }, 'Automation brought forward; the next scheduler pass will claim it');
+  return true;
+}
+
 export async function resumeAutomation(userId: string, agentId: string): Promise<boolean> {
   if (!(await isControllableAgent(userId, agentId))) {
     logger.warn({ userId, agentId }, 'Refused to resume: not one of this owner\'s scheduled agents');

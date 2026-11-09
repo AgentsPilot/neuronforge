@@ -42,6 +42,7 @@ import {
   pauseAutomation,
   removeAutomation,
   resumeAutomation,
+  runAutomationNow,
   updateAgentSchedule,
 } from '@/lib/business-os/automations/install';
 
@@ -145,7 +146,7 @@ const installSchema = z.object({
 
 const controlSchema = z.object({
   agentId: z.string().uuid(),
-  action: z.enum(['pause', 'resume', 'schedule']),
+  action: z.enum(['pause', 'resume', 'schedule', 'run']),
 
   /*
    * ───────────────────────────────────────────────────────────────────────────
@@ -514,6 +515,51 @@ export async function PATCH(request: NextRequest) {
         .catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
 
       return NextResponse.json({ success: true, data: { nextRun: outcome.nextRun ?? null } });
+    }
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * RUN NOW BRINGS THE CLOCK FORWARD; IT DOES NOT EXECUTE HERE.
+     *
+     * Running the agent inside this request would be a second execution path,
+     * and a second path is what made a ten-day channel failure so hard to see:
+     * that agent worked under its old cron and failed under the scheduler,
+     * because the two did not do the same thing. A "run now" that behaves
+     * differently from a scheduled run cannot reproduce a scheduled run's
+     * failure, which is the only reason to press it.
+     *
+     * So the answer says WHEN, not "done": the scheduler claims it on its next
+     * pass, within five minutes, and the owner needs to know that rather than
+     * watch for something that already happened.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (validated.action === 'run') {
+      const brought = await runAutomationNow(user.id, validated.agentId);
+
+      if (!brought) {
+        return NextResponse.json(
+          {
+            success: false,
+            /* The two reachable causes are a paused agent and an id that is not
+               this owner's. Neither is told apart for the caller: one is their
+               own state, the other is a question they may not ask. */
+            error: 'Could not bring this run forward',
+          },
+          { status: 400 }
+        );
+      }
+
+      auditTrail
+        .log({
+          action: 'AUTOMATION_AGENT_RUN_REQUESTED',
+          entityType: 'agent',
+          entityId: validated.agentId,
+          userId: user.id,
+          request,
+        })
+        .catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
+
+      return NextResponse.json({ success: true, data: { queued: true } });
     }
 
     const done =

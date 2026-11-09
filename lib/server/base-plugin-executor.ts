@@ -168,7 +168,53 @@ export abstract class BasePluginExecutor {
           { actionName, pluginKey: this.pluginName },
           'Provider rejected a token our expiry still called valid; refreshed and retrying once'
         );
-        result = await this.executeSpecificAction(refreshed, actionName, parameters);
+
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * AND IF THE FRESH TOKEN IS REFUSED TOO, WRITE THAT DOWN.
+         *
+         * The comment above draws the right conclusion and stopped there: a
+         * second 401 on a token issued seconds ago means the GRANT is gone,
+         * not the token. That is the one case where the owner really must
+         * reconnect — and nothing recorded it, so nothing could say so.
+         *
+         * `recordRefreshFailure` could not cover this. It fires when a REFRESH
+         * is refused, and here every refresh succeeds: Google keeps issuing
+         * access tokens and the API keeps rejecting them. So the connection
+         * read `status: active`, `refresh_failed_at: none`, and every surface
+         * called it healthy.
+         *
+         * Measured on a live account: a mailbox channel failed six runs a day
+         * for TEN DAYS this way. The channels card showed a green dot, the
+         * setup wizard said "set up", and the only sign was an agent that
+         * quietly filed nothing.
+         *
+         * Best-effort and non-fatal: the original error is still what the
+         * caller gets, and an unmarked connection is no worse than before.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        try {
+          result = await this.executeSpecificAction(refreshed, actionName, parameters);
+        } catch (secondError: any) {
+          if (this.httpStatusOf(secondError) === 401) {
+            this.logger.warn(
+              { actionName, pluginKey: this.pluginName },
+              'A freshly issued token was refused as well; recording the grant as dead'
+            );
+
+            await this.userConnections
+              .recordDeadGrant(
+                refreshed,
+                `${this.pluginName}: a token issued seconds earlier was refused by ${actionName}`
+              )
+              .catch(() => {
+                /* Annotating is a courtesy; failing the action over it would
+                   turn a reportable problem into an unreportable one. */
+              });
+          }
+
+          throw secondError;
+        }
       }
 
       // Step 4: Format success response using output guidance
