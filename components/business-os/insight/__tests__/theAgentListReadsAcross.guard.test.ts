@@ -23,16 +23,35 @@ const card = readFileSync(
 
 describe('the ledger', () => {
   it('has real column headers, not a stack', () => {
+    /*
+     * FOUR COLUMNS, AND THEY ARE ABOUT THE OUTCOME.
+     *
+     * It was six, and four of them were schedule arithmetic: every, last run,
+     * next run, stops after. The list answered "when does it run" four times
+     * over and never answered the question an owner opens it with — is this
+     * working, and did it do anything for me.
+     *
+     * The times moved into the editor the row opens. They are facts about ONE
+     * agent, read while looking at that agent, not while scanning for the one
+     * that broke.
+     */
     expect(card).toContain('<thead>');
     for (const key of [
       'automation.col_agent',
       'automation.col_watches',
-      'automation.col_every',
-      'automation.col_last',
-      'automation.col_next',
-      'automation.col_stops',
+      'automation.col_outcome',
+      'automation.col_detail',
     ]) {
       expect(card).toContain(key);
+    }
+  });
+
+  it('and the schedule columns are gone from the row', () => {
+    /* Guarded explicitly: re-adding one is how the list drifts back to being
+       a timetable. They live in the editor now. */
+    const head = card.slice(card.indexOf('<thead>'), card.indexOf('</thead>'));
+    for (const key of ['automation.col_every', 'automation.col_stops', 'automation.col_last', 'automation.col_next']) {
+      expect(head).not.toContain(key);
     }
   });
 
@@ -108,11 +127,18 @@ describe('one colour per state, and green belongs to running', () => {
   });
 
   it('keeps the next-run figure green only when something is coming', () => {
-    /* A paused agent with a stale `next_run` in the column would read as
-       running. */
-    expect(card.replace(/\s+/g, ' ')).toContain(
-      "{state === 'running' && when(agent.nextRun) ? ("
-    );
+    /*
+     * A paused agent with a stale `next_run` would read as running. The rule
+     * survived the move into the editor: paused and blocked say so in words,
+     * a retry after a failure is said plainly because it is not a promise,
+     * and only a run that is genuinely coming is green.
+     */
+    const flat = card.replace(/\s+/g, ' ');
+    expect(flat).toContain("agent.status !== 'active' ?");
+    expect(flat).toContain("automation.next_paused");
+    expect(flat).toContain("automation.next_blocked");
+    expect(flat).toContain("automation.next_retry");
+    expect(flat).toContain("var(--v2-success)");
   });
 
   it('lets blocked outrank paused', () => {
