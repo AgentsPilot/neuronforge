@@ -527,6 +527,7 @@ export const en = {
     'automation.outcome_nothing': 'Nothing to do',
     'automation.outcome_ran': 'Ran with nothing to report',
     'automation.found.items': 'items',
+    'automation.found.range': 'rows',
     'automation.found.invoices': 'invoices',
     'automation.found.emails': 'emails',
     'automation.found.bookings': 'bookings',

@@ -1119,9 +1119,21 @@ export interface AgentOutcome {
   actedOn: number | null;
 }
 
-/** A step that looks for things, as opposed to one that does something. */
+/**
+ * A step that looks for things, as opposed to one that does something.
+ *
+ * The prefix list is the whole definition, so a missing verb silently costs an
+ * agent its sentence: `read_range` was absent, so a spreadsheet import that
+ * read three rows reported "ran with nothing to report" — the one outcome an
+ * owner reads as a wasted morning.
+ *
+ * Prefixes rather than a list of actions, because plugins add verbs faster
+ * than anyone updates a catalogue. Anything that only ever LOOKS belongs here;
+ * anything that writes, sends or charges must not, or the row will claim the
+ * agent found what it actually did.
+ */
 function isFindingStep(action: string): boolean {
-  return /^(find|search|list|get|fetch)_/.test(action);
+  return /^(find|search|list|get|fetch|read|scan|query)_/.test(action);
 }
 
 export async function lastOutcomes(agentIds: string[]): Promise<Map<string, AgentOutcome>> {

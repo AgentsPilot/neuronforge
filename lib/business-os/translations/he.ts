@@ -3485,6 +3485,7 @@ export const he = {
     'automation.outcome_nothing': 'לא היה מה לעשות',
     'automation.outcome_ran': 'רץ, ללא ממצאים',
     'automation.found.items': 'פריטים',
+    'automation.found.range': 'שורות',
     'automation.found.invoices': 'חשבוניות',
     'automation.found.emails': 'מיילים',
     'automation.found.bookings': 'פגישות',

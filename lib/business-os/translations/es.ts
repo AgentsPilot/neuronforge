@@ -516,6 +516,7 @@ export const es = {
     'automation.outcome_nothing': 'Nada que hacer',
     'automation.outcome_ran': 'Se ejecutó sin novedades',
     'automation.found.items': 'elementos',
+    'automation.found.range': 'filas',
     'automation.found.invoices': 'facturas',
     'automation.found.emails': 'correos',
     'automation.found.bookings': 'reservas',
