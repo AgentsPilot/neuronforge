@@ -1002,12 +1002,16 @@ export function RunningAgentsCard() {
                    read one row at a time — so they get a column each. */
                 t('automation.col_detail') || 'What it did',
                 /*
-                 * `Last run` and `Next run` moved into the editor the row
-                 * opens. Six columns of times and settings crowded out the one
-                 * question the list exists to answer — is this agent working —
-                 * and both are read when an owner is already looking AT one
-                 * agent, not while scanning the list.
+                 * `Next run` earns its place; `Last run` does not.
+                 *
+                 * When something will next happen is the one scheduling fact
+                 * an owner scans FOR — it answers "is anything coming, and do
+                 * I need to do something before it". When it last ran is a
+                 * detail about one agent, read while already looking at that
+                 * agent, and it stays in the editor with the rest of the
+                 * schedule.
                  */
+                t('automation.col_next') || 'Next run',
                 '',
               ].map((heading, i) => (
                 <th
@@ -1343,6 +1347,37 @@ export function RunningAgentsCard() {
                         <span style={{ color: 'var(--v2-status-error-text)' }}>{reconnectError}</span>
                       )}
                     </span>
+                  </td>
+
+                  {/*
+                    Next run — green ONLY when something is genuinely coming.
+
+                    `state` collapses two situations into `blocked`: a plugin
+                    the owner has not connected, and an agent that FAILED and
+                    was dead-lettered. Both once printed "waiting on you",
+                    which for the second is wrong twice over — it blames the
+                    owner for a bug and hides the one fact they can act on,
+                    that it tries again, and when.
+                  */}
+                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule }}>
+                    {state === 'running' && when(agent.nextRun) ? (
+                      <span style={{ color: 'var(--v2-success)', fontWeight: 600 }}>
+                        {when(agent.nextRun)}
+                      </span>
+                    ) : agent.stopped && !agent.blocked && when(agent.nextRun) ? (
+                      <span style={{ color: 'var(--v2-text-secondary)' }}>
+                        {(t('automation.next_retry') || 'tries again {when}').replace(
+                          '{when}',
+                          when(agent.nextRun) ?? ''
+                        )}
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--v2-text-muted)' }}>
+                        {state === 'blocked'
+                          ? t('automation.next_blocked') || 'waiting on you'
+                          : t('automation.next_paused') || 'not while paused'}
+                      </span>
+                    )}
                   </td>
 
                   {/*
@@ -1873,7 +1908,7 @@ function ScheduleEditorRow({
         ROW's own `borderBottom` is already suppressed while it is open.
         ────────────────────────────────────────────────────────────────────────
       */}
-      <td colSpan={5} style={{ padding: '0 0 12px', borderBottom: '1px solid var(--v2-border)' }}>
+      <td colSpan={6} style={{ padding: '0 0 12px', borderBottom: '1px solid var(--v2-border)' }}>
         <div
           /*
             ────────────────────────────────────────────────────────────────────

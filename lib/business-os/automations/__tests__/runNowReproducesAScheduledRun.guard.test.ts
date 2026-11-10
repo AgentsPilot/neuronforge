@@ -66,7 +66,7 @@ describe('it refuses what it cannot deliver', () => {
   it('a paused agent, rather than promising a run that cannot happen', () => {
     /* The scheduler selects on `status = 'active'`, so moving a paused agent's
        clock would do nothing at all and report success. */
-    expect(runNow).toMatch(/status\?: string \}\)\.status !== 'active'/);
+    expect(runNow).toMatch(/status !== 'active'/);
   });
 
   it('and an agent that is not this owner\'s', () => {
