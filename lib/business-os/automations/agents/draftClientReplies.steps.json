@@ -125,7 +125,7 @@
               "plugin": "google-mail",
               "action": "search_emails",
               "params": {
-                "query": "to:{{current_reply.from_email}}",
+                "query": "to:{{current_reply.from_email}} newer_than:2d",
                 "max_results": 1,
                 "include_attachments": false,
                 "content_level": "metadata",

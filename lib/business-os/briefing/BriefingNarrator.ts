@@ -773,6 +773,7 @@ export function findUnsupportedFigures(
   permit(outlook.quotesDeclined?.count ?? 0);
   permit(outlook.quotesDeclined?.value);
   permit(outlook.unanswered?.count ?? 0);
+  permit(outlook.repliesWaiting?.count ?? 0);
   permit(outlook.refunded?.count ?? 0);
   permit(outlook.refunded?.value);
 
@@ -1163,6 +1164,23 @@ function outlookStatements(facts: BriefingFacts, language: BriefingLanguage): st
     );
   }
 
+  /*
+   * A conversation already underway, and the client is waiting on a person.
+   *
+   * Said separately from `unanswered` because the owner's next move differs:
+   * an unanswered enquiry needs writing from nothing, while this one may
+   * already have a draft sitting in their mail with their own words in it.
+   * The copy says so, which is the difference between a chore and a click.
+   */
+  if ((outlook.repliesWaiting?.count ?? 0) > 0) {
+    lines.push(
+      phrase.repliesWaiting(
+        phrase.names(outlook.repliesWaiting.people, outlook.repliesWaiting.count),
+        outlook.repliesWaiting.count
+      )
+    );
+  }
+
   if (outlook.next) {
     lines.push(
       phrase.next(outlook.next.name, formatDay(outlook.next.dateLocal, language), outlook.next.timeLocal)
@@ -1401,6 +1419,8 @@ interface FallbackPhrases {
   quoteDeclined: (n: number, money?: string, reason?: string) => string;
   /* Wrote in, still no reply — whenever they wrote. */
   unanswered: (named: string, n: number) => string;
+  /* Replied to us and is waiting on a person: a draft may already be written. */
+  repliesWaiting: (named: string, n: number) => string;
   /* Money that has gone back out. */
   refunded: (n: number, money?: string) => string;
   /** `money` is already formatted; `n` is how many payments made it up. */
@@ -1543,6 +1563,13 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       }.`,
     unanswered: (named, n) =>
       named ? `${named} wrote in and are still waiting for a reply.` : `${n} enquiries are still waiting for a reply.`,
+    /* "A reply may be drafted" rather than "is": the agent writes one only
+       when it judged it could, and promising a draft that is not there sends
+       the owner to an empty folder. */
+    repliesWaiting: (named, n) =>
+      named
+        ? `${named} replied and are waiting on you — a reply may already be drafted in your mail.`
+        : `${n} clients replied and are waiting on you — a reply may already be drafted in your mail.`,
     refunded: (n, money) =>
       (n === 1 ? 'A booking was refunded' : `${n} bookings were refunded`) + (money ? `, ${money}.` : '.'),
     owes: (name, amount) => `${name} still owes ${amount}.`,
@@ -1628,6 +1655,10 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       }.`,
     unanswered: (named, n) =>
       named ? `${named} escribieron y siguen esperando respuesta.` : `${n} consultas siguen esperando respuesta.`,
+    repliesWaiting: (named, n) =>
+      named
+        ? `${named} respondieron y te esperan: puede que ya haya un borrador en tu correo.`
+        : `${n} clientes respondieron y te esperan: puede que ya haya un borrador en tu correo.`,
     refunded: (n, money) =>
       (n === 1 ? 'Se reembolsó una reserva' : `Se reembolsaron ${n} reservas`) + (money ? `, ${money}.` : '.'),
     owes: (name, amount) => `${name} todavía debe ${amount}.`,
@@ -1711,6 +1742,10 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       }.`,
     unanswered: (named, n) =>
       named ? `${named} פנו ועדיין מחכים לתשובה.` : `${n} פניות עדיין מחכות לתשובה.`,
+    repliesWaiting: (named, n) =>
+      named
+        ? `${named} חזרו אליך ומחכים לך — ייתכן שכבר מחכה לך טיוטה בתיבה.`
+        : `${n} לקוחות חזרו אליך ומחכים לך — ייתכן שכבר מחכה לך טיוטה בתיבה.`,
     refunded: (n, money) =>
       (n === 1 ? 'הזמנה אחת זוכתה' : `${n} הזמנות זוכו`) + (money ? `, ${money}.` : '.'),
     owes: (name, amount) => `${name} עדיין חייב ${amount}.`,

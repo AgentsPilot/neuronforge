@@ -623,6 +623,50 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
 
         /*
          * ─────────────────────────────────────────────────────────────────────
+         * AND THE PLAN ITSELF, FOR THE SAME REASON.
+         *
+         * `refreshPlan` ran on the INSTALL path only, so an agent already
+         * installed and running never picked up a corrected plan. Its own
+         * comment names the cost — "the first version of the invoice chaser
+         * would have emailed the same client every morning; an install made
+         * before that fix would still be doing it" — and then left the fix
+         * reachable only by re-installing, which no owner has a reason to do.
+         *
+         * Found on 2026-11-10 on a bounded draft check: a reply agent declined
+         * to answer a client because of a draft written two months earlier,
+         * and correcting the catalogue would not have reached a single
+         * running install.
+         *
+         * Safe here for the reasons the repoint above is safe: it compares a
+         * fingerprint and returns before any query when they match, so the
+         * normal case costs nothing, concurrent dashboard loads converge, and
+         * only `pilot_steps` moves — the cadence, the status and everything
+         * else the owner chose are untouched.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        /*
+         * Not after a repoint: that IS a plan move, and it has just written
+         * the variant's own steps. Refreshing on top writes the same plan a
+         * second time on the same read.
+         */
+        if (automation && !repointed) {
+          /* A repair must never break the read it rides on. `refreshPlan`
+             handles its own write failures, but anything unexpected here
+             would take the whole agent list down with it — and a stale plan
+             is a far smaller problem than a dashboard that will not load. */
+          try {
+            await refreshPlan(
+              userId,
+              agent as { id: string; agent_config?: Record<string, unknown> | null },
+              automation
+            );
+          } catch (err) {
+            logger.warn({ err, userId, automationId: id }, 'Could not refresh the installed plan');
+          }
+        }
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
          * WHAT IS IN FORCE, NOT WHAT WAS TYPED.
          *
          * Cadence and stop-after are stored as the owner's EXPLICIT choice and

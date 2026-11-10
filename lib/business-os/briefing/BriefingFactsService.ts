@@ -180,6 +180,20 @@ export interface BriefingFacts {
      * actionable thing a morning briefing can carry.
      */
     unanswered: { count: number; people: Array<{ name: string; note?: string }> };
+    /**
+     * A client who REPLIED and is still waiting on the owner.
+     *
+     * Different from `unanswered`, which is a first enquiry nobody has
+     * answered. This is a conversation already underway: the receptionist
+     * agent read the reply, decided what to do, and either left a draft in the
+     * owner's mail or handed it over for them to write.
+     *
+     * The gap has existed and been counted by the dashboard since it was
+     * written, and the briefing never mentioned it — exactly the failure the
+     * note on `fromGaps` below warns about. An owner with a drafted reply
+     * waiting had no way to learn of it except by opening their drafts folder.
+     */
+    repliesWaiting: { count: number; people: Array<{ name: string; note?: string }> };
     /** Bookings refunded — money that has gone back out. */
     refunded: { count: number; people: Array<{ name: string; note?: string }>; value?: number; currency?: string };
     /**
@@ -847,6 +861,9 @@ function summariseOutlook(
     quotesAccepted: summariseDecided(decidedRows, 'accepted'),
     quotesDeclined: summariseDecided(decidedRows, 'declined'),
     unanswered: fromGaps(gaps, ['enquiry_unanswered']),
+    /* A reply already read and decided on: a draft waiting, or one the agent
+       handed to the owner. Both mean the client is waiting on a person. */
+    repliesWaiting: fromGaps(gaps, ['client_reply_waiting']),
     /* Money that has gone back out. Also counted by the dashboard, also unsaid. */
     refunded: fromGaps(gaps, ['booking_refunded']),
     quotesWaiting: fromGaps(gaps, ['quote_unwritten', 'quote_unsent']),
