@@ -223,6 +223,13 @@ export interface InstalledAutomation {
   stopped: StoppedAgent | null;
 
   /**
+   * What the last settled run did — see `lastOutcomes`. Null only when the
+   * read failed; an agent that has never run carries `state: 'never'`, which
+   * is a fact worth showing rather than an absence to hide.
+   */
+  lastOutcome: AgentOutcome | null;
+
+  /**
    * ───────────────────────────────────────────────────────────────────────────
    * WHAT THE SCHEDULE EDITOR OPENS ON, AND WHETHER IT MAY OPEN AT ALL.
    *
@@ -485,6 +492,9 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
    */
   const stoppedByAgent = await deadLetteredRuns((data || []).map(a => a.id));
 
+  /* One read for the list, like the failures above — not per row. */
+  const outcomeByAgent = await lastOutcomes((data || []).map(a => a.id));
+
   /*
    * One connection read for the whole list, like the dictionary above. Per row
    * would be an N+1 against a table every agent asks the same question of.
@@ -664,6 +674,7 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
           requires,
           missingPlugins: missing,
           stopped: ownerFacingFailure(stoppedByAgent.get(agent.id), say),
+          lastOutcome: outcomeByAgent.get(agent.id) ?? { state: 'never', at: null, found: null, foundAction: null, actedOn: null },
           /*
            * The stored interval, or the one its cron means.
            *
@@ -739,6 +750,7 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
           missingPlugins,
           requires: null,
           stopped: ownerFacingFailure(stoppedByAgent.get(agent.id), say),
+          lastOutcome: outcomeByAgent.get(agent.id) ?? { state: 'never', at: null, found: null, foundAction: null, actedOn: null },
           /* No named-cadence lookup: the channel's four were all minutes or an
              hour, and every one of those is a form `intervalFromCron` reads
              exactly. */
@@ -770,6 +782,7 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
         missingPlugins,
         requires: null,
         stopped: ownerFacingFailure(stoppedByAgent.get(agent.id), say),
+        lastOutcome: outcomeByAgent.get(agent.id) ?? { state: 'never', at: null, found: null, foundAction: null, actedOn: null },
         /*
          * No named-cadence lookup, and this is the case it exists to protect.
          * `0 9 * * 1` here is a Monday somebody picked, not the word "weekly" —
@@ -1048,6 +1061,112 @@ async function resolveName(userId: string, key: string): Promise<string> {
  * wrongly reports a working agent as stopped sends an owner to fix something
  * that is not broken.
  */
+/**
+ * What an agent actually DID on its last settled run.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The list could say when an agent ran and whether it was stopped, and nothing
+ * about what the run was FOR. "Checked yesterday" is not news an owner can use;
+ * "found 4 overdue invoices and wrote to 1 client" is.
+ *
+ * The pilot already records it. `workflow_executions.execution_results.items[]`
+ * carries one entry per step with its `action` and `itemCount`, so the counts
+ * exist for every run ever made — nothing new has to be captured and no
+ * backfill is needed.
+ *
+ * TWO NUMBERS, NOT A TRANSCRIPT. A plan is a find followed by something done
+ * per item, so the honest summary is what it found and what it acted on. Steps
+ * are not listed one by one: an owner is being told whether the agent earned
+ * its morning, not debugged.
+ *
+ * `friendlyMessage` on those items is deliberately NOT used. It is written for
+ * a developer, in English only, and carries bugs an owner should never meet —
+ * a live account has "Found 4 invoicess" stored on it. The noun is resolved
+ * from the action in the owner's own language instead.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface AgentOutcome {
+  /** `never` is its own state: an agent that has not run is not a success. */
+  state: 'ok' | 'failed' | 'never';
+  at: string | null;
+  /** What the finding step saw, and which action did the finding. */
+  found: number | null;
+  foundAction: string | null;
+  /** How many of those it then acted on. Null when the plan never scatters. */
+  actedOn: number | null;
+}
+
+/** A step that looks for things, as opposed to one that does something. */
+function isFindingStep(action: string): boolean {
+  return /^(find|search|list|get|fetch)_/.test(action);
+}
+
+export async function lastOutcomes(agentIds: string[]): Promise<Map<string, AgentOutcome>> {
+  const out = new Map<string, AgentOutcome>();
+  if (agentIds.length === 0) return out;
+
+  const { data, error } = await supabaseServer
+    .from('workflow_executions')
+    .select('agent_id, status, created_at, execution_results')
+    .in('agent_id', agentIds)
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (error) {
+    /* The list is still worth rendering without it. */
+    logger.error({ err: error }, 'Could not read what the last runs did');
+    return out;
+  }
+
+  for (const run of data ?? []) {
+    const id = run.agent_id as string;
+    if (out.has(id)) continue;
+
+    const status = String(run.status ?? '');
+    /* Same rule as `deadLetteredRuns`: a run still in flight says nothing
+       about whether the agent works, so it is skipped rather than counted. */
+    if (status !== 'completed' && status !== 'failed') continue;
+
+    const items = ((run.execution_results as { items?: unknown[] } | null)?.items ?? []) as Array<{
+      action?: string;
+      itemCount?: number;
+      status?: string;
+    }>;
+
+    let found: number | null = null;
+    let foundAction: string | null = null;
+    let actedOn: number | null = null;
+
+    for (const item of items) {
+      const action = String(item.action ?? '');
+      const count = typeof item.itemCount === 'number' ? item.itemCount : null;
+      if (count === null) continue;
+
+      if (action === 'scatter_gather') {
+        actedOn = count;
+      } else if (isFindingStep(action)) {
+        /* The LARGEST find wins. A plan often looks up supporting data —
+           services, contacts — beside the thing it is really about, and the
+           biggest set is the one the run was for. */
+        if (found === null || count > found) {
+          found = count;
+          foundAction = action;
+        }
+      }
+    }
+
+    out.set(id, {
+      state: status === 'completed' ? 'ok' : 'failed',
+      at: (run.created_at as string) ?? null,
+      found,
+      foundAction,
+      actedOn,
+    });
+  }
+
+  return out;
+}
+
 export async function deadLetteredRuns(
   agentIds: string[]
 ): Promise<Map<string, StoppedAgent>> {
