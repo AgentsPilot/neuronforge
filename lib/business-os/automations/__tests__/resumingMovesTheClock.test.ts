@@ -207,13 +207,33 @@ describe('what it will not do', () => {
 
   it('still reports the resume when the clock cannot be written', async () => {
     /*
-     * The agent IS active by then. Reporting failure would invite a second
-     * press, and a stale clock makes it due sooner than it should be — a wrong
-     * time rather than a wrong state.
+     * The agent IS active and claimable by then. Reporting failure would
+     * invite a second press, and a stale clock makes it due sooner than it
+     * should be — a wrong time rather than a wrong state.
+     *
+     * The two writes are mocked separately now that resume performs two: the
+     * schedule flag, then the clock. Failing them both together cannot tell
+     * the cases apart, and they are opposites — see the test below.
      */
-    update.mockResolvedValue({ data: null, error: new Error('write failed') });
+    update
+      .mockResolvedValueOnce({ data: {}, error: null })
+      .mockResolvedValueOnce({ data: null, error: new Error('write failed') });
 
     expect(await resumeAutomation(USER, AGENT)).toBe(true);
+  });
+
+  it('but NOT when the schedule flag cannot be written', async () => {
+    /*
+     * The opposite case, and the one that cost a live account five days. The
+     * scheduler claims on `schedule_enabled` as well as `status`, so an agent
+     * whose flag never got written is not resumed — it is active, idle and
+     * unclaimable. Reporting success there is how a spreadsheet agent sat
+     * still from 5 to 10 November while its owner pressed resume and was told
+     * yes.
+     */
+    update.mockResolvedValueOnce({ data: null, error: new Error('write failed') });
+
+    expect(await resumeAutomation(USER, AGENT)).toBe(false);
   });
 
   it('writes the status before the clock', async () => {

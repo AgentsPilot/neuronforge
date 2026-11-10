@@ -41,16 +41,23 @@ describe('the ledger', () => {
       'automation.col_watches',
       'automation.col_outcome',
       'automation.col_detail',
+      'automation.col_next',
     ]) {
       expect(card).toContain(key);
     }
   });
 
-  it('and the schedule columns are gone from the row', () => {
-    /* Guarded explicitly: re-adding one is how the list drifts back to being
-       a timetable. They live in the editor now. */
+  it('and the settings columns stay out of the row', () => {
+    /*
+     * `Next run` earns its place — it is the one scheduling fact an owner
+     * scans for, answering "is anything coming". The other three do not:
+     * every, stops after and last run are details about ONE agent, read while
+     * already looking at that agent, and they live in the editor the row
+     * opens. Re-adding one is how the list drifts back into being a timetable
+     * instead of a report.
+     */
     const head = card.slice(card.indexOf('<thead>'), card.indexOf('</thead>'));
-    for (const key of ['automation.col_every', 'automation.col_stops', 'automation.col_last', 'automation.col_next']) {
+    for (const key of ['automation.col_every', 'automation.col_stops', 'automation.col_last']) {
       expect(head).not.toContain(key);
     }
   });

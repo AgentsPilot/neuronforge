@@ -74,6 +74,8 @@ jest.mock('@/lib/supabaseServer', () => ({
 }));
 
 import { installedAutomations } from '../install';
+import { planVersion } from '../types';
+import { automationById } from '../catalog';
 
 const USER = 'owner-1';
 
@@ -84,7 +86,20 @@ const gmailInstall = (over: Record<string, unknown> = {}) => ({
   status: 'active',
   schedule_cron: '0 9 * * *',
   plugins_required: ['business-os', 'google-mail'],
-  agent_config: { business_os_automation: { id: 'draft_client_replies' } },
+  /*
+   * `planVersion` is set to whatever the catalogue currently fingerprints, so
+   * these fixtures are UP TO DATE installs. Without it the list read's plan
+   * refresh — added 2026-11-10 so a corrected plan reaches agents already
+   * running, rather than only on re-install — fires on every one of them and
+   * every "leaves it alone" assertion here measures that instead of the
+   * repoint it is about.
+   */
+  agent_config: {
+    business_os_automation: {
+      id: 'draft_client_replies',
+      planVersion: planVersion(automationById('draft_client_replies')?.steps ?? []),
+    },
+  },
   ...over,
 });
 
@@ -187,7 +202,14 @@ describe('what it leaves alone', () => {
       [
         gmailInstall({
           plugins_required: ['business-os', 'google-sheets'],
-          agent_config: { business_os_automation: { id: 'import_leads_from_sheet' } },
+          /* Up to date, like the fixture above, so the list read's plan
+             refresh stays out of a test about the repoint. */
+          agent_config: {
+            business_os_automation: {
+              id: 'import_leads_from_sheet',
+              planVersion: planVersion(automationById('import_leads_from_sheet')?.steps ?? []),
+            },
+          },
         }),
       ],
       ['outlook']

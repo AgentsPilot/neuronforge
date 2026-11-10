@@ -124,6 +124,7 @@
               "action": "search_emails",
               "params": {
                 "to_address": "{{current_reply.from_email}}",
+          "within_days": 2,
                 "max_results": 1,
                 "content_level": "metadata",
                 "folder": "drafts"

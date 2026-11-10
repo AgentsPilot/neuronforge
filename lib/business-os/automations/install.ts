@@ -549,7 +549,30 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
              on a row, not information. */
           (p): p is string => typeof p === 'string' && p.length > 0
         ),
-        status: agent.status,
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * A SCHEDULE SWITCHED OFF IS A PAUSED AGENT, WHATEVER `status` SAYS.
+         *
+         * The card was handed `status` alone, so an agent the scheduler can
+         * never claim — `schedule_enabled: false` with `status: 'active'` —
+         * arrived looking perfectly healthy. No badge, no warning, and a row
+         * that promised a next run it would never take.
+         *
+         * Measured on a live account on 2026-11-10: a spreadsheet agent in
+         * exactly that state had not run since 5 November and nothing on any
+         * surface said so. Its owner pressed resume and Run now in turn,
+         * both reported success, and the agent stayed invisible and idle.
+         *
+         * Reported as `inactive` because that is what it IS to an owner: off,
+         * and restartable by the control that says resume. The two ways an
+         * agent can be switched off are one fact to the person reading the
+         * list, and splitting them would ask them to learn our column names.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        status:
+          (agent as { schedule_enabled?: boolean }).schedule_enabled === false
+            ? 'inactive'
+            : agent.status,
         lastRun: (agent as { last_run?: string | null }).last_run ?? null,
         nextRun: (agent as { next_run?: string | null }).next_run ?? null,
       };
@@ -597,6 +620,50 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
 
         const id = repointed?.id ?? String(adopted.id);
         const automation = automationById(id);
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * AND THE PLAN ITSELF, FOR THE SAME REASON.
+         *
+         * `refreshPlan` ran on the INSTALL path only, so an agent already
+         * installed and running never picked up a corrected plan. Its own
+         * comment names the cost — "the first version of the invoice chaser
+         * would have emailed the same client every morning; an install made
+         * before that fix would still be doing it" — and then left the fix
+         * reachable only by re-installing, which no owner has a reason to do.
+         *
+         * Found on 2026-11-10 on a bounded draft check: a reply agent declined
+         * to answer a client because of a draft written two months earlier,
+         * and correcting the catalogue would not have reached a single
+         * running install.
+         *
+         * Safe here for the reasons the repoint above is safe: it compares a
+         * fingerprint and returns before any query when they match, so the
+         * normal case costs nothing, concurrent dashboard loads converge, and
+         * only `pilot_steps` moves — the cadence, the status and everything
+         * else the owner chose are untouched.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        /*
+         * Not after a repoint: that IS a plan move, and it has just written
+         * the variant's own steps. Refreshing on top writes the same plan a
+         * second time on the same read.
+         */
+        if (automation && !repointed) {
+          /* A repair must never break the read it rides on. `refreshPlan`
+             handles its own write failures, but anything unexpected here
+             would take the whole agent list down with it — and a stale plan
+             is a far smaller problem than a dashboard that will not load. */
+          try {
+            await refreshPlan(
+              userId,
+              agent as { id: string; agent_config?: Record<string, unknown> | null },
+              automation
+            );
+          } catch (err) {
+            logger.warn({ err, userId, automationId: id }, 'Could not refresh the installed plan');
+          }
+        }
 
         /*
          * ─────────────────────────────────────────────────────────────────────
@@ -1096,9 +1163,21 @@ export interface AgentOutcome {
   actedOn: number | null;
 }
 
-/** A step that looks for things, as opposed to one that does something. */
+/**
+ * A step that looks for things, as opposed to one that does something.
+ *
+ * The prefix list is the whole definition, so a missing verb silently costs an
+ * agent its sentence: `read_range` was absent, so a spreadsheet import that
+ * read three rows reported "ran with nothing to report" — the one outcome an
+ * owner reads as a wasted morning.
+ *
+ * Prefixes rather than a list of actions, because plugins add verbs faster
+ * than anyone updates a catalogue. Anything that only ever LOOKS belongs here;
+ * anything that writes, sends or charges must not, or the row will claim the
+ * agent found what it actually did.
+ */
 function isFindingStep(action: string): boolean {
-  return /^(find|search|list|get|fetch)_/.test(action);
+  return /^(find|search|list|get|fetch|read|scan|query)_/.test(action);
 }
 
 export async function lastOutcomes(agentIds: string[]): Promise<Map<string, AgentOutcome>> {
@@ -1988,10 +2067,39 @@ export async function runAutomationNow(userId: string, agentId: string): Promise
 
   if (!agent) return false;
 
-  if ((agent as { status?: string }).status !== 'active') {
-    /* Paused. The scheduler would never pick it up, so reporting success here
-       would promise a run that cannot happen. */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * EVERY CONDITION THE SCHEDULER CLAIMS ON, NOT JUST THE FIRST.
+   *
+   * This checked `status` alone, with the right reason beside it — "the
+   * scheduler would never pick it up, so reporting success here would promise
+   * a run that cannot happen". The claim query requires THREE things:
+   *
+   *     mode = 'scheduled'  AND  schedule_enabled = true  AND  status = 'active'
+   *
+   * so testing one of them promised exactly the run it was written to refuse.
+   *
+   * Measured on a live account on 2026-11-10: a spreadsheet agent with
+   * `schedule_enabled = false` was "run now"-ed repeatedly. Each press moved
+   * `next_run`, returned success, and queued nothing — the owner watched for
+   * a run that could never be claimed, and the list showed the agent as
+   * healthy throughout.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const row = agent as { status?: string; schedule_enabled?: boolean; mode?: string };
+
+  if (row.status !== 'active') {
     logger.info({ userId, agentId }, 'Refused to run: the agent is paused');
+    return false;
+  }
+
+  if (row.schedule_enabled === false) {
+    logger.info({ userId, agentId }, 'Refused to run: the schedule is switched off');
+    return false;
+  }
+
+  if (row.mode && row.mode !== 'scheduled') {
+    logger.info({ userId, agentId, mode: row.mode }, 'Refused to run: not a scheduled agent');
     return false;
   }
 
@@ -2021,6 +2129,34 @@ export async function resumeAutomation(userId: string, agentId: string): Promise
   }
 
   const nextRun = await nextDueOnResume(userId, agentId);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * BOTH FLAGS, BECAUSE THE SCHEDULER READS BOTH.
+   *
+   * `activate` sets `status`, and the claim query requires `status = 'active'`
+   * AND `schedule_enabled = true`. Resume set only the first, so an agent
+   * whose schedule flag was off could not be brought back from this UI at all:
+   * the button reported success, the row showed Active, and the scheduler went
+   * on ignoring it for ever.
+   *
+   * Found on a live account on 2026-11-10. A spreadsheet agent had not run
+   * since 5 November; its owner pressed resume, the control said yes, and
+   * `schedule_enabled` stayed false. Nothing anywhere said why.
+   *
+   * Written in the same patch as the clock, and treated as part of resuming
+   * rather than a courtesy: an agent that is "resumed" but unclaimable is the
+   * state this function exists to leave behind.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const { error: enableError } = await agentRepository.update(agentId, userId, {
+    schedule_enabled: true,
+  } as never);
+
+  if (enableError) {
+    logger.error({ err: enableError, userId, agentId }, 'Resumed the status but could not enable the schedule');
+    return false;
+  }
 
   if (nextRun) {
     const { error: clockError } = await agentRepository.update(agentId, userId, {
