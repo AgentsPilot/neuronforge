@@ -34,7 +34,6 @@ import { useAuth } from '@/components/UserProvider';
 import { getPluginAPIClient } from '@/lib/client/plugin-api-client';
 import {
   formatInterval,
-  nextTickAfter,
   type IntervalRange,
   type ScheduleInterval,
 } from '@/lib/business-os/schedule/interval';
@@ -297,6 +296,13 @@ interface AvailableAgent {
  * missing one of these degrades to today's wording instead of rendering a key.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * How far back the agent reaches, in the unit the owner chose it in.
+ *
+ * Renamed from the "stops after" framing on 2026-11-10: the number bounds the
+ * search window, not the agent's life. See the editor's label for the whole
+ * story.
+ */
 function stopAfterWords(days: number, t: (key: string) => string): string {
   const plural = (key: string, token: string, n: number) =>
     (t(key) || `{${token}} ${token}`).replace(`{${token}}`, String(n));
@@ -354,6 +360,91 @@ function stopAfterWords(days: number, t: (key: string) => string): string {
  * the owner can genuinely re-authorise.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT THE LAST RUN CAME TO, IN THREE WORDS.
+ *
+ * Three states, not two. An agent that has never run is not a success, and
+ * folding it into one is how a switched-off schedule hides: a spreadsheet
+ * agent sat idle for days reading exactly like the ones that were working.
+ *
+ * A dead-lettered failure outranks the stored outcome. `stopped` is the
+ * considered verdict — the queue retried, exhausted its attempts and had the
+ * failure translated for an owner — while `lastOutcome` is just the newest
+ * settled row. When they disagree, the one that gave up is the truth.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function outcomeVerdict(agent: InstalledAgent, t: (key: string) => string): string {
+  if (agent.stopped || agent.lastOutcome?.state === 'failed') {
+    return t('automation.outcome_failed') || 'Failed';
+  }
+  if (agent.lastOutcome?.state === 'ok') return t('automation.outcome_ok') || 'Worked';
+  return t('automation.outcome_never') || 'Not yet run';
+}
+
+function outcomeColour(agent: InstalledAgent): string {
+  if (agent.stopped || agent.lastOutcome?.state === 'failed') return 'var(--v2-status-error-text)';
+  if (agent.lastOutcome?.state === 'ok') return 'var(--v2-success)';
+  /* Never run is neither good nor bad — it is simply not news yet. */
+  return 'var(--v2-text-muted)';
+}
+
+/**
+ * What it found and how much of that it acted on.
+ *
+ * The noun comes from the step's action — `find_invoices` → invoices — so it
+ * reads in the owner's language. `friendlyMessage` is stored beside these
+ * counts and is deliberately unused: it is English-only and written for a
+ * developer, and a live account has "Found 4 invoicess" recorded on it.
+ *
+ * Zero is worth saying out loud. "Nothing to do" is the single most common
+ * honest outcome for a watching agent, and an empty cell reads as a fault.
+ */
+function outcomeDetail(outcome: AgentOutcome, t: (key: string) => string): string {
+  if (outcome.found === null) return t('automation.outcome_ran') || 'Ran with nothing to report';
+  if (outcome.found === 0) return t('automation.outcome_nothing') || 'Nothing to do';
+
+  const noun = String(outcome.foundAction ?? '').replace(/^(find|search|list|get|fetch)_/, '');
+  const nounKey = `automation.found.${noun}`;
+  const nounWord = noun && t(nounKey) !== nounKey ? t(nounKey) : t('automation.found.items') || 'items';
+
+  const found = (t('automation.outcome_found') || 'found {count} {noun}')
+    .replace('{count}', String(outcome.found))
+    .replace('{noun}', nounWord);
+
+  /* The acted-on half only when it says something the find did not. A plan
+     that scattered over everything it found adds no information by repeating
+     the number, and a plan with no scatter has nothing to add at all. */
+  if (outcome.actedOn === null || outcome.actedOn === outcome.found) return found;
+
+  const acted = (t('automation.outcome_acted') || 'acted on {count}').replace(
+    '{count}',
+    String(outcome.actedOn)
+  );
+  return `${found} · ${acted}`;
+}
+
+/**
+ * An agent that is meant to run daily and has not for days.
+ *
+ * Nothing else on the card notices this: the agent is not paused, not blocked
+ * and carries no failure, so every surface reads it as healthy while it
+ * quietly does nothing. That is the state a mailbox agent sat in for ten days.
+ *
+ * Only for a schedule we can reason about, and only past a margin — a daily
+ * agent an hour late is not news, and saying so would teach an owner to
+ * ignore the line.
+ */
+function overdueDays(agent: InstalledAgent): number | null {
+  if (!agent.lastRun || agent.status !== 'active') return null;
+  const everyDays =
+    agent.cadence === 'daily' ? 1 : agent.cadence === 'weekly' ? 7 : agent.cadence === 'monthly' ? 30 : null;
+  if (everyDays === null) return null;
+
+  const days = Math.floor((Date.now() - new Date(agent.lastRun).getTime()) / 86_400_000);
+  return days >= everyDays * 2 ? days : null;
+}
+
 const PLATFORM_PLUGINS = new Set(['business-os']);
 
 function reconnectable(agent: InstalledAgent): string[] {
@@ -889,10 +980,34 @@ export function RunningAgentsCard() {
               {[
                 t('automation.col_agent') || 'Agent',
                 t('automation.col_watches') || 'Watches',
-                t('automation.col_every') || 'Every',
-                t('automation.col_last') || 'Last run',
-                t('automation.col_next') || 'Next run',
-                t('automation.col_stops') || 'Stops after',
+                /*
+                 * ───────────────────────────────────────────────────────────
+                 * THE OUTCOME GETS ITS OWN COLUMN.
+                 *
+                 * `Watches` carried the failure as well as the subject, so a
+                 * stopped agent stopped saying what it was for — the two facts
+                 * an owner needs most were fighting for one cell, and the
+                 * answer depended on which was worse.
+                 *
+                 * `Every` and `Stops after` are gone from the row entirely.
+                 * They are settings, not news: unchanging, rarely read, and
+                 * still one click away in the editor this row opens. Four
+                 * columns of schedule arithmetic crowded out whether the thing
+                 * actually worked this morning.
+                 * ───────────────────────────────────────────────────────────
+                 */
+                t('automation.col_outcome') || 'Last outcome',
+                /* The verdict and the detail are two different questions —
+                   "did it work" is scanned down the page, "what did it do" is
+                   read one row at a time — so they get a column each. */
+                t('automation.col_detail') || 'What it did',
+                /*
+                 * `Last run` and `Next run` moved into the editor the row
+                 * opens. Six columns of times and settings crowded out the one
+                 * question the list exists to answer — is this agent working —
+                 * and both are read when an owner is already looking AT one
+                 * agent, not while scanning the list.
+                 */
                 '',
               ].map((heading, i) => (
                 <th
@@ -1057,12 +1172,32 @@ export function RunningAgentsCard() {
                       >
                         {agent.name}
                       </span>
-                      {state !== 'running' && (
+                      {/*
+                        ────────────────────────────────────────────────────
+                        "CANNOT RUN" ONLY WHEN IT TRULY CANNOT.
+
+                        This badge fired for `blocked || stopped`, which are
+                        not the same thing. A STOPPED agent ran, failed and was
+                        dead-lettered — but it is still switched on and still
+                        scheduled, so the row said "cannot run" while the
+                        drill-down beside it said "tries again tomorrow". Two
+                        statements, one row, flatly contradicting each other.
+
+                        It was also a second telling of the outcome: the Last
+                        outcome column already says Failed, in colour.
+
+                        So the badge is now only for the states the outcome
+                        column CANNOT express — a requirement never met, and a
+                        schedule the owner switched off. A failure speaks for
+                        itself one column over.
+                        ────────────────────────────────────────────────────
+                      */}
+                      {(agent.blocked || agent.status !== 'active') && (
                         <span
                           className="text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap"
                           style={{ background: colour.bg, color: colour.fg }}
                         >
-                          {state === 'blocked'
+                          {agent.blocked
                             ? t('automation.blocked') || 'Cannot run'
                             : t('automation.paused') || 'Paused'}
                         </span>
@@ -1070,234 +1205,144 @@ export function RunningAgentsCard() {
                     </span>
                   </td>
 
-                  {/* What it watches, or why it cannot run — the more useful of
-                      the two, in the same place. */}
-                  <td className="text-[12.5px]" style={{ padding: '9px 10px', borderBottom: rowRule, color: state === 'blocked' ? colour.fg : 'var(--v2-text-secondary)' }}>
-                    {/*
-                      WHY IT IS NOT RUNNING, WHERE "what it watches" GOES.
+                  {/*
+                    WHAT IT WATCHES. ONLY THAT.
 
-                      An agent that cannot run has nothing useful to say about
-                      what it watches, and the reason is the only thing the
-                      owner can act on. Two causes, one slot: a requirement
-                      never met, or a run that failed until the queue gave up.
-
-                      The stopped text is NOT translated here. It arrives
-                      already written for an owner, because the execution layer
-                      put it through the platform's own translator when it
-                      dead-lettered the run.
-                    */}
-                    {agent.stopped ? (
-                      <span className="flex flex-col gap-0.5">
-                        {/*
-                          ──────────────────────────────────────────────────────
-                          IN THE OWNER'S LANGUAGE WHERE WE HAVE WORDS FOR IT.
-
-                          `stopped.message` is written for a person but written
-                          in ENGLISH — it comes from a plugin definition's
-                          `common_errors`, and those carry one language. So a
-                          Hebrew dashboard showed "Your Gmail connection has
-                          expired. Please reconnect in Settings → Connected
-                          Apps." in the middle of Hebrew, which is both
-                          unreadable to the owner and the least useful moment
-                          to switch languages on them.
-
-                          The CODE is the translatable half. The English
-                          sentence stays as the fallback: for a code nobody has
-                          written words for, and for every run recorded before
-                          the code was carried. Saying it in English beats
-                          saying nothing, and beats showing a raw key.
-                          ──────────────────────────────────────────────────────
-                        */}
-                        {/*
-                          ONE SENTENCE, ALREADY IN THE OWNER'S LANGUAGE.
-
-                          The server resolves it from the failure's CATEGORY —
-                          reconnect, busy, data, ours — rather than passing
-                          down whatever the layer that broke happened to say.
-                          An owner is not a developer: "Scatter-gather step
-                          step2: all 2 items failed" is unreadable AND
-                          unactionable, and translating each variant would
-                          chase an open-ended set of strings to arrive at the
-                          same place.
-
-                          So this renders what it is given. The technical text
-                          stays on `agent_executions.error_message` for whoever
-                          is debugging.
-                        */}
-                        <span style={{ fontWeight: 600 }}>{agent.stopped.message}</span>
-                        {agent.stopped.whatToDo && (
-                          <span style={{ color: 'var(--v2-text-muted)' }}>
-                            {agent.stopped.whatToDo}
-                          </span>
-                        )}
-                        {/*
-                          THE FIX, BESIDE THE DESCRIPTION OF THE PROBLEM.
-
-                          Only where the failure is a connection AND we know
-                          which one: a button that cannot name its plugin has
-                          nothing to open. Both conditions come from the server,
-                          which is the only side that saw the failing step.
-                        */}
-                        {reconnectable(agent).map(pluginKey => (
-                          <button
-                            type="button"
-                            key={pluginKey}
-                            onClick={() => handleReconnect(pluginKey)}
-                            disabled={reconnecting !== null}
-                            className="inline-flex items-center gap-1.5 mt-1 px-2 py-1 rounded-md text-xs font-medium disabled:opacity-60"
-                            style={{
-                              background: 'var(--v2-surface-hover)',
-                              color: 'var(--v2-text-primary)',
-                              border: '1px solid var(--v2-border)',
-                              alignSelf: 'flex-start',
-                            }}
-                          >
-                            {reconnecting === pluginKey ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <PluginIcon
-                                pluginId={pluginKey}
-                                className="w-3 h-3"
-                                /* Decorative: the label says what it is. */
-                                alt=""
-                              />
-                            )}
-                            {(t('automation.reconnect_named') || 'Reconnect {plugin}').replace(
-                              '{plugin}',
-                              friendlyPlugin(pluginKey)
-                            )}
-                          </button>
-                        ))}
-                        {reconnectError && reconnecting === null && (
-                          <span style={{ color: 'var(--v2-status-error-text)' }}>
-                            {reconnectError}
-                          </span>
-                        )}
-                      </span>
-                    ) : state === 'blocked' && agent.missingPlugins.length > 0 ? (
-                      /*
-                        A DEAD CONNECTION BEATS A BUSINESS REQUIREMENT in this
-                        slot. Both make an agent unable to run, but this one is
-                        the owner's to fix in a minute and the other may be a
-                        deliberate setting, so it is the more useful of the two
-                        to show. Named, because "needs a connection" sends them
-                        hunting through settings.
-                      */
-                      (t('automation.needs_plugin') || 'Connect {plugin} first').replace(
-                        '{plugin}',
-                        agent.missingPlugins.join(', ')
-                      )
-                    ) : state === 'blocked' && agent.requires ? (
-                      t(`automation.requires.${agent.requires}`) || t('automation.requires.default')
-                    ) : (
-                      agent.watches
-                    )}
+                    This cell used to carry the failure too, so the moment an
+                    agent broke it stopped saying what it was for — and an
+                    owner deciding whether to care lost the one line that told
+                    them. Two facts, two columns; the outcome is next door.
+                  */}
+                  <td className="text-[12.5px]" style={{ padding: '9px 10px', borderBottom: rowRule, color: 'var(--v2-text-secondary)' }}>
+                    {agent.watches || '—'}
                   </td>
 
                   {/*
-                    How often.
+                    ──────────────────────────────────────────────────────────
+                    DID IT WORK, AND WHAT DID IT DO.
 
-                    A value, not a control. It carried the only way into an
-                    agent's settings — the words plus a pencil — and that is now
-                    the whole row, so this is back to being a cell that reports
-                    a number. The editor it used to open still opens; it is just
-                    no longer this cell's job to say so.
+                    Three states, because "not yet" is not a success: an agent
+                    installed yesterday and one whose schedule was never picked
+                    up both read as fine when `never` is folded into `ok`. That
+                    is exactly how a spreadsheet agent sat idle unnoticed — its
+                    schedule was switched off, so nothing ever claimed it.
 
-                    Words rather than a cadence key, because the mailbox channel
-                    runs on a schedule nobody chose from a list.
+                    Under the verdict, what the run was actually FOR: what it
+                    found and how much of it it acted on. "Checked yesterday"
+                    is not news; "found 4 overdue invoices, wrote to 1 client"
+                    is the reason the agent exists.
+                    ──────────────────────────────────────────────────────────
                   */}
-                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule, color: 'var(--v2-text-secondary)' }}>
-                    {agent.schedule ? (
-                      <span className="inline-flex items-center gap-1.5">
-                        {agent.scheduleWords || '—'}
-                      </span>
-                    ) : (
-                      /* Words, not a cadence key: the mailbox channel runs on a
-                         schedule nobody chose from a list, and this column
-                         showed that as a dash. */
-                      agent.scheduleWords || '—'
-                    )}
+                  {/* The verdict alone. One word, scannable down the page. */}
+                  <td
+                    className="text-[12.5px] whitespace-nowrap"
+                    style={{ padding: '9px 10px', borderBottom: rowRule, fontWeight: 600, color: outcomeColour(agent) }}
+                  >
+                    {outcomeVerdict(agent, t)}
                   </td>
 
-                  {/* Last run. Said plainly when it has never run: an agent that
-                      has never run looks identical to one that runs silently. */}
-                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule, color: 'var(--v2-text-secondary)' }}>
-                    {/*
-                      A RUN JUST ASKED FOR BEATS THE LAST ONE.
+                  {/* And what that amounted to: what it found, or what broke. */}
+                  <td className="text-[12.5px]" style={{ padding: '9px 10px', borderBottom: rowRule }}>
+                    <span className="flex flex-col gap-0.5">
+                      {/*
+                        ────────────────────────────────────────────────────
+                        A RUN JUST ASKED FOR BEATS THE LAST ONE.
 
-                      "Run now" moves the clock and the scheduler picks it up
-                      within five minutes, so for those few minutes the truest
-                      thing this cell can say is that one is coming — not a
-                      timestamp from yesterday, which reads as the press having
-                      done nothing.
+                        "Run now" moves the clock and the scheduler claims it
+                        within five minutes, so for those few minutes the
+                        truest thing this row can say is that one is coming.
+                        A button that reports success while the row goes on
+                        describing yesterday reads as a button that did
+                        nothing.
 
-                      Local and deliberately not persisted: it describes what
-                      the owner just did in this tab, and the next read of the
-                      list replaces it with the real result.
-                    */}
-                    {ranAt[agent.agentId] ? (
-                      <span style={{ color: 'var(--v2-primary)' }}>
-                        {t('automation.run_queued') || 'running shortly'}
-                      </span>
-                    ) : (
-                      when(agent.lastRun) ?? (
-                        <span style={{ color: 'var(--v2-text-muted)' }}>
-                          {t('automation.never_run') || 'has not run yet'}
+                        It lives HERE rather than beside the last-run time,
+                        which is now in the editor: the button is on the row,
+                        so its answer has to be on the row too.
+                        ────────────────────────────────────────────────────
+                      */}
+                      {ranAt[agent.agentId] && Date.now() - ranAt[agent.agentId] < 5 * 60_000 && (
+                        <span style={{ color: 'var(--v2-primary)', fontWeight: 600 }}>
+                          {t('automation.run_queued') || 'Run queued'}
                         </span>
-                      )
-                    )}
-                  </td>
+                      )}
 
-                  {/* Next run — green ONLY when something is genuinely coming. */}
-                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule }}>
-                    {/*
-                      ────────────────────────────────────────────────────────
-                      "WAITING ON YOU" ONLY WHEN IT ACTUALLY IS.
+                      {agent.lastOutcome?.state === 'ok' && (
+                        <span style={{ color: 'var(--v2-text-muted)' }}>
+                          {outcomeDetail(agent.lastOutcome, t)}
+                        </span>
+                      )}
 
-                      `state` collapses two different situations into
-                      `blocked`: a plugin the owner has not connected (they ARE
-                      the blocker, and acting is the only way the agent ever
-                      works again), and an agent that FAILED and was
-                      dead-lettered — which is usually our fault, not theirs,
-                      and which is still scheduled.
+                      {/*
+                        The failure, in the owner's language, with the remedy
+                        under it. Both arrive already written: the server
+                        resolves them from the failure's CATEGORY rather than
+                        passing down whatever the layer that broke happened to
+                        say.
+                      */}
+                      {agent.stopped && (
+                        <>
+                          <span style={{ color: 'var(--v2-status-error-text)' }}>
+                            {agent.stopped.message}
+                          </span>
+                          {agent.stopped.whatToDo && (
+                            <span style={{ color: 'var(--v2-text-muted)' }}>
+                              {agent.stopped.whatToDo}
+                            </span>
+                          )}
+                        </>
+                      )}
 
-                      Both printed "waiting on you" in this cell. For a stopped
-                      agent that is wrong twice over: it blames the owner for a
-                      bug, and it hides the one fact they can act on — that it
-                      tries again, and when. An owner reading "waiting on you"
-                      beside a message they cannot action has been handed a
-                      dead end.
+                      {/* Blocked for a reason that is not a failed run. */}
+                      {!agent.stopped && state === 'blocked' && agent.missingPlugins.length > 0 && (
+                        <span style={{ color: 'var(--v2-status-error-text)' }}>
+                          {(t('automation.needs_plugin') || 'Connect {plugin} first').replace(
+                            '{plugin}',
+                            agent.missingPlugins.join(', ')
+                          )}
+                        </span>
+                      )}
+                      {!agent.stopped && state === 'blocked' && !agent.missingPlugins.length && agent.requires && (
+                        <span style={{ color: 'var(--v2-status-error-text)' }}>
+                          {t(`automation.requires.${agent.requires}`) || t('automation.requires.default')}
+                        </span>
+                      )}
 
-                      So a stopped agent with a next run shows that run, quietly
-                      rather than in success green, since it is a retry and not
-                      a promise. The reason it stopped already has a home: the
-                      Watches column carries the sentence, and `stopped.whatToDo`
-                      sits under it when the execution layer wrote one.
-                      ────────────────────────────────────────────────────────
-                    */}
-                    {state === 'running' && when(agent.nextRun) ? (
-                      <span style={{ color: 'var(--v2-success)', fontWeight: 600 }}>
-                        {when(agent.nextRun)}
-                      </span>
-                    ) : agent.stopped && !agent.blocked && when(agent.nextRun) ? (
-                      <span style={{ color: 'var(--v2-text-secondary)' }}>
-                        {(t('automation.next_retry') || 'tries again {when}').replace(
-                          '{when}',
-                          when(agent.nextRun) ?? ''
-                        )}
-                      </span>
-                    ) : (
-                      <span style={{ color: 'var(--v2-text-muted)' }}>
-                        {state === 'blocked'
-                          ? t('automation.next_blocked') || 'waiting on you'
-                          : t('automation.next_paused') || 'not while paused'}
-                      </span>
-                    )}
-                  </td>
+                      {/*
+                        THE FIX, BESIDE THE DESCRIPTION OF THE PROBLEM.
 
-                  {/* The owner's end of life, in the unit they chose it in. */}
-                  <td className="text-[12px] tabular-nums whitespace-nowrap" style={{ padding: '9px 10px', borderBottom: rowRule, color: 'var(--v2-text-secondary)' }}>
-                    {agent.stopAfterDays ? stopAfterWords(agent.stopAfterDays, t) : '—'}
+                        Only where the failure is a connection AND we know
+                        which one: a button that cannot name its plugin has
+                        nothing to open.
+                      */}
+                      {reconnectable(agent).map(pluginKey => (
+                        <button
+                          type="button"
+                          key={pluginKey}
+                          onClick={() => handleReconnect(pluginKey)}
+                          disabled={reconnecting !== null}
+                          className="inline-flex items-center gap-1.5 mt-1 px-2 py-1 rounded-md text-xs font-medium disabled:opacity-60"
+                          style={{
+                            background: 'var(--v2-surface-hover)',
+                            color: 'var(--v2-text-primary)',
+                            border: '1px solid var(--v2-border)',
+                            alignSelf: 'flex-start',
+                          }}
+                        >
+                          {reconnecting === pluginKey ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <PluginIcon pluginId={pluginKey} className="w-3 h-3" alt="" />
+                          )}
+                          {(t('automation.reconnect_named') || 'Reconnect {plugin}').replace(
+                            '{plugin}',
+                            friendlyPlugin(pluginKey)
+                          )}
+                        </button>
+                      ))}
+                      {reconnectError && reconnecting === null && (
+                        <span style={{ color: 'var(--v2-status-error-text)' }}>{reconnectError}</span>
+                      )}
+                    </span>
                   </td>
 
                   {/*
@@ -1788,18 +1833,22 @@ function ScheduleEditorRow({
     t(`automation.unit.${unit}${count === 1 ? '_one' : ''}`) || unit;
 
   /*
-   * The new next run, worked out here the way the server will work it out:
-   * from the LAST run where there is one, so a cadence change is measured from
-   * when the agent last worked rather than from the moment a dropdown opened.
-   *
-   * Shown rather than promised. The server remains the authority — it clamps,
-   * and the list is re-read after saving — so this is a preview that can be
-   * contradicted, not a second implementation of the rule.
+   * This component's own date formatter. The list has one called `when`, but
+   * it is declared inside THAT component and is not in scope here — reaching
+   * for it resolved to an unrelated module binding and printed
+   * "[object Observable]" to an owner.
    */
-  const preview = nextTickAfter(
-    agent.lastRun ? new Date(agent.lastRun) : new Date(),
-    draft.schedule
-  );
+  const stamp = (iso: string | null): string | null => {
+    if (!iso) return null;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleString(ownerLocale(language), {
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
 
   const changed =
     formatInterval(draft.schedule) !== formatInterval(agent.schedule ?? draft.schedule) ||
@@ -1824,7 +1873,7 @@ function ScheduleEditorRow({
         ROW's own `borderBottom` is already suppressed while it is open.
         ────────────────────────────────────────────────────────────────────────
       */}
-      <td colSpan={7} style={{ padding: '0 0 12px', borderBottom: '1px solid var(--v2-border)' }}>
+      <td colSpan={5} style={{ padding: '0 0 12px', borderBottom: '1px solid var(--v2-border)' }}>
         <div
           /*
             ────────────────────────────────────────────────────────────────────
@@ -1871,6 +1920,90 @@ function ScheduleEditorRow({
             maxWidth: '100%',
           }}
         >
+          {/*
+            ──────────────────────────────────────────────────────────────────
+            ONLY WHAT IS NOT ALREADY ON SCREEN.
+
+            This opened as a summary of the outcome, the cadence, the lookback
+            and the next run — and every one of those was a duplicate. The
+            outcome has its own column now, the next run has another, and the
+            cadence and lookback are the two editable controls directly below.
+            The next run was being said THREE times: the row, this line, and
+            the editor's own "the next run would be" preview.
+
+            What is left is the one fact nothing else on the card can show.
+            ──────────────────────────────────────────────────────────────────
+          */}
+          {/*
+            ──────────────────────────────────────────────────────────────────
+            WHEN IT LAST RAN, AND WHEN IT NEXT WILL.
+
+            Both were columns. They are facts about ONE agent, read when an
+            owner is already looking at that agent — not while scanning a list
+            for the one that broke — so they belong here, and the row is calmer
+            without them.
+
+            The next run keeps the distinction the column drew: a run that is
+            genuinely coming is said in success green; a retry after a failure
+            is said plainly, because it is not a promise; and an agent waiting
+            on the owner says so instead of naming a time it will not keep.
+            ──────────────────────────────────────────────────────────────────
+          */}
+          <div className="w-full flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
+            <span style={{ color: 'var(--v2-text-muted)' }}>
+              {t('automation.col_last') || 'Last run'}:{' '}
+              <span style={{ color: 'var(--v2-text-secondary)' }}>
+                {agent.lastRun ? stamp(agent.lastRun) : t('automation.never_run') || 'never'}
+              </span>
+            </span>
+
+            <span style={{ color: 'var(--v2-text-muted)' }}>
+              {t('automation.col_next') || 'Next run'}:{' '}
+              {agent.status !== 'active' ? (
+                <span style={{ color: 'var(--v2-text-muted)' }}>
+                  {t('automation.next_paused') || 'not while paused'}
+                </span>
+              ) : agent.blocked ? (
+                <span style={{ color: 'var(--v2-text-muted)' }}>
+                  {t('automation.next_blocked') || 'waiting on you'}
+                </span>
+              ) : agent.nextRun && agent.stopped ? (
+                <span style={{ color: 'var(--v2-text-secondary)' }}>
+                  {(t('automation.next_retry') || 'tries again {when}').replace(
+                    '{when}',
+                    stamp(agent.nextRun) ?? ''
+                  )}
+                </span>
+              ) : agent.nextRun ? (
+                <span style={{ color: 'var(--v2-success)', fontWeight: 600 }}>
+                  {stamp(agent.nextRun)}
+                </span>
+              ) : (
+                <span style={{ color: 'var(--v2-text-muted)' }}>—</span>
+              )}
+            </span>
+          </div>
+
+          {overdueDays(agent) !== null && (
+            <div
+              /* `w-full` so the wrap breaks after it and the two questions
+                 keep the single row they were deliberately given. */
+              className="w-full text-[12.5px]"
+              style={{ color: 'var(--v2-status-warning-text)', fontWeight: 600 }}
+            >
+              {/*
+                SILENTLY NOT RUNNING IS ITS OWN FAILURE.
+
+                Not paused, not blocked, carrying no error — and days past due.
+                Every other surface reads this agent as healthy, which is
+                exactly the state a mailbox agent sat in for ten days while
+                enquiries quietly did not arrive.
+              */}
+              {(t('automation.overdue') || 'Should have checked by now — last checked {days} days ago')
+                .replace('{days}', String(overdueDays(agent)))}
+            </div>
+          )}
+
           {/*
             ──────────────────────────────────────────────────────────────────
             WHAT THIS AGENT IS, ABOVE THE QUESTIONS ABOUT IT.
@@ -1931,10 +2064,22 @@ function ScheduleEditorRow({
           {agent.stopAfter && (
             <IntervalPicker
               id={`stop-${agent.agentId}`}
-              label={t('automation.col_stops') || 'Stops after'}
-              /* The column's own words, not "After": inline there is one
-                 phrase, and "After 30 days" alone does not say after what. */
-              lead={t('automation.col_stops') || 'Stops after'}
+              /*
+                ──────────────────────────────────────────────────────────────
+                IT IS A LOOKBACK, NOT A TERMINATION.
+
+                This read "Stops after 2 months", which describes the agent
+                giving up. The setting does nothing of the kind: it bounds how
+                far BACK the agent looks — a chaser set to two months never
+                chases an invoice older than that, and goes on running for ever.
+
+                An owner reading "stops after" reasonably believes their agent
+                is about to switch itself off, and the real question — how far
+                back should it reach — was never asked anywhere.
+                ──────────────────────────────────────────────────────────────
+              */
+              label={t('automation.lookback') || 'How far back to look'}
+              lead={t('automation.lookback') || 'How far back to look'}
               /* The whole interval, both ways. Keeping only the number here is
                  what made the unit chips unpressable. */
               value={draft.stopAfter ?? agent.stopAfter}
@@ -1946,22 +2091,19 @@ function ScheduleEditorRow({
             />
           )}
 
-          <p
-            className="text-[11.5px] m-0 ms-auto"
-            style={{ color: 'var(--v2-text-muted)' }}
-          >
-            {(t('automation.next_run_becomes') || 'Next run would be {when}').replace(
-              '{when}',
-              /* The owner's language, like every other date on this card. */
-              preview.toLocaleString(ownerLocale(language), {
-                weekday: 'short',
-                day: 'numeric',
-                month: 'short',
-                hour: '2-digit',
-                minute: '2-digit',
-              })
-            )}
-          </p>
+          {/*
+            THE PREVIEW IS GONE.
+
+            It said "the next run would be ..." beside Save, which was a third
+            telling of the same fact: the drill-down states the next run two
+            lines above, and it used to be a column as well. Three statements
+            of one time read as three different times to anyone not studying
+            them.
+
+            The schedule controls still show what they are set to, and the
+            list is re-read after saving, so the owner sees the real answer
+            from the server rather than this component's guess at it.
+          */}
 
           <div className="flex items-center gap-2">
             <button
