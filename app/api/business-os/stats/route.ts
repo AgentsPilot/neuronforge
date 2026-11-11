@@ -96,7 +96,44 @@ interface PipelineStageCount {
   arrived?: number;
   moved_on?: number;
   stuck?: number;
+  /**
+   * How long the people at this stage have been standing there.
+   *
+   * A SHAPE, NOT A LIST. This carried the five longest-waiting names first, and
+   * names turned out to be the wrong answer: the card that renders them has no
+   * per-contact action on it, so a list of people is a preview with nothing to
+   * press. At fifty it is worse than nothing, because five of fifty reads as
+   * all of them.
+   *
+   * Aging buckets answer what the card is actually for — is this stage stuck,
+   * and how badly — and they do it in the same space whether the stage holds
+   * six people or six hundred. One name survives, the oldest, because it is the
+   * single contact an owner would open first and the only one worth naming.
+   *
+   * `days` is measured from `stage_entered_at`, which is set on every row, and
+   * is time at THIS stage rather than age of the contact. A lead created a year
+   * ago and moved here yesterday has waited a day.
+   */
+  waiting?: {
+    /** Everyone at this stage, named or not. */
+    total: number;
+    over30: number;
+    /** 14 up to 30 days. */
+    over14: number;
+    /** Under 14 days — not yet stuck by the detector's own threshold. */
+    recent: number;
+    oldest?: { id: string; name: string; days: number };
+  };
 }
+
+/*
+ * The aging thresholds, in days.
+ *
+ * 14 is deliberately the figure `conv_pipeline_stuck` fires on, so the funnel
+ * card and the alerts cannot disagree about what counts as stuck.
+ */
+const STUCK_DAYS = 14;
+const LONG_STUCK_DAYS = 30;
 
 /**
  * What the onboarding chat decided about how this business runs.
@@ -265,6 +302,18 @@ interface CapabilityStats {
       count: number;
       /** Written off against this service in the period, by `cancelledMoneyOf`. */
       lost: number;
+      /**
+       * Money that came BACK out of this service in the period.
+       *
+       * Already netted off `revenue` — the two are not added together — and
+       * reported in its own right because a service earning 2,000 and
+       * refunding 1,000 reads identically to one that earned 1,000 and
+       * refunded nothing, and those are different businesses.
+       *
+       * Summed from the same `refunded_amount` the revenue line subtracts, so
+       * the column and the figure beside it can never disagree.
+       */
+      refunded: number;
     }[];
     // Milestone data
     first_booking_date?: string;
@@ -638,10 +687,18 @@ export async function GET(request: NextRequest) {
         .select('id, stage, updated_at')
         .eq('user_id', user.id)
         .in('stage', ['lead', 'client']),
-      // CRM: contacts grouped by stage (get all contacts with their stages)
+      /*
+       * CRM: contacts grouped by stage (get all contacts with their stages).
+       *
+       * Named rather than counted. The funnel map can say a stage leaks but not
+       * WHO stopped there, and a rate with no names is not something an owner
+       * can act on. Taking the names from the same rows that produce `count`
+       * means the two can never disagree — a list drawn from any other source
+       * can show five people beside a stage that says four.
+       */
       supabaseServer
         .from('crm_contacts')
-        .select('stage')
+        .select('id, first_name, last_name, stage, stage_entered_at')
         .eq('user_id', user.id),
       /*
        * Scheduling: APPOINTMENTS in the period, not bookings.
@@ -1778,9 +1835,56 @@ export async function GET(request: NextRequest) {
 
     // Count contacts per pipeline stage
     const stageCountMap: Record<string, number> = {};
-    (contactsByStage || []).forEach((contact: { stage: string }) => {
+    /*
+     * The same rows, kept rather than only tallied, so a stage can describe how
+     * long its people have been waiting. One pass: `count` and `waiting` are
+     * the same rows read two ways, which is what stops them disagreeing.
+     */
+    const waitingByStage: Record<string, Array<{ id: string; name: string; days: number }>> = {};
+    (contactsByStage || []).forEach((contact: {
+      id?: string | null;
+      first_name?: string | null;
+      last_name?: string | null;
+      stage: string;
+      stage_entered_at?: string | null;
+    }) => {
       stageCountMap[contact.stage] = (stageCountMap[contact.stage] || 0) + 1;
+
+      /*
+       * Everyone counts toward the buckets, named or not — the buckets are a
+       * census of the stage and must match `count`. Only the OLDEST has to be
+       * nameable, and that is handled when one is chosen.
+       */
+      const since = contact.stage_entered_at ? Date.parse(contact.stage_entered_at) : NaN;
+      const days = Number.isFinite(since)
+        ? Math.max(0, Math.floor((now.getTime() - since) / (24 * 60 * 60 * 1000)))
+        : 0;
+
+      const name = `${contact.first_name ?? ''} ${contact.last_name ?? ''}`.trim();
+      (waitingByStage[contact.stage] ??= []).push({ id: contact.id ?? '', name, days });
     });
+
+    /*
+     * Each stage reduced to its shape. Constant size per stage however many
+     * people it holds, which is the whole point of sending this rather than a
+     * list — a six-hundred-contact stage costs the same as a six.
+     */
+    const waitingSummary: Record<string, NonNullable<PipelineStageCount['waiting']>> = {};
+    for (const [stageKey, rows] of Object.entries(waitingByStage)) {
+      /* Longest first, so the oldest is simply the head of the list. */
+      rows.sort((a, b) => b.days - a.days);
+      /* The oldest NAMED one. An unnamed row still counts in the buckets, but
+         cannot be offered as the contact to open first. */
+      const oldest = rows.find(row => row.name && row.id);
+
+      waitingSummary[stageKey] = {
+        total: rows.length,
+        over30: rows.filter(row => row.days >= LONG_STUCK_DAYS).length,
+        over14: rows.filter(row => row.days >= STUCK_DAYS && row.days < LONG_STUCK_DAYS).length,
+        recent: rows.filter(row => row.days < STUCK_DAYS).length,
+        ...(oldest ? { oldest: { id: oldest.id, name: oldest.name, days: oldest.days } } : {}),
+      };
+    }
 
     /*
      * What actually moved between stages, for the funnel map's connectors.
@@ -1823,6 +1927,9 @@ export async function GET(request: NextRequest) {
         color: stage.color || '#94A3B8',
         count: stageCountMap[stage.stage_key] || 0,
         ...(flow ? { arrived: flow.arrived, moved_on: flow.movedOn, stuck: flow.stuck } : {}),
+        ...(waitingSummary[stage.stage_key]?.total
+          ? { waiting: waitingSummary[stage.stage_key] }
+          : {}),
       };
     });
 
@@ -2222,7 +2329,7 @@ export async function GET(request: NextRequest) {
     const invoiceServiceId = (inv: RevenueInvoice): string | null =>
       inv.service_id || (inv.booking_id ? bookingServiceById.get(inv.booking_id) ?? null : null);
 
-    const serviceRevenueMap: Record<string, { service_name: string; revenue: number; count: number; lost: number }> = {};
+    const serviceRevenueMap: Record<string, { service_name: string; revenue: number; count: number; lost: number; refunded: number }> = {};
     const addServiceRevenue = (
       serviceId: string | null,
       amount: number | string | null,
@@ -2239,11 +2346,17 @@ export async function GET(request: NextRequest) {
           service_name: serviceId ? serviceNameById.get(serviceId) || 'Unknown Service' : 'Other',
           revenue: 0,
           count: 0,
-          lost: 0
+          lost: 0,
+          refunded: 0
         };
       }
       // amount is DECIMAL and may arrive as a string.
       serviceRevenueMap[key].revenue += (Number(amount) || 0) - (Number(refunded) || 0);
+      /* KEPT, not just subtracted. The netting above answers "what did this
+         service earn"; this answers "how much came back", which the netted
+         figure cannot be read backwards to find. Same source, so the two
+         cannot drift. */
+      serviceRevenueMap[key].refunded += Number(refunded) || 0;
       /* The COUNT is of payments, so a refund does not reduce it: the client
          did buy, and the row above already says what came back. */
       serviceRevenueMap[key].count += 1;
@@ -2444,6 +2557,10 @@ export async function GET(request: NextRequest) {
           revenue: 0,
           count: 0,
           lost: 0,
+          /* A service known only by what it lost refunded nothing, which is a
+             real zero rather than an unknown: this row was built here, so
+             there is no earlier figure it could be missing. */
+          refunded: 0,
         };
       }
       serviceRevenueMap[key].lost += amount;
@@ -2470,7 +2587,11 @@ export async function GET(request: NextRequest) {
         service_name: data.service_name,
         revenue: data.revenue,
         count: data.count,
-        lost: Math.round(data.lost * 100) / 100
+        lost: Math.round(data.lost * 100) / 100,
+        /* Rounded the same way `lost` is: both are sums of DECIMAL columns
+           that arrive as strings, and a cent of float drift in a money column
+           is the kind of thing an owner notices and nobody can explain. */
+        refunded: Math.round(data.refunded * 100) / 100
       }))
       .sort((a, b) => {
         if (a.service_id === UNATTRIBUTED_SERVICE_ID) return 1;

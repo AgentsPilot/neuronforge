@@ -652,9 +652,42 @@ export class StepExecutor {
         console.warn(`[StepExecutor] Failed to cache step ${step.id} output (non-critical):`, err);
       }
 
-      // ✅ NOTE: Step execution metadata will be updated by WorkflowPilot
-      // We've already included field_names in output.metadata above (line ~448)
-      // WorkflowPilot will call updateStepExecution with the complete metadata
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * CLOSE THE ROW HERE TOO, because for most steps nobody else will.
+       *
+       * This used to say only "WorkflowPilot will call updateStepExecution",
+       * and for a top-level step that is true. WorkflowPilot walks the
+       * top-level step list — it never sees the children of a scatter, a loop
+       * or a conditional, which are driven by ParallelExecutor calling back
+       * into this method. So those steps opened a row at `running` and nothing
+       * ever closed it.
+       *
+       * The asymmetry made it worse and hid it: both `updateStepExecution`
+       * calls on the failure path live in THIS method, so a nested step that
+       * FAILED was recorded correctly while one that SUCCEEDED was not. A run
+       * then read as "stopped at step 5" when step 5 had in fact passed dozens
+       * of times. Measured on one agent: 225 step4 rows and 127 step5 rows, all
+       * `running`, none of them stuck.
+       *
+       * WorkflowPilot still updates top-level steps afterwards with richer
+       * metadata; this write is the same row and the same status, so that
+       * overwrite is a no-op in effect and the two cannot disagree.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      if (this.stateManager) {
+        await this.stateManager.updateStepExecution(
+          context.executionId,
+          step.id,
+          'completed',
+          {
+            success: true,
+            execution_time: executionTime,
+            itemCount: output.metadata?.itemCount,
+            tokens_used: output.metadata?.tokensUsed,
+          }
+        );
+      }
 
       // Audit trail
       await this.auditTrail.log({
@@ -1567,51 +1600,41 @@ export class StepExecutor {
     let selectedModel: string | undefined;
     let routingDecision: any;
 
-    // === PER-STEP INTELLIGENT ROUTING ===
-    // TODO: Re-enable once TaskComplexityAnalyzer and PerStepModelRouter are implemented
-    // Analyze step complexity and route to optimal model
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * PER-STEP MODEL ROUTING — now asked for, rather than described.
+     *
+     * What was here: the whole block commented out behind
+     * "TODO: Re-enable once TaskComplexityAnalyzer and PerStepModelRouter are
+     * implemented". Neither class exists. So `selectedModel` was ALWAYS
+     * undefined, every step fell through to the account-wide default, and the
+     * admin toggle it checks first produced a log line and nothing else.
+     *
+     * Measured before this change: 0 routing decisions across 1,000 steps in 30
+     * days, with "AIS Routing Enabled" switched on the whole time. The last
+     * decision of any kind was 2026-03-29.
+     *
+     * The unimplemented routers were never needed. `RoutingService` exists,
+     * works, and is what `WorkflowOrchestrator.executeStep` already uses — so
+     * the pilot asks the orchestrator for a NAME through `routeModelFor` and
+     * keeps its own lightweight direct call. That separation is the point: WP-3
+     * was right that `runAgentKit` has no business inside a scatter, and wrong
+     * only in that model selection went out with it.
+     *
+     * `null` whenever routing has no opinion, which leaves today's behaviour
+     * exactly as it is.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     try {
-      // Check if per-step routing is enabled in orchestrator config (admin UI)
-      const isRoutingEnabled = context.orchestrator?.config?.aisRoutingEnabled || false;
+      if (context.orchestrator?.routeModelFor) {
+        selectedModel =
+          (await context.orchestrator.routeModelFor(step, context)) ?? undefined;
 
-      if (isRoutingEnabled) {
-        logger.debug({ stepId: step.id }, 'Per-step routing enabled - analyzing complexity');
-
-        // // Analyze step complexity
-        // const complexityAnalysis = await this.complexityAnalyzer.analyzeStep(step, context);
-        // console.log(`📊 [StepExecutor] Complexity: ${complexityAnalysis.complexityScore.toFixed(1)}/10`);
-
-        // // Get agent AIS (Agent Intensity Score)
-        // const agentAIS = (context.agent as any).agent_intensity_score || 5.0;
-
-        // // Route to optimal model (with memory-based learning)
-        // routingDecision = await this.modelRouter.routeStep(
-        //   complexityAnalysis,
-        //   agentAIS,
-        //   (context.agent as any).model_preference,
-        //   context.agentId  // Pass agentId for memory lookup
-        // );
-
-        // // Format model for AgentKit (provider:model)
-        // selectedModel = `${routingDecision.selectedModel.provider}:${routingDecision.selectedModel.model}`;
-
-        // console.log(`✅ [StepExecutor] Selected model: ${selectedModel}`);
-        // console.log(`   ${routingDecision.explanation}`);
-
-        // // Record routing decision to audit trail
-        // const stepIndex = context.completedSteps.length;
-        // await this.modelRouter.recordRoutingDecision(
-        //   context.agentId,
-        //   context.userId,
-        //   context.executionId,
-        //   stepIndex,
-        //   step.name,
-        //   step.type,
-        //   complexityAnalysis,
-        //   routingDecision
-        // );
-      } else {
-        logger.debug({ stepId: step.id }, 'Per-step routing disabled - using agent default model');
+        if (selectedModel) {
+          logger.info({ stepId: step.id, selectedModel }, 'Per-step routing chose a model');
+        } else {
+          logger.debug({ stepId: step.id }, 'Per-step routing had no opinion; using the account default');
+        }
       }
     } catch (routingError) {
       logger.error({ err: routingError, stepId: step.id }, 'Routing failed - falling back to agent default');
@@ -1854,7 +1877,27 @@ export class StepExecutor {
         promptString,
         context,
         step.id,
-        selectedModel
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * A STEP MAY NAME ITS OWN MODEL, AND IT OUTRANKS ROUTING.
+         *
+         * Routing picks one model for the whole agent's AIS, which is the
+         * wrong grain when one plan holds two very different questions. The
+         * mail agent's triage answers yes/no from a subject line and 200
+         * characters, once per stranger; its decide step reasons over a
+         * client's message, their history and the service list, a handful of
+         * times a day. Routing sent both to `gpt-5`.
+         *
+         * Measured on one afternoon of testing: 150 model calls, $1.05, and
+         * 146 of them were the triage. 97% of the spend went to asking a
+         * reasoning model whether a shoe-shop newsletter was a sales enquiry.
+         *
+         * So the plan author, who knows which question a step asks, can say so.
+         * Absent on a step, nothing changes: routing decides, then the account
+         * default.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        (step as { model?: string }).model || selectedModel
       );
       result = {
         success: true,
@@ -2001,9 +2044,26 @@ export class StepExecutor {
     outputTokens: number;
     totalTokens: number;
   }> {
-    // Determine model and provider
-    // Priority: modelOverride → agent.model_preference → DB config (with built-in defaults)
-    const modelPref = modelOverride || (context.agent as any).model_preference || '';
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * TWO SOURCES, NOT THREE. `model_preference` WAS NEVER ONE OF THEM.
+     *
+     * The middle rung read `agent.model_preference`, which WP-3 named as how an
+     * ai_processing step would pick its model. That column does not exist on
+     * `agents` — the read has always produced `undefined` on every agent, for
+     * every run, and fallen through. It was not per-agent control that was
+     * misconfigured; it was per-agent control that was never wired.
+     *
+     * Removed rather than implemented, because the gap it left is now filled
+     * properly: the step's routing decision arrives as `modelOverride` (see the
+     * caller), which is per-STEP and therefore strictly better than per-agent —
+     * a triage on a snippet and a reply drafted from a client's history should
+     * not be obliged to share a model just because one agent owns both.
+     *
+     * What remains: an explicit override, or the account-wide default.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const modelPref = modelOverride || '';
     let provider: 'openai' | 'anthropic';
     let model: string;
 
@@ -2052,6 +2112,7 @@ export class StepExecutor {
     }
 
     const { ProviderFactory } = await import('@/lib/ai/providerFactory');
+    const { rejectsSamplingParameters } = await import('@/lib/ai/providers/openaiProvider');
     const aiProvider = ProviderFactory.getProvider(provider);
     const maxOutputTokens = aiProvider.getMaxOutputTokens(model);
     // Cap max_tokens to avoid Anthropic's streaming requirement for long operations.
@@ -2065,7 +2126,30 @@ export class StepExecutor {
           { role: 'system', content: 'You are a workflow step executor. Follow the instructions precisely. When asked to generate HTML, respond with well-formatted HTML. When asked for JSON, respond with valid JSON only. Do not add commentary or explanation unless asked.' },
           { role: 'user', content: prompt }
         ],
-        temperature: 0.3,
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * TEMPERATURE ONLY WHERE THE MODEL ACCEPTS ONE.
+         *
+         * This sent `0.3` unconditionally. The reasoning families — `gpt-5*`,
+         * `o1`, `o3`, `o4` — accept only their default sampling settings and
+         * answer anything else with a plain 400:
+         *
+         *   Unsupported value: 'temperature' does not support 0.3 with this
+         *   model. Only the default (1) is supported.
+         *
+         * It never surfaced while every ai_processing step ran on one
+         * hardcoded Anthropic default. The moment per-step routing could
+         * actually choose a model, a live run routed to `gpt-5` and every AI
+         * step in the plan failed on this — a 400 that no model-fallback catches,
+         * because the model is fine and the parameter is not.
+         *
+         * `rejectsSamplingParameters` already existed on the OpenAI provider,
+         * already listed exactly these families, and was simply never asked
+         * here. Omitting the key entirely is what those models want; sending
+         * the default explicitly is also refused.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        ...(rejectsSamplingParameters(model) ? {} : { temperature: 0.3 }),
         max_tokens: cappedMaxTokens,
       },
       {

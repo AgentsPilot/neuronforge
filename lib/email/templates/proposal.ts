@@ -27,6 +27,18 @@ export interface ProposalEmailData {
   currency: string;
   /** Named stages, where the money is split. Empty for a single payment. */
   stages?: Array<{ label: string; amount: number }>;
+  /**
+   * THE BREAKDOWN, when the owner built one.
+   *
+   * Different from `stages`, which is how the money ARRIVES. This is what the
+   * money is FOR, and the two are listed separately because a client reading
+   * "deposit 4,500" has not been told what the deposit buys.
+   *
+   * Amounts arrive already rounded and already summing to `total`. This
+   * template formats; it never re-adds, so the email cannot print a sum that
+   * differs from the page the link opens.
+   */
+  items?: Array<{ label: string; amount: number; date?: string | null }>;
   /** What falls due the moment they accept. */
   dueOnAccept?: number | null;
   validUntil?: string | null;
@@ -200,6 +212,44 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
       : '';
 
   /*
+   * What the job is made of.
+   *
+   * Capped, because an email is a preview and a long renovation can carry
+   * sixty lines. The overflow is COUNTED rather than cut silently: a client
+   * who has seen eight of twelve must know there are four more, or they will
+   * read the eight as the whole scope.
+   */
+  const ITEMS_IN_EMAIL = 8;
+  const items = data.items ?? [];
+  const itemsBlock = items.length
+    ? `
+    <p style="margin: 22px 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">
+      ${t.itemsTitle[locale]}
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom: 6px;">
+      ${items
+        .slice(0, ITEMS_IN_EMAIL)
+        .map(
+          item => `
+        <tr>
+          <td style="padding: 6px 0; font-size: 14px; color: ${c.inkMuted};">${escapeHtml(item.label)}</td>
+          <td style="padding: 6px 0; font-size: 14px; color: ${c.ink}; text-align: ${locale === 'he' ? 'left' : 'right'}; font-weight: 600; white-space: nowrap;">
+            ${formatCurrency(item.amount, data.currency)}
+          </td>
+        </tr>`
+        )
+        .join('')}
+      ${
+        items.length > ITEMS_IN_EMAIL
+          ? `<tr><td colspan="2" style="padding: 6px 0; font-size: 13px; color: ${c.inkMuted};">${t.itemsMore[
+              locale
+            ].replace('{n}', String(items.length - ITEMS_IN_EMAIL))}</td></tr>`
+          : ''
+      }
+    </table>`
+    : '';
+
+  /*
    * Says the document is attached, and names it.
    *
    * Without a line like this the attachment is a paperclip icon the client may
@@ -241,6 +291,7 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
         : ''
     }
 
+    ${itemsBlock}
     ${emailDetailsTable(rows, brandingWithLocale)}
     ${sessionsBlock}
     ${stagesBlock}
@@ -319,6 +370,115 @@ export interface QuoteStoppedEmailData {
   clientFirstName?: string | null;
   branding: BrandingData;
   locale?: Locale;
+}
+
+/**
+ * The client's copy of an agreement they just signed.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT THIS CLOSES
+ *
+ * Accepting a quote sent the client nothing about the PROPOSAL. With money due
+ * they were redirected to a payment page and no email was sent at all; with
+ * nothing due they were emailed an INVOICE. Either way they ended up holding a
+ * bill and no record of the agreement — and, once signatures landed, no copy of
+ * the signature they had just drawn.
+ *
+ * Short on purpose. The document is attached; this is the covering note, and a
+ * client who has just agreed does not need the whole quote restated at them.
+ */
+export interface ProposalAcceptedEmailData {
+  title: string;
+  total: number;
+  currency: string;
+  /** What falls due on acceptance. Zero for a package billed per session. */
+  dueNow: number;
+  /** Where to pay, when something is due. Null otherwise. */
+  payUrl?: string | null;
+  clientFirstName?: string | null;
+  /** Only when one was given — never claimed otherwise. */
+  signedBy?: string | null;
+  signedOn?: string | null;
+  attachmentName?: string | null;
+  branding: BrandingData;
+  locale?: Locale;
+}
+
+export function generateProposalAcceptedEmail(
+  data: ProposalAcceptedEmailData
+): { subject: string; html: string } {
+  const locale = data.locale || 'en';
+  const t = emailTranslations.proposalAccepted;
+  const brandingWithLocale = { ...data.branding, locale };
+  const c = emailPalette(brandingWithLocale);
+
+  const greeting = data.clientFirstName
+    ? t.greeting[locale].replace('{name}', escapeHtml(data.clientFirstName))
+    : t.greetingPlain[locale];
+
+  const rows = [
+    emailDetailRow(t.totalLabel[locale], formatCurrency(data.total, data.currency), brandingWithLocale),
+  ];
+  /*
+   * The amount, or the absence of one — never silence.
+   *
+   * A per-session package owes nothing on approval, and an email that simply
+   * omits the figure reads as an oversight to a client who expected to pay
+   * something. Saying so is the point.
+   */
+  if (data.dueNow > 0) {
+    rows.push(
+      emailDetailRow(t.dueNowLabel[locale], formatCurrency(data.dueNow, data.currency), brandingWithLocale)
+    );
+  }
+
+  const signedBlock =
+    data.signedBy && data.signedOn
+      ? `
+    <p style="margin: 0 0 18px; font-size: 13px; color: ${c.inkMuted};">
+      ${t.signedLine[locale]
+        .replace('{name}', escapeHtml(data.signedBy))
+        .replace('{date}', escapeHtml(data.signedOn))}
+    </p>`
+      : '';
+
+  const attachmentBlock = data.attachmentName
+    ? `
+    <p style="margin: 18px 0 0; font-size: 13px; color: ${c.inkMuted};">
+      ${t.attachmentNote[locale]}
+      <span style="color: ${c.ink}; font-weight: 600;">${escapeHtml(data.attachmentName)}</span>
+    </p>`
+    : '';
+
+  const content = `
+    <h1 style="margin: 0 0 6px; font-size: 21px; font-weight: 600; color: ${c.ink};">
+      ${greeting}
+    </h1>
+    <p style="margin: 0 0 18px; font-size: 15px; color: ${c.inkMuted}; line-height: 1.6;">
+      ${t.intro[locale].replace('{title}', escapeHtml(data.title))}
+    </p>
+    ${signedBlock}
+
+    ${emailDetailsTable(rows, brandingWithLocale)}
+
+    ${
+      data.dueNow > 0 && data.payUrl
+        ? `<div style="margin-top: 24px;">${emailButton(t.payCta[locale], data.payUrl, {
+            branding: data.branding,
+          })}</div>`
+        : `<p style="margin: 18px 0 0; font-size: 14px; color: ${c.inkMuted};">${t.nothingDue[locale]}</p>`
+    }
+
+    ${attachmentBlock}
+
+    <p style="margin: 22px 0 0; font-size: 12px; color: ${c.inkFaint};">
+      ${t.footerNote[locale]}
+    </p>`;
+
+  return {
+    subject: t.subject[locale].replace('{title}', data.title),
+    html: wrapInBrandedTemplate(content, brandingWithLocale),
+  };
 }
 
 export function generateQuoteStoppedEmail(

@@ -76,6 +76,21 @@ const serviceRow = (name = 'Deep tissue massage') => {
   return within(tr as HTMLElement);
 };
 
+/**
+ * The LOST cell of a row, by position within that row.
+ *
+ * `getByText('—')` was unambiguous while lost was the last column. A refunded
+ * column now sits after it and prints its own dash on the same rows, so a bare
+ * text match finds two and throws. The column is still identified by name in
+ * the header test below; here it is the fourth cell: service, payments,
+ * revenue, lost, refunded.
+ */
+const LOST_CELL = 3;
+const lostCell = (name = 'Deep tissue massage') => {
+  const tr = screen.getByText(name).closest('tr') as HTMLElement;
+  return tr.querySelectorAll('td')[LOST_CELL];
+};
+
 describe('the lost column', () => {
   it('shows what was written off against a service', () => {
     render(<ServiceTable services={[row({ lost: 4166.66 })]} money={money} />);
@@ -87,7 +102,7 @@ describe('the lost column', () => {
   it('prints a dash when nothing was lost, never a zero', () => {
     render(<ServiceTable services={[row({ lost: 0 })]} money={money} />);
 
-    expect(serviceRow().getByText('—')).toBeInTheDocument();
+    expect(lostCell()).toHaveTextContent('—');
     expect(serviceRow().queryByText('ILS 0')).not.toBeInTheDocument();
   });
 
@@ -96,7 +111,7 @@ describe('the lost column', () => {
        same as nothing having been lost. */
     render(<ServiceTable services={[row()]} money={money} />);
 
-    expect(serviceRow().getByText('—')).toBeInTheDocument();
+    expect(lostCell()).toHaveTextContent('—');
   });
 
   it('heads the column, so the number is not a mystery', () => {
@@ -169,6 +184,9 @@ describe('the lost column', () => {
 
     const totals = within(screen.getByText('Total').closest('tr') as HTMLElement);
 
-    expect(totals.getByText('—')).toBeInTheDocument();
+    /* Both money columns are unknown on this fixture, so the dash is asserted
+       on the totals' LOST cell rather than by a text match that finds two. */
+    const totalCells = (screen.getByText('Total').closest('tr') as HTMLElement).querySelectorAll('td');
+    expect(totalCells[LOST_CELL]).toHaveTextContent('—');
   });
 });

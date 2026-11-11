@@ -31,7 +31,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Send, Check, Clock, AlertCircle, FileText, Bell, Receipt, Undo2, CalendarX, CalendarSearch, UserRound } from 'lucide-react';
+import { Send, Check, Clock, AlertCircle, FileText, Bell, Receipt, Undo2, CalendarX, CalendarSearch, UserRound, Bot, Mail } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CurrencyCode } from '@/lib/business-os/LanguageContext';
 // One definition, in the registry that owns the vocabulary. Declared here too,
@@ -39,6 +39,8 @@ import type { CurrencyCode } from '@/lib/business-os/LanguageContext';
 import type { GapAction } from '@/lib/business-os/gaps/types';
 import { RefundModal } from '@/components/payments/RefundModal';
 import { ExtendQuoteDialog } from './ExtendQuoteDialog';
+import { MailGapBlock } from './MailGapBlock';
+import { MailReplyBox } from './MailReplyBox';
 import { mostUrgent, tasksOf } from '@/lib/business-os/gaps/mostUrgent';
 /* One resolver for 'he' → 'he-IL', shared with the billing and invite copy.
    A second mapping here would drift the first time a language is added. */
@@ -48,6 +50,43 @@ export interface GapItemView {
   contactId: string;
   name: string;
   note: string | null;
+  /**
+   * The subject of the message this row is about. See `GapItem.subject`.
+   *
+   * Present only on the mail-driven gaps, and rendered as a quoted line rather
+   * than as prose: it is the client's own words, and it is what an owner
+   * recognises the thread by.
+   */
+  subject?: string | null;
+  /**
+   * The client's own words. See `GapItem.quote`.
+   *
+   * Set in quotation marks and in the text colour of body copy, because it is
+   * the only line on the row that somebody else wrote.
+   */
+  quote?: string | null;
+  /**
+   * The mail thread this row is about. See `GapItem.threadId`.
+   *
+   * Null on rows filed before the column existed, and the card then offers no
+   * mail link rather than one that lands on an empty search.
+   */
+  threadId?: string | null;
+  /**
+   * The reply the agent already wrote, and the draft object it became.
+   * See `GapItem.draftBody`. Present on `reply_drafted` rows only.
+   */
+  draftBody?: string | null;
+  draftId?: string | null;
+  /** Which mailbox this came from; only Gmail can send from the card today. */
+  viaProviderForReply?: string | null;
+  /**
+   * When this person was last answered from the card. See `GapItem.answeredAt`.
+   *
+   * The row STAYS when a reply is sent — the owner decides when a thread is
+   * done — so this is what stops it going on claiming they are waiting.
+   */
+  answeredAt?: string | null;
   since: string;
   entityId: string | null;
   /**
@@ -233,6 +272,32 @@ const OPENS_A_SCREEN = new Set<string>([
   'send_invoice',
   'mark_delivered',
 ]);
+
+/**
+ * Actions the REPLY BOX now performs, whose button must not also be drawn.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `answer_client` never worked. It was declared on the gap and added to the
+ * `GapAction` union, and that is the entire extent of it: no case in
+ * `endpointFor`, no entry in `OPENS_A_SCREEN`, none in `LEAVES_THE_BUILDING`,
+ * not even an icon. Pressing it fell through to `default: return null` and set
+ * the row to `refused` with the generic message.
+ *
+ * It was not an oversight so much as a placeholder — when the gap was written
+ * there was no way to answer a client from this card, so the button named the
+ * work without being able to do it. An owner pressing it got "something went
+ * wrong" for a task nothing had gone wrong with.
+ *
+ * `MailReplyBox` is now the real control, and it is a box with its own send,
+ * confirm and discard. Leaving the old button beside it would put two answers
+ * to one question on the row, one of which still cannot work.
+ *
+ * A SET rather than a check on the gap id, because the question is "does
+ * something else on this row already do this", which is a fact about the
+ * ACTION. The row keeps its "open the client" door either way.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const THE_REPLY_BOX_DOES_THIS = new Set<string>(['answer_client']);
 
 const LEAVES_THE_BUILDING = new Set<string>([
   'send_booking_link',
@@ -449,6 +514,23 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
   const router = useRouter();
   const [rows, setRows] = useState<Record<string, RowState>>({});
   /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ROWS THE OWNER HAS CLEARED, REMEMBERED HERE RATHER THAN REFETCHED.
+   *
+   * `onChanged` is `fetchDashboardData`, which re-reads the WHOLE dashboard:
+   * my-day, stats, pipeline stages and two channel-insight calls, plus the
+   * gaps. That is the right response to an action whose effects are spread
+   * across the page — a refund, a cancelled booking — and completely the wrong
+   * one for taking a single row off a single list. On screen it reads as the
+   * page reloading, which is what the owner reported.
+   *
+   * So a settled row is dropped locally and nothing is refetched. The server
+   * has already recorded it; this is only the list catching up. The next
+   * natural refresh agrees, because the gap now excludes that contact.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [clearedRows, setClearedRows] = useState<Set<string>>(() => new Set());
+  /*
    * The card leads with ONE task and keeps the rest behind a line.
    *
    * Eight tasks used to cost a heading, three lines and a button each, so a
@@ -482,6 +564,50 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
   } | null>(null);
 
   const setRow = (key: string, state: RowState) => setRows(prev => ({ ...prev, [key]: state }));
+
+  /**
+   * Take a mail row off the card, because the owner says it is done.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * On the ROW rather than inside the reply box, and that is the point of it.
+   * The box collapses once a reply has gone, so a clear button living there
+   * moved depending on what you last did — present after sending, somewhere
+   * else before it. This sits beside the "open the client" icon, which is
+   * where every other row on this card keeps its action.
+   *
+   * It is the only thing that writes `reply_handled`. Sending does not: a
+   * reply frequently opens the next question, and the owner decides when a
+   * thread is finished. See the route.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const settleMailRow = async (gap: GapView, item: GapItemView) => {
+    const key = rowKey(gap, item);
+    setRow(key, { kind: 'working' });
+    try {
+      const response = await fetch('/api/business-os/gaps/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'handled',
+          contactId: item.contactId,
+          threadId: item.threadId ?? undefined,
+          subject: item.subject ?? undefined,
+        }),
+      });
+      const data = await response.json();
+
+      if (data?.success) {
+        setRow(key, { kind: 'done' });
+        /* Let them see it tick, then drop it. No dashboard refetch: see
+           `clearedRows`. */
+        setTimeout(() => setClearedRows(prev => new Set(prev).add(key)), 700);
+        return;
+      }
+      setRow(key, { kind: 'refused', message: data?.error || t('gaps.refused.generic') });
+    } catch {
+      setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
+    }
+  };
 
   /**
    * Where each action goes.
@@ -858,9 +984,26 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
     }
   };
 
-  if (gaps.length === 0) return null;
+  /*
+   * What is left after the owner has cleared rows this session.
+   *
+   * Applied once, here, so the lead, the fold, the count and the list all
+   * agree — the alternative is four places that each have to remember to
+   * filter, and the one that forgets shows a row the owner has already dealt
+   * with. `count` is reduced alongside `items`, never below zero, so the pill
+   * cannot claim more work than the list can show.
+   */
+  const visibleGaps: GapView[] = gaps
+    .map(gap => {
+      const items = gap.items.filter(item => !clearedRows.has(rowKey(gap, item)));
+      const removed = gap.items.length - items.length;
+      return { ...gap, items, count: Math.max(0, gap.count - removed) };
+    })
+    .filter(gap => gap.items.length > 0 || gap.count > 0);
 
-  const total = gaps.reduce((sum, gap) => sum + gap.count, 0);
+  if (visibleGaps.length === 0) return null;
+
+  const total = visibleGaps.reduce((sum, gap) => sum + gap.count, 0);
 
   /*
    * The one task the card leads with.
@@ -881,12 +1024,12 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
    * They stay in the list, with the strip, exactly as before. They simply do
    * not get the headline.
    */
-  const leadCandidates = gaps.map(g => ({
+  const leadCandidates = visibleGaps.map(g => ({
     id: g.id as never,
     items: g.items.filter(item => !item.queued) as never,
   }));
   const lead = mostUrgent(tasksOf(leadCandidates));
-  const leadGap = lead ? gaps.find(g => g.id === lead.gapId) ?? null : null;
+  const leadGap = lead ? visibleGaps.find(g => g.id === lead.gapId) ?? null : null;
   /* Amber for the one thing that is worse tomorrow than today. */
   const leadUrgent = Boolean(lead?.item.planLive);
 
@@ -962,11 +1105,48 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
           </p>
 
           {/*
-            The owner's own words for the thing — a service name, a quote title.
-            Its own line, never inside the sentence: see `leadSentence`.
+            ONE BLOCK, BOTH POSITIONS. See `MailGapBlock` — this markup existed
+            twice and drifted twice, so the same client waiting in the same way
+            showed their words here and a subject line beside a clock in the
+            fold.
           */}
-          {lead.item.note && (
-            <p className="text-[12.5px] text-[var(--v2-text-secondary)] mb-1 truncate">
+          <MailGapBlock
+            subject={lead.item.subject}
+            quote={lead.item.quote}
+            note={lead.item.note}
+            threadId={lead.item.threadId}
+            contextKey={lead.item.contextKey}
+            when={startedOn(lead.item.since, language)}
+            t={t}
+          />
+
+          {/*
+            ANSWERING, ON THE CARD. See `MailReplyBox` — this is the move the
+            row has never had, and the reason every fact above it was being
+            assembled only to be abandoned at the door to Gmail.
+          */}
+          {lead.item.subject && (
+            <MailReplyBox
+              contactId={lead.item.contactId}
+              threadId={lead.item.threadId}
+              draftId={lead.item.draftId}
+              draftBody={lead.item.draftBody}
+              subject={lead.item.subject}
+              provider={lead.item.viaProvider}
+              answeredAt={lead.item.answeredAt}
+              language={language}
+              onDone={onChanged}
+              t={t}
+            />
+          )}
+
+          {/* Every other gap keeps the bare line it had: a service name, a
+              quote title. `MailGapBlock` renders nothing without a message. */}
+          {!lead.item.subject && lead.item.note && (
+            <p
+              style={{ unicodeBidi: 'plaintext' }}
+              className="text-[12.5px] text-[var(--v2-text-secondary)] mb-1 line-clamp-2"
+            >
               {lead.item.note}
             </p>
           )}
@@ -1015,6 +1195,9 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                       <UserRound className="w-4 h-4" aria-hidden="true" />
                     )}
                   </button>
+                  {/* Not where the reply box already offers it. See
+                      `THE_REPLY_BOX_DOES_THIS`. */}
+                  {!THE_REPLY_BOX_DOES_THIS.has(leadAction) && (
                   <button
                     type="button"
                     onClick={() => act(leadGap!, lead.item as GapItemView)}
@@ -1045,6 +1228,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                         ).replace('{name}', lead.item.name)
                       : t(`gaps.action.${leadAction}`)}
                   </button>
+                  )}
                   {asking && (
                     <button
                       type="button"
@@ -1116,7 +1300,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
         that has tasks must never render nothing.
       */}
       <div className="flex flex-col gap-3" hidden={Boolean(lead) && !expanded}>
-        {gaps.map(gap => (
+        {visibleGaps.map(gap => (
           <div key={gap.id}>
             {/*
               The kind, said once, rather than repeated on every row.
@@ -1241,6 +1425,34 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                       thing to rely on. A column stretches its children by
                       default, so the subject gets the full width with no
                       second rule at all.
+                    */}
+                    {/*
+                      ON A PHONE THE BUTTON TAKES ITS OWN LINE.
+
+                      Side by side, the action is `shrink-0` and the subject is
+                      `truncate`, so every pixel the button needs comes out of
+                      the text — and the button's label is a whole phrase
+                      ("כתיבת הצעה", "Write a quote"). At phone width that left
+                      the row reading "אופיר עומר · הצעת מחיר לש…", which cuts
+                      off exactly the half that says WHICH job is waiting.
+
+                      A column below `sm`, the same row above it. Stacking is
+                      done on the CONTAINER rather than by giving the subject a
+                      full basis: `flex-1` already sets `flex-basis: 0%`, and
+                      which of the two wins is decided by their order in the
+                      stylesheet rather than in the class list.
+
+                      MAIL ROWS KEEP THIS LAYOUT TOO, and briefly did not. They
+                      were forced to a column at every width because the action
+                      button used to float against the vertical middle of a
+                      four-line block. That button is gone from these rows — the
+                      reply box replaced it, see `THE_REPLY_BOX_DOES_THIS` — so
+                      the only thing left beside the text is the small "open the
+                      client" icon, which then had nothing to stack under and
+                      came to rest alone beneath the clock. One orphaned icon in
+                      a position no other row puts it in is a worse fault than
+                      the crowding the column was avoiding, and the crowding no
+                      longer happens.
                     */}
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                       <div className="min-w-0 flex-1">
@@ -1397,6 +1609,54 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                           )}
                         </p>
 
+                        {/*
+                          ─────────────────────────────────────────────────────
+                          THE REPLY, ON THE LIST ROW TOO.
+
+                          The promoted row got the client's words first, and
+                          that was half a fix: the lead is ONE task, and every
+                          other row on the card — the ones an owner opens the
+                          fold to work through — still showed a subject line
+                          beside a clock and nothing of what was said.
+
+                          Which half you see is decided by `mostUrgent`, so an
+                          owner with a quote waiting and an invoice overdue
+                          read the full version of one and the bare version of
+                          the other, for no reason they could perceive.
+
+                          Two lines rather than the lead's four. It is a row in
+                          a list, and the whole message is one tap away on the
+                          contact.
+                          ─────────────────────────────────────────────────────
+                        */}
+                        {/* The same block the promoted row gets, denser.
+                            See `MailGapBlock`. */}
+                        <MailGapBlock
+                          subject={item.subject}
+                          quote={item.quote}
+                          note={item.note}
+                          threadId={item.threadId}
+                          contextKey={item.contextKey}
+                          dense
+                          t={t}
+                        />
+
+                        {/* The same box the promoted row gets. */}
+                        {item.subject && (
+                          <MailReplyBox
+                            contactId={item.contactId}
+                            threadId={item.threadId}
+                            draftId={item.draftId}
+                            draftBody={item.draftBody}
+                            subject={item.subject}
+                            provider={item.viaProvider}
+                            answeredAt={item.answeredAt}
+                            language={language}
+                            onDone={onChanged}
+                            t={t}
+                          />
+                        )}
+
                         <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 flex items-center gap-1">
                           {/*
                             THE JOB, DOWN HERE WITH THE REST OF THE CONTEXT.
@@ -1411,9 +1671,32 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                             is the same KIND of fact as when it happened and
                             which session it was, and those were already here.
                           */}
-                          {item.note && (
+                          {/*
+                            THE SUBJECT, where there is one, in preference to
+                            the note.
+
+                            This is a metadata strip — one line, beside a
+                            clock — and the mail gaps put a two-sentence
+                            explanation in `note`, which cannot survive here.
+                            Their `subject` can: it is short, it is the
+                            client's own words, and it is what the owner
+                            recognises the thread by. The full explanation is
+                            on the promoted row, which has the room for it.
+
+                            Bidi handled as the lead block does it: this text
+                            is in whatever language the client wrote in, and an
+                            English string truncating inside an RTL strip loses
+                            its START. unicode-bidi: plaintext rather than a
+                            dir attribute, so the line stays aligned with the
+                            card instead of jumping to the opposite edge.
+                          */}
+                          {/* NOT repeated when `MailGapBlock` is showing it
+                              above: subject, quote, reasoning and origin all
+                              live there now, and printing the subject again
+                              one line down read as two different facts. */}
+                          {!item.subject && item.note && (
                             <>
-                              <span className="truncate">{item.note}</span>
+                              <span style={{ unicodeBidi: 'plaintext' }} className="truncate">{item.note}</span>
                               <span aria-hidden="true">·</span>
                             </>
                           )}
@@ -1435,6 +1718,23 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                             */}
                           <span title={startedOn(item.since, language)} className="truncate">
                             {(() => {
+                              /*
+                               * ANSWERED ROWS DO NOT SAY "WAITING".
+                               *
+                               * The row stays after a reply is sent, because
+                               * the owner decides when a thread is finished —
+                               * but the clock went on reading "ממתין ממש
+                               * עכשיו" over a client who had been answered
+                               * minutes earlier. That is the single most
+                               * misleading line the card can carry: it is the
+                               * phrase an owner scans to decide what still
+                               * needs them.
+                               *
+                               * The clock still counts from `since`, which is
+                               * when THEY wrote. Only the verb changes.
+                               */
+                              if (item.answeredAt) return t('gaps.since.answered');
+
                               /*
                                * WHAT THE CLOCK IS COUNTING FROM, which is not
                                * the same for every row of one gap.
@@ -1552,7 +1852,9 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                             check this before you bill it — and this is context. Two colours for two
                             jobs, or the warning stops meaning anything.
                           */}
-                          {item.contextKey && (
+                          {/* The origin moved into `MailGapBlock`'s badge for
+                              mail rows; anything else keeps it here. */}
+                          {item.contextKey && !item.subject && (
                             <>
                               <span aria-hidden="true">·</span>
                               <span className="text-[var(--v2-text-secondary)]">{t(item.contextKey)}</span>
@@ -1616,7 +1918,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                         that a real message reaches a real client the instant
                         they are pressed.
                       */}
-                      {action && state.kind === 'confirming' && (
+                      {action && !THE_REPLY_BOX_DOES_THIS.has(action) && state.kind === 'confirming' && (
                         <span className="shrink-0 self-start inline-flex items-center gap-1">
                           <button
                             type="button"
@@ -1683,7 +1985,32 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                         )}
                       </button>
 
-                      {action && state.kind !== 'confirming' && (
+                      {/*
+                        THE ROW'S OWN FINISH BUTTON, beside the door to the
+                        client — the slot every other row keeps its action in.
+                        Primary-filled, because on a mail row it is the one
+                        thing meant to be pressed once the reply has gone, and
+                        the quiet outline it used to wear made it read as a
+                        secondary option beside a box that had none.
+                      */}
+                      {item.subject && (
+                        <button
+                          type="button"
+                          onClick={() => void settleMailRow(gap, item)}
+                          disabled={state.kind === 'working' || state.kind === 'done'}
+                          className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
+                          style={{ background: 'var(--v2-primary)', color: '#fff' }}
+                        >
+                          {state.kind === 'done' ? (
+                            <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                          ) : null}
+                          {state.kind === 'done'
+                            ? t('gaps.reply.cleared')
+                            : t('gaps.reply.mark_handled')}
+                        </button>
+                      )}
+
+                      {action && !THE_REPLY_BOX_DOES_THIS.has(action) && state.kind !== 'confirming' && (
                         <button
                           type="button"
                           onClick={() => act(gap, item)}

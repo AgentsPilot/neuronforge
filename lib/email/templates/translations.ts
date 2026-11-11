@@ -1500,6 +1500,53 @@ export const emailTranslations = {
     },
     cta: { en: 'View the quote', es: 'Ver el presupuesto', he: 'צפייה בהצעה' },
   },
+  /*
+   * The client's copy of what they just agreed to.
+   *
+   * Sent on acceptance, which until now sent nothing about the PROPOSAL — the
+   * client was redirected to a payment page, or emailed an invoice, and in
+   * neither case received a record of the agreement or of the signature they
+   * had just drawn. Every e-signing product returns a signed copy; this is it.
+   */
+  proposalAccepted: {
+    subject: {
+      en: 'Confirmed: {title}',
+      es: 'Confirmado: {title}',
+      he: 'אושר: {title}',
+    },
+    greeting: { en: 'Hello {name},', es: 'Hola {name},', he: 'שלום {name},' },
+    greetingPlain: { en: 'Hello,', es: 'Hola,', he: 'שלום,' },
+    intro: {
+      en: 'Thank you — we have your approval for {title}. A copy is attached for your records.',
+      es: 'Gracias — tenemos tu aprobación para {title}. Adjuntamos una copia para tus archivos.',
+      he: 'תודה — קיבלנו את אישורך ל{title}. מצורף עותק לשמירה.',
+    },
+    /* Said only when a signature was actually given, so a quote approved
+       without one does not claim a signature that is not on the document. */
+    signedLine: {
+      en: 'Signed by {name} on {date}.',
+      es: 'Firmado por {name} el {date}.',
+      he: 'נחתם על ידי {name} בתאריך {date}.',
+    },
+    totalLabel: { en: 'Total', es: 'Total', he: 'סה״כ' },
+    dueNowLabel: { en: 'Due now', es: 'A pagar ahora', he: 'לתשלום עכשיו' },
+    nothingDue: {
+      en: 'Nothing to pay now — we will invoice as the work progresses.',
+      es: 'Nada que pagar ahora — facturaremos a medida que avance el trabajo.',
+      he: 'אין תשלום כרגע — נחייב ככל שהעבודה מתקדמת.',
+    },
+    payCta: { en: 'Pay now', es: 'Pagar ahora', he: 'לתשלום' },
+    attachmentNote: {
+      en: 'Your signed copy is attached to this email:',
+      es: 'Tu copia firmada está adjunta a este correo:',
+      he: 'העותק החתום מצורף למייל הזה:',
+    },
+    footerNote: {
+      en: 'Keep this email — it is your record of what was agreed.',
+      es: 'Guarda este correo — es tu registro de lo acordado.',
+      he: 'שמרו את המייל הזה — זה התיעוד שלכם למה שסוכם.',
+    },
+  },
   quoteStopped: {
     subject: {
       en: 'Update on {title}',
@@ -1730,6 +1777,22 @@ export const emailTranslations = {
       en: 'How it is paid',
       es: 'Cómo se paga',
       he: 'אופן התשלום'
+    },
+    /*
+     * The breakdown. Listed ABOVE the totals table and separately from the
+     * stages, because "what the work is" and "how the money arrives" are two
+     * questions and a client reading "deposit 4,500" has not been told what
+     * the deposit buys.
+     */
+    itemsTitle: {
+      en: 'What it covers',
+      es: 'Qué incluye',
+      he: 'מה זה כולל'
+    },
+    itemsMore: {
+      en: 'and {n} more — see the full proposal',
+      es: 'y {n} más — ver la propuesta completa',
+      he: 'ועוד {n} — ראו את ההצעה המלאה'
     },
     viewCta: { en: 'View and respond', es: 'Ver y responder', he: 'צפייה ומענה' },
     footerNote: {

@@ -3286,6 +3286,44 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         labels: { en: 'details', he: 'פרטים', es: 'detalles' },
         writable: true,
       },
+      /*
+       * The mail CONVERSATION this activity is about.
+       *
+       * Readable as well as writable, because both halves are needed: the
+       * agent writes it when it files a reply, and the "needs you" card reads
+       * it back to open that conversation and to answer INSIDE it.
+       *
+       * `string`, matching the column, which is `text` rather than `uuid` on
+       * purpose — the id belongs to the mail provider and its shape is theirs
+       * (Gmail hex, Graph base64url). `source_entity_id` was the obvious home
+       * and could not hold either; see the migration for the full reason.
+       */
+      source_thread_id: {
+        column: 'source_thread_id',
+        type: 'string',
+        labels: { en: 'mail thread', he: 'שרשור מייל', es: 'hilo de correo' },
+        writable: true,
+      },
+      /*
+       * The reply the AGENT proposed, and which draft object it became.
+       *
+       * Both exist so the card can finish the job it starts: show the draft,
+       * let the owner fix a word, send it as a threaded reply, and then remove
+       * the draft behind it. Without the id that draft stays in the mailbox
+       * looking unsent, and sending it by hand delivers the same answer twice.
+       */
+      draft_body: {
+        column: 'draft_body',
+        type: 'string',
+        labels: { en: 'drafted reply', he: 'טיוטת תשובה', es: 'borrador de respuesta' },
+        writable: true,
+      },
+      source_draft_id: {
+        column: 'source_draft_id',
+        type: 'string',
+        labels: { en: 'draft', he: 'טיוטה', es: 'borrador' },
+        writable: true,
+      },
       activity_type: {
         column: 'activity_type',
         type: 'enum',
@@ -3398,7 +3436,16 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         requiredFields: ['title', 'contact_id'],
         // Defaults to 'note' — most logged activity is a note.
         handlerSupplies: ['activity_type'],
-        optionalFields: ['description', 'activity_type', 'activity_date'],
+        optionalFields: [
+          'description',
+          'activity_type',
+          'activity_date',
+          /* So an agent filing a reply can say which conversation it was,
+             what it proposed saying, and which draft that became. */
+          'source_thread_id',
+          'draft_body',
+          'source_draft_id',
+        ],
       },
     },
   },

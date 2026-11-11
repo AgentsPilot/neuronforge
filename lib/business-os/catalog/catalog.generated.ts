@@ -3,7 +3,7 @@
  *
  * Produced by: npx tsx scripts/generate-business-catalog.ts
  * Source     : jgccgkyhpwirgknnceoh.supabase.co
- * Generated  : 2026-10-29T17:26:52.805Z
+ * Generated  : 2026-11-10T18:07:54.340Z
  *
  * This is the PHYSICAL half of the Business Catalog: what columns actually exist
  * in the database. The hand-authored semantic half lives in ./catalog.ts, and
@@ -16,7 +16,7 @@
 import type { PhysicalCatalog } from './catalog.schema';
 
 export const PHYSICAL_CATALOG: PhysicalCatalog = {
-  "generatedAt": "2026-10-29T17:26:52.805Z",
+  "generatedAt": "2026-11-10T18:07:54.340Z",
   "source": "jgccgkyhpwirgknnceoh.supabase.co",
   "tables": {
     "business_intake_forms": {
@@ -718,6 +718,33 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "required": false,
           "hasDefault": true,
           "isPrimaryKey": false
+        },
+        {
+          "name": "source_thread_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The mail thread this activity is about, in the provider's own id format (Gmail hex, Graph base64url). Distinct from source_entity_id, which is uuid and cannot hold either. NULL on every row written before 20261110 and never inferred: matching an old activity to a message by subject would open or reply into the wrong conversation. Written by the receptionist agent; read by the needs-you card to open the thread and to reply inside it rather than starting a new one."
+        },
+        {
+          "name": "draft_body",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The reply the AGENT proposed, stored so the needs-you card can show and edit it without a Gmail round trip. A snapshot of what was proposed, not a mirror of the live Gmail draft: an owner who edits the draft in their mailbox will not change this. NULL on reply_needs_owner rows (nothing was drafted) and on every row written before 20261110."
+        },
+        {
+          "name": "source_draft_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The Gmail/Graph draft this activity created, in the provider's own id format. Kept so that sending a reply from the card can delete the draft behind it — without this the draft is left in the mailbox and can be sent a second time by hand. NULL where no draft was created."
         }
       ]
     },
@@ -4079,6 +4106,24 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": true,
           "isPrimaryKey": false,
           "description": "Owner consent for automation #6: send ONE reminder on a quote still unanswered 72 hours after it was sent, asking whether the client needs more time or more information. Never a sequence — the queue dedupes per proposal, so a quote is followed up once and never again. Opt-in (DEFAULT false). Added 2026-10-10."
+        },
+        {
+          "name": "has_website",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The owner has a website of their own, whoever built it. Set from the onboarding client_acquisition chip \"I already have a website\". DISTINCT FROM online_presence_mode, which records only what WE build: a business keeping its own site and one with no web presence at all both carry booking_only. NULL means never established — the common case for accounts that predate this column and for anyone who took a website from us. Read NULL as \"do not offer\", never as false."
+        },
+        {
+          "name": "leads_arrive_by_email",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Enquiries from the owner's own site land in a mailbox. Asked as a follow-up ONLY where has_website is true, because it does not follow from it: an owner with their own site may take enquiries by phone or through a portal. TRUE is the one state that justifies offering the inbox-channel agent, which reads enquiry email; FALSE means offer the form smart link instead. NULL means never established and must suppress both offers rather than pick one."
         }
       ]
     },

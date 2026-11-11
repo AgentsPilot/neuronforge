@@ -120,6 +120,34 @@ export interface OperationalAutomation {
   coversProcess?: 'chase_overdue_invoices' | 'send_reminder_sequence' | 'send_followup_nudge';
 
   /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THIS AUTOMATION BEING OFF DOES TO THE AGENT BESIDE IT.
+   *
+   * `coversProcess` says the two work on the same job. It does NOT say what
+   * happens to one when the other is switched off, and those are three
+   * different answers:
+   *
+   *   'gates'   the agent's sender reads this column and FAILS CLOSED, so the
+   *             switch being off stops the agent too. True of `chase_invoices`
+   *             alone: `sendInvoiceChase` reads `chase_invoices_enabled`
+   *             before it even opens the invoice.
+   *
+   *   undefined no effect on the send path. The agent runs and sends whatever
+   *             this switch says. `reply_to_enquiries` is here —
+   *             `lead_autosend_enabled` is read nowhere a message goes out —
+   *             and so is `remind_about_meeting`, whose relationship runs the
+   *             OTHER way: its sender stands down while this one is ON, to
+   *             avoid two reminders for one booking.
+   *
+   * Declared rather than inferred because inferring it got this wrong. A card
+   * joined on `coversProcess` alone told an owner that "קביעת הפגישה הבאה"
+   * could not send while a lead-reply switch was off, on the same screen as
+   * the list showing that agent had run, worked, and was scheduled again.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  pairedAgentRelation?: 'gates';
+
+  /**
    * How long after the gap appears before the platform acts.
    *
    * Every one of these writes to somebody, and a delay is what gives the owner
@@ -367,6 +395,10 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     /* The standing version of `chase_overdue_invoices`: the same work, to the
        same recipients, on a clock instead of a button. */
     coversProcess: 'chase_overdue_invoices',
+    /* And the one place the relationship is a gate: `sendInvoiceChase` reads
+       this column first and refuses, so the agent sends nothing while it is
+       off. The only entry that may carry this. */
+    pairedAgentRelation: 'gates',
     /*
      * Unused, and left in place as the record of what this used to do.
      *

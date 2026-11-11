@@ -30,6 +30,7 @@ import type { InvoiceSettings } from '@/lib/repositories/BusinessProfileReposito
 import { createLogger } from '@/lib/logger';
 import { formatAddressLines } from '@/lib/geo/address';
 import { registerThemeFont } from './themeFonts';
+import { pdfLogoSource } from './logoSource';
 import { taxLineFor } from '@/lib/payments/taxLine';
 import { documentTitle } from '@/lib/payments/documentType';
 
@@ -234,6 +235,9 @@ export interface InvoicePDFData {
   businessSettings: InvoiceSettings & {
     /** The business's logo. Owned by the profile — the invoice only wears it. */
     logo_url?: string | null;
+    /* Resolved before the document is built: a PNG/JPEG URL passes through, an
+       SVG is rasterised to a data URI. See `pdfLogoSource`. */
+    logo_src?: string | null;
     /**
      * What the business says is already inside its prices.
      *
@@ -884,8 +888,15 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
                 so the PDF was the one invoice surface with no branding at all.
                 A broken or unreachable URL must not fail the render, hence the
                 plain presence check and the company name underneath regardless. */}
-            {businessSettings.logo_url ? (
-              <Image style={styles.logo} src={businessSettings.logo_url} />
+            {/*
+              Only a format the renderer can decode. `<Image>` takes PNG and
+              JPEG; handed an SVG it renders NOTHING and says nothing, which is
+              why one live account's invoices had no logo while the code, the
+              repository select and the route were all correct.
+              See lib/pdf/logoSource.ts.
+            */}
+            {businessSettings.logo_src ? (
+              <Image style={styles.logo} src={businessSettings.logo_src} />
             ) : null}
             <SmartText style={styles.companyName} isRTL={isRTL}>{companyName}</SmartText>
             {businessAddressLines.map((line, idx) => (
@@ -1187,6 +1198,15 @@ export async function generateInvoicePDFAsync(data: InvoicePDFData): Promise<Buf
     ensureHebrewSetup();
   }
 
+  /*
+   * The logo, in a form `<Image>` can draw.
+   *
+   * This rendered `logo_url` directly, which is correct for PNG and JPEG and
+   * silently draws NOTHING for SVG — the reason one live account's invoices
+   * had no logo while every layer feeding it was working.
+   */
+  const logoSrc = await pdfLogoSource(data.businessSettings?.logo_url);
+
   // Register the business's theme fonts before the document names them.
   // Skipped for Hebrew, which keeps Rubik — see lib/pdf/themeFonts.ts. Either
   // may come back null, and the styles fall back on their own.
@@ -1200,7 +1220,13 @@ export async function generateInvoicePDFAsync(data: InvoicePDFData): Promise<Buf
   }
 
   // Create the document element
-  const doc = React.createElement(InvoiceDocument, { data: { ...data, branding } });
+  const doc = React.createElement(InvoiceDocument, {
+    data: {
+      ...data,
+      branding,
+      businessSettings: { ...data.businessSettings, logo_src: logoSrc },
+    },
+  });
 
   // Render to buffer
   const buffer = await renderToBuffer(doc);

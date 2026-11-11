@@ -18,6 +18,7 @@ import type {
 } from './types';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { createLogger } from '@/lib/logger';
 
 export interface WorkflowOrchestrationResult {
   output: any;
@@ -32,6 +33,8 @@ export interface WorkflowOrchestrationResult {
   routedModel: string;
   executionTime: number;
 }
+
+const logger = createLogger({ module: 'WorkflowOrchestrator', service: 'orchestration' });
 
 export class WorkflowOrchestrator {
   private supabase: SupabaseClient;
@@ -479,6 +482,56 @@ export class WorkflowOrchestrator {
   /**
    * Check if orchestration is active for this execution
    */
+  /**
+   * Which model a step should run on, as `provider:model`.
+   *
+   * Implements the seam declared on `IOrchestrator`. Same routing service and
+   * same call shape `executeStep` uses, minus the execution: analyse the step,
+   * blend it with the agent's AIS at the documented 60/40, ask for a tier.
+   *
+   * Never throws and never blocks a run. Every failure path returns `null`,
+   * which the caller reads as "use the account default" — a routing outage must
+   * not become a step outage.
+   */
+  async routeModelFor(step: any, executionContext: any): Promise<string | null> {
+    try {
+      if (!this.orchestrationMetadata) return null;
+      if (!this.orchestrationMetadata.featureFlags?.aisRoutingEnabled) return null;
+
+      const routingService = this.orchestrationService.getRoutingService();
+      const analysis = await routingService.analyzeStepComplexity(step, executionContext);
+
+      const decision = await routingService.route(
+        {
+          agentId: this.orchestrationMetadata.agentId,
+          /* The step's own kind, where the orchestrator knows it. `generate` is
+             the honest default for an ai_processing step that declares none. */
+          intent: (step?.ai_type || 'generate') as never,
+          /* Only feeds a cost ESTIMATE, never the tier, so an unknown budget
+             cannot change which model is chosen. */
+          budgetRemaining: 0,
+          previousFailures: 0,
+          agentAIS: this.orchestrationMetadata.agentAIS,
+        },
+        step,
+        executionContext
+      );
+
+      if (!decision?.model) return null;
+
+      logger.info(
+        { stepId: step?.id, tier: decision.tier, model: decision.model, complexity: analysis?.complexityScore },
+        'Routed an ai_processing step without executing it through orchestration'
+      );
+
+      /* `provider:model`, which is the shape `callLLMDirect` already parses. */
+      return decision.provider ? `${decision.provider}:${decision.model}` : decision.model;
+    } catch (err) {
+      logger.warn({ err, stepId: step?.id }, 'Per-step routing failed; falling back to the account default');
+      return null;
+    }
+  }
+
   isActive(): boolean {
     return this.orchestrationMetadata !== null;
   }

@@ -1739,17 +1739,47 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
     // A pure data write: nothing leaves the building, so it can be declared
     // straight against the repository. `activity_date` defaults to now because
     // "log that I called Moshe" is almost always about what just happened.
-    create: async (_q, data, ctx) =>
-      crmActivityRepository.create({
+    create: async (_q, data, ctx) => {
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * WHO WROTE THIS — THE CHAT OR AN AGENT. They are not the same author.
+       *
+       * Both reach this one function, and it used to stamp every row `chat` /
+       * `auto_logged: false`, whose comment read "written by a person in
+       * conversation". That is true of the chat and false of an agent: the
+       * receptionist files `reply_needs_owner` and `reply_drafted` rows while
+       * nobody is at the keyboard, and each one was recorded as something the
+       * owner had typed.
+       *
+       * The cost is not cosmetic. `auto_logged` is what the contact timeline
+       * uses to separate what a person did from what the system inferred, and
+       * `source_capability` is the only field saying where a row came from —
+       * so a card built from these could not tell the owner that an agent
+       * found it, which is the single most reassuring thing it can say.
+       *
+       * Measured on the live account, 2026-11-10: every `chat` row in
+       * `crm_activities` — both of them — was written by the receptionist.
+       * The chat has never written one.
+       *
+       * `kernel` is the consumer the plugin executor passes (see
+       * `business-os-plugin-executor.ts`), and it is the agent path: the chat
+       * passes `chat`, detectors pass `detector`. Anything that is not the
+       * kernel keeps exactly the behaviour it had.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const writtenByAnAgent = ctx.consumer === 'kernel';
+
+      return crmActivityRepository.create({
         user_id: ctx.userId,
         activity_type: 'note',
         activity_date: new Date().toISOString(),
-        // Written by a person in conversation, not inferred by the system —
-        // which is what `auto_logged` distinguishes on the contact's timeline.
-        auto_logged: false,
-        source_capability: 'chat',
+        // What the contact's timeline uses to separate what a PERSON did from
+        // what the system inferred on their behalf.
+        auto_logged: writtenByAnAgent,
+        source_capability: writtenByAnAgent ? 'agent' : 'chat',
         ...data,
-      } as Parameters<typeof crmActivityRepository.create>[0]) as Promise<RepoResult<unknown>>,
+      } as Parameters<typeof crmActivityRepository.create>[0]) as Promise<RepoResult<unknown>>;
+    },
   },
 
   services: {

@@ -1552,6 +1552,12 @@ export function buildJourneySteps(
           at: v.decided_at || v.sent_at || v.created_at,
           isCurrent: v.id === proposal?.id,
           documentName: v.document?.name ?? null,
+          /* How many files this version carried, so the paperclip can count
+             rather than imply one. */
+          attachmentCount: v.attachmentCount ?? (v.document ? 1 : 0),
+          /* The dispute-settling fact, on the version it belongs to. */
+          signedBy: v.signedBy ?? null,
+          signedAt: v.signedAt ?? null,
           // Per version, because each revision was declined for its own reason
           // — and "too expensive" against 12,000 then "wrong timing" against
           // 10,000 is a different story from the same objection twice.
@@ -5946,6 +5952,52 @@ export function CRMContactDrawerV2({
                 /* Read the quote as it was sent. `supersedesId` names the version
                    to open on, not one to replace — `readOnly` is what decides
                    which of those it means. */
+                /*
+                 * SEND THE QUOTE AGAIN, unchanged.
+                 *
+                 * The I/O lives here rather than in `BookingsTab`, which is
+                 * presentational — the same split every other action on that
+                 * strip already follows.
+                 *
+                 * The refusals the route can return are all states the button
+                 * is not offered in (a draft, something already answered), so
+                 * reaching one means the list is stale: reloading is both the
+                 * fix and the honest thing to show.
+                 */
+                onResendProposal={async (proposalId) => {
+                  try {
+                    const res = await fetch(
+                      `/api/business-os/proposals/${proposalId}/resend`,
+                      { method: 'POST' }
+                    );
+                    const body = await res.json().catch(() => null);
+
+                    if (!res.ok || !body?.success) {
+                      /* The route returns a CODE, not a sentence: this drawer
+                         renders in three languages and a server string cannot
+                         be translated here. */
+                      toast.error(
+                        t(`crm.proposal.resend.${body?.code ?? 'failed'}`) ||
+                          t('crm.proposal.resend.failed') ||
+                          'The quote could not be sent again'
+                      );
+                      /* A refusal means this strip is describing a quote that
+                         has moved on — answered in another tab, withdrawn,
+                         expired. Re-read it rather than leave a button
+                         offering something the server just declined. */
+                      if (contact?.id) await fetchSessions(contact.id, { silent: true });
+                      return;
+                    }
+
+                    toast.success(
+                      t('crm.proposal.resend.sent') || 'The quote was sent again'
+                    );
+                  } catch {
+                    toast.error(
+                      t('crm.proposal.resend.failed') || 'The quote could not be sent again'
+                    );
+                  }
+                }}
                 onViewProposal={(bookingId, proposalId) => {
                   /*
                    * Carry the client's own words into the view.

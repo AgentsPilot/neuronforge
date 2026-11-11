@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Loader2, Check, Clock, Bot } from 'lucide-react';
+import { Loader2, Check, Clock, Bot, AlertTriangle } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 /* The registry, for the one field that joins an insight to the standing
@@ -123,6 +123,28 @@ interface PendingInsight extends Omit<InsightData, 'eligible_for_automation'> {
   affected_entity_type?: string;
 }
 
+/**
+ * One row of the installed-agents list, as the card needs to read it.
+ *
+ * A narrow view of what `/api/business-os/automation-agents` returns: only the
+ * fields the card quotes. Widening it would make this file a second definition
+ * of what an agent IS, which the list already owns.
+ */
+export interface InstalledAgentRow {
+  automationId: string;
+  status: string;
+  nextRun: string | null;
+  lastOutcome?: {
+    state: 'ok' | 'failed' | 'never';
+    at: string | null;
+    /** What the finding step saw, and which action did the finding. */
+    found: number | null;
+    foundAction: string | null;
+    /** How many of those it then acted on. Null when the plan never scatters. */
+    actedOn: number | null;
+  };
+}
+
 interface InsightAdvisorCardProps {
   insights: PendingInsight[];
   /**
@@ -193,6 +215,26 @@ interface InsightAdvisorCardProps {
    * `automate` action and would write a second standing rule for one press.
    */
   onAgentInstalled?: () => void;
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE ROWS THE AGENT LIST IS BUILT FROM.
+   *
+   * The card used to write its own sentence about who was handling a problem,
+   * which is how it came to say an agent could not send on the same screen as
+   * the list reporting that agent had run, worked, and was due again.
+   *
+   * It now QUOTES these rows instead. One fact, shown twice in the same words:
+   * the owner reads it on the card, scrolls down, and meets it again in the
+   * list. That repetition is what teaches them the two surfaces are one
+   * system — and the two can no longer contradict each other, because there
+   * is only one fact.
+   *
+   * Optional, so a host that does not pass them renders what it did before:
+   * the agent's name, and nothing claimed about results.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  installedAgents?: InstalledAgentRow[];
 
   /**
    * Automation ids this business already has installed.
@@ -310,6 +352,7 @@ export function InsightAdvisorCard({
   onOperationalNotify,
   onAgentInstalled,
   installedAutomationIds,
+  installedAgents,
 }: InsightAdvisorCardProps) {
   const { t, isRTL, formatCurrency } = useLanguage();
   const [cardState, setCardState] = useState<InsightCardState>('default');
@@ -507,6 +550,96 @@ export function InsightAdvisorCard({
   );
 
   /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHO IS ACTUALLY CHASING, AND WHETHER ANYTHING IS BEING SENT.
+   *
+   * `agentAlreadyWorking` above means INSTALLED, and that is the right test for
+   * whether to offer the install again. It is the wrong test for "I am handling
+   * this", which is what the card went on to claim with it.
+   *
+   * The work has two halves and the catalogue says so — the agent declares
+   * `worksAlongside: 'chase_invoices'`. The standing chaser sends on the
+   * owner's milestone days; the agent takes the tail once those are spent. And
+   * the agent's own sender reads the SAME consent column before it writes to
+   * anybody: `sendInvoiceChase` opens with `chase_invoices_enabled` and fails
+   * closed.
+   *
+   * So an agent installed with that switch off sends nothing at all, and the
+   * card said "I'm already handling these" over the top of it. `nextStep`,
+   * three hundred lines below, already read the switch — the headline simply
+   * never asked.
+   *
+   * Nothing new is fetched: `OPERATIONAL_AUTOMATIONS` carries the covering
+   * automation and `operational` carries the owner's answer to it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const coveringOperational = insight?.paired_process_id
+    ? OPERATIONAL_AUTOMATIONS.find(
+        automation => automation.coversProcess === insight.paired_process_id
+      )
+    : undefined;
+
+  const chaserOn = Boolean(
+    coveringOperational && operational.find(item => item.id === coveringOperational.id)?.enabled
+  );
+
+  const chaserName = coveringOperational ? t(coveringOperational.labelKey) : '';
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * IS THE AGENT ACTUALLY BLOCKED, OR DOES IT JUST SHARE A SUBJECT?
+   *
+   * This used to be `agentAlreadyWorking && coveringOperational && !chaserOn`
+   * — covering the same process was taken to mean gating it. It does not, and
+   * the card said so out loud: "קביעת הפגישה הבאה cannot send while this is
+   * off", directly above a list showing that agent had run, worked, and was
+   * scheduled again for the 15th.
+   *
+   * `pairedAgentRelation: 'gates'` is set on exactly one automation, because
+   * exactly one sender fails closed on its column. See the field's own note.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const sendingBlocked = Boolean(
+    agentAlreadyWorking && coveringOperational?.pairedAgentRelation === 'gates' && !chaserOn
+  );
+
+  /*
+   * And the chaser only joins the chain where it IS the chain.
+   *
+   * Two automations that merely touch the same records are not a sequence, and
+   * drawing them on one rail invites the owner to read an order into them that
+   * does not exist. Where there is no sequence there is one node and no line.
+   */
+  const chaserInChain = coveringOperational?.pairedAgentRelation === 'gates';
+
+  /* The agent's own row from the list, which is what the card quotes. */
+  const agentRow = offeredAgent
+    ? installedAgents?.find(row => row.automationId === offeredAgent.id)
+    : undefined;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHERE THE SWITCH ACTUALLY LIVES.
+   *
+   * An insight card cannot turn a chaser on. `operationalItem` is only set
+   * once `currentIndex` passes the insights, because the automations are their
+   * own pages appended AFTER them — so on an insight card it is always
+   * undefined and no branch of the footer can offer that switch.
+   *
+   * Which left the owner with a card saying nothing was being sent and no way
+   * to act on it from there. This is the index of the page that CAN: the
+   * chaser's own card, already built, already wired to write the column.
+   *
+   * Null when the carousel does not carry it, and the button is not drawn.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const jumpToChaser = (() => {
+    if (!coveringOperational) return null;
+    const at = operational.findIndex(item => item.id === coveringOperational.id);
+    return at < 0 ? null : insights.length + at;
+  })();
+
+  /*
    * Past the insights, the carousel is showing an automation to approve.
    *
    * Indexed rather than interleaved so `onIndexChange` and the dots below stay
@@ -642,6 +775,22 @@ export function InsightAdvisorCard({
 
     const answer = operational.find(item => item.id === covering.id);
     if (!answer) return null;
+
+    /*
+     * SILENT WHERE THE COLUMN ABOVE NOW SAYS IT BY NAME.
+     *
+     * This line and the projection column answer the same question. Until
+     * 2026-11-10 they answered it from different facts — this one read the
+     * consent switch, the column read only whether the agent was installed —
+     * so a card could carry both "I'm already handling these" and "nothing is
+     * set to chase these automatically". Three partial answers to one question
+     * is what made the card unreadable.
+     *
+     * The column now names both halves and reports the blocked state, so this
+     * speaks only where it still adds something: nothing is covering the work
+     * and no agent was offered to cover it.
+     */
+    if (agentAlreadyWorking) return null;
 
     return answer.enabled
       ? t('insight.next.covered') || 'I chase these automatically from now on.'
@@ -1239,6 +1388,276 @@ export function InsightAdvisorCard({
     return line?.text || fallback || '';
   };
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHO IS DOING THIS, DRAWN AS A CHAIN RATHER THAN WRITTEN AS A SENTENCE.
+   *
+   * Three attempts led here, and the first two are worth keeping on the record
+   * because each failed for a different reason.
+   *
+   *   1. One sentence naming both — "<chaser> goes first, then <agent> takes
+   *      over". True, and unreadable: the column renders in one colour and in
+   *      Hebrew both names are noun phrases, so the eye cannot find where
+   *      either ends.
+   *
+   *   2. One row per actor with a role label beside each name. Legible, and
+   *      still only a DESCRIPTION of coverage. An owner looking at it had no
+   *      way to tell a claim from a fact, which mattered because one of the
+   *      claims was wrong.
+   *
+   *   3. This. The rail and node from the bookings drawer — 18px node, 2px
+   *      line, a dashed empty ring for a step that has not happened — and
+   *      under the agent its OWN ROW from the list: what it found, what it
+   *      handled, when it runs next. Not "I am handling this" but "found 4
+   *      invoices, handled 1, next run 11 Nov 16:25". A receipt rather than a
+   *      promise, in the same words the list below uses, so the two surfaces
+   *      cannot disagree.
+   *
+   * The icons carry the one distinction an owner actually needs: a clock for a
+   * standing rule that runs on a schedule and has no results of its own, the
+   * robot the agent list already wears for something with runs behind it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  type ChainStep = {
+    kind: 'chaser' | 'agent';
+    name: string;
+    /** 'done' fills the node, 'blocked' warns, 'idle' is the dashed ring. */
+    state: 'done' | 'blocked' | 'idle' | 'standing';
+    /** The receipt, already in the reader's language. Null for a standing rule. */
+    receipt: string | null;
+    /** The quiet line under a step with no receipt to show. */
+    aside: string | null;
+  };
+
+  const chainSteps: ChainStep[] = [];
+
+  if (chaserName && chaserInChain) {
+    chainSteps.push({
+      kind: 'chaser',
+      name: chaserName,
+      state: chaserOn ? 'standing' : 'idle',
+      receipt: null,
+      aside: chaserOn
+        ? t('insight.chain.chaser_sends') || 'sends the first reminders'
+        : t('insight.chain.chaser_never') || 'not one reminder has gone out',
+    });
+  }
+
+  if (offeredAgent && agentAlreadyWorking) {
+    /*
+     * The receipt, built from the agent's own last run.
+     *
+     * Absent when the host passed no rows, or when the agent has not run yet —
+     * and absent is the right answer there. An agent with nothing behind it
+     * has nothing to prove, and inventing a line for it would put us back to
+     * claiming coverage instead of showing it.
+     */
+    const outcome = agentRow?.lastOutcome;
+    const parts: string[] = [];
+
+    if (outcome && outcome.state !== 'never' && outcome.found !== null) {
+      parts.push(
+        (t('insight.chain.found') || 'found {n}').replace('{n}', String(outcome.found))
+      );
+      if (outcome.actedOn !== null) {
+        parts.push(
+          (sendingBlocked
+            ? t('insight.chain.sent_to') || 'sent to {n}'
+            : t('insight.chain.handled') || 'handled {n}'
+          ).replace('{n}', String(sendingBlocked ? 0 : outcome.actedOn))
+        );
+      }
+    }
+
+    chainSteps.push({
+      kind: 'agent',
+      name: t(offeredAgent.nameKey),
+      state: sendingBlocked ? 'blocked' : outcome?.state === 'ok' ? 'done' : 'idle',
+      receipt: parts.length > 0 ? parts.join(' · ') : null,
+      aside: sendingBlocked
+        ? (t('insight.chain.blocked_by') || 'cannot write to clients until you approve that')
+        /* A receipt is better than a promise, and a next run is better than
+           nothing. With neither — the agent has never run, or the host passed
+           no rows — say what it is FOR, rather than leaving a bare name that
+           reads as an unfinished line. */
+        : agentRow?.nextRun
+          ? (t('insight.chain.next_run') || 'next run: {when}').replace(
+              '{when}',
+              new Date(agentRow.nextRun).toLocaleString(isRTL ? 'he-IL' : 'en-GB', {
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            )
+          : t('insight.projection.agent_on_it') || 'is handling these',
+    });
+  }
+
+  /*
+   * The rail, lifted from the bookings drawer so the two read as one system.
+   *
+   * 18px node on a 2px line, the line centred at 9px so it enters and leaves
+   * each node on axis, and 32px of gutter — the node plus a thumb of air. A
+   * dashed empty ring already means "this has not happened" to anyone who has
+   * opened a booking, which is why nothing here needs a legend.
+   */
+  const NODE_INK: Record<ChainStep['state'], string> = {
+    done: '#22C55E',
+    blocked: '#EAB308',
+    standing: 'var(--v2-text-muted)',
+    idle: 'var(--v2-text-muted)',
+  };
+
+  const coverageNode =
+    chainSteps.length > 0 ? (
+      <span
+        className="relative flex flex-col"
+        style={{
+          [isRTL ? 'paddingRight' : 'paddingLeft']: '30px',
+          gap: '11px',
+        }}
+      >
+        {/* Behind the nodes, and only drawn where there is a second step to
+            reach: a rail under a single node is a line to nowhere. */}
+        {chainSteps.length > 1 && (
+          <span
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              [isRTL ? 'right' : 'left']: '8px',
+              top: '10px',
+              bottom: '12px',
+              width: '2px',
+              borderRadius: '2px',
+              background: 'var(--v2-border)',
+            }}
+          />
+        )}
+
+        {chainSteps.map(step => (
+          <span key={step.kind} className="relative flex flex-col" style={{ gap: '2px', minWidth: 0 }}>
+            <span
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                [isRTL ? 'right' : 'left']: '-30px',
+                top: '2px',
+                width: '18px',
+                height: '18px',
+                borderRadius: '999px',
+                border: `2px ${step.state === 'idle' ? 'dashed' : 'solid'} ${NODE_INK[step.state]}`,
+                /* The ring stays empty while the step has not happened, and
+                   fills once it has. Opaque either way, so the rail appears to
+                   pass behind the node rather than through it. */
+                background:
+                  step.state === 'idle'
+                    ? 'transparent'
+                    : step.state === 'done'
+                      ? 'rgba(34,197,94,0.22)'
+                      : step.state === 'blocked'
+                        ? 'rgba(234,179,8,0.22)'
+                        : 'var(--v2-surface)',
+                display: 'grid',
+                placeItems: 'center',
+                color: NODE_INK[step.state],
+              }}
+            >
+              {step.state === 'idle' ? null : step.kind === 'agent' ? (
+                <Bot className="w-2.5 h-2.5" />
+              ) : (
+                <Clock className="w-2.5 h-2.5" />
+              )}
+            </span>
+
+            <span className="flex items-center gap-1.5" style={{ flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  fontWeight: step.kind === 'agent' ? 700 : 600,
+                  fontSize: step.kind === 'agent' ? '14px' : '13px',
+                  color:
+                    step.state === 'idle'
+                      ? 'var(--v2-text-muted)'
+                      : step.kind === 'agent'
+                        ? 'var(--v2-text-primary)'
+                        : 'var(--v2-text-secondary)',
+                }}
+              >
+                {step.name}
+              </span>
+              {step.state === 'blocked' && (
+                <span
+                  style={{
+                    fontSize: '10.5px',
+                    fontWeight: 700,
+                    borderRadius: '999px',
+                    padding: '1px 7px',
+                    background: 'rgba(234,179,8,0.15)',
+                    color: '#A16207',
+                  }}
+                >
+                  {t('insight.chain.waiting') || 'waiting'}
+                </span>
+              )}
+            </span>
+
+            {/* The receipt. Its numbers are the point, so they are the only
+                thing in this block the eye is meant to stop on. */}
+            {step.receipt && (
+              <span
+                style={{
+                  fontSize: '12.5px',
+                  color: 'var(--v2-text-secondary)',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {step.receipt}
+              </span>
+            )}
+            {step.aside && (
+              <span
+                style={{
+                  fontSize: '12px',
+                  color: 'var(--v2-text-muted)',
+                  lineHeight: 1.5,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {step.aside}
+              </span>
+            )}
+
+            {/*
+              The one new control.
+              `jumpToChaser` pages the carousel to that automation's own card,
+              where "הפעל את זה" already exists and already writes the consent
+              column. No new write path, and the fix sits at the break rather
+              than in a settings page the owner has to go and find.
+            */}
+            {step.kind === 'agent' && sendingBlocked && jumpToChaser !== null && (
+              <button
+                onClick={() => onIndexChange(jumpToChaser)}
+                style={{
+                  marginTop: '5px',
+                  alignSelf: 'flex-start',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  borderRadius: '8px',
+                  padding: '5px 11px',
+                  border: '1px solid rgba(234,179,8,0.45)',
+                  background: 'rgba(234,179,8,0.12)',
+                  color: '#A16207',
+                  cursor: 'pointer',
+                }}
+              >
+                {(t('insight.chain.turn_on') || 'Turn on “{chaser}”').replace('{chaser}', chaserName)}
+              </button>
+            )}
+          </span>
+        ))}
+      </span>
+    ) : null;
+
   // Build projection columns for BeforeAfterPanel
   const projectionColumns: { left: ProjectionColumn; right: ProjectionColumn } | null =
     effectiveStage === 'setup'
@@ -1306,14 +1725,19 @@ export function InsightAdvisorCard({
                * is still exactly true for them.
                * ───────────────────────────────────────────────────────────────
                */
-              value: (offeredAgent
-                ? agentAlreadyWorking
-                  /* Present tense, because it is already true. "I'll take
-                     these over" on a card whose agent has been running since
-                     Tuesday is an offer the owner already accepted. */
-                  ? t('insight.projection.agent_on_it')
-                  : t('insight.projection.agent_takes_over')
-                : '')
+              /*
+                The rows above, where we know who is doing the work. They name
+                the chaser and the agent and mark either one that is switched
+                off, which the single green sentence could not do.
+
+                Falls through to the server's own line for every insight we
+                ship no automation for — that line is still exactly true for
+                them.
+              */
+              value: coverageNode
+                || (offeredAgent && !agentAlreadyWorking
+                  ? t('insight.projection.agent_takes_over')
+                  : '')
                 || renderLine(projection.letMeHandleIt?.summaryLine, projection.letMeHandleIt?.summary)
                 || `~${formatCurrency(insight?.estimated_impact_usd || 0, {
                   showFree: false,
@@ -2012,14 +2436,24 @@ export function InsightAdvisorCard({
               marginTop: '16px',
               padding: '11px 13px',
               borderRadius: '12px',
-              background: 'rgba(34,197,94,0.10)',
-              border: '1.5px solid rgba(34,197,94,0.30)',
+              /* Green says "handled". It must not be green when the agent is
+                 installed and its consent is off, because then nothing is
+                 being sent and the strip is the most reassuring thing on the
+                 card. */
+              background: sendingBlocked ? 'rgba(234,179,8,0.10)' : 'rgba(34,197,94,0.10)',
+              border: sendingBlocked
+                ? '1.5px solid rgba(234,179,8,0.35)'
+                : '1.5px solid rgba(34,197,94,0.30)',
               display: 'flex',
               alignItems: 'flex-start',
               gap: '9px',
             }}
           >
-            <Check className="w-4 h-4 shrink-0 mt-0.5" style={{ color: '#15803D' }} />
+            {sendingBlocked ? (
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: '#A16207' }} />
+            ) : (
+              <Check className="w-4 h-4 shrink-0 mt-0.5" style={{ color: '#15803D' }} />
+            )}
             <div style={{ minWidth: 0 }}>
               <div
                 style={{
@@ -2029,10 +2463,15 @@ export function InsightAdvisorCard({
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                 }}
               >
-                {(t('insight.covered_by') || '{agent} is already handling this').replace(
-                  '{agent}',
-                  t(offeredAgent.nameKey)
-                )}
+                {sendingBlocked
+                  ? (t('insight.covered_but_off') ||
+                      '“{agent}” is installed, but “{chaser}” is switched off')
+                      .replace('{agent}', t(offeredAgent.nameKey))
+                      .replace('{chaser}', chaserName)
+                  : (t('insight.covered_by') || '{agent} is already handling this').replace(
+                      '{agent}',
+                      t(offeredAgent.nameKey)
+                    )}
               </div>
               <div
                 style={{
@@ -2042,7 +2481,17 @@ export function InsightAdvisorCard({
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                 }}
               >
-                {t(offeredAgent.watchesKey)}
+                {/*
+                  What the agent watches for is the right second line when it
+                  is working. When its consent is off it is the wrong one
+                  entirely — the owner does not need to know what it looks for,
+                  they need to know which switch brings it back.
+                */}
+                {sendingBlocked
+                  ? (t('insight.covered_but_off_fix') ||
+                      'Turn “{chaser}” back on and the reminders go out again.')
+                      .replace('{chaser}', chaserName)
+                  : t(offeredAgent.watchesKey)}
               </div>
             </div>
           </div>
@@ -2166,7 +2615,40 @@ export function InsightAdvisorCard({
                   : t('insight.action.primary') || 'Handle it for me'}
             </button>
             )}
-            {/* Secondary button: .adv-lite */}
+            {/*
+              ─────────────────────────────────────────────────────────────────
+              SECONDARY BUTTON (.adv-lite) — AND WHEN THERE ISN'T ONE.
+              ─────────────────────────────────────────────────────────────────
+              NOTHING LEFT TO DEFER.
+
+              With an agent already on the job this card had two endings, and
+              they were not equal:
+
+                הבנתי      `handleAgentCovers` → `markAutomated` → status
+                           'automated'. Closes the card and records WHY: an
+                           automation has this.
+
+                לא עכשיו   `handleDismiss` → status 'dismissed'. Closes the
+                           same card and records that it did not matter — of
+                           a problem that is still open and still costing
+                           money, with an agent working on it right now.
+
+              One of those is a complete, truthful ending. The other is the
+              same ending with a worse record attached, under a label that
+              promises a deferral it does not deliver: there is no "later"
+              here, the insight does not come back.
+
+              The signal is not cosmetic. `dismissed` is what the platform
+              learns from about what to stop showing, so the owner closing a
+              handled card in the obvious way would teach it to hide the
+              exact cards their agents are proving useful on.
+
+              So the choice is removed rather than relabelled. An owner with
+              an agent on the job has one thing to say, and the primary says
+              it. Everywhere else the secondary is unchanged — on an offer it
+              is a real decline, and on an automation page a reversible one.
+              ───────────────────────────────────────────────────────────────── */}
+            {!agentAlreadyWorking && (
             <button
               onClick={operationalItem ? () => handleDecide(false) : handleDismiss}
               /*
@@ -2201,6 +2683,7 @@ export function InsightAdvisorCard({
                   : t('automation.decline')
                 : t('insight.action.secondary') || 'Not now'}
             </button>
+            )}
 
             {/* "Seen" note: .adv-seen */}
             {seenText && (

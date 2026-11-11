@@ -31,7 +31,7 @@ import { DailyBriefingCard } from './DailyBriefingCard';
 import { NeedsYouCard, type GapView } from './NeedsYouCard';
 import { RunningAgentsCard } from './RunningAgentsCard';
 import { ClientReachJourney } from './ClientReachJourney';
-import type { OperationalItem } from './InsightAdvisorCard';
+import type { InstalledAgentRow, OperationalItem } from './InsightAdvisorCard';
 import { briefingLines } from '@/lib/business-os/briefing/briefingLines';
 import { InsightAdvisorCard } from './InsightAdvisorCard';
 import { createLogger } from '@/lib/logger';
@@ -192,6 +192,26 @@ export interface PipelineStage {
   arrived?: number;
   moved_on?: number;
   stuck?: number;
+  /**
+   * How long the people at this stage have been standing there.
+   *
+   * The panel below the map renders this. It was a list of names, and names
+   * were the wrong answer twice over: read from the `conv_pipeline_stuck`
+   * insight they were usually absent (that detector reports at 14 days and
+   * only while unresolved, so a stage could be visibly leaking with an empty
+   * list); read from the contacts themselves they were present but useless,
+   * because this card has no per-contact action — five names out of fifty are
+   * a preview with nothing to press, and they read as all of them.
+   *
+   * A shape instead. Same size for six people or six hundred.
+   */
+  waiting?: {
+    total: number;
+    over30: number;
+    over14: number;
+    recent: number;
+    oldest?: { id: string; name: string; days: number };
+  };
 }
 
 export interface MilestoneData {
@@ -323,6 +343,7 @@ interface LiveDashboardProps {
    */
   assistantSlot?: React.ReactNode;
 }
+
 
 /**
  * The advisor card when the engine has nothing pending.
@@ -788,6 +809,9 @@ export function LiveDashboard({
    * ───────────────────────────────────────────────────────────────────────────
    */
   const [installedAutomationIds, setInstalledAutomationIds] = useState<string[]>([]);
+  /* The same rows the ids came from. Kept beside rather than instead of, so
+     every existing reader of the ids is untouched. */
+  const [installedAgents, setInstalledAgents] = useState<InstalledAgentRow[]>([]);
 
   const loadInstalledAutomations = useCallback(async () => {
     try {
@@ -796,13 +820,27 @@ export function LiveDashboard({
       const body = await response.json();
       if (!body.success) return;
 
-      setInstalledAutomationIds(
-        (body.data as { automationId: string; status: string }[])
-          /* Paused counts as installed. The owner has already answered this
-             question, and re-offering it is how a pause turns into a nag. */
-          .map(row => row.automationId)
-          .filter(Boolean)
-      );
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * KEEP THE ROWS, NOT ONLY THEIR IDS.
+       *
+       * This response already carries what each agent last did and when it
+       * runs next — the same facts the list below the carousel renders — and
+       * every one of them was being thrown away here.
+       *
+       * The card needs them to QUOTE the list rather than describe it. An
+       * owner could not tell which automation was handling their money
+       * because the card wrote its own sentence about coverage while the
+       * list, on the same screen, reported runs and results; once the card
+       * shows the agent's own row the two cannot disagree, because there is
+       * only one fact.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const rows = (body.data as InstalledAgentRow[]).filter(row => row.automationId);
+      setInstalledAgents(rows);
+      /* Paused counts as installed. The owner has already answered this
+         question, and re-offering it is how a pause turns into a nag. */
+      setInstalledAutomationIds(rows.map(row => row.automationId));
     } catch {
       /* Silent: the worst case is a card offering an agent that is already
          installed, which the install itself handles idempotently. */
@@ -945,18 +983,36 @@ export function LiveDashboard({
 
     const repliesOff = inboxChannel.problems.includes('replies_off');
 
-    if (inboxChannel.channels.length > 0 && repliesOff) {
+    /*
+       ── IT TICKS, IT DOES NOT VANISH ────────────────────────────────────────
+       This row was added only while replies were OFF, so switching them on
+       removed it from the list entirely. Every other readiness step stays and
+       shows a tick, so the one that disappears reads as "did my click do
+       anything?" rather than "that is done" — and an owner who wants to check
+       later finds no trace of a step they remember answering.
+
+       Present whenever the channel exists, `completed` from the live answer.
+       `action` only while there is something to do: a finished step offering a
+       button to finish it again is the other half of the same confusion.
+    */
+    if (inboxChannel.channels.length > 0) {
       return [
         ...setupItems,
         {
           id: 'inbox-channel-replies',
-          title: t('leads.inbox.readiness.replies_off_title') || 'Website leads are not being answered',
-          description:
-            t('leads.inbox.readiness.replies_off_desc') ||
-            'Enquiries from your website are being filed, but automatic replies are off, so nobody receives your booking link.',
-          completed: false,
+          /* The step reads as its own state. "Website leads are not being
+             answered" beside a tick is a sentence arguing with its own icon. */
+          title: repliesOff
+            ? t('leads.inbox.readiness.replies_off_title') || 'Website leads are not being answered'
+            : t('leads.inbox.readiness.replies_on_title') || 'Website leads are answered',
+          description: repliesOff
+            ? t('leads.inbox.readiness.replies_off_desc') ||
+              'Enquiries from your website are being filed, but automatic replies are off, so nobody receives your booking link.'
+            : t('leads.inbox.readiness.replies_on_desc') ||
+              'Enquiries from your website are filed, and the automatic reply sends them your booking link.',
+          completed: !repliesOff,
           required: true,
-          action: 'enable_lead_replies',
+          action: repliesOff ? 'enable_lead_replies' : undefined,
         },
       ];
     }
@@ -1229,6 +1285,19 @@ export function LiveDashboard({
   const [selectedNode, setSelectedNode] = useState<string>(() =>
     pipelineStages.length > 0 ? pipelineStages[0].stage_key : 'lead'
   );
+  /*
+   * What the owner actually PRESSED on the map, as opposed to what is merely
+   * highlighted.
+   *
+   * `selectedNode` cannot answer that: it is seeded with the first stage before
+   * anyone has touched anything, and the tip stepper moves it too. The panel
+   * below the map has to tell the two apart — unprompted it should surface the
+   * worst leak, which is the thing most worth knowing and nobody would think to
+   * click; once a station or a gap IS pressed, that choice wins.
+   *
+   * Null until the first press, which is precisely the distinction.
+   */
+  const [pickedKey, setPickedKey] = useState<string | null>(null);
   const [tipIndex, setTipIndex] = useState(0);
   /*
    * Bumped on every marker press so the tip strip can acknowledge one.
@@ -1450,6 +1519,8 @@ export function LiveDashboard({
       window: FunnelWindow;
       /** Cohort flow for the connector BELOW this station, where it is known. */
       flow?: { arrived: number; movedOn: number };
+      /** How long its people have waited. See `PipelineStage.waiting`. */
+      waiting?: PipelineStage['waiting'];
     }[] = [];
 
     // Present whenever the business has a website at all, published or not.
@@ -1480,6 +1551,7 @@ export function LiveDashboard({
           ...(typeof stage.arrived === 'number' && typeof stage.moved_on === 'number'
             ? { flow: { arrived: stage.arrived, movedOn: stage.moved_on } }
             : {}),
+          ...(stage.waiting?.total ? { waiting: stage.waiting } : {}),
         });
       }
       return nodes;
@@ -1635,11 +1707,32 @@ export function LiveDashboard({
     if (leakIndex >= 0) {
       const from = funnelNodes[leakIndex];
       const to = funnelNodes[leakIndex + 1];
+      /*
+       * ── THE SAME TWO NUMBERS THE CONNECTOR USED ──────────────────────────
+       *
+       * This subtracted the STATIONS' own counts. The connector beside it and
+       * the panel below it both work from `gapEndsFor`, which returns the
+       * recorded COHORT where one exists — people who actually arrived and
+       * actually moved on — and only falls back to the stations when it does
+       * not.
+       *
+       * So on any account with flow history the tip printed a different figure
+       * from the gap it was describing, one card above the diagram that
+       * contradicted it. The panel below already carries a note warning
+       * against exactly this: "the figures the RATE was computed from, not the
+       * stations' own counts".
+       *
+       * They agree today only because this account has no recorded history,
+       * which is the worst kind of agreement — it holds until the feature that
+       * would reveal it starts working.
+       */
+      const tipEnds = gapEndsFor(from, to);
+      const tipDropped = Math.max(0, tipEnds.from.count - tipEnds.to.count);
       result.push({
         at: funnelGaps[leakIndex].k,
         n: result.length + 1,
         t: t('tip.followup.title') || 'Follow up',
-        s: `${from.count - to.count} ${t('tip.followup.stuckAt') || 'are still at'} ${from.label} ${t('tip.followup.notYet') || 'and haven\'t reached'} ${to.label}. ${t('tip.followup.desc') || 'A note costs nothing.'}`,
+        s: `${tipDropped} ${t('tip.followup.stuckAt') || 'are still at'} ${from.label} ${t('tip.followup.notYet') || 'and haven\'t reached'} ${to.label}. ${t('tip.followup.desc') || 'A note costs nothing.'}`,
         // A connector has two ends, so naming one of them would be worse than
         // naming neither — the reader would look for a single station.
         about: `${from.label} → ${to.label}`,
@@ -1708,7 +1801,7 @@ export function LiveDashboard({
     }
 
     return result;
-  }, [hasPublished, reachesByLink, funnelGaps, funnelNodes, funnelStations, pendingInsights, stats, t]);
+  }, [hasPublished, reachesByLink, funnelGaps, funnelNodes, funnelStations, gapEndsFor, pendingInsights, stats, t]);
 
   /*
    * `FirstLightMilestones` and the `milestones` memo that fed it are gone.
@@ -1724,18 +1817,12 @@ export function LiveDashboard({
    * performance figure rather than a milestone — it belongs with the funnel.
    */
 
-  /** Says which period a number covers, so no figure sits unlabelled. */
-  const windowLabel = useCallback(
-    (window: FunnelWindow): string => {
-      if (window === 'visitors') return t('window.visitors') || 'last 30 days';
-      if (window === 'period') return t('window.period') || 'this month';
-      // A cohort is not a moment: these are the people who ARRIVED in the
-      // window, which is a different claim from how many are standing there.
-      if (window === 'flow') return t('window.flow') || 'reached this step';
-      return t('window.pipeline') || 'right now';
-    },
-    [t]
-  );
+  /*
+   * `windowLabel` lived here and is gone with its only caller, the period line
+   * under the map. The `window.*` strings it read are left in the translation
+   * files: `FunnelWindow` still carries the distinction, and whatever replaces
+   * that line will want the same four phrases.
+   */
 
   /**
    * The drawer, for leaks only.
@@ -1755,45 +1842,183 @@ export function LiveDashboard({
    * while the panel called it healthy — and re-deriving it here is what makes
    * that impossible rather than merely unlikely.
    */
+  /*
+   * A stage's waiting time, as the three figures and the one name the panel
+   * shows. Shared by both panels so a station and the gap leaving it describe
+   * the same people identically.
+   *
+   * The buckets are a census and sum to `total`; they are not a sample, which
+   * is exactly what a list of names could not promise.
+   */
+  const waitingSummary = useCallback(
+    (waiting: PipelineStage['waiting']) => {
+      if (!waiting?.total) return null;
+      const dayWord = t('gaps.days_short') || 'd';
+      /*
+       * FIRST STRONG ISOLATE … POP DIRECTIONAL ISOLATE.
+       *
+       * A contact's name carries its own direction and is dropped into a
+       * sentence that may run the other way: "Website contact" inside a Hebrew
+       * line. Without isolation the punctuation around it belongs to neither
+       * side and gets reordered — the comma and the day count end up on the
+       * wrong side of the name, which is exactly what was reported.
+       *
+       * FSI rather than LRI because the name's direction is not ours to
+       * assume: a Hebrew-named contact in an English sentence has the same
+       * problem mirrored, and FSI works that out from the text itself.
+       */
+      const isolate = (value: string) => `\u2068${value}\u2069`;
+      return {
+        longest: waiting.oldest
+          ? (t('drawer.longest') || 'Longest wait: {name}, {d}{u}')
+              .replace('{name}', isolate(waiting.oldest.name))
+              /* The figure and its unit are ONE run — "14 ימים" split by a
+                 bidi boundary puts the number after the word. */
+              .replace('{d}{u}', isolate(`${waiting.oldest.days}${dayWord}`))
+          : null,
+        stats: [
+          {
+            v: String(waiting.over30),
+            l: t('drawer.bucket.over30') || 'Over 30 days',
+            s: '',
+            /* Red only when there is something to be red about. A zero in the
+               worst bucket is good news and must not be coloured as a fault. */
+            bad: waiting.over30 > 0,
+          },
+          {
+            v: String(waiting.over14),
+            l: t('drawer.bucket.over14') || '14 to 30 days',
+            s: '',
+          },
+          {
+            v: String(waiting.recent),
+            l: t('drawer.bucket.recent') || 'Under 14 days',
+            s: '',
+          },
+        ],
+      };
+    },
+    [t]
+  );
+
   const gapDrawer = useMemo<DrawerContent | null>(() => {
-    // The rule lives in pickLeak, where it is tested: a leak opens this panel
-    // whether or not anyone clicked it, a clicked leak wins over a worse one,
-    // and with several leaks the worst shows rather than the first.
-    const leak = pickLeak(funnelNodes, hasPublished, selectedNode, gapEndsFor);
-    if (!leak) return null;
+    // The verdict still comes from pickLeak, where it is tested, so the panel
+    // and the connector above it cannot disagree about whether a gap leaks.
+    // What changed is WHEN: this opens on a press and never on its own.
+    /*
+     * ── CLOSED UNTIL ASKED FOR ───────────────────────────────────────────────
+     *
+     * This panel used to open on its own whenever the funnel leaked, on the
+     * reasoning that a leak is worth surfacing unprompted. On a page already
+     * carrying the verdict, the timeline, the readiness list and the work
+     * queue, that reasoning cost more than it bought: the map states the leak
+     * in red directly above, so the card arrived as a second telling of
+     * something the reader had just been told, and it was tall.
+     *
+     * So it is now a drill-down and nothing else. Press a circle or a
+     * connector, get the detail; press nothing, and the map is just a map.
+     */
+    if (!pickedKey) return null;
+
+    /*
+     * ── A PRESSED STATION SHOWS WHO IS STANDING AT IT ────────────────────────
+     *
+     * The circles were already wired to `onSelectNode`, but `pickLeak` matches
+     * its argument against GAP keys (`g1`, `g2`), so a station key fell through
+     * to "the worst leak" and pressing a circle changed nothing below. Half the
+     * map was inert.
+     *
+     * Only when the station has names to show. A panel that opens on "nothing
+     * here" is the click-returns-nothing case this file already refuses, and
+     * the visitors station has no contacts to name at all.
+     */
+    const pressedStation = funnelNodes.find(node => node.key === pickedKey);
+
+    if (pressedStation) {
+      const summary = waitingSummary(pressedStation.waiting);
+      if (!summary) return null;
+
+      return {
+        ey: pressedStation.label,
+        t: (t('drawer.station.waiting') || '{n} waiting here')
+          .replace('{n}', String(pressedStation.waiting!.total)),
+        p: summary.longest ?? '',
+        stats: summary.stats,
+        pl: {
+          tx: t('drawer.gap.pilot') || 'Pick up where they stopped.',
+          act: t('drawer.gap.openCrm') || 'Open the CRM',
+          actKey: 'view_funnel',
+        },
+      };
+    }
+
+    /*
+     * A connector was pressed. It must be THE one pressed: `pickLeak` falls
+     * back to the worst leak when its key matches nothing, which is right when
+     * the panel opens by itself and wrong now that it only opens on a press —
+     * pressing a healthy connector would otherwise open a panel about a
+     * different pair of stages entirely.
+     */
+    const leak = pickLeak(funnelNodes, hasPublished, pickedKey, gapEndsFor);
+    if (!leak || leak.key !== pickedKey) return null;
 
     const { from, to } = leak;
 
-    // resolveGap returns 'empty' at from.count 0 and 'tooEarly' below
-    // MIN_TO_JUDGE, both before 'leaking' — so this cannot divide by zero.
     /*
-     * The same two numbers the connector used, not the stations' own counts —
-     * otherwise this panel would print a different percentage from the gap it
-     * was opened by.
+     * ── HOW LONG, NOT WHO ────────────────────────────────────────────────────
+     *
+     * This panel restated the connector above it and stopped there: the same
+     * sentence, the same figure, one card lower. Three surfaces said "5 dropped
+     * off" and none of them said anything further.
+     *
+     * It answered that with a list of names, and names were wrong here. The
+     * card carries no per-contact action, so five names are a preview with
+     * nothing to press — and five out of fifty read as all of them. What an
+     * owner can act on is the SHAPE: how many have been stuck long enough to
+     * matter, and which single contact to open first.
+     *
+     * Taken from the FROM station, since those are the people sitting in the
+     * stage they failed to leave; the `to` end is where they did not arrive,
+     * and nobody is waiting there to be chased.
      */
-    const ends = gapEndsFor(from, to);
-    const rate = Math.round((ends.to.count / ends.from.count) * 100);
+    const summary = waitingSummary(from.waiting);
 
     return {
       ey: `${t('drawer.gap.between') || 'Between'} ${from.label} ${t('drawer.gap.and') || 'and'} ${to.label}`,
       t: `${leak.dropped} ${t('drawer.gap.dropped') || 'dropped off'}`,
-      p: t('drawer.gap.dropped.desc') || 'Some contacts didn\'t move to the next stage.',
+      /* The longest wait replaces the generic line where one is known: it is
+         the same sentence's worth of space carrying a fact instead of a
+         restatement. */
+      p: summary?.longest ?? (t('drawer.gap.dropped.desc') || 'Some contacts didn\'t move to the next stage.'),
       hero: true,
-      stats: [
-        /*
-         * The figures the RATE was computed from, not the stations' own counts.
-         *
-         * Each wears its own period, because the two ends of a gap can be
-         * counted over different spans and an unlabelled pair invites the
-         * reader to treat them as one flow. Showing the stations here while the
-         * percentage came from a cohort would print two numbers that do not
-         * divide into the number beside them.
-         */
-        { v: ends.from.count.toString(), l: from.label, s: windowLabel(ends.from.window) },
-        { v: ends.to.count.toString(), l: to.label, s: `${rate}%`, bad: true },
-      ],
+      /*
+       * The aging buckets — NOT the two station counts and the rate this grid
+       * used to hold. Those were the same figures the circles directly above
+       * already show, in boxes twice their size, and the percentage belongs to
+       * the connector that drew it. These three are the one thing no other
+       * surface on the page says.
+       */
+      ...(summary
+        ? {
+            stats: summary.stats,
+            /*
+             * The way out. A panel that reports a stage is clogged and offers
+             * nothing to do about it leaves the owner to work out where to go.
+             *
+             * `view_funnel` is an action the page already handles — it lands on
+             * the contacts list — so this adds a button without adding a route.
+             * The label is translated and the KEY travels separately, which is
+             * what `actKey` was added to `pl` for.
+             */
+            pl: {
+              tx: t('drawer.gap.pilot') || 'Pick up where they stopped.',
+              act: t('drawer.gap.openCrm') || 'Open the CRM',
+              actKey: 'view_funnel',
+            },
+          }
+        : {}),
     };
-  }, [selectedNode, funnelNodes, hasPublished, windowLabel, gapEndsFor, t]);
+  }, [pickedKey, funnelNodes, hasPublished, gapEndsFor, waitingSummary, t]);
 
 
   /*
@@ -2070,6 +2295,17 @@ export function LiveDashboard({
   // Handlers
   const handleNodeSelect = useCallback((nodeKey: string) => {
     setSelectedNode(nodeKey);
+    /*
+     * A real press, which is what opens the panel below on this station or
+     * gap. The map calls this for BOTH — a circle with its station key, a
+     * connector with its gap key — so one handler covers both halves of
+     * "clicking the circles or the leak link opens the data below".
+     *
+     * Pressing the same one again closes it. Without that the panel has no
+     * off switch: it opens on the first press and the page is taller from
+     * then on, which is the weight this drill-down was meant to remove.
+     */
+    setPickedKey(current => (current === nodeKey ? null : nodeKey));
     const tipForNode = tips.findIndex(tip => tip.at === nodeKey);
     if (tipForNode >= 0) {
       setTipIndex(tipForNode);
@@ -2931,29 +3167,30 @@ export function LiveDashboard({
             ghost={ghost}
           />
 
-          {/* Present whenever the funnel is leaking, clicked or not. Null
-              otherwise, and FunnelDrawer renders nothing for null. */}
-          <FunnelDrawer content={gapDrawer} />
+          {/*
+            NO PERIOD CAPTION.
 
-          {/* The map's numbers don't share one period and can't be made to: a
-              pipeline is where people stand now, visitors are a rolling window.
-              Saying which is which beats leaving four unlabelled figures in a
-              row and letting the reader assume they're comparable. */}
-          {hasPublished && (
-            <p
-              style={{
-                fontSize: '12px',
-                color: 'var(--v2-text-secondary)',
-                margin: '8px 2px 0',
-                lineHeight: 1.45,
-              }}
-            >
-              {t('funnel.windows', {
-                visitors: windowLabel('visitors'),
-                pipeline: windowLabel('pipeline'),
-              })}
-            </p>
-          )}
+            A line here used to spell out that the map mixes windows — visitors
+            over 30 days, stage counts as they stand now. Removed on the owner's
+            call: the dashboard was carrying too much text, and this was a
+            sentence every reader paid for while few needed it.
+
+            What it protected against is still true and is now undefended: the
+            figures read left to right as one flow, so a stage count larger than
+            the one before it invites "how did that grow?". If that question
+            ever comes back, the fix is to put each window on its own station
+            rather than to restore a paragraph under the map.
+          */}
+          {/* The drill-down. Null until a circle or a connector is pressed, and
+              FunnelDrawer renders nothing for null.
+
+              `onAction` so the panel's own button works; `onClose` so the panel
+              can be put away without hunting for the station that opened it. */}
+          <FunnelDrawer
+            content={gapDrawer}
+            onAction={action => onAction?.(action)}
+            onClose={() => setPickedKey(null)}
+          />
         </>
       )}
 
@@ -3008,6 +3245,7 @@ export function LiveDashboard({
              off the carousel without a page reload. */
           onAgentInstalled={refreshInsights}
           installedAutomationIds={installedAutomationIds}
+          installedAgents={installedAgents}
         />
       ) : (
         <AdvisorIdleCard

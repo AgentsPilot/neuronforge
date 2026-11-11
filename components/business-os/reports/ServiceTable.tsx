@@ -43,6 +43,20 @@ export interface ServiceRow {
    * the same discipline `HealthRows` keeps about absent figures.
    */
   lost?: number;
+  /**
+   * Money that came BACK out of this service in the period.
+   *
+   * Optional for the same reason `lost` is: a stored summary written before
+   * this existed carries no such field, and a missing figure must read as
+   * "not known" rather than as a confident zero.
+   *
+   * ALREADY NETTED OFF `revenue` by `serviceRevenueMap`, so the two are never
+   * added together. It is reported because the netted figure cannot be read
+   * backwards: a service that earned 2,000 and refunded 1,000 looks exactly
+   * like one that earned 1,000 and refunded nothing, and those are different
+   * businesses.
+   */
+  refunded?: number;
 }
 
 export interface ServiceTableProps {
@@ -94,11 +108,14 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
     lost: ordered.some(s => typeof s.lost === 'number')
       ? ordered.reduce((sum, s) => sum + (s.lost ?? 0), 0)
       : null,
+    refunded: ordered.some(s => typeof s.refunded === 'number')
+      ? ordered.reduce((sum, s) => sum + (s.refunded ?? 0), 0)
+      : null,
   };
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse min-w-[420px]">
+      <table className="w-full border-collapse min-w-[500px]">
         <thead>
           <tr>
             <th
@@ -124,6 +141,15 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
               className="px-[18px] py-2.5 text-end text-[11px] font-bold uppercase tracking-[0.07em] text-[var(--v2-text-muted)] border-b border-[var(--v2-border)] whitespace-nowrap"
             >
               {t('reports.col_lost')}
+            </th>
+            {/* Last, because it is the smallest of the three money columns and
+                the least often non-zero. Revenue stays beside the payment count
+                it belongs to. */}
+            <th
+              scope="col"
+              className="px-[18px] py-2.5 text-end text-[11px] font-bold uppercase tracking-[0.07em] text-[var(--v2-text-muted)] border-b border-[var(--v2-border)] whitespace-nowrap"
+            >
+              {t('reports.col_refunded')}
             </th>
           </tr>
         </thead>
@@ -164,6 +190,16 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
               }
             >
               {totals.lost === null ? '—' : money(totals.lost)}
+            </td>
+            <td
+              className="px-[18px] py-[11px] text-end text-sm font-bold tabular-nums whitespace-nowrap"
+              style={
+                totals.refunded !== null && totals.refunded > 0
+                  ? { color: REPORTS_COLORS.WARNING }
+                  : { color: 'var(--v2-text-muted)' }
+              }
+            >
+              {totals.refunded === null ? '—' : money(totals.refunded)}
             </td>
           </tr>
 
@@ -207,6 +243,19 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
                 }
               >
                 {row.lost && row.lost > 0 ? money(row.lost) : '—'}
+              </td>
+              {/* Same rule as the column beside it: a figure only where there
+                  is one, so a column of zeroes does not teach the reader to
+                  skip the one row that matters. */}
+              <td
+                className="px-[18px] py-[11px] text-end text-sm tabular-nums whitespace-nowrap"
+                style={
+                  row.refunded && row.refunded > 0
+                    ? { color: REPORTS_COLORS.WARNING, fontWeight: 600 }
+                    : { color: 'var(--v2-text-muted)' }
+                }
+              >
+                {row.refunded && row.refunded > 0 ? money(row.refunded) : '—'}
               </td>
             </tr>
           ))}

@@ -91,6 +91,42 @@ export class BusinessOsPluginExecutor extends BasePluginExecutor {
     return null;
   }
 
+  /**
+   * The fields a find RETURNS, which must be the fields the plugin PROMISED.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Asking for these explicitly, rather than letting the compiler default.
+   *
+   * `buildSelect` falls back to `entity.displayFields` when a query carries no
+   * `select` — the four or five columns a CARD shows. That is right for the
+   * chat, which renders rows to a reader. It is wrong here, because the
+   * generated plugin definition advertises a find's rows as
+   * `readableFields(entity)` (see `scripts/generate-business-os-plugin.ts`),
+   * which is the whole readable surface. So the schema promised a column the
+   * runtime did not return, and a step referencing one went silently empty.
+   *
+   * Measured on the receptionist, 2026-11-10: `emails.displayFields` is
+   * `['subject','to_email','status','sent_at']` and does not include
+   * `contact_id`, so `{{client_history.rows[0].contact_id}}` resolved to
+   * nothing and `create_activities` refused the write with "needs a real value
+   * for: contact_id" on every single run. The reference was correct; the row
+   * simply never carried the column.
+   *
+   * An agent is not a card. It reads rows to make decisions and to fill the
+   * next step's parameters, so what it can reference has to be what the
+   * definition it was generated against said it could reference.
+   *
+   * The chat is untouched: it builds its own `FindQuery` and never comes
+   * through this executor.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private readableFieldsOf(entityKey: string): string[] | undefined {
+    const fields = CATALOG.entities[entityKey]?.fields;
+    if (!fields) return undefined;
+    const readable = Object.keys(fields).filter(key => fields[key].readable !== false);
+    return readable.length ? readable : undefined;
+  }
+
   private async find(userId: string, entityKey: string, parameters: any): Promise<any> {
     const query: FindQuery = {
       op: 'find',
@@ -98,6 +134,10 @@ export class BusinessOsPluginExecutor extends BasePluginExecutor {
       where: (parameters?.filters ?? []) as Predicate[],
       order_by: parameters?.order_by as SortSpec[] | undefined,
       limit: typeof parameters?.limit === 'number' ? parameters.limit : undefined,
+      /* A caller may still narrow it; absent that, return what was advertised. */
+      select: (Array.isArray(parameters?.select) && parameters.select.length
+        ? parameters.select
+        : this.readableFieldsOf(entityKey)) as string[] | undefined,
     };
 
     const result = await runBusinessQuery(query, { userId, consumer: 'kernel' });

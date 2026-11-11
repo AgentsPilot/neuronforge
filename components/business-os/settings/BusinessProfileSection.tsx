@@ -1099,7 +1099,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
                   <button
                     key={opt.value}
                     onClick={() => { setOrgSettings(o => ({ ...o, industry: opt.value })); setOpenDropdown(null); }}
-                    className={`w-full px-3 py-2.5 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${orgSettings.industry === opt.value ? 'bg-[var(--v2-bg)]' : ''}`}
+                    className={`w-full px-3 py-2.5 text-sm text-[var(--v2-text-primary)] flex items-center justify-between hover:bg-[var(--v2-bg)] ${orgSettings.industry === opt.value ? 'bg-[var(--v2-bg)]' : ''}`}
                   >
                     <span className="truncate">{opt.label}</span>
                     {orgSettings.industry === opt.value && <Check className="w-4 h-4 shrink-0" style={{ color: CONFIG_ACCENT }} />}
@@ -1134,7 +1134,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
                   <button
                     key={opt.value}
                     onClick={() => { setOrgSettings(o => ({ ...o, company_size: opt.value })); setOpenDropdown(null); }}
-                    className={`w-full px-3 py-2.5 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${orgSettings.company_size === opt.value ? 'bg-[var(--v2-bg)]' : ''}`}
+                    className={`w-full px-3 py-2.5 text-sm text-[var(--v2-text-primary)] flex items-center justify-between hover:bg-[var(--v2-bg)] ${orgSettings.company_size === opt.value ? 'bg-[var(--v2-bg)]' : ''}`}
                   >
                     <span className="truncate">{opt.label}</span>
                     {orgSettings.company_size === opt.value && <Check className="w-4 h-4 shrink-0" style={{ color: CONFIG_ACCENT }} />}
@@ -1169,7 +1169,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
                   <button
                     key={opt.value}
                     onClick={() => { setOrgSettings(o => ({ ...o, primary_goal: opt.value })); setOpenDropdown(null); }}
-                    className={`w-full px-3 py-2.5 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${orgSettings.primary_goal === opt.value ? 'bg-[var(--v2-bg)]' : ''}`}
+                    className={`w-full px-3 py-2.5 text-sm text-[var(--v2-text-primary)] flex items-center justify-between hover:bg-[var(--v2-bg)] ${orgSettings.primary_goal === opt.value ? 'bg-[var(--v2-bg)]' : ''}`}
                   >
                     <span className="truncate">{opt.label}</span>
                     {orgSettings.primary_goal === opt.value && <Check className="w-4 h-4 shrink-0" style={{ color: CONFIG_ACCENT }} />}
@@ -1204,7 +1204,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
                   <button
                     key={opt.value}
                     onClick={() => { setOrgSettings(o => ({ ...o, technical_level: opt.value })); setOpenDropdown(null); }}
-                    className={`w-full px-3 py-2.5 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${orgSettings.technical_level === opt.value ? 'bg-[var(--v2-bg)]' : ''}`}
+                    className={`w-full px-3 py-2.5 text-sm text-[var(--v2-text-primary)] flex items-center justify-between hover:bg-[var(--v2-bg)] ${orgSettings.technical_level === opt.value ? 'bg-[var(--v2-bg)]' : ''}`}
                   >
                     <span className="truncate">{opt.label}</span>
                     {orgSettings.technical_level === opt.value && <Check className="w-4 h-4 shrink-0" style={{ color: CONFIG_ACCENT }} />}

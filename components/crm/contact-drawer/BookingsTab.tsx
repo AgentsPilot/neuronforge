@@ -15,6 +15,18 @@ import {
    */
   UserCog, Bot,
   Phone, AtSign, Eye, ExternalLink, Save, X, RotateCcw, Ban, FileText, Paperclip,
+  /*
+   * A SIGNATURE, on the version that carries one.
+   *
+   * `PenLine` rather than `Check`: a tick already means "done" on the journey
+   * rail above, and a signature is not a step being completed — it is a person
+   * putting their name to one.
+   */
+  PenLine,
+  /* The per-version PDF link on the quote journey. */
+  Download,
+  /* Send the quote again, for a client who cannot find the email. */
+  Send,
   // The journey rail's "done" mark. A bare tick inside the filled disc, not
   // `CheckCircle2`, which would draw a ring inside a ring.
   Check,
@@ -483,6 +495,15 @@ interface BookingsTabProps {
    * words lived only on the client's copy.
    */
   onViewProposal?: (bookingId: string, proposalId: string) => void;
+  /**
+   * Send a live version again, unchanged.
+   *
+   * Not a reminder — that is `onRemind`, with its own copy and a seven-day
+   * cooldown for a client who HAS read the quote. This is for one who never
+   * found the email, and must not be refused by a cooldown on a nudge nobody
+   * sent them.
+   */
+  onResendProposal?: (proposalId: string) => void;
   onSendInvoice?: (invoiceId: string, bookingId: string) => Promise<void>;
   /**
    * Send the refund confirmation for one stage again.
@@ -691,8 +712,13 @@ interface ProposalVersion {
   /** When this version stopped — decided, or sent and still open. */
   at: string | null;
   isCurrent: boolean;
-  /** The document sent with this version, if any. */
+  /** The first file sent with this version, if any. */
   documentName: string | null;
+  /** How many files in total, so the row can show "+2" rather than imply one. */
+  attachmentCount: number;
+  /** Who signed this version, and when. Null when none was asked for or given. */
+  signedBy: string | null;
+  signedAt: string | null;
   /** Why the client declined THIS version, in their own words and ours. */
   declineReason: string | null;
   declineNote: string | null;
@@ -722,7 +748,21 @@ const VERSION_TONES: Record<string, { dot: string; text: string }> = {
    * painting it like a replaced version would hide it.
    */
   stopped: { dot: '#B54708', text: '#B54708' },
-  viewed: { dot: '#4F6EF7', text: '#3450C7' },
+  /*
+   * THE CLIENT OPENED IT — and yes, we genuinely know.
+   *
+   * `markViewed` fires the first time the quote page is fetched with a valid
+   * token, so `viewed` means a human followed the link. It is the most useful
+   * state on this strip: a quote sitting at `sent` may never have arrived,
+   * while one at `viewed` has been read and not answered, which is a different
+   * conversation.
+   *
+   * ORANGE, the platform's `#F97316`, not the blue it wore. Blue reads as
+   * neutral information everywhere else in this product; this is something
+   * waiting on the owner. Distinct from `expired`'s amber by being the hotter
+   * end of the same family, and the WORD beside it says which is which.
+   */
+  viewed: { dot: '#F97316', text: '#C2410C' },
   sent: { dot: '#9AA1B2', text: 'var(--v2-text-muted)' },
 };
 
@@ -793,6 +833,7 @@ export function BookingsTab({
   onExtendQuote,
   onStopQuote,
   onViewProposal,
+  onResendProposal,
   onSendInvoice,
   onResendRefundEmail,
   onResendMail,
@@ -5500,13 +5541,24 @@ export function BookingsTab({
                                                     the decline note below is a paragraph, which
                                                     cannot legally sit inside a button.
                                                   */}
+                                                  {/*
+                                                    ONE LINE: the version, then what can be done
+                                                    with it.
+
+                                                    The actions are SIBLINGS of the button, not
+                                                    children — a link or a button nested inside a
+                                                    button is invalid markup that swallows its own
+                                                    clicks. The row keeps `flex-1` so they sit at
+                                                    its end rather than under it.
+                                                  */}
+                                                  <div className="flex items-center gap-2">
                                                   <button
                                                     type="button"
                                                     onClick={e => {
                                                       e.stopPropagation();
                                                       onViewProposal?.(booking.id, version.id);
                                                     }}
-                                                    className="flex w-full items-center gap-2 text-start hover:opacity-80 transition-opacity"
+                                                    className="flex min-w-0 flex-1 items-center gap-2 text-start hover:opacity-80 transition-opacity"
                                                     title={t('crm.proposal.view') || 'View quote'}
                                                   >
                                                     {/* A dot, not a coloured pill per row —
@@ -5559,6 +5611,36 @@ export function BookingsTab({
                                                         <span className="truncate max-w-[110px]">
                                                           {version.documentName}
                                                         </span>
+                                                        {/* Counted, not listed: the row has to
+                                                            stay one line, and "+2" says there is
+                                                            more without spending the width. */}
+                                                        {version.attachmentCount > 1 && (
+                                                          <span className="shrink-0 tabular-nums">
+                                                            +{version.attachmentCount - 1}
+                                                          </span>
+                                                        )}
+                                                      </span>
+                                                    )}
+
+                                                    {/* WHO AGREED, on the version they agreed
+                                                        to. The comment above this block asks
+                                                        "which one did they agree to"; a
+                                                        signature is the strongest answer there
+                                                        is, so it sits beside the question. */}
+                                                    {version.signedBy && (
+                                                      <span
+                                                        className="flex min-w-0 items-center gap-1 text-[11.5px]"
+                                                        style={{ color: '#15864F' }}
+                                                        title={
+                                                          version.signedAt
+                                                            ? `${version.signedBy} · ${formatShortDate(version.signedAt)}`
+                                                            : version.signedBy
+                                                        }
+                                                      >
+                                                        <PenLine className="h-3 w-3 shrink-0" />
+                                                        <span className="truncate max-w-[90px]">
+                                                          {version.signedBy}
+                                                        </span>
                                                       </span>
                                                     )}
 
@@ -5569,6 +5651,72 @@ export function BookingsTab({
                                                       {version.at ? formatShortDate(version.at) : ''}
                                                     </span>
                                                   </button>
+
+                                                  {/*
+                                                    THIS version's PDF, including a superseded
+                                                    one — "what did version 1 say" is the
+                                                    question the journey exists to answer, and
+                                                    it cannot be answered by a link that always
+                                                    serves the current offer.
+
+                                                    Its own anchor, OUTSIDE the button above:
+                                                    the row is already a button, and a link
+                                                    nested inside one is invalid markup that
+                                                    swallows its own clicks.
+
+                                                    `draft` is excluded — nothing was sent, so
+                                                    there is no version to re-read.
+                                                  */}
+                                                  {version.status !== 'draft' && (
+                                                    <a
+                                                      href={`/api/business-os/proposals/${version.id}/pdf`}
+                                                      target="_blank"
+                                                      rel="noopener noreferrer"
+                                                      onClick={e => e.stopPropagation()}
+                                                      title={t('crm.booking.version_pdf') || 'PDF'}
+                                                      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] hover:bg-[var(--v2-bg)]"
+                                                      style={{ color: 'var(--v2-text-muted)' }}
+                                                    >
+                                                      <Download className="h-3 w-3 shrink-0" />
+                                                      {t('crm.booking.version_pdf') || 'PDF'}
+                                                    </a>
+                                                  )}
+
+                                                  {/*
+                                                    SEND IT AGAIN.
+                                                    ─────────────────────────────────────────
+                                                    Clients lose emails, and a quote they cannot
+                                                    find is a sale that stalls for no reason.
+
+                                                    ONLY while it is `sent` and unopened.
+
+                                                    `viewed` means the page was fetched with a
+                                                    valid token — the client has the quote and
+                                                    read it. Resending answers a question they
+                                                    did not ask; what they need is a nudge, and
+                                                    that is what Remind is for.
+
+                                                    A draft was never sent, and anything
+                                                    answered, withdrawn or expired would land on
+                                                    "no longer available". The route refuses all
+                                                    of those too; this just does not offer them.
+                                                  */}
+                                                  {version.status === 'sent' && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={e => {
+                                                        e.stopPropagation();
+                                                        onResendProposal?.(version.id);
+                                                      }}
+                                                      title={t('crm.booking.version_resend') || 'Send again'}
+                                                      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] hover:bg-[var(--v2-bg)]"
+                                                      style={{ color: 'var(--v2-text-muted)' }}
+                                                    >
+                                                      <Send className="h-3 w-3 shrink-0" />
+                                                      {t('crm.booking.version_resend') || 'Send again'}
+                                                    </button>
+                                                  )}
+                                                  </div>
 
                                                   {/* What the client said, under
                                                       the version they said it

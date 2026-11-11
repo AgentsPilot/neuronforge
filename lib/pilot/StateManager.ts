@@ -22,6 +22,7 @@ import { ExecutionService } from '@/lib/services/ExecutionService';
 import { ExecutionResultsBuilder } from './ExecutionResultsBuilder';
 import { MetricsCollector } from './MetricsCollector';
 import { SLAEvaluator } from '@/lib/services/SLAEvaluator';
+import { createLogger } from '@/lib/logger';
 
 // Create admin client inline to avoid module initialization issues
 const supabaseAdmin = createClient(
@@ -34,6 +35,8 @@ const supabaseAdmin = createClient(
     }
   }
 );
+
+const logger = createLogger({ module: 'StateManager', service: 'workflow-pilot' });
 
 export class StateManager {
   private supabase: SupabaseClient;
@@ -71,11 +74,11 @@ export class StateManager {
       // Subscribe to the channel
       this.realTimeChannel.subscribe((status: string) => {
         if (status === 'SUBSCRIBED') {
-          console.log(`[StateManager] Real-time channel subscribed for execution: ${executionId}`);
+          logger.debug({ executionId }, 'Real-time channel subscribed for execution');
         }
       });
     } catch (error) {
-      console.error('[StateManager] Failed to setup real-time channel:', error);
+      logger.error({ err: error }, 'Failed to setup real-time channel');
       // Don't fail execution if real-time setup fails
     }
   }
@@ -99,9 +102,9 @@ export class StateManager {
           ...update,
         },
       });
-      console.log(`[StateManager] Broadcasted progress update for execution: ${executionId}`);
+      logger.debug({ executionId }, 'Broadcasted progress update for execution');
     } catch (error) {
-      console.error('[StateManager] Failed to broadcast progress:', error);
+      logger.error({ err: error }, 'Failed to broadcast progress');
       // Don't fail execution if broadcast fails
     }
   }
@@ -115,9 +118,9 @@ export class StateManager {
       try {
         await this.supabase.removeChannel(this.realTimeChannel);
         this.realTimeChannel = null;
-        console.log('[StateManager] Real-time channel cleaned up');
+        logger.debug('Real-time channel cleaned up');
       } catch (error) {
-        console.error('[StateManager] Failed to cleanup real-time channel:', error);
+        logger.error({ err: error }, 'Failed to cleanup real-time channel');
       }
     }
   }
@@ -158,13 +161,13 @@ export class StateManager {
 
       // Log quota status
       const remaining = quota.remaining === null ? '∞' : quota.remaining.toLocaleString();
-      console.log(`[StateManager] Execution quota check: ${quota.used}/${quota.quota ?? '∞'} used, ${remaining} remaining`);
+      logger.debug({ used: quota.used, quota: quota.quota ?? '∞', remaining }, 'Execution quota check');
 
       if (quota.isNearLimit) {
-        console.warn(`[StateManager] ⚠️  User ${userId} is near execution limit (${(quota.percentageUsed * 100).toFixed(1)}% used)`);
+        logger.warn({ userId, percentageUsed: Number((quota.percentageUsed * 100).toFixed(1)) }, 'User is near execution limit');
       }
     } catch (error: any) {
-      console.error('[StateManager] Execution quota check failed:', error);
+      logger.error({ err: error }, 'Execution quota check failed');
       throw error;
     }
 
@@ -196,16 +199,16 @@ export class StateManager {
     // Use frontend-provided execution ID if available (for calibration polling)
     if (providedExecutionId) {
       insertPayload.id = providedExecutionId;
-      console.log(`[StateManager] Using frontend-provided execution ID: ${providedExecutionId}`);
+      logger.debug({ providedExecutionId }, 'Using frontend-provided execution ID');
     }
 
-    console.log(`[StateManager] Attempting to insert execution record with payload:`, {
+    logger.debug({
       agent_id: agent.id,
       user_id: userId,
       run_mode: insertPayload.run_mode,
       has_custom_id: !!providedExecutionId,
       total_steps: insertPayload.total_steps
-    });
+    }, 'Attempting to insert execution record with payload');
 
     const { data, error } = await supabaseAdmin
       .from('workflow_executions')
@@ -214,29 +217,26 @@ export class StateManager {
       .single();
 
     if (error) {
-      console.error('[StateManager] Failed to create execution. Error details:', {
-        message: error.message,
-        code: error.code,
-        details: error.details,
-        hint: error.hint,
+      logger.error({
+        err: error,
         providedExecutionId,
         payload: {
           agent_id: agent.id,
           user_id: userId,
           run_mode: insertPayload.run_mode
         }
-      });
+      }, 'Failed to create execution');
       throw new Error(`Failed to create workflow execution: ${error.message}`);
     }
 
-    console.log(`[StateManager] ✅ Created execution record: ${data.id}`);
+    logger.info({ dataId: data.id }, 'Created execution record');
 
     // Record the execution to increment quota usage
     try {
       await executionService.recordExecution(userId);
-      console.log(`[StateManager] ✅ Recorded execution usage for user ${userId}`);
+      logger.info({ userId }, 'Recorded execution usage for user');
     } catch (error: any) {
-      console.error('[StateManager] Failed to record execution usage (non-critical):', error.message);
+      logger.error({ err: error }, 'Failed to record execution usage (non-critical)');
       // Don't fail the execution if quota recording fails - it's already started
     }
 
@@ -259,7 +259,7 @@ export class StateManager {
   async checkpoint(context: ExecutionContext): Promise<void> {
     // Skip checkpointing if progress tracking is disabled
     if (!this.progressTrackingEnabled) {
-      console.log('[StateManager] Progress tracking disabled, skipping checkpoint');
+      logger.debug('Progress tracking disabled, skipping checkpoint');
       return;
     }
 
@@ -269,7 +269,7 @@ export class StateManager {
     try {
       // CRITICAL: Preserve cached_outputs from database before updating execution_trace
       // ExecutionOutputCache writes directly to DB, but we have in-memory executionTrace
-      console.log(`[StateManager] 🔍 Reading current execution_trace to preserve cached_outputs...`);
+      logger.debug('Reading current execution_trace to preserve cached_outputs...');
       const { data: currentExecution } = await supabaseAdmin
         .from('workflow_executions')
         .select('execution_trace')
@@ -280,7 +280,7 @@ export class StateManager {
       const cachedOutputs = currentTrace.cached_outputs || {};
       const cachedCount = Object.keys(cachedOutputs).length;
 
-      console.log(`[StateManager] 🔍 Found ${cachedCount} cached outputs to preserve in checkpoint`);
+      logger.debug({ cachedCount }, 'Found cached outputs to preserve in checkpoint');
 
       // Merge cached_outputs from database into the trace we're about to save
       const mergedTrace = {
@@ -305,10 +305,10 @@ export class StateManager {
         .eq('id', context.executionId);
 
       if (error) {
-        console.error('[StateManager] Checkpoint failed:', error);
+        logger.error({ err: error }, 'Checkpoint failed');
         // Don't throw - checkpoint failures should not stop execution
       } else {
-        console.log(`[StateManager] Checkpointed execution: ${context.executionId}`);
+        logger.debug({ executionId: context.executionId }, 'Checkpointed execution');
 
         // Broadcast progress update if real-time updates enabled
         await this.broadcastProgress(context.executionId, {
@@ -323,7 +323,7 @@ export class StateManager {
         });
       }
     } catch (err) {
-      console.error('[StateManager] Checkpoint error:', err);
+      logger.error({ err }, 'Checkpoint error');
       // Don't throw - checkpoint failures should not stop execution
     }
   }
@@ -401,14 +401,14 @@ export class StateManager {
     // Pass sanitizedOutput since it already has the count metadata we need
     const executionResults = ExecutionResultsBuilder.build(context, sanitizedOutput);
 
-    console.log('[StateManager] 🔒 Sanitized final_output for storage:', {
+    logger.debug({
       original_keys: Object.keys(finalOutput || {}),
       sanitized_keys: Object.keys(sanitizedOutput || {}),
       example_before: finalOutput ? JSON.stringify(finalOutput).substring(0, 200) : 'null',
       example_after: JSON.stringify(sanitizedOutput).substring(0, 200)
-    });
+    }, 'Sanitized final_output for storage');
 
-    console.log('[StateManager] 📊 Generated execution results:', {
+    logger.debug({
       summary: executionResults.summary,
       totalItems: executionResults.totalItems,
       totalSteps: executionResults.totalSteps,
@@ -418,7 +418,7 @@ export class StateManager {
         itemCount: i.itemCount,
         dataType: i.dataType
       }))
-    });
+    }, 'Generated execution results');
 
     // CRITICAL: Collect business intelligence metrics BEFORE output is discarded
     // This enables privacy-first business intelligence by storing only metadata
@@ -430,10 +430,10 @@ export class StateManager {
         context.agentId,
         context
       );
-      console.log('[StateManager] ✅ Business intelligence metrics collected (privacy-safe)');
+      logger.debug('Business intelligence metrics collected (privacy-safe)');
     } catch (metricsError) {
       // Non-fatal - don't fail execution if metrics collection fails
-      console.error('[StateManager] Failed to collect metrics (non-fatal):', metricsError);
+      logger.error({ err: metricsError }, 'Failed to collect metrics (non-fatal)');
     }
 
     // Evaluate SLAs after metrics are collected
@@ -446,11 +446,11 @@ export class StateManager {
         context.userId
       );
       if (evalResult.evaluatedCount > 0) {
-        console.log(`[StateManager] ✅ SLA evaluation complete: ${evalResult.evaluatedCount} SLAs checked, ${evalResult.violationsCount} violations, ${evalResult.recoveriesCount} recoveries`);
+        logger.debug({ evaluatedCount: evalResult.evaluatedCount, violationsCount: evalResult.violationsCount, recoveriesCount: evalResult.recoveriesCount }, 'SLA evaluation complete: SLAs checked, violations, recoveries');
       }
     } catch (slaError) {
       // Non-fatal - don't fail execution if SLA evaluation fails
-      console.error('[StateManager] Failed to evaluate SLAs (non-fatal):', slaError);
+      logger.error({ err: slaError }, 'Failed to evaluate SLAs (non-fatal)');
     }
 
     // Update workflow_executions table (internal tracking)
@@ -473,11 +473,11 @@ export class StateManager {
       .eq('id', executionId);
 
     if (error) {
-      console.error('[StateManager] Failed to mark execution as completed:', error);
+      logger.error({ err: error }, 'Failed to mark execution as completed');
       throw error;
     }
 
-    console.log(`[StateManager] Marked execution as completed: ${executionId}`);
+    logger.info({ executionId }, 'Marked execution as completed');
 
     // Broadcast final completion update
     await this.broadcastProgress(executionId, {
@@ -493,8 +493,34 @@ export class StateManager {
     // Cleanup real-time channel
     await this.cleanupRealTimeChannel();
 
-    // Also log to agent_executions table for UI display
-    // This ensures executions appear in the agent page analytics tab
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE SECOND ROW IS DELIBERATE, AND `'manual'` ON IT IS LOAD-BEARING.
+     *
+     * A scheduled run produces TWO `agent_executions` rows: the scheduler's,
+     * created before the work starts, and this one, written after the workflow
+     * finishes and carrying the logs, duration and token totals the UI reads.
+     * They look like an accident and are not.
+     *
+     * `agent_executions` IS THE QUEUE. The lease added in migration 20261101
+     * claims rows scoped to `execution_type = 'scheduled'`, so writing the
+     * honest trigger type here would make the pilot's own COMPLETION record
+     * claimable as queued work and the scheduler would run the agent again off
+     * the record that it already ran. `'manual'` is what keeps this row out of
+     * the queue. See the note at the `pilot.execute` call in
+     * `lib/execution/scheduledAgentRunner.ts`, which depends on it.
+     *
+     * THE REAL COST, so nobody has to rediscover it: anything COUNTING runs
+     * from this table double-counts a scheduled one. Readers that matter filter
+     * by `execution_type` — `deadLetteredRuns` takes `'scheduled'` only — but a
+     * naive `count(*)` per agent is roughly twice the truth.
+     *
+     * Fixing that properly means one row per run, which means threading the
+     * trigger from the scheduler through `runAgentWithContext` into the pilot.
+     * That is a cross-cutting change to every execution path and wants review,
+     * not a quiet edit here.
+     * ───────────────────────────────────────────────────────────────────────
+     */
     try {
       const now = new Date().toISOString();
       const startTime = new Date(Date.now() - summary.totalExecutionTime).toISOString();
@@ -537,10 +563,10 @@ export class StateManager {
       });
 
       if (agentExecError) {
-        console.error('[StateManager] Failed to log to agent_executions:', agentExecError);
+        logger.error({ err: agentExecError }, 'Failed to log to agent_executions');
         // Non-fatal - don't throw, just log the error
       } else {
-        console.log(`[StateManager] Logged execution to agent_executions for UI display`);
+        logger.debug('Logged execution to agent_executions for UI display');
 
         // Aggregate model usage from token_usage table to populate cost/model fields
         try {
@@ -548,22 +574,22 @@ export class StateManager {
             .rpc('aggregate_execution_model_usage', { p_execution_id: executionId });
 
           if (aggregateError) {
-            console.error('[StateManager] Failed to aggregate model usage:', aggregateError);
+            logger.error({ err: aggregateError }, 'Failed to aggregate model usage');
           } else if (aggregateResult) {
-            console.log('[StateManager] ✅ Aggregated model usage:', {
+            logger.debug({
               total_cost_usd: aggregateResult.total_cost_usd,
               primary_model: aggregateResult.primary_model,
               primary_provider: aggregateResult.primary_provider,
               models_count: aggregateResult.models_used?.length || 0
-            });
+            }, 'Aggregated model usage');
           }
         } catch (aggregateErr) {
-          console.error('[StateManager] Error aggregating model usage:', aggregateErr);
+          logger.error({ err: aggregateErr }, 'Error aggregating model usage');
           // Non-fatal - continue
         }
       }
     } catch (logError) {
-      console.error('[StateManager] Error logging to agent_executions:', logError);
+      logger.error({ err: logError }, 'Error logging to agent_executions');
       // Non-fatal - continue execution
     }
   }
@@ -590,7 +616,7 @@ export class StateManager {
     const maxRetries = 10;
     let retryCount = 0;
 
-    console.log(`[StateManager] 🔍 Waiting for ${expectedCacheCount} cached outputs to be available...`);
+    logger.debug({ expectedCacheCount }, 'Waiting for cached outputs to be available...');
 
     while (retryCount < maxRetries) {
       const { data: currentExecution } = await supabaseAdmin
@@ -603,10 +629,10 @@ export class StateManager {
       cachedOutputs = currentTrace.cached_outputs || {};
       const cachedCount = Object.keys(cachedOutputs).length;
 
-      console.log(`[StateManager] 🔍 Retry ${retryCount + 1}/${maxRetries}: Found ${cachedCount}/${expectedCacheCount} cached outputs`);
+      logger.debug({ retryCount: retryCount + 1, maxRetries, cachedCount, expectedCacheCount }, 'Retrying for cached outputs');
 
       if (cachedCount >= expectedCacheCount) {
-        console.log(`[StateManager] ✅ All ${cachedCount} cached outputs found!`);
+        logger.debug({ cachedCount }, 'All cached outputs found!');
         break;
       }
 
@@ -617,15 +643,15 @@ export class StateManager {
     }
 
     if (Object.keys(cachedOutputs).length < expectedCacheCount) {
-      console.warn(`[StateManager] ⚠️  Cache incomplete after ${maxRetries} retries: Found ${Object.keys(cachedOutputs).length}/${expectedCacheCount} cached outputs`);
+      logger.warn({ maxRetries, cachedOutputsLength: Object.keys(cachedOutputs).length, expectedCacheCount }, 'Cache still incomplete after the final retry');
     }
 
-    console.log(`[StateManager] 🔍 Read from database before failExecution:`, {
+    logger.debug({
       executionId,
       hasCachedOutputs: !!currentTrace.cached_outputs,
       cachedOutputsKeys: Object.keys(cachedOutputs),
       completedStepsCount: summary.stepCount.completed,
-    });
+    }, 'Read from database before failExecution');
 
     // Merge cached_outputs from database into the trace we're about to save
     const mergedTrace = {
@@ -633,8 +659,8 @@ export class StateManager {
       cached_outputs: cachedOutputs, // ← PRESERVE cached outputs!
     };
 
-    console.log(`[StateManager] 🔄 Updating execution ${executionId} to failed status...`);
-    console.log(`[StateManager] 🔍 Preserving ${Object.keys(cachedOutputs).length} cached outputs in execution_trace`);
+    logger.debug({ executionId }, 'Updating execution to failed status...');
+    logger.debug({ cachedOutputsLength: Object.keys(cachedOutputs).length }, 'Preserving cached outputs in execution_trace');
 
     const { data: updateData, error: dbError } = await supabaseAdmin
       .from('workflow_executions')
@@ -655,17 +681,17 @@ export class StateManager {
       .select(); // ← Add select() to return the updated row
 
     if (dbError) {
-      console.error('[StateManager] ❌ Failed to mark execution as failed:', {
+      logger.error({
         executionId,
         error: dbError.message,
         code: dbError.code,
         details: dbError.details,
         hint: dbError.hint,
-      });
+      }, 'Failed to mark execution as failed');
       // Don't throw - we're already handling an error
     } else {
-      console.log(`[StateManager] ✅ Marked execution as failed: ${executionId}`);
-      console.log(`[StateManager] 🔍 Verification - updated row status:`, updateData?.[0]?.status);
+      logger.info({ executionId }, 'Marked execution as failed');
+      logger.debug({ updateDataStatus: updateData?.[0]?.status }, 'Verification - updated row status');
 
       // CRITICAL: Verify the update actually happened
       const { data: verifyData } = await supabaseAdmin
@@ -673,7 +699,7 @@ export class StateManager {
         .select('status')
         .eq('id', executionId)
         .single();
-      console.log(`[StateManager] 🔍 Verification - database now shows status:`, verifyData?.status);
+      logger.debug({ verifyDataStatus: verifyData?.status }, 'Verification - database now shows status');
     }
 
     // Also log to agent_executions table for UI display
@@ -720,10 +746,10 @@ export class StateManager {
       });
 
       if (agentExecError) {
-        console.error('[StateManager] Failed to log to agent_executions:', agentExecError);
+        logger.error({ err: agentExecError }, 'Failed to log to agent_executions');
         // Non-fatal - don't throw
       } else {
-        console.log(`[StateManager] Logged failed execution to agent_executions for UI display`);
+        logger.debug('Logged failed execution to agent_executions for UI display');
 
         // Aggregate model usage from token_usage table to populate cost/model fields
         try {
@@ -731,21 +757,21 @@ export class StateManager {
             .rpc('aggregate_execution_model_usage', { p_execution_id: executionId });
 
           if (aggregateError) {
-            console.error('[StateManager] Failed to aggregate model usage:', aggregateError);
+            logger.error({ err: aggregateError }, 'Failed to aggregate model usage');
           } else if (aggregateResult) {
-            console.log('[StateManager] ✅ Aggregated model usage for failed execution:', {
+            logger.debug({
               total_cost_usd: aggregateResult.total_cost_usd,
               primary_model: aggregateResult.primary_model,
               primary_provider: aggregateResult.primary_provider
-            });
+            }, 'Aggregated model usage for failed execution');
           }
         } catch (aggregateErr) {
-          console.error('[StateManager] Error aggregating model usage:', aggregateErr);
+          logger.error({ err: aggregateErr }, 'Error aggregating model usage');
           // Non-fatal - continue
         }
       }
     } catch (logError) {
-      console.error('[StateManager] Error logging failed execution to agent_executions:', logError);
+      logger.error({ err: logError }, 'Error logging failed execution to agent_executions');
       // Non-fatal - continue
     }
   }
@@ -775,11 +801,11 @@ export class StateManager {
       .eq('id', executionId);
 
     if (error) {
-      console.error('[StateManager] Failed to pause execution:', error);
+      logger.error({ err: error }, 'Failed to pause execution');
       throw error;
     }
 
-    console.log(`[StateManager] Paused execution: ${executionId}`);
+    logger.info({ executionId }, 'Paused execution');
   }
 
   /**
@@ -878,7 +904,7 @@ export class StateManager {
     if (isFreshRestart) {
       // Fresh restart - start from beginning with empty state
       // This happens when user fixes hardcoded values and retries
-      console.log('[StateManager] 🔄 Fresh restart detected - re-executing entire workflow from step 1');
+      logger.debug('Fresh restart detected - re-executing entire workflow from step 1');
       context.currentStep = null;
       context.completedSteps = [];
       context.failedSteps = [];
@@ -888,7 +914,7 @@ export class StateManager {
       // Keep original startedAt to track total time including retries
     } else {
       // Partial resume - restore checkpoint state
-      console.log('[StateManager] ⏭️  Partial resume - continuing from checkpoint');
+      logger.debug('Partial resume - continuing from checkpoint');
       context.currentStep = data.current_step;
       context.completedSteps = data.execution_trace?.completedSteps || [];
       context.failedSteps = data.execution_trace?.failedSteps || [];
@@ -902,7 +928,7 @@ export class StateManager {
     // Restore step outputs from execution_trace.cached_outputs (temporary database storage)
     // This allows partial resume to work correctly when user fixes hardcoded values
     if (!isFreshRestart && context.completedSteps.length > 0) {
-      console.log(`[StateManager] 🔄 Restoring step outputs from cache for ${context.completedSteps.length} completed steps`);
+      logger.debug({ completedStepsLength: context.completedSteps.length }, 'Restoring step outputs from cache for completed steps');
 
       const { executionOutputCache } = await import('./ExecutionOutputCache');
       const cachedOutputs = await executionOutputCache.getAllOutputs(executionId);
@@ -921,15 +947,15 @@ export class StateManager {
             });
             restoredCount++;
           } else {
-            console.warn(`[StateManager] ⚠️  No cached output found for ${stepId} - will need to re-execute`);
+            logger.warn({ stepId }, 'No cached output found for - will need to re-execute');
           }
         }
-        console.log(`[StateManager] ✅ Restored ${restoredCount}/${context.completedSteps.length} step outputs from cache`);
+        logger.debug({ restoredCount, completedStepsLength: context.completedSteps.length }, 'Restored step outputs from cache');
       } else {
         // CRITICAL: Cache miss - execution_trace.cached_outputs is empty
         // FALLBACK: Convert to fresh restart mode to re-execute entire workflow
-        console.warn(`[StateManager] ❌ Cache miss for ${executionId} - no cached outputs available`);
-        console.warn(`[StateManager] 🔄 FALLBACK: Converting to fresh restart mode (will re-execute all steps from step 1)`);
+        logger.warn({ executionId }, 'Cache miss for - no cached outputs available');
+        logger.warn('FALLBACK: Converting to fresh restart mode (will re-execute all steps from step 1)');
 
         // Convert to fresh restart to rebuild data flow
         context.currentStep = null;
@@ -939,7 +965,7 @@ export class StateManager {
         context.totalTokensUsed = 0;
         context.totalExecutionTime = 0;
 
-        console.log(`[StateManager] ✅ Converted to fresh restart mode - will re-execute entire workflow`);
+        logger.debug('Converted to fresh restart mode - will re-execute entire workflow');
       }
     }
 
@@ -954,7 +980,7 @@ export class StateManager {
       })
       .eq('id', executionId);
 
-    console.log(`[StateManager] Resumed execution: ${executionId}`);
+    logger.info({ executionId }, 'Resumed execution');
 
     return { context, agent, runMode };
   }
@@ -988,11 +1014,11 @@ export class StateManager {
       .eq('id', executionId);
 
     if (error) {
-      console.error('[StateManager] Failed to cancel execution:', error);
+      logger.error({ err: error }, 'Failed to cancel execution');
       throw error;
     }
 
-    console.log(`[StateManager] Cancelled execution: ${executionId}`);
+    logger.info({ executionId }, 'Cancelled execution');
   }
 
   /**
@@ -1006,7 +1032,7 @@ export class StateManager {
       .single();
 
     if (error) {
-      console.error('[StateManager] Failed to fetch execution status:', error);
+      logger.error({ err: error }, 'Failed to fetch execution status');
       return null;
     }
 
@@ -1025,7 +1051,7 @@ export class StateManager {
       .order('started_at', { ascending: false });
 
     if (error) {
-      console.error('[StateManager] Failed to fetch active executions:', error);
+      logger.error({ err: error }, 'Failed to fetch active executions');
       return [];
     }
 
@@ -1047,7 +1073,7 @@ export class StateManager {
       .limit(limit);
 
     if (error) {
-      console.error('[StateManager] Failed to fetch execution history:', error);
+      logger.error({ err: error }, 'Failed to fetch execution history');
       return [];
     }
 
@@ -1070,17 +1096,39 @@ export class StateManager {
       // Database constraint only allows: action, llm_decision, conditional, loop, transform, delay, parallel_group
       const normalizedStepType = this.normalizeStepType(stepType);
 
-      // Check if record already exists (might have been created by WorkflowOrchestrator)
-      // Use supabaseAdmin to bypass RLS policies for server-side operations
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * `maybeSingle` AFTER A `limit(1)`, AND THE DIFFERENCE IS NOT COSMETIC.
+       *
+       * This was `.single()`, which FAILS when the query matches more than one
+       * row. A step inside a scatter runs once per item under the same
+       * `step_id`, so from the second item onward this read errored, `existing`
+       * came back undefined, and the branch below inserted ANOTHER row. One
+       * agent accumulated 225 rows for a single step across six runs, every one
+       * of them stranded at `running`.
+       *
+       * One row per (execution, step) is also what `updateStepExecution`
+       * already assumes — it updates by those two columns and no third — so the
+       * read and the write finally agree about how many rows exist.
+       *
+       * WHAT THIS DELIBERATELY DOES NOT DO: give each scatter item its own row.
+       * That would need an item index on the table and a matching key on every
+       * read, and it is a real feature — per-item visibility — rather than this
+       * bug. The honest answer for now is one row per step, reset as each item
+       * starts and closed as it finishes, which answers "did this step work"
+       * without pretending to answer "which item failed".
+       * ───────────────────────────────────────────────────────────────────────
+       */
       const { data: existing } = await supabaseAdmin
         .from('workflow_step_executions')
         .select('id')
         .eq('workflow_execution_id', workflowExecutionId)
         .eq('step_id', stepId)
-        .single();
+        .limit(1)
+        .maybeSingle();
 
       if (existing) {
-        console.log(`[StateManager] Step execution record already exists for ${stepId}, resetting for re-execution`);
+        logger.debug({ stepId }, 'Step execution record already exists; resetting it for re-execution');
 
         // CRITICAL FIX: Reset the existing record completely when re-executing
         // This ensures status API returns correct state, not stale "failed" status
@@ -1109,10 +1157,10 @@ export class StateManager {
           .eq('id', existing.id);
 
         if (updateError) {
-          console.error(`[StateManager] ❌ Failed to reset step execution record for ${stepId}:`, updateError);
+          logger.error({ err: updateError, stepId }, 'Failed to reset step execution record');
           // Don't throw - best effort reset
         } else {
-          console.log(`✅ [StateManager] Reset step execution record for ${stepId} to 'running' (cleared previous failure state)`);
+          logger.debug({ stepId }, 'Reset step execution record to running, clearing the previous failure state');
         }
         return;
       }
@@ -1147,13 +1195,13 @@ export class StateManager {
         .insert(insertData);
 
       if (error) {
-        console.error('[StateManager] Failed to log step execution:', error);
+        logger.error({ err: error }, 'Failed to log step execution');
         // Don't throw - step logging failures should not stop execution
       } else {
-        console.log(`✅ [StateManager] Created step execution record for ${stepId} (using service role)`);
+        logger.debug({ stepId }, 'Created step execution record for (using service role)');
       }
     } catch (err) {
-      console.error('[StateManager] Step logging error:', err);
+      logger.error({ err }, 'Step logging error');
       // Don't throw
     }
   }
@@ -1197,9 +1245,9 @@ export class StateManager {
     try {
       // 🔍 DIAGNOSTIC: Log what metadata we receive
       if (metadata?.field_names) {
-        console.log(`🔍 [StateManager] Received metadata with field_names for step ${stepId}:`, metadata.field_names);
+        logger.debug({ stepId, field_names: metadata.field_names }, 'Received metadata with field_names for step');
       } else if (metadata?.itemCount > 0) {
-        console.warn(`⚠️  [StateManager] Step ${stepId} has itemCount ${metadata.itemCount} but NO field_names in metadata`);
+        logger.warn({ stepId, itemCount: metadata.itemCount }, 'Step has itemCount but NO field_names in metadata');
       }
 
       const updateData: any = {
@@ -1208,7 +1256,7 @@ export class StateManager {
       };
 
       // 🔍 DIAGNOSTIC: Log what we're about to store
-      console.log(`🔍 [StateManager] Storing execution_metadata for step ${stepId}:`, JSON.stringify(updateData.execution_metadata).slice(0, 200));
+      logger.debug({ stepId, execution_metadataSlice: JSON.stringify(updateData.execution_metadata).slice(0, 200) }, 'Storing execution_metadata for step');
 
       if (status === 'completed') {
         updateData.completed_at = new Date().toISOString();
@@ -1241,16 +1289,16 @@ export class StateManager {
         .eq('step_id', stepId);
 
       if (error) {
-        console.error('[StateManager] Failed to update step execution:', error);
+        logger.error({ err: error }, 'Failed to update step execution');
         // Don't throw
       } else {
         // 🔍 DIAGNOSTIC: Confirm successful storage
         if (metadata?.field_names) {
-          console.log(`✅ [StateManager] Successfully stored metadata with field_names for step ${stepId}`);
+          logger.debug({ stepId }, 'Successfully stored metadata with field_names for step');
         }
       }
     } catch (err) {
-      console.error('[StateManager] Step update error:', err);
+      logger.error({ err }, 'Step update error');
       // Don't throw
     }
   }
@@ -1272,13 +1320,13 @@ export class StateManager {
         .single();
 
       if (error) {
-        console.error(`[StateManager] Failed to get step execution ${stepId}:`, error);
+        logger.error({ err: error, stepId }, 'Failed to get step execution');
         return null;
       }
 
       return data;
     } catch (err) {
-      console.error(`[StateManager] Error getting step execution:`, err);
+      logger.error({ err }, 'Error getting step execution');
       return null;
     }
   }
@@ -1297,11 +1345,11 @@ export class StateManager {
       .lt('created_at', cutoffDate.toISOString());
 
     if (error) {
-      console.error('[StateManager] Cleanup failed:', error);
+      logger.error({ err: error }, 'Cleanup failed');
       throw error;
     }
 
-    console.log(`[StateManager] Cleaned up ${count || 0} old executions`);
+    logger.info({ count: count || 0 }, 'Cleaned up old executions');
     return count || 0;
   }
 }

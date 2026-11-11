@@ -26,7 +26,15 @@ import { safeTimezone } from '@/lib/scheduling/businessTime';
 import { proposalRepository } from '@/lib/repositories/ProposalRepository';
 import { applyAcceptance, splitTotal } from '@/lib/services/ProposalAcceptanceService';
 import { sendInvoice } from '@/lib/services/InvoiceDeliveryService';
+import { sendProposalAcceptedEmail } from '@/lib/services/ProposalSendService';
 import type { Proposal } from '@/lib/repositories/ProposalRepository';
+import { attachmentsFor } from '@/lib/business-os/proposals/attachmentsFor';
+import { formatAddressLines } from '@/lib/geo/address';
+import { signatureStatement } from '@/lib/business-os/proposals/signatureStatement';
+/* `hashIP` and `getClientIP` from the attribution util — the same pair
+   `lib/consent` uses, so a signature's evidence is produced the way every
+   other piece of evidence in this product is. */
+import { getClientIP, hashIP } from '@/lib/utils/attribution';
 
 const logger = createLogger({ module: 'PublicProposalAPI' });
 
@@ -80,37 +88,48 @@ function blockingState(proposal: Proposal): ProposalPageCode | null {
 }
 
 /**
- * The attached proposal document, signed for reading.
+ * The attached proposal documents, signed for reading.
  *
- * Null whenever there is no document, the row is gone, or the signature could
- * not be produced — and the page treats all three the same way: it simply shows
- * no document and does not gate acceptance on one. A quote must never become
- * unacceptable because a file failed to sign.
+ * Empty whenever there are none, a row is gone, or a signature could not be
+ * produced — and the page treats all three the same way: it shows no document
+ * and does not gate acceptance on one. A quote must never become unacceptable
+ * because a file failed to sign.
  */
-async function presentDocument(documentId: string | null, userId: string) {
-  if (!documentId) return null;
+async function presentDocuments(proposal: Proposal) {
+  /*
+   * BOTH ERAS, through the one reader.
+   *
+   * This took `proposal.document_id` alone, which is the only place a quote
+   * written before 2026-11-10 keeps its file. A quote written after can carry
+   * several, in `proposal_attachments`. `attachmentsFor` returns them in the
+   * owner's order with the legacy column first, so this function no longer has
+   * to know which kind of quote it is looking at.
+   */
+  const files = await attachmentsFor(proposal);
+  if (files.length === 0) return [];
 
-  const { data: doc } = await supabaseServer
-    .from('contact_documents')
-    .select('file_name, file_size, mime_type, storage_path, storage_bucket')
-    .eq('id', documentId)
-    .eq('user_id', userId)
-    .maybeSingle();
+  const signed = await Promise.all(
+    files.map(async file => {
+      if (!file.storagePath) return null;
 
-  if (!doc?.storage_path) return null;
+      const { data } = await supabaseServer.storage
+        .from(file.storageBucket || 'contact-documents')
+        .createSignedUrl(file.storagePath, 60 * 60);
 
-  const { data: signed } = await supabaseServer.storage
-    .from(doc.storage_bucket || 'contact-documents')
-    .createSignedUrl(doc.storage_path, 60 * 60);
+      if (!data?.signedUrl) return null;
 
-  if (!signed?.signedUrl) return null;
+      return {
+        name: file.fileName,
+        size: file.fileSize,
+        mimeType: file.mimeType,
+        url: data.signedUrl,
+      };
+    })
+  );
 
-  return {
-    name: doc.file_name,
-    size: doc.file_size,
-    mimeType: doc.mime_type,
-    url: signed.signedUrl,
-  };
+  /* One file failing to sign drops that file, never the quote: a page the
+     client cannot open is worse than a page missing an attachment. */
+  return signed.filter((file): file is NonNullable<typeof file> => file !== null);
 }
 
 /** What the client is shown — never the internal columns. */
@@ -133,10 +152,31 @@ async function present(proposal: Proposal) {
     // Only for the default terms, when this quote does not name its own.
     supabaseServer
       .from('business_profiles')
-      .select('invoice_payment_terms_days')
+      /*
+       * The letterhead is read LIVE, not stored on the quote.
+       *
+       * A business that moves office should not have to reissue open quotes to
+       * show the right address, and none of this is a term the client agreed
+       * to — the terms are frozen in `accepted_snapshot`, and the letterhead is
+       * not among them.
+       *
+       * The invoice fields first, falling back to the general ones, which is
+       * the same order `InvoicePDFGenerator` resolves them in: a business that
+       * has filled in its billing identity means that one.
+       *
+       * Every column here was checked against the live table. A name that does
+       * not exist makes PostgREST reject the WHOLE select, which would take the
+       * payment terms down with it and expire quotes that are perfectly valid.
+       */
+      .select(
+        'invoice_payment_terms_days, invoice_company_name, invoice_address, invoice_tax_id, company_name, address, phone, email, logo_url, language'
+      )
       .eq('user_id', proposal.user_id)
       .maybeSingle(),
   ]);
+
+  /** Every file on this quote, from both places they can live. */
+  const documents = await presentDocuments(proposal);
 
   /** Billed after each meeting: see `PackageSessions.bill_per_session`. */
   const perSession = Boolean(proposal.sessions?.bill_per_session);
@@ -241,7 +281,64 @@ async function present(proposal: Proposal) {
      * is long enough to read a proposal and short enough that a forwarded link
      * stops working.
      */
-    document: await presentDocument(proposal.document_id, proposal.user_id),
+    /*
+     * `document` is kept as the FIRST attachment so every existing reader —
+     * the accept gate, the card, the guard tests — goes on working unchanged.
+     * `documents` carries the full list beside it.
+     */
+    document: documents[0] ?? null,
+    documents,
+    /* Whether Approve is gated. False on every quote written before this. */
+    requiresSignature: Boolean(proposal.requires_signature),
+    /*
+     * THE BREAKDOWN, and the letterhead it is printed on.
+     *
+     * `breakdown`, not `document` — that key is taken by the file the owner
+     * uploaded, and the two are different things: this is JSON the owner built
+     * here, that is a file they attached. Giving them one name is how a client
+     * ends up being shown one and told about the other.
+     *
+     * Null for every quote priced as a single figure, which is all 46 written
+     * before this existed. The page renders nothing at all for null rather
+     * than an empty section.
+     *
+     * The items are sent as they were stored: already rounded, already summing
+     * to `total`. The page formats, it does not re-add.
+     */
+    breakdown: proposal.content?.items?.length
+      ? {
+          items: proposal.content.items,
+          tax: proposal.content.tax,
+          letterhead: {
+            name: profile?.invoice_company_name || profile?.company_name || null,
+            /*
+             * LINES, not an object.
+             *
+             * `invoice_address` is jsonb — `{line1, city, state, postal_code,
+             * country}` — and the page interpolated it straight into a joined
+             * string, so a live quote's letterhead read
+             * `[object Object] · +1201… · …`.
+             *
+             * Formatted HERE rather than on the page so this and the PDF use
+             * the one formatter and the one locale: `formatAddressLines`
+             * renders `US` as ארצות הברית for a Hebrew reader, which a join
+             * could never do.
+             */
+            addressLines: formatAddressLines(
+              (profile?.invoice_address || profile?.address || null) as Parameters<
+                typeof formatAddressLines
+              >[0],
+              (profile?.language === 'he' || profile?.language === 'es'
+                ? profile.language
+                : 'en') as 'en' | 'es' | 'he'
+            ),
+            taxId: profile?.invoice_tax_id || null,
+            phone: profile?.phone || null,
+            email: profile?.email || null,
+            logoUrl: profile?.logo_url || null,
+          },
+        }
+      : null,
     /*
      * Which version this is.
      *
@@ -376,6 +473,39 @@ const answerSchema = z.discriminatedUnion('answer', [
      * Optional so an older cached page still works; it just loses the guard.
      */
     proposal_id: z.string().uuid().optional(),
+    /*
+     * The signature, when the quote asks for one.
+     *
+     * Optional HERE and required BELOW, against the proposal's own
+     * `requires_signature` — the schema cannot see the row, and a quote that
+     * does not ask for a signature must not be refused for lacking one.
+     *
+     * `statement` is what the PAGE displayed. It is not what gets recorded:
+     * the server resolves its own wording and keeps this as the client's echo,
+     * so a stale page cannot decide what was agreed to.
+     */
+    signature: z
+      .object({
+        name: z.string().trim().min(2).max(200),
+        agreed: z.literal(true),
+        statement: z.string().max(500).optional(),
+        /*
+         * The drawn mark, as a PNG data URI.
+         *
+         * Bounded and shape-checked HERE as well as by the column's CHECK: this
+         * is a public, unauthenticated endpoint, and the row it writes to can
+         * never be edited or deleted afterwards. 350k of base64 is ~256KB —
+         * far above a real signature (5-20KB) and far below what an unbounded
+         * field would accept.
+         */
+        image: z
+          .string()
+          .regex(/^data:image\/png;base64,[A-Za-z0-9+/=]+$/, 'A signature must be a PNG')
+          .max(350000)
+          .nullable()
+          .optional(),
+      })
+      .optional(),
   }),
   z.object({
     answer: z.literal('decline'),
@@ -511,6 +641,39 @@ export async function POST(
       }
     }
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE SIGNATURE IS CHECKED BEFORE THE CLAIM. THE ORDER IS THE DESIGN.
+     *
+     * `claimForAcceptance` is a ONE-SHOT conditional update, `sent|viewed →
+     * accepted`. It is what guarantees a single acceptance, and it cannot be
+     * taken back: there is no path in this product that returns an accepted
+     * quote to `sent`.
+     *
+     * So a signature validated AFTER it would leave a quote permanently
+     * accepted, with no money raised and no way for the client to try again —
+     * every retry would hit `blockingState` and be told it was already
+     * accepted. The client would be locked out of a purchase they were trying
+     * to make, by a typo.
+     *
+     * Validated here, a refusal costs nothing: the quote is still `sent`, the
+     * page re-renders, and they correct it.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (existing.requires_signature) {
+      const signature = parsed.data.signature;
+      if (!signature?.name?.trim() || signature.agreed !== true || !signature.image) {
+        requestLogger.warn(
+          { proposalId: existing.id },
+          'Refused: this quote needs a signature and none was given'
+        );
+        return NextResponse.json(
+          { success: false, code: 'signature_required' as const },
+          { status: 400 }
+        );
+      }
+    }
+
     const claimed = await proposalRepository.claimForAcceptance(existing.id);
     if (!claimed.data) {
       const { data: now } = await proposalRepository.findByIdForToken(existing.id);
@@ -518,6 +681,76 @@ export async function POST(
     }
 
     const proposal = claimed.data;
+
+    /*
+     * Written after the claim and BEFORE the money.
+     *
+     * After the claim, because only one request wins it and the signature must
+     * belong to that one. Before `applyAcceptance`, because an invoice raised
+     * against an unrecorded signature is the one combination that cannot be
+     * explained afterwards — and a failure here leaves a quote accepted with no
+     * money raised, which is the same window that already exists between the
+     * claim and the invoice today. No new class of failure, and the smaller
+     * half of the two.
+     */
+    if (proposal.requires_signature && parsed.data.signature) {
+      /*
+       * The BUSINESS's language, which is the client's: the quote, its email
+       * and the page they signed on were all written in it. Read here rather
+       * than taken from the request, because the statement that gets recorded
+       * must not be chosen by the browser sending it.
+       */
+      const { data: signingProfile } = await supabaseServer
+        .from('business_profiles')
+        .select('language')
+        .eq('user_id', proposal.user_id)
+        .maybeSingle();
+
+      const statement = signatureStatement(signingProfile?.language);
+      const clientEcho = parsed.data.signature.statement?.trim();
+      if (clientEcho && clientEcho !== statement.text) {
+        /* Not a refusal — the server's wording is what is recorded either way.
+           Logged so a page shipping stale copy is visible. */
+        requestLogger.warn(
+          { proposalId: proposal.id },
+          'Signature statement echoed by the client differs from the server wording'
+        );
+      }
+
+      const ip = getClientIP(request.headers);
+      /* The salt is stored WITH the hash: `hashIP` salts with the calendar day,
+         which is unverifiable later unless the day is kept. */
+      const salt = ip ? new Date().toDateString() : null;
+
+      const { error: signatureError } = await supabaseServer.from('proposal_signatures').insert({
+        proposal_id: proposal.id,
+        user_id: proposal.user_id,
+        signed_name: parsed.data.signature.name.trim(),
+        statement_text: statement.text,
+        statement_locale: statement.locale,
+        statement_version: statement.version,
+        ip_hash: ip ? hashIP(ip, salt ?? undefined) : null,
+        ip_hash_salt: salt,
+        user_agent: request.headers.get('user-agent'),
+        /* Named by what the client actually did, not by what the flow asked
+           for — a row that says `drawn` carries a mark, always. */
+        method: parsed.data.signature.image ? 'drawn' : 'typed_name',
+        signature_image: parsed.data.signature.image ?? null,
+        ...(clientEcho ? { evidence: { client_statement: clientEcho } } : {}),
+      });
+
+      if (signatureError) {
+        requestLogger.error(
+          { err: signatureError, proposalId: proposal.id },
+          'Signature could not be recorded — acceptance stopped before any money was raised'
+        );
+        return NextResponse.json(
+          { success: false, code: 'signature_failed' as const },
+          { status: 500 }
+        );
+      }
+    }
+
     const created = await applyAcceptance(proposal);
 
     /*
@@ -539,6 +772,26 @@ export async function POST(
         tax_rate: proposal.tax_rate,
         tax_label: proposal.tax_label,
         prices_include_tax: proposal.prices_include_tax,
+        /*
+         * The breakdown, frozen with the rest.
+         *
+         * It is part of what was agreed — a client approved these items at
+         * these prices — and the row's `content` can be superseded by a
+         * revision. Without it the snapshot would record a total with nothing
+         * explaining it, which is the dispute it exists to settle.
+         */
+        ...(proposal.content ? { content: proposal.content } : {}),
+        /*
+         * A POINTER, not the evidence.
+         *
+         * The signature lives in its own append-only table where it cannot be
+         * edited; copying it here would make a second, editable copy of the
+         * one record whose value is that it cannot be edited.
+         *
+         * Additive: the 28 snapshots written before this have neither key, and
+         * every reader must go on working without them.
+         */
+        ...(proposal.requires_signature ? { signed: true } : {}),
         accepted_at: new Date().toISOString(),
       },
       {
@@ -746,6 +999,28 @@ export async function POST(
           }
         });
     }
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE CLIENT'S COPY OF WHAT THEY JUST AGREED TO.
+     *
+     * BOTH branches, which is the point. Until now a quote with money due sent
+     * the client nothing at all — they were redirected to a payment page — and
+     * one with nothing due sent an INVOICE. Either way they held a bill and no
+     * record of the agreement, nor of the signature they had just drawn.
+     *
+     * AWAITED, not fired and forgotten. On the redirect branch the browser
+     * leaves for the payment page the moment this response returns, and a
+     * serverless host is free to freeze the function with the mail half-sent.
+     * The cost is a second or two on a page the client is leaving anyway.
+     *
+     * It cannot throw: `sendProposalAcceptedEmail` swallows everything. The
+     * quote is claimed, the invoice is raised and the meetings are booked by
+     * this point — a client who cannot be emailed has still bought the work,
+     * and failing the response would tell them otherwise.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    await sendProposalAcceptedEmail(proposal.id, proposal.user_id, acceptedInvoiceUrl);
 
     return NextResponse.json({
       success: true,

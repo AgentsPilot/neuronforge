@@ -31,9 +31,23 @@ type Catalogue = Record<Locale, Record<string, string>>;
 export const publicMessages: Catalogue = {
   en: {
     // ── Proposals ─────────────────────────────────────────────────────────
-    'proposal.document.open_prompt': 'Open the full proposal before accepting',
+    /* The owner's ATTACHED file, not the proposal — that is on this page and
+       downloadable as a PDF. Gating on it means "read this too". */
+    'proposal.document.open_prompt': 'Open this before approving',
+    /* The quote itself, rendered. Not the owner's attached file — see the
+       note at the link in ProposalAnswer. */
+    'proposal.download_pdf': 'Download as PDF',
+    /* The sentence the client agrees to. The SERVER has its own copy in
+       lib/business-os/proposals/signatureStatement.ts and that is the one
+       recorded — this is what gets displayed, and is sent back as the echo.
+       Changing one without the other is what the version guards against. */
+    'proposal.sign.statement': 'I have read this proposal and I agree to its terms.',
+    'proposal.sign.name_label': 'Your full name',
+    'proposal.sign.draw_label': 'Sign here',
+    'proposal.sign.draw_clear': 'Clear',
+    'proposal.sign.draw_hint': 'Draw your signature with your finger or mouse',
   'proposal.document.opened': 'Opened — you can accept below',
-  'proposal.document.required': 'Please open the proposal above before accepting.',
+  'proposal.document.required': 'Please open the attached file above before approving.',
   'proposal.header': 'Your quote',
   'proposal.greeting': 'Your quote',
     'proposal.greeting_named': 'Hello {name},',
@@ -388,9 +402,15 @@ export const publicMessages: Catalogue = {
 
   es: {
     // ── Presupuestos ──────────────────────────────────────────────────────
-    'proposal.document.open_prompt': 'Abre el presupuesto completo antes de aceptar',
+    'proposal.document.open_prompt': 'Ábrelo antes de aprobar',
+    'proposal.download_pdf': 'Descargar en PDF',
+    'proposal.sign.statement': 'He leído esta propuesta y acepto sus condiciones.',
+    'proposal.sign.name_label': 'Tu nombre completo',
+    'proposal.sign.draw_label': 'Firma aquí',
+    'proposal.sign.draw_clear': 'Borrar',
+    'proposal.sign.draw_hint': 'Dibuja tu firma con el dedo o el ratón',
   'proposal.document.opened': 'Abierto — ya puedes aceptar',
-  'proposal.document.required': 'Abre el presupuesto de arriba antes de aceptar.',
+  'proposal.document.required': 'Abre el archivo adjunto de arriba antes de aprobar.',
   'proposal.header': 'Tu presupuesto',
   'proposal.greeting': 'Tu presupuesto',
     'proposal.greeting_named': 'Hola {name},',
@@ -683,9 +703,15 @@ export const publicMessages: Catalogue = {
 
   he: {
     // ── הצעות מחיר ────────────────────────────────────────────────────────
-    'proposal.document.open_prompt': 'פתחו את הצעת המחיר המלאה לפני האישור',
+    'proposal.document.open_prompt': 'פתחו את הקובץ לפני האישור',
+    'proposal.download_pdf': 'הורדה כ‑PDF',
+    'proposal.sign.statement': 'קראתי את ההצעה ואני מסכים/ה לתנאיה.',
+    'proposal.sign.name_label': 'השם המלא שלך',
+    'proposal.sign.draw_label': 'חתמו כאן',
+    'proposal.sign.draw_clear': 'ניקוי',
+    'proposal.sign.draw_hint': 'ציירו את החתימה באצבע או בעכבר',
   'proposal.document.opened': 'נפתח — אפשר לאשר',
-  'proposal.document.required': 'יש לפתוח את הצעת המחיר שלמעלה לפני האישור.',
+  'proposal.document.required': 'יש לפתוח את הקובץ המצורף שלמעלה לפני האישור.',
   'proposal.header': 'הצעת המחיר שלך',
   'proposal.greeting': 'הצעת המחיר שלך',
     'proposal.greeting_named': 'שלום {name},',

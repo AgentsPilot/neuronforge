@@ -255,6 +255,35 @@ export const en = {
     'gaps.lead.urgent': 'Costing you right now',
     'gaps.lead.next': 'Start here',
     'gaps.lead.open_contact': 'Open the client',
+    'gaps.message.wrote': 'What they wrote',
+    'gaps.message.subject': 'Subject',
+    'gaps.message.content': 'Their message',
+    'gaps.message.why': 'Why it needs you',
+    'gaps.from.reply_agent': 'your agent found this reply in your mailbox',
+    'gaps.from.agent_badge': 'your agent',
+    'gaps.message.open_mail': 'Open the email',
+    'gaps.reply.label': 'Your reply',
+    'gaps.reply.draft_label': "The agent's draft · you can edit it",
+    'gaps.reply.draft_note': 'Written from your service list only. Nothing is sent until you approve it.',
+    'gaps.reply.suggested_label': 'A suggested start · check it before sending',
+    'gaps.reply.suggested_note': 'The agent could not answer this one, so it only acknowledges and promises you will come back. It states no time, price or availability — add those yourself.',
+    'gaps.reply.placeholder': 'Write here, and it goes from your own mailbox…',
+    'gaps.reply.send': 'Send reply',
+    'gaps.reply.send_draft': 'Send the draft',
+    'gaps.reply.confirm': 'Send it now',
+    'gaps.reply.discard': 'Discard draft',
+    'gaps.reply.mark_handled': 'Mark as handled',
+    'gaps.reply.sent': 'Sent',
+    'gaps.reply.add_link': 'Add a link',
+    'gaps.reply.link_free': 'free',
+    'gaps.reply.link_all': 'Everything we offer',
+    'gaps.reply.bold': 'Bold',
+    'gaps.reply.italic': 'Italic',
+    'gaps.reply.bullets': 'Bulleted list',
+    'gaps.reply.cleared': 'Cleared',
+    'gaps.reply.answered': 'You replied {when}',
+    'gaps.since.answered': 'you have replied',
+    'gaps.reply.no_links': 'No bookable service or booking page yet.',
     'gaps.lead.more': 'and {n} more waiting',
     'gaps.lead.collapse': 'Show just the next one',
     'gaps.lead.say.booking_cancelled': '{name} cancelled the appointment, and you are holding {amount}.',
@@ -1032,7 +1061,18 @@ export const en = {
        disagreeing with itself about whether the owner has accepted yet. */
     'insight.projection.handling_it': 'What I am doing about it',
     'insight.projection.agent_takes_over': 'I take these over and keep on top of them',
-    'insight.projection.agent_on_it': 'I am on these already, and keeping on top of them',
+    'insight.projection.agent_on_it': 'is handling these and keeping on top of them',
+    'insight.covered_but_off': '“{agent}” is installed, but “{chaser}” is switched off',
+    'insight.covered_but_off_fix': 'Turn “{chaser}” back on and the reminders go out again.',
+    'insight.chain.chaser_sends': 'sends the first reminders',
+    'insight.chain.chaser_never': 'not one reminder has gone out',
+    'insight.chain.found': 'found {n}',
+    'insight.chain.handled': 'handled {n}',
+    'insight.chain.sent_to': 'sent to {n}',
+    'insight.chain.next_run': 'next run: {when}',
+    'insight.chain.waiting': 'waiting',
+    'insight.chain.blocked_by': 'cannot write to clients until you approve that',
+    'insight.chain.turn_on': 'Turn on “{chaser}”',
 
     // Handled Section (What I've done today)
     'handled.title': "What I've handled for you today",
@@ -1175,7 +1215,7 @@ export const en = {
     'verdict.live.via': 'Most came from {channel}',
     'channels.hideConnections': 'Hide connections',
     'channels.showConnections': 'Show connections',
-    'channels.discover': 'Know where your clients came from — connect Instagram, Facebook or Google.',
+    'channels.discover': 'Know where your clients came from.',
     'channels.discoverAction': 'Connect',
     'verdict.live.found': 'people have found you',
     'verdict.live.sub': 'No one has booked this week.',
@@ -1209,6 +1249,10 @@ export const en = {
     'health.as_of': 'Worked out {date}. Updates again next Sunday.',
     'health.moving': '{improved} of {total} measures improved',
     'health.more': 'Read the rest',
+    /* The collapsed card shows only its verdict, so the button opens the whole
+       note rather than the tail of a paragraph. `health.more` is kept: it is
+       still the right words anywhere a clamp hides only the rest of a text. */
+    'health.open': 'Show the detail',
     'health.less': 'Show less',
     'health.of_n': 'from {n}',
     /* The denominator with its unit named, for the one measure whose sample is
@@ -1527,6 +1571,18 @@ export const en = {
     'drawer.gap.between': 'Between',
     'drawer.gap.and': 'and',
     'drawer.gap.dropped': 'dropped off',
+    /* Beside the names of the people stuck in the stage, so the panel
+       offers a way out rather than only a count. */
+    'drawer.gap.pilot': 'Pick up where they stopped.',
+    /* The key still says Crm because that is where it lands; the LABEL must
+       not, because "CRM" is our word for it and not the owner's. The page it
+       opens calls them contacts throughout, so this does too. */
+    'drawer.gap.openCrm': 'Open contacts',
+    'drawer.station.waiting': '{n} waiting here',
+    'drawer.longest': 'Longest wait: {name}, {d}{u}',
+    'drawer.bucket.over30': 'Over 30 days',
+    'drawer.bucket.over14': '14 to 30 days',
+    'drawer.bucket.recent': 'Under 14 days',
     'drawer.gap.dropped.desc': 'Some contacts didn\'t move to the next stage.',
     'drawer.gap.healthy': 'Healthy conversion',
     'drawer.gap.healthy.desc': 'Most contacts are progressing through this stage.',
@@ -2495,6 +2551,19 @@ export const en = {
     /* The status filter's own chip. Every other chip reuses the status
        label beside it, so a chip and the badge it filters to agree. */
     'crm.booking.filter.all': 'All',
+    /* The label is the file type, which needs no translation — the icon
+       beside it carries the meaning. */
+    'crm.booking.version_pdf': 'PDF',
+    'crm.booking.version_resend': 'Send again',
+    /* Keyed by the route's refusal codes, so the drawer translates them rather
+       than printing a server sentence it cannot localise. */
+    'crm.proposal.resend.sent': 'The quote was sent again',
+    'crm.proposal.resend.failed': 'The quote could not be sent again',
+    'crm.proposal.resend.not_sent_yet': 'This version was never sent, so there is nothing to resend',
+    'crm.proposal.resend.already_opened': 'The client has already opened this quote — send a reminder instead',
+    'crm.proposal.resend.already_answered': 'This quote has already been answered',
+    'crm.proposal.resend.no_client_email': 'This client has no email address',
+    'crm.proposal.resend.not_found': 'That quote no longer exists',
     'crm.booking.status.completed': 'Completed',
     'crm.booking.status.cancelled': 'Cancelled',
     'crm.booking.status.auto_completed': 'Marked automatically',
@@ -4365,6 +4434,8 @@ export const en = {
     'reports.col_payments': 'Payments',
     'reports.col_revenue': 'Revenue',
     'reports.col_lost': 'Lost',
+    /* Money that came back out. Netted off Revenue already, never added to it. */
+    'reports.col_refunded': 'Refunded',
     // Heads the summed row at the TOP of the services table.
     'reports.col_total': 'Total',
     /* The two names the stats route writes itself. Every other row in that
@@ -5322,8 +5393,10 @@ export const en = {
     'proposal.package_date_outside': 'Outside your working hours ({start}–{end}).',
     'proposal.package_date_past': 'This time has already passed.',
     'proposal.package_count': '{count} meetings of {minutes} minutes. The client sees every date before approving.',
-    'proposal.attach_document': 'Attach the full proposal',
-    'proposal.attach_document_hint': 'A PDF or document with the scope and terms. The client must open it before they can accept.',
+    /* NOT "the full proposal" any more: that is generated from the quote and
+       attached to every email on its own. This is supporting material. */
+    'proposal.attach_document': 'Attach extra files',
+    'proposal.attach_document_hint': 'Photos, drawings or anything else that backs up the quote. The proposal itself is always sent as a PDF. The client must open the first file before they can approve.',
     'proposal.choose_file': 'Choose a file',
     'proposal.remove_file': 'Remove this file',
     'proposal.open_in_tab': 'Open in a new tab',
@@ -5340,6 +5413,34 @@ export const en = {
     'proposal.field.description': 'What the work covers',
     'proposal.field.description_placeholder': 'Describe the work in your own words. This is what they read before deciding.',
     'proposal.field.description_hint': 'No cost breakdown — one total, explained.',
+    /* ── The optional breakdown. Shown only when the owner turns it on. ── */
+    'proposal.doc.toggle': 'Build a detailed proposal',
+    'proposal.doc.toggle_hint': 'Letterhead, items and pricing',
+    'proposal.doc.title': 'The proposal',
+    'proposal.doc.derived': 'Worked out from the items in the proposal',
+    'proposal.doc.date': 'Date',
+    'proposal.doc.item': 'Item',
+    'proposal.doc.item_placeholder': 'What this covers',
+    'proposal.doc.qty': 'Qty',
+    'proposal.doc.unit': 'Unit price',
+    'proposal.doc.amount': 'Amount',
+    'proposal.doc.add': 'Add item',
+    'proposal.doc.remove': 'Remove',
+    'proposal.doc.up': 'Move up',
+    'proposal.doc.down': 'Move down',
+    'proposal.doc.describe': 'Add a description',
+    'proposal.doc.desc_placeholder': 'What does this item cover?',
+    'proposal.doc.removed': 'Item removed',
+    'proposal.doc.undo': 'Undo',
+    'proposal.doc.needs_item': 'Add at least one item, or turn the breakdown off.',
+    'proposal.doc.subtotal': 'Subtotal',
+    'proposal.doc.tax': 'Tax',
+    'proposal.doc.tax_included': 'included',
+    'proposal.doc.total': 'Total',
+    'proposal.sign.require': 'Ask the client to sign',
+    'proposal.sign.require_hint': 'They type their name and agree before approving. Declining is never gated.',
+    'proposal.doc.reuse_prompt': 'Start from one you have had accepted?',
+    'proposal.doc.reuse_items': '{n} items',
     'proposal.field.total': 'Total',
     'proposal.field.terms': 'Payment terms',
     'proposal.terms_hint_single': 'How long the client has to pay the invoice.',
@@ -5560,6 +5661,11 @@ export const en = {
     'leads.inbox.learned_from_one': 'Learned from one message only, so check the rule above carefully.',
     'leads.inbox.readiness.replies_off_title': 'Website leads are not being answered',
     'leads.inbox.readiness.replies_off_desc': 'Enquiries from your website are being filed, but automatic replies are off, so nobody receives your booking link.',
+    /* The SAME step, once it is done. The row stays and ticks like every other
+       readiness step, so a title stating the problem would be read as the
+       problem persisting with a tick beside it. */
+    'leads.inbox.readiness.replies_on_title': 'Website leads are answered',
+    'leads.inbox.readiness.replies_on_desc': 'Enquiries from your website are filed, and the automatic reply sends them your booking link.',
     'leads.inbox.readiness.connect_title': 'Leads from your own website',
     'leads.inbox.readiness.connect_desc': 'Your website emails you when somebody fills in your contact form. We can file them as leads and reply with a link to book.',
 

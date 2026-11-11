@@ -8866,6 +8866,9 @@
         "contact_id",
         "title",
         "description",
+        "source_thread_id",
+        "draft_body",
+        "source_draft_id",
         "activity_type",
         "activity_date",
         "auto_logged"
@@ -8905,6 +8908,18 @@
                 "description": {
                   "type": "string",
                   "description": "details · (string)"
+                },
+                "source_thread_id": {
+                  "type": "string",
+                  "description": "mail thread · (string)"
+                },
+                "draft_body": {
+                  "type": "string",
+                  "description": "drafted reply · (string)"
+                },
+                "source_draft_id": {
+                  "type": "string",
+                  "description": "draft · (string)"
                 },
                 "activity_type": {
                   "type": "string",
@@ -8952,7 +8967,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | source_thread_id — mail thread · (string) | draft_body — drafted reply · (string) | source_draft_id — draft · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -8963,6 +8978,9 @@
                     "contact_id",
                     "title",
                     "description",
+                    "source_thread_id",
+                    "draft_body",
+                    "source_draft_id",
                     "activity_type",
                     "activity_date",
                     "auto_logged"
@@ -9008,6 +9026,9 @@
                     "contact_id",
                     "title",
                     "description",
+                    "source_thread_id",
+                    "draft_body",
+                    "source_draft_id",
                     "activity_type",
                     "activity_date",
                     "auto_logged"
@@ -9134,6 +9155,9 @@
               "contact_id",
               "title",
               "description",
+              "source_thread_id",
+              "draft_body",
+              "source_draft_id",
               "activity_type",
               "activity_date",
               "auto_logged",
@@ -9179,7 +9203,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | source_thread_id — mail thread · (string) | draft_body — drafted reply · (string) | source_draft_id — draft · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -9190,6 +9214,9 @@
                     "contact_id",
                     "title",
                     "description",
+                    "source_thread_id",
+                    "draft_body",
+                    "source_draft_id",
                     "activity_type",
                     "activity_date",
                     "auto_logged"
@@ -9243,6 +9270,9 @@
         "contact_id",
         "title",
         "description",
+        "source_thread_id",
+        "draft_body",
+        "source_draft_id",
         "activity_type",
         "activity_date",
         "auto_logged"
@@ -9292,7 +9322,7 @@
         "properties": {
           "data": {
             "type": "object",
-            "description": "Values to write. Writable fields: contact_id, title, description, activity_type, activity_date. Required: title, contact_id.",
+            "description": "Values to write. Writable fields: contact_id, title, description, source_thread_id, draft_body, source_draft_id, activity_type, activity_date. Required: title, contact_id.",
             "properties": {
               "title": {
                 "type": "string",
@@ -9313,6 +9343,18 @@
               "activity_date": {
                 "type": "string",
                 "description": "when · (datetime)"
+              },
+              "source_thread_id": {
+                "type": "string",
+                "description": "mail thread · (string)"
+              },
+              "draft_body": {
+                "type": "string",
+                "description": "drafted reply · (string)"
+              },
+              "source_draft_id": {
+                "type": "string",
+                "description": "draft · (string)"
               }
             }
           }

@@ -111,6 +111,40 @@ interface MoneyRowProps {
    * ───────────────────────────────────────────────────────────────────────────
    */
   hideClient?: boolean;
+  /**
+   * Lay the row out for a NARROW CONTAINER rather than a narrow screen.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE BUG THIS EXISTS FOR
+   *
+   * The two templates below switch on `sm:`, which is a VIEWPORT media query —
+   * `@media (min-width: 640px)`. The thing that actually constrains this row is
+   * the CRM drawer, which is 576px. On any normal desktop the viewport is wide,
+   * so the wide template wins inside a container that cannot hold it:
+   *
+   *     fixed tracks   1.25rem + 14rem + 6rem + four 12px gaps  =  388px
+   *     left for text  576 − 24 (p-3) − 388                     =  164px
+   *     split 1.5fr : 0.85fr                                    ≈  105px | 59px
+   *
+   * A title column of 105px is "Sports …", a date of "Nov 11, 2…", and a legend
+   * that needs "Collected $32.50" in 59px paints straight over the title beside
+   * it. That is the reported screen exactly. The same drawer in a narrow
+   * BROWSER WINDOW looked right, because then the viewport query finally agreed
+   * with the container — which is why it read as a language bug when the two
+   * screenshots were taken at different window widths.
+   *
+   * Tailwind 4 ships container queries and they are the textbook answer here,
+   * but they are not used anywhere in this repo yet and CLAUDE.md rule 7 puts a
+   * new pattern behind SA review. So the container tells the row instead, which
+   * is the convention this component already uses for exactly this problem —
+   * see `hideClient`, added because the same 576px drawer truncated the service.
+   *
+   * Dense keeps every fact and gives each one room: the cashflow bar and its
+   * figures move to a line of their own under the title, where they have the
+   * full width of the row instead of a 59px slice of it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  dense?: boolean;
 }
 
 /** One row control: an icon that says what it is on hover and to a screen reader. */
@@ -165,6 +199,7 @@ export function MoneyRow({
   onOpenContact,
   onOpenBooking,
   hideClient = false,
+  dense = false,
 }: MoneyRowProps) {
   const tone = STATUS_TONE[item.status] ?? REPORTS_COLORS.UNATTRIBUTED;
   const chip = statusChipStyle(item.status);
@@ -464,9 +499,23 @@ export function MoneyRow({
             onSelect();
           }
         }}
-        className={`grid grid-cols-[1.25rem_minmax(0,1fr)_7rem_6rem] items-center gap-3 p-3 sm:grid-cols-[1.25rem_minmax(0,1.5fr)_minmax(0,0.85fr)_14rem_6rem] ${
-          onSelect ? 'cursor-pointer hover:bg-[var(--v2-surface-hover)]' : ''
-        }`}
+        /*
+          DENSE IS NOT A THIRD TEMPLATE, it is the same row on two lines.
+          ─────────────────────────────────────────────────────────────────────
+          Four tracks, and the cashflow placed explicitly on a second line
+          spanning from the title to the end. Everything the wide row shows is
+          still here; what changes is that the bar and its figures get the row's
+          full width instead of a slice too small to print "Collected $32.50".
+
+          The amount track is `auto` rather than 14rem: in 576px a fixed track
+          that size is most of the row, and the figure plus its chip already
+          size themselves.
+        */
+        className={`grid items-center gap-3 p-3 ${
+          dense
+            ? 'grid-cols-[1.25rem_minmax(0,1fr)_auto_auto]'
+            : 'grid-cols-[1.25rem_minmax(0,1fr)_7rem_6rem] sm:grid-cols-[1.25rem_minmax(0,1.5fr)_minmax(0,0.85fr)_14rem_6rem]'
+        } ${onSelect ? 'cursor-pointer hover:bg-[var(--v2-surface-hover)]' : ''}`}
       >
         <MethodIcon className="h-4 w-4 shrink-0 self-center text-[var(--v2-text-muted)]" />
 
@@ -557,7 +606,21 @@ export function MoneyRow({
           Hidden on a narrow screen, where there is no room for a bar AND the
           figures — and where a list is scrolled rather than scanned.
         */}
-        <div className="hidden min-w-0 sm:block">
+        {/*
+          `overflow-hidden` in BOTH layouts, not only dense.
+          ─────────────────────────────────────────────────────────────────────
+          The legend is a nowrap figure ("Collected $32.50") inside a track that
+          can be narrower than it. Grid does not clip by default, so it painted
+          over the title to its start side. Clipping is the safety net; dense is
+          the fix that stops it being needed.
+        */}
+        <div
+          className={
+            dense
+              ? 'col-start-2 col-end-[-1] row-start-2 min-w-0 overflow-hidden'
+              : 'hidden min-w-0 overflow-hidden sm:block'
+          }
+        >
           {segments.length > 0 ? (
             <>
               <div
@@ -617,7 +680,7 @@ export function MoneyRow({
           and the money, which put the two halves of one answer on either side
           of a divider.
         */}
-        <div className="min-w-0 text-end">
+        <div className={`min-w-0 text-end ${dense ? 'col-start-3 row-start-1' : ''}`}>
           {/*
             The figure and its state on ONE line.
             ─────────────────────────────────────────────────────────────────
@@ -690,7 +753,11 @@ export function MoneyRow({
           row, and each stops propagation — without that the row's own handler
           fires too and a drawer lands on top of the thing just expanded.
         */}
-        <div className="flex items-center justify-end gap-1">
+        <div
+          className={`flex items-center justify-end gap-1 ${
+            dense ? 'col-start-4 row-start-1' : ''
+          }`}
+        >
           {onToggleExpand ? (
             <RowAction
               onClick={onToggleExpand}

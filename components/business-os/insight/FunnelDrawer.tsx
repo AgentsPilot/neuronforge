@@ -16,7 +16,12 @@ export interface DrawerStat {
 
 export interface DrawerPerson {
   n: string;        // Name
-  s: string;        // Status (e.g., 'opened booking page')
+  /*
+   * Status (e.g., 'opened booking page'). Optional: the funnel panels name the
+   * stage in their eyebrow, so repeating it under every name printed the same
+   * word down the whole list and said nothing the heading had not.
+   */
+  s?: string;
   since: string;    // Time since (e.g., '2d')
   col: string;      // Avatar color
 }
@@ -52,7 +57,13 @@ export interface DrawerContent {
   hero?: boolean;   // Red border if leak
   stats?: DrawerStat[];
   conf?: ConfidenceData;
-  pl?: { tx: string; act: string };  // Pilot suggestion
+  /*
+   * Pilot suggestion. `act` is the BUTTON LABEL and was also sent to
+   * `onAction` as the key, so a translated label could never carry a working
+   * action — the handler would receive "Open the CRM" and match nothing.
+   * `actKey` separates the two, exactly as `DrawerTodo` already does.
+   */
+  pl?: { tx: string; act: string; actKey?: string };
   people?: DrawerPerson[];
   todos?: DrawerTodo[];
   checklist?: ChecklistItem[];  // Compact checklist for Day 1
@@ -61,13 +72,23 @@ export interface DrawerContent {
 interface FunnelDrawerProps {
   content: DrawerContent | null;
   onAction?: (action: string) => void;
+  /**
+   * Dismiss the panel. Optional: the Day 1 checklist content is always-on and
+   * has nothing to close back to, so only the funnel drill-down supplies it.
+   *
+   * Pressing the station or connector again also closes it, but that is a
+   * hidden affordance — nobody discovers a toggle by guessing, and the panel is
+   * tall enough that being unable to put it away is the complaint it was meant
+   * to answer.
+   */
+  onClose?: () => void;
 }
 
 // ===========================
 // Component (matching mockup .lv-dr)
 // ===========================
 
-export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
+export function FunnelDrawer({ content, onAction, onClose }: FunnelDrawerProps) {
   const { isRTL, t } = useLanguage();
 
   if (!content) {
@@ -87,9 +108,21 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
       style={{
         direction: isRTL ? 'rtl' : 'ltr',
         marginTop: '16px',
-        /* The tint sits ON the surface rather than on white, so the wash
-           reads in both themes instead of turning the panel into a light card
-           on a dark page. */
+        /*
+         * THE LEAK WEARS RED, and the tint sits ON the surface rather than on
+         * white so it reads in both themes instead of turning the panel into a
+         * light card on a dark page.
+         *
+         * Taken away once, on the reasoning that the map above already draws
+         * the leak in red and a second alarm was redundant. Put back on the
+         * owner's call: the panel opens on a press now, so it is no longer
+         * sitting there competing for attention — and once opened, a card about
+         * a leak that looks exactly like every neutral card gives the reader
+         * nothing to tell it apart from the ones that are merely informative.
+         *
+         * The controls inside it stay in the <NeedsYouCard> idiom. It is the
+         * CARD that signals, not its buttons.
+         */
         background: content.hero
           ? 'linear-gradient(180deg, rgba(220, 38, 38, 0.08), var(--v2-surface))'
           : checklistComplete
@@ -99,8 +132,45 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
         borderRadius: '18px',
         padding: '20px',
         boxShadow: '0 6px 20px -10px rgba(16,22,42,0.25)',
+        position: 'relative',
       }}
     >
+      {/* Close. Placed against the panel's trailing edge, which flips with the
+          writing direction, so it never lands on top of the eyebrow in RTL. */}
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={t('common.close') || 'Close'}
+          className="inline-flex items-center justify-center rounded-lg transition-colors text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)]"
+          style={{
+            position: 'absolute',
+            top: '12px',
+            insetInlineEnd: '12px',
+            width: '28px',
+            height: '28px',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+          }}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            style={{
+              width: '15px',
+              height: '15px',
+              stroke: 'currentColor',
+              fill: 'none',
+              strokeWidth: 2.2,
+              strokeLinecap: 'round',
+            }}
+          >
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      )}
+
       {/* Eyebrow: .lv-dr-ey */}
       <div
         className="lv-dr-ey"
@@ -114,6 +184,8 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
              token reads on both, and the orange beside it already did. */
           color: checklistComplete ? 'var(--v2-success)' : '#F97316',
           marginBottom: '5px',
+          /* Clear of the close button, which overlays this corner. */
+          paddingInlineEnd: '30px',
           fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
         }}
       >
@@ -133,6 +205,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
           letterSpacing: '-0.02em',
           marginBottom: '5px',
           color: 'var(--v2-text-primary)',
+          paddingInlineEnd: '30px',
         }}
       >
         {checklistComplete && (
@@ -174,7 +247,21 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
       {/* Description: .lv-dr-p */}
       <div
         className="lv-dr-p"
+        /*
+         * `unicode-bidi: isolate` so an embedded run cannot reorder the line
+         * around it. This line reads "Longest wait: <name>, <n> days", and in
+         * Hebrew the name is usually Latin — a left-to-right island inside a
+         * right-to-left sentence. The neutral characters touching it (the
+         * colon, the comma) then take their direction from whichever side wins,
+         * and the punctuation migrates: the colon jumps to the far end and the
+         * number lands on the wrong side of the name.
+         *
+         * The producer wraps the name and the figure in FSI/PDI; this is the
+         * other half, keeping the paragraph itself from being dragged around by
+         * them.
+         */
         style={{
+          unicodeBidi: 'isolate',
           fontSize: '14px',
           color: 'var(--v2-text-secondary)',
           marginBottom: '16px',
@@ -232,7 +319,17 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                   fontWeight: 600,
                   letterSpacing: '-0.02em',
                   fontVariantNumeric: 'tabular-nums',
-                  color: 'var(--v2-text-primary)',
+                  /*
+                   * The state belongs on the FIGURE. `bad` used to tint only
+                   * the subtext, so a bucket carrying no subtext — these aging
+                   * buckets carry none — showed no state at all: "5 over 30
+                   * days" rendered in the same ink as "0 over 30 days".
+                   */
+                  color: stat.good
+                    ? 'var(--v2-success)'
+                    : stat.bad
+                      ? 'var(--v2-error)'
+                      : 'var(--v2-text-primary)',
                 }}
               >
                 {stat.v}
@@ -389,10 +486,17 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
               key={index}
               className="lv-p"
               style={{
+                /*
+                 * TIGHTER THAN IT WAS: 32px avatars in 10px rows, each name on
+                 * its own 14px line, made five people as tall as the card above
+                 * them. The row carries a name and a number of days; it does
+                 * not need the height of a list item with a subtitle, and the
+                 * subtitle is gone.
+                 */
                 display: 'flex',
-                gap: '11px',
+                gap: '9px',
                 alignItems: 'center',
-                padding: '10px 0',
+                padding: '6px 0',
                 borderBottom: index < content.people!.length - 1 ? '1px solid var(--v2-border)' : 'none',
               }}
             >
@@ -400,13 +504,13 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
               <span
                 className="lv-av"
                 style={{
-                  width: '32px',
-                  height: '32px',
+                  width: '24px',
+                  height: '24px',
                   borderRadius: '50%',
                   display: 'grid',
                   placeItems: 'center',
                   color: '#fff',
-                  fontSize: '12px',
+                  fontSize: '10px',
                   fontWeight: 700,
                   flexShrink: 0,
                   background: person.col,
@@ -418,7 +522,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
               <div className="lv-p-m" style={{ flex: 1, minWidth: 0 }}>
                 <b
                   style={{
-                    fontSize: '14px',
+                    fontSize: '13px',
                     display: 'block',
                     fontWeight: 600,
                     fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
@@ -427,25 +531,27 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                 >
                   {person.n}
                 </b>
-                <small
-                  style={{
-                    fontSize: '12.5px',
-                    color: 'var(--v2-text-secondary)',
-                    fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-                  }}
-                >
-                  {person.s}
-                </small>
+                {person.s && (
+                  <small
+                    style={{
+                      fontSize: '12.5px',
+                      color: 'var(--v2-text-secondary)',
+                      fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                    }}
+                  >
+                    {person.s}
+                  </small>
+                )}
               </div>
               {/* Tag: .lv-p-tag */}
               <span
                 className="lv-p-tag"
                 style={{
-                  fontSize: '11.5px',
+                  fontSize: '11px',
                   fontWeight: 600,
                   color: '#F97316',
                   background: 'rgba(249, 115, 22, 0.12)',
-                  padding: '4px 9px',
+                  padding: '2px 7px',
                   borderRadius: '20px',
                   whiteSpace: 'nowrap',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
@@ -576,8 +682,10 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
             display: 'flex',
             gap: '11px',
             alignItems: 'flex-start',
-            background: 'rgba(249, 115, 22, 0.10)',
-            border: '1px solid rgba(249, 115, 22, 0.30)',
+            /* The sunken-panel pair <NeedsYouCard> uses for a box inside a
+               card, instead of a second orange wash competing with the tags. */
+            background: 'var(--v2-bg)',
+            border: '1px solid var(--v2-border)',
             borderRadius: '13px',
             padding: '13px 14px',
             marginTop: '16px',
@@ -612,19 +720,23 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
           {/* Action button */}
           {content.pl.act && (
             <button
-              className="lv-pl-btn"
-              onClick={() => onAction?.(content.pl!.act)}
+              type="button"
+              className="lv-pl-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
+              onClick={() => onAction?.(content.pl!.actKey ?? content.pl!.act)}
+              /*
+               * THE SAME BUTTON AS EVERY ROW IN <NeedsYouCard>.
+               *
+               * Metrics, lift, hover and press all copied rather than
+               * approximated. `ap-primary-lift` has to be the class and not an
+               * inline shadow for the reason globals.css records: the glow is a
+               * colour-mix of the primary, and dark mode swaps it for a plain
+               * dark shadow. Written inline it would lose that and go back to
+               * glowing on the dark ground.
+               */
               style={{
-                border: 'none',
-                background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
+                background: 'var(--v2-primary)',
                 color: '#fff',
-                borderRadius: '10px',
-                padding: '8px 14px',
-                fontSize: '13px',
-                fontWeight: 600,
                 whiteSpace: 'nowrap',
-                boxShadow: '0 5px 14px -7px rgba(249,115,22,0.9)',
-                cursor: 'pointer',
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
               }}
             >

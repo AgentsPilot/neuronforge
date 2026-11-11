@@ -577,6 +577,19 @@ export async function GET(request: NextRequest) {
           contactId: item.contactId,
           name: item.name,
           note: item.note ?? null,
+          /* The subject of the message that started this row, on the mail gaps.
+             Named here because this list is written out field by field — see the
+             note below, which this field is the second instance of. */
+          subject: item.subject ?? null,
+          /* The client's own words. Named here for the same reason. */
+          quote: item.quote ?? null,
+          /* The conversation to open, and to answer inside. Same reason. */
+          threadId: item.threadId ?? null,
+          /* The agent's proposed reply, and the draft it became. */
+          draftBody: item.draftBody ?? null,
+          draftId: item.draftId ?? null,
+          /* When they were last answered from the card. */
+          answeredAt: item.answeredAt ?? null,
           since: item.since,
           entityId: item.entityId ?? null,
           /*

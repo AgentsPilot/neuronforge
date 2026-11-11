@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
 import { createLogger } from '@/lib/logger';
@@ -244,9 +244,24 @@ function BusinessOSContent() {
     }
   }, []);
 
+  /*
+   * ── ASKED AGAIN WHEN THE OWNER COMES BACK ─────────────────────────────────
+   *
+   * This ran once. The readiness row it feeds says "website leads are not being
+   * answered", and the switch that answers it lives in Settings — so the owner
+   * left this page, turned replies on, came back, and the row was still there,
+   * built from the answer this page got before they went. It cleared on a hard
+   * reload, which reads as the fix not having worked.
+   *
+   * `pathname` re-asks whenever the route changes, which is exactly the trip
+   * the owner makes to fix it. The status route is a handful of narrow reads
+   * and `cache: 'no-store'` already, so asking again costs one request.
+   */
+  const pathname = usePathname();
+
   useEffect(() => {
     void refreshInboxChannel();
-  }, [refreshInboxChannel]);
+  }, [refreshInboxChannel, pathname]);
 
   /**
    * Pause or resume one mailbox's channel.
@@ -771,31 +786,69 @@ function BusinessOSContent() {
              account can reach that state, and the step now means one thing. */
           const googleConnected = Boolean(s.channels?.google_business_profile);
 
-          computedSetupItems.push({
-            id: 'meta_insights',
-            title: metaConnected ? t('setup.meta.done') : t('setup.meta.todo'),
-            description: metaConnected ? '' : t('setup.meta.why'),
-            completed: metaConnected,
-            action: 'connect_channels',
-            required: false
-          });
+          /*
+           * ── OFFERED ONLY TO AN ACCOUNT THAT ALREADY HAS IT ────────────────
+           * Owner decision 2026-11-10, same decision as the tile in
+           * `ChannelsCard`: `meta-insights` is read-only reach and produces no
+           * contact, no enquiry and nothing an agent can act on. The product's
+           * job in this phase is to CAPTURE leads, so a readiness row asking
+           * for an OAuth in exchange for a number is a step that costs more
+           * than it returns — and with the tile withdrawn it would be a step
+           * pointing at a connect button that is no longer there.
+           *
+           * Still pushed when the account IS connected, for two reasons: the
+           * row is how that owner sees the connection's state at all, and
+           * `brokenConnections` above reads `completed('meta_insights')` to
+           * decide whether a meta-insights token expiry is worth reporting.
+           * Dropping the row outright would silence that alert for the
+           * accounts that still have the connection live.
+           *
+           * Instagram and Facebook ATTRIBUTION is untouched and must stay: it
+           * arrives by referrer, needs nothing connected, and is the half that
+           * actually captures leads.
+           */
+          if (metaConnected) {
+            computedSetupItems.push({
+              id: 'meta_insights',
+              title: t('setup.meta.done'),
+              description: '',
+              completed: true,
+              action: 'connect_channels',
+              required: false
+            });
+          }
 
-          computedSetupItems.push({
-            /*
-             * `google_business`, because that is what this row offers. It was
-             * `google_analytics` while its own copy read "see who finds you
-             * through search and your listing" — the Business Profile, not
-             * Analytics — and `googleConnected` below has always accepted
-             * either. Analytics is no longer offered at all, so the id now
-             * matches the one thing the step is about.
-             */
-            id: 'google_business',
-            title: googleConnected ? t('setup.google.done') : t('setup.google.todo'),
-            description: googleConnected ? '' : t('setup.google.why'),
-            completed: googleConnected,
-            action: 'connect_channels',
-            required: false
-          });
+          /*
+           * ── AND THE LISTING, ON THE SAME TERMS AS META ────────────────────
+           * Owner decision 2026-11-10. The listing reports impressions, calls
+           * and direction requests: real visibility for a phone-led business,
+           * but reach rather than a captured lead, and an OAuth plus a location
+           * to pick. Withdrawn from the offer while the product's job is
+           * capturing leads, so this row is no longer put to an owner who has
+           * not connected one.
+           *
+           * Pushed when connected, for the same two reasons as Meta: it is how
+           * that owner sees the connection at all, and `brokenConnections`
+           * reads `completed('google_business')` before it will report a
+           * listing token expiry.
+           *
+           * The `google` CHANNEL is untouched. Anyone arriving from a google.*
+           * host is still attributed, with no connection at all.
+           *
+           * `google_business`, not `google_analytics`: the id names the one
+           * thing this row was ever about, and Analytics has not been offered
+           * for some time.
+           */
+          if (googleConnected) {
+            computedSetupItems.push({
+              id: 'google_business',
+              title: t('setup.google.done'),
+              description: '',
+              completed: true,
+              action: 'connect_channels',
+              required: false
+            });
+          }
 
           setSetupItems(computedSetupItems);
 
