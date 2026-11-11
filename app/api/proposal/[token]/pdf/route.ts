@@ -31,6 +31,7 @@ import { splitTotal } from '@/lib/services/ProposalAcceptanceService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import { resolveEmailBranding } from '@/lib/email/branding';
+import { rateLimit, tooManyRequests, RATE_LIMITS } from '@/lib/security/rateLimit';
 
 const logger = createLogger({ module: 'proposal-pdf' });
 
@@ -40,6 +41,23 @@ export async function GET(
 ) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
+
+  /*
+   * THROTTLED, and the most worth throttling on this surface.
+   *
+   * `publicEndpointsAreThrottled` enumerates every route under
+   * `app/api/proposal` rather than naming them, so this failed the moment it
+   * was added — which is the point of a guard that lists a directory.
+   *
+   * The read allowance, not the write one: a client may legitimately open the
+   * PDF a few times, and 120 in five minutes is far past that. But unlike the
+   * JSON beside it, each call RENDERS a document — fonts, a rasterised logo,
+   * a full layout pass — so an unthrottled signed link is the cheapest way to
+   * spend our CPU that exists on this surface. The allowance is generous; the
+   * ceiling is the point.
+   */
+  const throttle = await rateLimit(request, 'proposal-pdf', RATE_LIMITS.read);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.read.windowSeconds);
 
   const { token } = await params;
   const payload = verifyProposalToken(token);

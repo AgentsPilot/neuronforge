@@ -2560,7 +2560,7 @@ export const en = {
     'crm.proposal.resend.sent': 'The quote was sent again',
     'crm.proposal.resend.failed': 'The quote could not be sent again',
     'crm.proposal.resend.not_sent_yet': 'This version was never sent, so there is nothing to resend',
-    'crm.proposal.resend.already_opened': 'The client has already opened this quote — send a reminder instead',
+    'crm.proposal.resend.already_opened': 'The client has already opened this quote. Send a reminder instead',
     'crm.proposal.resend.already_answered': 'This quote has already been answered',
     'crm.proposal.resend.no_client_email': 'This client has no email address',
     'crm.proposal.resend.not_found': 'That quote no longer exists',

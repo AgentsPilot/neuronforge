@@ -881,7 +881,12 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     //   the deletion request, which a business Reset or Purge must not cancel (SA O-2).
     // +2 module export MX-1a (2026-10-27): business_os_export_module_jobs and business_os_export_requests
     //   (never, user_id), the export history and the daily limit counter (SA MX1A-2). Counted from 162 (SA CR-3).
-    expect(baseline.count).toBe(164);
+    // +2 quote children (2026-11-11): proposal_attachments and proposal_signatures
+    //   (reset, user_id), the files a quote carries and the client's signature on
+    //   it. Both are CASCADE children of `proposals` that hold their own user_id,
+    //   so each is business owned in its own right (20261119) and classified with
+    //   its parent. Counted from 164.
+    expect(baseline.count).toBe(166);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

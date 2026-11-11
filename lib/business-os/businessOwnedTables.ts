@@ -81,6 +81,13 @@ export const BUSINESS_OWNED_TABLES = [
   'saved_payment_methods',
   'stripe_connect_accounts',
   'proposals',
+  /*
+   * A quote's own children. Both carry their own `user_id` rather than leaning
+   * on the cascade from `proposals`, so each needs its own constraint — and a
+   * signature in particular must not outlive the business that took it.
+   */
+  'proposal_attachments',
+  'proposal_signatures',
   // Online presence
   'smart_links',
   'website_content',

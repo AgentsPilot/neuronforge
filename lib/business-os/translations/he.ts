@@ -375,7 +375,7 @@ export const he = {
     'crm.proposal.resend.sent': 'ההצעה נשלחה שוב',
     'crm.proposal.resend.failed': 'לא הצלחנו לשלוח את ההצעה שוב',
     'crm.proposal.resend.not_sent_yet': 'הגרסה הזו מעולם לא נשלחה, אז אין מה לשלוח שוב',
-    'crm.proposal.resend.already_opened': 'הלקוח כבר פתח את ההצעה — שלחו תזכורת במקום',
+    'crm.proposal.resend.already_opened': 'הלקוח כבר פתח את ההצעה. שלחו תזכורת במקום',
     'crm.proposal.resend.already_answered': 'הלקוח כבר ענה להצעה הזו',
     'crm.proposal.resend.no_client_email': 'ללקוח הזה אין כתובת מייל',
     'crm.proposal.resend.not_found': 'ההצעה הזו כבר לא קיימת',

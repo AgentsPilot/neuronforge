@@ -2411,7 +2411,7 @@ export const es = {
     'crm.proposal.resend.sent': 'El presupuesto se envió de nuevo',
     'crm.proposal.resend.failed': 'No se pudo enviar el presupuesto de nuevo',
     'crm.proposal.resend.not_sent_yet': 'Esta versión nunca se envió, no hay nada que reenviar',
-    'crm.proposal.resend.already_opened': 'El cliente ya abrió este presupuesto — envía un recordatorio',
+    'crm.proposal.resend.already_opened': 'El cliente ya abrió este presupuesto. Envía un recordatorio',
     'crm.proposal.resend.already_answered': 'El cliente ya respondió a este presupuesto',
     'crm.proposal.resend.no_client_email': 'Este cliente no tiene correo electrónico',
     'crm.proposal.resend.not_found': 'Ese presupuesto ya no existe',

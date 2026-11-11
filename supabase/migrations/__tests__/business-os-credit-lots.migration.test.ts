@@ -835,6 +835,16 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
       join(SQL_SCRIPTS_DIR, '20261094_operator_test_account_cleanup_account_closures_rollback.sql'),
       join(MIGRATIONS_DIR, '20261096_operator_test_account_cleanup_export_requests.sql'),
       join(SQL_SCRIPTS_DIR, '20261096_operator_test_account_cleanup_export_requests_rollback.sql'),
+      // 20261104 (the scheduling_meetings.replaces_meeting_id link) and its rollback, which
+      // restores 20261096: same again. Missing here since it was generated, so this assertion
+      // has been failing on the gate rather than guarding anything.
+      join(MIGRATIONS_DIR, '20261104_operator_test_account_cleanup_meeting_replaces.sql'),
+      join(SQL_SCRIPTS_DIR, '20261104_operator_test_account_cleanup_meeting_replaces_rollback.sql'),
+      // 20261120 (the proposal_attachments and proposal_signatures links) and its rollback, which
+      // restores 20261104: same again. It counts and deletes one test account's rows by user_id
+      // and defines no charge function, column or grant, so what L8 pins is unchanged.
+      join(MIGRATIONS_DIR, '20261120_operator_test_account_cleanup_quote_children.sql'),
+      join(SQL_SCRIPTS_DIR, '20261120_operator_test_account_cleanup_quote_children_rollback.sql'),
     ];
     const allowed = new Set(
       [CHARGES_MIGRATION, CHARGES_ROLLBACK, ...indexOnly, ...testAccountCleanup].map((file) => relative(ROOT, file))

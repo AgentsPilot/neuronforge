@@ -121,6 +121,8 @@ const BUSINESS_OWNED_20260916: readonly string[] = [
   'saved_payment_methods',
   'stripe_connect_accounts',
   'proposals',
+  'proposal_attachments',
+  'proposal_signatures',
   'smart_links',
   'website_content',
   'website_page_views',
@@ -162,7 +164,7 @@ const BUSINESS_OWNED_20260916: readonly string[] = [
 const DYNAMIC_FK_MIGRATIONS: readonly DynamicFkMigration[] = [
   {
     file: '20260916_business_data_ownership.sql',
-    sha256: '6d9cad766e5ce3655df454153975af7a637e7ffe11ce5d17ae15a6bcc303a7f6',
+    sha256: '37f976f8ea8cf12f0de4300aba935df1c6488f0516c4afc5d77b49bbe89a7f11',
     expands: BUSINESS_OWNED_20260916.map((table) => ({
       child: table,
       columns: ['user_id'],
@@ -174,6 +176,21 @@ const DYNAMIC_FK_MIGRATIONS: readonly DynamicFkMigration[] = [
       'Expanded from the array as committed. The loop skips a table absent from the database, which is why two of the ' +
       'expansions are on NOT_ON_PROD. The file is edited whenever a business-owned table joins the array: re-copy the ' +
       'array above and update the sha256 in the same PR.',
+  },
+  {
+    file: '20261119_a_quotes_children_belong_to_the_business.sql',
+    sha256: '75480b7ab06ec55e1f0ddbbad885bf17f70f99754c187f4b0ce13cae2eb9634b',
+    expands: ['proposal_attachments', 'proposal_signatures'].map((table) => ({
+      child: table,
+      columns: ['user_id'],
+      parent: 'business_profiles',
+      constraint: `${table}_business_fk`,
+    })),
+    reason:
+      'The same EXECUTE format() loop as 20260916, over a two-entry array. It exists because an existing ' +
+      'database has already run 20260916 and will never see names added to that array afterwards, so the ' +
+      'loop there reaches a FRESH install only. Written as dynamic SQL rather than two plain ALTERs because ' +
+      'Postgres has no ADD CONSTRAINT IF NOT EXISTS and the migration has to be re-runnable.',
   },
 ];
 
