@@ -120,6 +120,102 @@ interface ComplexityThresholds {
 }
 
 // Available model options
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE TIER'S MODEL PICKER, AND THE REASON IT IS A COMPONENT.
+ *
+ * A `<select>` whose value matches no `<option>` does not show "nothing" — the
+ * browser renders the FIRST option. With a hand-written list that had drifted
+ * to 2024 and a stored value of `gpt-5.2`, all three tiers displayed
+ * "Claude 3.5 Sonnet (Most Capable)": a model nobody had chosen, on the one
+ * page whose job is to report what is configured. The save button then made it
+ * look deliberate.
+ *
+ * Two defences, and the second matters more than the first:
+ *
+ *   · the options come from the server's pricing catalogue, so anything
+ *     billable is offerable and there is no second list to maintain;
+ *   · a stored value that is STILL unknown is rendered as its own option and
+ *     labelled, instead of being quietly replaced by whatever sorts first.
+ *     A catalogue can lag a config again; silence about it must not.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function TierModelSelect({
+  value,
+  onChange,
+  catalogue,
+  accent,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  catalogue: Record<string, string[]> | null;
+  accent: string;
+}) {
+  const groups = catalogue && Object.keys(catalogue).length
+    ? catalogue
+    : {
+        claude: AVAILABLE_MODELS.claude.map(m => m.value),
+        openai: AVAILABLE_MODELS.openai.map(m => m.value),
+        google: AVAILABLE_MODELS.google.map(m => m.value),
+      };
+
+  const known = Object.values(groups).some(models => models.includes(value));
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────
+   * THE PROVIDER IS SHOWN, NOT CHOSEN.
+   *
+   * `orchestration_routing_provider_<tier>` rows exist in the database and
+   * NOTHING WRITES THEM — the key appears zero times in this page's route.
+   * They were set once on 2025-12-30 and sat at `openai` while the models
+   * changed above them, which is how the Fast tier came to hold
+   * `claude-3-haiku-20240307` against provider `openai`: an impossible pair
+   * that fails at request time, not at save time, because the page let one
+   * half of a two-part answer be edited alone.
+   *
+   * `RoutingService` now derives the provider from the model, so the stored
+   * row is only a fallback for a model the catalogue has never heard of.
+   * This line says out loud what the run will actually do, so the screen and
+   * the runtime cannot tell different stories.
+   * ───────────────────────────────────────────────────────────────────────
+   */
+  const provider = Object.entries(groups).find(([, models]) => models.includes(value))?.[0];
+
+  return (
+    <>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={`w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 ${accent} focus:border-transparent cursor-pointer`}
+      >
+        {!known && value && (
+          <option value={value}>{value} — configured, not in the catalogue</option>
+        )}
+        {Object.entries(groups).map(([provider, models]) => (
+          <optgroup key={provider} label={provider}>
+            {models.map(model => (
+              <option key={model} value={model}>{model}</option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      {provider && (
+        <p className="text-xs text-slate-400 mt-1">
+          Runs on <span className="font-semibold text-slate-300">{provider}</span>, taken from the model itself.
+        </p>
+      )}
+      {!known && value && (
+        <p className="text-xs text-amber-400 mt-1">
+          This tier is set to <code>{value}</code>, which has no price row. Its
+          provider cannot be derived and cost estimates will be wrong until it is
+          added to the catalogue.
+        </p>
+      )}
+    </>
+  );
+}
+
 const AVAILABLE_MODELS = {
   claude: [
     { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (Most Capable)', tier: 'powerful' },
@@ -173,6 +269,10 @@ export default function OrchestrationConfigPage() {
   const [compressionExpanded, setCompressionExpanded] = useState(false);
 
   // Configuration state
+  /* The model catalogue the route serves, so the picker offers what can
+     actually be billed rather than a list maintained by hand. */
+  const [catalogue, setCatalogue] = useState<Record<string, string[]> | null>(null);
+
   const [config, setConfig] = useState<OrchestrationConfig>({
     enabled: false,
     compressionEnabled: false,
@@ -315,6 +415,8 @@ export default function OrchestrationConfigPage() {
 
       if (data.success && data.config) {
         setConfig(data.config);
+        /* Served by the route from the pricing catalogue. */
+        if (data.availableModels) setCatalogue(data.availableModels);
         if (data.complexityWeights) setComplexityWeights(data.complexityWeights);
         if (data.complexityThresholds) setComplexityThresholds(data.complexityThresholds);
       }
@@ -610,32 +712,12 @@ export default function OrchestrationConfigPage() {
                     <Zap className="w-4 h-4 inline mr-2" />
                     Fast Tier Model (Score {'<'} 3.0)
                   </label>
-                  <select
+                  <TierModelSelect
                     value={config.modelFast}
-                    onChange={(e) => setConfig({ ...config, modelFast: e.target.value })}
-                    className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent cursor-pointer"
-                  >
-                    <optgroup label="Claude Models">
-                      {AVAILABLE_MODELS.claude.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="OpenAI Models">
-                      {AVAILABLE_MODELS.openai.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Google Models">
-                      {AVAILABLE_MODELS.google.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Kimi Models (Moonshot AI)">
-                      {AVAILABLE_MODELS.kimi.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                  </select>
+                    onChange={(next) => setConfig({ ...config, modelFast: next })}
+                    catalogue={catalogue}
+                    accent="focus:ring-green-500"
+                  />
                   <p className="text-xs text-slate-400 mt-2">Used for simple, straightforward tasks with complexity scores below the Fast Tier Max threshold. Examples: Basic data retrieval, simple API calls, data validation, format conversion, status checks. These tasks don't require advanced reasoning or extensive context understanding. Recommended models: claude-3-haiku (fastest, cheapest), gpt-4o-mini (good balance), claude-3-5-haiku (newest fast model). Fast tier handles 60-70% of typical workflow tasks at fraction of the cost.</p>
                 </div>
 
@@ -645,32 +727,12 @@ export default function OrchestrationConfigPage() {
                     <Sliders className="w-4 h-4 inline mr-2" />
                     Balanced Tier Model (Score 3.0-6.5)
                   </label>
-                  <select
+                  <TierModelSelect
                     value={config.modelBalanced}
-                    onChange={(e) => setConfig({ ...config, modelBalanced: e.target.value })}
-                    className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer"
-                  >
-                    <optgroup label="Claude Models">
-                      {AVAILABLE_MODELS.claude.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="OpenAI Models">
-                      {AVAILABLE_MODELS.openai.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Google Models">
-                      {AVAILABLE_MODELS.google.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Kimi Models (Moonshot AI)">
-                      {AVAILABLE_MODELS.kimi.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                  </select>
+                    onChange={(next) => setConfig({ ...config, modelBalanced: next })}
+                    catalogue={catalogue}
+                    accent="focus:ring-blue-500"
+                  />
                   <p className="text-xs text-slate-400 mt-2">Used for moderate complexity tasks with scores between Fast Max and Balanced Max thresholds. Examples: Multi-step workflows, data transformation, moderate reasoning, summarization, business logic execution, error handling. These tasks require some reasoning capability but don't need flagship model power. Recommended models: claude-3-5-haiku (excellent capability-to-cost ratio), gpt-4o-mini, claude-3-sonnet. Balanced tier handles 25-30% of tasks and provides sweet spot for cost-performance.</p>
                 </div>
 
@@ -680,32 +742,12 @@ export default function OrchestrationConfigPage() {
                     <Brain className="w-4 h-4 inline mr-2" />
                     Powerful Tier Model (Score {'>'} 6.5)
                   </label>
-                  <select
+                  <TierModelSelect
                     value={config.modelPowerful}
-                    onChange={(e) => setConfig({ ...config, modelPowerful: e.target.value })}
-                    className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent cursor-pointer"
-                  >
-                    <optgroup label="Claude Models">
-                      {AVAILABLE_MODELS.claude.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="OpenAI Models">
-                      {AVAILABLE_MODELS.openai.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Google Models">
-                      {AVAILABLE_MODELS.google.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Kimi Models (Moonshot AI)">
-                      {AVAILABLE_MODELS.kimi.map(model => (
-                        <option key={model.value} value={model.value}>{model.label}</option>
-                      ))}
-                    </optgroup>
-                  </select>
+                    onChange={(next) => setConfig({ ...config, modelPowerful: next })}
+                    catalogue={catalogue}
+                    accent="focus:ring-purple-500"
+                  />
                   <p className="text-xs text-slate-400 mt-2">Used for high complexity tasks scoring above Balanced Max threshold. Examples: Complex reasoning, code generation, advanced data analysis, creative problem-solving, multi-step decision trees, strategic planning. These tasks require flagship model capabilities for quality results. Recommended models: claude-3-5-sonnet (best overall), gpt-4o (strong reasoning), claude-3-opus (maximum capability). Powerful tier handles 5-15% of tasks but ensures critical/complex operations get the best available AI. Most expensive but essential for quality.</p>
                 </div>
               </div>

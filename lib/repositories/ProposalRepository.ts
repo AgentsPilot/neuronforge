@@ -16,6 +16,7 @@
 
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
+import type { ProposalContent } from '@/lib/business-os/proposals/proposalContent';
 
 const logger = createLogger({ service: 'ProposalRepository' });
 
@@ -149,6 +150,16 @@ export interface Proposal {
   /** When the remaining stages were called off. Not `updated_at`. */
   stopped_at: string | null;
   supersedes_id: string | null;
+  /**
+   * The breakdown explaining `total`, when the owner built one.
+   *
+   * NULL on every quote written before 2026-11-10, and on every one from an
+   * owner who prices a job as a single figure. Read by the document renderer
+   * and the PDF; by nothing else.
+   */
+  content: ProposalContent | null;
+  /** Whether Approve is gated on a signature. Decline never is. */
+  requires_signature: boolean;
   accepted_snapshot: Record<string, unknown> | null;
   created_invoice_id: string | null;
   created_plan_id: string | null;
@@ -181,6 +192,16 @@ export interface ProposalInsert {
    */
   sessions?: PackageSessions | null;
   supersedes_id?: string | null;
+  /**
+   * The optional breakdown explaining `total` — JSON on the row, not a file.
+   *
+   * Null on every quote priced the way they always have been. Nothing in this
+   * repository filters, sorts or searches on it: it is written here and read
+   * by the two surfaces that render it.
+   */
+  content?: ProposalContent | null;
+  /** Gate Approve behind a typed name and an agreement. Decline never gates. */
+  requires_signature?: boolean;
 }
 
 export interface RepositoryResult<T> {

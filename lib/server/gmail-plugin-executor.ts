@@ -16,6 +16,73 @@ const SYSTEM_LABELS = new Set([
 
 // Executor for Gmail plugin actions
 
+/**
+ * What the sender actually wrote, without the conversation underneath it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS WORTH DOING AT ALL
+ *
+ * A reply carries the whole thread below it. A client writing two sentences
+ * back to a booking confirmation produced ~4,100 tokens of message, almost all
+ * of it our own HTML card quoted back at us, and every one of those tokens was
+ * paid for on the way into a model that needed the two sentences.
+ *
+ * MARKERS, NOT GUESSES. Each pattern below is something a mail client WRITES to
+ * mark a quote. Nothing here infers from blank lines, indentation or length,
+ * because a short message is not a quote and a long one is not a thread.
+ *
+ *   gmail_quote / blockquote   what Gmail and most web clients emit
+ *   -----Original Message----- Outlook and everything imitating it
+ *   From: … Sent: … To:        the Outlook header block, which arrives as
+ *                              plain text inside the body
+ *   On <date>, <who> wrote:    the Apple Mail and Thunderbird convention
+ *   a run of lines opening >   the oldest convention of all
+ *
+ * THE SAFETY RULE, which matters more than the patterns: people bottom-post.
+ * Plenty of readers answer UNDER the quote, so cutting at the first marker
+ * would throw their entire reply away and hand the model an empty string. If
+ * what survives is empty or too short to be a message, the original is
+ * returned untouched. A long prompt costs money; a blank one costs an answer.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const QUOTE_MARKERS: RegExp[] = [
+  /<div[^>]*class=["'][^"']*gmail_quote/i,
+  /<blockquote/i,
+  /-{2,}\s*original message\s*-{2,}/i,
+  /^\s*from:.*$\n^\s*sent:.*$/im,
+  /^\s*on .{0,120}wrote:\s*$/im,
+  /(^|\n)(>\s?.*\n){2,}/,
+];
+
+/*
+ * The floor catches an EMPTY cut, not a short one.
+ *
+ * It was 12, which is the kind of number that looks cautious and is not:
+ * "Yes please." is 11 characters and a complete answer, and at 12 it fell back
+ * to the whole quoted thread — the exact cost this function exists to avoid.
+ * Two characters is the real question being asked: did the cut leave anything
+ * at all, or did this person answer underneath the quote?
+ */
+const TOO_SHORT_TO_BE_A_MESSAGE = 2;
+
+export function stripQuotedThread(body: string): string {
+  if (!body) return body;
+
+  let cut = body.length;
+  for (const marker of QUOTE_MARKERS) {
+    const found = body.search(marker);
+    if (found >= 0 && found < cut) cut = found;
+  }
+
+  if (cut >= body.length) return body;
+
+  const kept = body.slice(0, cut).trim();
+
+  /* Nothing above the quote means they answered underneath it, and the reply
+     we want is in the part we just cut. Hand back the original. */
+  return kept.length >= TOO_SHORT_TO_BE_A_MESSAGE ? kept : body;
+}
+
 export class GmailPluginExecutor extends GoogleBasePluginExecutor {
   protected gmailApisUrl: string;
 
@@ -55,6 +122,8 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
         return await this.replyToThread(connection, parameters);
       case 'send_draft':
         return await this.sendDraft(connection, parameters);
+      case 'delete_draft':
+        return await this.deleteDraft(connection, parameters);
       case 'batch_modify_emails':
         return await this.batchModifyMessages(connection, parameters);
       default:
@@ -239,7 +308,10 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
           connection.access_token,
           message.id,
           parameters.include_attachments || false,
-          contentLevel
+          contentLevel,
+          /* Opt-in, and deliberately not the default: every other caller of
+             this action wants the message exactly as it arrived. */
+          parameters.strip_quoted_reply === true
         );
         emails.push(emailDetail);
       } catch (error) {
@@ -869,10 +941,61 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
    * it CONTINUES the conversation rather than starting one.
    * NOT idempotent — each call sends a new message (double-send on re-run).
    */
+  /**
+   * The newest message in a thread — the one a reply should answer.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Gmail threading is driven by a MESSAGE: `In-Reply-To` and `References` are
+   * built from the message being answered, and `threadedReplyParts` needs one.
+   * A caller holding only a conversation had no way in.
+   *
+   * That caller is the "needs you" card. It stores a THREAD on the activity,
+   * deliberately — a thread is what the owner is answering, and by the time
+   * they press send the client may have written twice more. Pinning the stored
+   * message would answer whichever message the agent happened to scan, which on
+   * a moving conversation is the wrong one and reads as a non-sequitur.
+   *
+   * `format=minimal` returns the message list without bodies. Gmail returns
+   * them oldest-first, so the last is the newest.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private async newestMessageInThread(connection: any, threadId: string): Promise<string> {
+    const response = await fetch(
+      `${this.gmailApisUrl}/users/me/threads/${encodeURIComponent(threadId)}?format=minimal`,
+      { headers: { Authorization: `Bearer ${connection.access_token}`, Accept: 'application/json' } }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ status: response.status, threadId, errorData }, 'reply_to_email: thread lookup failed');
+      throw new Error(`Gmail thread lookup failed: ${response.status} - ${errorData}`);
+    }
+
+    const thread = await response.json();
+    const messages: Array<{ id?: string }> = Array.isArray(thread?.messages) ? thread.messages : [];
+    const newest = messages[messages.length - 1]?.id;
+
+    if (!newest) {
+      throw new Error(`Gmail thread ${threadId} has no messages to reply to`);
+    }
+    return newest;
+  }
+
   private async replyToThread(connection: any, parameters: any): Promise<any> {
-    const messageId: string = typeof parameters.message_id === 'string' ? parameters.message_id.trim() : '';
+    let messageId: string = typeof parameters.message_id === 'string' ? parameters.message_id.trim() : '';
+
+    /*
+     * A thread is an accepted alternative to a message — see
+     * `newestMessageInThread`. The message still wins where both are given,
+     * because a caller naming one is answering that one specifically.
+     */
+    const threadParam: string = typeof parameters.thread_id === 'string' ? parameters.thread_id.trim() : '';
+    if (!messageId && threadParam) {
+      messageId = await this.newestMessageInThread(connection, threadParam);
+    }
+
     if (!messageId) {
-      throw new Error('message_id is a required parameter');
+      throw new Error('reply_to_email needs either message_id or thread_id');
     }
 
     const content = parameters.content || {};
@@ -917,6 +1040,50 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
    * Send an existing Gmail draft (drafts.send { id }).
    * NOT idempotent — consumes the draft; a re-run 404s.
    */
+  /**
+   * Throw away a draft nobody is going to send.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Needed the moment a reply can be sent from somewhere OTHER than the draft.
+   * The "needs you" card lets an owner edit the agent's proposed text and send
+   * it as a threaded reply — which leaves the original draft sitting in the
+   * mailbox, identical-looking and still sendable. A fortnight later it is
+   * indistinguishable from a reply that never went, and sending it delivers the
+   * same answer twice.
+   *
+   * Also the honest answer to "discard": an owner who rejects the agent's draft
+   * should not have to go into Gmail to finish rejecting it.
+   *
+   * A 404 is SUCCESS here, not an error. The draft may already be gone — the
+   * owner deleted it by hand, or sent it themselves — and the caller's intent
+   * ("this draft should not exist") is satisfied either way.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private async deleteDraft(connection: any, parameters: any): Promise<any> {
+    const draftId: string = typeof parameters.draft_id === 'string' ? parameters.draft_id.trim() : '';
+    if (!draftId) {
+      throw new Error('draft_id is a required parameter');
+    }
+
+    const response = await fetch(
+      `${this.gmailApisUrl}/users/me/drafts/${encodeURIComponent(draftId)}`,
+      { method: 'DELETE', headers: { Authorization: `Bearer ${connection.access_token}` } }
+    );
+
+    if (response.status === 404) {
+      this.logger.debug({ draftId }, 'delete_draft: already gone, treating as done');
+      return { draft_id: draftId, deleted: false, already_absent: true };
+    }
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ status: response.status, errorData, draftId }, 'delete_draft failed');
+      throw new Error(`Gmail draft delete failed: ${response.status} - ${errorData}`);
+    }
+
+    return { draft_id: draftId, deleted: true, already_absent: false };
+  }
+
   private async sendDraft(connection: any, parameters: any): Promise<any> {
     const draftId: string = typeof parameters.draft_id === 'string' ? parameters.draft_id.trim() : '';
     if (!draftId) {
@@ -1190,7 +1357,8 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     accessToken: string,
     messageId: string,
     includeAttachments: boolean,
-    contentLevel: 'metadata' | 'snippet' | 'full' = 'snippet'
+    contentLevel: 'metadata' | 'snippet' | 'full' = 'snippet',
+    stripQuotedReply = false
   ): Promise<any> {
     // Determine Gmail API format based on content level
     // - 'metadata': Only fetch headers (fastest, no body/snippet in payload)
@@ -1271,7 +1439,8 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     // Only include body field if content_level is 'full'
     // This prevents sending large body data to LLM when not needed
     if (contentLevel === 'full') {
-      emailInfo.body = email.payload ? this.extractEmailBody(email.payload) : '';
+      const whole = email.payload ? this.extractEmailBody(email.payload) : '';
+      emailInfo.body = stripQuotedReply ? stripQuotedThread(whole) : whole;
     }
     // Note: For 'metadata' and 'snippet' levels, body field is intentionally omitted
     // Use the 'snippet' field (~200 chars) for content matching/filtering

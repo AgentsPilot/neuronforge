@@ -224,6 +224,61 @@ export interface GapItem {
   name: string;
   /** What it is about — the service, the amount, the appointment. */
   note?: string;
+  /**
+   * The SUBJECT of the message this row is about, where a message started it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Only the mail-driven gaps set it, and for them it is the single most
+   * recognisable fact on the row: an owner identifies a waiting thread by its
+   * subject long before they read anybody's summary of it.
+   *
+   * It was already being stored — the agent writes it to `crm_activities.title`
+   * — and then thrown away, because `client_reply_waiting` collapsed title and
+   * description into one field (`description || title`). Since the agent always
+   * writes a description, the subject never once reached the card.
+   *
+   * Kept separate from `note` rather than concatenated: one is the client's own
+   * words and the other is the agent's read of them, they are set in different
+   * type and the card quotes only the first.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  subject?: string;
+  /**
+   * The client's OWN WORDS, where a message started this row.
+   *
+   * The one part of a mail row that is the client speaking rather than the
+   * agent reporting, which is why it is carried separately and set in
+   * quotation on the card. Absent on rows written before the agent began
+   * recording it, and on every gap that is not about a message.
+   */
+  quote?: string;
+  /**
+   * The mail thread this row is about, in the provider's own id format.
+   *
+   * What lets the card open the exact conversation instead of the contact's
+   * record, and — the part that matters — what lets a reply sent from the card
+   * continue the client's thread rather than starting a second one beside it.
+   * Absent on rows filed before `crm_activities.source_thread_id` existed.
+   */
+  threadId?: string;
+  /**
+   * The reply the agent already composed, on `reply_drafted` rows only.
+   *
+   * A SNAPSHOT of what was proposed, not a mirror of the live Gmail draft —
+   * an owner who edits the draft in their mailbox does not change this. The
+   * card labels it as the agent's draft for exactly that reason.
+   */
+  draftBody?: string;
+  /** The provider's draft object, so sending can delete it. */
+  draftId?: string;
+  /**
+   * When the owner last answered this person from the card.
+   *
+   * Present without the row being settled, which is the point: sending does
+   * not finish a thread, but a row that shows no sign of the reply invites
+   * the same client being answered twice.
+   */
+  answeredAt?: string;
   /** When it became stuck, so "how long" can be shown rather than a date. */
   since: string;
   /**

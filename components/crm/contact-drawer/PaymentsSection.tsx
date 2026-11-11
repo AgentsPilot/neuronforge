@@ -529,6 +529,16 @@ export function PaymentsSection({
                      times down a 576px drawer truncated the service beside it
                      to say something the reader already knew. */
                   hideClient
+                  /*
+                   * The row's own `sm:` template is a VIEWPORT query, and the
+                   * thing that constrains it here is this drawer at 576px. On a
+                   * normal desktop the viewport is wide, so the row laid itself
+                   * out for a screen it does not have: a 105px title column
+                   * reading "Sports …", a date reading "Nov 11, 2…", and the
+                   * cashflow legend painting over both. Saying so here is the
+                   * same answer `hideClient` gives to the same problem.
+                   */
+                  dense
                 />
                 </div>
               ))}

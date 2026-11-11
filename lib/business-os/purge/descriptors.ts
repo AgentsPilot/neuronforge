@@ -1335,6 +1335,22 @@ const IN_SCOPE: PurgeDescriptor[] = [
   // ── §3.15 Newly classified in scope (T1 pass) ────────────────────────────
   { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: PROPOSALS_EXPORT,
     notes: 'Business content the owner authored and sent to their clients. Self-FK supersedes_id is SET NULL — no ordering needed. LEAF (slice 3a, M-4): a CASCADE child of crm_contacts, so it goes before it for an accurate count.' },
+  /*
+   * A quote's children, both classified with their parent.
+   *
+   * LEAF: each is a CASCADE child of `proposals`, so it is counted before the
+   * quote it hangs off, exactly as `proposals` is counted before the contact.
+   *
+   * Excluded from the export rather than included. An attachment is the file
+   * the owner already holds a copy of, and a signature is evidence ABOUT a
+   * client — neither is the business's own authored content in the way the
+   * quote body is, and a signature image in an export is a mark that can be
+   * lifted out of it.
+   */
+  { table: 'proposal_attachments', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'the files the owner attached to a quote: they already hold the originals, and the quote body that references them is exported with `proposals`'),
+    notes: 'A CASCADE child of proposals that carries its own user_id, so it is named in BUSINESS_OWNED_TABLES and given its own business FK by 20261119.' },
+  { table: 'proposal_signatures', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'a client\'s signature is evidence about a third party, not the business\'s authored content; the drawn mark in particular must not travel in an export'),
+    notes: 'Append-only by trigger on UPDATE, but DELETE is deliberately left open so the CASCADE from proposals and this purge both work (see 20261115).' },
   { table: 'lead_responses', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'queued and sent automatic messages to leads and clients (invitations, chases, reminders) with their claim / lease columns: messages sent are activity (TL default BC-2, 2026-10-16; as payment_reminders, DE-5 BC-4)'),
     notes: 'Lead data is customer data.' },
   { table: 'daily_briefings', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },

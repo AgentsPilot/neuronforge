@@ -2462,7 +2462,7 @@ const clientReplyWaiting: GapDefinition = {
     safely('client_reply_waiting', async () => {
       const { data: raised } = await supabaseServer
         .from('crm_activities')
-        .select('contact_id, title, description, activity_date, created_at')
+        .select('contact_id, title, description, activity_date, created_at, source_capability, source_thread_id, draft_body, source_draft_id')
         .eq('user_id', userId)
         .in('activity_type', ['reply_drafted', 'reply_needs_owner'])
         .gte('created_at', daysAgo(now, 14))
@@ -2488,6 +2488,34 @@ const clientReplyWaiting: GapDefinition = {
 
       const settled = new Set((closed || []).map(r => r.contact_id as string));
 
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * ALREADY ANSWERED FROM THE CARD, WITHOUT BEING FINISHED.
+       *
+       * Sending a reply here deliberately does not settle the row — the owner
+       * says when a conversation is done. But the row has to SAY that a reply
+       * went, or it renders after a reload exactly as it did before: an empty
+       * box, no sign the client was answered, and a straight invitation to
+       * answer them a second time.
+       *
+       * Read as a map of the newest `reply_sent` per contact, so the card can
+       * show when it happened rather than merely that it did.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const { data: answered } = await supabaseServer
+        .from('crm_activities')
+        .select('contact_id, created_at')
+        .eq('user_id', userId)
+        .in('contact_id', contactIds)
+        .eq('activity_type', 'reply_sent')
+        .order('created_at', { ascending: true });
+
+      const answeredAtFor = new Map<string, string>();
+      for (const row of answered || []) {
+        /* Ascending, so the last write per contact is the newest. */
+        answeredAtFor.set(row.contact_id as string, row.created_at as string);
+      }
+
       const { data: people } = await supabaseServer
         .from('crm_contacts')
         .select('id, first_name, last_name')
@@ -2501,6 +2529,35 @@ const clientReplyWaiting: GapDefinition = {
          problems. */
       const seen = new Set<string>();
 
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * THE CLOCK COMES FROM THE FIRST MESSAGE; THE WORDS FROM THE LAST.
+       *
+       * Collapsing a person's rows to ONE row meant one row decided both, and
+       * the oldest won — which is right for "how long have they been waiting"
+       * and wrong for everything the card actually shows. A client who wrote
+       * on Monday and again on Thursday had Thursday's message filed, read and
+       * summarised, and the card went on showing Monday's.
+       *
+       * It is the worse half of the trade: the owner is about to answer this
+       * person, and they are shown the stale version of what was asked. Seen
+       * live on 2026-11-10 — two rows on the same thread, the newer one
+       * carrying the client's own words and the card displaying the older one
+       * that had none.
+       *
+       * So `since` keeps the oldest unanswered message, because the wait
+       * genuinely started there and `staleAfterHours: 0` measures from it, and
+       * every line of content is taken from the newest. Both facts are true of
+       * the same person, which is what the single card is claiming to be
+       * about.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const latestFor = new Map<string, (typeof rows)[number]>();
+      for (const r of rows) {
+        /* `rows` is ascending, so the last write per contact is the newest. */
+        latestFor.set(r.contact_id as string, r);
+      }
+
       return rows
         .filter(r => !settled.has(r.contact_id as string))
         .filter(r => {
@@ -2509,15 +2566,106 @@ const clientReplyWaiting: GapDefinition = {
           seen.add(id);
           return true;
         })
-        .map(r => ({
+        .map(oldest => {
+          /* The oldest row is `oldest` and supplies only the clock. */
+          const r = latestFor.get(oldest.contact_id as string) ?? oldest;
+          /*
+           * ───────────────────────────────────────────────────────────────────
+           * TWO THINGS IN ONE COLUMN, SPLIT ON THE BLANK LINE BETWEEN THEM.
+           *
+           * The agent writes `description` as the client's own words, a blank
+           * line, then its own note about them (see step11/step13 in
+           * `draftClientReplies.steps.json`). They are stored together because
+           * `crm_activities` has `title`, `description` and no third text
+           * column — and the card needs both: the quote is the only part that
+           * is the CLIENT speaking, and without it the owner has to open their
+           * mailbox to find out what was actually said.
+           *
+           * The split is deliberately one-way and safe. A description with no
+           * blank line — every row written before this, including the ones
+           * already on screen — yields no quote and keeps its whole text as the
+           * note, which is exactly what the card did before. So old rows render
+           * as they always did rather than having their first sentence promoted
+           * into a quotation they never were.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          const described = str(r.description);
+          const [first, ...rest] = described.split(/\n\s*\n/);
+          const afterTheBreak = rest.join('\n\n').trim();
+
+          return {
           contactId: r.contact_id as string,
           name: named.get(r.contact_id as string) ?? '',
           /* What they asked, as the agent recorded it. Already written for a
              person to read. */
-          note: str(r.description) || str(r.title),
-          since: (r.activity_date as string) || (r.created_at as string),
+          note: afterTheBreak || described || str(r.title),
+          /*
+           * Their own words, present only where the agent recorded them.
+           *
+           * Line breaks collapsed to spaces: this is copied out of a mail body
+           * and arrives with the sender's own CRLFs, which the card renders as
+           * one clamped paragraph anyway. Normalising here means the stored
+           * text stays verbatim while the row cannot inherit a stray `\r`.
+           */
+          quote: afterTheBreak
+            ? first.replace(/\s*\r?\n\s*/g, ' ').trim() || undefined
+            : undefined,
+          /*
+           * The thread's subject, which is how the owner recognises it.
+           *
+           * `note` above falls back to the title, but only when there is no
+           * description — and the agent always writes one, so the subject was
+           * stored on every row and shown on none. See `GapItem.subject`.
+           */
+          subject: str(r.title) || undefined,
+          /*
+           * The mail conversation this row is about, so the card can open it
+           * and answer inside it. NULL on every row filed before the column
+           * existed, and the card falls back to opening the contact.
+           */
+          threadId: str(r.source_thread_id) || undefined,
+          /*
+           * The reply the agent already wrote, where it wrote one.
+           *
+           * Only `reply_drafted` rows carry it, and its presence is what
+           * turns the card's answer box from empty into a draft waiting for
+           * one glance. The id beside it is the Gmail object, kept so that
+           * sending from the card can remove the draft rather than leave it
+           * behind to be sent a second time.
+           */
+          draftBody: str(r.draft_body) || undefined,
+          draftId: str(r.source_draft_id) || undefined,
+          /*
+           * When the owner last answered this person FROM THE CARD. The row
+           * stays either way; this is what stops it looking untouched.
+           */
+          answeredAt: answeredAtFor.get(r.contact_id as string),
+          /*
+           * WHERE THIS CARD CAME FROM, said in the reader's own language.
+           *
+           * A row an owner did not create and cannot place is a row they
+           * distrust: nobody typed this, no form produced it, and until the
+           * card says so there is nothing on screen connecting it to the agent
+           * reading their mailbox. A key rather than a sentence, because gaps
+           * are built server-side with no language resolved — the same reason
+           * `contextKey` exists at all.
+           *
+           * Read off the ROW rather than assumed from the activity type.
+           * These two types are only written by the receptionist today, so
+           * assuming would be right and would quietly stop being right the
+           * first time anything else wrote one. Rows filed before
+           * `source_capability` was recorded honestly (it was hardcoded to
+           * `chat`, see `MutateExecutor`) carry no claim rather than a false
+           * one.
+           */
+          contextKey:
+            r.source_capability === 'agent' ? 'gaps.from.reply_agent' : undefined,
+          /* From the OLDEST row: how long they have been waiting, which did
+             not restart when they chased. See the note above. */
+          since: (oldest.activity_date as string) || (oldest.created_at as string),
           entityId: r.contact_id as string,
-        }));
+          };
+        });
     }),
 };
 

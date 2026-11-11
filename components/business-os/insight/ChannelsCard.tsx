@@ -78,7 +78,31 @@ const PROVIDERS: {
   offered?: false;
 }[] = [
   {
+    /*
+     * NOT OFFERED, for the phase we are in. Owner decision 2026-11-10.
+     *
+     * `meta-insights` is read-only reach: page and profile insights, follower
+     * counts, post performance. It produces no contact, no enquiry and nothing
+     * an agent can act on, and the product's job right now is to CAPTURE
+     * leads. An OAuth the owner must complete, for a number, is a step that
+     * costs more than it returns at this stage.
+     *
+     * What this does NOT touch, and must not: Instagram and Facebook
+     * ATTRIBUTION. Those arrive by referrer — `l.instagram.com`, `fb.me`,
+     * `messenger.com` and the rest — and produce identified leads with
+     * bookings and revenue against them, with nothing connected at all. That
+     * is the half that captures leads, and it keeps working.
+     *
+     * Listed rather than deleted, exactly as Analytics is below: `providerOf`
+     * falls back to 'meta', so removing the entry would offer to repair an
+     * expired Analytics connection through Facebook. An account that connected
+     * Meta before keeps its rows, its sync and its reconnect path.
+     *
+     * Meta Lead Ads is the thing that WOULD produce leads here, and ingesting
+     * those is a separate piece of work nobody has started. Deferred with it.
+     */
     provider: 'meta',
+    offered: false,
     platforms: ['facebook_page', 'instagram'],
     logos: ['facebook', 'instagram'],
     labels: { en: 'Facebook & Instagram', es: 'Facebook e Instagram', he: 'פייסבוק ואינסטגרם' },
@@ -108,7 +132,26 @@ const PROVIDERS: {
     short: { en: 'Analytics', es: 'Analytics', he: 'אנליטיקס' },
   },
   {
+    /*
+     * NOT OFFERED either, same decision and same day as Meta above.
+     *
+     * The listing reports impressions, call clicks and direction requests. It
+     * is the most defensible of the three — it is the only visibility a
+     * phone-led local business has, and a call from a listing is real demand
+     * your own pages never see — but it is still reach rather than a captured
+     * lead, and it still costs the owner an OAuth plus picking a location.
+     * While the product's job is capturing leads, it is not worth the step.
+     *
+     * The `google` CHANNEL is unaffected: anyone arriving from a google.* host
+     * is attributed without any connection, which is most of what this row was
+     * ever worth to an owner.
+     *
+     * Listed, not deleted, for the `providerOf` reason above. An account that
+     * connected a listing keeps its rows, its daily sync and its reconnect
+     * path, and `get_location_metrics` goes on filling channel_metrics_daily.
+     */
     provider: 'google_business_profile',
+    offered: false,
     platforms: ['google_business_profile'],
     logos: ['google-business-profile'],
     labels: { en: 'Google Business Profile', es: 'Perfil de Empresa', he: 'פרופיל עסקי בגוגל' },
@@ -126,10 +169,19 @@ const PLATFORM_LOGOS: Record<string, string> = {
 
 const COPY: Record<string, Record<string, string>> = {
   title: { en: 'Your channels', es: 'Tus canales', he: 'הערוצים שלך' },
+  /*
+   * Shown only while NOTHING is live on the card.
+   *
+   * It said "connect an account to see how many people it reaches" while the
+   * three accounts it meant — Meta, the Google listing, Analytics — are all
+   * withdrawn from the offer. The chips that remain are a website, a landing
+   * page, a smart link and a mailbox, so the line now names what this card
+   * actually answers rather than an account nobody is being offered.
+   */
   subtitle: {
-    en: 'Connect an account to see how many people it reaches',
-    es: 'Conecta una cuenta para ver a cuánta gente llega',
-    he: 'חבר חשבון כדי לראות לכמה אנשים הוא מגיע',
+    en: 'Add a way for clients to reach you, and see where they came from',
+    es: 'Añade una forma de que te contacten y mira de dónde vinieron',
+    he: 'הוסיפו דרך שבה לקוחות יכולים להגיע אליכם, וראו מאיפה הם הגיעו',
   },
 
   /*

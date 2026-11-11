@@ -329,11 +329,35 @@ export async function GET() {
       }
     });
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE MODELS THE PAGE MAY OFFER, FROM THE ONE PLACE THAT KNOWS THEM.
+     *
+     * The settings page carried its own hand-written `AVAILABLE_MODELS` list,
+     * and it had drifted to 2024: the newest entries were Sonnet 3.5 and
+     * GPT-4o, while this account's stored tiers all say `gpt-5.2`. A `<select>`
+     * whose value matches no option renders the FIRST one, so all three tiers
+     * displayed "Claude 3.5 Sonnet (Most Capable)" — a configuration nobody had
+     * ever chosen, on a page whose whole job is to report what is configured.
+     *
+     * `inCodeTokenPrices()` is the pricing catalogue every cost calculation
+     * already reads, so a model that can be billed is a model that can be
+     * offered, and there is no second list to keep in step. Serving it from the
+     * route keeps the catalogue server-side, which is where it lives.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const { inCodeTokenPrices } = await import('@/lib/ai/pricing');
+    const availableModels: Record<string, string[]> = {};
+    for (const [provider, models] of Object.entries(inCodeTokenPrices())) {
+      availableModels[provider] = Object.keys(models).sort();
+    }
+
     return NextResponse.json({
       success: true,
       config,
       complexityWeights,
       complexityThresholds,
+      availableModels,
     });
   } catch (error) {
     console.error('[Orchestration Config API] Exception:', error);
@@ -381,9 +405,26 @@ export async function PUT(request: NextRequest) {
       { key: 'orchestration_enabled', value: config.enabled },
       { key: 'orchestration_compression_enabled', value: config.compressionEnabled },
       { key: 'orchestration_ais_routing_enabled', value: config.aisRoutingEnabled },
-      { key: 'orchestration_routing_model_fast', value: `"${config.modelFast}"` },
-      { key: 'orchestration_routing_model_balanced', value: `"${config.modelBalanced}"` },
-      { key: 'orchestration_routing_model_powerful', value: `"${config.modelPowerful}"` },
+      /*
+       * ───────────────────────────────────────────────────────────────────
+       * STORED BARE, like every other value in this table.
+       *
+       * These three were written wrapped in literal quote characters, so the
+       * row held `"gpt-5"` rather than `gpt-5`. The GET below strips them on
+       * its own read, so the settings page round-tripped cleanly and the
+       * damage was invisible from here — but `RoutingService` read the row
+       * raw and passed the quotes through to the provider. 25 routing
+       * decisions recorded in production carry `"\"gpt-5.2\""` in
+       * `selected_model`.
+       *
+       * Both readers tolerate quoted and bare values, so existing rows keep
+       * working and no migration is needed; they simply become clean the next
+       * time somebody saves.
+       * ───────────────────────────────────────────────────────────────────
+       */
+      { key: 'orchestration_routing_model_fast', value: config.modelFast },
+      { key: 'orchestration_routing_model_balanced', value: config.modelBalanced },
+      { key: 'orchestration_routing_model_powerful', value: config.modelPowerful },
       { key: 'orchestration_routing_fast_tier_max_score', value: config.fastTierMaxScore.toString() },
       { key: 'orchestration_routing_balanced_tier_max_score', value: config.balancedTierMaxScore.toString() },
       { key: 'orchestration_routing_strategy_balanced', value: JSON.stringify(config.routingStrategy) },

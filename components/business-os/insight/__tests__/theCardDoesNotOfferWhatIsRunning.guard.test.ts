@@ -75,11 +75,7 @@ describe('every line that speaks in the future consults the flag', () => {
       "t('insight.projection.handle_it')",
       /* "If I handle it" over "I'm already handling these". */
     ],
-    [
-      'the projection value',
-      "t('insight.projection.agent_takes_over')",
-      /* "I'll take these over", which was the first one fixed. */
-    ],
+
     [
       'the repeat-seen footer',
       "t('insight.seen.repeated')",
@@ -87,6 +83,24 @@ describe('every line that speaks in the future consults the flag', () => {
     ],
   ])('%s is gated on agentAlreadyWorking', (_label, key) => {
     expect(near(key)).toContain('agentAlreadyWorking');
+  });
+
+  it('the projection value is gated on agentAlreadyWorking', () => {
+    /*
+     * Asserted on the STRUCTURE rather than through `near`, which samples 400
+     * characters backwards. On 2026-11-10 the value grew three more branches —
+     * naming the chaser, and reporting the state where the agent is installed
+     * but its consent is off — and the flag moved outside that window while
+     * remaining exactly where it belongs.
+     *
+     * Widening `near` for everyone would be the wrong fix: the flag appears
+     * many times in this file, so a longer window starts passing on an
+     * unrelated occurrence, which is the vacuous-guard failure this file's own
+     * header warns about. The order of the two tokens is the real invariant.
+     */
+    expect(SOURCE).toMatch(
+      /agentAlreadyWorking[\s\S]{0,1400}t\('insight\.projection\.agent_takes_over'\)/
+    );
   });
 });
 

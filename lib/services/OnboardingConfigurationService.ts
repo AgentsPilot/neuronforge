@@ -1148,7 +1148,7 @@ export class OnboardingConfigurationService {
       // week, for a data-analysis goal and by a pain-point mapping, so it can
       // never answer "did this person ask for their accounts to be connected?"
       // — which is the only question the channels card needs answered.
-      addCapability('channel_insights', 'You want to connect Facebook, Instagram or Google');
+      addCapability('channel_insights', 'You want to see where your clients come from');
     }
 
     /*

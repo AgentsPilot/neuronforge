@@ -122,6 +122,12 @@ DECLARE
     'saved_payment_methods',
     'stripe_connect_accounts',
     'proposals',
+    -- A quote's children. Each carries its own user_id rather than relying on
+    -- the cascade from `proposals`, so each gets its own constraint. Existing
+    -- databases get these two from 20261119; naming them here is what makes a
+    -- FRESH install correct, exactly as `scheduling_meetings` above.
+    'proposal_attachments',
+    'proposal_signatures',
     -- Online presence
     'smart_links',
     'website_content',

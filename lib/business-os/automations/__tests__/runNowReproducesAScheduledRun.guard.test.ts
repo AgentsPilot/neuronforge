@@ -123,8 +123,26 @@ describe('a failure is read in the owner\'s own language', () => {
      * from a plugin definition. Three languages of correct copy sat unused.
      */
     expect(install).toMatch(
-      /const category = stopped\.category \?\? failureCategoryOf\(stopped\.code, stopped\.message\)/
+      /const category =\s*stopped\.category \?\?[\s\S]{0,400}?failureCategoryOf\(/
     );
+  });
+
+  it('is handed the title and the next action, not just the message', () => {
+    /*
+     * The pair it used to read classified a REAL expired Gmail token as
+     * `unknown`, which is the category that tells the owner "it is on us, do
+     * nothing". The code was `execution_error` and the message said "the access
+     * has expired" where the pattern looks for "connection has expired" — while
+     * `title: "Gmail needs to be reconnected"` and
+     * `what_to_do: "Reconnect the app and try again."` sat unread on the same
+     * object. One account logged 22 of those in six hours, one every five
+     * minutes, and nobody was ever asked to reconnect anything.
+     *
+     * Pinned on the CALL rather than on the patterns, because the patterns were
+     * never wrong: they were being shown two of the four fields.
+     */
+    expect(install).toMatch(/stopped\.title \?\? ''/);
+    expect(install).toMatch(/stopped\.whatToDo \?\? ''/);
   });
 
   it('derived on READ, so failures already recorded are translated too', () => {

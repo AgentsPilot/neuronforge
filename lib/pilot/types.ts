@@ -586,6 +586,34 @@ export interface IOrchestrator {
   } | null>;
 
   /**
+   * Which model this step should run on, as `provider:model`.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE PILOT ASKS THE QUESTION; THE ORCHESTRATOR OWNS THE ANSWER.
+   *
+   * Added so an `ai_processing` step can be routed WITHOUT being executed
+   * through orchestration. Those two were one thing, and bundling them is why
+   * no AI step on the platform has been routed since March: WP-3 skipped
+   * orchestration for `ai_processing` because `runAgentKit` was too heavy
+   * inside a scatter — a correct diagnosis — and model selection went with it
+   * as collateral.
+   *
+   * This returns a NAME, nothing else. No memory, no session, no tool loop, no
+   * step execution. The pilot keeps its lightweight direct call and gains the
+   * one thing it was missing.
+   *
+   * `null` means "no opinion" — routing disabled, orchestration not
+   * initialised, or the decision failed — and the caller falls back to the
+   * account default. Never throws: a routing failure must not fail a step that
+   * would otherwise run.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  routeModelFor?(
+    step: WorkflowStep,
+    executionContext: IExecutionContext
+  ): Promise<string | null>;
+
+  /**
    * Orchestrator configuration
    */
   config?: {

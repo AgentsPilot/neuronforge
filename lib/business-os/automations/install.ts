@@ -369,9 +369,39 @@ export interface StoppedAgent {
  */
 export type FailureCategory = 'reconnect' | 'busy' | 'data' | 'unknown';
 
-export function failureCategoryOf(code: string | undefined, message: string): FailureCategory {
+export function failureCategoryOf(
+  code: string | undefined,
+  message: string,
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE REST OF WHAT THE RUNNER WROTE, because `message` is not all of it.
+   *
+   * A failure is recorded as four fields and this read two. On a real expired
+   * Gmail token it was handed:
+   *
+   *   code       "execution_error"                 matches no branch
+   *   message    "...the connection isn't working. This usually means the
+   *               access has expired."             matches no pattern below:
+   *                                                the phrase there is
+   *                                                "connection has expired"
+   *   title      "Gmail needs to be reconnected"   NEVER READ
+   *   what_to_do "Reconnect the app and try again" NEVER READ
+   *
+   * So it fell through to `unknown`, and the card told the owner "it is on us,
+   * do nothing, it will keep trying" about a token only they can renew.
+   * Measured on one account 2026-11-10: 22 failures in six hours, one every
+   * five minutes, and nobody ever told to reconnect.
+   *
+   * The two unread fields are exactly where the runner puts the actionable
+   * words, and both say "reconnect" outright. Passing them in is enough: the
+   * patterns below are untouched, so nothing already classified correctly can
+   * move. Optional, so every existing caller keeps today's behaviour.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  alsoSaid?: string
+): FailureCategory {
   const c = (code ?? '').toLowerCase();
-  const m = (message ?? '').toLowerCase();
+  const m = `${message ?? ''} ${alsoSaid ?? ''}`.toLowerCase();
 
   /* The code first — it is the only structured thing we get. */
   if (c === 'auth_failed' || c === 'insufficient_permissions') return 'reconnect';
@@ -427,7 +457,16 @@ function ownerFacingFailure(
    * its sentence too, instead of only those failing from now on.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  const category = stopped.category ?? failureCategoryOf(stopped.code, stopped.message);
+  const category =
+    stopped.category ??
+    /* Title and next-action too: they are where the runner writes the words an
+       owner can act on, and reading only `message` classified a dead Gmail
+       token as our own bug. See `failureCategoryOf`. */
+    failureCategoryOf(
+      stopped.code,
+      stopped.message,
+      `${stopped.title ?? ''} ${stopped.whatToDo ?? ''}`
+    );
 
   const key = `automation.failure.${category}`;
   const sentence = say(key);
@@ -1029,7 +1068,9 @@ function cadenceForCron(cron: string | null): AutomationCadence | null {
  */
 export function planInputs(
   automation: AutomationAgent,
-  agentConfig?: Record<string, unknown> | null
+  agentConfig?: Record<string, unknown> | null,
+  /** When this agent last ran SUCCESSFULLY. Absent on one that never has. */
+  lastRun?: string | null
 ): Record<string, number> {
   const stored = (agentConfig?.business_os_automation as { stopAfterDays?: number | null } | undefined)
     ?.stopAfterDays;
@@ -1083,9 +1124,54 @@ export function planInputs(
          a cadence nobody declared. */
       2;
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE SAME WINDOW AS AN INSTANT, FOR PROVIDERS THAT CAN TAKE ONE.
+   *
+   * `scan_days` above is a whole number of days because `newer_than:` only
+   * speaks days, and that floor of 2 is why a fifteen-minute agent would still
+   * re-read two days of mail on every tick: ninety-six passes a day over the
+   * same messages, bounded only by `max_results`, which silently drops whatever
+   * does not fit. The window cannot track a cadence it cannot express.
+   *
+   * Gmail also accepts `after:<epoch seconds>`, which is a true rolling
+   * instant, so a plan that uses this one sees only what actually arrived since
+   * it last worked.
+   *
+   * THREE GUARDS, each for a failure that would otherwise be silent:
+   *
+   *   never run        no watermark exists, so fall back to the day window
+   *                    rather than scanning from the epoch.
+   *   ten minutes      subtracted from the watermark, because a run takes time
+   *                    and mail that landed mid-run would otherwise fall
+   *                    between two windows. The overlap is re-read, which the
+   *                    plans already tolerate: a drafts check and an
+   *                    `already_handled` outcome both exist to absorb it.
+   *   a seven-day cap  an agent paused for a month would otherwise come back to
+   *                    a month of mail, hit `max_results`, and drop most of it
+   *                    without saying so. Seven days is a bounded catch-up, and
+   *                    the owner reads anything older themselves.
+   *
+   * Emitted ALONGSIDE `scan_days`, never instead of it. Every plan shipped
+   * before this reads `scan_days` and must keep working untouched.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const MAX_CATCH_UP_DAYS = 7;
+  const OVERLAP_MINUTES = 10;
+
+  const watermark = lastRun ? Date.parse(lastRun) : NaN;
+  const floor = Date.now() - MAX_CATCH_UP_DAYS * 24 * 60 * 60 * 1000;
+  const fallback = Date.now() - scanDays * 24 * 60 * 60 * 1000;
+
+  const scanAfter = Number.isFinite(watermark)
+    ? Math.max(floor, watermark - OVERLAP_MINUTES * 60 * 1000)
+    : fallback;
+
   return {
     ...(typeof days === 'number' ? { stop_after_days: -Math.abs(days) } : {}),
     scan_days: scanDays,
+    /* Seconds, not milliseconds: what `after:` takes. */
+    scan_after: Math.floor(scanAfter / 1000),
   };
 }
 

@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { isIsoCalendarDate } from '@/lib/business-os/bizql/types';
 // Shared with the chat's write path — one definition of the three shapes.
 import { paymentShapeSchema } from '@/lib/business-os/proposalShape';
+import { proposalContentSchema, totalMatches } from '@/lib/business-os/proposals/proposalContent';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -117,9 +118,42 @@ const createSchema = z.object({
     .optional(),
   /** Set when this replaces a declined or sent version. */
   supersedes_id: z.string().uuid().nullable().optional(),
+  /**
+   * The optional breakdown explaining `total` — JSON, not a file.
+   *
+   * Absent on every quote priced the way they always have been, which is all
+   * 46 that exist. Its presence changes nothing downstream: `total` is still
+   * the one figure the invoice, the stages and every chaser read.
+   */
+  content: proposalContentSchema.nullable().optional(),
+  /** Gate Approve on a typed name and an explicit agreement. Decline never gates. */
+  requires_signature: z.boolean().optional(),
 }).refine(
   data => !data.sessions || Boolean(data.service_id),
   { path: ['service_id'], message: 'A package needs a service: its meetings are bookings.' }
+).refine(
+  /*
+   * A BREAKDOWN THAT DOES NOT ADD UP IS WORSE THAN NONE.
+   *
+   * The client is shown the items and asked to approve `total`. If the two
+   * disagree the document argues with itself, and the figure that actually
+   * gets invoiced — `total` — is the one they were not reading.
+   *
+   * Recomputed here rather than trusted, because the sum arrives from the
+   * browser and this is the last place it can be checked against the number it
+   * is supposed to explain. `totalOf` rounds at every boundary, so this is an
+   * exact comparison in cents rather than a tolerance.
+   */
+  data => !data.content || totalMatches(data.content, data.total),
+  { path: ['total'], message: 'The items do not add up to the total.' }
+).refine(
+  /*
+   * A package's items are its meetings. Letting a quote carry both would be two
+   * answers to "what is being sold", and nothing downstream could say which
+   * one the client agreed to.
+   */
+  data => !data.content || !data.sessions,
+  { path: ['content'], message: 'A package of meetings cannot also carry a breakdown.' }
 );
 
 export async function GET(request: NextRequest) {
@@ -313,9 +347,65 @@ export async function GET(request: NextRequest) {
      * with it. A revision that changed the scope carries a different file, and
      * the history is only honest if it says which.
      */
-    const documentIds = proposals
-      .map(p => p.document_id)
-      .filter((id): id is string => Boolean(id));
+    /*
+     * BATCHED, not `attachmentsFor` per row.
+     *
+     * That helper is the right reader everywhere a single quote is in hand.
+     * This is a list — a contact with ten versions would make ten round trips
+     * for a column the drawer renders as one paperclip. Two queries serve the
+     * whole page, and the ordering rule is the same one the helper applies:
+     * the legacy `document_id` first, then the join rows by position.
+     */
+    const { data: joinRows } = await supabaseServer
+      .from('proposal_attachments')
+      .select('proposal_id, document_id, position')
+      .eq('user_id', user.id)
+      .in(
+        'proposal_id',
+        proposals.map(p => p.id)
+      )
+      .order('position', { ascending: true });
+
+    const fileIdsByProposal = new Map<string, string[]>();
+    for (const p of proposals) {
+      fileIdsByProposal.set(p.id, p.document_id ? [p.document_id] : []);
+    }
+    for (const join of joinRows ?? []) {
+      const list = fileIdsByProposal.get(join.proposal_id);
+      if (list && join.document_id && !list.includes(join.document_id)) {
+        list.push(join.document_id);
+      }
+    }
+
+    const documentIds = [...new Set([...fileIdsByProposal.values()].flat())];
+
+    /*
+     * Who signed which version.
+     *
+     * One query for the whole page, like the attachments above. The journey
+     * lists every version of a quote and "which one did they agree to" is the
+     * question it exists to answer — a signature is the strongest possible
+     * form of that answer, so it belongs on the row rather than behind a click.
+     *
+     * Read directly rather than through a repository because there is nothing
+     * to abstract: one filtered select, no writes, and the table is append-only
+     * by trigger.
+     */
+    const { data: signatureRows } = await supabaseServer
+      .from('proposal_signatures')
+      .select('proposal_id, signed_name, signed_at')
+      .eq('user_id', user.id)
+      .in(
+        'proposal_id',
+        proposals.map(p => p.id)
+      );
+
+    const signatureByProposal = new Map(
+      (signatureRows ?? []).map(row => [
+        row.proposal_id,
+        { name: row.signed_name, at: row.signed_at },
+      ])
+    );
 
     let documentsById: Record<string, { name: string; size: number | null }> = {};
 
@@ -361,7 +451,25 @@ export async function GET(request: NextRequest) {
               };
             })
           : [],
-        document: p.document_id ? (documentsById[p.document_id] ?? null) : null,
+        /*
+         * `document` stays the FIRST file, so every existing reader — the
+         * drawer's paperclip, the journey's version rows, their guard tests —
+         * goes on working without knowing anything changed.
+         *
+         * `attachmentCount` is what says there are more. The booking tab shows
+         * it as "+2" beside the name rather than listing files in a row that
+         * has to stay one line.
+         */
+        document: (() => {
+          const first = fileIdsByProposal.get(p.id)?.[0];
+          return first ? (documentsById[first] ?? null) : null;
+        })(),
+        attachmentCount: (fileIdsByProposal.get(p.id) ?? []).filter(
+          id => documentsById[id]
+        ).length,
+        /* Who agreed to this version, for the journey to name on the row. */
+        signedBy: signatureByProposal.get(p.id)?.name ?? null,
+        signedAt: signatureByProposal.get(p.id)?.at ?? null,
       })),
     });
   } catch (error) {
@@ -479,6 +587,44 @@ export async function POST(request: NextRequest) {
       .eq('user_id', user.id)
       .maybeSingle();
 
+    /*
+     * THE TAX THAT IS STORED IS THE TAX THAT IS CHECKED.
+     *
+     * The schema already refused a breakdown that does not add up, but it
+     * checked it against the tax the BROWSER sent. What gets stored is the
+     * profile's, read above and frozen onto the row beside it — and if an owner
+     * changed their VAT setting while a draft was open, those are two different
+     * numbers and the stored document would not add up to its own total.
+     *
+     * So the substitution happens first and the sum is re-checked against it.
+     * Rejecting here costs the owner a re-send; the alternative is a client
+     * reading items that contradict the figure they are approving.
+     */
+    const storedContent = validated.content
+      ? {
+          ...validated.content,
+          tax: {
+            rate: profile?.invoice_tax_rate ?? 0,
+            label: profile?.invoice_tax_label ?? '',
+            inclusive: profile?.invoice_prices_include_tax ?? true,
+          },
+        }
+      : null;
+
+    if (storedContent && !totalMatches(storedContent, validated.total)) {
+      requestLogger.warn(
+        { contactId: validated.contact_id },
+        'Breakdown does not add up under the business tax settings'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'The items no longer add up to the total. Reopen the breakdown and send again.',
+        },
+        { status: 400 }
+      );
+    }
+
     const result = await proposalRepository.create({
       user_id: user.id,
       contact_id: validated.contact_id,
@@ -501,6 +647,13 @@ export async function POST(request: NextRequest) {
        */
       sessions: validated.sessions ?? null,
       supersedes_id: validated.supersedes_id ?? null,
+      /*
+       * The breakdown, when the owner built one, carrying the same profile tax
+       * frozen onto the row above — checked against the total just before this.
+       * Null for every quote priced the way they always have been.
+       */
+      content: storedContent,
+      requires_signature: validated.requires_signature ?? false,
     });
 
     if (result.error || !result.data) {

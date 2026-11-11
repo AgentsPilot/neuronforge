@@ -27,6 +27,15 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ProposalItemsEditor } from '@/components/crm/contact-drawer/proposal-builder/ProposalItemsEditor';
+import {
+  rebaseItemDates,
+  reuseItems,
+  totalOf,
+  type ProposalContent,
+  type ProposalItem,
+  type ProposalTax,
+} from '@/lib/business-os/proposals/proposalContent';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -144,6 +153,21 @@ interface ProposalBuilderModalProps {
     title: string;
     description: string | null;
     total: number;
+    /**
+     * That version's breakdown, carried into the revision.
+     *
+     * A revision that loses the document the client just read is worse than no
+     * builder at all: the owner is answering ONE objection, and retyping six
+     * items to change a price is how they decide not to re-quote.
+     */
+    content?: ProposalContent | null;
+    /**
+     * Why the client said no — already passed to this dialog today.
+     *
+     * Used to decide what the builder puts in FRONT of the owner. They are
+     * answering a specific objection, and the dialog already knows which.
+     */
+    decline_reason?: string | null;
     /**
      * Where this version stands, which decides whether it may be revised.
      *
@@ -461,6 +485,61 @@ export function ProposalBuilderModal({
    * an empty field every owner scrolls past.
    */
   const [attachDocument, setAttachDocument] = useState(false);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE OPTIONAL BREAKDOWN — JSON on the row, not a file.
+   *
+   * Off by default, which is the whole compatibility story: an owner who never
+   * turns it on writes exactly the quote this dialog has always written, and
+   * `total` is the number they typed.
+   *
+   * Turned on, the items produce that number instead. Nothing downstream
+   * changes — `totalNumber`, the stage previews, the send gate and the payload
+   * all read `total`, and never learn where the figure came from.
+   *
+   * `docItems` is kept even while the toggle is off, so an owner comparing the
+   * two shapes does not lose work they have already typed. Only the ON state
+   * is sent.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [useDocument, setUseDocument] = useState(false);
+  const [docItems, setDocItems] = useState<ProposalItem[]>([]);
+  /*
+   * Copied from the business profile, exactly as the server copies it onto the
+   * row. Held so the editor's running total matches the figure the route will
+   * recompute — if these two disagreed, Send would be refused with a sum the
+   * owner could see was right.
+   */
+  const [docTax, setDocTax] = useState<ProposalTax>({ rate: 0, label: '', inclusive: true });
+
+  /*
+   * Ask the client to sign.
+   *
+   * NOT part of the breakdown and not scoped to one job: it records consent to
+   * terms, and a client buying ten meetings agrees to terms exactly as one
+   * buying a renovation does. Off by default, so every existing quote and
+   * every owner who does not want it keeps today's one-tap approval.
+   */
+  const [requiresSignature, setRequiresSignature] = useState(false);
+
+  /*
+   * Accepted documents this owner can start from.
+   *
+   * Fetched when the BUILDER opens — never on the dialog, the drawer or the
+   * booking tab. An owner who never opens it pays nothing for this.
+   */
+  const [reusable, setReusable] = useState<
+    Array<{
+      id: string;
+      title: string;
+      itemCount: number;
+      subtotal: number;
+      acceptedAt: string | null;
+      sameService: boolean;
+      content: ProposalContent;
+    }>
+  >([]);
   const [file, setFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -522,6 +601,28 @@ export function ProposalBuilderModal({
       setTitle(basedOn.title);
       setDescription(basedOn.description ?? '');
       setTotal(String(basedOn.total));
+
+      /*
+       * THE DOCUMENT COMES WITH IT, re-dated.
+       *
+       * Every date in the version being revised has passed by the time anyone
+       * is revising it, so the spacing is kept and the start moved to today —
+       * see `rebaseItemDates`. Fresh ids, because the source's belong to the
+       * source.
+       *
+       * Read-only mode gets it too: this dialog is also the viewer, and
+       * reading a quote back must show what was actually sent.
+       */
+      if (basedOn.content?.items?.length) {
+        setUseDocument(true);
+        setDocItems(
+          rebaseItemDates(
+            reuseItems(basedOn.content.items, () => `it_${Date.now().toString(36)}_${Math.round(Math.random() * 1e6)}`),
+            readOnly ? (basedOn.content.items[0]?.date ?? localToday()) : localToday()
+          )
+        );
+        if (basedOn.content.tax) setDocTax(basedOn.content.tax);
+      }
 
       /*
        * THE EXPIRY, WHEN READING A QUOTE BACK — AND ONLY THEN.
@@ -691,6 +792,16 @@ export function ProposalBuilderModal({
       .then(d => {
         if (cancelled || !d?.data) return;
         setDefaultTermsDays(d.data.invoice_payment_terms_days ?? DEFAULT_PAYMENT_TERMS_DAYS);
+        /*
+         * The same read already carries the tax, so the breakdown's running
+         * total is computed from the business's real settings rather than a
+         * guess — and matches what the route recomputes on save.
+         */
+        setDocTax({
+          rate: d.data.invoice_tax_rate ?? 0,
+          label: d.data.invoice_tax_label ?? '',
+          inclusive: d.data.invoice_prices_include_tax ?? true,
+        });
       })
       .catch(() => {
         // A failed read is not worth blocking the quote: the server resolves
@@ -700,6 +811,61 @@ export function ProposalBuilderModal({
       cancelled = true;
     };
   }, [isOpen]);
+
+  /*
+   * THE BREAKDOWN FEEDS THE TOTAL. That is the whole integration.
+   *
+   * It writes the same state the owner types into, so everything below —
+   * `totalNumber`, the stage previews, the per-session split, `canSend`, the
+   * POST payload — is untouched and never learns where the figure came from.
+   * `basedOn` already set this field the same way when reading a quote back.
+   *
+   * Only while the toggle is ON. Switched off, the field is the owner's again
+   * and keeps whatever it last held, which is the number they will send.
+   */
+  const documentTotal = useMemo(
+    () => (useDocument ? totalOf({ items: docItems, tax: docTax }) : null),
+    [useDocument, docItems, docTax]
+  );
+
+  useEffect(() => {
+    if (documentTotal === null) return;
+    const next = documentTotal.toFixed(2);
+    /* Guarded, or this would set state on every render and loop. */
+    setTotal(prev => (prev === next ? prev : next));
+  }, [documentTotal]);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THE OWNER HAS ALREADY HAD ACCEPTED.
+   *
+   * Triggered by `useDocument`, which is the builder opening. Not by `isOpen`:
+   * the dialog opens far more often than the builder does, and a therapist who
+   * never touches it must not pay for a request they will never see the result
+   * of.
+   *
+   * A failure is silent and leaves the list empty — this is an offer to save
+   * typing, and a builder that opens blank is exactly what a first-time owner
+   * gets anyway.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    if (!useDocument || readOnly) return;
+    let cancelled = false;
+    const query = serviceId ? `?service_id=${encodeURIComponent(serviceId)}` : '';
+    fetch(`/api/business-os/proposals/reusable${query}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (cancelled || !d?.proposals) return;
+        setReusable(d.proposals);
+      })
+      .catch(() => {
+        /* Silent: see above. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [useDocument, readOnly, serviceId]);
 
   const totalNumber = Number(total.replace(/,/g, ''));
   const totalValid = total.trim() !== '' && Number.isFinite(totalNumber) && totalNumber > 0;
@@ -1337,8 +1503,36 @@ export function ProposalBuilderModal({
    */
   const expiryValid = validUntil.length > 0 && validUntil >= localToday();
 
+  /*
+   * A breakdown that is on must have something in it: zero items cannot
+   * produce a total, and `totalValid` would already be false — this names the
+   * reason so the refusal is not a mystery. The editor says it on the list.
+   *
+   * NOT `documentReady`, which is taken: that one is the UPLOADED FILE's gate
+   * ("you said you would attach one, so attach one"). Two different documents,
+   * two different readinesses — see the migration's note on the three things
+   * this feature calls a document.
+   */
+  /*
+   * Nothing has been typed into the breakdown yet.
+   *
+   * The offer to start from an accepted document lives in this state and
+   * disappears the moment it stops being true — proposing to replace a list
+   * the owner has begun building is a destructive action dressed as a
+   * suggestion, and nobody reads it as optional.
+   *
+   * A single untouched row counts as empty: the builder opens with one so the
+   * owner has somewhere to type, and that is not a decision they have made.
+   */
+  const breakdownUntouched =
+    docItems.length === 0 ||
+    (docItems.length === 1 && !docItems[0].label.trim() && !docItems[0].unitPrice);
+
+  const breakdownReady = !useDocument || docItems.length > 0;
+
   const canSend =
     totalValid &&
+    breakdownReady &&
     title.trim().length > 0 &&
     expiryValid &&
     splitComplete &&
@@ -1597,6 +1791,18 @@ export function ProposalBuilderModal({
            * the diary, the email, the client's calendar — needs that moment
            * rather than a string whose zone has to be remembered.
            */
+          /*
+           * The breakdown, when it is on. Null otherwise, which is what every
+           * quote this dialog has ever sent looks like.
+           *
+           * The tax travels with it so the route can check the sum against the
+           * same figures the owner was shown; the route then substitutes the
+           * profile's own tax and re-checks, which is the authority.
+           */
+          requires_signature: requiresSignature,
+          content: useDocument
+            ? { v: 1 as const, overview: [], items: docItems, tax: docTax }
+            : null,
           sessions: isPackage
             ? {
                 dates: sessionDates.map(local =>
@@ -1710,11 +1916,27 @@ export function ProposalBuilderModal({
          * into something unreadable. Narrower than the document view, which
          * needs room for a preview pane rather than a table.
          *
+         * WIDER AGAIN FOR A BREAKDOWN, and for more reason than the package
+         * has: its row is six columns — date, item, quantity, unit price,
+         * amount, and the reorder and remove controls — and at 42rem the
+         * middle three collapse to about 50px each. A unit price of 2,727.27
+         * does not fit in 50px, so the owner types into a field that cannot
+         * show what they typed.
+         *
+         * Between the package and the preview: the table needs room, but every
+         * column is narrow and none of them is a document.
+         *
+         * Ordered file → breakdown → package. A quote can have a file preview
+         * AND a breakdown, and the preview is the wider need. It cannot have a
+         * breakdown and a package — the builder lives inside the one-job card.
+         *
          * Only `max-width` moves: the shell is already `w-full h-[100dvh]`
          * below the `sm` breakpoint, so a phone is unaffected either way and
          * the grid scrolls sideways in its own container there.
          */
-        style={{ maxWidth: file ? '64rem' : isPackage ? '54rem' : '42rem' }}
+        style={{
+          maxWidth: file ? '64rem' : useDocument ? '58rem' : isPackage ? '54rem' : '42rem',
+        }}
         dir={isRTL ? 'rtl' : 'ltr'}
       >
         {/* Sticky header — `pe-14` leaves room for the close button. */}
@@ -1811,9 +2033,22 @@ export function ProposalBuilderModal({
               placeholder={t('proposal.field.description_placeholder')}
               className="w-full rounded-lg border border-[var(--v2-border)] bg-[var(--v2-surface)] px-3 py-2 text-sm text-[var(--v2-text-primary)] outline-none focus:border-[var(--v2-primary)]"
             />
-            <p className="mt-1 text-xs text-[var(--v2-text-secondary)]">
-              {t('proposal.field.description_hint')}
-            </p>
+            {/*
+              "No cost breakdown — one total, explained."
+              ───────────────────────────────────────────────────────────────
+              Still true, and still the default: a quote priced as one figure
+              is what this dialog has always written and what it writes unless
+              the owner asks otherwise.
+
+              Hidden the moment a breakdown exists, because then it is simply
+              false, and a form that contradicts itself teaches an owner to
+              stop reading its hints.
+            */}
+            {!useDocument && (
+              <p className="mt-1 text-xs text-[var(--v2-text-secondary)]">
+                {t('proposal.field.description_hint')}
+              </p>
+            )}
           </div>
 
           {/*
@@ -1829,99 +2064,6 @@ export function ProposalBuilderModal({
             intrinsic width unless it is allowed to, so without it the track
             widens again the moment a date is typed in.
           */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="min-w-0">
-              {/* `htmlFor`/`id`, which this pair never had: the label was not
-                  associated with the field, so a screen reader announced an
-                  unnamed input and clicking the word did not focus it. */}
-              <label
-                htmlFor="proposal-total"
-                className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2"
-              >
-                {t('proposal.field.total')}
-                <RequiredMark />
-              </label>
-              <Input
-                id="proposal-total"
-                value={total}
-                onChange={e => setTotal(e.target.value)}
-                inputMode="decimal"
-                placeholder="0"
-                className="tabular-nums"
-              />
-            </div>
-            <div className="min-w-0">
-              {/*
-                Marked required, and told why when it is wrong.
-
-                The field became mandatory without saying so, and `min` on a
-                date input is advisory — a typed date is accepted by the control
-                and simply marks it invalid. So an owner could type last month,
-                see nothing, and find Send quietly disabled with no reason given
-                anywhere on the screen. A disabled button with no explanation is
-                the worst of both: it refuses and it will not say what for.
-              */}
-              <label
-                htmlFor="proposal-valid-until"
-                className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2"
-              >
-                {t('proposal.field.valid_until')}
-                <RequiredMark />
-              </label>
-              {/*
-                `max` is not decoration.
-
-                A native date input accepts a five-digit year — type a 6 in
-                front of 2026 and the browser submits "62026-09-10" without
-                complaint. Three quotes in this database carry exactly that, and
-                every screen that shows one reads "10 בספט׳ 62026". The API
-                refuses it now too; this stops it a step earlier, where the
-                person can still see what they typed.
-              */}
-              {/*
-                And `min` is not decoration either.
-
-                The ceiling above was added without a floor, so the field took
-                any past date. Expiry is COMPUTED from this rather than stored,
-                so a quote dated yesterday is expired the moment it is sent: the
-                client opens the link and reads that it is no longer available,
-                having never seen it. One live quote is exactly that — valid
-                until the 11th, sent on the 12th.
-
-                Local date, not UTC: the browser compares `min` against what the
-                owner sees in their own calendar, and a UTC floor would grey out
-                their own today west of Greenwich.
-              */}
-              <Input
-                id="proposal-valid-until"
-                type="date"
-                required
-                value={validUntil}
-                min={localToday()}
-                max={`${new Date().getFullYear() + 10}-12-31`}
-                onChange={e => setValidUntil(e.target.value)}
-                aria-invalid={!expiryValid}
-                aria-describedby={!expiryValid ? 'proposal-valid-until-error' : undefined}
-                className={!expiryValid ? 'border-red-400 focus-visible:ring-red-400' : undefined}
-              />
-              {/*
-                Said only once the owner has typed something. An empty field on
-                a form they have just opened is not an error yet, and colouring
-                it red before they have touched it is nagging rather than
-                helping — the asterisk already says it will be needed.
-              */}
-              {validUntil.length > 0 && !expiryValid && (
-                <p
-                  id="proposal-valid-until-error"
-                  role="alert"
-                  className="mt-1.5 text-[12px] text-red-600"
-                >
-                  {t('proposal.field.valid_until_past') ||
-                    'That date has already passed. A quote has to stay open until at least today.'}
-                </p>
-              )}
-            </div>
-          </div>
 
           {/*
             A PACKAGE — several meetings sold as one purchase.
@@ -1996,6 +2138,22 @@ export function ProposalBuilderModal({
                       setIsPackage(checked);
 
                       /*
+                       * A PACKAGE CANNOT ALSO CARRY A BREAKDOWN.
+                       *
+                       * Its line items are its meetings — dates and a
+                       * per-session price — so a second list would be a second
+                       * answer to "what is being sold", and nothing reading the
+                       * quote afterwards could say which one the client agreed
+                       * to. The route refuses the combination; this is what
+                       * stops the owner reaching it.
+                       *
+                       * The items themselves are KEPT, so switching back finds
+                       * the work still there. Only the toggle is cleared, and
+                       * only the ON state is ever sent.
+                       */
+                      if (checked) setUseDocument(false);
+
+                      /*
                        * The same default the moment it is switched on, and
                        * undone when it is switched off: a one-off job has no
                        * reason to be due on receipt unless the owner said so.
@@ -2067,6 +2225,142 @@ export function ProposalBuilderModal({
               <p className="mt-2.5 text-xs text-[var(--v2-text-secondary)]">
                 {t('proposal.package_needs_service')}
               </p>
+            )}
+
+            {/*
+              ───────────────────────────────────────────────────────────────
+              THE OPTIONAL BREAKDOWN — ONE JOB ONLY.
+
+              Rendered below the two cards rather than inside the chosen one,
+              because those cards ARE buttons and a button cannot contain
+              another control. `!isPackage` is what scopes it: a package's line
+              items are its meetings, and a second list would be a second answer
+              to "what is being sold" that nothing downstream could choose
+              between.
+
+              Switching to the series card clears it for the same reason — see
+              the handler above.
+              ───────────────────────────────────────────────────────────────
+            */}
+            {!isPackage && (
+              <div className="mt-3 rounded-xl border border-[var(--v2-primary)]/35 bg-[var(--v2-primary)]/[0.06] p-3">
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-[var(--v2-text-primary)]">
+                      {t('proposal.doc.toggle') || 'Build a detailed proposal'}
+                    </span>
+                    <span className="mt-0.5 block text-[11.5px] text-[var(--v2-text-secondary)]">
+                      {t('proposal.doc.toggle_hint') || 'Letterhead, items and pricing'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    id="proposal-use-document"
+                    aria-checked={useDocument}
+                    aria-label={t('proposal.doc.toggle') || 'Build a detailed proposal'}
+                    disabled={readOnly}
+                    onClick={() => {
+                      const next = !useDocument;
+                      setUseDocument(next);
+                      /* Opened empty, the first row is the thing to type in —
+                         an empty table with an "add" button is a step nobody
+                         needs. */
+                      if (next && docItems.length === 0) {
+                        setDocItems([
+                          { id: `it_${Date.now().toString(36)}`, date: null, label: '', qty: 1, unitPrice: 0, body: [] },
+                        ]);
+                      }
+                    }}
+                    className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                      useDocument ? 'bg-[var(--v2-primary)]' : 'bg-[var(--v2-border)]'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
+                        useDocument ? 'start-[18px]' : 'start-0.5'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/*
+                  START FROM SOMETHING THAT WORKED.
+                  ───────────────────────────────────────────────────────────
+                  Only while nothing has been typed, because this REPLACES the
+                  list. Only accepted quotes, because a sent-and-ignored one is
+                  the owner's intention rather than a proven document.
+
+                  Nothing was saved to make this possible: every accepted quote
+                  is the template, which is why there is no "save as template"
+                  button anywhere in this dialog.
+                */}
+                {useDocument && breakdownUntouched && reusable.length > 0 && (
+                  <div className="mt-3 border-t border-[var(--v2-primary)]/25 pt-3">
+                    <p className="mb-2 text-xs font-medium text-[var(--v2-text-secondary)]">
+                      {t('proposal.doc.reuse_prompt')}
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                      {reusable.map(candidate => (
+                        <button
+                          key={candidate.id}
+                          type="button"
+                          onClick={() => {
+                            /*
+                             * Re-dated from today, with fresh ids — the source's
+                             * dates have passed and its ids belong to it.
+                             */
+                            setDocItems(
+                              rebaseItemDates(
+                                reuseItems(
+                                  candidate.content.items,
+                                  () =>
+                                    `it_${Date.now().toString(36)}_${Math.round(Math.random() * 1e6)}`
+                                ),
+                                localToday()
+                              )
+                            );
+                            /*
+                             * The TAX stays this business's current setting,
+                             * not the one frozen on a quote from March. The
+                             * route recomputes against the profile anyway, and
+                             * taking the old rate would fail that check.
+                             */
+                          }}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-[var(--v2-border)] bg-[var(--v2-surface)] px-3 py-2 text-start hover:border-[var(--v2-primary)]"
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[13px] font-medium text-[var(--v2-text-primary)]">
+                              {candidate.title}
+                            </span>
+                            <span className="block text-[11.5px] text-[var(--v2-text-secondary)]">
+                              {money(candidate.subtotal)} ·{' '}
+                              {t('proposal.doc.reuse_items').replace(
+                                '{n}',
+                                String(candidate.itemCount)
+                              )}
+                            </span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {useDocument && (
+                  <div className="mt-3 border-t border-[var(--v2-primary)]/25 pt-3">
+                    <ProposalItemsEditor
+                      items={docItems}
+                      onChange={setDocItems}
+                      tax={docTax}
+                      formatMoney={money}
+                      readOnly={readOnly}
+                      t={t}
+                      isRTL={isRTL}
+                    />
+                  </div>
+                )}
+              </div>
             )}
 
             {isPackage && (
@@ -2476,6 +2770,129 @@ export function ProposalBuilderModal({
             )}
           </div>
 
+          {/*
+            THE MONEY COMES AFTER THE FORK.
+
+            These two fields used to sit ABOVE "what are you selling?", which
+            was harmless while the total was always typed. It stops being
+            harmless once a detailed proposal can derive it: the owner would
+            fill the total, scroll past it, pick a sell type, open the builder
+            — and watch a field they had already answered rewrite itself.
+
+            Asking what the job IS before asking what it costs also reads the
+            way the owner thinks: the kind of work decides how it is priced,
+            not the other way round.
+          */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="min-w-0">
+              {/* `htmlFor`/`id`, which this pair never had: the label was not
+                  associated with the field, so a screen reader announced an
+                  unnamed input and clicking the word did not focus it. */}
+              <label
+                htmlFor="proposal-total"
+                className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2"
+              >
+                {t('proposal.field.total')}
+                <RequiredMark />
+              </label>
+              <Input
+                id="proposal-total"
+                value={total}
+                onChange={e => setTotal(e.target.value)}
+                inputMode="decimal"
+                placeholder="0"
+                className="tabular-nums"
+                /*
+                  Read-only while a breakdown is feeding it, because the two
+                  cannot both be the authority. Typing here would be silently
+                  overwritten on the next keystroke in the items, which is
+                  worse than refusing the edit.
+                */
+                readOnly={useDocument}
+                aria-describedby={useDocument ? 'proposal-total-derived' : undefined}
+              />
+              {useDocument && (
+                <p
+                  id="proposal-total-derived"
+                  className="mt-1.5 text-[11.5px] text-[var(--v2-primary)]"
+                >
+                  {t('proposal.doc.derived') || 'Worked out from the items in the proposal'}
+                </p>
+              )}
+            </div>
+            <div className="min-w-0">
+              {/*
+                Marked required, and told why when it is wrong.
+
+                The field became mandatory without saying so, and `min` on a
+                date input is advisory — a typed date is accepted by the control
+                and simply marks it invalid. So an owner could type last month,
+                see nothing, and find Send quietly disabled with no reason given
+                anywhere on the screen. A disabled button with no explanation is
+                the worst of both: it refuses and it will not say what for.
+              */}
+              <label
+                htmlFor="proposal-valid-until"
+                className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2"
+              >
+                {t('proposal.field.valid_until')}
+                <RequiredMark />
+              </label>
+              {/*
+                `max` is not decoration.
+
+                A native date input accepts a five-digit year — type a 6 in
+                front of 2026 and the browser submits "62026-09-10" without
+                complaint. Three quotes in this database carry exactly that, and
+                every screen that shows one reads "10 בספט׳ 62026". The API
+                refuses it now too; this stops it a step earlier, where the
+                person can still see what they typed.
+              */}
+              {/*
+                And `min` is not decoration either.
+
+                The ceiling above was added without a floor, so the field took
+                any past date. Expiry is COMPUTED from this rather than stored,
+                so a quote dated yesterday is expired the moment it is sent: the
+                client opens the link and reads that it is no longer available,
+                having never seen it. One live quote is exactly that — valid
+                until the 11th, sent on the 12th.
+
+                Local date, not UTC: the browser compares `min` against what the
+                owner sees in their own calendar, and a UTC floor would grey out
+                their own today west of Greenwich.
+              */}
+              <Input
+                id="proposal-valid-until"
+                type="date"
+                required
+                value={validUntil}
+                min={localToday()}
+                max={`${new Date().getFullYear() + 10}-12-31`}
+                onChange={e => setValidUntil(e.target.value)}
+                aria-invalid={!expiryValid}
+                aria-describedby={!expiryValid ? 'proposal-valid-until-error' : undefined}
+                className={!expiryValid ? 'border-red-400 focus-visible:ring-red-400' : undefined}
+              />
+              {/*
+                Said only once the owner has typed something. An empty field on
+                a form they have just opened is not an error yet, and colouring
+                it red before they have touched it is nagging rather than
+                helping — the asterisk already says it will be needed.
+              */}
+              {validUntil.length > 0 && !expiryValid && (
+                <p
+                  id="proposal-valid-until-error"
+                  role="alert"
+                  className="mt-1.5 text-[12px] text-red-600"
+                >
+                  {t('proposal.field.valid_until_past') ||
+                    'That date has already passed. A quote has to stay open until at least today.'}
+                </p>
+              )}
+            </div>
+          </div>
+
           {/* How the money arrives. */}
           <div>
             <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
@@ -2750,6 +3167,48 @@ export function ProposalBuilderModal({
               and instalments it is the deadline applied to every bill.
             */}
             <p className="mt-2 text-xs text-[var(--v2-text-secondary)]">{t(termsHintKey)}</p>
+          </div>
+
+          {/*
+            Ask the client to sign.
+            ─────────────────────────────────────────────────────────────────
+            Outside the עבודה אחת card, deliberately — unlike the breakdown.
+            A signature records consent to TERMS, and a client buying ten
+            meetings agrees to terms exactly as one buying a renovation does,
+            so this is offered on both branches and with or without a document.
+
+            Off by default. Declining is never gated either way: a client who
+            will not sign must still be able to say no.
+          */}
+          <div className="rounded-lg border border-[var(--v2-border)] px-3 py-2.5">
+            <div className="flex items-start justify-between gap-3">
+              <label htmlFor="proposal-requires-signature" className="min-w-0 cursor-pointer">
+                <span className="block text-sm font-medium text-[var(--v2-text-primary)]">
+                  {t('proposal.sign.require')}
+                </span>
+                <span className="mt-0.5 block text-xs text-[var(--v2-text-secondary)]">
+                  {t('proposal.sign.require_hint')}
+                </span>
+              </label>
+              <button
+                type="button"
+                role="switch"
+                id="proposal-requires-signature"
+                aria-checked={requiresSignature}
+                aria-label={t('proposal.sign.require')}
+                disabled={readOnly}
+                onClick={() => setRequiresSignature(v => !v)}
+                className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                  requiresSignature ? 'bg-[var(--v2-primary)]' : 'bg-[var(--v2-border)]'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
+                    requiresSignature ? 'start-[18px]' : 'start-0.5'
+                  }`}
+                />
+              </button>
+            </div>
           </div>
 
           {/*

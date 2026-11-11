@@ -47,12 +47,16 @@
           "id": "step4",
           "type": "action",
           "name": "Ask what we have sent this sender",
-          "description": "THE FILTER AND THE HISTORY ARE ONE QUESTION, which is why this is a single read rather than an existence check followed by a fetch. 'What has this business sent to this address?' answers both: the rows ARE the history the model needs, and no rows means this business has never written to them, so the message is none of the agent's business. Matching on `email_sends.to_email` rather than on a contact is deliberate: somebody in the CRM we have never emailed cannot be replying to us, and a reply to our own mail is the only thing this agent is for. `from_email` means the same bare lowercase address on both providers — on Outlook it is an alias, because Graph already hands back a structured address, where Gmail reads a MIME header and has to parse `\"Dana Levi\" <dana@host>` out of it. One name, one meaning, whichever mailbox answered.",
+          "description": "THE FILTER AND THE HISTORY ARE ONE QUESTION, which is why this is a single read rather than an existence check followed by a fetch. 'What has this business sent to this address?' answers both: the rows ARE the history the model needs, and no rows means this business has never written to them, so the message is none of the agent's business. Matching on `email_sends.to_email` rather than on a contact is deliberate: somebody in the CRM we have never emailed cannot be replying to us, and a reply to our own mail is the only thing this agent is for. `from_email` means the same bare lowercase address on both providers — on Outlook it is an alias, because Graph already hands back a structured address, where Gmail reads a MIME header and has to parse `\"Dana Levi\" <dana@host>` out of it. One name, one meaning, whichever mailbox answered.\n\nEITHER ADDRESS THE REPLY CARRIES, because a client replying is not obliged to reply AS the address we wrote to. A Microsoft 365 account answers through its tenant relay, so a mail sent to `someone@their-domain.com` comes back From `someone@tenant.onmicrosoft.com` — Gmail renders it as 'via <tenant>.onmicrosoft.com'. Matching the send log on `from_email` alone found nothing, so a real client with eight prior sends was read as a stranger: the gate closed, the escalation had no contact to attach to, and `activities.create` refused the write that was supposed to reach the owner.\n\n`reply_to_email` is the address that relay sets back to the human, and the mail executors already extract it. Matching on both is strictly wider and cannot admit anybody new: a row only exists in `email_sends` if THIS business sent to that address with a contact attached.\n\nFIVE ROWS, NOT TEN. The gate needs only `count`; the prompt needs only enough to recognise what a reply is ABOUT, and five subjects establish a relationship that ten do not establish harder.",
           "plugin": "business-os",
           "action": "find_emails",
           "params": {
             "filters": [
-              { "field": "to_email", "op": "eq", "value": "{{current_reply.from_email}}" },
+              {
+                "field": "to_email",
+                "op": "in",
+                "value": ["{{current_reply.from_email}}", "{{current_reply.reply_to_email}}"]
+              },
               { "field": "contact_id", "op": "is_not_null" },
               {
                 "field": "sent_at",
@@ -61,7 +65,7 @@
               }
             ],
             "order_by": [{ "field": "sent_at", "dir": "desc" }],
-            "limit": 10
+            "limit": 5
           },
           "output_variable": "client_history",
           "output_schema": { "type": "object" }
@@ -124,7 +128,7 @@
               "action": "search_emails",
               "params": {
                 "to_address": "{{current_reply.from_email}}",
-          "within_days": 2,
+                "within_days": 2,
                 "max_results": 1,
                 "content_level": "metadata",
                 "folder": "drafts"
@@ -151,7 +155,7 @@
                   "type": "ai_processing",
                   "name": "Decide what becomes of this reply",
                   "description": "THE SAME PROMPT AS THE GMAIL PLAN, WORD FOR WORD, and that is deliberate. The judgement an agent makes about a client's message cannot depend on which mail provider the owner happens to use; two prompts that drifted apart would mean one owner's agent escalates what another's answers, with nothing to point at. FOUR OUTCOMES, NOT A YES OR NO, and the two refusals are not the same refusal. An out-of-office and a client asking to move an appointment both mean 'cannot answer', but one deserves the owner's attention and the other deserves silence; collapsing them means either every bounce interrupts the owner or real escalations get swallowed in the noise. `already_handled` is the fourth, and it is a judgement rather than a date comparison on purpose: asking whether our last message answers their question is both sturdier and more useful than asking whether it arrived afterwards. REFUSING IS THE DEFAULT. The draft reaches the owner, never the client, so a refusal costs one glance and a confident wrong answer costs a client.",
-                  "prompt": "You are the front desk of a small business, drafting a reply for the OWNER to read and send. You never send anything yourself, and the client never hears from you directly.\n\nTHE MESSAGE THAT JUST ARRIVED\n  from: {{current_reply.from}}\n  subject: {{current_reply.subject}}\n  message: {{full_message.emails.0.body}}\n\nWHAT THIS BUSINESS HAS SENT THIS PERSON BEFORE (newest first)\n{{client_history.rows}}\n\nTHE LAST THING SENT TO THEM FROM THIS MAILBOX\n{{our_last_word.emails}}\n\nTHE BUSINESS'S SERVICES — the only business facts you have\n{{service_list.rows}}\n\nIf the message above is empty or missing, choose 'needs_owner' with the reason 'could not read the message' and write nothing. Never answer a message you cannot see.\n\nChoose exactly ONE outcome.\n\n'already_handled' — the last thing sent to them already answers what they are asking. Say nothing further. Choose this whenever it looks answered; a missed draft costs nothing and a duplicate one costs trust.\n\n'ignore' — this needs no reply and the owner does not need to know. Out-of-office and holiday autoresponders, bounces, delivery and read receipts, unsubscribe confirmations, calendar notifications, and plain acknowledgements that ask nothing ('thanks!', 'great', 'noted'). Nothing is shown to the owner for these.\n\n'needs_owner' — a real question or request that you must not answer. Choose this when answering would need any fact you were NOT given above. You do NOT know the diary, whether any time is free, what this person owes or has paid, what was agreed in conversation, the address, the opening hours, or anything about a specific booking. Also choose it for: asking to book, move or cancel; complaints; disputes; refunds; discounts; anything legal or medical; anything about another person's booking. And choose it whenever you are unsure. Unsure means needs_owner.\n\n'draft' — you can answer completely from what you were given. Write the reply.\n\nWHEN YOU CHOOSE 'draft', these rules are absolute:\n1. Write in the SAME LANGUAGE the person wrote in. Never translate or transliterate their name.\n2. State ONLY facts present above. Never invent or estimate a price, a duration, a date, a time, an address or a policy.\n3. Never say or imply that anything is booked, held, confirmed, reserved or paid. Never promise a time.\n4. Never apologise for something you cannot verify happened.\n5. No links, no URLs.\n6. Write as the business, first person, plainly. Three sentences at most.\n7. No greeting and no sign-off — the owner's mail carries both.\n8. Keep their subject, prefixed with 'Re: ' unless it already starts with it.\n9. Answer the WHOLE message or choose needs_owner instead. Replying about the easy half of a two-part question and silently dropping the rest reads worse than not replying.\n\nFor 'reason': one short sentence written for the OWNER, naming what was asked and what you would have needed. It is shown to them, so write it as a note to a colleague, not a log line. Leave `subject` and `body` empty unless the outcome is 'draft'.",
+                  "prompt": "You are the front desk of a small business, drafting a reply for the OWNER to read and send. You never send anything yourself, and the client never hears from you directly.\n\nTHE MESSAGE THAT JUST ARRIVED\n  from: {{current_reply.from}}\n  subject: {{current_reply.subject}}\n  message: {{full_message.emails.0.body}}\n\nWHAT THIS BUSINESS HAS SENT THIS PERSON BEFORE (newest first)\n{{client_history.rows}}\n\nTHE LAST THING SENT TO THEM FROM THIS MAILBOX\n{{our_last_word.emails}}\n\nTHE BUSINESS'S SERVICES — the only business facts you have\n{{service_list.rows}}\n\nIf the message above is empty or missing, choose 'needs_owner' with the reason 'could not read the message' and write nothing. Never answer a message you cannot see.\n\nChoose exactly ONE outcome.\n\n'already_handled' — the last thing sent to them already answers what they are asking. Say nothing further. Choose this whenever it looks answered; a missed draft costs nothing and a duplicate one costs trust.\n\n'ignore' — this needs no reply and the owner does not need to know. Out-of-office and holiday autoresponders, bounces, delivery and read receipts, unsubscribe confirmations, calendar notifications, and plain acknowledgements that ask nothing ('thanks!', 'great', 'noted'). Nothing is shown to the owner for these.\n\n'needs_owner' — a real question or request that you must not answer. Choose this when answering would need any fact you were NOT given above. You do NOT know the diary, whether any time is free, what this person owes or has paid, what was agreed in conversation, the address, the opening hours, or anything about a specific booking. Also choose it for: asking to book, move or cancel; complaints; disputes; refunds; discounts; anything legal or medical; anything about another person's booking. And choose it whenever you are unsure. Unsure means needs_owner.\n\n'draft' — you can answer completely from what you were given. Write the reply.\n\nWHEN YOU CHOOSE 'draft', these rules are absolute:\n1. Write in the SAME LANGUAGE the person wrote in. Never translate or transliterate their name.\n2. State ONLY facts present above. Never invent or estimate a price, a duration, a date, a time, an address or a policy.\n3. Never say or imply that anything is booked, held, confirmed, reserved or paid. Never promise a time.\n4. Never apologise for something you cannot verify happened.\n5. No links, no URLs.\n6. Write as the business, first person, plainly. Three sentences at most.\n7. No greeting and no sign-off — the owner's mail carries both.\n8. Keep their subject, prefixed with 'Re: ' unless it already starts with it.\n9. Answer the WHOLE message or choose needs_owner instead. Replying about the easy half of a two-part question and silently dropping the rest reads worse than not replying.\n\nFor 'quote': the client's OWN WORDS. Copy the one or two sentences from their message that say what they actually want — verbatim, in their language, at most 200 characters, trimmed at a sentence end. Do not translate it, do not summarise it and do not tidy their grammar. This is shown to the owner AS THE MESSAGE: it is the only part of the card that is the client speaking rather than you reporting, so an empty quote means the owner sees nothing of what was written and has to open their mailbox to find out. Strip greetings, sign-offs and any quoted earlier thread. Leave it empty only when the message itself is empty or unreadable.\n\nFor 'reason': one or two short sentences written for the OWNER, naming what was asked and what you would have needed. WRITE IT IN {{input.owner_language}}, WHICH IS THE OWNER'S OWN LANGUAGE — not the client's. This line is never sent to anybody; it appears on the owner's dashboard, and they are the only person who reads it.\n\nThe previous rule said to match the language the CLIENT wrote in, which has no answer when a message carries a Hebrew subject and an English body. Measured on 2026-11-10: the same message, processed twelve seconds apart, produced one English note and one Hebrew one. The draft reply still matches the client, because they read that one. This does not. Lead with what they actually asked for, in their words where you can, then what you would have needed to answer it. Write it as a note to a colleague, not a log line. Leave `subject` and `body` empty unless the outcome is 'draft'.\n\nFOR 'needs_owner', ALSO WRITE A 'suggested_reply'. Same call, no second thought.\n\nThe owner is about to answer this person from their dashboard, and starting from\na blank box is the slowest part of the job. You cannot answer the question — that\nis what 'needs_owner' MEANS — but you can write the holding reply they would\notherwise type themselves.\n\nWHAT IT MAY SAY: that their message arrived, what you understood them to be\nasking, and that the owner will come back to them. Nothing else.\n\nWHAT IT MAY NEVER SAY, and this is absolute: no time, no date, no price, no\nduration, no availability, no address, no policy, no promise that anything is\nbooked, held or confirmed. If you were not given a fact, it does not go in —\nand for this outcome you were not given the fact that matters, or you would have\nchosen 'draft'. Never apologise for something you cannot verify happened.\n\nWrite it in the SAME LANGUAGE THE PERSON WROTE IN — unlike 'reason', this one is\nfor THEM. Two sentences at most, no greeting and no sign-off, first person, as\nthe business.\n\nA good one reads: \"Thanks for letting me know — I understand you can't make that\ntime and would like a call about the service. I'll check and come straight back\nto you.\" It commits to nothing and saves the owner the typing.\n\nLeave `suggested_reply` empty for 'draft', 'ignore' and 'already_handled': the\nfirst has a real reply in `body`, and the other two are not answered at all.",
                   "output_schema": {
                     "type": "object",
                     "properties": {
@@ -161,7 +165,15 @@
                       },
                       "reason": { "type": "string" },
                       "subject": { "type": "string" },
-                      "body": { "type": "string" }
+                      "body": { "type": "string" },
+                      "quote": {
+                        "type": "string",
+                        "description": "The client's own words, verbatim, at most 200 characters."
+                      },
+                      "suggested_reply": {
+                        "type": "string",
+                        "description": "A holding reply for needs_owner. States no fact it was not given."
+                      }
                     },
                     "required": ["outcome", "reason"]
                   },
@@ -206,10 +218,13 @@
                       "action": "create_activities",
                       "params": {
                         "data": {
-                          "contact_id": "{{client_history.rows.0.contact_id}}",
+                          "contact_id": "{{client_history.rows[0].contact_id}}",
                           "activity_type": "reply_drafted",
                           "title": "{{decision.subject}}",
-                          "description": "{{decision.reason}}"
+                          "description": "{{decision.quote}}\n\n{{decision.reason}}",
+                          "source_thread_id": "{{current_reply.thread_id}}",
+                          "draft_body": "{{decision.body}}",
+                          "source_draft_id": "{{draft_result.draft_id}}"
                         }
                       },
                       "output_variable": "drafted_note",
@@ -240,13 +255,27 @@
                       "action": "create_activities",
                       "params": {
                         "data": {
-                          "contact_id": "{{client_history.rows.0.contact_id}}",
+                          "contact_id": "{{client_history.rows[0].contact_id}}",
                           "activity_type": "reply_needs_owner",
                           "title": "{{current_reply.subject}}",
-                          "description": "{{decision.reason}}"
+                          "description": "{{decision.quote}}\n\n{{decision.reason}}",
+                          "source_thread_id": "{{current_reply.thread_id}}",
+                          "draft_body": "{{decision.suggested_reply}}"
                         }
                       },
                       "output_variable": "escalation_note",
+                      "output_schema": { "type": "object" }
+                    },
+                    {
+                      "step_id": "step13b",
+                      "id": "step13b",
+                      "type": "action",
+                      "name": "Flag the message, since Outlook has no labels",
+                      "description": "THE OUTLOOK ANSWER TO GMAIL'S LABEL, AND NOT THE SAME ANSWER.\n\nGmail's twin tags the thread `AgentPilot/Needs you`, which is additive: it marks the mail without moving it or changing what it claims to be. Outlook has no labels at all. `modify_message` offers read state, a folder move and an importance flag, and of the three only importance is comparably light — moving a client's mail into a folder takes it out of the inbox the owner is actually reading, which is a bigger act than the card is entitled to.\n\nSo an escalation is raised to high importance. In Outlook that is a red marker beside the row, which is close to what the Gmail label buys: something visible in the mailbox saying this one is waiting on you.\n\nWHAT IT DOES NOT BUY. Gmail excludes already-escalated threads from the next scan with `-label:`; there is no equivalent exclusion here, because importance is a flag an owner sets for their own reasons and filtering on it would skip their mail as well as ours. The Outlook plan leans on the `scan_days` watermark alone, exactly as it did before.",
+                      "plugin": "outlook",
+                      "action": "modify_message",
+                      "params": { "message_id": "{{current_reply.id}}", "importance": "high" },
+                      "output_variable": "flagged_in_mail",
                       "output_schema": { "type": "object" }
                     }
                   ]
@@ -274,10 +303,11 @@
                       "action": "create_activities",
                       "params": {
                         "data": {
-                          "contact_id": "{{client_history.rows.0.contact_id}}",
+                          "contact_id": "{{client_history.rows[0].contact_id}}",
                           "activity_type": "reply_handled",
                           "title": "{{current_reply.subject}}",
-                          "description": "{{decision.reason}}"
+                          "description": "{{decision.reason}}",
+                          "source_thread_id": "{{current_reply.thread_id}}"
                         }
                       },
                       "output_variable": "handled_note",
@@ -287,7 +317,137 @@
                 }
               ]
             }
+          ],
+          "else_steps": [
+            {
+              "step_id": "step5z",
+              "id": "step5z",
+              "type": "conditional",
+              "name": "Is a person writing to us at all?",
+              "description": "DROP THE MACHINES BEFORE A MODEL IS ASKED ANYTHING.\n\nNothing here costs a call: Gmail returns `labels` and the parsed sender on every scanned message, so these are string tests on data already in hand.\n\nWHY IT EXISTS. Without it every stranger reached the triage, and a stranger is most of any inbox. Measured on one afternoon: 150 model calls and $1.05, of which 146 were triage — 97% of the spend asking a reasoning model whether a shoe-shop newsletter was a sales enquiry. A 48-hour window took 14 minutes to run. The triage is the one cost on this agent that scales with the SIZE of the mailbox rather than the size of the business, so it is the one that has to be defended.\n\nGmail's own category labels do most of the work, because Google has already sorted promotions, social and bulk updates out of the personal mail. The sender tests catch the rest: a no-reply address is nobody waiting for an answer, and our own sending domain is us talking to ourselves.\n\nDELIBERATELY NOT A SPAM FILTER. Anything that survives still faces the triage, which is where judgement belongs. This only removes what needs no judgement at all.",
+              "condition": {
+                "conditionType": "complex_and",
+                "conditions": [
+                  {
+                    "conditionType": "complex_not",
+                    "condition": {
+                      "conditionType": "simple",
+                      "field": "current_reply.labels",
+                      "operator": "contains_any",
+                      "value": [
+                        "CATEGORY_PROMOTIONS",
+                        "CATEGORY_SOCIAL",
+                        "CATEGORY_UPDATES",
+                        "CATEGORY_FORUMS"
+                      ]
+                    }
+                  },
+                  {
+                    "conditionType": "simple",
+                    "field": "current_reply.from_email",
+                    "operator": "not_contains",
+                    "value": "no-reply"
+                  },
+                  {
+                    "conditionType": "simple",
+                    "field": "current_reply.from_email",
+                    "operator": "not_contains",
+                    "value": "noreply"
+                  },
+                  {
+                    "conditionType": "simple",
+                    "field": "current_reply.from_email",
+                    "operator": "not_contains",
+                    "value": "agentspilot.ai"
+                  }
+                ]
+              },
+              "steps": [
+                {
+                  "step_id": "step5b",
+                  "id": "step5b",
+                  "type": "ai_processing",
+                  "name": "Is this a stranger worth knowing?",
+                  "description": "THE ONLY THING THAT READS A STRANGER, and it reads two lines of them.\n\nEverything above this point ran on headers. This is the first judgement about somebody we have never written to, and it is made on the subject and the 200-character snippet that step 1 already returned — no body is fetched here, and none is fetched after it either. The owner opens the real message in their own inbox, which is where it already sits.\n\nWHY IT COSTS A MODEL CALL AT ALL. No header separates a prospect from the accountant: both are real people writing real sentences from real addresses. The deterministic drops above catch machines, not humans. This is the price of covering first contact, and it is kept to a subject line and a snippet precisely because it is paid once per stranger — the one number on this agent that scales with the size of the mailbox.\n\nNO MODEL IS NAMED HERE, AND THAT IS THE FIX RATHER THAN AN OMISSION. This step carried `model: gpt-5-nano`, pinned to stop the triage costing a dollar a run before the deterministic guard above existed. Two things were wrong with it. It breaks the platform rule against hardcoded model names (CLAUDE.md rule 5), and a nano model gets this particular judgement wrong — it filed a property mailshot as a lead for a parenting consultancy on 2026-11-10, because on a subject line and 200 characters a mailshot and an enquiry are separated only by DIRECTION.\n\nRouting already answers it correctly: at this agent's AIS of 5.00 and a step complexity of 5.35 the effective score is 5.14, which lands in the balanced tier — `gpt-5.4-mini` under the current configuration. Measured, not assumed. So the override bought nothing the router was not already giving, and cost the one thing the router exists for: an operator can retune the tiers from the admin page and this step follows, where a pinned name would not.",
+                  "prompt": "You are the front desk of a small business, sorting the morning post.\n\nThis message is from an address this business has NEVER written to. You are\ndeciding one thing only: is a potential customer making contact?\n\nYou get the subject line and the first 200 characters. You do NOT get the body,\nand you must not ask for it. A stranger's full message is not read unless you\nsay it is worth the owner's attention.\n\n  from:    {{current_reply.from}}\n  subject: {{current_reply.subject}}\n  opening: {{current_reply.snippet}}\n\nTHE BUSINESS SELLS\n{{service_list.rows}}\n\nAnswer 'yes' only when a HUMAN appears to be asking about what this business\nsells, or about working with them. Examples: a price, availability, whether you\nhandle something, a request to be called back.\n\nAnswer 'no' for everything else, and most post is everything else: suppliers,\nthe accountant, the bank, a landlord, recruiters, cold sales approaches, anything\nautomated that slipped past the earlier checks, and anybody writing about a\nsubject this business does not sell.\n\nTHE TEST IS DIRECTION, AND IT IS THE ONE THAT GETS MISSED.\n\nAsk which way the offer points: is this person trying to BUY what the business\nsells, or to SELL something to the business? Anything OFFERING goods, services,\nlistings, properties, leads, candidates, finance, advertising, software, an\nintroduction or a free consultation is 'no' — however warmly it is written,\nhowever personally it addresses the owner by name, and however plainly a real\nhuman sent it.\n\nA estate agent's listings, an agency's pitch, a recruiter's candidate and a\nsupplier's catalogue all arrive from a named person, addressed to the owner, in\nthe first person plural, inviting a call. Being addressed by name is not evidence\nof an enquiry; it is evidence of a mailing list. 'Contact us for more\ninformation' is somebody selling. 'Do you have anything on Tuesday' is somebody\nbuying.\n\nMeasured on this account, 2026-11-10: \"Brickell Condos For Sale\" — a property\nmailshot opening \"Hello Offir Omer, find below some recommended listings for you\n… feel free to contact us\" — was filed as a lead for a parenting-consultancy\nbusiness. Every surface fact said enquiry; only the direction said otherwise.\n\nWHEN UNSURE, ANSWER 'no'. A missed enquiry is one message the owner reads in\ntheir own inbox, where it already is. A wrong 'yes' files a stranger into their\ncustomer list and asks them to deal with it, which is worse and harder to undo.\n\nWrite 'reason' in {{input.owner_language}}. It is shown on the owner's dashboard and nowhere else, so it follows the language THEY read, never the language the sender happened to use.\n\nIf the sender's own name is evident from the address or the From line, give it.\nNever invent a name: leave it empty rather than guess.",
+                  "output_schema": {
+                    "type": "object",
+                    "properties": {
+                      "is_enquiry": { "type": "boolean" },
+                      "person_name": { "type": "string" },
+                      "reason": { "type": "string" }
+                    },
+                    "required": ["is_enquiry", "reason"]
+                  },
+                  "output_variable": "triage"
+                },
+                {
+                  "step_id": "step5c",
+                  "id": "step5c",
+                  "type": "conditional",
+                  "name": "File them only if they are one",
+                  "description": "The gate on the whole enquiry branch. A 'no' ends the message here having cost one small call and read nothing but a snippet.",
+                  "condition": {
+                    "conditionType": "simple",
+                    "field": "triage.is_enquiry",
+                    "operator": "equals",
+                    "value": true
+                  },
+                  "steps": [
+                    {
+                      "step_id": "step5d",
+                      "id": "step5d",
+                      "type": "action",
+                      "name": "Add them to the contacts",
+                      "description": "FILED, NOT ANSWERED. The owner decided a stranger gets a contact and a flag, never a drafted reply: first contact sets the tone of a relationship, and the only business facts this agent holds are a list of service names.\n\nThe name may be absent — the triage step is told to leave it empty rather than invent one — so the address stands in for it. A contact called by their own email address is honest; one called by a guessed name is a mistake the owner has to find and correct.",
+                      "plugin": "business-os",
+                      "action": "create_contacts",
+                      "params": {
+                        "data": {
+                          "email": "{{current_reply.from_email}}",
+                          "first_name": "{{triage.person_name}}",
+                          "notes": "{{current_reply.subject}}"
+                        }
+                      },
+                      "output_variable": "filed_contact",
+                      "output_schema": { "type": "object" }
+                    },
+                    {
+                      "step_id": "step5e",
+                      "id": "step5e",
+                      "type": "action",
+                      "name": "Flag it for the owner",
+                      "description": "THE FLAG IS THE WHOLE POINT OF THIS BRANCH. Without it a contact appears in the list with no explanation and the owner never learns a stranger wrote in — which is the gap this agent was widened to close.\n\nThe title carries their actual subject line and the description carries why the triage said yes, so the owner can judge the call without opening anything. `contact_id` comes from the row just created, which is why that step runs first.",
+                      "plugin": "business-os",
+                      "action": "create_activities",
+                      "params": {
+                        "data": {
+                          "contact_id": "{{filed_contact.row.id}}",
+                          "activity_type": "enquiry_received",
+                          "title": "{{current_reply.subject}}",
+                          "description": "{{triage.reason}}"
+                        }
+                      },
+                      "output_variable": "enquiry_note",
+                      "output_schema": { "type": "object" }
+                    }
+                  ]
+                }
+              ]
+            }
           ]
+        },
+        {
+          "step_id": "step16",
+          "id": "step16",
+          "type": "action",
+          "name": "Mark what it read as read",
+          "description": "THE LAST THING DONE TO EVERY MESSAGE, WHATEVER WAS DECIDED ABOUT IT.\n\nOutside the outcome branches on purpose. A drafted reply, an escalation, a thread judged already answered and a newsletter from a stranger were all READ by the agent, and the owner's inbox should say so for all four — otherwise the unread count keeps claiming work nobody still has to do.\n\nReading through the API does not change read state by itself, which is why this step has to exist: `messages.get` leaves UNREAD exactly as it found it, so without this the mailbox looks untouched no matter how much the agent processed.\n\nWHAT THIS COSTS, SAID PLAINLY. An escalation goes read here, so the bold unread row is no longer what tells the owner a client is waiting. The card is, and in Gmail the label is. That is the trade the owner chose; it is reversible by setting `mark_read` to false, which puts UNREAD back.\n\nLast in the scatter so it runs once per message and after every branch has had its say.",
+          "plugin": "outlook",
+          "action": "modify_message",
+          "params": { "message_id": "{{current_reply.id}}", "is_read": true },
+          "output_variable": "read_receipt",
+          "output_schema": { "type": "object" }
         }
       ],
       "continueOnError": true

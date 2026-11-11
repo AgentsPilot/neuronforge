@@ -3110,11 +3110,24 @@ export class OnboardingConversationManager {
 
     // Connecting the accounts they already have.
     //
-    // The platform reads from Facebook, Instagram, Google Analytics and a
-    // Google listing: it syncs their numbers daily so the dashboard can say
-    // where clients actually came from. It does not post, and it does not run
-    // campaigns — which is what the two options this replaces implied, and
+    // The platform syncs their numbers daily so the dashboard can say where
+    // clients actually came from. It does not post, and it does not run
+    // campaigns — which is what the two options this replaced implied, and
     // neither of them was a thing we do.
+    //
+    // ── THE OPTION NO LONGER NAMES A CONNECTION, 2026-11-10 ──────────────
+    // Meta insights and the Google listing are both withdrawn from the offer
+    // (see `ChannelsCard`): each is read-only reach, neither produces a lead,
+    // and this phase is about capturing leads. With nothing left to connect,
+    // an option saying "connect X" would promise a tile that is not there.
+    //
+    // So it asks for the ANSWER instead of the connection: where clients come
+    // from. That still works, and works for everyone — attribution is resolved
+    // from the referrer, so Instagram, Facebook, Google, WhatsApp and the rest
+    // are already named on the card with nothing connected at all.
+    //
+    // The platform words stay in the matcher below on purpose: an owner who
+    // types "instagram" means the same thing, and the card answers it.
     const needsChannels =
       lowerMsg.includes('facebook') ||
       lowerMsg.includes('instagram') ||
@@ -4434,7 +4447,7 @@ export class OnboardingConversationManager {
         client_acquisition_options: [
           'שאבנה לך אתר מקצועי',
           'כבר יש לי אתר',
-          'לחבר פייסבוק, אינסטגרם או גוגל: לראות מאיפה מגיעים הלקוחות',
+          'לראות מאיפה מגיעים הלקוחות שלי',
         ],
         /* See the English copy. */
         lead_arrival_prompt: 'וכשמישהו פונה דרך האתר שלך, זה מגיע אליך למייל?',
@@ -4508,7 +4521,7 @@ export class OnboardingConversationManager {
         client_acquisition_options: [
           'Que te construya un sitio web profesional',
           'Ya tengo un sitio web',
-          'Conectar Facebook, Instagram o Google: ver de dónde vienen tus clientes',
+          'Ver de dónde vienen mis clientes',
         ],
         /* See the English copy. */
         lead_arrival_prompt: 'Y cuando alguien consulta desde tu sitio, ¿te llega por correo?',
@@ -4627,7 +4640,7 @@ export class OnboardingConversationManager {
       client_acquisition_options: [
         'Build me a professional website',
         'I already have a website',
-        'Connect Facebook, Instagram or Google: see where clients come from',
+        'Show me where my clients come from',
       ],
       /*
        * Q4b. Worded for an owner who has never thought about it, so neither

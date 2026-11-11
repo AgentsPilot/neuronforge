@@ -44,6 +44,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { supabaseServer } from '@/lib/supabaseServer';
 import { agentConfigurationRepository } from '@/lib/repositories/AgentConfigurationRepository';
 import { automationById } from '@/lib/business-os/automations/catalog';
 import { planInputs } from '@/lib/business-os/automations/install';
@@ -56,6 +57,67 @@ export interface AgentForInputs {
   id: string;
   user_id: string;
   agent_config?: Record<string, unknown> | null;
+  /**
+   * The last SUCCESSFUL run, which is what `agents.last_run` means — the
+   * scheduler writes it only once the work is done, never on a failure.
+   *
+   * Spent by `planInputs` as `scan_after`, the rolling instant a plan can scan
+   * from instead of a whole number of days. Optional: a caller that does not
+   * have it gets the day window, which is what every plan used before this.
+   */
+  last_run?: string | null;
+}
+
+
+/**
+ * The language the OWNER reads, named rather than coded.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY A PLAN NEEDS THIS AT ALL
+ *
+ * A plan's prompts produce two different kinds of text, for two different
+ * readers, and they do not share a language rule:
+ *
+ *   the DRAFT REPLY   is read by the CLIENT, so it must match the language they
+ *                     wrote in. That rule stays where it is.
+ *
+ *   the NOTE on the   is read only by the OWNER, on their own dashboard, in
+ *   "needs you" card  their own interface language.
+ *
+ * Conflating them produced a line that could not be written consistently.
+ * "Write it in the same language the person wrote in" has no answer when the
+ * person sends a HEBREW subject with an ENGLISH body — and the model duly
+ * answered differently each run. Measured on this account, 2026-11-10: the same
+ * message, processed twelve seconds apart, produced one English note and one
+ * Hebrew one.
+ *
+ * NAMED, NOT CODED. The value reaches a prompt, and "write it in he" is an
+ * instruction a model has to decode before it can follow it. An unknown or
+ * absent preference falls back to English, which is what every one of these
+ * prompts was written in.
+ *
+ * `user_preferences.preferred_language` is the authority, the same table
+ * CLAUDE.md names as the authority for the clock. Read failures are swallowed:
+ * a note in the wrong language is a blemish, and a tick that disappears because
+ * one preference read failed is an outage.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const LANGUAGE_NAMES: Record<string, string> = { he: 'Hebrew', es: 'Spanish', en: 'English' };
+
+async function ownerLanguage(userId: string): Promise<string> {
+  try {
+    const { data } = await supabaseServer
+      .from('user_preferences')
+      .select('preferred_language')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const code = String(data?.preferred_language ?? '').slice(0, 2).toLowerCase();
+    return LANGUAGE_NAMES[code] ?? 'English';
+  } catch (err) {
+    logger.warn({ err, userId }, 'Could not read the owner language; defaulting to English');
+    return 'English';
+  }
 }
 
 /**
@@ -117,7 +179,15 @@ export async function inputsFor(agent: AgentForInputs): Promise<Record<string, u
 
     return {
       ...((stored?.input_values as Record<string, unknown> | undefined) ?? {}),
-      ...planInputs(automation as AutomationAgent, agent.agent_config ?? null),
+      /* Which language the owner reads. See `ownerLanguage`. */
+      owner_language: await ownerLanguage(agent.user_id),
+      ...planInputs(
+        automation as AutomationAgent,
+        agent.agent_config ?? null,
+        /* The watermark, so a plan can ask for what arrived since it last
+           worked rather than for the last two days every time. */
+        agent.last_run ?? null
+      ),
     };
   }
 
