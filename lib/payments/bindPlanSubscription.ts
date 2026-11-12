@@ -422,25 +422,82 @@ async function projectPeriods({
     return;
   }
 
-  const projected = planSchedule(planTotal, currency, planFrequency, planCount, new Date());
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ADOPT BEFORE PROJECTING. TWO COMPONENTS WRITE A PLAN'S PERIODS.
+   *
+   * The WEBSITE path reaches here with nothing written: the client pays at
+   * checkout, the subscription binds, and these rows are the schedule's first
+   * appearance. That is the branch below, and it is unchanged.
+   *
+   * The OWNER path writes the schedule at booking time, with `subscription_id`
+   * NULL, because at that moment there is no subscription to name — see
+   * `createBookingPaymentPlan`. When such a booking later gains a subscription,
+   * projecting here would write the schedule a SECOND time: two period 1s, two
+   * period 2s, and a plan reading as double the money it sold.
+   *
+   * So the existing rows are handed to the subscription instead. Scoped to the
+   * BOOKING, and only where `subscription_id` is still null, so a period that
+   * already belongs to a subscription is never moved to another one.
+   *
+   * A booking with no rows adopts nothing and falls through to the insert, so
+   * the website path cannot take this branch.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  let adoptedExisting = false;
 
-  const { error } = await paymentPlanRepository.insertProjectedPeriods(
-    projected.installments.map((period): NewProjectedPeriodRow => ({
-      user_id: ownerId,
-      payment_plan_id: planRowId,
-      subscription_id: planId,
-      booking_id: bookingId,
-      contact_id: contactId,
-      installment_number: period.installmentNumber,
-      amount: period.amount,
-      currency,
-      due_date: period.dueDate.toISOString().split('T')[0],
-      status: 'pending',
-    }))
-  );
+  if (bookingId) {
+    const adopted = await paymentPlanRepository.adoptPeriodsIntoSubscription(
+      ownerId,
+      bookingId,
+      planId
+    );
+    if (adopted.error) {
+      /* Loud, and then projected anyway. A failed adoption matched nothing, so
+         the booking still has no periods naming this subscription — and no
+         periods at all is the worse outcome of the two. */
+      logger.error(
+        { err: adopted.error, planId, bookingId },
+        'Could not hand the booking existing periods to its subscription',
+      );
+    } else if (adopted.data && adopted.data.adopted > 0) {
+      adoptedExisting = true;
+      logger.info(
+        { planId, bookingId, adopted: adopted.data.adopted },
+        'Adopted the periods written at booking time; not projecting a second set',
+      );
+    }
+  }
 
-  if (error) {
-    logger.error({ err: error, planId }, 'Plan recorded but periods not projected');
+  /*
+   * A FLAG, NOT AN EARLY RETURN.
+   *
+   * Only the INSERT is skipped when periods were adopted. The booking still has
+   * to be linked to its plan below — that field is written by both plan paths,
+   * and returning here would leave an owner-created plan unlinked, which is the
+   * guess `linkPaymentPlan` exists to end.
+   */
+  if (!adoptedExisting) {
+    const projected = planSchedule(planTotal, currency, planFrequency, planCount, new Date());
+
+    const { error } = await paymentPlanRepository.insertProjectedPeriods(
+      projected.installments.map((period): NewProjectedPeriodRow => ({
+        user_id: ownerId,
+        payment_plan_id: planRowId,
+        subscription_id: planId,
+        booking_id: bookingId,
+        contact_id: contactId,
+        installment_number: period.installmentNumber,
+        amount: period.amount,
+        currency,
+        due_date: period.dueDate.toISOString().split('T')[0],
+        status: 'pending',
+      }))
+    );
+
+    if (error) {
+      logger.error({ err: error, planId }, 'Plan recorded but periods not projected');
+    }
   }
 
   /*

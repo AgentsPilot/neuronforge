@@ -325,11 +325,20 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
   // CF-5 PR 2 (workplan §7.3.3): the 15 invoice and business-profile sites.
   // Expected calls per handler; together they are every call in the route.
   const INVOICE_CALLS: Record<string, Record<string, number>> = {
+    /*
+     * TWO of `findByStripeInvoiceId` and `markPaidFromStripeInvoice`, not one.
+     *
+     * The second pair settles a PLAN period's invoice before that branch
+     * returns. A plan period never used to have an invoice row of ours — the
+     * public widget raises none — but the owner's path now raises period one as
+     * the subscription's first invoice, and nothing marked it paid. The
+     * client's portal then counted money already taken as still owed.
+     */
     handleConnectInvoicePaid: {
-      findByStripeInvoiceId: 1,
+      findByStripeInvoiceId: 2,
       findByIdUnscoped: 1,
       recordStripeInvoiceId: 1,
-      markPaidFromStripeInvoice: 1,
+      markPaidFromStripeInvoice: 2,
       readFieldsUnscoped: 1,
     },
     handleConnectCheckoutCompleted: { findByIdUnscoped: 1, markPaidFromCheckout: 1 },
@@ -407,7 +416,15 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
         expect({ fn, write: write.expression.getText(sf), check: nearest?.arguments[1]?.getText(sf) }).toEqual({
           fn,
           write: write.expression.getText(sf),
-          check: expect.stringMatching(/^(platformInvoice|invoiceByMetadata)\.user_id$/),
+          /*
+           * `planInvoice` joins the two: it is the invoice row behind a PLAN
+           * period, settled before that branch returns. What this pins is that
+           * the ownership check is made on an INVOICE ROW rather than on
+           * something else in scope — the first version of that settle leaned
+           * on the subscription's `planMeta.owner_id`, which is the
+           * subscription's claim about itself and not about this row.
+           */
+          check: expect.stringMatching(/^(platformInvoice|invoiceByMetadata|planInvoice)\.user_id$/),
         });
       }
     }

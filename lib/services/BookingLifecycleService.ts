@@ -70,6 +70,18 @@ import { SERVICE_DATE_TERMS } from '@/lib/payments/invoiceTerms';
 import { isPlanStopped } from '@/lib/payments/planStatus';
 import { isSlotTakenError } from '@/lib/business-os/bookingStatus';
 import { isInstallmentPlan } from '@/lib/payments/PaymentPlanService';
+import { planPhases, stripeIntervalFor, dueDatesFor, type PlanFrequency } from '@/lib/payments/planSchedule';
+
+/**
+ * How long a card plan's FIRST invoice stays payable.
+ *
+ * The owner's booking is emailed, not paid at a checkout, so the client may
+ * open it days later. The standalone invoice this replaces stayed open until
+ * its due date; this keeps that, and is the reason the subscription is
+ * `send_invoice` rather than the public widget's `default_incomplete`, which
+ * Stripe expires within a day.
+ */
+const STRIPE_PLAN_INVOICE_DAYS_UNTIL_DUE = 30;
 import { planStartDate } from '@/lib/payments/planSchedule';
 import {
   paymentPlanRepository,
@@ -2048,6 +2060,162 @@ export async function createBookingInvoice(
 
       const stripeInvoiceService = getStripeInvoiceService();
 
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A CARD PLAN'S FIRST PERIOD IS RAISED THROUGH A SUBSCRIPTION.
+       *
+       * A service set to collect ONLINE in instalments is a card plan: the
+       * client enters a card and the later periods are meant to be taken from
+       * it. Billing period one as a standalone invoice cannot do that — only a
+       * subscription can save the card (`save_default_payment_method`), and an
+       * Invoice has no `setup_future_usage` to offer. So this path took ₪400 by
+       * card and then sent a SECOND BILL a week later, on a service sold as a
+       * card plan, with the client's card sitting unused on the Stripe customer.
+       *
+       * Raising it through a subscription changes nothing the client sees: the
+       * same email, the same invoice page, the same Payment Element, one
+       * payment. What changes is that Stripe keeps the card and takes period
+       * two itself, bounded by the schedule `bindPlanSubscription` attaches
+       * when `invoice.paid` arrives.
+       *
+       * `collection = 'invoice'` is deliberately untouched. That plan is
+       * collected by raising each period's invoice on its due date, which is
+       * correct for a business taking bank transfers or cash, and is what
+       * `createBookingPaymentPlan` was written to do.
+       */
+      const isCardPlan =
+        plan !== null &&
+        service.collection === 'online' &&
+        isInstallmentPlan(service) &&
+        plan.count > 1;
+
+      if (isCardPlan && plan) {
+        const period = planPhases(service.price!, service.currency, plan.count)[0];
+        const planFrequency = (service.installment_frequency || 'monthly') as PlanFrequency;
+        const interval = stripeIntervalFor(planFrequency);
+
+        /*
+         * WHEN THE PLAN MUST STOP, decided here and passed to Stripe in the
+         * same call that creates the subscription.
+         *
+         * A subscription with no end bills the client for ever. The bounded
+         * Subscription Schedule is attached by `bindPlanSubscription` from a
+         * WEBHOOK, so a webhook that never arrives would leave this one
+         * running with nothing to stop it. `cancel_at` closes that window:
+         * there is no moment at which the plan exists unbounded.
+         *
+         * The last agreed period's due date, plus one period, so the final
+         * charge is taken before Stripe cancels. `dueDatesFor` is the same
+         * function the local schedule is built from, so the two cannot name
+         * different endings.
+         */
+        const dueDates = dueDatesFor(new Date(), planFrequency, plan.count);
+        const lastDue = dueDates[dueDates.length - 1];
+        const afterLast = dueDatesFor(lastDue, planFrequency, 2)[1];
+        const cancelAt = Math.floor(afterLast.getTime() / 1000);
+
+        const planSubscription = await stripeInvoiceService.createPlanSubscriptionInvoice({
+          connectAccountId: stripeAccount.stripe_account_id,
+          customerEmail: bookingData.contact_email,
+          customerName: bookingData.contact_name || 'Client',
+          periodAmountMinor: period.amountMinor,
+          currency: service.currency,
+          interval,
+          productName: service.service_name,
+          /* The same window the standalone invoice had, so a client who opens
+             the email days later still finds it payable. */
+          daysUntilDue: STRIPE_PLAN_INVOICE_DAYS_UNTIL_DUE,
+          cancelAt,
+          metadata: {
+            owner_id: userId,
+            booking_id: bookingId,
+            service_id: service.id,
+            /* What `bindPlanSubscription` reads to bound the plan. Without
+               `plan_count` it cannot tell how many periods were agreed, and an
+               unbounded subscription bills the client for ever. */
+            plan_total: String(service.price),
+            plan_currency: service.currency,
+            plan_count: String(plan.count),
+            plan_frequency: planFrequency,
+            payment_plan_id: plan.planId,
+          },
+        });
+
+        const planUpdate = await paymentInvoiceRepository.updateStripeFields(invoice.id, userId, {
+          stripe_invoice_id: planSubscription.invoiceId,
+          stripe_hosted_invoice_url: planSubscription.hostedInvoiceUrl || undefined,
+        });
+
+        if (planUpdate.data) {
+          invoice = planUpdate.data;
+        }
+
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * BOUND AND MIRRORED NOW, NOT WHEN THE WEBHOOK ARRIVES.
+         *
+         * `bindPlanSubscription` normally runs from `invoice.paid`. Waiting for
+         * it here would leave a window with two billers in it: our database
+         * would have no `payment_plan_subscriptions` row, so
+         * `planCanNoLongerCharge` would read "nobody is collecting this" and
+         * `billDueDatedStages` would raise its own invoice for period two —
+         * while the Stripe subscription raised one of its own. The client
+         * would be asked for the same money twice.
+         *
+         * Binding here closes that window: the row exists, the schedule is
+         * bounded, and step one's adoption hands the periods written at booking
+         * time to the subscription instead of writing a second set. The
+         * webhook's later call then finds it bound AND projected, and does
+         * nothing — which is exactly what `alreadyBound` is for.
+         *
+         * A schedule CAN be created from this subscription: `send_invoice`
+         * makes it `active` at once, where the public widget's
+         * `default_incomplete` would be `incomplete` and refuse.
+         *
+         * Non-fatal. The invoice is raised and the client can pay; the plan is
+         * already bounded by `cancel_at` whatever happens here, and the webhook
+         * retries this same binding on `invoice.paid`.
+         */
+        try {
+          const { default: Stripe } = await import('stripe');
+          const { bindPlanSubscription } = await import('@/lib/payments/bindPlanSubscription');
+
+          await bindPlanSubscription({
+            stripe: new Stripe(process.env.STRIPE_SECRET_KEY!),
+            connectAccountId: stripeAccount.stripe_account_id,
+            subscriptionId: planSubscription.subscriptionId,
+            customerId: planSubscription.customerId,
+            ownerId: userId,
+            bookingId,
+            serviceId: service.id,
+            planTotal: service.price!,
+            planCurrency: service.currency,
+            planCount: plan.count,
+            planFrequency,
+            paymentPlanId: plan.planId,
+          });
+        } catch (bindError) {
+          log.error(
+            { err: bindError, subscriptionId: planSubscription.subscriptionId, bookingId },
+            'Card plan raised but not bounded locally; the webhook will retry on invoice.paid'
+          );
+        }
+
+        log.info(
+          {
+            invoiceId: invoice.id,
+            subscriptionId: planSubscription.subscriptionId,
+            stripeInvoiceId: planSubscription.invoiceId,
+          },
+          'Card plan: first period raised through a Stripe subscription'
+        );
+
+        /*
+         * NO EARLY RETURN. `emitPaymentEvent('invoice.created')` runs after
+         * this block for both shapes, and returning here would deny a card
+         * plan the event every other invoice emits.
+         */
+      } else {
       const stripeInvoice = await stripeInvoiceService.createInvoice({
         connectAccountId: stripeAccount.stripe_account_id,
         customerEmail: bookingData.contact_email,
@@ -2103,6 +2271,7 @@ export async function createBookingInvoice(
         { invoiceId: invoice.id, stripeInvoiceId: sentStripeInvoice.invoiceId },
         'Stripe invoice created and sent for booking'
       );
+      }
     } catch (stripeError) {
       // The local invoice is still valid and still owed.
       log.error(

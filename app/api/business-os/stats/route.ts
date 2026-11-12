@@ -299,7 +299,10 @@ interface CapabilityStats {
       service_id: string;
       service_name: string;
       revenue: number;
+      /** Money ROWS behind the revenue: transactions plus unsettled invoices. */
       count: number;
+      /** How many times it was BOOKED in the period, cancellations excluded. */
+      booked: number;
       /** Written off against this service in the period, by `cancelledMoneyOf`. */
       lost: number;
       /**
@@ -2581,12 +2584,50 @@ export async function GET(request: NextRequest) {
 
     // Biggest service first, with the unattributed row pinned last however large
     // it is — it is a remainder, not a service competing for the top of the list.
+    /*
+     * HOW MANY TIMES EACH SERVICE WAS BOOKED. Not how many payments it took.
+     *
+     * `count` beside it is payments — "transactions plus unsettled invoices" —
+     * and a service paid in three instalments counts three times there. That is
+     * the right number for a money column and the wrong one for "what people
+     * buy", where an owner is asking how many people bought the thing.
+     *
+     * Cancelled bookings are left out, to agree with the revenue in the same
+     * row: that figure is net of refunds and a cancelled booking's money is
+     * reported as `lost`, not as revenue. Counting it as an order would make
+     * the two halves of one row describe different businesses.
+     *
+     * Grouped here rather than in SQL because PostgREST cannot GROUP BY, which
+     * is the same reason every other per-key total on this route is summed in
+     * TypeScript.
+     */
+    const { data: bookedRows, error: bookedError } = await supabaseServer
+      .from('scheduling_bookings')
+      .select('service_id, status')
+      .eq('user_id', user.id)
+      .gte('created_at', periodStart);
+
+    if (bookedError) {
+      /* Degraded, never fatal: the money in this table is the point, and a
+         missing order count must not cost the owner the whole report. */
+      logger.warn({ err: bookedError, userId: user.id }, 'Could not read the per-service booking count');
+    }
+
+    const bookedByService = new Map<string, number>();
+    for (const booking of bookedRows || []) {
+      if (booking.status === 'cancelled') continue;
+      const key = booking.service_id || UNATTRIBUTED_SERVICE_ID;
+      bookedByService.set(key, (bookedByService.get(key) ?? 0) + 1);
+    }
+
     const serviceRevenueArray = Object.entries(serviceRevenueMap)
       .map(([service_id, data]) => ({
         service_id,
         service_name: data.service_name,
         revenue: data.revenue,
         count: data.count,
+        /* Orders, not payments. See the note where this map is built. */
+        booked: bookedByService.get(service_id) ?? 0,
         lost: Math.round(data.lost * 100) / 100,
         /* Rounded the same way `lost` is: both are sums of DECIMAL columns
            that arrive as strings, and a cent of float drift in a money column

@@ -33,10 +33,26 @@ export interface ServiceRow {
   service_id: string;
   service_name: string;
   revenue: number;
-  /** Money ROWS that produced this revenue: transactions plus unsettled invoices. */
+  /**
+   * Money ROWS that produced this revenue: transactions plus unsettled
+   * invoices. Still sent by the stats route; NO LONGER SHOWN — a service paid
+   * in three instalments counted three times, which is the right number for a
+   * money column and the wrong answer to "how many people bought this".
+   */
   count: number;
   /**
-   * Written off against this service in the period.
+   * How many times this service was BOOKED in the period, cancellations
+   * excluded, so it agrees with the revenue beside it.
+   *
+   * Optional because a stored summary from before this existed has no such
+   * field. Unlike `lost`, a missing one reads as 0 rather than as "not known":
+   * the column is a count of rows the reader can see, not a money figure whose
+   * absence would be a claim.
+   */
+  booked?: number;
+  /**
+   * Written off against this service in the period. NO LONGER SHOWN: the table
+   * now carries the top line only, service / orders / revenue.
    *
    * Optional because a stored summary from before this existed has no such
    * field, and a missing one must read as "not known" rather than as zero —
@@ -44,7 +60,8 @@ export interface ServiceRow {
    */
   lost?: number;
   /**
-   * Money that came BACK out of this service in the period.
+   * Money that came BACK out of this service in the period. NO LONGER SHOWN,
+   * as `lost` above.
    *
    * Optional for the same reason `lost` is: a stored summary written before
    * this existed carries no such field, and a missing figure must read as
@@ -101,16 +118,12 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
   const widest = Math.max(1, ...ordered.map(s => s.revenue));
 
   /* Summed from the rows the reader can see, so the total and the breakdown
-     cannot disagree. `lost` stays null when no row knows it — see the row. */
+     cannot disagree. `booked` is optional: a stored summary written before the
+     order count existed has no such field, and `?? 0` is right here because
+     the total is of what IS on screen. */
   const totals = {
-    count: ordered.reduce((sum, s) => sum + s.count, 0),
+    booked: ordered.reduce((sum, s) => sum + (s.booked ?? 0), 0),
     revenue: ordered.reduce((sum, s) => sum + s.revenue, 0),
-    lost: ordered.some(s => typeof s.lost === 'number')
-      ? ordered.reduce((sum, s) => sum + (s.lost ?? 0), 0)
-      : null,
-    refunded: ordered.some(s => typeof s.refunded === 'number')
-      ? ordered.reduce((sum, s) => sum + (s.refunded ?? 0), 0)
-      : null,
   };
 
   return (
@@ -128,28 +141,13 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
               scope="col"
               className="px-[18px] py-2.5 text-end text-[11px] font-bold uppercase tracking-[0.07em] text-[var(--v2-text-muted)] border-b border-[var(--v2-border)] whitespace-nowrap"
             >
-              {t('reports.col_payments')}
+              {t('reports.col_bookings')}
             </th>
             <th
               scope="col"
               className="px-[18px] py-2.5 text-end text-[11px] font-bold uppercase tracking-[0.07em] text-[var(--v2-text-muted)] border-b border-[var(--v2-border)] whitespace-nowrap"
             >
               {t('reports.col_revenue')}
-            </th>
-            <th
-              scope="col"
-              className="px-[18px] py-2.5 text-end text-[11px] font-bold uppercase tracking-[0.07em] text-[var(--v2-text-muted)] border-b border-[var(--v2-border)] whitespace-nowrap"
-            >
-              {t('reports.col_lost')}
-            </th>
-            {/* Last, because it is the smallest of the three money columns and
-                the least often non-zero. Revenue stays beside the payment count
-                it belongs to. */}
-            <th
-              scope="col"
-              className="px-[18px] py-2.5 text-end text-[11px] font-bold uppercase tracking-[0.07em] text-[var(--v2-text-muted)] border-b border-[var(--v2-border)] whitespace-nowrap"
-            >
-              {t('reports.col_refunded')}
             </th>
           </tr>
         </thead>
@@ -176,30 +174,10 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
               {t('reports.col_total') || 'Total'}
             </td>
             <td className="px-[18px] py-[11px] text-end text-sm font-bold tabular-nums text-[var(--v2-text-primary)] whitespace-nowrap">
-              {totals.count}
+              {totals.booked}
             </td>
             <td className="px-[18px] py-[11px] text-end text-sm font-bold tabular-nums text-[var(--v2-text-primary)] whitespace-nowrap">
               {money(totals.revenue)}
-            </td>
-            <td
-              className="px-[18px] py-[11px] text-end text-sm font-bold tabular-nums whitespace-nowrap"
-              style={
-                totals.lost !== null && totals.lost > 0
-                  ? { color: REPORTS_COLORS.WARNING }
-                  : { color: 'var(--v2-text-muted)' }
-              }
-            >
-              {totals.lost === null ? '—' : money(totals.lost)}
-            </td>
-            <td
-              className="px-[18px] py-[11px] text-end text-sm font-bold tabular-nums whitespace-nowrap"
-              style={
-                totals.refunded !== null && totals.refunded > 0
-                  ? { color: REPORTS_COLORS.WARNING }
-                  : { color: 'var(--v2-text-muted)' }
-              }
-            >
-              {totals.refunded === null ? '—' : money(totals.refunded)}
             </td>
           </tr>
 
@@ -220,42 +198,14 @@ export function ServiceTable({ services, money }: ServiceTableProps) {
                   {rowName(row)}
                 </span>
               </td>
+              {/* Orders, not payments: `count` is payment ROWS, so a service
+                  paid in three instalments counted three times there. See the
+                  note on `booked` in the stats route. */}
               <td className="px-[18px] py-[11px] text-end text-sm tabular-nums text-[var(--v2-text-primary)] whitespace-nowrap">
-                {row.count}
+                {row.booked ?? 0}
               </td>
               <td className="px-[18px] py-[11px] text-end text-sm tabular-nums text-[var(--v2-text-primary)] whitespace-nowrap">
                 {money(row.revenue)}
-              </td>
-              {/*
-                * Amber only when there is something to see.
-                *
-                * A column of zeroes down the best-performing services is noise
-                * that teaches the reader to skip the column, and the one row
-                * that matters goes with it. Nothing lost prints a dash, which
-                * is the same "no figure" the rest of these cards use.
-                */}
-              <td
-                className="px-[18px] py-[11px] text-end text-sm tabular-nums whitespace-nowrap"
-                style={
-                  row.lost && row.lost > 0
-                    ? { color: REPORTS_COLORS.WARNING, fontWeight: 600 }
-                    : { color: 'var(--v2-text-muted)' }
-                }
-              >
-                {row.lost && row.lost > 0 ? money(row.lost) : '—'}
-              </td>
-              {/* Same rule as the column beside it: a figure only where there
-                  is one, so a column of zeroes does not teach the reader to
-                  skip the one row that matters. */}
-              <td
-                className="px-[18px] py-[11px] text-end text-sm tabular-nums whitespace-nowrap"
-                style={
-                  row.refunded && row.refunded > 0
-                    ? { color: REPORTS_COLORS.WARNING, fontWeight: 600 }
-                    : { color: 'var(--v2-text-muted)' }
-                }
-              >
-                {row.refunded && row.refunded > 0 ? money(row.refunded) : '—'}
               </td>
             </tr>
           ))}

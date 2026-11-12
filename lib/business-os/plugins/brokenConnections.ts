@@ -74,10 +74,38 @@ export async function brokenConnections(userId: string): Promise<BrokenConnectio
     ]);
 
     const pluginManager = await PluginManagerV2.getInstance();
-    const expired = await pluginManager.getActiveExpiredPluginKeys(userId);
 
-    /* Nothing lapsed: stop before asking what is configured. The common case,
-       and it costs two queries to answer it the other way round. */
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * `getActiveExpiredPlugins`, NOT `...PluginKeys`: EXPIRED IS NOT BROKEN
+     *
+     * A Google access token lives exactly one hour, so sixty minutes after any
+     * refresh every Google connection on the platform is "expired" — with its
+     * refresh token intact and the executors refreshing it on demand without
+     * anybody noticing. The manager says so at length on
+     * `getActiveExpiredPlugins`, and answers the question that actually
+     * matters in `canRefresh`: is there anything the OWNER has to do.
+     *
+     * That method was written to make the distinction and left this caller,
+     * its only one, taking the keys-only variant that throws `canRefresh`
+     * away. So My Day told an owner their Gmail had died, every hour, for a
+     * connection that worked. Signing in again "fixed" it by writing a fresh
+     * hour — and the line came back when that hour was up. Seen live on
+     * eomer3@walla.co.il: `google-mail`, refresh token present, no
+     * `refresh_failed_at`, reported broken.
+     *
+     * A genuinely dead grant still reaches the owner: `canRefresh` is already
+     * false once `refreshToken` has written `refresh_failed_at` on an
+     * `invalid_grant`, which is the only proof a grant was actually refused.
+     * Nothing that needs the owner is lost here; only the noise is.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const lapsed = await pluginManager.getActiveExpiredPlugins(userId);
+    const expired = lapsed.filter(conn => !conn.canRefresh).map(conn => conn.key);
+
+    /* Nothing the owner must act on: stop before asking what is configured.
+       The common case, and it costs two queries to answer it the other way
+       round. */
     if (!expired.length) return [];
 
     const [inbox, profile] = await Promise.all([

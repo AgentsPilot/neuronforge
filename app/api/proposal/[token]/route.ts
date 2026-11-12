@@ -828,11 +828,21 @@ export async function POST(
      * pass the check before either settles. Narrowing that window is not
      * closing it.
      *
-     * So the email is sent only when there is nothing to redirect to: a quote
-     * with nothing due on acceptance, or one whose invoice could not be raised.
-     * A client who is redirected already has the payment page in front of them,
-     * and if they close it the accepted quote page still carries a link to it —
-     * the same page, not a second one.
+     * That was once settled by sending the email only when there was nothing to
+     * redirect to. The email now goes on BOTH branches — a client with money
+     * due used to receive nothing at all, not even the document they had just
+     * signed — so the second door has to be closed by the WORDING instead.
+     *
+     * `payCta` is "View your invoice", never "Pay now". The link still goes to
+     * the same invoice page, which is the recovery path for a client who closed
+     * the payment tab, and which shows the invoice as PAID once it is. What it
+     * no longer does is ask a client who has just paid on the redirect to pay
+     * again, which is what an owner reported.
+     *
+     * The narrow case the paragraph above describes is not fully closed: a
+     * client who opens the email while the payment tab is still live can still
+     * start a second checkout. Neutral wording makes that far less inviting; it
+     * does not make it impossible, and the atomic fix belongs on the pay route.
      */
     const willRedirect = Boolean(created.invoiceId) && created.dueNow > 0;
 
