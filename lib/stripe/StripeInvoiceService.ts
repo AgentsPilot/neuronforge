@@ -57,6 +57,16 @@ export interface CreateInvoiceParams {
   idempotencyKey?: string;
 }
 
+/** What a bounded card plan's first invoice comes back as. */
+export interface StripePlanSubscriptionResult {
+  subscriptionId: string;
+  /** The Stripe customer, which binding needs to mirror the plan. */
+  customerId: string;
+  /** The subscription's FIRST invoice, which is the one the client pays now. */
+  invoiceId: string;
+  hostedInvoiceUrl: string | null;
+}
+
 export interface StripeInvoiceResult {
   invoiceId: string;
   hostedInvoiceUrl: string | null;
@@ -82,6 +92,160 @@ export class StripeInvoiceService {
   /**
    * Create a Stripe Customer on the Connect account (or find existing)
    */
+  /**
+   * A card plan's first period, raised as a SUBSCRIPTION's invoice.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY NOT `createInvoice`, WHICH ALSO BILLS ONE PERIOD
+   *
+   * It bills the period and nothing more. A standalone invoice cannot save the
+   * client's card: `save_default_payment_method` exists only on a subscription,
+   * and an Invoice's `payment_method_options.card` offers only `installments`
+   * and `request_three_d_secure` — no `setup_future_usage`. So a plan collected
+   * that way takes period one by card and then has no way to take period two,
+   * which is what the owner's path has been doing: the client pays ₪400, and a
+   * week later gets a second bill to pay by hand on a service sold as a card
+   * plan.
+   *
+   * Raising period one THROUGH a subscription fixes it at the only moment the
+   * card is present. The client sees the same invoice and pays it the same way.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `send_invoice`, NOT `charge_automatically`
+   *
+   * `charge_automatically` with `default_incomplete` is what the public widget
+   * uses, and it is right there: the client is at the checkout and pays within
+   * minutes. An owner-created booking is EMAILED, and may be opened three days
+   * later — by which time an incomplete subscription has expired and the link
+   * is dead. `send_invoice` leaves the invoice open until its due date, exactly
+   * as the standalone invoice this replaces did.
+   *
+   * The subscription is switched to `charge_automatically` once that first
+   * invoice is paid and a card is on file. Until then nothing can be charged,
+   * which is the correct state for a client who has not paid yet.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE PERIOD'S PRICE, NOT THE TOTAL
+   *
+   * The caller passes the period amount `planPhases` computed, which carries
+   * the remainder on the FINAL period so the plan sums to exactly what was
+   * agreed. The bounded schedule the webhook attaches replaces these phases; it
+   * only has to be right for period one here.
+   *
+   * The metadata is what `bindPlanSubscription` reads to bound the plan. Without
+   * `plan_count` it cannot tell how many periods were agreed, and an unbounded
+   * subscription bills a client for ever.
+   */
+  async createPlanSubscriptionInvoice(params: {
+    connectAccountId: string;
+    customerEmail: string;
+    customerName: string;
+    /** One period, in minor units, from `planPhases`. */
+    periodAmountMinor: number;
+    currency: string;
+    interval: { interval: Stripe.PriceCreateParams.Recurring.Interval; interval_count: number };
+    productName: string;
+    daysUntilDue: number;
+    /**
+     * When the plan must stop, as a Unix timestamp: the end of the LAST agreed
+     * period. See the note on `cancel_at` below — this is not optional.
+     */
+    cancelAt: number;
+    metadata: Record<string, string>;
+  }): Promise<StripePlanSubscriptionResult> {
+    const {
+      connectAccountId,
+      customerEmail,
+      customerName,
+      periodAmountMinor,
+      currency,
+      interval,
+      productName,
+      daysUntilDue,
+      cancelAt,
+      metadata,
+    } = params;
+
+    const accountOptions = { stripeAccount: connectAccountId };
+
+    const customerId = await this.getOrCreateCustomer(connectAccountId, customerEmail, customerName);
+
+    const price = await this.stripe.prices.create(
+      {
+        currency: currency.toLowerCase(),
+        unit_amount: periodAmountMinor,
+        /* `interval_count`, not `count`: reading the wrong field yields
+           undefined, Stripe defaults it to 1, and a quarterly plan charges
+           monthly — three times as often as the client agreed. */
+        recurring: { interval: interval.interval, interval_count: interval.interval_count },
+        product_data: { name: productName },
+      },
+      accountOptions
+    );
+
+    const subscription = await this.stripe.subscriptions.create(
+      {
+        customer: customerId,
+        items: [{ price: price.id }],
+        collection_method: 'send_invoice',
+        days_until_due: Math.max(1, daysUntilDue),
+        /*
+         * ─────────────────────────────────────────────────────────────────
+         * BORN WITH AN END DATE. THIS IS THE ONE LINE THAT MUST NOT BE LOST.
+         *
+         * A subscription with no end bills the client for ever, and that is a
+         * legal problem, not a reporting one. `bindPlanSubscription` attaches a
+         * Subscription Schedule with `end_behavior: 'cancel'` and is the proper
+         * bound — but it runs from a WEBHOOK, and a webhook that never arrives
+         * would leave this subscription running with nothing to stop it.
+         *
+         * `cancel_at` is set in the same call that creates it, so the plan can
+         * never exist unbounded, not even for a second. The schedule then
+         * refines the periods; this guarantees the ending regardless.
+         *
+         * Belt and braces, deliberately: the two mechanisms agree on the same
+         * last period, and either alone would stop the plan.
+         * ─────────────────────────────────────────────────────────────────
+         */
+        cancel_at: cancelAt,
+        payment_settings: {
+          /* The whole point: the card the client pays this first invoice with
+             becomes the subscription's default, so period two can be charged
+             without asking them again. */
+          save_default_payment_method: 'on_subscription',
+          payment_method_types: ['card'],
+        },
+        metadata,
+        expand: ['latest_invoice'],
+      },
+      accountOptions
+    );
+
+    const latest = subscription.latest_invoice;
+    const invoice = typeof latest === 'string' ? null : latest;
+
+    if (!invoice?.id) {
+      /* Loud: the subscription exists and the client has nothing to pay, which
+         is the one state the caller cannot recover from on its own. */
+      logger.error(
+        { subscriptionId: subscription.id, connectAccountId },
+        'Plan subscription created but Stripe raised no first invoice'
+      );
+      throw new Error('Plan subscription has no first invoice');
+    }
+
+    /* Finalised and sent, as the standalone path does: an invoice left in
+       `draft` has no hosted page, so the client has nothing to open. */
+    const sent = await this.stripe.invoices.sendInvoice(invoice.id, accountOptions);
+
+    return {
+      subscriptionId: subscription.id,
+      customerId,
+      invoiceId: sent.id ?? invoice.id,
+      hostedInvoiceUrl: sent.hosted_invoice_url ?? invoice.hosted_invoice_url ?? null,
+    };
+  }
+
   private async getOrCreateCustomer(
     connectAccountId: string,
     customerEmail: string,

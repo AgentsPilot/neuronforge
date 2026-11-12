@@ -13,6 +13,7 @@ import { resolveAccountOwner } from '@/lib/payments/stripeAccountContext';
 import { notifyOwnerOfDispute } from '@/lib/services/DisputeAlertService';
 import { subscriptionIdFromInvoice, subscriptionMetadataFromInvoice } from '@/lib/payments/invoiceSubscription';
 import { bindPlanSubscription } from '@/lib/payments/bindPlanSubscription';
+import { enableAutomaticPlanCharge } from '@/lib/payments/enableAutomaticPlanCharge';
 import { vetLinkId } from '@/lib/payments/ownedLinkId';
 import {
   REFUND_ROW_ID_METADATA_KEY,
@@ -25,7 +26,7 @@ import { fromMinorUnits } from '@/lib/payments/refundMath';
 import { resolveInvoicePaymentIntent } from '@/lib/payments/invoicePaymentIntent';
 import { syncBookingsForTransactions } from '@/lib/payments/syncBookingPaymentState';
 import { resolveProcessorFee, feeColumns } from '@/lib/payments/processorFee';
-import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '@/lib/payments/planSchedule';
+import { type PlanFrequency } from '@/lib/payments/planSchedule';
 import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
 import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
@@ -1406,8 +1407,19 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
      */
     const planMeta = subscriptionMetadataFromInvoice(invoice);
 
+    /*
+     * Proved here, acted on AFTER the period is recorded.
+     *
+     * The switch to automatic charge needs the card that paid, and that card
+     * is not visible yet at this point in the handler. See the note at the
+     * call site below for the measurement.
+     */
+    let planIsOurs = false;
+
     if (planMeta.plan_count && planMeta.owner_id) {
       if (await accountOwns(connectAccountId, planMeta.owner_id, log)) {
+        planIsOurs = true;
+
         try {
           const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -1428,6 +1440,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
             /* Same reason as the subscription-created path. */
             attemptId: planMeta.attempt_id || null,
           });
+
         } catch (bindError) {
           // Loud, and deliberately rethrown: an unbounded subscription charges a
           // client indefinitely. Failing the webhook makes Stripe retry, which
@@ -1444,6 +1457,69 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     }
 
     const handled = await recordPlanPeriodPaid(invoice, subscriptionId, connectAccountId, log);
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AND NOW HAND IT TO STRIPE, IF A CARD PAID.
+     *
+     * A plan created by the OWNER's path starts on `send_invoice`, so its first
+     * invoice survives being emailed and opened days later. That mode bills; it
+     * does not charge. Left alone, period two would arrive as a second bill to
+     * pay by hand, the defect this whole path exists to end.
+     *
+     * The website's plans are already `charge_automatically` and this is a
+     * no-op for them. It never throws: the period is recorded and the schedule
+     * is bounded, and a plan left billing by invoice is the behaviour that
+     * shipped before any of this.
+     *
+     * ─── AFTER `recordPlanPeriodPaid`, AND THAT IS THE WHOLE POINT ───
+     *
+     * This ran BEFORE the recorder, next to `bindPlanSubscription`, and it lost
+     * a race it could not win there. The card that paid is reachable only
+     * through the invoice's settlement object, and Stripe creates that object
+     * AFTER it sends `invoice.paid`.
+     *
+     * Measured on booking 60502d7d:
+     *
+     *   15:24:30  invoice.paid delivered
+     *   15:24:32  this ran, read the invoice, found `payments` EMPTY,
+     *             and correctly refused
+     *   15:24:33  `recordPlanPeriodPaid` read the SAME invoice and resolved
+     *             pi_3Uazn3..., which it stored on the transaction
+     *   15:24:34  Stripe emitted `invoice_payment.paid`: the settlement
+     *             object being born
+     *
+     * So the card was one second away. The plan stayed on `send_invoice` with
+     * no default payment method, which is exactly the defect, reproduced by the
+     * fix for it.
+     *
+     * The recorder is the proof the object has landed: it cannot record a
+     * period without resolving that same payment intent, and it warns when it
+     * cannot. Running after it therefore costs no extra wait and no extra read,
+     * and removes the timing dependence rather than narrowing it.
+     *
+     * NOT GUARDED ON `alreadyBound`, and that was a real bug of its own. It was,
+     * to spare a redelivery one Stripe read. But the owner's path now binds the
+     * plan AT BOOKING, so by the time this runs the plan is ALWAYS already
+     * bound, and the switch never happened at all. The question is asked of
+     * Stripe instead, the only place that actually knows: the function returns
+     * immediately when the plan is already `charge_automatically`. One read per
+     * plan invoice, and no read at all for any other event.
+     *
+     * Not inside `if (handled)`: a redelivery finds the period already recorded
+     * and returns early, and a plan still sitting on `send_invoice` must still
+     * be switched on that delivery.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (planIsOurs) {
+      await enableAutomaticPlanCharge({
+        stripe: new Stripe(process.env.STRIPE_SECRET_KEY!),
+        connectAccountId,
+        subscriptionId,
+        /* The card is on THIS invoice's settlement - see the note there. */
+        invoiceId: invoice.id!,
+      });
+    }
 
     /*
      * ───────────────────────────────────────────────────────────────────────
@@ -1484,7 +1560,71 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     // A period belongs to its plan, not to a platform invoice. Returning here
     // stops the ordinary invoice path treating it as an unmatched Stripe
     // invoice and doing nothing with it twice.
-    if (handled) return;
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A PLAN PERIOD CAN NOW HAVE ONE OF OUR INVOICES BEHIND IT. SETTLE IT.
+     *
+     * The `return` below skips the ordinary settlement — the part that marks
+     * `payment_invoices` paid — and that was right for as long as a plan period
+     * had no invoice row of ours: the public widget raises none, and Stripe
+     * bills each period itself.
+     *
+     * The OWNER's path changed that. Period one is now raised as the
+     * subscription's FIRST INVOICE and recorded as `payment_invoices`, so the
+     * row exists and nothing was marking it paid. Measured on booking
+     * 85f86333: period one `paid`, INV-00057 still `sent` with a null
+     * `paid_at`. The client's portal adds every unpaid invoice to what is owed,
+     * so it asked for ₪800 — the ₪400 already taken plus the ₪400 not yet due —
+     * and offered a Pay button for money it already had.
+     *
+     * Its own lookup rather than hoisting the one below: the ordinary path's
+     * error handling stays exactly as it was, and a plan invoice with no row of
+     * ours — every website plan — finds nothing and moves on.
+     *
+     * No `settleInvoicePaid` here: that also writes a `payment_transactions`
+     * row, and `recordPlanPeriodPaid` has already written one for this money.
+     * This marks the invoice and nothing else.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (handled) {
+      const { data: planInvoice } = await paymentInvoiceRepository.findByStripeInvoiceId(invoice.id!);
+
+      /*
+       * OWNED BY THE SENDING ACCOUNT, checked on the INVOICE ROW itself.
+       *
+       * `planMeta.owner_id` was proved above, but that is the SUBSCRIPTION's
+       * claim about itself, not this row's. Every write to `payment_invoices`
+       * on this route follows a check on the row being written, and the
+       * placement guard pins it — the first version of this settle skipped it
+       * and leaned on the subscription's check, which is the shape that lets a
+       * connected account name somebody else's row.
+       */
+      const planInvoiceIsOurs =
+        !!planInvoice && (await accountOwns(connectAccountId, planInvoice.user_id, log));
+
+      if (planInvoice && planInvoiceIsOurs && String(planInvoice.status) !== 'paid') {
+        const { error: settleError } = await paymentInvoiceRepository.markPaidFromStripeInvoice(
+          planInvoice.id as string,
+          {
+            paidAt: new Date().toISOString(),
+            hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+            invoicePdf: invoice.invoice_pdf ?? null,
+          }
+        );
+
+        if (settleError) {
+          /* Loud, not fatal: the period and the money are already recorded. An
+             unsettled row overstates what the client owes, and the next
+             delivery of this event corrects it. */
+          log.error(
+            { err: settleError, invoiceId: planInvoice.id, stripeInvoiceId: invoice.id },
+            'Plan period recorded but its invoice row was not marked paid'
+          );
+        }
+      }
+
+      return;
+    }
   }
 
   // Look up the platform invoice by Stripe invoice ID

@@ -782,7 +782,29 @@ describe('Fix-1b QA: a redelivery makes no extra reads', () => {
     expect(again.status).toBe(200);
     expect(ownershipReads(again)).toEqual([]);
     expect(planFallbackReads(again)).toEqual([]);
-    expect(stripeCalls(again).filter((c) => c.method.startsWith('subscriptionSchedules') || c.method === 'subscriptions.retrieve')).toEqual([]);
+    /*
+     * NO SCHEDULE WORK, EVER. That is the half of this guarantee that matters:
+     * a redelivery must not create or update a schedule, because doing it twice
+     * is how a plan ends up bounded differently from the one that was agreed.
+     */
+    expect(stripeCalls(again).filter((c) => c.method.startsWith('subscriptionSchedules'))).toEqual([]);
+
+    /*
+     * ONE `subscriptions.retrieve` ON THE INVOICE PATH, AND ONLY THERE.
+     *
+     * `enableAutomaticPlanCharge` asks whether the plan is already
+     * `charge_automatically` and returns at once when it is. That read is the
+     * redelivery protection, not a breach of it — Stripe is the only place that
+     * knows, and the two alternatives were both worse: guarding on
+     * `alreadyBound` meant the switch never ran once the owner path began
+     * binding at booking time, and asking our own database first disturbed the
+     * sequenced mocks three other webhook guards depend on.
+     *
+     * The other two sites never reach it: the switch lives in
+     * `handleConnectInvoicePaid` alone.
+     */
+    const retrieves = stripeCalls(again).filter((c) => c.method === 'subscriptions.retrieve');
+    expect({ site, retrieves: retrieves.length }).toEqual({ site, retrieves: site === 'I' ? 1 : 0 });
     expect(rowsOf('payment_plan_installments')).toHaveLength(periodsBefore);
     if (site !== 'I') expect(JSON.stringify(rowsOf('payment_plan_subscriptions'))).toBe(plansBefore);
     expect(dropLogs(again)).toEqual([]);

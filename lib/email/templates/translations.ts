@@ -1531,11 +1531,26 @@ export const emailTranslations = {
     totalLabel: { en: 'Total', es: 'Total', he: 'סה״כ' },
     dueNowLabel: { en: 'Due now', es: 'A pagar ahora', he: 'לתשלום עכשיו' },
     nothingDue: {
-      en: 'Nothing to pay now — we will invoice as the work progresses.',
-      es: 'Nada que pagar ahora — facturaremos a medida que avance el trabajo.',
-      he: 'אין תשלום כרגע — נחייב ככל שהעבודה מתקדמת.',
+      en: 'Nothing to pay now. We will invoice as the work progresses.',
+      es: 'Nada que pagar ahora. Facturaremos a medida que avance el trabajo.',
+      he: 'אין תשלום כרגע. נחייב ככל שהעבודה מתקדמת.',
     },
-    payCta: { en: 'Pay now', es: 'Pagar ahora', he: 'לתשלום' },
+    /*
+     * "View your invoice", NOT "Pay now".
+     *
+     * This email is sent at acceptance, and the client is redirected to the
+     * payment page in the same breath — `payUrl` is non-null ONLY when that
+     * redirect happens. So by the time anyone reads this, they have usually
+     * already paid, and a button demanding payment is asking for money twice.
+     * Reported live after an owner's client paid on the redirect and then
+     * opened the email.
+     *
+     * The link is kept rather than dropped: a client who closed the payment
+     * page needs a way back, and the invoice page already tells the truth
+     * either way — it shows the invoice as paid when it is. Neutral wording is
+     * what makes one button correct in both states.
+     */
+    payCta: { en: 'View your invoice', es: 'Ver tu factura', he: 'לצפייה בחשבונית' },
     attachmentNote: {
       en: 'Your signed copy is attached to this email:',
       es: 'Tu copia firmada está adjunta a este correo:',

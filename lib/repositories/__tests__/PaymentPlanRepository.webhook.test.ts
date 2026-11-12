@@ -364,7 +364,7 @@ describe('PaymentPlanRepository: Stripe webhook and plan-binding methods (CF-5 P
       'countProjectedPeriods',
       'insertProjectedPeriods',
     ];
-    const SCOPED = ['cancelOpenPeriodsForEndedPlan', 'findOldestActivePlanIdForService'];
+    const SCOPED = ['cancelOpenPeriodsForEndedPlan', 'findOldestActivePlanIdForService', 'adoptPeriodsIntoSubscription'];
 
     it('one unscoped section, then one owner-scoped section, both in the class', () => {
       expect(classStart).toBeGreaterThan(-1);

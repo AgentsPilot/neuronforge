@@ -1408,6 +1408,64 @@ export class PaymentPlanRepository {
   // carried a `user_id` filter inline. They keep it, in the same place. Same
   // error handling: no try/catch, no logging.
 
+
+  /**
+   * Hand periods that already exist to the subscription
+   * that has just been bounded, instead of writing a second set.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY ADOPTION AND NOT A SECOND INSERT
+   *
+   * Two components write a plan's periods, and until now never for the same
+   * booking:
+   *
+   *   createInstallmentsForBooking  the OWNER's path. Writes the schedule at
+   *                                 booking time with `subscription_id` NULL,
+   *                                 because that path has no Stripe
+   *                                 subscription — see `createBookingPaymentPlan`.
+   *   insertProjectedPeriods        the WEBSITE's path, via `bindPlanSubscription`.
+   *                                 Writes them when the subscription binds.
+   *
+   * A booking that goes down both — which is what an owner-created CARD plan
+   * now does — would get its schedule written twice: two period 1s, two period
+   * 2s, and a plan that reads as double the money it sold. Measured on four
+   * live website bookings, each has exactly N rows and every one carries a
+   * `subscription_id`, which is how we know the two have never collided yet.
+   *
+   * The alternative was to stop the owner path writing periods and let binding
+   * write them. That was rejected: a client who never pays would then leave the
+   * booking with NO schedule at all, where today it is visible from the moment
+   * the owner creates it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONLY WHAT IS UNCLAIMED
+   *
+   * `.is('subscription_id', null)` is the guard that makes this safe to call
+   * twice: a period already belonging to a subscription is never moved to
+   * another one. Scoped to the BOOKING, which is the sale — `payment_plan_id`
+   * names the service's plan offer and is shared by every sale made under it,
+   * so scoping by plan alone would adopt another client's periods.
+   *
+   * OWNER-SCOPED, which is why it sits below the marker rather than above it:
+   * it filters `user_id` itself. The caller also vetted the booking against
+   * that owner (`vetLinkId`, Fix-1b) before binding, so this is the second of
+   * two checks, not the only one.
+   */
+  async adoptPeriodsIntoSubscription(
+    userId: string,
+    bookingId: string,
+    planSubscriptionId: string
+  ): Promise<WebhookInstallmentResult<{ adopted: number }>> {
+    const { data, error } = await this.supabase
+      .from('payment_plan_installments')
+      .update({ subscription_id: planSubscriptionId })
+      .eq('user_id', userId)
+      .eq('booking_id', bookingId)
+      .is('subscription_id', null)
+      .select('id');
+    return { data: { adopted: data?.length ?? 0 }, error };
+  }
+
   /**
    * Stripe ended a plan that was not complete: its unsettled periods stop
    * counting as owed. Scoped to the plan's owner (proved by `accountOwns`).
