@@ -180,7 +180,20 @@ const fill = (template: string, values: Record<string, string>) => template.repl
  * money control can never hide behind it. Each absence test that uses this also
  * asserts the excluded button is present, so the narrowing is visible.
  */
-const moneyButtons = () => screen.queryAllByRole('button').filter((button) => button.getAttribute('data-testid') !== 'plan-compare-open');
+const moneyButtons = () =>
+  screen
+    .queryAllByRole('button')
+    .filter((button) => button.getAttribute('data-testid') !== 'plan-compare-open')
+    /*
+     * And controls that DECLARE they are not money.
+     *
+     * Still never by name or pattern (SA W-3). The amount-explain toggles are
+     * one per capability, so they have no single exact id to name — they carry
+     * `data-money="no"` instead, which is the same promise made by the control
+     * rather than guessed by the test. A money button that forgot to declare
+     * itself is still counted, which is the direction that has to fail safe.
+     */
+    .filter((button) => button.getAttribute('data-money') !== 'no');
 
 /**
  * Upgrade modal UM-1b (workplan §13): Choose / Pay for live in the plan

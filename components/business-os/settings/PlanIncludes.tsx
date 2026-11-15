@@ -363,6 +363,24 @@ export function PlanAmounts({
                         aria-expanded={open}
                         aria-label={t('plan.amount_explain')}
                         data-testid={`plan-amount-explain-${item.category}`}
+                        /*
+                         * NOT A MONEY CONTROL, SAID OUT LOUD.
+                         *
+                         * `PlanPurchase.render` asserts that an account which
+                         * must see no Choose or Pay button sees NO button at
+                         * all, excluding the one it names by exact id — a rule
+                         * written so a money control can never hide behind a
+                         * loose matcher.
+                         *
+                         * This toggle opens a sentence explaining a figure. It
+                         * takes no money and cannot start a purchase, but its
+                         * test id is per-capability, so there is no exact id
+                         * for the guard to name. Declaring the FACT here keeps
+                         * the guard exact: it excludes controls that say they
+                         * are not money, and anything that forgets to say so —
+                         * every real Choose button included — still trips it.
+                         */
+                        data-money="no"
                         onClick={() => setExplaining(open ? null : item.feature.capability)}
                         className="inline-flex items-center justify-center w-6 h-6 shrink-0 rounded-full text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-surface-hover)] transition-colors"
                       >
