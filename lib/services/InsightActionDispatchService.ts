@@ -290,7 +290,27 @@ async function chaseInvoice(action: InsightAction, ctx: Context): Promise<Outcom
 export async function sendInvoiceChase(
   invoiceId: string,
   userId: string,
-  ctx?: Context
+  ctx?: Context,
+  /**
+   * A PERSON asked for this one, right now.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The consent gate below asks "may we write to this business's clients" and
+   * fails closed, which is right for every AUTOMATIC sender: a scheduled run, a
+   * queue, an agent acting on its own.
+   *
+   * It is wrong for a button. An owner looking at a late invoice who presses
+   * "send a reminder" has just given the only permission that question is
+   * asking about, and refusing silently — the gate returns `skipped`, not an
+   * error — would be a button that does nothing and says nothing.
+   *
+   * It bypasses the CONSENT read and nothing else. The settled-invoice check
+   * still applies, because "the client paid between the press and the send" is
+   * exactly as true for a person as for a queue, and chasing somebody for money
+   * they have already sent is the worst thing this function can do.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  options?: { askedByAPerson?: boolean }
 ): Promise<Outcome> {
   /*
    * ───────────────────────────────────────────────────────────────────────────
@@ -315,17 +335,22 @@ export async function sendInvoiceChase(
    * `getUserReminderConfig` fails in, and for the same reason.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  const { data: consent, error: consentError } = await supabaseServer
-    .from('business_profiles')
-    .select('chase_invoices_enabled')
-    .eq('user_id', userId)
-    .maybeSingle();
+  const { data: consent, error: consentError } = options?.askedByAPerson
+    ? { data: null, error: null }
+    : await supabaseServer
+        .from('business_profiles')
+        .select('chase_invoices_enabled')
+        .eq('user_id', userId)
+        .maybeSingle();
 
   if (consentError) {
     return { sent: false, reason: 'could not read whether this business chases invoices' };
   }
 
-  if (!(consent as { chase_invoices_enabled?: boolean } | null)?.chase_invoices_enabled) {
+  if (
+    !options?.askedByAPerson &&
+    !(consent as { chase_invoices_enabled?: boolean } | null)?.chase_invoices_enabled
+  ) {
     /* A no-op, not a failure: the owner has simply not asked for this, and a
        run that reports it as an error teaches them to ignore the report. */
     return { sent: false, skipped: true, reason: 'chasing unpaid invoices is not switched on' };
@@ -342,6 +367,50 @@ export async function sendInvoiceChase(
        for money they have already sent is the worst thing this queue could do,
        so not sending IS the success. */
     return { sent: false, skipped: true, reason: `invoice is ${invoice.status}` };
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND WHAT THE PLAN SAYS, WHICH THE INVOICE SOMETIMES DOES NOT.
+   *
+   * The check above trusts `payment_invoices.status`, and on a payment plan
+   * that row can be stale. Observed 2026-11-15 on INV-00060:
+   *
+   *     invoice          status overdue · paid_at NULL
+   *     transaction      succeeded ₪400 · invoice_id NULL
+   *     instalment #1    paid · inv=290b54bf · tx=b07a3988
+   *
+   * The money arrived, the instalment recorded WHICH invoice and WHICH charge
+   * settled it, and the invoice row was never moved. So the guard above saw an
+   * unpaid bill and chased a client who had already paid — the one outcome this
+   * function says it must never produce. Stripe's own pay page caught it and
+   * warned the client, which is not a defence we should be relying on.
+   *
+   * So the instalment is asked too. It is a cheap read on a table that is
+   * already the authority for what a plan has collected, and it fails OPEN on
+   * purpose: an unreadable instalment must not stop a legitimate chase, only a
+   * positive "this was paid" may.
+   *
+   * THIS IS A GUARD, NOT A FIX. The invoice is still wrong, and anything else
+   * reading it — reporting, the owner's own screen — is still wrong with it.
+   * Whatever settles a plan instalment needs to mark the invoice and link the
+   * transaction; until it does, this stops the client being harmed by it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const { data: paidInstalment } = await supabaseServer
+    .from('payment_plan_installments')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('invoice_id', invoiceId)
+    .eq('status', 'paid')
+    .limit(1);
+
+  if (paidInstalment && paidInstalment.length > 0) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: 'invoice is paid',
+    };
   }
 
   const to = invoice.client_email?.trim();
@@ -464,11 +533,33 @@ export async function sendInvoiceChase(
     return { sent: false, reason: 'could not read this client chase history' };
   }
 
-  if (alreadyChased && alreadyChased.length > 0) {
+  if (alreadyChased && alreadyChased.length > 0 && !options?.askedByAPerson) {
     /* THE COOLDOWN, WORKING. The whole point of this agent running daily is
        that most days it finds nothing new to do. */
     return { sent: false, skipped: true, reason: `already chased within ${CHASE_COOLDOWN_DAYS} days` };
   }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND WHY A PERSON MAY PASS IT.
+   *
+   * The cooldown is about CADENCE, and its own line above says so: the point of
+   * a daily agent is that most days it finds nothing new to do. It stops the
+   * same invoice being chased every morning.
+   *
+   * An owner who opens a client's record, sees a bill eleven days late, and
+   * presses "send a reminder" is not a daily sweep. They know they chased on
+   * Monday; they are chasing again on purpose, often because the client replied
+   * to something else, or promised to pay and did not.
+   *
+   * Refusing them was worse than useless: it returns `skipped`, not an error,
+   * so before this the button appeared to do nothing at all.
+   *
+   * The guards that protect the CLIENT are untouched and still run below —
+   * above all the settled check: if they have paid, not sending is the success,
+   * for a person exactly as for the queue.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
 
   const dueDate = new Date(invoice.due_date as string);
   const daysOverdue = Math.max(0, Math.floor((Date.now() - dueDate.getTime()) / 86_400_000));
@@ -512,15 +603,39 @@ export async function sendInvoiceChase(
     .toISOString()
     .slice(0, 10);
 
-  const siblings = invoice.contact_id
-    ? (
-        await paymentInvoiceRepository.list(userId, {
-          contactId: invoice.contact_id,
-          status: 'sent,overdue',
-          limit: 50,
-        })
-      ).data ?? []
-    : [];
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A PERSON CHASING ONE INVOICE CHASES ONE INVOICE.
+   *
+   * Gathering the client's other debts is right for the AGENT, and the comment
+   * above says why: it sends one email per client per week, so that email has
+   * to say everything or the cooldown buries the rest.
+   *
+   * It is wrong for a button. An owner looking at `INV-00059` who presses
+   * "send a reminder" expects a reminder about `INV-00059`. What arrived was a
+   * statement headed "2 invoices in total" listing a second bill they had not
+   * chosen to mention — and because the statement is built per CLIENT, every
+   * button on every row of that client sent the identical email. Pressing on
+   * three different invoices wrote the same letter three times.
+   *
+   * There is no cooldown to work around here either: a manual press already
+   * passes it, so nothing is suppressed by naming one bill.
+   *
+   * `items` therefore stays at length one, and `generateChaseInvoiceEmail`
+   * runs instead of the statement — the email that names THIS invoice, its due
+   * date and how late it is.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const siblings =
+    invoice.contact_id && !options?.askedByAPerson
+      ? (
+          await paymentInvoiceRepository.list(userId, {
+            contactId: invoice.contact_id,
+            status: 'sent,overdue',
+            limit: 50,
+          })
+        ).data ?? []
+      : [];
 
   const statementRows = [
     invoice,

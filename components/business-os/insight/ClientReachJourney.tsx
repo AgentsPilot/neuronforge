@@ -304,7 +304,11 @@ export function ClientReachJourney({ graph, onAction }: Props) {
             {focus.item.action && onAction && (
               <button
                 onClick={() => onAction(focus.item.action!, { stepId: focus.item.id })}
-                className="crj-btn"
+                /* `ap-primary-lift` on the primary only. The quiet variant
+                   below overrides the fill with `!important`, and the class's
+                   dark-mode rule is `!important` too, so wearing both would
+                   paint the secondary orange in dark mode. */
+                className="crj-btn ap-primary-lift"
                 style={{ fontFamily: font }}
               >
                 {focus.item.action === 'create_booking_link'
@@ -462,17 +466,28 @@ export function ClientReachJourney({ graph, onAction }: Props) {
           to { left: 100%; }
         }
 
+        /*
+         * The fill comes from the platform token, and the lift from the class
+         * every other primary button uses. (No backticks in here: this comment
+         * sits inside a styled-jsx template literal, and one would close it.)
+         *
+         * It was a raw #F97316 with a 16px orange glow under it. Two faults in
+         * one rule: the colour could not follow the brand token, and the glow
+         * is a coloured halo on the dark ground, which is what ap-primary-lift
+         * exists to swap for a plain dark shadow. The shadow is deliberately
+         * NOT redeclared here, because a scoped styled-jsx selector outranks
+         * the global class and would win it back.
+         */
         .crj-btn {
           flex: 0 0 auto;
           border: none;
-          background: #F97316;
+          background: var(--v2-primary);
           color: #fff;
           font-size: 13px;
           font-weight: 600;
           padding: 10px 16px;
           border-radius: 11px;
           cursor: pointer;
-          box-shadow: 0 6px 16px -8px rgba(249,115,22,0.9);
           transition: filter 0.15s, transform 0.15s;
         }
         .crj-btn:hover {

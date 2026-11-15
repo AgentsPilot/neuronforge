@@ -128,6 +128,8 @@ async function resolve(
       return canSendMarketing(userId);
     case 'bills_for_anything':
       return billsForAnything(userId);
+    case 'mail_reaches_owner_inbox':
+      return mailReachesOwnerInbox(userId);
     default:
       return true;
   }
@@ -282,4 +284,82 @@ async function sendsQuotes(userId: string): Promise<boolean> {
     logger.warn({ err, userId }, 'Could not resolve whether this business sends quotes; not offering the quote chase');
     return false;
   }
+}
+
+/**
+ * Would the mailbox we read be the one this owner's clients write to?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Compares two addresses the product already holds:
+ *
+ *   business_profiles.email        where this business receives its mail
+ *   plugin_connections.email       the Google or Microsoft account the owner
+ *                                  authorised, as the provider reported it
+ *
+ * Equal, and the agent reads the right inbox. Different, and it reads a mailbox
+ * no client has written to, which is the state this exists to refuse. Found
+ * live: an owner on `@walla.co.il` whose google-mail connection was
+ * `@gmail.com`, with an agent running every five minutes against the wrong
+ * inbox and completing without error every time.
+ *
+ * WHY NOT A LIST OF SUPPORTED DOMAINS. A business on Google Workspace has a
+ * custom domain, is fully supported, and its connected mailbox is
+ * `owner@theirfirm.com` — a domain check would block it. Comparing the two
+ * addresses handles Workspace and walla.co.il with one rule.
+ *
+ * UNKNOWN MEANS YES, which is the direction every gate in this file takes. An
+ * owner who has not filled in their business email, or a read that failed, must
+ * not be locked out of an automation on a fact we could not establish.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function mailReachesOwnerInbox(userId: string): Promise<boolean> {
+  try {
+    const { supabaseServer } = await import('@/lib/supabaseServer');
+
+    const { data: profile, error: profileError } = await supabaseServer
+      .from('business_profiles')
+      .select('email')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (profileError) {
+      logger.warn({ err: profileError, userId }, 'Could not read the business email; not blocking the mail automation');
+      return true;
+    }
+
+    const ownerEmail = normaliseEmail((profile as { email?: string | null } | null)?.email);
+    /* Nothing to compare against. See UNKNOWN MEANS YES above. */
+    if (!ownerEmail) return true;
+
+    const { pluginConnectionRepository } = await import('@/lib/repositories/PluginConnectionRepository');
+    const { data: connections, error: connectionsError } = await pluginConnectionRepository.findActiveByUser(userId);
+
+    if (connectionsError) {
+      logger.warn({ err: connectionsError, userId }, 'Could not read the mail connections; not blocking the mail automation');
+      return true;
+    }
+
+    const mailboxes = (connections || [])
+      .filter(connection => MAIL_PLUGINS.has(String(connection.plugin_key ?? connection.plugin_name ?? '')))
+      .map(connection => normaliseEmail((connection as { email?: string | null }).email))
+      .filter((email): email is string => Boolean(email));
+
+    /* No mailbox connected at all is `missingPluginConnections`' question, not
+       this one, and answering it here would say the wrong thing. */
+    if (mailboxes.length === 0) return true;
+
+    return mailboxes.includes(ownerEmail);
+  } catch (error) {
+    logger.warn({ err: error, userId }, 'Could not compare the mailbox with the business email; not blocking');
+    return true;
+  }
+}
+
+/** The mail plugins the receptionist can actually read. */
+const MAIL_PLUGINS = new Set(['google-mail', 'outlook']);
+
+/** Case and surrounding space are not identity; everything else is. */
+function normaliseEmail(value: unknown): string | null {
+  const email = String(value ?? '').trim().toLowerCase();
+  return email.includes('@') ? email : null;
 }

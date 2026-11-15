@@ -42,6 +42,7 @@ import {
   schedulingServiceRepository,
 } from '@/lib/repositories/SchedulingRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { refundRequestRepository } from '@/lib/repositories/RefundRequestRepository';
 import {
   cancelBooking,
   createBooking,
@@ -230,6 +231,61 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
      * guard lives in the CRM executor, which is where this was learned.
      * ─────────────────────────────────────────────────────────────────────────
      */
+    /**
+     * Send a client a link to a page where they decide.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * A GUARD THAT FIRED IS NOT A FAILURE — the lesson `remind` above learned
+     * the hard way. Three of the four outcomes here are "nothing to send and
+     * nothing wrong": the door already went, there is no booking to open, the
+     * contact has no address. Returning an error for any of those would make a
+     * daily agent that correctly declines report "all items failed", and the
+     * owner would switch it off.
+     *
+     * So they come back as data. `sent: false` with a reason means the run's
+     * output still says what it decided and why.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    send_portal_door: async (_q, data, ctx) => {
+      const { sendPortalDoor } = await import('@/lib/business-os/receptionist/sendPortalDoor');
+
+      const row = (data ?? {}) as Record<string, unknown>;
+      const contactId = typeof row.contact_id === 'string' ? row.contact_id : null;
+      const door = typeof row.door === 'string' ? row.door : null;
+
+      if (!contactId || !door) {
+        return {
+          data: null,
+          error: new Error('A door needs a contact and which door to open.'),
+        };
+      }
+
+      const result = await sendPortalDoor({
+        userId: ctx.userId,
+        contactId,
+        door: door as Parameters<typeof sendPortalDoor>[0]['door'],
+        bookingId: typeof row.booking_id === 'string' ? row.booking_id : null,
+        threadId: typeof row.thread_id === 'string' ? row.thread_id : null,
+      });
+
+      if (!result.sent && result.reason === 'send_failed') {
+        /* The one real fault: we tried and the mail did not go. Somebody has
+           to know, so this is an error rather than a skip. */
+        return { data: null, error: new Error('The link could not be sent.') };
+      }
+
+      return {
+        data: {
+          sent: result.sent,
+          skipped: Boolean(result.skipped),
+          reason: result.reason ?? null,
+          door,
+        },
+        error: null,
+      };
+    },
+
     capture_enquiry: async (_q, data, ctx) => {
       const resolved = (value: unknown): string | null => {
         if (typeof value !== 'string') return null;
@@ -964,8 +1020,77 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         return { data: null, error: new Error(result.message ?? 'The refund was refused.') };
       }
 
+      /*
+       * The same entry the two refund routes write.
+       *
+       * Without it a refund issued in chat appeared in the audit trail only as
+       * `BUSINESS_CHAT_WRITE` — true, but it names the confirmation, not the
+       * money. Anyone asking "show me every refund" keyed off `PAYMENT_REFUNDED`
+       * and would have been shown the ones made from the dialog and not the ones
+       * made by asking for them.
+       *
+       * Imported here rather than at the top of the file: this is the only
+       * handler that needs it, and `RefundService` is already loaded the same
+       * way for the same reason.
+       *
+       * Non-blocking, per CLAUDE.md. The money has already moved; a failure to
+       * write the note about it must not turn a completed refund into an error.
+       */
+      void import('@/lib/services/AuditTrailService')
+        .then(({ AuditTrailService }) =>
+          AuditTrailService.getInstance().log({
+            action: 'PAYMENT_REFUNDED',
+            entityType: 'payment_transaction',
+            entityId: requireTargetId(q),
+            userId: ctx.userId,
+            changes: {
+              refundId: result.refundId,
+              processorRefundId: result.processorRefundId,
+              amount: result.amount,
+              currency: result.currency,
+              replayed: result.replayed,
+              /* What the dialog cannot say: this one was asked for in words. */
+              via: ctx.consumer ?? 'chat',
+            },
+          })
+        )
+        .catch((err) => logger.error({ err }, 'Audit failed (non-blocking)'));
+
       return { data: result as unknown as QueryRow, error: null };
     },
+  },
+
+  refund_requests: {
+    /**
+     * The refund agent's conclusion, and nothing else.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE ONE WRITE AN AUTOMATION GETS ON A CLIENT'S REFUND REQUEST.
+     *
+     * The catalogue declared `refund_requests.update` before anything was
+     * wired to it, so the agent failed on its last step with "that action is
+     * listed but not built" — after the model had already produced its
+     * assessment. Loud, as that branch intends, but the work was thrown away
+     * each run.
+     *
+     * It delegates to `recordAssessment`, which is deliberately NOT a generic
+     * update:
+     *   · it stamps `assessed_at` server-side, because a static plan cannot
+     *     know the time — this is what `{{now}}` was failing to express;
+     *   · it is scoped to the OPEN statuses, so an assessment can never
+     *     overwrite a person's answer. The owner refunding, declining or
+     *     marking it handled while the model thinks closes the row, and this
+     *     then finds nothing.
+     *
+     * What it cannot do is the point: `transactions.refund` is `movesMoney`
+     * and refused on every automation path, so the most an agent can achieve
+     * here is a recommendation beside a button only a person can press.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    update: async (q, data, ctx) =>
+      refundRequestRepository.recordAssessment(requireTargetId(q), ctx.userId, data) as Promise<
+        RepoResult<unknown>
+      >,
   },
 
   links: {
@@ -1824,6 +1949,48 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
   },
 
   bookings: {
+
+    /**
+     * What is still refundable on this client's bookings.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * ONE FUNCTION, THREE READERS, NO DRIFT.
+     *
+     * `refundableBookingsFor` already answers this for the client's portal and
+     * for the owner's refund dialog. The agent reading the same function is
+     * the whole point: three different answers about the same money is how an
+     * owner is told a booking was never paid for while the client is looking
+     * at the receipt.
+     *
+     * A read on the mutate path, which looks odd and is correct: the plugin
+     * executor routes only `find_` and `aggregate_` to the query side, and
+     * this cannot be a table read — it is a join through `payment_invoices`
+     * that BizQL has no way to express. `risk: 'read'`, `writesRow: false`,
+     * and it touches nothing.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    refundable: async (_q, data, ctx) => {
+      const { refundableBookingsFor } = await import('@/lib/payments/refundableBookings');
+
+      const contactId = typeof data?.contact_id === 'string' ? data.contact_id : '';
+      if (!contactId) {
+        return { data: null, error: new Error('refundable needs a contact_id') };
+      }
+
+      const all = await refundableBookingsFor({ userId: ctx.userId, contactId });
+
+      /* Narrowed to one booking where the caller named one. The agent always
+         does; the chat might reasonably ask about the whole client. */
+      const bookingId = typeof data?.booking_id === 'string' ? data.booking_id : null;
+      const bookings = bookingId ? all.filter(b => b.bookingId === bookingId) : all;
+
+      /*
+       * `found: false` rather than an empty list with no explanation. The
+       * model is being asked to decide something about money, and "we looked
+       * and there is none" has to be distinguishable from "we did not look".
+       */
+      return { data: { found: bookings.length > 0, bookings }, error: null };
+    },
     /*
      * Re-send the confirmation for a booking that already exists.
      *
@@ -2454,6 +2621,48 @@ export async function executeMutate(
     throw new BizQLValidationError([
       `'${query.entity}' has no action '${query.action}'. ` +
         `Available: ${Object.keys(entity.actions ?? {}).join(', ') || 'none'}.`,
+    ]);
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN AGENT MAY NOT MOVE MONEY.
+   *
+   * `transactions.refund` has always declared `requiresConfirmation: true`, and
+   * its plugin definition says "Requires explicit confirmation". That flag is
+   * read in exactly ONE place — the chat route, which parks the resolved write
+   * in `ConfirmationStore` and replays it when the owner says yes.
+   *
+   * This path is the other one. `business-os-plugin-executor` calls us with
+   * `consumer: 'kernel'`, and that value has only ever chosen how a CRM activity
+   * is attributed (see `writtenByAnAgent` below). Nothing here read the flag. So
+   * a committed `steps.json` with a refund step would have taken money out of a
+   * business's Stripe balance on a cron, with nobody asked and no decision
+   * recorded — while the declaration read like a guarantee.
+   *
+   * Nothing exploited it: the nine shipped automations' entire vocabulary is
+   * `find_*`, `create_*`, `remind_*`, `invite_contacts`, `modify_email` and the
+   * sheet range ops. The hole was unused, not absent, and the next person to
+   * write an agent would reasonably have trusted the label.
+   *
+   * GATED ON `movesMoney`, NOT ON `requiresConfirmation`. That flag is also true
+   * for every `risk: 'send'` action, and sending is what four live agents exist
+   * to do. Refusing those to protect this one would break the mechanism to
+   * secure it.
+   *
+   * Thrown, not skipped. A refund that silently does not happen is the worse
+   * failure: the owner believes a client was repaid.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (action.movesMoney && ctx.consumer === 'kernel') {
+    logger.warn(
+      { userId: ctx.userId, entity: query.entity, action: query.action },
+      'Refused: an automation tried to run an action that moves money'
+    );
+    throw new BizQLValidationError([
+      `'${query.entity}.${query.action}' moves money and cannot be run by an automation. ` +
+        'Money leaves this business only when a person asks for it: from the refund ' +
+        'dialog, or by confirming it in chat.',
     ]);
   }
 

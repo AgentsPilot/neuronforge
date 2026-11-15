@@ -173,15 +173,41 @@ describe('the two plans agree on everything but the plumbing', () => {
     expect(promptsIn(OUTLOOK)).toEqual(gmail);
   });
 
-  it('offers the model the same four outcomes', () => {
+  it('offers the model the same five outcomes, doors included', () => {
     const outcomesIn = (file: string) => {
       const ai = allSteps(file).find(s => s.type === 'ai_processing') as Step;
       const schema = ai.output_schema as Record<string, Record<string, Step>>;
       return [...((schema.properties.outcome.enum as string[]) ?? [])].sort();
     };
 
-    expect(outcomesIn(OUTLOOK)).toEqual(['already_handled', 'draft', 'ignore', 'needs_owner']);
+    /*
+     * FIVE SINCE THE DOORS. `send_link` was added so the agent could answer a
+     * request it cannot answer in words — a refund, a reschedule — by sending
+     * the client the page where they decide. The list is pinned rather than
+     * merely compared between the two files, because two plans can agree with
+     * each other and both be wrong: a dropped outcome would make the model
+     * escalate everything it used to handle, and the pair test would stay
+     * green while the owner's inbox filled up.
+     */
+    expect(outcomesIn(OUTLOOK)).toEqual([
+      'already_handled',
+      'draft',
+      'ignore',
+      'needs_owner',
+      'send_link',
+    ]);
     expect(outcomesIn(OUTLOOK)).toEqual(outcomesIn(GMAIL));
+
+    /* And the doors themselves, which are what `send_link` is useless without.
+       A door missing from one provider is a request that mailbox cannot
+       answer and the other can. */
+    const doorsIn = (file: string) => {
+      const ai = allSteps(file).find(s => s.type === 'ai_processing') as Step;
+      const schema = ai.output_schema as Record<string, Record<string, Step>>;
+      return [...((schema.properties.door?.enum as string[]) ?? [])].sort();
+    };
+    expect(doorsIn(OUTLOOK)).toContain('refund');
+    expect(doorsIn(OUTLOOK)).toEqual(doorsIn(GMAIL));
   });
 
   it('writes the same timeline entries, which is how the owner is told at all', () => {

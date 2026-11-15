@@ -39,6 +39,7 @@ import type { CurrencyCode } from '@/lib/business-os/LanguageContext';
 import type { GapAction } from '@/lib/business-os/gaps/types';
 import { RefundModal } from '@/components/payments/RefundModal';
 import { ExtendQuoteDialog } from './ExtendQuoteDialog';
+import { RefundGapBlock } from '@/components/business-os/insight/RefundGapBlock';
 import { MailGapBlock } from './MailGapBlock';
 import { MailReplyBox } from './MailReplyBox';
 import { mostUrgent, tasksOf } from '@/lib/business-os/gaps/mostUrgent';
@@ -312,6 +313,23 @@ const LEAVES_THE_BUILDING = new Set<string>([
 const SUPPORTED_CURRENCIES: CurrencyCode[] = ['USD', 'EUR', 'ILS', 'GBP'];
 
 /** The icon says what KIND of work this is before the label is read. */
+/**
+ * The refund row brings its own buttons, so the generic one must stand down.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * It had FOUR. The generic action button renders for any row with an `action`,
+ * and `refund_requested` has one (`refund`, which opens the dialog). Giving the
+ * row a one-click approve and a "different amount" beside it did not replace
+ * that button — it sat there as a fourth, saying "refund" next to one saying
+ * "refund ₪74.99", with no way to tell which was which.
+ *
+ * Same reasoning as `THE_REPLY_BOX_DOES_THIS`: when a row has grown a better
+ * answer of its own, the generic one is noise, not a fallback.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const THE_REFUND_ROW_ANSWERS_ITSELF = (gap: GapView): boolean =>
+  gap.id === 'refund_requested';
+
 const ACTION_ICON: Record<string, typeof Send> = {
   send_booking_link: Send,
   write_quote: FileText,
@@ -369,12 +387,34 @@ function moneyHeld(item: GapItemView): boolean {
  * that is not needs a deliberate line.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ROWS THAT ARE AN EMAIL CONVERSATION, and therefore get a reply box.
+ *
+ * This was inferred from `item.subject` being set, which was true for exactly
+ * as long as one gap set it. `refund_requested` then set it too — a booking's
+ * name, not a mail subject — and inherited the whole conversation apparatus: a
+ * rich-text reply editor, an "add link" button, and a "mark as handled" that
+ * finishes a correspondence nobody started. A client who filled in a form had
+ * their request rendered as an email they never sent.
+ *
+ * Naming the gaps makes the claim checkable. A gap that genuinely arrives as
+ * mail adds itself here deliberately; everything else renders its facts and
+ * its own action, which is what a form submission actually needs.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const CONVERSATION_GAPS = new Set<string>(['client_reply_waiting']);
+
 const VALUE_LABEL: Record<string, string> = {
   /* What the work came to, and nobody has asked for it. Not held: the client
      has not been charged at all. */
   booking_unbilled: 'gaps.value.to_bill',
   stage_awaiting_completion: 'gaps.value.to_bill',
   invoice_unpaid: 'gaps.value.owed',
+  /* What the CLIENT asked for, which is neither what is held nor what will be
+     returned. The business may hold more (they under-asked) or the same. Saying
+     "held by you" of this figure states a balance that is not this number. */
+  refund_requested: 'gaps.value.requested',
   quote_unsent: 'gaps.value.quoted',
   quote_awaiting_client: 'gaps.value.quoted',
   quote_deadline_unanswered: 'gaps.value.quoted',
@@ -451,7 +491,22 @@ function leadSentence(
  * Asked of the template rather than hardcoded to a gap id, so a sentence that
  * grows an amount later takes care of itself.
  */
+/**
+ * A gap whose own text already shows the figure, so the meta strip must not
+ * show it a second time.
+ *
+ * Two ways that happens. A lead sentence can interpolate `{amount}` — the
+ * original case, read off the dictionary. Or a gap can have a BLOCK that
+ * leads with the figure, which no dictionary lookup can see: `RefundGapBlock`
+ * puts the amount asked for at the top, in the size the figure deserves,
+ * because on a refund request the amount is the question rather than a
+ * detail. Showing it again in the top-right strip beside the clock said the
+ * same number twice and put the quieter copy where the eye goes first.
+ */
+const BLOCKS_THAT_LEAD_WITH_THE_AMOUNT = new Set<string>(['refund_requested']);
+
 function sentenceCarriesAmount(gapId: string, t: (key: string) => string): boolean {
+  if (BLOCKS_THAT_LEAD_WITH_THE_AMOUNT.has(gapId)) return true;
   const key = `gaps.lead.say.${gapId}`;
   const say = t(key);
   return say !== key && say.includes('{amount}');
@@ -547,9 +602,17 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
   /** The booking whose refund dialog is open, if any. */
   const [refunding, setRefunding] = useState<{
     bookingId: string;
+    /** The CEILING — what is still refundable, never what the client asked. */
     amount: number;
     currency: string;
     name: string;
+    /** Open on the partial tab, for "a different amount". */
+    startPartial?: boolean;
+    /** The agent's figure, so the owner adjusts rather than types. */
+    prefillAmount?: number;
+    /** The client's own reason and words — the same keys the dialog uses. */
+    reasonKey?: string;
+    reasonNote?: string;
   } | null>(null);
   /**
    * The lapsed quote whose extend dialog is open, if any.
@@ -580,6 +643,158 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
    * thread is finished. See the route.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * The owner says no.
+   *
+   * The other half of a decision whose yes is the refund dialog. A refund
+   * request had only "mark as handled" beside it, which closed the row without
+   * recording what was decided — so a week later nothing could say whether the
+   * money went back or the client was turned down.
+   *
+   * TWO ANSWERS, NEITHER OF WHICH IS A REFUND.
+   *
+   *   declined  the owner said no
+   *   handled   they dealt with it themselves — a transfer, a phone call
+   *
+   * Both settle the request AND the conversation it came from, so the client
+   * is not left on a card asking the owner to reply to something they have
+   * just answered. Neither can mark money as returned: that comes from a
+   * refund actually happening. See the route's header.
+   */
+  /**
+   * Take the agent's recommendation, in one press.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE SAME ROUTE THE DIALOG POSTS TO. No second refund path: `/api/payments/
+   * refunds` owns the cap, the row lock, the idempotency, the ledger row and
+   * the client's email, and it keeps owning them here.
+   *
+   * The comment on `act` lists three reasons a direct POST used to be wrong,
+   * and all three now have answers rather than being argued away:
+   *
+   *   a payment plan        `canApproveInOneClick` refuses the one-click
+   *                         button outright when one is live. Stopping future
+   *                         charges is a decision, and the dialog asks it.
+   *   telling the client    `notify_contact: true`, where the route defaults
+   *                         to silence. A refund the client is never told
+   *                         about is how the next email starts.
+   *   money outside Stripe  `manual: !viaProcessor`. The route has always
+   *                         taken this; nothing was passing it. The button
+   *                         says "mark as returned" in that case, because
+   *                         that is what happens.
+   *
+   * It is offered ONLY where the agent named a figure, so the owner is
+   * pressing a number they can read on the card — never a blank "refund".
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const approveRefund = async (gap: GapView, item: GapItemView) => {
+    const key = rowKey(gap, item);
+    const amount = item.refundRecommendedAmount;
+
+    if (!item.entityId || typeof amount !== 'number' || amount <= 0) {
+      setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
+      return;
+    }
+
+    setRow(key, { kind: 'working' });
+    try {
+      const response = await fetch('/api/payments/refunds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          booking_id: item.entityId,
+          amount,
+          /*
+           * THE CLIENT'S OWN REASON, which is already in this dialog's
+           * vocabulary: the portal form and `REFUND_REASON_KEYS` use the same
+           * keys, so `no_show` needs no translation on the way in.
+           */
+          reason: item.noteKey?.replace('payments.refund.reason.', '') || 'goodwill',
+          /*
+           * The route requires a note and the form does not, so a client who
+           * picked a reason and typed nothing would 400. Their words when they
+           * wrote any, the agent's reasoning when they did not — never an
+           * empty string, and never something invented about why.
+           */
+          reason_note:
+            item.quote?.trim() || item.refundReasoning?.trim() || t('gaps.refund.note_fallback'),
+          notify_contact: true,
+          manual: item.refundViaProcessor === false,
+          /*
+           * Stable for this request, so a double press — or React's double
+           * invoke — is one refund and not two. The request id is the natural
+           * key: it is exactly "this client's one open ask about this booking".
+           */
+          client_request_id: `gap-refund-${item.requestId ?? item.entityId}`,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) {
+        /* The route's own message, which names the real cause — over-refund,
+           no Stripe reference, already refunded. Far better than a generic
+           line on the one action that moves money. */
+        setRow(key, {
+          kind: 'refused',
+          message: String(payload?.error || t('gaps.refused.generic')),
+        });
+        return;
+      }
+      setRow(key, { kind: 'done' });
+      onChanged?.();
+    } catch {
+      setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
+    }
+  };
+
+  /**
+   * Whether this row may offer the one-click button at all.
+   *
+   * Every clause is a case where one press would hide a decision from the
+   * owner, so the dialog becomes the only path rather than the alternative.
+   */
+  const canApproveInOneClick = (item: GapItemView): boolean =>
+    /* The agent named a figure. `needs_owner` and `decline` name none, and a
+       confident button under "I cannot decide this" would contradict it. */
+    typeof item.refundRecommendedAmount === 'number' &&
+    item.refundRecommendedAmount > 0 &&
+    /* And it is within what is actually left — never what was asked for. */
+    typeof item.refundableAmount === 'number' &&
+    item.refundRecommendedAmount <= item.refundableAmount &&
+    /* One payment behind the booking. Two means choosing which, and that is
+       the dialog's job — it already knows how to ask. */
+    item.refundPaymentsCount === 1 &&
+    /* No live payment plan: stopping future charges is its own decision. */
+    !item.planLive;
+
+  const answerRefund = async (
+    gap: GapView,
+    item: GapItemView,
+    decision: 'declined' | 'handled'
+  ) => {
+    const key = rowKey(gap, item);
+    if (!item.requestId) {
+      setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
+      return;
+    }
+    setRow(key, { kind: 'working' });
+    try {
+      const response = await fetch('/api/business-os/refund-requests/decide', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: item.requestId, decision }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) {
+        setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
+        return;
+      }
+      setRow(key, { kind: 'done' });
+      onChanged?.();
+    } catch {
+      setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
+    }
+  };
+
   const settleMailRow = async (gap: GapView, item: GapItemView) => {
     const key = rowKey(gap, item);
     setRow(key, { kind: 'working' });
@@ -625,7 +840,19 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
       case 'chase_intake':
         return item.entityId ? `/api/scheduling/bookings/${item.entityId}/intake` : null;
       case 'chase_payment':
-        return item.entityId ? `/api/payments/invoices/${item.entityId}/send` : null;
+        /*
+         * `/chase`, NOT `/send`.
+         *
+         * `/send` is invoice DELIVERY — it raises the bill and stamps
+         * `sent_at`. Pointed here, "chase payment" re-sent the original
+         * invoice byte for byte: no mention of the due date it had passed, no
+         * days-overdue, nothing saying we had asked before. The client read a
+         * duplicate, not a reminder.
+         *
+         * `/chase` is what the `chase_overdue_invoices` agent sends, so a late
+         * invoice now reads the same whether a person or the agent chased it.
+         */
+        return item.entityId ? `/api/payments/invoices/${item.entityId}/chase` : null;
       /*
        * The same reminder the automation sends, sent now because the owner
        * pressed it rather than because three days passed. One endpoint for
@@ -898,7 +1125,15 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
       }
       setRefunding({
         bookingId: item.entityId,
-        amount: typeof item.value === 'number' ? item.value : 0,
+        /* WHAT IS LEFT, not what was asked. `item.value` is the client's ask,
+           and opening on it forbade both a goodwill refund above it and any
+           honest view of the real ceiling. */
+        amount:
+          typeof item.refundableAmount === 'number'
+            ? item.refundableAmount
+            : typeof item.value === 'number'
+              ? item.value
+              : 0,
         currency: item.currency || '',
         name: item.name,
       });
@@ -1110,15 +1345,33 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
             showed their words here and a subject line beside a clock in the
             fold.
           */}
-          <MailGapBlock
-            subject={lead.item.subject}
-            quote={lead.item.quote}
-            note={lead.item.note}
-            threadId={lead.item.threadId}
-            contextKey={lead.item.contextKey}
-            when={startedOn(lead.item.since, language)}
-            t={t}
-          />
+          {/* The same choice the dense row makes: a form is not a message. */}
+          {lead.gapId === 'refund_requested' ? (
+            <RefundGapBlock
+              value={lead.item.value}
+              currency={lead.item.currency}
+              noteKey={lead.item.noteKey}
+              note={lead.item.note}
+              subject={lead.item.subject}
+              quote={lead.item.quote}
+              contextKey={lead.item.contextKey}
+              when={startedOn(lead.item.since, language)}
+              recommendation={lead.item.refundRecommendation}
+              recommendedAmount={lead.item.refundRecommendedAmount}
+              reasoning={lead.item.refundReasoning}
+              t={t}
+            />
+          ) : (
+            <MailGapBlock
+              subject={lead.item.subject}
+              quote={lead.item.quote}
+              note={lead.item.noteKey ? t(lead.item.noteKey) : lead.item.note}
+              threadId={lead.item.threadId}
+              contextKey={lead.item.contextKey}
+              when={startedOn(lead.item.since, language)}
+              t={t}
+            />
+          )}
 
           {/*
             ANSWERING, ON THE CARD. See `MailReplyBox` — this is the move the
@@ -1142,12 +1395,12 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
 
           {/* Every other gap keeps the bare line it had: a service name, a
               quote title. `MailGapBlock` renders nothing without a message. */}
-          {!lead.item.subject && lead.item.note && (
+          {!lead.item.subject && (lead.item.noteKey || lead.item.note) && (
             <p
               style={{ unicodeBidi: 'plaintext' }}
               className="text-[12.5px] text-[var(--v2-text-secondary)] mb-1 line-clamp-2"
             >
-              {lead.item.note}
+              {lead.item.noteKey ? t(lead.item.noteKey) : lead.item.note}
             </p>
           )}
 
@@ -1631,18 +1884,29 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                         */}
                         {/* The same block the promoted row gets, denser.
                             See `MailGapBlock`. */}
-                        <MailGapBlock
-                          subject={item.subject}
-                          quote={item.quote}
-                          note={item.note}
-                          threadId={item.threadId}
-                          contextKey={item.contextKey}
-                          dense
-                          t={t}
-                        />
+                        {/*
+                          A FORM IS NOT A MESSAGE. `MailGapBlock` frames a row
+                          as an email — envelope, subject, message content —
+                          which is right for a client who wrote to you and
+                          wrong for one who filled in a form. See
+                          `RefundGapBlock`.
+                        */}
+                        {gap.id !== 'refund_requested' && (
+                          <MailGapBlock
+                            subject={item.subject}
+                            quote={item.quote}
+                            note={item.noteKey ? t(item.noteKey) : item.note}
+                            threadId={item.threadId}
+                            contextKey={item.contextKey}
+                            dense
+                            t={t}
+                          />
+                        )}
 
-                        {/* The same box the promoted row gets. */}
-                        {item.subject && (
+                        {/* The same box the promoted row gets, and only
+                            where there is a conversation to reply INTO. See
+                            `CONVERSATION_GAPS`. */}
+                        {item.subject && CONVERSATION_GAPS.has(gap.id) && (
                           <MailReplyBox
                             contactId={item.contactId}
                             threadId={item.threadId}
@@ -1694,9 +1958,9 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                               above: subject, quote, reasoning and origin all
                               live there now, and printing the subject again
                               one line down read as two different facts. */}
-                          {!item.subject && item.note && (
+                          {!item.subject && (item.noteKey || item.note) && (
                             <>
-                              <span style={{ unicodeBidi: 'plaintext' }} className="truncate">{item.note}</span>
+                              <span style={{ unicodeBidi: 'plaintext' }} className="truncate">{item.noteKey ? t(item.noteKey) : item.note}</span>
                               <span aria-hidden="true">·</span>
                             </>
                           )}
@@ -1918,7 +2182,10 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                         that a real message reaches a real client the instant
                         they are pressed.
                       */}
-                      {action && !THE_REPLY_BOX_DOES_THIS.has(action) && state.kind === 'confirming' && (
+                      {action &&
+                        !THE_REPLY_BOX_DOES_THIS.has(action) &&
+                        !THE_REFUND_ROW_ANSWERS_ITSELF(gap) &&
+                        state.kind === 'confirming' && (
                         <span className="shrink-0 self-start inline-flex items-center gap-1">
                           <button
                             type="button"
@@ -1993,7 +2260,147 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                         the quiet outline it used to wear made it read as a
                         secondary option beside a box that had none.
                       */}
-                      {item.subject && (
+                      {/*
+                        A REFUND REQUEST IS ANSWERED YES OR NO, not "handled".
+                        The yes is the refund button beside this one, which
+                        opens the owner's own dialog. This is the no, and it
+                        records WHICH was decided — the thing "mark as handled"
+                        could never say.
+                      */}
+                      {/*
+                        ─────────────────────────────────────────────────────
+                        THERE IS NO "MARK AS HANDLED" HERE ANY MORE.
+                        It called the same endpoint as `דחייה`, closed the same
+                        request and settled the same thread, and sent the client
+                        nothing either way. One word apart in the database and
+                        identical to press — two buttons for one act.
+
+                        Worse, it was the wrong home for the case it was meant
+                        to serve. "I already sent the money by bank transfer"
+                        marked the request closed while the ledger went on
+                        saying the client was never refunded. That belongs in
+                        the refund dialog, which records a hand-returned refund
+                        properly (`settledByHand`), and now has a button of its
+                        own above.
+                        ─────────────────────────────────────────────────────
+                      */}
+                      {/*
+                        ─────────────────────────────────────────────────────
+                        THE AGENT'S ANSWER, AS A BUTTON WITH ITS FIGURE ON IT.
+
+                        The owner is not pressing "refund" — they are pressing
+                        a number they can read three lines above, next to the
+                        reasoning that produced it. That is what makes one
+                        press defensible on money that cannot come back.
+
+                        The LABEL changes with how the money was taken. A card
+                        payment goes back through the processor; one taken by
+                        bank transfer does not, and the platform only RECORDS
+                        that the owner returned it. Calling both "refund" would
+                        promise something the second cannot do — the same
+                        relabel `MoneyEntryActions` already makes.
+                        ─────────────────────────────────────────────────────
+                      */}
+                      {gap.id === 'refund_requested' &&
+                        item.requestId &&
+                        canApproveInOneClick(item) && (
+                          <button
+                            type="button"
+                            onClick={() => void approveRefund(gap, item)}
+                            disabled={state.kind === 'working' || state.kind === 'done'}
+                            className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
+                            style={{
+                              background: 'var(--v2-primary)',
+                              color: '#fff',
+                              border: '1px solid var(--v2-primary)',
+                            }}
+                          >
+                            {state.kind === 'done' ? (
+                              <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                            ) : (
+                              <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
+                            )}
+                            {t(
+                              item.refundViaProcessor === false
+                                ? 'gaps.refund.mark_returned'
+                                : 'gaps.refund.approve'
+                            ).replace(
+                              '{amount}',
+                              typeof item.refundRecommendedAmount === 'number' && item.currency
+                                ? new Intl.NumberFormat(undefined, {
+                                    style: 'currency',
+                                    currency: item.currency,
+                                    maximumFractionDigits: 2,
+                                  }).format(item.refundRecommendedAmount)
+                                : ''
+                            )}
+                          </button>
+                        )}
+
+                      {/*
+                        ANY OTHER AMOUNT — the existing dialog, opened on its
+                        partial tab with everything already filled in. Not a
+                        second way to move money: the same dialog every other
+                        surface uses, reached one step further along.
+                      */}
+                      {gap.id === 'refund_requested' && item.requestId && item.entityId && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRefunding({
+                              bookingId: item.entityId as string,
+                              /* THE CEILING IS WHAT IS LEFT, not what was
+                                 asked: a client may ask for less than they
+                                 paid, and the owner may return more as
+                                 goodwill. Opening on the ask forbade both. */
+                              amount:
+                                typeof item.refundableAmount === 'number'
+                                  ? item.refundableAmount
+                                  : typeof item.value === 'number'
+                                    ? item.value
+                                    : 0,
+                              currency: item.currency || '',
+                              name: item.name,
+                              startPartial: true,
+                              prefillAmount: item.refundRecommendedAmount,
+                              reasonKey: item.noteKey?.replace('payments.refund.reason.', ''),
+                              reasonNote: item.quote?.trim() || item.refundReasoning?.trim(),
+                            })
+                          }
+                          disabled={state.kind === 'working' || state.kind === 'done'}
+                          className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
+                          style={{
+                            borderColor: 'var(--v2-border)',
+                            color: 'var(--v2-text-secondary)',
+                            background: 'transparent',
+                          }}
+                        >
+                          {t('gaps.refund.partial')}
+                        </button>
+                      )}
+
+                      {gap.id === 'refund_requested' && item.requestId && (
+                        <button
+                          type="button"
+                          onClick={() => void answerRefund(gap, item, 'declined')}
+                          disabled={state.kind === 'working' || state.kind === 'done'}
+                          className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
+                          style={{
+                            borderColor: 'var(--v2-border)',
+                            color: 'var(--v2-text-secondary)',
+                            background: 'transparent',
+                          }}
+                        >
+                          {state.kind === 'done' ? (
+                            <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                          ) : null}
+                          {state.kind === 'done'
+                            ? t('gaps.refund.declined')
+                            : t('gaps.refund.decline')}
+                        </button>
+                      )}
+
+                      {item.subject && CONVERSATION_GAPS.has(gap.id) && (
                         <button
                           type="button"
                           onClick={() => void settleMailRow(gap, item)}
@@ -2010,7 +2417,10 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                         </button>
                       )}
 
-                      {action && !THE_REPLY_BOX_DOES_THIS.has(action) && state.kind !== 'confirming' && (
+                      {action &&
+                        !THE_REPLY_BOX_DOES_THIS.has(action) &&
+                        !THE_REFUND_ROW_ANSWERS_ITSELF(gap) &&
+                        state.kind !== 'confirming' && (
                         <button
                           type="button"
                           onClick={() => act(gap, item)}
@@ -2077,6 +2487,48 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                         </button>
                       )}
                     </div>
+
+                    {/*
+                      ─────────────────────────────────────────────────────────
+                      FULL WIDTH, BELOW THE ROW — NOT BESIDE THE BUTTONS.
+
+                      Every other block lives in the `flex-1` column that
+                      shares the row with the action buttons. That column is
+                      whatever is left after the buttons, and the mail blocks
+                      are short enough not to care.
+
+                      This one is not. It carries three steps — what the client
+                      asked, what the diary says, what we recommend — and
+                      squeezed into half a row it wrapped into a narrow column
+                      with the other half sitting empty beneath the buttons.
+                      The information was all there and unreadable.
+
+                      So it sits under the whole row and uses its full width,
+                      the way the promoted position already does. Nothing about
+                      the block changed; only where it is allowed to breathe.
+                      ─────────────────────────────────────────────────────────
+                    */}
+                    {gap.id === 'refund_requested' && (
+                      <RefundGapBlock
+                        value={item.value}
+                        currency={item.currency}
+                        noteKey={item.noteKey}
+                        note={item.note}
+                        subject={item.subject}
+                        quote={item.quote}
+                        contextKey={item.contextKey}
+                        /* What the diary says happened, so the owner can answer
+                           without going to find the booking. */
+                        bookingOutcomeKey={item.bookingOutcomeKey}
+                        bookingWhen={item.bookingWhen}
+                        bookingContradicts={item.bookingContradicts}
+                        recommendation={item.refundRecommendation}
+                        recommendedAmount={item.refundRecommendedAmount}
+                        reasoning={item.refundReasoning}
+                        dense
+                        t={t}
+                      />
+                    )}
 
                     {item.queued && state.kind === 'idle' && (
                       <div
@@ -2241,6 +2693,16 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
           originalAmount={refunding.amount}
           currency={refunding.currency}
           contactName={refunding.name}
+          /*
+           * OPENED ALREADY ANSWERED. Everything below came from the card: the
+           * agent's figure, and the reason the CLIENT gave on their own form.
+           * The dialog is unchanged in what it can do — this only saves the
+           * owner re-entering facts the system already has.
+           */
+          startPartial={refunding.startPartial}
+          prefillAmount={refunding.prefillAmount}
+          prefillReasonKey={refunding.reasonKey}
+          prefillReasonNote={refunding.reasonNote}
           isRTL={isRTL}
           onSuccess={() => {
             setRefunding(null);

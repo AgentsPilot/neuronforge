@@ -70,6 +70,32 @@ const LIST_HEIGHT = PAGE_SIZE * ROW_HEIGHT;
 /** What the body reserves on every screen, so the panel never resizes. */
 const BODY_HEIGHT = LIST_HEIGHT + 96;
 
+/**
+ * The same reserve, but never taller than the screen it is on.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * A bare `minHeight` is a floor, and a floor outranks every cap above it: the
+ * panel's `max-h` and the container's height both give way to it. So whenever
+ * the reserve does not fit, the panel grows past the viewport — and because it
+ * is centred it overflows equally top AND bottom, putting the wizard's footer
+ * below the fold. That footer holds the only control that advances a step, and
+ * the backdrop does not scroll, so the way out was to close the dialog.
+ *
+ * The numbers, so the next reader does not have to re-derive them: the body
+ * asks for 386px (five 58px rows plus 96), and the header, the footer and the
+ * container's `p-4` add roughly 160 more — about 546px of demand. An upright
+ * phone clears that; a phone in landscape does not, and neither does an
+ * upright one once the keyboard is up, which is exactly when this wizard is
+ * asking for a mailbox address.
+ *
+ * `min()` keeps the reason the floor exists — a thirty-row picker and a
+ * one-paragraph last screen must not make the buttons jump under the cursor —
+ * and surrenders it only when the screen cannot afford it. The 11rem is the
+ * chrome the body does not own. Below that the body is simply shorter, the
+ * panel still fits, and the list inside keeps its own scroll either way.
+ */
+const BODY_MIN_HEIGHT = `min(${BODY_HEIGHT}px, calc(100dvh - 11rem))`;
+
 interface Message {
   id: string;
   from: string;
@@ -527,9 +553,25 @@ export function InboxChannelSetupDialog({
 
   const repliesOff = live?.problems.includes('replies_off');
 
+  /*
+   * THE BOX THE PANEL IS CENTRED IN HAS TO BE THE SCREEN.
+   * ─────────────────────────────────────────────────────────────────────────
+   * The container was `fixed inset-0`, and a fixed box with `inset-0` resolves
+   * against the LARGE viewport — the one with the address bar hidden. So on a
+   * phone the panel was being centred inside a box taller than anything
+   * visible, and sat offset by half the chrome's height. `ConfigurationDialog`
+   * is the same bug written down at length; this is the fix it settled on:
+   * name the edges and give the height in `dvh`, which tracks the viewport as
+   * it is right now.
+   *
+   * The `p-4` stays and matters: with the reserve INSIDE the box, `max-h-full`
+   * on the panel is a promise the container can keep. That is the half
+   * `BookingModal` records — insets around a near-full-height panel are what
+   * put a footer below the fold with the page behind it scroll-locked.
+   */
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-x-0 top-0 h-[100dvh] z-50 flex items-center justify-center p-4"
       style={{ background: 'rgba(0,0,0,0.45)', direction: isRTL ? 'rtl' : 'ltr' }}
       onClick={() => !busy && onOpenChange(false)}
     >
@@ -543,7 +585,12 @@ export function InboxChannelSetupDialog({
         them having set something sensible: it paints its own ground.
       */}
       <div
-        className="w-full max-w-lg bg-[var(--v2-surface)] border border-[var(--v2-border)] max-h-[90vh] overflow-y-auto flex flex-col"
+        /* `max-h-full`, not `max-h-[90vh]`: the container above is now exactly
+           the visual viewport with its padding inside, so "all of it" is a cap
+           the box can honour. `90vh` measured against the chrome-less viewport,
+           which on a phone is TALLER than what the owner can see — the cap was
+           bigger than the screen and so capped nothing. */
+        className="w-full max-w-lg bg-[var(--v2-surface)] border border-[var(--v2-border)] max-h-full overflow-y-auto flex flex-col"
         style={{
           borderRadius: 'var(--v2-radius-card)',
           boxShadow: 'var(--v2-shadow-card)',
@@ -577,14 +624,19 @@ export function InboxChannelSetupDialog({
           <button
             type="button"
             onClick={() => !busy && onOpenChange(false)}
-            className="p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
+            /* A 16px icon with `p-1` is a 24px target, and on a phone this is
+               the only dismiss an owner can see — the other is a backdrop tap
+               they have no reason to guess at. 36px square instead, with the
+               extra bulk pulled back out to the corner by the negative margins
+               so the title beside it does not move. */
+            className="-me-2 -mt-2 h-9 w-9 inline-flex items-center justify-center text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
             aria-label="Close"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="p-5" style={{ minHeight: BODY_HEIGHT }}>
+        <div className="p-5" style={{ minHeight: BODY_MIN_HEIGHT }}>
           {/* ── 1. the mailbox ─────────────────────────────────────────── */}
           {step === 1 && (
             <>

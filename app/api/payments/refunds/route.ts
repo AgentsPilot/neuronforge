@@ -361,6 +361,11 @@ export async function POST(request: NextRequest) {
       transactionId,
       amount: body.amount,
       reason: body.reason,
+      /* Collected by the schema, validated, and until now dropped on this path
+         alone — the group call above has always passed it. `RefundService`
+         writes it to `payment_refunds.reason_note`, so every single-payment
+         refund silently lost whatever the owner typed. */
+      reasonNote: body.reason_note,
       manual: body.manual,
       source: 'app',
       initiatedBy: user.id,

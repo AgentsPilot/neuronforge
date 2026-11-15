@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Receipt, CreditCard, Plus, DollarSign, Calendar, ExternalLink, FileText, RotateCcw } from 'lucide-react';
 import { RefundModal } from '@/components/payments/RefundModal';
 import { createLogger } from '@/lib/logger';
-import { buildMoneyItems, totalMoney, type MoneyEntry, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
+import { buildMoneyItems, itemFlow, totalMoney, type MoneyEntry, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
 import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import { buildEntryActions } from '@/lib/payments/entryActions';
 /* The money page's drawer, not the orders page's.
@@ -14,6 +14,7 @@ import { buildEntryActions } from '@/lib/payments/entryActions';
 import { MoneyOrderDrawer } from '@/components/business-os/money/MoneyOrderDrawer';
 import { MoneyRow } from '@/components/payments/MoneyRow';
 import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
+import { STATUS_TONE, scheduleTone } from '@/lib/payments/moneyStatusTone';
 import type { SessionCardData } from './types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -134,6 +135,77 @@ export function PaymentsSection({
    * there is one and the transaction ids when there is not.
    */
   const [refundEntry, setRefundEntry] = useState<MoneyEntry | null>(null);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THE CLIENT ASKED FOR, which the money rows cannot say.
+   *
+   * A row can show that ₪20 went back. It cannot show that ₪300 was asked for,
+   * that the client said they were ill and never came, or that the owner
+   * returned part of it and closed the matter. The card that carried all of
+   * that disappears the moment the request is settled — correctly, because a
+   * settled request is not work — and the asking disappeared with it.
+   *
+   * So a partial refund read as a decision nobody explained, to the person who
+   * made it, three weeks later. This is that missing half, sitting with the
+   * payment it is about.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [refundAsks, setRefundAsks] = useState<
+    Array<{
+      id: string;
+      booking_id: string | null;
+      amount_requested: number;
+      currency: string;
+      reason: string | null;
+      note: string | null;
+      status: string;
+      created_at: string;
+      /* What the agent concluded, and when. All null on a request nothing has
+         looked at — the owner answered it before the agent got to it, or the
+         agent is paused. The story then simply has no middle step, which is
+         itself worth seeing. */
+      recommendation: string | null;
+      recommended_amount: number | null;
+      reasoning: string | null;
+      assessed_at: string | null;
+      /* When the owner answered. Null while it is still open. */
+      decided_at: string | null;
+      source: string | null;
+    }>
+  >([]);
+
+  useEffect(() => {
+    if (!contactId) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await fetch(
+          `/api/business-os/refund-requests?contact_id=${contactId}`,
+          { credentials: 'include' }
+        );
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (!cancelled && payload?.success) setRefundAsks(payload.data ?? []);
+      } catch {
+        /* The money rows are the point of this section and render without
+           this. A failed read leaves them alone rather than blanking them. */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contactId]);
+
+  /* By booking, which is how a request names what it is about — the client
+     thinks "the session I missed", never a transaction id. */
+  const asksByBooking = useMemo(() => {
+    const map = new Map<string, (typeof refundAsks)[number]>();
+    for (const ask of refundAsks) if (ask.booking_id) map.set(ask.booking_id, ask);
+    return map;
+  }, [refundAsks]);
   /** The money row whose full detail is open. */
   const [detail, setDetail] = useState<MoneyItem | null>(null);
   /** A refund the processor or the ledger refused. */
@@ -203,6 +275,236 @@ export function PaymentsSection({
   );
 
   const totals = useMemo(() => totalMoney(moneyItems), [moneyItems]);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A FILTER AND A PAGE, BECAUSE THE LIST HAS NO CEILING.
+   *
+   * This rendered every row a client had — 40 on the account that raised it,
+   * and nothing stops that growing. In a 576px drawer the thing somebody came
+   * to find was below several screens of scrolling, and there was no way to
+   * ask for "the unpaid ones".
+   *
+   * The chips are built from what is ACTUALLY PRESENT, with counts, rather
+   * than from the eight statuses that exist: a chip reading "failed · 0" is a
+   * question the reader has to dismiss. One client's money usually has two or
+   * three states, so the row stays short.
+   *
+   * `totals` deliberately keeps reading `moneyItems`, not the filtered list.
+   * The header says what this client owes and has paid IN TOTAL, and a figure
+   * that moved when somebody pressed a filter chip would be a different claim
+   * about the same business.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * FOUR GROUPS, NOT SEVEN STATUSES.
+   *
+   * The person reading this is good at therapy and running a business is the
+   * part they like least. `זוכה`, `זוכה חלקית`, `ממתין לתשלום`, `באיחור`,
+   * `טיוטה` are bookkeeping words: seven chips are seven questions before any
+   * answer arrives.
+   *
+   * What actually differs to them is far smaller:
+   *
+   *   WAITING    somebody owes money. This is the only group that needs them.
+   *   RETURNED   money went back out. Done, but worth being able to explain.
+   *   PAID       settled. One line, because there is nothing to do.
+   *   CANCELLED  NOT MONEY AT ALL — never collected and never will be.
+   *
+   * Lateness is a MARK INSIDE the first group, not a group of its own: it is
+   * the same money, late. Splitting it hid "they owe you" behind two chips
+   * that had to be added up by eye.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  type MoneyGroup = 'waiting' | 'refunded' | 'paid' | 'cancelled';
+
+  const groupOf = (status: string): MoneyGroup => {
+    switch (status) {
+      case 'refunded':
+      case 'partially_refunded':
+        return 'refunded';
+      case 'paid':
+        return 'paid';
+      case 'cancelled':
+        return 'cancelled';
+      /* `draft` and `failed` land in WAITING on purpose: from the reader's side
+         both mean "this money has not arrived and something has to happen". */
+      default:
+        return 'waiting';
+    }
+  };
+
+  const grouped = useMemo(() => {
+    const out: Record<MoneyGroup, MoneyItem[]> = {
+      waiting: [],
+      refunded: [],
+      paid: [],
+      cancelled: [],
+    };
+    for (const item of moneyItems) out[groupOf(String(item.status))].push(item);
+
+    /* Inside WAITING: late first, then by due date. The oldest debt is the one
+       they should be chasing, and it should not be below a bill due next month. */
+    out.waiting.sort((a, b) => {
+      const lateA = String(a.status) === 'overdue' ? 0 : 1;
+      const lateB = String(b.status) === 'overdue' ? 0 : 1;
+      if (lateA !== lateB) return lateA - lateB;
+      return String(a.date).localeCompare(String(b.date));
+    });
+    /* The others newest first: recent history is what gets looked up. */
+    for (const key of ['refunded', 'paid', 'cancelled'] as MoneyGroup[]) {
+      out[key].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    }
+    return out;
+  }, [moneyItems]);
+
+  /*
+   * THE LATE FIGURE COMES FROM `totalMoney`, NEVER FROM A SECOND SUM.
+   *
+   * This was computed here, over `grouped.waiting` where `status === 'overdue'`
+   * — and reported MORE late money than there was outstanding, which is
+   * impossible and said so on screen: "owes you ₪6,374.99, of which ₪6,700.00
+   * is already late".
+   *
+   * Two reasons, both avoidable by not having written it:
+   *   · it summed `amount - refunded`, a different basis from the one
+   *     `totalMoney` uses for `outstanding`;
+   *   · it only saw items whose own status is `overdue`, while `totalMoney`
+   *     also counts a plan period whose due date has passed — "a period is
+   *     never given that status, so without the second half a plan could be
+   *     months late and report nothing".
+   *
+   * `totals.overdue` is documented as a SUBSET of `outstanding`, computed in
+   * the same pass by the same rules, so the sentence can never contradict
+   * itself again.
+   */
+
+  /* How many rows each group shows before "show more". WAITING starts open
+     because it is the work; the rest start closed because they are history. */
+  const FIRST_PAGE = 3;
+  const [shown, setShown] = useState<Record<MoneyGroup, number>>({
+    waiting: FIRST_PAGE,
+    refunded: FIRST_PAGE,
+    paid: 0,
+    cancelled: 0,
+  });
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE REMINDER HAS TO SHOW THAT IT WENT.
+   *
+   * The button called `onResend` and rendered nothing: no pending state, no
+   * confirmation, no error. The email went out and the screen was identical
+   * before and after, so the only way to find out whether it had worked was to
+   * press it again — which sends a second one to the client.
+   *
+   * `MoneyEntryActions` has exactly this (a `busy` key, a failure line); the
+   * raw button here had none because it is not that component.
+   *
+   * `sent` is not cleared on a timer. The row stays late until the client
+   * actually pays, so a confirmation that faded after three seconds would
+   * leave the button looking untouched and invite the second send all over
+   * again. It stands until the drawer is closed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [reminding, setReminding] = useState<string | null>(null);
+  const [reminded, setReminded] = useState<Set<string>>(new Set());
+  /*
+   * WHY NOTHING WENT, ON THE ROW SOMEBODY PRESSED.
+   *
+   * A chase can legitimately not send: the client already paid, the invoice is
+   * not due, there is no address on it. The server returns those as `skipped`,
+   * which is the guard working and sometimes good news.
+   *
+   * In a red banner they read as failures; reported nowhere at all they read
+   * as "the email went out". Neither is true, so the sentence sits on the row,
+   * in the owner's language, in a tone that matches what happened.
+   */
+  const [remindOutcome, setRemindOutcome] = useState<
+    Record<string, { kind: 'sent' | 'skipped'; message: string }>
+  >({});
+
+  const remind = async (item: MoneyItem) => {
+    /*
+     * THE CHASE, NOT A SECOND COPY OF THE INVOICE.
+     *
+     * This called `onResend`, which posts to `/invoices/[id]/send` — invoice
+     * delivery. A button labelled "send a reminder" therefore sent the client
+     * the ORIGINAL invoice again, with no mention that it was late, because
+     * the invoice template has no reminder variant.
+     *
+     * `/chase` is the endpoint the `chase_overdue_invoices` agent's email goes
+     * through, so a late invoice now says the same thing whoever sent it.
+     */
+    const invoiceId = item.entries.find(e => e.invoiceId)?.invoiceId;
+    if (!invoiceId) return;
+
+    setReminding(item.key);
+    try {
+      const response = await fetch(`/api/payments/invoices/${invoiceId}/chase`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const payload = await response.json();
+
+      if (!payload?.success) {
+        /*
+         * A SKIP IS NOT A FAILURE. The route classifies it into a code, so
+         * this reads the code rather than matching on an English sentence
+         * written for a log line. A real failure still goes to the banner,
+         * which is where errors live.
+         */
+        if (payload?.skipped) {
+          setRemindOutcome(prev => ({
+            ...prev,
+            [item.key]: {
+              kind: 'skipped',
+              message: t('payments.chase.' + (payload.code ?? 'other')),
+            },
+          }));
+          /* Most often the client has paid since this list was drawn, so
+             refresh and let the row move to its real group. */
+          onMoneyChanged?.();
+          return;
+        }
+        setRefundError(String(payload?.error || t('payments.remind_failed')));
+        return;
+      }
+
+      setReminded(prev => new Set(prev).add(item.key));
+      setRemindOutcome(prev => ({
+        ...prev,
+        [item.key]: { kind: 'sent', message: t('payments.remind_sent') },
+      }));
+      /* The invoice's `last_chased` moved; the list should say so. */
+      onMoneyChanged?.();
+    } catch {
+      /* The shared banner above the list, which is already the place this
+         section reports a failed action. */
+      setRefundError(t('payments.remind_failed'));
+    } finally {
+      setReminding(null);
+    }
+  };
+
+  /*
+   * Titles that more than one row shares, so the rows that need a tie-breaker
+   * can ask for one and the rest stay clean.
+   */
+  const ambiguousTitles = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const item of moneyItems) {
+      seen.set(item.title, (seen.get(item.title) ?? 0) + 1);
+    }
+    return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([title]) => title));
+  }, [moneyItems]);
+
+  const daysLate = (due: string | null | undefined): number => {
+    if (!due) return 0;
+    const ms = Date.now() - new Date(due).getTime();
+    return ms > 0 ? Math.floor(ms / 86_400_000) : 0;
+  };
 
   /*
    * `silent` skips the loading state, for a refresh after an action.
@@ -443,105 +745,536 @@ export function PaymentsSection({
             <>
               {/* What the list adds up to. Summed over entries, never rows, so a
                   booking with two invoices is not counted twice. */}
-              <div className="flex items-center gap-4 px-1 pb-1 text-xs text-[var(--v2-text-muted)]">
-                <span>
-                  {t('payments.collected') || 'Collected'}{' '}
-                  <b className="text-[var(--v2-text-primary)] tabular-nums">
-                    {formatCurrency(totals.collected, moneyItems[0].currency)}
-                  </b>
-                </span>
-                {totals.outstanding > 0 && (
-                  <span>
-                    {t('payments.outstanding') || 'Outstanding'}{' '}
-                    <b className="text-amber-600 tabular-nums">
-                      {formatCurrency(totals.outstanding, moneyItems[0].currency)}
-                    </b>
-                  </span>
-                )}
-                {totals.refunded > 0 && (
-                  <span>
-                    {t('payments.refunded') || 'Refunded'}{' '}
-                    <b className="text-orange-600 tabular-nums">
-                      {formatCurrency(totals.refunded, moneyItems[0].currency)}
-                    </b>
-                  </span>
-                )}
-                {/* Money this contact was billed for and called off.
-                    `totalMoney` has always computed it; this line was the only
-                    one of the four totals never rendered, so a contact whose
-                    bookings were cancelled read as having simply been billed
-                    less. The rows underneath already show it — `MoneyRow`
-                    paints a `cancelled` segment — so the figure was visible per
-                    booking and absent from the sum of them.
+              {/*
+                ───────────────────────────────────────────────────────────────
+                ONE SENTENCE, BEFORE ANY LIST.
 
-                    Same key and same colour as the orders list, deliberately:
-                    `REPORTS_COLORS.LOST` is what the bars immediately below
-                    this line use, and the same money in two colours inches
-                    apart reads as two different figures.
+                This was four figures in a row — collected, outstanding,
+                refunded, cancelled — with no indication which of them was a
+                problem. The reader had to add two of them up by eye to answer
+                the only question they came with: does this client owe me
+                anything, and is any of it late.
 
-                    Only when there is some, matching the strip's rule — a
-                    permanent zero beside three live totals reads as a fourth
-                    problem the contact does not have. */}
-                {totals.cancelled > 0 && (
-                  <span>
-                    {t('payments.cancelled_total') || 'Cancelled'}{' '}
-                    <b className="tabular-nums" style={{ color: REPORTS_COLORS.LOST }}>
-                      {formatCurrency(totals.cancelled, moneyItems[0].currency)}
-                    </b>
-                  </span>
+                So the answer is written out. If they read nothing else on this
+                tab, they know whether today needs them.
+
+                CANCELLED IS NOT IN IT. `totals.cancelled` has always been its
+                own number; printing it beside `collected` invited the reader to
+                add them, and a cancelled invoice is not money — not collected,
+                not owed, never will be. It has its own group below, which says
+                so in as many words.
+                ───────────────────────────────────────────────────────────────
+              */}
+              <p className="m-0 px-1 text-[15px] font-semibold leading-relaxed text-[var(--v2-text-primary)]">
+                {totals.outstanding > 0 ? (
+                  <>
+                    {t('payments.answer.owes')
+                      .replace('{name}', contactName)
+                      .replace(
+                        '{amount}',
+                        formatCurrency(totals.outstanding, moneyItems[0].currency)
+                      )}
+                    {totals.overdue > 0 && (
+                      <span style={{ color: STATUS_TONE.overdue }}>
+                        {t('payments.answer.of_which_late').replace(
+                          '{amount}',
+                          formatCurrency(totals.overdue, moneyItems[0].currency)
+                        )}
+                      </span>
+                    )}
+                    {'. '}
+                  </>
+                ) : (
+                  <>{t('payments.answer.nothing_owed').replace('{name}', contactName)} </>
                 )}
+                {/* Green, because it is the one figure that is good news.
+                    The sentence carries three amounts and they were all the
+                    same colour, so the reader had to parse the words to tell
+                    the debt from the takings. */}
+                {totals.collected > 0 && (
+                  <>
+                    {t('payments.answer.received')
+                      .split('{amount}')
+                      .flatMap((part, i) =>
+                        i === 0
+                          ? [part]
+                          : [
+                              <span key="amt" style={{ color: STATUS_TONE.paid }}>
+                                {formatCurrency(totals.collected, moneyItems[0].currency)}
+                              </span>,
+                              part,
+                            ]
+                      )}
+                  </>
+                )}
+              </p>
+
+              {/* The three figures that are actually money, each labelled in
+                  the reader's own words rather than an accounting term. */}
+              <div className="flex flex-wrap gap-2 px-1 pt-1">
+                {(
+                  [
+                    /* The same three colours the bar and the chips use, so a
+                       figure here and a dot below cannot describe one state
+                       two ways. */
+                    ['waiting', totals.outstanding, STATUS_TONE.awaiting_payment],
+                    ['received', totals.collected, STATUS_TONE.paid],
+                    ['refunded', totals.refunded, STATUS_TONE.refunded],
+                  ] as Array<[string, number, string]>
+                )
+                  .filter(([, value]) => value > 0)
+                  .map(([key, value, colour]) => (
+                    <div
+                      key={key}
+                      className="flex-1 rounded-xl border px-3 py-2"
+                      style={{
+                        minWidth: '120px',
+                        /*
+                         * THE ONE THAT NEEDS THEM IS TINTED, and the two that
+                         * do not are plain.
+                         *
+                         * Three identically-framed figures ask the reader to
+                         * work out which is a problem. Money owed is the only
+                         * one that can be acted on, so it carries the warning
+                         * colour in its border and a wash of it behind — the
+                         * same amber the late rows use, so the eye connects
+                         * the figure to the rows that make it up.
+                         */
+                        borderColor:
+                          key === 'waiting'
+                            ? `color-mix(in srgb, ${STATUS_TONE.awaiting_payment} 45%, var(--v2-border))`
+                            : 'var(--v2-border)',
+                        background:
+                          key === 'waiting'
+                            ? `color-mix(in srgb, ${STATUS_TONE.awaiting_payment} 8%, transparent)`
+                            : 'transparent',
+                      }}
+                    >
+                      <p className="m-0 text-[11.5px] text-[var(--v2-text-secondary)]">
+                        {t(`payments.stat.${key}`)}
+                      </p>
+                      <p
+                        className="m-0 text-[17px] font-bold"
+                        style={{ color: colour, fontVariantNumeric: 'tabular-nums' }}
+                      >
+                        {formatCurrency(value, moneyItems[0].currency)}
+                      </p>
+                    </div>
+                  ))}
               </div>
 
-              {/* Bookings first, then money that belongs to no appointment.
-                  Mixed together they read as invoices floating loose; labelled,
-                  the hierarchy is obvious. */}
-              {moneyItems.some(i => i.kind === 'booking') &&
-                moneyItems.some(i => i.kind !== 'booking') && (
-                  <div className="pt-1 text-[10.5px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
-                    {t('payments.section.bookings') || 'Bookings'}
-                  </div>
-                )}
+              {/*
+                ───────────────────────────────────────────────────────────────
+                FOUR GROUPS, EACH WRITTEN AS A SENTENCE.
 
-              {[...moneyItems]
-                .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'booking' ? -1 : 1))
-                .map((item, index, sorted) => (
-                <div key={item.key}>
-                  {/* The divider appears exactly once, where the kinds change. */}
-                  {index > 0 &&
-                    sorted[index - 1].kind === 'booking' &&
-                    item.kind !== 'booking' && (
-                      <div className="pt-3 pb-1 text-[10.5px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
-                        {t('payments.section.other') || 'Not linked to a booking'}
+                The old list sorted by bookings-then-other and printed a status
+                chip on every row. Both are facts ABOUT the record rather than
+                about the money: "is this attached to a booking" is not a
+                question anybody asks, and the status was already said by the
+                amount's colour and the line beneath it.
+                ───────────────────────────────────────────────────────────────
+              */}
+              {(
+                [
+                  ['waiting', 'd-warn'],
+                  ['refunded', 'd-mute'],
+                  ['paid', 'd-good'],
+                  ['cancelled', 'd-mute'],
+                ] as Array<[MoneyGroup, string]>
+              ).map(([group]) => {
+                const rows = grouped[group];
+                if (rows.length === 0) return null;
+
+                const limit = shown[group];
+                const visibleRows = rows.slice(0, limit);
+                const rest = rows.length - visibleRows.length;
+
+                /* PAID and CANCELLED collapse to one sentence until asked for.
+                   Six settled payments are six rows of nothing to do. */
+                const quiet = group === 'paid' || group === 'cancelled';
+                const total = rows.reduce(
+                  (sum, i) => sum + (Number(i.amount) || 0) - (Number(i.refunded) || 0),
+                  0
+                );
+
+                return (
+                  <div key={group} className="mt-4">
+                    <div className="mb-1.5 flex items-center gap-2">
+                      <h4 className="m-0 text-[13.5px] font-bold text-[var(--v2-text-primary)]">
+                        {t(`payments.group.${group}`)}
+                      </h4>
+                      <span
+                        className="rounded-full border px-2 py-px text-[11px] font-bold text-[var(--v2-text-secondary)]"
+                        style={{ borderColor: 'var(--v2-border)', fontVariantNumeric: 'tabular-nums' }}
+                      >
+                        {rows.length}
+                      </span>
+                      <span className="ms-auto text-[11px] text-[var(--v2-text-muted)]">
+                        {t(`payments.group.${group}_why`)}
+                      </span>
+                    </div>
+
+                    {quiet && limit === 0 ? (
+                      <div
+                        className="flex items-center gap-2 rounded-xl border border-dashed px-3 py-2.5 text-[12.5px] text-[var(--v2-text-muted)]"
+                        style={{ borderColor: 'var(--v2-border)' }}
+                      >
+                        <span className="flex-1">
+                          {group === 'paid'
+                            ? t('payments.quiet.paid')
+                                .replace('{amount}', formatCurrency(total, rows[0].currency))
+                                .replace('{n}', String(rows.length))
+                            : (
+                              /*
+                               * THE CANCELLED FIGURE, AND WHY IT IS HERE.
+                               *
+                               * It used to sit in the summary strip beside
+                               * `collected`, which invited the reader to add
+                               * them — and cancelled money is not money: never
+                               * collected, never owed, never will be.
+                               *
+                               * Dropping it entirely was worse, and
+                               * `paymentsSummaryShowsEveryBucket` says why: it
+                               * is `totalMoney`'s own bucket, counted in no
+                               * other, so omitting it makes a client who called
+                               * off half their work read as one who was never
+                               * billed for it.
+                               *
+                               * So the figure stays, in the one group that
+                               * cannot be mistaken for spendable money, under a
+                               * heading that says it counts towards nothing
+                               * above.
+                               */
+                              <>
+                                {totals.cancelled > 0 && (
+                                  <span>
+                                    {t('payments.cancelled_total')}:{' '}
+                                    {formatCurrency(totals.cancelled, moneyItems[0].currency)} ·{' '}
+                                  </span>
+                                )}
+                                {t('payments.quiet.cancelled').replace('{n}', String(rows.length))}
+                              </>
+                            )}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShown(s => ({ ...s, [group]: FIRST_PAGE }))}
+                          className="shrink-0 rounded-lg border px-2.5 py-1 text-[11.5px] font-semibold"
+                          style={{ borderColor: 'var(--v2-border)', color: 'var(--v2-text-secondary)' }}
+                        >
+                          {t('payments.show')}
+                        </button>
                       </div>
+                    ) : (
+                      <>
+                        {visibleRows.map(item => {
+                          const late = String(item.status) === 'overdue';
+                          const n = late ? daysLate(item.date) : 0;
+                          /*
+                           * WHAT IS STILL OWED, NOT THE GROSS.
+                           *
+                           * This read `amount - refunded`, which on a payment
+                           * PLAN is the whole agreement: a ₪1,200 plan with
+                           * ₪400 already collected sat in "waiting for money"
+                           * saying ₪1,200. The owner is owed ₪800, and the
+                           * drawer one click away said so.
+                           *
+                           * `itemFlow` is the function that works this out,
+                           * entry by entry, and the drawer's own bar already
+                           * reads it. A second subtraction here could only
+                           * ever be a different answer to the same question.
+                           */
+                          const flow = itemFlow(item);
+                          const owed = flow.outstanding;
+
+                          return (
+                            <div
+                              key={item.key}
+                              className="flex items-start gap-2.5 border-t py-2.5 first:border-t-0"
+                              style={{ borderColor: 'var(--v2-border)' }}
+                            >
+                              <span
+                                className="mt-2 h-2 w-2 shrink-0 rounded-full"
+                                style={{
+                                  /*
+                                   * THE SHARED PALETTE, NOT A FIFTH ONE.
+                                   *
+                                   * These dots were amber for late, a literal
+                                   * blue for waiting, `--v2-success` for paid
+                                   * and `--v2-text-muted` for everything
+                                   * closed — five states, five disagreements
+                                   * with the drawer this list opens.
+                                   *
+                                   * `moneyStatusTone` exists for exactly that
+                                   * and says so: "FOUR PALETTES DESCRIBED THE
+                                   * SAME FACT, AND THEY DISAGREED... the
+                                   * colour of a money state is decided here,
+                                   * once, and every surface reads it." This
+                                   * was the fifth.
+                                   *
+                                   * `scheduleTone` is the right reader: this
+                                   * is a list of payments, which is the shape
+                                   * it is written for — a partly refunded one
+                                   * still counts as collected here, as it does
+                                   * in the drawer's schedule.
+                                   */
+                                  background: scheduleTone(String(item.status)),
+                                }}
+                              />
+
+                              <div className="min-w-0 flex-1">
+                                {/* THE AMOUNT AND WHAT IT IS FOR, first and in
+                                    that order — how the reader holds it in
+                                    their head. The invoice number moved into
+                                    the drawer, where somebody has already
+                                    asked about this one. */}
+                                <p className="m-0 flex flex-wrap items-baseline gap-x-2 text-[13.5px] font-semibold">
+                                  {/*
+                                    AN EXPLICIT COLOUR, NEVER INHERITED.
+
+                                    This span had none, so the figure took
+                                    whatever colour the surrounding text
+                                    happened to be — black on a dark surface,
+                                    which is the one element on the row that
+                                    must always be readable.
+
+                                    The token, not a literal: `--v2-text-primary`
+                                    has a light and a dark value, and a hex here
+                                    would be right in exactly one theme.
+                                  */}
+                                  <span
+                                    style={{
+                                      color: 'var(--v2-text-primary)',
+                                      fontVariantNumeric: 'tabular-nums',
+                                    }}
+                                  >
+                                    {formatCurrency(
+                                      group === 'refunded'
+                                        ? flow.refunded || flow.collected
+                                        : group === 'paid'
+                                          ? flow.collected
+                                          : group === 'cancelled'
+                                            ? flow.cancelled || Number(item.amount) || 0
+                                            : owed,
+                                      item.currency
+                                    )}
+                                  </span>
+                                  <span
+                                    className="truncate font-medium text-[var(--v2-text-secondary)]"
+                                    style={{ unicodeBidi: 'plaintext' }}
+                                  >
+                                    {item.title}
+                                  </span>
+                                  {/*
+                                    THE INVOICE NUMBER, ONLY WHERE THE TITLE
+                                    DOES NOT TELL THEM APART.
+
+                                    Numbers were deliberately moved into the
+                                    drawer: a reader scanning their money does
+                                    not think in `INV-00059`. But two bookings
+                                    of the same service, due the same day, for
+                                    the same amount produce two rows that are
+                                    identical in every visible character — and
+                                    then the owner cannot tell which one they
+                                    just reminded somebody about.
+
+                                    So it appears exactly when it is the only
+                                    thing that differs, and stays out of the
+                                    way the rest of the time. Quiet and small:
+                                    it is a tie-breaker, not a heading.
+                                  */}
+                                  {ambiguousTitles.has(item.title) &&
+                                    item.entries.find(e => e.invoiceNumber)?.invoiceNumber && (
+                                      <span className="text-[11px] text-[var(--v2-text-muted)]">
+                                        {item.entries.find(e => e.invoiceNumber)?.invoiceNumber}
+                                      </span>
+                                    )}
+                                </p>
+
+                                {/* ONE LINE SAYING WHERE IT STANDS, in time
+                                    rather than in vocabulary. */}
+                                <p className="m-0 mt-0.5 text-[12px] text-[var(--v2-text-secondary)]">
+                                  {late ? (
+                                    <span
+                                      className="font-semibold"
+                                      /* DANGER, the colour the drawer gives
+                                         money being chased — distinct from
+                                         WARNING, which merely waits. */
+                                      style={{ color: STATUS_TONE.overdue }}
+                                    >
+                                      {n === 1
+                                        ? t('payments.late_day')
+                                        : t('payments.late_days').replace('{n}', String(n))}
+                                    </span>
+                                  ) : group === 'waiting' ? (
+                                    <>
+                                      {t('payments.due_on').replace('{date}', formatDate(item.date))}
+                                      {/* "not due yet" is the reassurance that
+                                          stops an unpaid row reading as a
+                                          problem. Only where the date really
+                                          is ahead — otherwise it would argue
+                                          with the amber above it. */}
+                                      {new Date(item.date).getTime() > Date.now() && (
+                                        <span className="opacity-70"> · {t('payments.due_soon')}</span>
+                                      )}
+                                    </>
+                                  ) : group === 'refunded' ? (
+                                    t('payments.returned_on').replace('{date}', formatDate(item.date))
+                                  ) : (
+                                    t('payments.paid_on').replace('{date}', formatDate(item.date))
+                                  )}
+                                </p>
+
+                                {/* WHAT HAPPENED, kept apart from what can
+                                    happen next. It stands until the drawer is
+                                    closed — the row stays late until the client
+                                    actually pays, so a note that faded would
+                                    leave no trace that anything was sent. */}
+                                {remindOutcome[item.key] && (
+                                  <p
+                                    className="m-0 mt-0.5 text-[11.5px] font-semibold"
+                                    style={{
+                                      /* Sent is good news and wears the
+                                         collected colour. A skip is neither
+                                         good nor bad and stays neutral: red
+                                         would make "they already paid" look
+                                         like something went wrong. */
+                                      color:
+                                        remindOutcome[item.key].kind === 'sent'
+                                          ? STATUS_TONE.paid
+                                          : 'var(--v2-text-secondary)',
+                                    }}
+                                  >
+                                    {remindOutcome[item.key].message}
+                                  </p>
+                                )}
+                              </div>
+
+                              {/*
+                                A LATE BILL OFFERS THE THING TO DO ABOUT IT.
+
+                                Only on late rows: offering it on a bill due
+                                next month is nagging a client who has done
+                                nothing wrong.
+
+                                AND ONLY WHERE THE CHASE CAN ACTUALLY GO.
+                                ─────────────────────────────────────────────
+                                This gate read `entryHandlers.onResend &&
+                                item.entries[0]`, from when the button posted
+                                to `/invoices/[id]/send`. Both halves were
+                                wrong by the time `remind` moved to `/chase`:
+
+                                  · `buildEntryActions` always returns an
+                                    `onResend`, so that conjunct was
+                                    statically true (ts 2774) and tested
+                                    nothing;
+                                  · `remind` needs an INVOICE id, and
+                                    `entries[0]` only says the row has an
+                                    entry. A late standalone payment carries
+                                    `invoiceId: null`, so the button drew,
+                                    and `remind` returned at its own guard
+                                    without a word — a control that cannot
+                                    work, which is the one thing a row must
+                                    never show.
+
+                                So the gate now asks the question `remind`
+                                asks, in the same words.
+                              */}
+                              {late && item.entries.some(e => e.invoiceId) && (
+                                <button
+                                  type="button"
+                                  onClick={() => void remind(item)}
+                                  /*
+                                   * DISABLED ONLY WHILE IT IS IN FLIGHT.
+                                   *
+                                   * It used to stay disabled after a success,
+                                   * so a client who ignored the first reminder
+                                   * could not be sent a second without
+                                   * reloading the drawer. The confirmation
+                                   * belongs to what HAPPENED; the button is
+                                   * what can happen next, and those are not the
+                                   * same thing.
+                                   *
+                                   * Once sent it goes quiet — outlined rather
+                                   * than filled — so the row stops shouting at
+                                   * somebody who has already acted, while
+                                   * staying available to anyone who means it.
+                                   */
+                                  disabled={reminding === item.key}
+                                  /*
+                                   * AND IT PRESSES LIKE EVERY OTHER PRIMARY.
+                                   *
+                                   * The fill was already the token, but the
+                                   * other half was missing: without
+                                   * `ap-primary-lift` nothing deepens the fill
+                                   * in dark mode, so a white label sat on the
+                                   * bare brand orange at about 2.26:1 and read
+                                   * as a glow rather than as letters. That is
+                                   * the whole reason the class exists and
+                                   * cannot be an inline shadow — it answers
+                                   * `.dark`. See `app/globals.css`.
+                                   *
+                                   * The lift is on the FILLED state only. Once
+                                   * sent, the button is outlined on
+                                   * `transparent`, and a lift under nothing is
+                                   * a shadow with no object: the same rule
+                                   * <NeedsYouCard> applies to its own settled
+                                   * rows.
+                                   */
+                                  className={
+                                    'shrink-0 self-center rounded-lg px-2.5 py-1.5 text-[12px] font-bold transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-60 disabled:active:scale-100' +
+                                    (reminded.has(item.key) ? '' : ' ap-primary-lift')
+                                  }
+                                  style={
+                                    reminded.has(item.key)
+                                      ? {
+                                          background: 'transparent',
+                                          border: '1px solid var(--v2-border)',
+                                          color: 'var(--v2-text-secondary)',
+                                        }
+                                      : { background: 'var(--v2-primary)', color: '#fff' }
+                                  }
+                                >
+                                  {reminding === item.key
+                                    ? t('payments.remind_sending')
+                                    : t('payments.remind')}
+                                </button>
+                              )}
+
+                              {/* The SAME drawer as before. The list changed;
+                                  what opens from it did not. */}
+                              <button
+                                type="button"
+                                onClick={() => setDetail(item)}
+                                className="shrink-0 self-center rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold"
+                                style={{
+                                  borderColor: 'var(--v2-border)',
+                                  color: 'var(--v2-text-secondary)',
+                                }}
+                              >
+                                {t('payments.open')}
+                              </button>
+                            </div>
+                          );
+                        })}
+
+                        {rest > 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShown(s => ({ ...s, [group]: rows.length }))
+                            }
+                            className="mt-1.5 w-full rounded-lg border border-dashed py-1.5 text-[12px] font-semibold text-[var(--v2-text-secondary)]"
+                            style={{ borderColor: 'var(--v2-border)' }}
+                          >
+                            {t('payments.more_n').replace('{n}', String(rest))}
+                          </button>
+                        )}
+                      </>
                     )}
-                <MoneyRow
-                  item={item}
-                  t={t}
-                  isRTL={isRTL}
-                  formatCurrency={formatCurrency}
-                  formatDate={formatDate}
-                  // The same detail drawer the reports list opens. The row used
-                  // to expand here and carry its own ⋯ menu; both moved, and
-                  // this section has to follow or the contact's money becomes
-                  // read-only while the reports page can act on it.
-                  onSelect={() => setDetail(item)}
-                  /* Every row here is this contact's. Repeating the name six
-                     times down a 576px drawer truncated the service beside it
-                     to say something the reader already knew. */
-                  hideClient
-                  /*
-                   * The row's own `sm:` template is a VIEWPORT query, and the
-                   * thing that constrains it here is this drawer at 576px. On a
-                   * normal desktop the viewport is wide, so the row laid itself
-                   * out for a screen it does not have: a 105px title column
-                   * reading "Sports …", a date reading "Nov 11, 2…", and the
-                   * cashflow legend painting over both. Saying so here is the
-                   * same answer `hideClient` gives to the same problem.
-                   */
-                  dense
-                />
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </>
           )}
         </div>
@@ -558,6 +1291,10 @@ export function PaymentsSection({
 
       <MoneyOrderDrawer
         item={detail}
+        /* The client's refund request behind this booking, where there is one.
+           Looked up by booking because that is how a request names what it is
+           about — a client thinks "the session I missed", never a payment id. */
+        refundAsk={detail?.bookingId ? (asksByBooking.get(detail.bookingId) ?? null) : null}
         onClose={() => setDetail(null)}
         /*
           No `onOpenBooking` and no `onOpenContact`, so the footer carries

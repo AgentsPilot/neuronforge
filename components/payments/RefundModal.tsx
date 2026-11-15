@@ -87,6 +87,28 @@ interface RefundModalProps {
    * ───────────────────────────────────────────────────────────────────────────
    */
   bookingUnscheduled?: boolean;
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * OPENED ALREADY ANSWERED.
+   *
+   * A caller that already knows the figure and the reason — the refund card,
+   * where an agent worked out one and the client gave the other — fills them
+   * in rather than making the owner retype facts the system holds.
+   *
+   * All optional, and all only a STARTING POINT: every control stays editable,
+   * the server still caps the amount, and nothing here can make this dialog do
+   * something it could not do before. Omitted, it behaves exactly as it always
+   * has, which is what every other caller relies on.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /** Open on the partial tab, rather than "refund everything". */
+  startPartial?: boolean;
+  /** The figure to start from, in major units. Capped by the server as ever. */
+  prefillAmount?: number;
+  /** One of `REFUND_REASON_KEYS`. Anything else is ignored rather than shown. */
+  prefillReasonKey?: string;
+  /** The sentence the key cannot carry — usually the client's own words. */
+  prefillReasonNote?: string;
   isRTL?: boolean;
 }
 
@@ -147,12 +169,26 @@ export function RefundModal({
   bookingStatus,
   bookingMeetingStatus,
   bookingUnscheduled,
-  isRTL = false
+  isRTL = false,
+  startPartial,
+  prefillAmount,
+  prefillReasonKey,
+  prefillReasonNote,
 }: RefundModalProps) {
   const { t, language } = useLanguage();
   const [loading, setLoading] = useState(false);
-  const [refundType, setRefundType] = useState<'full' | 'partial'>('full');
-  const [partialAmount, setPartialAmount] = useState('');
+  /*
+   * SEEDED FROM THE CALLER, where one knew. A lazy initialiser rather than an
+   * effect: an effect would fight the owner, overwriting what they had just
+   * typed on any re-render. This runs once, when the dialog opens, and from
+   * then on the controls are theirs.
+   */
+  const [refundType, setRefundType] = useState<'full' | 'partial'>(
+    startPartial ? 'partial' : 'full'
+  );
+  const [partialAmount, setPartialAmount] = useState(
+    typeof prefillAmount === 'number' && prefillAmount > 0 ? String(prefillAmount) : ''
+  );
   /*
    * The chip and the free text are two different things.
    *
@@ -166,8 +202,15 @@ export function RefundModal({
    * "didn't turn up" being three different reasons in a report. So the key is
    * held separately from anything typed, and only one of them is ever sent.
    */
-  const [reasonKey, setReasonKey] = useState<string | null>(null);
-  const [reasonText, setReasonText] = useState('');
+  /* Only a key this dialog actually offers. An unknown one is ignored rather
+     than rendered, so a caller cannot invent a reason the reports cannot
+     group — the whole point of the key being closed. */
+  const [reasonKey, setReasonKey] = useState<string | null>(
+    prefillReasonKey && (REFUND_REASON_KEYS as readonly string[]).includes(prefillReasonKey)
+      ? prefillReasonKey
+      : null
+  );
+  const [reasonText, setReasonText] = useState(prefillReasonNote ?? '');
 
   /*
    * BOTH are sent now, and both are required.

@@ -450,17 +450,23 @@ function AdvisorIdleCard({
               </p>
               <button
                 onClick={onPublish}
-                style={{
-                  background: 'linear-gradient(135deg, #F97316 0%, #EA580C 100%)',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  borderRadius: '12px',
-                  padding: '12px 24px',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 12px -4px rgba(249, 115, 22, 0.4)',
-                }}
+                /*
+                 * The page's one CTA, painted from the same place as the
+                 * Needs-you card's buttons.
+                 *
+                 * It was a two-stop gradient with its own orange shadow. The
+                 * eyebrow and the mark above it KEEP the raw accent, because
+                 * they say whose voice this is and are not pressed; the button
+                 * is pressed, so it follows the platform token and takes
+                 * `ap-primary-lift`, which is what deepens the fill in dark
+                 * mode instead of hanging an orange halo off it.
+                 *
+                 * The size stays: this is a full-width panel CTA, not a row
+                 * action, so it keeps `text-sm px-4 py-2.5` rather than the
+                 * list's `text-xs px-3 py-1.5`.
+                 */
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold rounded-xl ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
+                style={{ background: 'var(--v2-primary)', color: '#fff' }}
               >
                 {t('advisor.action.publish') || 'Publish it'}
               </button>

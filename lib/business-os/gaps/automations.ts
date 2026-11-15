@@ -72,7 +72,31 @@ export type AutomationRequirement =
    * nothing leaves the building.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  | 'can_send_marketing';
+  | 'can_send_marketing'
+  /**
+   * The mailbox we would read is the one this owner's clients write to.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The receptionist reads a CONNECTED Gmail or Outlook mailbox. Nothing made
+   * it check that the connected mailbox is the owner's own, and the two come
+   * apart more easily than it sounds: an owner signs in with
+   * `someone@walla.co.il`, connects Google with whatever account the browser
+   * was already signed into, and the agent then reads a personal Gmail that no
+   * client has ever written to.
+   *
+   * Found live. The owner's `business_profiles.email` was `@walla.co.il`, the
+   * google-mail connection was `@gmail.com`, and the agent ran happily every
+   * five minutes against the wrong inbox: active, green, completing without
+   * error, and structurally incapable of seeing a single client enquiry.
+   *
+   * Deliberately NOT a check on the domain. A business on Google Workspace has
+   * a custom domain and is perfectly supported — its connected mailbox IS
+   * `owner@theirfirm.com`. Comparing the two addresses covers Workspace and
+   * blocks walla.co.il with one rule, where a list of allowed domains would
+   * block exactly the businesses we most want.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  | 'mail_reaches_owner_inbox';
 
 export interface OperationalAutomation {
   id: OperationalAutomationId;

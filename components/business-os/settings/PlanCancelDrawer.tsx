@@ -64,7 +64,7 @@ import { SettingsDrawer } from './SettingsDrawer';
 
 const logger = createLogger({ module: 'BusinessOsPlanCancelDrawer' });
 
-const PRIMARY_BUTTON = 'rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60';
+const PRIMARY_BUTTON = 'rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-semibold text-white ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-60';
 const SECONDARY_BUTTON = 'rounded border border-[var(--v2-border)] px-3 py-1.5 text-xs text-[var(--v2-text-primary)] disabled:opacity-60';
 const HEADING = 'text-sm font-semibold text-[var(--v2-text-primary)] focus:outline-none';
 const BODY = 'text-xs text-[var(--v2-text-primary)]';

@@ -496,7 +496,80 @@ function ownerFacingFailure(
  * Reads the shared tag rather than the per-agent one, so a list is one query
  * however many are installed.
  */
+/**
+ * Put the essential agents to work, for a business that has not asked.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IT CREATES, AND IT NEVER RESURRECTS. That distinction is the whole file.
+ *
+ * `installAutomation` reactivates a paused agent, deliberately: "re-installing
+ * a paused one is the owner asking for it back". That is right when a PERSON
+ * presses install, and it is wrong here — this runs on every render of the
+ * agents list, so an owner who paused the refund agent would find it running
+ * again seconds later, every time, with no way to make the pause stick.
+ *
+ * So this looks first, and only installs when there is no row at all. A paused
+ * essential agent is an owner who has decided; the only honest response to
+ * that is to leave it alone.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IT NEVER THROWS, AND NEVER BLOCKS.
+ *
+ * Both callers are doing something else: one is rendering the owner's agent
+ * list, the other is finishing a client's refund request. Neither may fail
+ * because an install did. A business that ends up without the agent sees its
+ * refund requests cold, which is exactly what this feature did before the
+ * agent existed.
+ */
+export async function ensureEssentialAutomations(userId: string): Promise<void> {
+  try {
+    const { AUTOMATION_AGENTS } = await import('./catalog');
+    const essential = AUTOMATION_AGENTS.filter(a => a.essential);
+    if (essential.length === 0) return;
+
+    /*
+     * Every agent this owner already has, by automation id — paused ones
+     * included. `findScheduled` is what the list itself reads, so an agent
+     * invisible to this check is invisible to the owner too.
+     */
+    const { data: existing } = await agentRepository.findScheduled(userId);
+    const have = new Set(
+      (existing ?? [])
+        .map(row => {
+          const config = (row as { agent_config?: Record<string, unknown> | null }).agent_config;
+          const automation = (config?.business_os_automation ?? {}) as { id?: string };
+          return automation.id;
+        })
+        .filter(Boolean) as string[]
+    );
+
+    for (const automation of essential) {
+      if (have.has(automation.id)) continue;
+
+      const outcome = await installAutomation(userId, automation);
+
+      if (outcome.ok && !outcome.alreadyInstalled) {
+        logger.info(
+          { userId, automationId: automation.id, agentId: outcome.agentId },
+          'Installed an essential agent for a business that had none'
+        );
+      }
+    }
+  } catch (err) {
+    logger.error({ err, userId }, 'Could not ensure the essential agents (non-blocking)');
+  }
+}
+
 export async function installedAutomations(userId: string): Promise<InstalledAutomation[]> {
+  /*
+   * BEFORE the read, so a business seeing this list for the first time sees
+   * the essential agents in it rather than on their second visit. It is
+   * idempotent and it respects a pause, so calling it on every render costs
+   * one indexed lookup per essential agent and changes nothing once they are
+   * there.
+   */
+  await ensureEssentialAutomations(userId);
+
   const { data, error } = await agentRepository.findScheduled(userId);
 
   if (error) {
@@ -1083,8 +1156,36 @@ export function planInputs(
    * The spreadsheet importer is the first entry with no stop rule: a row has
    * no age, so there is nothing for a cut-off to measure.
    */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE OWNER'S NUMBER, NOT A LIST THE PICKER STOPPED READING.
+   *
+   * This validated against `stopAfterChoices`, and the control that writes the
+   * value has not consulted that list since ranges replaced per-agent choices
+   * — see the header of `schedule/ranges.ts`. `stopAfterRangeOf` "takes the
+   * agent and ignores it, deliberately" and returns `STOP_RANGE`: twelve hours
+   * to two years, the same for every agent.
+   *
+   * So the two ends disagreed. An owner could set "12 months", the picker
+   * accepted it, the row stored 365, and this line found 365 absent from
+   * `[7, 14, 30]` and handed the run 14. The control reported success and
+   * changed nothing, which is the one failure this file keeps being corrected
+   * for.
+   *
+   * Measured on the live account 2026-11-13, on the receptionist: a client
+   * emailed 20 days after the last letter sent to them read as a stranger,
+   * because step4 only counts sends inside this window, and the window was 14
+   * whatever the owner had chosen.
+   *
+   * Bounded by the SAME constant the picker offers, so there is one answer to
+   * "what may this be" rather than two. The default still covers an agent that
+   * has never been set, and the absent-stop-rule case below is untouched.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const maxStopDays = Math.round(intervalMinutes(STOP_RANGE.max) / (60 * 24));
+
   const days =
-    typeof stored === 'number' && (automation.stopAfterChoices ?? []).includes(stored)
+    typeof stored === 'number' && stored > 0 && stored <= maxStopDays
       ? stored
       : automation.defaultStopAfterDays;
 

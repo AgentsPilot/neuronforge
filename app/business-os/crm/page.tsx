@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CRMPipelineView } from '@/components/crm/CRMPipelineView';
 import { ContactsPager } from '@/components/crm/ContactsPager';
+import { CRMLoadingState } from '@/components/crm/CRMLoadingState';
 import { CRMSubscriberList } from '@/components/crm/CRMSubscriberList';
 import { CRMContactList } from '@/components/crm/CRMContactList';
 import { CRMTaskList } from '@/components/crm/CRMTaskList';
@@ -45,6 +46,22 @@ const PHONE_COLUMN = EXPORT_COLUMNS.indexOf('phone');
 
 /** The views whose rows are `contacts` — the only ones Export can honestly count. */
 const EXPORTABLE_VIEWS: readonly ViewMode[] = ['pipeline', 'contacts'];
+
+/**
+ * The views that are actually waiting on this page's own contacts fetch.
+ *
+ * ── Why the spinner said the wrong thing on half the tabs ───────────────────
+ * It was shown for every view and always read "Loading contacts…". On
+ * Subscribers and Tasks that was not a wording slip: those views do not use
+ * `contacts` at all — each fetches its own data and brings its own spinner —
+ * and the page was still holding them behind a contacts fetch they had no use
+ * for. So the owner waited for contacts, read that they were waiting for
+ * contacts, and THEN waited again for the list they had actually asked for.
+ *
+ * `CRMTaskList` has had its own labelled spinner all along; it simply never
+ * got to show it.
+ */
+const CONTACT_FETCH_VIEWS: readonly ViewMode[] = ['pipeline', 'contacts'];
 
 /**
  * The drawer's collapsible sections, as `CRMContactDrawerV2.initialSection`
@@ -815,13 +832,13 @@ export default function CRMPage() {
         />
 
         {/* Content */}
-        {loading || (viewMode === 'pipeline' && !stagesLoaded) ? (
-          <div className="flex items-center justify-center min-h-[400px]">
-            <div className="text-center space-y-4">
-              <div className="w-16 h-16 border-4 border-t-transparent rounded-full animate-spin mx-auto" style={{ borderColor: '#8B5CF6', borderTopColor: 'transparent' }}></div>
-              <p className="text-[var(--v2-text-secondary)] font-medium">{t('crm.loading')}</p>
-            </div>
-          </div>
+        {(CONTACT_FETCH_VIEWS.includes(viewMode) && loading) ||
+        (viewMode === 'pipeline' && !stagesLoaded) ? (
+          /* The board is contacts AND the columns they sit in, so it says so;
+             the list is contacts and keeps the original line. */
+          <CRMLoadingState
+            label={viewMode === 'pipeline' ? t('crm.loading_board') : t('crm.loading')}
+          />
         ) : (
           <>
             {viewMode === 'pipeline' && !pipelineStages.length && stagesFailed && (

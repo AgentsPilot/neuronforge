@@ -159,12 +159,16 @@ const BUSINESS_OWNED_20260916: readonly string[] = [
   'business_chat_verified_questions',
   'marketing_consent_settings',
   'business_subscribers',
+  /* A client asking for their money back (20261121). Existing databases get the
+     constraint from that migration's own loop; this entry is what the FRESH
+     install path expands to. */
+  'refund_requests',
 ];
 
 const DYNAMIC_FK_MIGRATIONS: readonly DynamicFkMigration[] = [
   {
     file: '20260916_business_data_ownership.sql',
-    sha256: '37f976f8ea8cf12f0de4300aba935df1c6488f0516c4afc5d77b49bbe89a7f11',
+    sha256: '831600cbf9bc7e1743c5c366abe1b7b2832f3b8f967848848d484a37c84037d9',
     expands: BUSINESS_OWNED_20260916.map((table) => ({
       child: table,
       columns: ['user_id'],

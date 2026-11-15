@@ -35,8 +35,34 @@ const DRAWER = readFileSync(
 const LIST = readFileSync(join(ROOT, 'components', 'payments', 'MoneyList.tsx'), 'utf8');
 
 describe('the drawer asks for the dense layout', () => {
-  it('PaymentsSection passes it, beside the other thing it tells the row about itself', () => {
-    expect(DRAWER).toMatch(/hideClient[\s\S]{0,800}\n\s*dense\b/);
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE DRAWER NO LONGER RENDERS `MoneyRow` AT ALL.
+   *
+   * This asserted that `PaymentsSection` passed `dense` beside `hideClient`,
+   * because both are the drawer telling a shared row what its 576px container
+   * is — something `sm:` media queries cannot see.
+   *
+   * The section was rebuilt for the person reading it: four plain groups
+   * (waiting / returned / paid / cancelled) with rows written as sentences,
+   * and no status chip, progress bar or client name to suppress. There is no
+   * shared row left to brief, so the old assertion could only ever pass by
+   * accident.
+   *
+   * What replaces it is the same promise in the form that now holds: the
+   * drawer builds its own rows, and `MoneyRow` stays on the wide money page
+   * where its five columns fit. The 576px lesson in the header above is the
+   * reason the rebuilt rows are a flex line and not a grid.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('the drawer builds its own rows rather than briefing a shared one', () => {
+    expect(DRAWER).not.toMatch(/<MoneyRow\b/);
+
+    /* And it still opens the SAME detail drawer. The list changed; the
+       drill-down did not, which is what kept this a layout change rather than
+       a second way to look at money. */
+    expect(DRAWER).toMatch(/setDetail\(item\)/);
+    expect(DRAWER).toMatch(/<MoneyOrderDrawer/);
   });
 
   it('the orders list does NOT, so the wide page keeps its five columns', () => {

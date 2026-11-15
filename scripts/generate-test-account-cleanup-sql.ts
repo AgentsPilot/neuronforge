@@ -179,18 +179,19 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * and anonymise (seen live 2026-10-30, the closurespike admin check). The same
  * class as 20261092. Chained on 20261096, stamp b1203c526bc9ec91, live.
  */
-export const FUNCTION_MIGRATION = '20261120_operator_test_account_cleanup_quote_children';
+export const FUNCTION_MIGRATION = '20261122_operator_test_account_cleanup_refund_requests';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261104_operator_test_account_cleanup_meeting_replaces';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261120_operator_test_account_cleanup_quote_children';
 /**
  * What this migration changes, for its header (comment lines, no semicolons or
  * apostrophes: the file must stay paste-safe). Rewritten with each new
  * FUNCTION_MIGRATION; the applied files keep their own.
  */
 export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
-  'Reviews the five foreign keys of proposal_attachments and proposal_signatures for G-18, added by 20261114, 20261115 and 20261119',
-  'Both tables carry their own user_id, so each is business owned and each gets its own business_fk',
-  'Without it G-18 refuses every check, delete and anonymise',
+  'Adds refund_requests to the plan and reviews its three foreign keys for G-18, added by 20261121',
+  'A client asking for their money back. It carries its own user_id, so it is business owned and gets its own business_fk',
+  'Its contact_id and booking_id point at crm_contacts and scheduling_bookings, both of which the plan empties, so both need reviewing',
+  'Without it G-10 sees an unreviewed link to the login and refuses every check, delete and anonymise',
   'Nothing else in the plan changes. Same 8 argument signature as 20261104',
 ];
 /**
@@ -199,9 +200,9 @@ export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
  * each new FUNCTION_MIGRATION.
  */
 export const ROLLBACK_CONSEQUENCE: ReadonlyArray<string> = [
-  'The restored 20261104 function does not know the foreign keys of 20261114, 20261115 and 20261119',
-  'While those links exist, G-18 of the restored function refuses every check, delete and anonymise',
-  'Redeploy a build that pins the 20261104 stamp after running this file'
+  'The restored 20261120 function does not know refund_requests or its three foreign keys (20261121)',
+  'While that table exists, G-10 of the restored function sees an unreviewed link to the login and refuses every check, delete and anonymise',
+  'Redeploy a build that pins the 20261120 stamp after running this file'
 ];
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
@@ -626,6 +627,9 @@ export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, strin
   ['payment_transactions', 'payment_transactions_service_id_fkey', 'user_id'],
   ['plugin_performance', 'plugin_performance_agent_id_fkey', 'user_id'],
   ['profiles', 'profiles_org_id_fkey', 'id'],
+  ['refund_requests', 'refund_requests_business_fk', 'user_id'],
+  ['refund_requests', 'refund_requests_contact_id_fkey', 'user_id'],
+  ['refund_requests', 'refund_requests_booking_id_fkey', 'user_id'],
   ['proposal_attachments', 'proposal_attachments_business_fk', 'user_id'],
   ['proposal_attachments', 'proposal_attachments_document_id_fkey', 'user_id'],
   ['proposal_attachments', 'proposal_attachments_proposal_id_fkey', 'user_id'],

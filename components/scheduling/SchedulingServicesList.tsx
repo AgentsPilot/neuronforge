@@ -396,6 +396,28 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   });
   const [savingNewRow, setSavingNewRow] = useState(false);
   const [newRowFromChat, setNewRowFromChat] = useState(false); // Track if new row was started from chat
+  /**
+   * The service just created, waiting for the refreshed list so it can be
+   * opened for editing.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY IT DOES NOT OPEN IMMEDIATELY
+   *
+   * A new service is saved as a DRAFT (`is_active: false, status: 'draft'`),
+   * and publishing it is a control inside the open editor. So saving collapsed
+   * the row into the list and left the owner looking at an unpublished service
+   * with no way to publish it but to find it again and click it — two extra
+   * steps, in the middle of the one task they were already doing.
+   *
+   * Held as an id rather than opened from `newRowValues` because the SERVER
+   * shapes what it stored: `serviceShapeFields` nulls a price on a quoted
+   * service, drops the duration on one that needs no time, and so on. Opening
+   * from the typed values would show fields the record does not actually hold,
+   * which is the class of bug the duration fallback note below describes.
+   *
+   * Cleared the moment it is consumed, so a later refresh cannot reopen it.
+   */
+  const [openAfterCreateId, setOpenAfterCreateId] = useState<string | null>(null);
   // Optimistic updates - local overrides for immediate UI feedback
   const [optimisticUpdates, setOptimisticUpdates] = useState<Record<string, Partial<SchedulingService>>>({});
   // Delete confirmation state
@@ -1103,6 +1125,11 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           setRecentlyEditedId(newServiceId);
         setNoticeSeq(n => n + 1); // every save is an event, even a repeat of the same one
           onServiceEdited?.(newServiceId);
+          /* And leave it OPEN. It was saved as a draft and the publish control
+             lives inside the editor, so collapsing it here is what forced the
+             owner to find the row again and click it before they could publish
+             the thing they had just finished describing. */
+          setOpenAfterCreateId(newServiceId);
         }
 
         setNewRowFromChat(false);
@@ -1161,6 +1188,32 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     setEditRowValues(initial);
     setEditRowBaseline(rowFingerprint(initial));
   };
+
+  /**
+   * Open the service that was just created, once the list has caught up.
+   *
+   * `saveNewRow` asks for this and the refresh answers it: `onServicePublished`
+   * triggers the parent's silent reload, and this fires on the render where the
+   * new row finally appears in `services`.
+   *
+   * `startRowEdit` rather than a third hand-written copy of the mapping. The
+   * auto-edit-from-chat effect above still has its own, which is worth folding
+   * in one day; duplicating it a second time here is not.
+   *
+   * Safe to re-run: the id is cleared as it is consumed, and every other render
+   * returns on the first line.
+   */
+  useEffect(() => {
+    if (!openAfterCreateId) return;
+
+    const created = services.find(service => service.id === openAfterCreateId);
+    /* The reload has not landed yet. Nothing to do but wait for the render
+       that carries it. */
+    if (!created) return;
+
+    startRowEdit(created);
+    setOpenAfterCreateId(null);
+  }, [openAfterCreateId, services, startRowEdit]);
 
   const cancelRowEdit = () => {
     setEditingRowId(null);

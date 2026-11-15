@@ -577,6 +577,33 @@ export async function GET(request: NextRequest) {
           contactId: item.contactId,
           name: item.name,
           note: item.note ?? null,
+          /*
+           * A note that is a KEY, resolved in the reader's language by the
+           * card. Named here because this list is written out field by field,
+           * and an unnamed field is dropped in silence — which is exactly what
+           * happened to this one and to `requestId` below: the reason vanished
+           * from the card and the decline button never rendered.
+           */
+          noteKey: item.noteKey ?? null,
+          /* The refund request this row is about, so declining can settle it.
+             Kept apart from `entityId`, which the refund dialog opens ON. */
+          requestId: item.requestId ?? null,
+          /* What the refund agent concluded. Named here for the same reason as
+             everything else in this list: an unnamed field is dropped. */
+          refundRecommendation: item.refundRecommendation ?? null,
+          refundRecommendedAmount: item.refundRecommendedAmount ?? null,
+          refundReasoning: item.refundReasoning ?? null,
+          /* What the business's own diary says happened, and when — so the
+             owner can answer without going to look for the booking. Named
+             here because an unnamed field is dropped in silence. */
+          bookingOutcomeKey: item.bookingOutcomeKey ?? null,
+          bookingWhen: item.bookingWhen ?? null,
+          bookingContradicts: item.bookingContradicts ?? null,
+          /* What the one-click button is allowed to be. Named here, like
+             everything else in this list, or it is dropped in silence. */
+          refundableAmount: item.refundableAmount ?? null,
+          refundViaProcessor: item.refundViaProcessor ?? null,
+          refundPaymentsCount: item.refundPaymentsCount ?? null,
           /* The subject of the message that started this row, on the mail gaps.
              Named here because this list is written out field by field — see the
              note below, which this field is the second instance of. */
@@ -590,6 +617,8 @@ export async function GET(request: NextRequest) {
           draftId: item.draftId ?? null,
           /* When they were last answered from the card. */
           answeredAt: item.answeredAt ?? null,
+          /* How many conversations this person has open, when more than one. */
+          openThreads: item.openThreads ?? null,
           since: item.since,
           entityId: item.entityId ?? null,
           /*

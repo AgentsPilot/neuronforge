@@ -71,7 +71,7 @@ import {
 const logger = createLogger({ module: 'BusinessOsPlanUpgrade' });
 
 // LF-1 (live test 2026-10-20): the app's own primary button, on the admin theme's --v2-primary.
-const PRIMARY_BUTTON = 'rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60';
+const PRIMARY_BUTTON = 'rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-semibold text-white ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-60';
 const SECONDARY_BUTTON = 'rounded border border-[var(--v2-border)] px-3 py-1.5 text-xs text-[var(--v2-text-primary)] disabled:opacity-60';
 
 /** The preview's 200 body, as the route sends it. */

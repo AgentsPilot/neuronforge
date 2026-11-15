@@ -1046,9 +1046,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X7. the
       "type": "planRepo.close",
     },
     {
-      "type": "stripe.client",
-    },
-    {
       "chain": [
         [
           "select",
@@ -1190,9 +1187,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X8. a p
       "table": "payment_plan_installments",
       "terminal": "maybeSingle",
       "type": "db",
-    },
-    {
-      "type": "stripe.client",
     },
     {
       "chain": [
@@ -4644,9 +4638,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X34. pl
       "type": "db",
     },
     {
-      "type": "stripe.client",
-    },
-    {
       "chain": [
         [
           "select",
@@ -4874,9 +4865,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X36. pl
         "sub_plan_1",
       ],
       "type": "planRepo.findBySubscriptionId",
-    },
-    {
-      "type": "stripe.client",
     },
     {
       "chain": [
@@ -9537,9 +9525,6 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 3. invoice
       "type": "db",
     },
     {
-      "type": "stripe.client",
-    },
-    {
       "chain": [
         [
           "select",
@@ -13779,9 +13764,6 @@ exports[`Stripe webhook, Fix-1b: plan link ids F5-3. invoice.paid first plan per
         "sub_plan_first_f5",
       ],
       "type": "planRepo.findBySubscriptionId",
-    },
-    {
-      "type": "stripe.client",
     },
     {
       "chain": [

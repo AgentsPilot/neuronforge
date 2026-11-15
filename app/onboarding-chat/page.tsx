@@ -57,26 +57,28 @@ const VOICE_TINT = {
 } as const;
 
 /**
- * The platform orange, for a button that moves the owner forward.
+ * The platform's primary button, for an action that moves the owner forward.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * `#F97316` with `#EA580C` beneath it is what every primary action in Business
- * OS is painted with — the dashboard, the chat command panel, the preview
- * panel. This page used `--v2-primary` for all of its buttons, which is the
- * indigo, so the onboarding looked like a different product from the one it
- * was setting up.
+ * It was `#F97316` over `#EA580C`, chosen so onboarding matched Business OS
+ * rather than sitting at the indigo default. The goal was right and the source
+ * was wrong: a brand colour spelled out in a hundred files is one
+ * find-and-replace away from a rebrand that misses a few, and a fixed hex has
+ * no answer for dark mode.
  *
- * A RAW HEX, matching the hundred-odd other uses of it. It is not a token,
- * which it should be: a brand colour spelled out in a hundred files is one
- * find-and-replace away from a rebrand that misses a few. Introducing
- * `--v2-brand` is a design-system change and wants SA review rather than being
- * slipped in under a button fix, so this at least keeps the page down to one
- * definition instead of adding more scattered copies.
+ * `--v2-primary` IS that colour. It is the admin-set brand token (orange for
+ * this business, indigo #6366F1 by default), it is what every Needs-you button
+ * paints with, and `app/onboarding-chat/layout.tsx` already injects the custom
+ * tokens, so this page resolves exactly the same value the dashboard does.
+ *
+ * `ap-primary-lift` is the other half, and has to be a class: it swaps the
+ * light-mode glow for a plain dark shadow in dark mode and takes the fill's
+ * luminance down far enough for a white label to read. See `app/globals.css`.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 const ORANGE_BUTTON =
-  'text-white bg-[#F97316] border border-[#EA580C] hover:bg-[#EA580C] ' +
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F97316] focus-visible:ring-offset-1';
+  'text-white bg-[var(--v2-primary)] ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] ' +
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)] focus-visible:ring-offset-1';
 
 interface ServiceInput {
   name: string;

@@ -849,7 +849,7 @@ function BusinessOSSettingsContent() {
                   // the handler, and `saveProfile` would take it as overrides.
                   onClick={() => saveProfile()}
                   disabled={saving}
-                  className="px-4 py-2 text-sm bg-[var(--v2-primary)] text-white font-medium disabled:opacity-50"
+                  className="px-4 py-2 text-sm bg-[var(--v2-primary)] text-white font-medium ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : t('common.save')}
@@ -1259,7 +1259,7 @@ function BusinessOSSettingsContent() {
               type="button"
               onClick={handleLogout}
               disabled={loggingOut}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-[var(--v2-primary)] hover:opacity-90 transition-all disabled:opacity-50"
+              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-[var(--v2-primary)] ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
               {loggingOut ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}

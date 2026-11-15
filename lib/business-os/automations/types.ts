@@ -30,7 +30,8 @@ export type AutomationAgentId =
   | 'win_back_quiet_clients'
   | 'draft_client_replies'
   | 'draft_client_replies_outlook'
-  | 'import_leads_from_sheet';
+  | 'import_leads_from_sheet'
+  | 'assess_refund_requests';
 
 /**
  * How often an automation may be set to run.
@@ -323,6 +324,26 @@ export interface AutomationAgent {
   }>;
 
   /** Plugins the plan calls. Written onto the agent row for the runtime. */
+  /**
+   * Installed for every business, without being asked.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ALMOST NOTHING SHOULD BE THIS. The catalogue's whole shape is that an owner
+   * chooses what runs for them, and an agent that installs itself is the
+   * platform deciding how their business works.
+   *
+   * The bar: the agent answers something a CLIENT can start, which the business
+   * then owes an answer to. A client asking for their money back is not a
+   * feature the owner opted into — it happens whether or not anybody installed
+   * anything, and a request nobody looks at is worse than no agent at all.
+   *
+   * An essential agent is still ordinary in every other way: it appears in the
+   * list, it can be paused, it keeps its run history, and pausing it is
+   * respected for ever. This flag decides how it ARRIVES, not whether the owner
+   * is in charge of it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  essential?: true;
   pluginsRequired: string[];
 
   /**

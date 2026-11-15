@@ -179,11 +179,52 @@ export async function GET(
      * Retrieved and EXPANDED, never created. `confirmation_secret` is the
      * secret for the intent Stripe raised when this invoice was finalised.
      */
-    const stripeInvoice = await stripe.invoices.retrieve(
+    let stripeInvoice = await stripe.invoices.retrieve(
       stripeInvoiceId,
       { expand: ['confirmation_secret'] },
       { stripeAccount: capability.accountId }
     );
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A VOIDED INVOICE IS RAISED AGAIN, ONCE.
+     *
+     * A card plan's first period is a subscription invoice, and a subscription
+     * nobody has paid is `incomplete` for 23 hours before Stripe expires it and
+     * VOIDS that invoice. A client who opened this page, did not pay, and came
+     * back two days later would otherwise find a dead invoice and no way to pay
+     * at all — strictly worse than the ordinary invoice this replaced, which
+     * stays payable until its due date.
+     *
+     * So a void invoice is forgotten and raised again, which for a plan means a
+     * fresh subscription with a fresh 23 hours, and for anything else means a
+     * fresh invoice. ONCE, and only for `void`: no other status is retried, and
+     * a `paid` one is caught by the check below rather than reissued.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (stripeInvoice.status === 'void') {
+      log.info({ stripeInvoiceId }, 'The invoice at Stripe was voided; raising this debt again');
+
+      await supabaseServer
+        .from('payment_invoices')
+        .update({ stripe_invoice_id: null, stripe_hosted_invoice_url: null })
+        .eq('id', invoice.id)
+        .eq('user_id', invoice.user_id);
+
+      const reraised = await raiseInvoiceForPayment(invoice.id as string, invoice.user_id as string);
+
+      if (!reraised.ok) {
+        log.info({ reason: reraised.reason }, 'Voided invoice could not be raised again');
+        return NextResponse.json({ success: false, error: 'not_billed_yet' }, { status: 409 });
+      }
+
+      stripeInvoiceId = reraised.stripeInvoiceId;
+      stripeInvoice = await stripe.invoices.retrieve(
+        stripeInvoiceId,
+        { expand: ['confirmation_secret'] },
+        { stripeAccount: capability.accountId }
+      );
+    }
 
     /*
      * ─────────────────────────────────────────────────────────────────────────

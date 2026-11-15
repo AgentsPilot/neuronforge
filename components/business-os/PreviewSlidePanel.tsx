@@ -205,10 +205,17 @@ export function PreviewSlidePanel({ className = '' }: PreviewSlidePanelProps) {
                 <button
                   onClick={handlePublish}
                   disabled={isPublishing}
-                  className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50"
+                  /* The platform's primary button: the token for the fill and
+                     `ap-primary-lift` for the lift, the same pair the
+                     Needs-you card uses. It was a fixed-hex gradient, so a
+                     brand colour could not reach it and dark mode could not
+                     deepen it. `hover:brightness-110` replaces
+                     `transition-colors`, which had nothing to transition once
+                     the gradient went. */
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
                   style={{
                     borderRadius: 'var(--v2-radius-button)',
-                    background: 'linear-gradient(135deg, #F97316 0%, #EA580C 100%)',
+                    background: 'var(--v2-primary)',
                   }}
                 >
                   {isPublishing ? (

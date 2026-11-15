@@ -128,6 +128,10 @@ DECLARE
     -- FRESH install correct, exactly as `scheduling_meetings` above.
     'proposal_attachments',
     'proposal_signatures',
+    -- A client asking for their money back. Existing databases get this from
+    -- 20261121; naming it here is what makes a FRESH install correct, for the
+    -- same reason as the two above.
+    'refund_requests',
     -- Online presence
     'smart_links',
     'website_content',

@@ -388,7 +388,19 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
   it('UM-1b (replaces UM-1a W-4): the drawer has one button, "See plans"; the Choose presses below are by column, not by index', async () => {
     const payload = await payloadFor();
     await show(payload);
-    expect(screen.getAllByRole('button')).toEqual([screen.getByTestId('plan-compare-open')]);
+
+    /*
+     * One button that LEADS ANYWHERE, which is what UM-1b is about. Since the
+     * 2026-11-15 redesign the list has controls of its own — a category row
+     * opens to show what is in it, an amount's info button opens the sentence
+     * that defines it — and neither leaves the drawer or spends anything.
+     * Excluded by id prefix, so a Choose button appearing here still fails.
+     */
+    const leaving = screen
+      .getAllByRole('button')
+      .filter((button) => !/^(plan-includes-row-|plan-amount-explain-)/.test(button.getAttribute('data-testid') ?? ''));
+
+    expect(leaving).toEqual([screen.getByTestId('plan-compare-open')]);
     expect(screen.getByTestId('plan-compare-open')).toHaveTextContent(COPY['upgrade_modal.open_see_plans']);
   });
 });

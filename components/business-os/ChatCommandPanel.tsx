@@ -1925,10 +1925,13 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
           <button
             onClick={handleSend}
             disabled={loading || !input.trim()}
-            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center flex-none transition-transform active:scale-95 disabled:opacity-50 mb-0.5"
+            /* The send key is a button, so it takes the platform fill. The
+               user's own BUBBLE above keeps the three-stop gradient: that is
+               chrome saying who spoke, and nobody presses it. */
+            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center flex-none ap-primary-lift transition-all hover:brightness-110 active:scale-95 disabled:opacity-50 mb-0.5"
             style={{
               borderRadius: '8px',
-              background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)'
+              background: 'var(--v2-primary)'
             }}
           >
             <Send className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" strokeWidth={2.2} />
@@ -2122,8 +2125,11 @@ function PendingWriteMessage({
           <button
             type="button"
             onClick={() => respond(isHebrew ? 'כן' : 'Yes')}
-            className="text-xs font-semibold text-white transition-opacity hover:opacity-90"
-            style={{ background: '#F97316', borderRadius: '10px', padding: '6px 14px' }}
+            /* Painted from the token, like every other primary. The raw hex
+               could not follow the brand colour and had no dark-mode answer;
+               `ap-primary-lift` carries both. */
+            className="text-xs font-semibold text-white ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
+            style={{ background: 'var(--v2-primary)', borderRadius: '10px', padding: '6px 14px' }}
           >
             {isHebrew ? 'אשר' : 'Confirm'}
           </button>

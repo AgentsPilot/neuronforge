@@ -637,19 +637,22 @@ export function FunnelDrawer({ content, onAction, onClose }: FunnelDrawerProps) 
               {/* Action button or done tag */}
               {todo.action && !todo.done ? (
                 <button
-                  className="lv-td-btn"
+                  className="lv-td-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
                   onClick={() => onAction?.(todo.actionKey || todo.action!)}
+                  /*
+                   * THE SAME BUTTON AS THE PLAN BUTTON EIGHTY LINES BELOW IT,
+                   * which it was not.
+                   *
+                   * This one carried the three-stop gradient and a 14px orange
+                   * glow; that one carries `var(--v2-primary)` and
+                   * `ap-primary-lift`, copied from <NeedsYouCard>. One drawer,
+                   * two buttons, two products — and the gradient was fixed hex,
+                   * so it ignored the theme and the brand colour alike.
+                   */
                   style={{
-                    border: 'none',
-                    background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
+                    background: 'var(--v2-primary)',
                     color: '#fff',
-                    borderRadius: '10px',
-                    padding: '8px 14px',
-                    fontSize: '13px',
-                    fontWeight: 600,
                     whiteSpace: 'nowrap',
-                    boxShadow: '0 5px 14px -7px rgba(249,115,22,0.9)',
-                    cursor: 'pointer',
                     fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                   }}
                 >

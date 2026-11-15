@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { CalendarPlus, ClipboardCheck, ClipboardList, CreditCard, FileText, Hourglass, Mail, RefreshCw, User, X } from 'lucide-react';
+import { CalendarPlus, ClipboardCheck, ClipboardList, CreditCard, FileText, Hourglass, Mail, RefreshCw, Undo2, User, X } from 'lucide-react';
 
 /*
  * The TYPE only.
@@ -27,6 +27,7 @@ import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
 import { CancelPanel } from '@/components/public/CancelPanel';
 import { IntakePanel } from '@/components/public/IntakePanel';
 import { ReschedulePanel } from '@/components/public/ReschedulePanel';
+import { RefundPanel, type RefundableBooking } from '@/components/public/RefundPanel';
 import { InvoicePaymentPanel } from '@/components/public/InvoicePaymentPanel';
 import { PortalMeetings } from '@/components/public/PortalMeetings';
 import { ProposalAnswer } from '@/components/public/ProposalAnswer';
@@ -62,14 +63,35 @@ export default function BookingManagePage() {
   const [booking, setBooking] = useState<PortalBooking | null>(null);
   /** The other meetings, when this booking is one of a package. */
   const [meetings, setMeetings] = useState<PortalPackageMeeting[]>([]);
+  /* What this client could ask for money back on. Empty for most clients, and
+     the button that opens the form is not drawn when it is. */
+  const [refundableBookings, setRefundableBookings] = useState<RefundableBooking[]>([]);
   const [quote, setQuote] = useState<PortalQuote | null>(null);
   const [awaitingQuote, setAwaitingQuote] = useState(false);
   const [intake, setIntake] = useState<PortalIntake | null>(null);
   const [payment, setPayment] = useState<PortalPayment | null>(null);
-  /* The latest payment, readable from inside an async loop that outlives the
-     render it started in — see the return-from-payment effect below. */
-  const paymentRef = useRef<PortalPayment | null>(null);
-  paymentRef.current = payment;
+  /*
+   * WHICH PAYMENT THE REFUND FORM IS ABOUT, while it is open.
+   *
+   * `payment` and `periods` below describe the booking whose LINK was opened,
+   * which is very often NOT the one being asked about: a client clicks through
+   * from any reminder and then picks a different payment in the form. Left
+   * alone, this page reads "₪800 overdue, 2 instalments" beside a form that
+   * says "refund ₪74.99 for the renovation quote" — two true statements about
+   * two different bookings, side by side, where every one of them is money.
+   */
+  const [refundSubject, setRefundSubject] = useState<RefundableBooking | null>(null);
+
+  /*
+   * The booking the LINK was for, kept from the first load.
+   *
+   * Once the panel has been asked for a sibling, `booking.id` is that sibling,
+   * so it can no longer answer "what did they actually click". Closing the
+   * refund form has to come back to something, and this is the only thing that
+   * still knows what.
+   */
+  const linkBookingId = useRef<string | null>(null);
+
   const [loading, setLoading] = useState(true);
   /** The questions, unfolded in place rather than on a page of their own. */
   /*
@@ -87,7 +109,7 @@ export default function BookingManagePage() {
    * ───────────────────────────────────────────────────────────────────────────
    */
   const [task, setTask] = useState<{
-    kind: 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay';
+    kind: 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay' | 'refund';
     token: string;
     /**
      * The SESSION this task is about, for a package.
@@ -120,7 +142,7 @@ export default function BookingManagePage() {
    * ─────────────────────────────────────────────────────────────────────────
    */
   const openOnly = (
-    kind: 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay',
+    kind: 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay' | 'refund',
     forToken: string = token,
     forMeeting: string | null = null
   ) =>
@@ -189,14 +211,35 @@ export default function BookingManagePage() {
    * ───────────────────────────────────────────────────────────────────────────
    */
   const loadBooking = useCallback(
-    async (quiet = false) => {
+    async (quiet = false, showBookingId?: string) => {
       if (!quiet) setLoading(true);
       try {
-        const res = await fetch(`/api/book/manage/${token}`, { cache: 'no-store' });
+        /*
+         * `?booking=` asks the route for ANOTHER booking of the same client —
+         * the one the refund form is about. The route honours it only for a
+         * booking of the same contact and business, so the token still decides
+         * what may be seen; see its own comment. Everything that comes back has
+         * the same shape, so every piece of state below is set as usual and the
+         * whole panel — balance, instalments, meetings — describes what was
+         * picked rather than whatever link was clicked.
+         */
+        const res = await fetch(
+          showBookingId
+            ? `/api/book/manage/${token}?booking=${encodeURIComponent(showBookingId)}`
+            : `/api/book/manage/${token}`,
+          { cache: 'no-store' }
+        );
         const data = await res.json();
         if (data.success) {
           setBooking(data.booking);
+          /* Only the first, unasked load: afterwards this is a sibling. */
+          if (!showBookingId && !linkBookingId.current) {
+            linkBookingId.current = data.booking?.id ?? null;
+          }
           setMeetings(Array.isArray(data.meetings) ? data.meetings : []);
+          setRefundableBookings(
+            Array.isArray(data.refundableBookings) ? data.refundableBookings : []
+          );
           setQuote(data.quote ?? null);
           setAwaitingQuote(Boolean(data.awaitingQuote));
           setIntake(data.intake ?? null);
@@ -216,6 +259,30 @@ export default function BookingManagePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [token]
   );
+
+  /*
+   * Follow the choice: load the whole panel for the booking being asked about,
+   * and go back to the link's own when the form closes.
+   *
+   * A re-fetch rather than a card built from the refund row, because a client
+   * deciding about money should see what they see everywhere else — the
+   * balance, the instalments, what has been paid and when. A summary made from
+   * the two figures the form happens to hold is a different, smaller answer.
+   */
+  const showBooking = useCallback(
+    (chosen: RefundableBooking | null) => {
+      setRefundSubject(chosen);
+      const target = chosen?.bookingId ?? linkBookingId.current;
+      if (target && target !== booking?.id) void loadBooking(true, target);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [booking?.id]
+  );
+  /* The latest payment, readable from inside an async loop that outlives the
+     render it started in — see the return-from-payment effect below. */
+  const paymentRef = useRef<PortalPayment | null>(null);
+  paymentRef.current = payment;
+
 
   useEffect(() => {
     loadBooking();
@@ -408,6 +475,18 @@ export default function BookingManagePage() {
     const ready: Record<string, boolean> = {
       pay: Boolean(payInvoiceId),
       quote: Boolean(quoteToken),
+      /*
+       * Only where there is something to ask about.
+       *
+       * The refund link email names a booking the client has actually paid
+       * for, but a link is a thing people keep: followed a week later, after
+       * the owner has already returned the money, there is nothing left to
+       * request. Every sibling here makes the same check, and `refund` was
+       * missing from this map entirely — so `?task=refund` was read, found no
+       * entry, and was silently ignored. The link opened the portal and the
+       * form stayed shut.
+       */
+      refund: refundableBookings.some(b => !b.requestedAt),
       intake: Boolean(intake?.required),
       cancel: true,
       /*
@@ -449,7 +528,7 @@ export default function BookingManagePage() {
 
     setTaskAutoOpened(true);
     setTask({
-      kind: wanted as 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay',
+      kind: wanted as 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay' | 'refund',
       token,
       /* `?session=` — which hour of a package the client came to move. */
       meetingId: params.get('session'),
@@ -709,20 +788,54 @@ export default function BookingManagePage() {
             {firstName ? t('portal.greeting').replace('{name}', firstName) : t('manageBooking')}
           </h2>
 
-          {brand.info?.bookingUrl && (
-            <a
-              href={brand.info.bookingUrl}
-              className="flex h-10 items-center gap-2 px-4 text-sm font-bold transition-opacity hover:opacity-85"
-              style={{
-                background: 'var(--ap-brand)',
-                color: 'var(--ap-on-brand)',
-                borderRadius: 'var(--ap-radius-md)',
-              }}
-            >
-              <CalendarPlus className="h-4 w-4" aria-hidden />
-              {t('portal.book_another')}
-            </a>
-          )}
+          <div className="flex items-center gap-2">
+            {/*
+              ─────────────────────────────────────────────────────────────────
+              ASKING FOR MONEY BACK IS ABOUT THE CLIENT, NOT A BOOKING.
+
+              Beside "book another" for the same reason that one is here: both
+              are about this person and this business, and neither belongs on
+              an appointment card next to Reschedule and Cancel, which act on
+              one specific hour. A client wanting a refund may well mean a
+              booking other than the one whose link they happened to open.
+
+              Shown only when there is something to ask about. `refundable`
+              counts what is left after any refund already made, so a client
+              who has had their money back is not invited to ask again.
+              ─────────────────────────────────────────────────────────────────
+            */}
+            {refundableBookings.length > 0 && (
+              <button
+                type="button"
+                onClick={() => openOnly('refund')}
+                className="flex h-10 items-center gap-2 px-4 text-sm font-bold transition-colors"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--ap-text)',
+                  border: '1.5px solid var(--ap-border)',
+                  borderRadius: 'var(--ap-radius-md)',
+                }}
+              >
+                <Undo2 className="h-4 w-4" aria-hidden />
+                {t('refund.ask')}
+              </button>
+            )}
+
+            {brand.info?.bookingUrl && (
+              <a
+                href={brand.info.bookingUrl}
+                className="flex h-10 items-center gap-2 px-4 text-sm font-bold transition-opacity hover:opacity-85"
+                style={{
+                  background: 'var(--ap-brand)',
+                  color: 'var(--ap-on-brand)',
+                  borderRadius: 'var(--ap-radius-md)',
+                }}
+              >
+                <CalendarPlus className="h-4 w-4" aria-hidden />
+                {t('portal.book_another')}
+              </a>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1487,6 +1600,22 @@ export default function BookingManagePage() {
         rather than a reload: the booking and the list it refreshes are both on
         screen.
       */}
+      {task && task.kind === 'refund' && (
+        <section className="apc-panel p-5">
+          <RefundPanel
+            token={token}
+            bookings={refundableBookings}
+            locale={locale}
+            t={t}
+            /* Re-read so the list drops what has just been asked about and the
+               button disappears when nothing is left. */
+            onSent={() => loadBooking(true)}
+            /* So the money shown on this page follows what they picked. */
+            onChoose={showBooking}
+          />
+        </section>
+      )}
+
       {task && (task.kind === 'reschedule' || task.kind === 'cancel') && (
         <section className="apc-panel p-5">
           {task.kind === 'reschedule' ? (

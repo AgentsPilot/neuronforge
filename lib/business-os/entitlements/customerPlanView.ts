@@ -169,11 +169,32 @@ export function comparableAmount(value: CapabilityValue | undefined): { unit: st
 }
 
 /** One capability, as the customer reads it. */
+/** The three catalog shapes that carry a figure, or `null` for a plain feature. */
+export type CustomerPlanAmountKind = 'metered' | 'fair_use' | 'quantity' | null;
+
 export interface CustomerPlanFeature {
   capability: string;
   label: string;
   /** Already formatted server-side; the component renders the string. */
   value: string;
+  /**
+   * The catalog shape when this feature carries a NUMBER, otherwise `null`.
+   *
+   * `metered` is spent (credits), `fair_use` is a ceiling that warns rather
+   * than blocks (an email volume), `quantity` is a fixed count that does not
+   * reset (seats, locations) — the same three shapes `isAmountShape` groups
+   * under "What's included" in the comparison table. The kind travels rather
+   * than a boolean because each is READ differently: one wants a meter of what
+   * is left, one wants its ceiling stated, one is just a number.
+   *
+   * By shape alone: no capability id is consulted, so a capability added to
+   * the catalog tomorrow presents correctly with no edit here or in the UI.
+   *
+   * The plan drawer reads it to lift the figures out of the prose. An owner
+   * opens that screen to check what is left, and "5,000 a month" was a clause
+   * in the middle of a sentence.
+   */
+  amountKind: CustomerPlanAmountKind;
 }
 
 /**
@@ -570,8 +591,19 @@ const CATEGORY_PRESENTATION: ReadonlyArray<CategoryPresentation> = [
  * is a three-state offer, not an amount.
  */
 export function isAmountShape(definition: CapabilityDef | undefined): boolean {
+  return amountKindOf(definition) !== null;
+}
+
+/**
+ * Which amount shape a capability has, or `null` when it carries no figure.
+ *
+ * The one place the three shapes are named. `isAmountShape` is written in
+ * terms of it so the comparison table and the plan drawer cannot come to
+ * disagree about what counts as an amount.
+ */
+export function amountKindOf(definition: CapabilityDef | undefined): CustomerPlanAmountKind {
   const kind = definition?.shape.kind;
-  return kind === 'metered' || kind === 'fair_use' || kind === 'quantity';
+  return kind === 'metered' || kind === 'fair_use' || kind === 'quantity' ? kind : null;
 }
 
 /**
@@ -760,7 +792,12 @@ function describeFreePlanEnding(
 function featuresFrom(rows: PlanCapabilityRow[], catalog: Record<string, CapabilityDef>): CustomerPlanFeature[] {
   return rows
     .filter((row) => row.granting && !isHiddenFromCustomer(row.capability, catalog[row.capability]))
-    .map((row) => ({ capability: row.capability, label: row.label, value: row.display }));
+    .map((row) => ({
+      capability: row.capability,
+      label: row.label,
+      value: row.display,
+      amountKind: amountKindOf(catalog[row.capability]),
+    }));
 }
 
 /**

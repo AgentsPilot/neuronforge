@@ -88,6 +88,7 @@ export const BUSINESS_OWNED_TABLES = [
    */
   'proposal_attachments',
   'proposal_signatures',
+  'refund_requests',
   // Online presence
   'smart_links',
   'website_content',

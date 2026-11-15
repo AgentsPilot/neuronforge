@@ -812,7 +812,27 @@ export function SchedulingDialog({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0 me-8 sm:me-12">
+          {/*
+            THE GUTTER THAT KEEPS NEW BOOKING OFF THE CLOSE BUTTON.
+            ───────────────────────────────────────────────────────────────────
+            `DialogContent` draws its own close X at `absolute end-4 top-4`
+            around a 16px icon, so the X's leading edge sits 32px in from the
+            end of the sheet: 16px of offset plus its own 16px of width.
+
+            This margin was `me-8 sm:me-12` — and 8 IS 32px, so on a phone the
+            two controls met with nothing between them. On `sm` the 48px left
+            16px of clear space, which is why the report is mobile-only.
+
+            Worse on a phone than the numbers suggest: below `sm` the button
+            drops its label and is a bare 14px Plus, so the thumb is aiming at
+            something small, immediately beside a target whose mis-tap closes
+            the calendar outright rather than doing nothing.
+
+            48px throughout, so the gap is the same 16px at every width. The
+            header absorbs it without a reflow: the title block beside it is
+            `flex-1 min-w-0` with `truncate`.
+          */}
+          <div className="flex items-center gap-2 flex-shrink-0 me-12">
             <button
               onClick={handleNewBooking}
               className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium text-white transition-all hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[#14B8A6] focus:ring-offset-2 focus:ring-offset-[var(--v2-surface)]"
