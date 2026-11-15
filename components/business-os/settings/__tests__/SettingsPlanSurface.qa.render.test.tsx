@@ -65,7 +65,15 @@ beforeEach(() => {
   router.replace.mockReset();
   server.plans = [];
   server.reads = 0;
-  global.fetch = jest.fn(async () => {
+  global.fetch = jest.fn(async (url: string) => {
+    /* The plan's own read, and nothing else: `PlanIncludes` GETs
+       `/api/business-os/usage`, and counting it made "how many times did we
+       read the plan" answer one too many. Excluded by exact path — see the
+       longer note in `SettingsPlanSurface.render`. */
+    if (String(url).startsWith('/api/business-os/usage')) {
+      return { ok: true, status: 200, json: async () => ({ success: true, data: null }) } as Response;
+    }
+
     const next = server.plans[Math.min(server.reads, server.plans.length - 1)];
     server.reads += 1;
     return { ok: true, status: 200, json: async () => ({ success: true, data: next }) } as Response;
