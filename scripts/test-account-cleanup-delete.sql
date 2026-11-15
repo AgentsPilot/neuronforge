@@ -582,6 +582,7 @@ inbound_review AS (
     ('refund_requests', 'refund_requests_business_fk', 'user_id'),
     ('refund_requests', 'refund_requests_contact_id_fkey', 'user_id'),
     ('refund_requests', 'refund_requests_booking_id_fkey', 'user_id'),
+    ('refund_requests', 'refund_requests_transaction_id_fkey', 'user_id'),
     ('proposal_attachments', 'proposal_attachments_business_fk', 'user_id'),
     ('proposal_attachments', 'proposal_attachments_document_id_fkey', 'user_id'),
     ('proposal_attachments', 'proposal_attachments_proposal_id_fkey', 'user_id'),
