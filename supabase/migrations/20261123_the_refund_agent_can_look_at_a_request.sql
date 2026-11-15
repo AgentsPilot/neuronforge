@@ -342,6 +342,27 @@ $settle$;
  * the login and the anonymise-blank tables, which this is not. So no
  * regeneration of the cleanup function is required by this migration.
  */
+/*
+ * LOCKED DOWN LIKE THE TWO RPCs ABOVE.
+ *
+ * `SECURITY DEFINER` means this runs with the definer's rights, so leaving
+ * EXECUTE with PUBLIC lets any signed-in client call it directly rather than
+ * only through the trigger. It writes `refund_requests.status`, so a direct
+ * caller could settle somebody's refund request out from under them.
+ *
+ * The claim and reap functions in this same file were revoked; this one was
+ * missed. `security-definer-surface.guard` caught it (rule R-a).
+ *
+ * Nothing breaks: a trigger executes as the table owner and never consults
+ * the caller's EXECUTE grant, so revoking it changes no behaviour at all.
+ *
+ * ALSO APPLIED BY 20261126, because this migration had already run in
+ * production by the time the omission was found — editing a file that has
+ * been applied changes nothing on the database.
+ */
+REVOKE EXECUTE ON FUNCTION public.settle_refund_request_on_refund() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.settle_refund_request_on_refund() TO service_role;
+
 DROP TRIGGER IF EXISTS settle_refund_request_on_refund_trigger ON public.payment_refunds;
 
 CREATE TRIGGER settle_refund_request_on_refund_trigger

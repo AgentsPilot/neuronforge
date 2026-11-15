@@ -87,8 +87,28 @@ describe('the mapping is total', () => {
      * that plugin is retired, so the capability moved onto the Business OS one
      * where every other agent action lives. Same work, same writes; what
      * changed is which plugin the plan calls.
+     *
+     * 115 from 2026-11-15, the refund work. Five, and each is a door an agent
+     * or the chat needs onto something that already existed:
+     *
+     *   refund_requests  find, aggregate and update — a client's own request
+     *                    for their money back. The assessing agent reads them
+     *                    and writes one field: what it RECOMMENDS. It cannot
+     *                    settle one, and `transactions.refund` stays
+     *                    `movesMoney` and refused on every agent path.
+     *   bookings         `refundable` — what is really left to return on a
+     *                    booking, behind the one function the client's portal
+     *                    and the owner's refund dialog already use. A read,
+     *                    and it exists because the obvious query is wrong: an
+     *                    invoiced sale carries the booking on the INVOICE, so
+     *                    matching `booking_id` alone reported "no payment" on
+     *                    a booking that was paid.
+     *   contacts         `send_portal_door` — the receptionist sending a
+     *                    client a page where they decide. It cannot carry a
+     *                    message: the door comes from a closed list and the
+     *                    words from a table with no free-text field.
      */
-    expect(pluginActions).toHaveLength(110);
+    expect(pluginActions).toHaveLength(115);
     expect(pluginActions.filter((action) => !derived.includes(action))).toEqual([]);
     expect(derived.filter((action) => !pluginActions.includes(action))).toEqual([]);
   });
