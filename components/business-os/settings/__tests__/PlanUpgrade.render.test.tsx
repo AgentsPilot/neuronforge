@@ -171,6 +171,25 @@ beforeEach(() => {
       if (answer === 'network') throw new TypeError('Failed to fetch');
       return { ok: answer.status === 200, status: answer.status, json: async () => answer.body } as Response;
     }
+    /*
+     * THE PLAN'S OWN READ, AND NOTHING ELSE.
+     *
+     * This counted EVERY non-POST fetch, which was the same thing as a plan
+     * read for as long as the plan screen fetched nothing else. `PlanIncludes`
+     * broke that: it GETs `/api/business-os/usage` to show how much of a
+     * metered allowance has been used, so a count that meant "how many times
+     * did we re-read the plan" quietly became "how many GETs happened" and
+     * read 3 where the flow does 2.
+     *
+     * Excluded by EXACT path, never a pattern: a future plan endpoint still
+     * counts, and only this known-unrelated one is skipped. The answer is a
+     * well-formed empty usage payload, so the component under test renders its
+     * normal no-figures state rather than an error path nobody asked for.
+     */
+    if (String(url).startsWith('/api/business-os/usage')) {
+      return { ok: true, status: 200, json: async () => ({ success: true, data: null }) } as Response;
+    }
+
     const next = server.plans[Math.min(server.planReads, server.plans.length - 1)];
     server.planReads += 1;
     if (next === 'fail') throw new Error('offline');
