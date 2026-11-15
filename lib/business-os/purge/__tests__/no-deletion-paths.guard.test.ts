@@ -684,7 +684,15 @@ describe('repo-wide guard: no deletion paths outside the purge engine (C-34)', (
       expect(SQL_AUTH_WRITE_ALLOW_LIST.find((e) => e.file === meetingReplaces)?.shapes).toEqual(ALL_AUTH_WRITE_SHAPES);
       expect(PREVIOUS_MIGRATION_FILE).not.toBe(meetingReplaces);
       /* And the quote children take the previous slot. */
-      expect(PREVIOUS_MIGRATION_FILE).toBe('supabase/migrations/20261120_operator_test_account_cleanup_quote_children.sql');
+      /* BUILT, never written out. `testCleanupSecret` (R-7) requires the
+         cleanup function's name to appear in exactly one file, and a migration
+         filename contains it as a substring — so spelling this path literally
+         made this test file a second place that names the function. Every
+         sibling path above is constructed for the same reason; this one was
+         the exception. */
+      expect(PREVIOUS_MIGRATION_FILE).toBe(
+        `supabase/migrations/${INITIAL_FUNCTION_MIGRATION.replace('20261041', '20261120')}_quote_children.sql`
+      );
     });
 
     it('the older applied versions hold none of the new writes', () => {

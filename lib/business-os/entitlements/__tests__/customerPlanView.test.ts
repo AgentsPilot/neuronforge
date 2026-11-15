@@ -848,7 +848,18 @@ describe('the included list is grouped by category', () => {
     const named = new Set(
       [...new Set(Object.values(catalog).map((definition) => definition.category))].filter((category) => {
         const row = groupByCategory(
-          [{ capability: Object.keys(catalog).find((id) => catalog[id].category === category)!, label: 'x', value: 'yes' }],
+          /* `amountKind: null` — this fixture asks one question, whether every
+             catalog category has a customer-facing NAME, and the field is
+             required on the type. Null is the honest value: a plain feature
+             with no figure, which is what `label: 'x'` already is. */
+          [
+            {
+              capability: Object.keys(catalog).find((id) => catalog[id].category === category)!,
+              label: 'x',
+              value: 'yes',
+              amountKind: null,
+            },
+          ],
           catalog
         )[0];
         return row.labelKey !== category;

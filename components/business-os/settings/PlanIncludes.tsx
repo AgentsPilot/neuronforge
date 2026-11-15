@@ -559,6 +559,12 @@ export function PlanCapabilityRows({
               type="button"
               aria-expanded={expanded}
               data-testid={`plan-includes-row-${group.category}`}
+              /* NOT A MONEY CONTROL. It folds a category open. See the longer
+                 note on the amount-explain toggle above: `PlanPurchase.render`
+                 counts every button that does not declare itself, so a real
+                 Choose button can never hide, and a disclosure like this one
+                 says what it is instead of being matched by name. */
+              data-money="no"
               onClick={() => setOpen(expanded ? null : group.category)}
               className="w-full flex items-center gap-3 py-3 text-start bg-transparent border-0 hover:bg-[var(--v2-surface-hover)] transition-colors"
             >
