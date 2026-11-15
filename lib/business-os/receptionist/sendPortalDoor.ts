@@ -51,6 +51,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { sendEmail } from '@/lib/notifications/emailTransport';
 import { recordEmailSend } from '@/lib/notifications/recordEmailSend';
+import { platformOrigin } from '@/lib/utils/origins';
 import { generateBookingToken } from '@/lib/services/bookingToken';
 import { getBusinessLocale } from '@/lib/services/BookingEmailService';
 import { resolveEmailBranding } from '@/lib/email/branding';
@@ -182,7 +183,19 @@ export async function sendPortalDoor(
   const locale = await getBusinessLocale(userId);
   const branding = await resolveEmailBranding(userId, locale, profile ?? undefined);
 
-  const origin = process.env.NEXT_PUBLIC_APP_URL || 'https://app.agentspilot.com';
+  /*
+   * THE RESOLVER, NEVER THE VARIABLE.
+   *
+   * This read `NEXT_PUBLIC_APP_URL || 'https://app.agentspilot.com'`, which is
+   * the exact shape `oneAddressPolicy` exists to stop: a literal fallback that
+   * is right wherever it was written and wrong everywhere else. A door is a
+   * link a CLIENT clicks — an address that resolves to the wrong host is a
+   * dead page for the one person the feature is for.
+   *
+   * `platformOrigin` knows what this environment actually is: the serving host
+   * in a browser, the deployment on Vercel, the configured value otherwise.
+   */
+  const origin = platformOrigin();
   const token = generateBookingToken(bookingId, clientEmail);
   const url =
     door === 'book'

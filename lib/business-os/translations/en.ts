@@ -3218,6 +3218,7 @@ export const en = {
      * A kind with no label here falls back to the subject, so adding a sender
      * before its label is safe.
      */
+    'crm.journey.mail_kind.self_service_link': 'A link to a page where the client decides',
     'crm.journey.mail_kind.booking_confirmed': 'the booking confirmation',
     'crm.journey.mail_kind.booking_rescheduled': 'the new time',
     'crm.journey.mail_kind.booking_cancelled': 'the booking cancellation notice',
