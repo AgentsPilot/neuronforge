@@ -201,6 +201,20 @@ export interface VectorMaturityData {
   noteKey: 'vecs.note.cold' | 'vecs.note.full' | 'vecs.note.partial';
   /** Vector keys still learning, for the partial note's list. */
   noteLearning: string[];
+  /**
+   * Vectors with nothing to read at all, as translation KEYS.
+   *
+   * The server has sent this since `InsightRepository` grew it; this local
+   * copy of the type never learned about it, so `VectorsStrip` destructured a
+   * field TypeScript said did not exist. The header above explains why this
+   * type is local rather than imported — `journeyAnchors` is genuinely
+   * optional here — but that licence is for differences that are REAL, and a
+   * field the server always sends is not one of them.
+   *
+   * Keys, not names: the client renders `insight.vector.{key}`, and an English
+   * name inside a Hebrew sentence is the bug the field was created to avoid.
+   */
+  noteDark: string[];
 }
 
 // ===========================

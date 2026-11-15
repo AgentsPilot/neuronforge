@@ -199,22 +199,7 @@ describe('no plan is described by what it withholds', () => {
   // enum is safe, an array is not, and the allow-list is what keeps the
   // difference enforced rather than assumed.
   const FEATURE_KEYS = ['amountKind', 'capability', 'label', 'value'].sort();
-  /*
-   * AN UPGRADE ROW'S FEATURES ARE A DIFFERENT SHAPE, and pinning them
-   * separately is the point rather than a concession.
-   *
-   * `included` features carry `amountKind` because the plan page splits a
-   * figure from a plain feature. An `adds` row answers "what would I gain",
-   * where the figure is already in `value` and the shape of it buys nothing —
-   * so the server never writes the field there.
-   *
-   * One allow-list across both would have to accept a key that is sometimes
-   * absent, and `toEqual` on an exact key set is the whole mechanism here: the
-   * moment it tolerates a missing key it tolerates an extra one too, and an
-   * exclusion array could appear in the shape that was not checked. Two exact
-   * lists keep both shapes closed.
-   */
-  const UPGRADE_FEATURE_KEYS = ['capability', 'label', 'value'].sort();
+
   // SA R4-4 asked for the badge object's keys to join this sweep. It became moot:
   // the user dropped the pill beside the plan heading, so the payload carries no
   // `badge` at all — and VIEW_KEYS above would now REJECT one, which is stronger
@@ -271,7 +256,7 @@ describe('no plan is described by what it withholds', () => {
           // exclusion array nested inside an upgrade row is the same defect one
           // level further down.
           for (const feature of row.features) {
-            expect(Object.keys(feature).sort()).toEqual(UPGRADE_FEATURE_KEYS);
+            expect(Object.keys(feature).sort()).toEqual(FEATURE_KEYS);
           }
         }
       }

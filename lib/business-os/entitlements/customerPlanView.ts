@@ -854,7 +854,17 @@ function buildUpgrade(
     if (!row.granting) continue;
 
     if (!mine || !mine.granting) {
-      adds.push({ capability: row.capability, label: row.label, value: row.display });
+      /* `amountKind` like every other feature: the field is REQUIRED on
+         `CustomerPlanFeature`, and leaving it off here was the one producer
+         that did not supply it. A comparison row describes the same kind of
+         thing as an included one, so it answers the same question about where
+         its figure comes from. */
+      adds.push({
+        capability: row.capability,
+        label: row.label,
+        value: row.display,
+        amountKind: amountKindOf(catalog[row.capability]),
+      });
       continue;
     }
 
