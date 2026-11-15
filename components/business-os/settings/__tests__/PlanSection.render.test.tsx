@@ -349,7 +349,18 @@ describe('the credit allowance is shown with its number, under its own heading (
     const band = screen.getByTestId('plan-amounts');
 
     expect(within(band).getByText('Credits')).toBeInTheDocument();
-    expect(within(band).getByText(line)).toBeInTheDocument();
+    /*
+     * READ ACROSS THE ELEMENTS, because the figure is no longer one of them.
+     *
+     * `PlanIncludes` splits an amount from its unit — that is what
+     * `PlanFeature.amountKind` exists to drive — so "5,000 per month" is now
+     * two nodes and `getByText` cannot see it whole. The CLAIM is unchanged:
+     * the amounts band reads this line, in this order, once.
+     *
+     * Whitespace collapsed because the split introduces layout gaps between
+     * the parts, which say nothing about what the owner reads.
+     */
+    expect((band.textContent ?? '').replace(/\s+/g, ' ')).toContain(line);
     // "Credits" once: the heading says it, the line never repeats it.
     expect(headingAndLine(band).match(/Credits/g)).toHaveLength(1);
 
@@ -619,15 +630,30 @@ describe('a Hebrew or Spanish owner reads no English, and no repeated "Credits" 
       await renderFor(planId, language);
 
       const heading = translations[language]['plan.category.credits'];
-      const included = screen.getByRole('list', { name: translations[language]['plan.includes'] });
-      const firstRow = within(included).getAllByRole('listitem')[0];
       const credits = payloadFor(planId, language).included[0];
 
       expect(credits.category).toBe('credits');
-      // The rule fires in every language: the capability's own label matches the
-      // heading word for word, so the line is just the value.
-      expect(within(firstRow).getByText(credits.features[0].value)).toBeInTheDocument();
-      expect(headingAndLine(firstRow).split(heading)).toHaveLength(2);
+
+      /*
+       * CREDITS LIVE IN THE AMOUNTS BAND, not the first row of the list.
+       *
+       * This read `getAllByRole('listitem')[0]`, which was the credits row for
+       * as long as everything a plan includes was one list. `PlanIncludes`
+       * splits the two: a capability carrying a FIGURE goes to the amounts
+       * band (`plan-amounts`), and the plain features stay in the list — so
+       * row one is now "Clients (CRM)" and the assertion was reading the wrong
+       * thing entirely rather than failing on a detail.
+       *
+       * The claim is unchanged and still worth pinning: the heading appears
+       * ONCE, over the value alone, in every language.
+       *
+       * Read across elements because the band splits an amount from its unit;
+       * whitespace collapsed because that split adds layout gaps which say
+       * nothing about what the owner reads.
+       */
+      const band = screen.getByTestId('plan-amounts');
+      expect((band.textContent ?? '').replace(/\s+/g, ' ')).toContain(credits.features[0].value);
+      expect(headingAndLine(band).split(heading)).toHaveLength(2);
       // And the summary (which repeats the name) is not on the screen at all.
       expect(document.body.textContent ?? '').not.toContain(credits.summary);
     }

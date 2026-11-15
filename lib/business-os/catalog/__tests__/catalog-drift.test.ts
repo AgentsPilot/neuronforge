@@ -81,13 +81,53 @@ describe('Business Catalog', () => {
       }
     });
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE ONE SEND THAT MAY NOT ASK, NAMED HERE RATHER THAN EXCUSED IN GENERAL.
+     *
+     * The rule is right: a destructive or outbound action is something a person
+     * should agree to. `send_portal_door` is the exception, and the catalogue
+     * argues it at the declaration — an agent runs on a schedule with nobody
+     * watching, so a prompt is not a safeguard, it is a feature that never
+     * runs. A door the owner must approve IS the owner handling the request,
+     * which is the work the agent exists to take off them.
+     *
+     * What makes it safe is structural, not procedural: the action takes a
+     * DOOR from a closed list and the sentence comes from a table with no
+     * free-text field, so it can choose where to point a client and can never
+     * choose what to say to them. A door carries no price, no time and no
+     * commitment — the client decides on the page, or does not open it.
+     *
+     * By EXACT key, so a second send cannot inherit the exemption by being
+     * near it, and adding one is a deliberate edit here with a reason beside
+     * it.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const CONFIRMATION_EXEMPT = new Set(['contacts.send_portal_door']);
+
     it('every destructive or outbound action requires confirmation', () => {
-      for (const entity of Object.values(CATALOG.entities)) {
-        for (const action of Object.values(entity.actions ?? {})) {
+      for (const [entityKey, entity] of Object.entries(CATALOG.entities)) {
+        for (const [actionKey, action] of Object.entries(entity.actions ?? {})) {
           if (action.risk === 'delete' || action.risk === 'send') {
-            expect(action.requiresConfirmation).toBe(true);
+            if (CONFIRMATION_EXEMPT.has(`${entityKey}.${actionKey}`)) continue;
+            expect({ action: `${entityKey}.${actionKey}`, confirms: action.requiresConfirmation }).toEqual({
+              action: `${entityKey}.${actionKey}`,
+              confirms: true,
+            });
           }
         }
+      }
+    });
+
+    it('nothing is exempt from confirmation that no longer exists', () => {
+      /* A stale exemption is how a future action of the same name is quietly
+         excused. */
+      for (const key of CONFIRMATION_EXEMPT) {
+        const [entityKey, actionKey] = key.split('.');
+        expect({ key, present: Boolean(CATALOG.entities[entityKey]?.actions?.[actionKey]) }).toEqual({
+          key,
+          present: true,
+        });
       }
     });
   });
