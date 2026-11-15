@@ -37,6 +37,31 @@
 import fs from 'fs';
 import path from 'path';
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE SEAM IS STUBBED, BECAUSE THE PASSING CASES REALLY DO CARRY ON.
+ *
+ * Two cases below assert what the gate does NOT refuse — the chat path and a
+ * send — so execution continues past it and reaches the database. The comment
+ * on the first said "it will still fail, there is no database here", and that
+ * was the wrong half of the truth: there is no database, so it tried to open a
+ * socket to one. `jest-gate-check` G8 caught two refused connections to
+ * test.supabase.co, and a unit test that only passes because a call failed is
+ * testing error handling by accident.
+ *
+ * Throwing from `from` is enough: the assertions ask only that the rejection is
+ * not the movesMoney refusal, and this gives them a different, honest failure
+ * without a network call. CLAUDE.md § No test may reach the network.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+jest.mock('@/lib/supabaseServer', () => ({
+  supabaseServer: {
+    from: () => {
+      throw new Error('no database in a unit test');
+    },
+  },
+}));
+
 import { executeMutate } from '../mutate/MutateExecutor';
 import { CATALOG } from '@/lib/business-os/catalog';
 import type { MutateQuery } from '../types';
