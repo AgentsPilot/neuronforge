@@ -961,7 +961,26 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
       refunded: entry.refunded,
       currency: entry.currency,
       date: entry.date,
-      bookingId: null,
+      /*
+       * THE BOOKING BEHIND THE INVOICE, not a flat null.
+       *
+       * This said `bookingId: null` outright, which was true of the
+       * TRANSACTION and false of the money: a website sale writes `booking_id`
+       * on the transaction, while an invoiced booking leaves it null and
+       * carries the booking on the INVOICE. `bookingOfInvoice` already follows
+       * that hop for the booking-grouped branch above; this branch did not
+       * consult it.
+       *
+       * The cost was not cosmetic. Anything matching money to a booking found
+       * nothing for every invoiced sale — the refund story in the money drawer
+       * came back empty for the one refund it was built to explain, because
+       * the request named the booking and the item claimed to have none.
+       *
+       * The same one-hop mistake `refundableBookings.ts` documents, and the
+       * same one that made the refund agent report "no payment recorded" on a
+       * booking marked paid.
+       */
+      bookingId: entry.invoiceId ? (bookingOfInvoice.get(entry.invoiceId) ?? null) : null,
       contactId:
         contactOfInvoice.get(entry.invoiceId ?? '') ??
         contactOfTransaction.get(entry.transactionIds[0]) ??

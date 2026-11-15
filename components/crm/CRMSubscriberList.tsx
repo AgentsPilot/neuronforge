@@ -29,6 +29,7 @@ import { Mail, MailCheck, MailX, Clock, Loader2, ArrowRight, User } from 'lucide
 
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import { CRMLoadingState } from '@/components/crm/CRMLoadingState';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
 
@@ -45,6 +46,27 @@ interface Subscriber {
   confirmed_at: string | null;
   promoted_contact_id: string | null;
   mailable: boolean;
+}
+
+/**
+ * How this person arrived, in words rather than in the column's own value.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The row printed `source` raw, so an owner read `website_booking`, `consent`
+ * and `footer_form` — three different vocabularies, none of them language, all
+ * of them ours rather than theirs.
+ *
+ * `source` is written by several flows and by the contacts table too, so the
+ * set is open. The fallback is therefore a real sentence rather than the raw
+ * value: a source nobody has translated yet reads as "agreed to be emailed",
+ * which is true of every row on this screen by definition, instead of leaking
+ * a snake_case token onto a client-facing-looking list.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function sourcePhrase(source: string | null | undefined, t: (key: string) => string): string {
+  const key = `crm.subscribers.source.${String(source ?? '').trim() || 'unknown'}`;
+  const phrase = t(key);
+  return phrase !== key ? phrase : t('crm.subscribers.source.unknown');
 }
 
 const STATUS_ICON = {
@@ -75,13 +97,23 @@ export function CRMSubscriberList({ onPromoted }: { onPromoted?: () => void }) {
   /*
    * ON by default, which is the opposite of what it was.
    *
-   * The list is now "everyone you may email", and on a real account most of
-   * those people are already contacts — they consented while booking or
-   * enquiring. Opening with them hidden is how this screen came to show zero
-   * rows for an account with nine consented people. Off is a narrowing the
-   * owner chooses: show me only the ones I have not started working yet.
+   * The list is "everyone you may email", and on a real account most of those
+   * people are already contacts — they consented while booking or enquiring.
+   *
+   * ── IT OPENS CLOSED AGAIN, AND WHY THAT IS SAFE NOW ───────────────────────
+   * Owner decision 2026-11-14: a contact already in the pipeline appearing on
+   * this screen read as a mistake — "why do I get him, he is in the pipeline".
+   * The honest default is therefore the narrower one: people you may email and
+   * have NOT started working yet.
+   *
+   * That default is exactly what once made this screen show zero rows for an
+   * account with nine consented people, so it does not go back alone. The
+   * empty state below now distinguishes "nobody has agreed to anything" from
+   * "everyone who agreed is already in your CRM", and the second points at the
+   * toggle that reveals them. The old failure was a blank screen with no way
+   * out of it; what is restored is the default, not the dead end.
    */
-  const [includePromoted, setIncludePromoted] = useState(true);
+  const [includePromoted, setIncludePromoted] = useState(false);
   const [promoting, setPromoting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -136,10 +168,17 @@ export function CRMSubscriberList({ onPromoted }: { onPromoted?: () => void }) {
     });
 
   if (loading) {
+    /*
+     * It SAYS what it is loading.
+     *
+     * A bare spinner was defensible while the CRM page covered this tab with
+     * its own "Loading contacts…" — one of them had to be wrong, and the page
+     * won. Now that the page no longer holds this view behind a contacts fetch
+     * it has no use for, this spinner is the only one the owner sees here, so
+     * it names its own subject like the tasks list does.
+     */
     return (
-      <div className="flex justify-center p-12">
-        <Loader2 className="h-5 w-5 animate-spin text-[var(--v2-text-muted)]" />
-      </div>
+      <CRMLoadingState label={t('crm.subscribers.loading')} />
     );
   }
 
@@ -151,24 +190,71 @@ export function CRMSubscriberList({ onPromoted }: { onPromoted?: () => void }) {
         settings panels and the briefing card use, so it reads as the one
         control the product already has.
       */}
-      <div className="flex items-center gap-2">
-        <Switch
-          id="include-promoted"
-          checked={includePromoted}
-          onCheckedChange={setIncludePromoted}
-        />
-        <label
-          htmlFor="include-promoted"
-          className="cursor-pointer text-sm text-[var(--v2-text-secondary)]"
-        >
-          {t('crm.subscribers.show_promoted')}
-        </label>
+      {/*
+        THIS VIEW'S OWN HEADING.
+        ─────────────────────────────────────────────────────────────────────
+        The page header says "client list — manage your contacts and
+        relationships", which is the CONTACTS view talking. Over this list it
+        is wrong twice: these are not all contacts, and the screen is not about
+        relationships but about permission.
+
+        The sentence is the one the empty state already carried, kept now that
+        there are rows — which is exactly when an owner stops being able to
+        work out what they are looking at.
+      */}
+      {/*
+        ONE HEADER ROW: what this list is, and the one control over it.
+
+        The switch had a line of its own under the two-line heading, which gave
+        the screen three stacked bands of text before the first person in it.
+        Beside the heading it costs no vertical space and reads as part of the
+        same statement: here is the audience, and here is whether the people
+        already in the CRM are in it.
+
+        `flex-wrap` rather than a breakpoint: the switch drops under the
+        heading only when there is genuinely no room for it, which is the same
+        answer at any width. `justify-between` is logical, so the switch sits
+        left in Hebrew without a second rule.
+      */}
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-[var(--v2-text-primary)]">
+            {t('crm.subscribers.title')}
+          </h2>
+          <p className="mt-0.5 text-sm text-[var(--v2-text-secondary)]">
+            {t('crm.subscribers.subtitle')}
+          </p>
+        </div>
+
+        {/* `pt-0.5` so it rests on the TITLE's line rather than above it. */}
+        <div className="flex shrink-0 items-center gap-2 pt-0.5">
+          <Switch
+            id="include-promoted"
+            checked={includePromoted}
+            onCheckedChange={setIncludePromoted}
+          />
+          <label
+            htmlFor="include-promoted"
+            className="cursor-pointer text-sm text-[var(--v2-text-secondary)]"
+          >
+            {t('crm.subscribers.show_promoted')}
+          </label>
+        </div>
       </div>
 
       {subscribers.length === 0 ? (
+        /*
+          TWO EMPTY STATES, because they mean opposite things.
+
+          "Nobody has agreed to be emailed" is a business fact and the owner's
+          next move is to start collecting consent. "Everyone who agreed is
+          already in your CRM" is a FILTER, and the next move is one click on
+          the switch above. Saying the first when the second is true is the
+          blank screen this default caused before.
+        */
         <div className="p-12 text-center text-[var(--v2-text-muted)]">
           <Mail className="mx-auto mb-4 h-10 w-10 opacity-40" />
-          <p>{t('crm.subscribers.empty')}</p>
+          <p>{includePromoted ? t('crm.subscribers.empty') : t('crm.subscribers.empty_filtered')}</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -187,15 +273,20 @@ export function CRMSubscriberList({ onPromoted }: { onPromoted?: () => void }) {
                   {s.name && (
                     <div className="truncate text-sm text-[var(--v2-text-secondary)]">{s.email}</div>
                   )}
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--v2-text-muted)]">
+                  {/*
+                    TWO QUESTIONS, TWO LINES.
+                    ───────────────────────────────────────────────────────
+                    One slot used to carry both "איש קשר" (who they are) and
+                    "אושר" (the state of their consent), in the same position
+                    and the same styling, so neither read clearly. The status
+                    answers whether you may write to them; the line beneath
+                    answers how they got here and when.
+                  */}
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                     <span className={`inline-flex items-center gap-1 ${STATUS_TONE[s.status]}`}>
                       <Icon className="h-3.5 w-3.5" />
                       {t(`crm.subscribers.status_${s.status}`)}
                     </span>
-                    <span>
-                      {t('crm.subscribers.subscribed_on')} {formatDate(s.subscribed_at)}
-                    </span>
-                    <span>{s.source}</span>
                     {/*
                       Shown only where the two disagree — confirmed here but not
                       mailable, because consent was withdrawn somewhere this
@@ -205,6 +296,12 @@ export function CRMSubscriberList({ onPromoted }: { onPromoted?: () => void }) {
                     {s.status === 'confirmed' && !s.mailable && (
                       <span className="text-amber-600">{t('crm.subscribers.not_mailable')}</span>
                     )}
+                  </div>
+
+                  <div className="mt-1 text-xs text-[var(--v2-text-muted)]">
+                    {sourcePhrase(s.source, t)}
+                    {' · '}
+                    {t('crm.subscribers.subscribed_on')} {formatDate(s.subscribed_at)}
                   </div>
                 </div>
 

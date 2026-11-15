@@ -1,0 +1,151 @@
+[
+  {
+    "step_id": "step1",
+    "id": "step1",
+    "type": "action",
+    "name": "Find the refund requests nobody has looked at",
+    "description": "THE AGENT'S WHOLE INPUT, and the status is the only filter it needs. A request is 'submitted' from the moment the client presses send on the form until something answers it. The moment this agent writes its assessment the row becomes 'awaiting_owner'; the moment the owner refunds, declines or marks it handled it becomes terminal. None of those is 'submitted', so nothing is ever picked up twice — and the OWNER always wins a race, because a row they have answered is no longer in this set. Oldest first: somebody who asked on Monday waits less than somebody who asked today.",
+    "plugin": "business-os",
+    "action": "find_refund_requests",
+    "params": {
+      "limit": 20,
+      "filters": [
+        {
+          "op": "eq",
+          "field": "status",
+          "value": "submitted"
+        }
+      ],
+      "order_by": [
+        {
+          "dir": "asc",
+          "field": "created_at"
+        }
+      ]
+    },
+    "output_variable": "requests",
+    "output_schema": {
+      "type": "object"
+    }
+  },
+  {
+    "step_id": "step2",
+    "id": "step2",
+    "type": "scatter_gather",
+    "name": "Look at each one",
+    "description": "One request at a time. A batch prompt would let one client's wording colour another's answer, and the owner reads these as separate decisions because that is what they are.",
+    "scatter": {
+      "input": "{{requests.rows}}",
+      "itemVariable": "current_request",
+      "continueOnError": true,
+      "steps": [
+        {
+          "step_id": "step3",
+          "id": "step3",
+          "type": "action",
+          "name": "What is still refundable on this booking",
+          "description": "THE FACTS ABOUT THE MONEY, FROM THE ONE FUNCTION EVERYONE ELSE USES. This asked `find_transactions where booking_id = <booking>` and found nothing on a booking whose `payment_status` was `paid` — because that is only how a WEBSITE sale is stored. An invoiced sale puts the booking on the invoice and the payment carries `invoice_id` alone, one hop away and invisible to that filter. `refundableBookings.ts` had already named it: \"Matching only `booking_id` is the bug `resolveRefundTargets` documents: it reported 'no payment'.\" The agent then told the owner in writing that nothing had been paid. `refundable_bookings` is the same call the client's portal and the owner's refund dialog make, so all three can never disagree about the same money.",
+          "plugin": "business-os",
+          "action": "refundable_bookings",
+          "params": {
+            "data": {
+              "contact_id": "{{current_request.contact_id}}",
+              "booking_id": "{{current_request.booking_id}}"
+            }
+          },
+          "output_variable": "money",
+          "output_schema": {
+            "type": "object"
+          }
+        },
+        {
+          "step_id": "step4",
+          "id": "step4",
+          "type": "action",
+          "name": "What the booking was, and whether it has happened",
+          "description": "Read separately from the payment because a booking with no payment is still a booking: the client may be asking about something they were never charged for, and the owner needs to be told that rather than shown an empty card. ORDERED EVEN THOUGH IT FETCHES ONE ROW. `limit` without `order_by` asks the database to pick, and the database is free to pick differently between runs. Here the id makes it a single row either way, but the rule is worth keeping whole: the guard enforces it on every capped find, because the one exempted today is the one that grows a second match tomorrow.",
+          "plugin": "business-os",
+          "action": "find_bookings",
+          "params": {
+            "limit": 1,
+            "filters": [
+              {
+                "op": "eq",
+                "field": "id",
+                "value": "{{current_request.booking_id}}"
+              }
+            ],
+            "order_by": [
+              {
+                "dir": "desc",
+                "field": "created_at"
+              }
+            ]
+          },
+          "output_variable": "booking",
+          "output_schema": {
+            "type": "object"
+          }
+        },
+        {
+          "step_id": "step5",
+          "id": "step5",
+          "type": "ai_processing",
+          "name": "Decide what to recommend",
+          "description": "IT ADVISES, IT DOES NOT ACT. Its whole output is four fields on the request; the owner presses a button and `RefundService` decides what is actually possible. `transactions.refund` is marked `movesMoney` and refused outright on any automated path, so this cannot issue the refund it recommends even if it were asked to. TWO THINGS IT IS TOLD IT DOES NOT KNOW, because both are failure modes in this kind of call: the business has no recorded refund policy, so it must not invent terms in the owner's name; and the clock only says whether the appointment time has passed, not whether the work was done. `needs_owner` is a first-class answer, not a failure — a recommendation the owner has to think about is worth more than one that sounds certain and is made up.",
+          "prompt": "A client of a small business has asked for a refund. You advise the OWNER.\n\nYou do not issue refunds. Nothing you write is sent to the client by anything automatic.\n\nTHE REQUEST\n  asked for: {{current_request.amount_requested}} {{current_request.currency}}\n  reason they chose: {{current_request.reason}}\n  what they wrote: {{current_request.note}}\n  arrived: {{current_request.created_at}}\n  how it arrived: {{current_request.source}}\n\nTHE BOOKING, AND WHAT YOUR DIARY SAYS HAPPENED\n  when it was:      {{booking.rows[0].start_time}}\n  the diary says:   {{booking.rows[0].meeting_status}}\n  booking status:   {{booking.rows[0].status}}\n  who marked it:    {{booking.rows[0].outcome_by}}\n\n  `meeting_status` is the business's own record of what happened:\n    held     somebody marked this as having TAKEN PLACE\n    no_show  the client did not come\n    (empty)  nobody has marked it either way\n\nALL OF IT, IN CASE SOMETHING ABOVE IS EMPTY\n{{booking.rows}}\n\nWHAT IS STILL REFUNDABLE ON IT\n  a payment was found: {{money.row.found}}\n{{money.row.bookings}}\n\n`refundable` is what is LEFT after anything already returned, in that\nbooking's own currency. It is the ceiling: never recommend more.\n`paid` is what they originally paid, which is not the same number once a\npart refund has happened.\n\nWHAT YOU DO NOT KNOW\n- This business has not recorded a refund policy. Do not invent one, and never\n  state terms (\"our 14-day policy\") as though they existed.\n- Whether the work was delivered, WHERE THE DIARY IS EMPTY. If\n  `meeting_status` says `held` or `no_show`, that IS the business's record and\n  you should use it — this line used to say the opposite and made the agent\n  ignore the one fact the owner needed.\nIf the decision turns on something you do not know, answer \"needs_owner\" and\nsay plainly what the owner needs to check. That is a good answer, not a failure.\n\nSAY SO WHEN THE TWO SIDES DISAGREE\nThe client gives a reason and the diary records an outcome, and they do not\nalways match. A client who chose \"did not attend\" against a session marked\n`held` is the whole decision, and the owner must not have to go and look it up:\nlead with it, in one sentence, in plain words. Do not call the client a liar —\nsomebody may simply have marked the diary wrong. State both sides and let the\nowner judge.\n\nRULES\n- Never recommend more than `refundable`. That figure is already the\n  remainder: a payment partly returned has only what is left.\n- \"refund_full\" means everything still refundable. Put that number in amount.\n- \"refund_partial\" needs a number AND a reason for that number specifically.\n- \"decline\" needs a reason the owner would be willing to say out loud.\n- If `a payment was found` is false, there is no payment recorded against\n  this booking. Answer \"needs_owner\" and say plainly that none is\n  recorded, so the owner can check whether it was paid another way.\n\nWRITE IT THE WAY A PERSON WOULD SAY IT\nThe owner runs a small business. They have never seen our database and do not\nknow our words for things.\n- NEVER use our vocabulary: settled, succeeded, transaction, ledger, record,\n  status, entity, row. Say \"payment\", \"paid\", \"invoice\", \"the session\".\n- NEVER transliterate an English word into their language. A real answer in\n  Hebrew said \"תשלום מסומן כסטלֵט\" — \"a payment marked as settlet\" — which is\n  not a word, and told the owner nothing.\n- Write the sentence you would say out loud to them across a desk. If a\n  bookkeeper would not say it, do not write it.\n- Plain and short beats precise and technical. \"לא רשום אצלנו תשלום על הפגישה\n  הזאת\" is the whole thought; it does not need our schema in it.\n\nANSWER WITH JSON ONLY:\n{\n  \"recommendation\": \"refund_full\" | \"refund_partial\" | \"decline\" | \"needs_owner\",\n  \"amount\": number | null,\n  \"reasoning\": \"two or three sentences FOR THE OWNER, in their language\",\n  \"client_message_draft\": \"a short reply to the client, in the language they wrote in, that the owner can edit and send\"\n}",
+          "output_variable": "assessment",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "recommendation": {
+                "type": "string",
+                "enum": [
+                  "refund_full",
+                  "refund_partial",
+                  "decline",
+                  "needs_owner"
+                ]
+              },
+              "amount": {
+                "type": "number"
+              },
+              "reasoning": {
+                "type": "string"
+              },
+              "client_message_draft": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "recommendation",
+              "reasoning"
+            ]
+          }
+        },
+        {
+          "step_id": "step6",
+          "id": "step6",
+          "type": "action",
+          "name": "Write it down and hand the request to the owner",
+          "description": "ONE WRITE, AND IT IS WHAT MAKES THE CARD APPEAR. `awaiting_owner` is the status the `refund_requested` gap renders, so this line is both the record of what the agent thinks and the thing that puts it in front of a person. It cannot write a terminal status: the action's field list allows `status`, and the catalogue's own comment says the terminal answers are a person's to give. If the owner has already answered while this was thinking, the row is no longer 'submitted' and this write simply finds nothing — which is the owner winning the race, by design. THE KEY IS `target_id`, NOT `target`. The executor builds the mutate query with `parameters.target_id ? { target: { id: ... } } : {}` — so a key named `target` is not renamed, it is DROPPED, and the write arrives with no row to write to. It failed with 'needs an explicit target id' while the plan plainly contained a target; the name was the whole bug. NOTE ALSO THE ABSENCE OF `assessed_at`. It used to be written here as a `now` token — the only one in the whole catalogue — and the pilot has no such variable, so every run died with an unresolved-root error AFTER the model had already produced its assessment. (Spelled without braces on purpose: the variable guard reads descriptions too, and rightly — a plan is one document, and a token in a comment is still a token in the file.) A plan is static JSON; it cannot know the time. The database stamps it instead, from the same statement that sets the recommendation, so the two can never disagree.",
+          "plugin": "business-os",
+          "action": "update_refund_requests",
+          "params": {
+            "target_id": "{{current_request.id}}",
+            "data": {
+              "status": "awaiting_owner",
+              "recommendation": "{{assessment.recommendation}}",
+              "recommended_amount": "{{assessment.amount}}",
+              "reasoning": "{{assessment.reasoning}}",
+              "client_message_draft": "{{assessment.client_message_draft}}"
+            }
+          }
+        }
+      ]
+    },
+    "gather": {
+      "operation": "collect"
+    }
+  }
+]

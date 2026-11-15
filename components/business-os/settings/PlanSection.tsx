@@ -76,7 +76,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { ArrowRight, Check, Loader2, Sparkles } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, Loader2, Sparkles } from 'lucide-react';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 // Display only, and a pure file with no import (P-5a.2): a well-formed
@@ -86,8 +86,10 @@ import { createLogger } from '@/lib/logger';
 
 import { readMyPlan, type PlanDrawerRead, type PlanRead } from './planDrawerReads';
 import type { PlanPayload, PlanSentence, PlanUpgradeView } from './planPayloadTypes';
-import { CategoryRowText, Notice, PlanBillingNotices, PlanIncludedList, fill, priceLine, renderSentence } from './planText';
+import { CategoryRowText, Notice, PlanBillingNotices, fill, priceLine, renderSentence } from './planText';
+import { PlanAmounts, PlanCapabilityRows, splitIncluded } from './PlanIncludes';
 import { PlanFlowStatus } from './PlanFlowStatus';
+import { TabFooter } from './TabFooter';
 import { PlanManage } from './PlanManage';
 import { UpgradeModal } from './UpgradeModal';
 import { useUpgradeModalInlineHost } from './UpgradeModalProvider';
@@ -292,17 +294,62 @@ export function PlanSection({
   }
 
   const compare = upgradeModalView(plan);
+  /* Figures and capabilities, told apart by the catalog shape the server sends
+     with each feature — never by a capability id. See `splitIncluded`. */
+  const includes = splitIncluded(plan);
 
   return (
     <div className="space-y-5" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* What you are on */}
       <div>
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="text-base text-[var(--v2-text-primary)]">{plan.name}</span>
-          <span className="text-sm text-[var(--v2-text-muted)]">{priceLine(plan, t)}</span>
-          {/* No plan pill here (user decision, 2026-09-27): the plan name is
-              already the first thing on this line, so a pill beside it repeats it.
-              The one pill lives in the chrome, beside the logo. */}
+        {/*
+          THE PLAN IS THE HEADING, ITS STATE IS A PILL BESIDE IT.
+          ─────────────────────────────────────────────────────────────────────
+          Name and price used to share one line at nearly one weight, so the
+          first thing on a screen called "Your plan" did not look like an
+          answer to it. The name now carries the weight; what it costs and
+          whether it ends are the two facts about it, as pills.
+
+          Still no PLAN pill (user decision, 2026-09-27): these say free / a
+          price / no end date, never the plan's own name, which is already the
+          heading. The one plan pill lives in the chrome beside the logo.
+        */}
+        <h3 className="text-xl font-bold tracking-tight text-[var(--v2-text-primary)] m-0">
+          {plan.name}
+        </h3>
+        <div className="flex items-center gap-1.5 flex-wrap mt-2">
+          {/*
+            TWO PILLS, AND ONLY THE FIRST IS COLOURED.
+            ───────────────────────────────────────────────────────────────────
+            What the plan costs is the good news on a free plan, so it takes
+            the status-success family — defined in BOTH themes
+            (`--v2-status-success-*`), unlike `--v2-success`, which is one
+            colour and would sit on the wrong ground in dark mode.
+
+            A price is not good news or bad, so a paid plan's pill stays
+            neutral, and so does the end-date fact beside it. Three coloured
+            pills in a row would be a traffic light with nothing to report.
+          */}
+          <span
+            className="inline-flex items-center h-6 px-2.5 rounded-full text-xs font-semibold"
+            style={
+              plan.free
+                ? { background: 'var(--v2-status-success-bg)', color: 'var(--v2-status-success-text)' }
+                : { background: 'var(--v2-surface)', color: 'var(--v2-text-primary)' }
+            }
+          >
+            {plan.free ? t('plan.price.free') : priceLine(plan, t)}
+          </span>
+          {/* Only where it is true, and only as its own fact: a free plan with
+              an end date says so through `endsWhen` below, as it always did. */}
+          {plan.free && plan.accessEndsAt === null && (
+            <span
+              className="inline-flex items-center h-6 px-2.5 rounded-full text-xs font-medium"
+              style={{ background: 'var(--v2-surface)', color: 'var(--v2-text-secondary)' }}
+            >
+              {t('plan.state.no_end')}
+            </span>
+          )}
         </div>
         {sentence(plan.endsWhen) && (
           <p className="text-xs text-[var(--v2-text-muted)] mt-1">{sentence(plan.endsWhen)}</p>
@@ -325,13 +372,50 @@ export function PlanSection({
           change is something the customer has already read once. */}
       {sentence(plan.whenThisChanges) && <Notice>{sentence(plan.whenThisChanges)}</Notice>}
 
-      {/* What you have */}
-      <div>
-        <h4 className="text-xs uppercase tracking-wide text-[var(--v2-text-muted)] mb-2">
-          {t('plan.includes')}
-        </h4>
-        <PlanIncludedList plan={plan} t={t} noteTestIdPrefix="plan-category-note-" />
-      </div>
+      {/*
+        WHAT YOU HAVE, IN TWO PARTS.
+        ───────────────────────────────────────────────────────────────────────
+        The figures first — what is spent, what the ceilings are, how many
+        seats — because they are what an owner opens this drawer to check and
+        they used to be clauses inside sentences. Then the capabilities, one
+        row per category, each opening to show what is in it.
+
+        The split is `splitIncluded`, which reads the catalog shape the server
+        sends with every feature. Nothing here knows what credits are.
+      */}
+      {includes.amounts.length > 0 && (
+        <PlanAmounts
+          amounts={includes.amounts}
+          t={t}
+          language={language}
+          noteTestIdPrefix="plan-category-note-"
+        />
+      )}
+
+      {/*
+        COLLAPSED (owner decision, 2026-11-15).
+        ───────────────────────────────────────────────────────────────────────
+        The figures above answer the question this drawer is opened with. What
+        the plan can DO is a longer answer, and ten category rows under them
+        pushed the one action off the screen. `<details>` is the same control
+        the Settings pop-up already uses for this exact list, so the two
+        surfaces open the same way.
+      */}
+      <details data-testid="plan-includes" className="group">
+        <summary className="flex items-center gap-2 cursor-pointer list-none text-xs uppercase tracking-wide text-[var(--v2-text-muted)] rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)]">
+          <span className="flex-1">{t('plan.includes')}</span>
+          <span className="tabular-nums">{includes.groups.length}</span>
+          <ChevronDown className="w-4 h-4 transition-transform group-open:rotate-180" aria-hidden="true" />
+        </summary>
+        <div className="mt-2">
+          <PlanCapabilityRows
+            groups={includes.groups}
+            t={t}
+            isRTL={isRTL}
+            noteTestIdPrefix="plan-category-note-"
+          />
+        </div>
+      </details>
 
       {/* The plan above, as information. Its own footer no longer says
           "Available to choose." once the server sends a purchase view: the Choose
@@ -350,19 +434,50 @@ export function PlanSection({
           UI never builds a table itself. */}
       {(plan.plans?.length ?? 0) > 0 && !processing && compare.available && (
         <>
-          <button
-            type="button"
-            onClick={() => setCompareOpen(true)}
-            aria-haspopup="dialog"
-            data-testid="plan-compare-open"
-            // LF-1 (live test 2026-10-20): the app's own primary button, on the admin
-            // theme's --v2-primary like every other one; no gradient, no darker shade
-            // (the theme provider does not set it, so it fell back to the default indigo).
-            className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[var(--v2-primary)] hover:opacity-90 rounded-[var(--v2-radius-button)] shadow-[var(--v2-shadow-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]"
-          >
-            <Sparkles aria-hidden="true" className="w-4 h-4 shrink-0" />
-            <span>{t(compare.hasActions ? 'upgrade_modal.open_see_plans' : 'upgrade_modal.open_compare')}</span>
-          </button>
+          {/*
+            IN THE DRAWER'S FIXED FOOTER, where every other drawer puts its
+            action.
+            ─────────────────────────────────────────────────────────────────
+            It was the last thing in the scroll body, so on a plan with a long
+            "what you have" list the one action on the screen was below the
+            fold: the owner had to scroll a page of information to reach the
+            button that shows them the other plans.
+
+            `TabFooter` portals into the slot `SettingsDrawer` renders after
+            the scroll body (its own §THE FIXED FOOTER), which is the same
+            mechanism the business-profile and invoice tabs use for Save. It
+            needs no prop on the drawer, and where there is no slot it falls
+            back to an inline bordered row, so this stays correct if the
+            section is ever rendered outside one.
+
+            The `UpgradeModal` stays in the normal tree: only the button
+            moves.
+          */}
+          <TabFooter>
+            <button
+              type="button"
+              onClick={() => setCompareOpen(true)}
+              aria-haspopup="dialog"
+              data-testid="plan-compare-open"
+              // LF-1 (live test 2026-10-20): the app's own primary button, on the admin
+              // theme's --v2-primary like every other one; no gradient, no darker shade
+              // (the theme provider does not set it, so it fell back to the default indigo).
+              //
+              // 2026-11-15: and the LIFT the rest of the platform's primaries wear.
+              // `hover:opacity-90` faded the whole button, label included, which on
+              // the brand orange took white text from about 2.26:1 to under 2:1 on
+              // the one interaction meant to make it clearer. `ap-primary-lift`
+              // brings the dark-mode answer with it — a plain dark shadow instead of
+              // a coloured halo, and a deepened fill under the label — which an
+              // inline shadow token cannot do because it has no `.dark` variant.
+              // That is also why `shadow-[var(--v2-shadow-button)]` goes: the class
+              // owns the shadow now, in both themes.
+              className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[var(--v2-primary)] ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] rounded-[var(--v2-radius-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]"
+            >
+              <Sparkles aria-hidden="true" className="w-4 h-4 shrink-0" />
+              <span>{t(compare.hasActions ? 'upgrade_modal.open_see_plans' : 'upgrade_modal.open_compare')}</span>
+            </button>
+          </TabFooter>
           <UpgradeModal
             open={compareOpen}
             onOpenChange={setCompareOpen}

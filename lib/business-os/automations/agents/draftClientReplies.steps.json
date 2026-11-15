@@ -4,18 +4,20 @@
     "id": "step1",
     "type": "action",
     "name": "Scan the mailbox for new replies, headers only",
-    "description": "THE FIRST THING THAT HAPPENS, and nothing about any client is read before it. HEADERS ONLY, AND THAT IS THE PRIVACY DESIGN, not a saving. Scanning before anyone knows who is a client means this pass sees whatever arrived — the owner's accountant, their landlord, a newsletter — so what it is allowed to fetch has to be the narrowest thing that still identifies a sender. `metadata` is exactly that: addresses, subject and a snippet, and no body. A non-client's actual words are therefore never pulled into the run at all, rather than being fetched and dropped a step later. The body is fetched in step 6, after the sender is confirmed to be somebody this business has written to. The alternative was scoping this query to known client addresses, which cannot be done without loading the client list FIRST — the order this design deliberately rejects. `{{input.scan_days}}` is the ONLY thing defining 'new', and `planInputs` derives it from the agent's own cadence rather than this file naming a number: a weekly agent with a two-day window would never see the five days in between, and would miss them silently. It carries a day of slack for a failed run, so a reply can surface on two consecutive runs; step 8's `already_handled` outcome is what catches the second pass.\n\nAND NOT WHAT IT HAS ALREADY ESCALATED. `-label:\"AgentPilot/Needs you\"` removes every thread this agent has already handed to the owner, which step13b labelled at the moment it did so.\n\nIt is the mailbox answering a question the watermark cannot. `scan_after` moves forward each run, so in ordinary service a message is seen once — but the window carries a ten-minute overlap, a run can be triggered by hand, and a failed run leaves the watermark where it was. In each of those a thread is read twice, and twice means a second escalation on a card that is already asking for the same answer. Observed on 2026-11-10: two `reply_needs_owner` rows on one thread.\n\nNOT `is:unread`, deliberately, though it would be the obvious filter now that step16 marks what it processed. The agent is not the only reader of this mailbox: an owner who opens a client's mail on their phone and does not answer it would make it invisible to the agent for good. Read state means 'somebody looked'; the label means 'this agent dealt with it', and only the second is safe to filter on.\n\nA thread stops being excluded when the label is removed, which is what an owner does when they want the agent to look again.",
+    "description": "THE FIRST THING THAT HAPPENS, and nothing about any client is read before it. HEADERS ONLY, AND THAT IS THE PRIVACY DESIGN, not a saving. Scanning before anyone knows who is a client means this pass sees whatever arrived — the owner's accountant, their landlord, a newsletter — so what it is allowed to fetch has to be the narrowest thing that still identifies a sender. `metadata` is exactly that: addresses, subject and a snippet, and no body. A non-client's actual words are therefore never pulled into the run at all, rather than being fetched and dropped a step later. The body is fetched in step 6, after the sender is confirmed to be somebody this business has written to. The alternative was scoping this query to known client addresses, which cannot be done without loading the client list FIRST — the order this design deliberately rejects. `{{input.scan_days}}` is the ONLY thing defining 'new', and `planInputs` derives it from the agent's own cadence rather than this file naming a number: a weekly agent with a two-day window would never see the five days in between, and would miss them silently. It carries a day of slack for a failed run, so a reply can surface on two consecutive runs; step 8's `already_handled` outcome is what catches the second pass.\n\nAND NOT WHAT IT HAS ALREADY ESCALATED. `-label:\"AgentPilot/Needs you\"` removes every thread this agent has already handed to the owner, which step13b labelled at the moment it did so.\n\nIt is the mailbox answering a question the watermark cannot. `scan_after` moves forward each run, so in ordinary service a message is seen once — but the window carries a ten-minute overlap, a run can be triggered by hand, and a failed run leaves the watermark where it was. In each of those a thread is read twice, and twice means a second escalation on a card that is already asking for the same answer. Observed on 2026-11-10: two `reply_needs_owner` rows on one thread.\n\nNOT `is:unread`, deliberately, though it would be the obvious filter now that step16 marks what it processed. The agent is not the only reader of this mailbox: an owner who opens a client's mail on their phone and does not answer it would make it invisible to the agent for good. Read state means 'somebody looked'; the label means 'this agent dealt with it', and only the second is safe to filter on.\n\nA thread stops being excluded when the label is removed, which is what an owner does when they want the agent to look again. ONE MORE EXCLUSION, added with the refund outcome: a thread already labelled AgentPilot/Refund has been handed to the refund agent, so re-reading it would classify the same request again every run and write a second row for it. The clause only ever REMOVES messages from the scan, and nothing carries that label until the new branch below applies it, so for every existing mailbox this query returns exactly what it returned before.",
     "plugin": "google-mail",
     "action": "search_emails",
     "params": {
-      "query": "after:{{input.scan_after}} -label:\"AgentPilot/Needs you\"",
+      "query": "after:{{input.scan_after}} -label:\"AgentPilot/Needs you\" -label:\"AgentPilot/Handled\"",
       "max_results": 50,
       "include_attachments": false,
       "content_level": "metadata",
       "folder": "inbox"
     },
     "output_variable": "inbound",
-    "output_schema": { "type": "object" }
+    "output_schema": {
+      "type": "object"
+    }
   },
   {
     "step_id": "step2",
@@ -26,12 +28,25 @@
     "plugin": "business-os",
     "action": "find_services",
     "params": {
-      "filters": [{ "field": "is_active", "op": "eq", "value": true }],
-      "order_by": [{ "field": "service_name", "dir": "asc" }],
+      "filters": [
+        {
+          "field": "is_active",
+          "op": "eq",
+          "value": true
+        }
+      ],
+      "order_by": [
+        {
+          "field": "service_name",
+          "dir": "asc"
+        }
+      ],
       "limit": 50
     },
     "output_variable": "service_list",
-    "output_schema": { "type": "object" }
+    "output_schema": {
+      "type": "object"
+    }
   },
   {
     "step_id": "step3",
@@ -56,20 +71,38 @@
               {
                 "field": "to_email",
                 "op": "in",
-                "value": ["{{current_reply.from_email}}", "{{current_reply.reply_to_email}}"]
+                "value": [
+                  "{{current_reply.from_email}}",
+                  "{{current_reply.reply_to_email}}"
+                ]
               },
-              { "field": "contact_id", "op": "is_not_null" },
+              {
+                "field": "contact_id",
+                "op": "is_not_null"
+              },
               {
                 "field": "sent_at",
                 "op": "gte",
-                "value": { "$date": "today", "offset": { "days": "{{input.stop_after_days}}" } }
+                "value": {
+                  "$date": "today",
+                  "offset": {
+                    "days": "{{input.stop_after_days}}"
+                  }
+                }
               }
             ],
-            "order_by": [{ "field": "sent_at", "dir": "desc" }],
+            "order_by": [
+              {
+                "field": "sent_at",
+                "dir": "desc"
+              }
+            ],
             "limit": 5
           },
           "output_variable": "client_history",
-          "output_schema": { "type": "object" }
+          "output_schema": {
+            "type": "object"
+          }
         },
         {
           "step_id": "step5",
@@ -100,7 +133,9 @@
                 "folder": "inbox"
               },
               "output_variable": "full_message",
-              "output_schema": { "type": "object" }
+              "output_schema": {
+                "type": "object"
+              }
             },
             {
               "step_id": "step7",
@@ -118,25 +153,29 @@
                 "folder": "sent"
               },
               "output_variable": "our_last_word",
-              "output_schema": { "type": "object" }
+              "output_schema": {
+                "type": "object"
+              }
             },
             {
               "step_id": "step7b",
               "id": "step7b",
               "type": "action",
               "name": "Have we already drafted one for them?",
-              "description": "THE MEMORY, and it is the owner's own drafts folder rather than a table. The scan window is two days so a run that failed loses nothing, which means a reply can be seen on two consecutive mornings — and without this the second morning writes a second draft of the same answer. A draft we wrote is the record that we wrote it: it sits in `drafts` addressed to that client until the owner does something with it. SELF-CLEARING, which is why this beats a stored flag. Send the draft and it leaves `drafts` for `sent`, where step 7 finds it and the model answers `already_handled`. Discard it and the next run writes a fresh one, which is the right behaviour — the owner threw the first away.",
+              "description": "SCOPED TO THIS CONVERSATION, not to this person. It asked whether ANY draft to this client was waiting, and stopped the whole message if one was — no classification, no label, no row, nothing to look at. So one unrelated draft sitting in the folder silenced that client completely for two days. Measured on 2026-11-15: a client wrote \"I don't understand why you charged me if I couldn't make the appointment\", the agent read it, marked it read and stopped here, because a draft about something else was open. That was tolerable when the only outcome was another draft. It is not now: the thing being dropped is a client who would have been answered automatically, and it is dropped in silence. A draft on THIS thread is a real reason to hold off; a draft to the same person about a different booking is not. It fails OPEN by design — a subject that breaks the search returns nothing, `total_found` is 0, and the message is classified rather than silently held. THE MEMORY, and it is the owner's own drafts folder rather than a table. The scan window is two days so a run that failed loses nothing, which means a reply can be seen on two consecutive mornings — and without this the second morning writes a second draft of the same answer. A draft we wrote is the record that we wrote it: it sits in `drafts` addressed to that client until the owner does something with it. SELF-CLEARING, which is why this beats a stored flag. Send the draft and it leaves `drafts` for `sent`, where step 7 finds it and the model answers `already_handled`. Discard it and the next run writes a fresh one, which is the right behaviour — the owner threw the first away.",
               "plugin": "google-mail",
               "action": "search_emails",
               "params": {
-                "query": "to:{{current_reply.from_email}} newer_than:2d",
+                "query": "to:{{current_reply.from_email}} subject:\"{{current_reply.subject}}\" newer_than:2d",
                 "max_results": 1,
                 "include_attachments": false,
                 "content_level": "metadata",
                 "folder": "drafts"
               },
               "output_variable": "existing_draft",
-              "output_schema": { "type": "object" }
+              "output_schema": {
+                "type": "object"
+              }
             },
             {
               "step_id": "step7c",
@@ -156,18 +195,30 @@
                   "id": "step8",
                   "type": "ai_processing",
                   "name": "Decide what becomes of this reply",
-                  "description": "FOUR OUTCOMES, NOT A YES OR NO, and the two refusals are not the same refusal. An out-of-office and a client asking to move an appointment both mean 'cannot answer', but one deserves the owner's attention and the other deserves silence; collapsing them means either every bounce interrupts the owner or real escalations get swallowed in the noise. `already_handled` is the fourth, and it is a judgement rather than a date comparison on purpose: the sent header arrives as RFC 2822, which does not compare as a string, and asking whether our last message answers their question is both sturdier and more useful than asking whether it arrived afterwards. REFUSING IS THE DEFAULT. The draft reaches the owner, never the client, so a refusal costs one glance and a confident wrong answer costs a client.",
-                  "prompt": "You are the front desk of a small business, drafting a reply for the OWNER to read and send. You never send anything yourself, and the client never hears from you directly.\n\nTHE MESSAGE THAT JUST ARRIVED\n  from: {{current_reply.from}}\n  subject: {{current_reply.subject}}\n  message: {{full_message.emails.0.body}}\n\nWHAT THIS BUSINESS HAS SENT THIS PERSON BEFORE (newest first)\n{{client_history.rows}}\n\nTHE LAST THING SENT TO THEM FROM THIS MAILBOX\n{{our_last_word.emails}}\n\nTHE BUSINESS'S SERVICES — the only business facts you have\n{{service_list.rows}}\n\nIf the message above is empty or missing, choose 'needs_owner' with the reason 'could not read the message' and write nothing. Never answer a message you cannot see.\n\nChoose exactly ONE outcome.\n\n'already_handled' — the last thing sent to them already answers what they are asking. Say nothing further. Choose this whenever it looks answered; a missed draft costs nothing and a duplicate one costs trust.\n\n'ignore' — this needs no reply and the owner does not need to know. Out-of-office and holiday autoresponders, bounces, delivery and read receipts, unsubscribe confirmations, calendar notifications, and plain acknowledgements that ask nothing ('thanks!', 'great', 'noted'). Nothing is shown to the owner for these.\n\n'needs_owner' — a real question or request that you must not answer. Choose this when answering would need any fact you were NOT given above. You do NOT know the diary, whether any time is free, what this person owes or has paid, what was agreed in conversation, the address, the opening hours, or anything about a specific booking. Also choose it for: asking to book, move or cancel; complaints; disputes; refunds; discounts; anything legal or medical; anything about another person's booking. And choose it whenever you are unsure. Unsure means needs_owner.\n\n'draft' — you can answer completely from what you were given. Write the reply.\n\nWHEN YOU CHOOSE 'draft', these rules are absolute:\n1. Write in the SAME LANGUAGE the person wrote in. Never translate or transliterate their name.\n2. State ONLY facts present above. Never invent or estimate a price, a duration, a date, a time, an address or a policy.\n3. Never say or imply that anything is booked, held, confirmed, reserved or paid. Never promise a time.\n4. Never apologise for something you cannot verify happened.\n5. No links, no URLs.\n6. Write as the business, first person, plainly. Three sentences at most.\n7. No greeting and no sign-off — the owner's mail carries both.\n8. Keep their subject, prefixed with 'Re: ' unless it already starts with it.\n9. Answer the WHOLE message or choose needs_owner instead. Replying about the easy half of a two-part question and silently dropping the rest reads worse than not replying.\n\nFor 'quote': the client's OWN WORDS. Copy the one or two sentences from their message that say what they actually want — verbatim, in their language, at most 200 characters, trimmed at a sentence end. Do not translate it, do not summarise it and do not tidy their grammar. This is shown to the owner AS THE MESSAGE: it is the only part of the card that is the client speaking rather than you reporting, so an empty quote means the owner sees nothing of what was written and has to open their mailbox to find out. Strip greetings, sign-offs and any quoted earlier thread. Leave it empty only when the message itself is empty or unreadable.\n\nFor 'reason': one or two short sentences written for the OWNER, naming what was asked and what you would have needed. WRITE IT IN {{input.owner_language}}, WHICH IS THE OWNER'S OWN LANGUAGE — not the client's. This line is never sent to anybody; it appears on the owner's dashboard, and they are the only person who reads it.\n\nThe previous rule said to match the language the CLIENT wrote in, which has no answer when a message carries a Hebrew subject and an English body. Measured on 2026-11-10: the same message, processed twelve seconds apart, produced one English note and one Hebrew one. The draft reply still matches the client, because they read that one. This does not. Lead with what they actually asked for, in their words where you can, then what you would have needed to answer it. Write it as a note to a colleague, not a log line. Leave `subject` and `body` empty unless the outcome is 'draft'.\n\nFOR 'needs_owner', ALSO WRITE A 'suggested_reply'. Same call, no second thought.\n\nThe owner is about to answer this person from their dashboard, and starting from\na blank box is the slowest part of the job. You cannot answer the question — that\nis what 'needs_owner' MEANS — but you can write the holding reply they would\notherwise type themselves.\n\nWHAT IT MAY SAY: that their message arrived, what you understood them to be\nasking, and that the owner will come back to them. Nothing else.\n\nWHAT IT MAY NEVER SAY, and this is absolute: no time, no date, no price, no\nduration, no availability, no address, no policy, no promise that anything is\nbooked, held or confirmed. If you were not given a fact, it does not go in —\nand for this outcome you were not given the fact that matters, or you would have\nchosen 'draft'. Never apologise for something you cannot verify happened.\n\nWrite it in the SAME LANGUAGE THE PERSON WROTE IN — unlike 'reason', this one is\nfor THEM. Two sentences at most, no greeting and no sign-off, first person, as\nthe business.\n\nA good one reads: \"Thanks for letting me know — I understand you can't make that\ntime and would like a call about the service. I'll check and come straight back\nto you.\" It commits to nothing and saves the owner the typing.\n\nLeave `suggested_reply` empty for 'draft', 'ignore' and 'already_handled': the\nfirst has a real reply in `body`, and the other two are not answered at all.",
+                  "description": "THE ORDER OF THE RULES IS THE WHOLE DESIGN, and it was wrong once. `needs_owner` said \"choose this when answering would need any fact you were not given\" — which is ALWAYS true of a refund, so it swallowed `send_link` every time. Measured 2026-11-15: the model correctly wrote \"the client is asking for a refund\" and then escalated anyway, reasoning that it did not know the policy. It was obeying the rules it was given. So the doors are now read FIRST, and both definitions say the same thing from their own side: not knowing the answer is the reason to send a door, never a reason to escalate. A door collects what is missing; `needs_owner` is for what no page can. FIVE OUTCOMES. NOT A YES OR NO, and the two refusals are not the same refusal. An out-of-office and a client asking to move an appointment both mean 'cannot answer', but one deserves the owner's attention and the other deserves silence; collapsing them means either every bounce interrupts the owner or real escalations get swallowed in the noise. `already_handled` is the fourth, and it is a judgement rather than a date comparison on purpose: the sent header arrives as RFC 2822, which does not compare as a string, and asking whether our last message answers their question is both sturdier and more useful than asking whether it arrived afterwards. REFUSING IS THE DEFAULT. The draft reaches the owner, never the client, so a refusal costs one glance and a confident wrong answer costs a client. THE FIFTH, `refund_request`, added 2026-11-13: a client asking for money back is routed to the refund agent rather than to the owner, so no card interrupts them before there is a decision to make. It is deliberately a NEW enum value rather than a change to any existing one — the three branches below are equality checks on 'draft', 'needs_owner' and 'already_handled', so a run that never chooses the new value behaves exactly as it did. Ambiguity still falls to `needs_owner`.",
+                  "prompt": "You are the front desk of a small business, drafting a reply for the OWNER to read and send. You never send anything yourself, and the client never hears from you directly.\n\nTHE MESSAGE THAT JUST ARRIVED\n  from: {{current_reply.from}}\n  subject: {{current_reply.subject}}\n  message: {{full_message.emails.0.body}}\n\nWHAT THIS BUSINESS HAS SENT THIS PERSON BEFORE (newest first)\n{{client_history.rows}}\n\nTHE LAST THING SENT TO THEM FROM THIS MAILBOX\n{{our_last_word.emails}}\n\nTHE BUSINESS'S SERVICES — the only business facts you have\n{{service_list.rows}}\n\nIf the message above is empty or missing, choose 'needs_owner' with the reason 'could not read the message' and write nothing. Never answer a message you cannot see.\n\nChoose exactly ONE outcome.\n\nRead these in order. The first one that fits is the answer, and the doors come\nfirst on purpose: a page that collects what is missing beats interrupting the\nowner, every time.\n\n'send_link' — a page they can use themselves answers this. Choose it and name the `door`.\n\nSENDING A DOOR IS NOT ANSWERING. This is the outcome for exactly the case where you do NOT know enough to reply: the page asks them which booking, which payment, how much and why, and it reaches the owner as a complete request instead of a conversation. You are not promising anything and you are not deciding anything.\n\nSo \"I'd have to know the policy\", \"I'd have to know what they paid\", \"I'd have to know what was agreed\" are all reasons to send a door — not reasons to escalate.\n\nThe doors:\n\n  book        they want to book, or are asking what times you have.\n              NEVER state availability yourself. The page shows what is free\n              right now; a time you name may be gone by the time they read it.\n  reschedule  they want to move an existing appointment.\n  cancel      they want to cancel one.\n  pay         they are asking how to pay, or for a payment link.\n  intake      they are asking what you need from them before the appointment.\n  quote       they are asking to see a quote again.\n  refund      they are asking for MONEY BACK — a refund, a payment taken\n              wrongly or twice, money back for something that did not happen.\n\nNothing you write is sent. The email is a fixed sentence and a button, chosen\nby the door, so you are deciding WHERE to point them and nothing else.\n\nOne thing only is NOT a refund: asking what something costs. A published price you were\ngiven is a 'draft'. Everything else about money already taken — asking for it back,\nquestioning a charge, \"why was I charged\", \"I couldn't come and I was billed\",\ndisputing an amount — is the refund door. They do not have to use the word refund.\n\nIf you are torn between 'send_link' and 'needs_owner', choose 'needs_owner'.\nThat is the older, safer path and it always reaches the owner.\n\n'already_handled' — the last thing sent to them already answers what they are asking. Say nothing further. Choose this whenever it looks answered; a missed draft costs nothing and a duplicate one costs trust.\n\n'ignore' — this needs no reply and the owner does not need to know. Out-of-office and holiday autoresponders, bounces, delivery and read receipts, unsubscribe confirmations, calendar notifications, and plain acknowledgements that ask nothing ('thanks!', 'great', 'noted'). Nothing is shown to the owner for these.\n\n'needs_owner' — a question only the owner can answer, and NO page can collect.\n\nChoose this when a PERSON has to decide or has to know something you do not. You do not know the diary, what this person owes or has paid, what was agreed in conversation, the address, the opening hours, or the business's policies.\n\nBUT READ THE DOORS FIRST. If a page would collect what is missing, that page is the answer and you choose 'send_link'. \"I would need to know the policy / the amount / what was decided\" is a reason to send a door, never a reason to choose this.\n\nChoose it for: complaints with no request attached; anything legal or medical; anything about another person's booking; a price that is not on the service list; a discount; something agreed in conversation. And choose it whenever no door fits and you are unsure. Unsure means needs_owner.\n\n'draft' — you can answer completely from what you were given. Write the reply.\n\nWHEN YOU CHOOSE 'draft', these rules are absolute:\n1. Write in the SAME LANGUAGE the person wrote in. Never translate or transliterate their name.\n2. State ONLY facts present above. Never invent or estimate a price, a duration, a date, a time, an address or a policy.\n3. Never say or imply that anything is booked, held, confirmed, reserved or paid. Never promise a time.\n4. Never apologise for something you cannot verify happened.\n5. No links, no URLs.\n6. Write as the business, first person, plainly. Three sentences at most.\n7. No greeting and no sign-off — the owner's mail carries both.\n8. Keep their subject, prefixed with 'Re: ' unless it already starts with it.\n9. Answer the WHOLE message or choose needs_owner instead. Replying about the easy half of a two-part question and silently dropping the rest reads worse than not replying.\n\nFor 'quote': the client's OWN WORDS. Copy the one or two sentences from their message that say what they actually want — verbatim, in their language, at most 200 characters, trimmed at a sentence end. Do not translate it, do not summarise it and do not tidy their grammar. This is shown to the owner AS THE MESSAGE: it is the only part of the card that is the client speaking rather than you reporting, so an empty quote means the owner sees nothing of what was written and has to open their mailbox to find out. Strip greetings, sign-offs and any quoted earlier thread. Leave it empty only when the message itself is empty or unreadable.\n\nFor 'reason': one or two short sentences written for the OWNER, naming what was asked and what you would have needed. WRITE IT IN {{input.owner_language}}, WHICH IS THE OWNER'S OWN LANGUAGE — not the client's. This line is never sent to anybody; it appears on the owner's dashboard, and they are the only person who reads it.\n\nThe previous rule said to match the language the CLIENT wrote in, which has no answer when a message carries a Hebrew subject and an English body. Measured on 2026-11-10: the same message, processed twelve seconds apart, produced one English note and one Hebrew one. The draft reply still matches the client, because they read that one. This does not. Lead with what they actually asked for, in their words where you can, then what you would have needed to answer it. Write it as a note to a colleague, not a log line. Leave `subject` and `body` empty unless the outcome is 'draft'.\n\nFOR 'needs_owner', ALSO WRITE A 'suggested_reply'. Same call, no second thought.\n\nThe owner is about to answer this person from their dashboard, and starting from\na blank box is the slowest part of the job. You cannot answer the question — that\nis what 'needs_owner' MEANS — but you can write the holding reply they would\notherwise type themselves.\n\nWHAT IT MAY SAY: that their message arrived, what you understood them to be\nasking, and that the owner will come back to them. Nothing else.\n\nWHAT IT MAY NEVER SAY, and this is absolute: no time, no date, no price, no\nduration, no availability, no address, no policy, no promise that anything is\nbooked, held or confirmed. If you were not given a fact, it does not go in —\nand for this outcome you were not given the fact that matters, or you would have\nchosen 'draft'. Never apologise for something you cannot verify happened.\n\nWrite it in the SAME LANGUAGE THE PERSON WROTE IN — unlike 'reason', this one is\nfor THEM. Two sentences at most, no greeting and no sign-off, first person, as\nthe business.\n\nA good one reads: \"Thanks for letting me know — I understand you can't make that\ntime and would like a call about the service. I'll check and come straight back\nto you.\" It commits to nothing and saves the owner the typing.\n\nLeave `suggested_reply` empty for 'draft', 'ignore' and 'already_handled': the\nfirst has a real reply in `body`, and the other two are not answered at all.",
                   "output_schema": {
                     "type": "object",
                     "properties": {
                       "outcome": {
                         "type": "string",
-                        "enum": ["draft", "needs_owner", "ignore", "already_handled"]
+                        "enum": [
+                          "draft",
+                          "needs_owner",
+                          "ignore",
+                          "already_handled",
+                          "send_link"
+                        ]
                       },
-                      "reason": { "type": "string" },
-                      "subject": { "type": "string" },
-                      "body": { "type": "string" },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "body": {
+                        "type": "string"
+                      },
                       "quote": {
                         "type": "string",
                         "description": "The client's own words, verbatim, at most 200 characters."
@@ -175,9 +226,25 @@
                       "suggested_reply": {
                         "type": "string",
                         "description": "A holding reply for needs_owner. States no fact it was not given."
+                      },
+                      "door": {
+                        "type": "string",
+                        "enum": [
+                          "book",
+                          "reschedule",
+                          "cancel",
+                          "pay",
+                          "intake",
+                          "quote",
+                          "refund"
+                        ],
+                        "description": "Required when outcome is 'send_link'. Which self-service page answers this message. Ignored otherwise."
                       }
                     },
-                    "required": ["outcome", "reason"]
+                    "required": [
+                      "outcome",
+                      "reason"
+                    ]
                   },
                   "output_variable": "decision"
                 },
@@ -204,12 +271,21 @@
                       "action": "create_draft",
                       "params": {
                         "reply_to_message_id": "{{current_reply.id}}",
-                        "recipients": { "to": ["{{current_reply.from_email}}"] },
-                        "content": { "subject": "{{decision.subject}}", "body": "{{decision.body}}" },
+                        "recipients": {
+                          "to": [
+                            "{{current_reply.from_email}}"
+                          ]
+                        },
+                        "content": {
+                          "subject": "{{decision.subject}}",
+                          "body": "{{decision.body}}"
+                        },
                         "save_location": "drafts"
                       },
                       "output_variable": "draft_result",
-                      "output_schema": { "type": "object" }
+                      "output_schema": {
+                        "type": "object"
+                      }
                     },
                     {
                       "step_id": "step11",
@@ -231,7 +307,9 @@
                         }
                       },
                       "output_variable": "drafted_note",
-                      "output_schema": { "type": "object" }
+                      "output_schema": {
+                        "type": "object"
+                      }
                     }
                   ]
                 },
@@ -267,7 +345,9 @@
                         }
                       },
                       "output_variable": "escalation_note",
-                      "output_schema": { "type": "object" }
+                      "output_schema": {
+                        "type": "object"
+                      }
                     },
                     {
                       "step_id": "step13b",
@@ -279,10 +359,65 @@
                       "action": "modify_email",
                       "params": {
                         "message_id": "{{current_reply.id}}",
-                        "add_labels": ["AgentPilot/Needs you"]
+                        "add_labels": [
+                          "AgentPilot/Needs you"
+                        ]
                       },
                       "output_variable": "flagged_in_mail",
-                      "output_schema": { "type": "object" }
+                      "output_schema": {
+                        "type": "object"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "step_id": "step12r",
+                  "id": "step12r",
+                  "type": "conditional",
+                  "name": "Or send them a page they can use themselves",
+                  "description": "THE ONE OUTCOME THAT REACHES THE CLIENT, and the only send this agent has. It cannot carry a message: `send_portal_door_contacts` takes a DOOR from a closed list and the words come from a table, so the model decides where to point and never what to say. A door is a page where the CLIENT decides — a booking link does not book, a refund form does not refund — so a misread message costs them a door they do not walk through.",
+                  "condition": {
+                    "conditionType": "simple",
+                    "field": "decision.outcome",
+                    "operator": "equals",
+                    "value": "send_link"
+                  },
+                  "steps": [
+                    {
+                      "step_id": "step13r",
+                      "id": "step13r",
+                      "type": "action",
+                      "name": "Send the page, or prepare it for the owner",
+                      "description": "One action for every door. It reads `business_profiles.agents_may_reply_directly` at the point of sending, so no plan can bypass the owner's choice — including one written by hand. It also refuses to send the same door twice to one conversation.",
+                      "plugin": "business-os",
+                      "action": "send_portal_door_contacts",
+                      "params": {
+                        "data": {
+                          "contact_id": "{{client_history.rows[0].contact_id}}",
+                          "door": "{{decision.door}}",
+                          "thread_id": "{{current_reply.thread_id}}"
+                        }
+                      },
+                      "output_variable": "door_result",
+                      "output_schema": {
+                        "type": "object"
+                      }
+                    },
+                    {
+                      "step_id": "step13rb",
+                      "id": "step13rb",
+                      "type": "action",
+                      "name": "Mark the thread so it is not answered twice",
+                      "description": "MARKED READ, AND ONLY ON THIS BRANCH. The client has the page they needed and the owner has nothing left to do, so an unread sitting in their inbox is a false alarm about work that is finished. The `needs_owner` branch deliberately does NOT do this: there the owner IS the next step, and an agent quietly marking that read would hide the one thing it escalated. `AgentPilot/Handled` is the label step 1 excludes, so it is also what stops the thread being answered twice; the read flag is cosmetic beside it and carries no logic.",
+                      "plugin": "google-mail",
+                      "action": "modify_email",
+                      "params": {
+                        "message_id": "{{current_reply.id}}",
+                        "add_labels": [
+                          "AgentPilot/Handled"
+                        ],
+                        "mark_read": true
+                      }
                     }
                   ]
                 },
@@ -317,7 +452,9 @@
                         }
                       },
                       "output_variable": "handled_note",
-                      "output_schema": { "type": "object" }
+                      "output_schema": {
+                        "type": "object"
+                      }
                     }
                   ]
                 }
@@ -380,11 +517,20 @@
                   "output_schema": {
                     "type": "object",
                     "properties": {
-                      "is_enquiry": { "type": "boolean" },
-                      "person_name": { "type": "string" },
-                      "reason": { "type": "string" }
+                      "is_enquiry": {
+                        "type": "boolean"
+                      },
+                      "person_name": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
                     },
-                    "required": ["is_enquiry", "reason"]
+                    "required": [
+                      "is_enquiry",
+                      "reason"
+                    ]
                   },
                   "output_variable": "triage"
                 },
@@ -417,7 +563,9 @@
                         }
                       },
                       "output_variable": "filed_contact",
-                      "output_schema": { "type": "object" }
+                      "output_schema": {
+                        "type": "object"
+                      }
                     },
                     {
                       "step_id": "step5e",
@@ -436,7 +584,9 @@
                         }
                       },
                       "output_variable": "enquiry_note",
-                      "output_schema": { "type": "object" }
+                      "output_schema": {
+                        "type": "object"
+                      }
                     }
                   ]
                 }
@@ -452,14 +602,21 @@
           "description": "THE LAST THING DONE TO EVERY MESSAGE, WHATEVER WAS DECIDED ABOUT IT.\n\nOutside the outcome branches on purpose. A drafted reply, an escalation, a thread judged already answered and a newsletter from a stranger were all READ by the agent, and the owner's inbox should say so for all four — otherwise the unread count keeps claiming work nobody still has to do.\n\nReading through the API does not change read state by itself, which is why this step has to exist: `messages.get` leaves UNREAD exactly as it found it, so without this the mailbox looks untouched no matter how much the agent processed.\n\nWHAT THIS COSTS, SAID PLAINLY. An escalation goes read here, so the bold unread row is no longer what tells the owner a client is waiting. The card is, and in Gmail the label is. That is the trade the owner chose; it is reversible by setting `mark_read` to false, which puts UNREAD back.\n\nLast in the scatter so it runs once per message and after every branch has had its say.",
           "plugin": "google-mail",
           "action": "modify_email",
-          "params": { "message_id": "{{current_reply.id}}", "mark_read": true },
+          "params": {
+            "message_id": "{{current_reply.id}}",
+            "mark_read": true
+          },
           "output_variable": "read_receipt",
-          "output_schema": { "type": "object" }
+          "output_schema": {
+            "type": "object"
+          }
         }
       ],
       "continueOnError": true
     },
-    "gather": { "operation": "collect" },
+    "gather": {
+      "operation": "collect"
+    },
     "output_variable": "receptionist_results"
   }
 ]

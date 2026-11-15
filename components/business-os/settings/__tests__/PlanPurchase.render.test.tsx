@@ -154,6 +154,25 @@ beforeEach(() => {
       server.posts.push(JSON.parse(String(init.body)));
       return { ok: server.checkout.status === 200, status: server.checkout.status, json: async () => server.checkout.body } as Response;
     }
+    /*
+     * THE PLAN'S OWN READ, AND NOTHING ELSE.
+     *
+     * This counted EVERY non-POST fetch, which was the same thing as a plan
+     * read for as long as the plan screen fetched nothing else. `PlanIncludes`
+     * broke that: it GETs `/api/business-os/usage` to show how much of a
+     * metered allowance has been used, so a count that meant "how many times
+     * did we re-read the plan" quietly became "how many GETs happened" and
+     * read 3 where the flow does 2.
+     *
+     * Excluded by EXACT path, never a pattern: a future plan endpoint still
+     * counts, and only this known-unrelated one is skipped. The answer is a
+     * well-formed empty usage payload, so the component under test renders its
+     * normal no-figures state rather than an error path nobody asked for.
+     */
+    if (String(url).startsWith('/api/business-os/usage')) {
+      return { ok: true, status: 200, json: async () => ({ success: true, data: null }) } as Response;
+    }
+
     const next = server.plans[Math.min(server.planReads, server.plans.length - 1)];
     server.planReads += 1;
     if (next === 'fail') throw new Error('offline');
@@ -180,7 +199,20 @@ const fill = (template: string, values: Record<string, string>) => template.repl
  * money control can never hide behind it. Each absence test that uses this also
  * asserts the excluded button is present, so the narrowing is visible.
  */
-const moneyButtons = () => screen.queryAllByRole('button').filter((button) => button.getAttribute('data-testid') !== 'plan-compare-open');
+const moneyButtons = () =>
+  screen
+    .queryAllByRole('button')
+    .filter((button) => button.getAttribute('data-testid') !== 'plan-compare-open')
+    /*
+     * And controls that DECLARE they are not money.
+     *
+     * Still never by name or pattern (SA W-3). The amount-explain toggles are
+     * one per capability, so they have no single exact id to name — they carry
+     * `data-money="no"` instead, which is the same promise made by the control
+     * rather than guessed by the test. A money button that forgot to declare
+     * itself is still counted, which is the direction that has to fail safe.
+     */
+    .filter((button) => button.getAttribute('data-money') !== 'no');
 
 /**
  * Upgrade modal UM-1b (workplan §13): Choose / Pay for live in the plan
@@ -388,7 +420,19 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
   it('UM-1b (replaces UM-1a W-4): the drawer has one button, "See plans"; the Choose presses below are by column, not by index', async () => {
     const payload = await payloadFor();
     await show(payload);
-    expect(screen.getAllByRole('button')).toEqual([screen.getByTestId('plan-compare-open')]);
+
+    /*
+     * One button that LEADS ANYWHERE, which is what UM-1b is about. Since the
+     * 2026-11-15 redesign the list has controls of its own — a category row
+     * opens to show what is in it, an amount's info button opens the sentence
+     * that defines it — and neither leaves the drawer or spends anything.
+     * Excluded by id prefix, so a Choose button appearing here still fails.
+     */
+    const leaving = screen
+      .getAllByRole('button')
+      .filter((button) => !/^(plan-includes-row-|plan-amount-explain-)/.test(button.getAttribute('data-testid') ?? ''));
+
+    expect(leaving).toEqual([screen.getByTestId('plan-compare-open')]);
     expect(screen.getByTestId('plan-compare-open')).toHaveTextContent(COPY['upgrade_modal.open_see_plans']);
   });
 });

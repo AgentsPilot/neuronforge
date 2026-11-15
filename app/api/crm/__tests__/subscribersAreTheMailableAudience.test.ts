@@ -152,6 +152,96 @@ describe('the mailable audience', () => {
     });
   });
 
+  describe('a consent row that names nobody, for somebody who IS somebody', () => {
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * FOUND ON A LIVE ACCOUNT, 2026-11-15.
+     *
+     * `offir.omer@windpoint.io` consented on 8 Oct with `contact_id: null`,
+     * and became a contact on 25 Oct — a client at stage `family_enrolled`.
+     * Nothing backfills `contact_id`, so the consent row still said "nobody".
+     *
+     * The screen then broke both its promises for that row: it stayed visible
+     * with "include people already in the CRM" switched OFF, and it offered
+     * the button to add them. The owner's words: "the contact is already in
+     * the CRM even as a client, so why do we have this button".
+     *
+     * The button could not even have done it — the row's id is
+     * `consent:<address>` and the promote route takes a uuid — so it was a
+     * control that did nothing, which is worse than one that is absent.
+     *
+     * The fix asks the address when the id is missing. These three cases are
+     * the whole of it: resolved, hidden, and not case-sensitive.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const unlinked = consentRow({ email_normalized: 'client@example.com', contact_id: null });
+
+    it('is resolved by address, so the row says contact and hides the button', () => {
+      const rows = buildAudience({
+        roster: [],
+        consented: [unlinked],
+        contacts: [],
+        contactsByEmail: new Map([['client@example.com', contact()]]),
+        consentByEmail: new Map(),
+        includePromoted: true,
+      });
+
+      expect(rows[0]).toMatchObject({
+        status: 'contact',
+        promoted_contact_id: 'c1',
+        name: 'Dana Levi',
+        /* And the id is now the contact's, not `consent:<address>`. */
+        id: 'c1',
+      });
+    });
+
+    it('and is hidden when the toggle is off, like every other contact', () => {
+      const rows = buildAudience({
+        roster: [],
+        consented: [unlinked],
+        contacts: [],
+        contactsByEmail: new Map([['client@example.com', contact()]]),
+        consentByEmail: new Map(),
+        includePromoted: false,
+      });
+
+      expect(rows).toHaveLength(0);
+    });
+
+    it('matches regardless of the case the contact was typed in', () => {
+      /* One live contact is stored as `TalOmer@…` while consent normalises to
+         lowercase. The map is keyed on the normalised address for that reason;
+         the route lowercases the contact's own email before keying it. */
+      const rows = buildAudience({
+        roster: [],
+        consented: [consentRow({ email_normalized: 'talomer@ipstool.com', contact_id: null })],
+        contacts: [],
+        contactsByEmail: new Map([
+          ['talomer@ipstool.com', contact({ id: 'c9', email: 'TalOmer@ipstool.com' })],
+        ]),
+        consentByEmail: new Map(),
+        includePromoted: true,
+      });
+
+      expect(rows[0]).toMatchObject({ status: 'contact', promoted_contact_id: 'c9' });
+    });
+
+    it('leaves a genuinely unknown address alone', () => {
+      /* The case above it in this file: ticked a box, never became anybody.
+         No contact exists, so nothing changes for them. */
+      const rows = buildAudience({
+        roster: [],
+        consented: [consentRow({ email_normalized: 'just@anaddress.com', contact_id: null })],
+        contacts: [],
+        contactsByEmail: new Map(),
+        consentByEmail: new Map(),
+        includePromoted: true,
+      });
+
+      expect(rows[0]).toMatchObject({ status: 'confirmed', promoted_contact_id: null });
+    });
+  });
+
   it('survives a contact that has since been deleted', () => {
     /*
      * A deleted contact does not un-say what they said, and the suppression has

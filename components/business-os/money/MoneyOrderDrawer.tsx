@@ -53,6 +53,7 @@ import { itemFlow, type MoneyEntry, type MoneyItem, isLatePeriod } from '@/lib/p
   and `buildEntryActions` is where what they DO lives, defined once because two
   surfaces having their own copies is how one of them stayed broken.
 */
+import { RefundStory, type RefundAsk } from '@/components/payments/RefundStory';
 import { MoneyEntryActions, type EntryActionHandlers } from '@/components/payments/MoneyEntryActions';
 /* The drawer's own phrasing for "payment 2 of 3", off the raw numbers the
    webhook carried. `serviceLabel` holds the ENGLISH sentence the processor
@@ -210,11 +211,36 @@ export function scheduleOf(item: MoneyItem, t: (key: string) => string): Schedul
          a plan need not bill in the currency of the row it sits under, but
          when it says nothing it is billing in that one. */
       currency: period.currency ?? item.currency,
+      /*
+       * THE BILLS RAISED AGAINST THIS INSTALMENT, matched three ways.
+       *
+       * `planPeriod` alone was not enough, and the screen said so: instalment
+       * one picked up its refund button while `INV-00060` fell through to the
+       * fallback section, unattached to the payment it was for.
+       *
+       * The reason is where `planPeriod` comes from — `planPeriodNumbers`
+       * reads a TRANSACTION's metadata (`source === 'payment_plan'`). An
+       * INVOICE entry has no such metadata and never carries one, so matching
+       * on it could only ever claim the paid half of a plan.
+       *
+       * The stronger links were already on the period and unused:
+       *   invoiceId      "the invoice raised for this period, once one has
+       *                  been" — the period's own word for this bill
+       *   transactionId  the charge that settled it
+       *
+       * Tried in that order, weakest last.
+       */
+      entries: item.entries.filter(e => {
+        if (period.invoiceId && e.invoiceId && period.invoiceId === e.invoiceId) return true;
+        if (period.transactionId && e.transactionIds?.includes(period.transactionId)) return true;
+        return e.planPeriod?.number === period.installmentNumber;
+      }),
     }));
   }
 
   return item.entries.map(entry => ({
     key: entry.key,
+    entries: [entry],
     label: entry.invoiceNumber ?? planPeriodText(entry, t) ?? entry.serviceLabel ?? item.title,
     date: entry.date,
     dateKind: entry.dateKind,
@@ -242,10 +268,30 @@ export interface ScheduleRow {
   status: string;
   amount: number;
   currency: string;
+  /**
+   * The bills behind this line, so its actions sit ON it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The actions used to be a separate section at the foot of the drawer, one
+   * card per entry, under "what you can do". It was correct and it read as
+   * unrelated furniture: a card headed `INV-00058` carrying six icon buttons,
+   * below a schedule that never mentioned an invoice number, with nothing
+   * saying which payment it belonged to.
+   *
+   * A PLAN is why they were ever apart — its schedule is periods and its
+   * entries are the invoices raised against them, which is not a 1:1 list. But
+   * it is a matchable one: a period knows its `installmentNumber` and an entry
+   * knows its `planPeriod.number`. Matched here, each payment in the sequence
+   * carries what can be done about it, and anything that matches nothing still
+   * gets the old section rather than vanishing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  entries?: MoneyEntry[];
 }
 
 export function MoneyOrderDrawer({
   item,
+  refundAsk,
   onClose,
   onOpenBooking,
   onOpenContact,
@@ -258,6 +304,18 @@ export function MoneyOrderDrawer({
   ...actions
 }: {
   item: MoneyItem | null;
+  /**
+   * The client's refund request behind this money, where there is one.
+   *
+   * Optional, and absent means the section is not drawn — most money has no
+   * refund request, and the money page does not load them at all. Supplied by
+   * the contact drawer, which already reads them for this client.
+   *
+   * It is why a refund happened, which `payment_refunds` cannot hold: what the
+   * client asked for, what they said, what the agent recommended and why, and
+   * what the owner decided. See `RefundStory`.
+   */
+  refundAsk?: RefundAsk | null;
   onClose: () => void;
   /**
    * WHERE THIS DRAWER CAN SEND THE READER, decided by whoever opened it.
@@ -310,6 +368,94 @@ export function MoneyOrderDrawer({
      the same call, and one of them would eventually pass something else. */
   const schedule = scheduleOf(item, t);
 
+  /*
+   * Entries no line of the schedule claimed.
+   *
+   * Normally none: a simple item's rows ARE its entries, and a plan's bills
+   * carry the instalment they belong to. But a bill raised outside the plan's
+   * periods, or one whose metadata never recorded a period, would otherwise
+   * lose its actions entirely — so the old section stays for exactly those,
+   * rather than the drawer quietly dropping the only way to act on them.
+   */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT A SETTLED PAYMENT IS ALLOWED TO OFFER.
+   *
+   * `MoneyEntryActions` already gates on the ENTRY's status — a settled entry
+   * gets refund and nothing destructive, and its own header says so: "a paid
+   * invoice cannot be voided". That gate could not fire here, because the
+   * entry does not know it was paid: the charge that settled `INV-00061`
+   * carries no `invoice_id` back to the bill, so the invoice and its own
+   * payment arrive as two unmerged entries and neither holds the whole story.
+   *
+   * The SCHEDULE knows. The period reads `paid` from the instalment row, which
+   * is the business's own record of what happened, so the drawer answers from
+   * the period rather than waiting for the entries to agree.
+   *
+   * It suppresses by WITHHOLDING HANDLERS rather than by adding a prop: the
+   * component draws a button only where it was given something to call, so a
+   * handler it never receives is a button that cannot appear. No second gate
+   * to keep in step with the first, and the money page is untouched.
+   *
+   * The three withheld are the three that are wrong on settled money: void
+   * would cancel a bill the client has paid, mark-paid claims a payment that
+   * already exists, and a payment link invites sending somebody a request they
+   * have already settled.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const actionsFor = (rowStatus: string, entries?: MoneyEntry[]): EntryActionHandlers => {
+    const settled = ['paid', 'refunded', 'partially_refunded'].includes(rowStatus);
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A LATE INVOICE IS CHASED, NOT RE-SENT — WHOEVER PRESSES.
+     *
+     * `onResend` posts to `/invoices/[id]/send`, which is invoice DELIVERY:
+     * it raises the bill and stamps `sent_at`. On a LATE invoice that sends
+     * the client the original a second time, byte for byte, with nothing
+     * saying it is overdue — the invoice template has no reminder variant.
+     *
+     * The `chase_overdue_invoices` agent sends a different email entirely:
+     * the amount, the due date, HOW MANY DAYS OVERDUE, a pay link. One late
+     * invoice should not read two ways depending on whether a person or the
+     * agent sent it.
+     *
+     * Swapped here rather than in `MoneyEntryActions`, which the wide money
+     * page shares and which has no idea what a chase is. The button, its icon
+     * and its busy state are untouched; only where it posts changes.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const late = rowStatus === 'overdue';
+    const invoiceId = entries?.find(e => e.invoiceId)?.invoiceId;
+
+    const chasing: EntryActionHandlers =
+      late && invoiceId
+        ? {
+            ...actions,
+            onResend: async () => {
+              const response = await fetch(`/api/payments/invoices/${invoiceId}/chase`, {
+                method: 'POST',
+                credentials: 'include',
+              });
+              const payload = await response.json();
+              /* Thrown so `MoneyEntryActions` shows its own failure line —
+                 it already renders the last error under the buttons, and the
+                 server's sentence says far more than a generic one. */
+              if (!payload?.success) {
+                throw new Error(String(payload?.error || 'The reminder was not sent'));
+              }
+            },
+          }
+        : actions;
+
+    if (!settled) return chasing;
+    const { onVoid: _void, onMarkPaid: _markPaid, onCopyLink: _copyLink, ...safe } = chasing;
+    return safe;
+  };
+
+  const claimed = new Set(schedule.flatMap(row => (row.entries ?? []).map(e => e.key)));
+  const orphanEntries = item.entries.filter(entry => !claimed.has(entry.key));
+
   const flow = itemFlow(item);
   const waiting = Math.max(0, flow.outstanding - flow.overdue);
   /*
@@ -330,7 +476,24 @@ export function MoneyOrderDrawer({
   /* The facts a support conversation needs, and only the ones this row has. */
   const lead = item.entries[0];
   const facts: { label: string; value: string }[] = [];
-  if (lead?.invoiceNumber) {
+  /*
+   * THE INVOICE NUMBER IS NOT REPEATED HERE.
+   *
+   * It used to be the first fact, back when the actions lived in a card of
+   * their own at the foot of the drawer and nothing else on screen named the
+   * bill. The number now heads the action card ON the payment it belongs to,
+   * so printing it again three inches below said the same thing twice and left
+   * "The details" looking like the authoritative copy of something already
+   * shown.
+   *
+   * Only where it IS shown above, though: an entry no schedule row claimed
+   * renders in the fallback section without a heading when it is the only one,
+   * so the fact stays for that case rather than losing the number entirely.
+   */
+  const invoiceShownAbove = schedule.some(row =>
+    (row.entries ?? []).some(e => e.invoiceNumber)
+  );
+  if (lead?.invoiceNumber && !invoiceShownAbove) {
     facts.push({ label: t('payments.invoice') || 'Invoice', value: lead.invoiceNumber });
   }
   facts.push({
@@ -338,7 +501,25 @@ export function MoneyOrderDrawer({
     value: t(`payments.method.${item.method}`) || item.method,
   });
   if (lead?.paymentMethod) {
-    facts.push({ label: t('payments.method_label') || 'Paid with', value: lead.paymentMethod });
+    /*
+     * TRANSLATED, NOT PRINTED RAW.
+     *
+     * This showed the stored value, so a Hebrew reader's drawer read
+     * "אמצעי תשלום: card" — an English database word in the middle of their
+     * own language, under a heading that is the only place in this panel a
+     * person looks for plain facts.
+     *
+     * The keys already existed (`payments.payment_method.card` is `כרטיס`);
+     * nothing here needed inventing, only asking. Falls back to the stored
+     * value for a method with no key, which is better than an empty row and
+     * is exactly what the old behaviour was for every method.
+     */
+    const methodKey = `payments.payment_method.${lead.paymentMethod}`;
+    const translated = t(methodKey);
+    facts.push({
+      label: t('payments.method_label') || 'Paid with',
+      value: translated && translated !== methodKey ? translated : lead.paymentMethod,
+    });
   }
   if (lead?.processorRef) {
     facts.push({ label: t('payments.reference') || 'Reference', value: lead.processorRef });
@@ -506,6 +687,66 @@ export function MoneyOrderDrawer({
                         {row.date ? formatDate(row.date) : '—'}
                       </span>
                     </div>
+
+                    {/*
+                      WHAT CAN BE DONE ABOUT THIS PAYMENT, on this payment.
+
+                      The invoice number sits with the actions it belongs to
+                      rather than heading a card at the foot of the drawer,
+                      because "send it / void it / mark it paid" are questions
+                      about THIS line of the schedule and were being asked
+                      somewhere that never named it.
+                    */}
+                    {/*
+                      ONE CARD PER PAYMENT, not one per entry.
+
+                      A paid instalment produced TWO: the invoice, and the
+                      charge that settled it. They are the same ₪400 — they
+                      only arrive as separate entries because the transaction
+                      carries no `invoice_id` back to the bill it paid, so
+                      `buildMoneyItems` has nothing to merge them on.
+
+                      Whatever the data does, the reader is looking at one
+                      payment and should see one set of controls under one
+                      heading. The frame is drawn once here, and the entries
+                      contribute their buttons into it.
+                    */}
+                    {(row.entries ?? []).length > 0 && (
+                      <div className="mt-2 rounded-xl border border-[var(--v2-border)] bg-[var(--v2-surface-hover)] p-3">
+                        {(() => {
+                          const number = (row.entries ?? []).find(e => e.invoiceNumber)
+                            ?.invoiceNumber;
+                          return number ? (
+                            <p className="m-0 mb-2 text-[12.5px] font-semibold text-[var(--v2-text-primary)]">
+                              {number}
+                            </p>
+                          ) : null;
+                        })()}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {(row.entries ?? []).map(entry => (
+                      /*
+                        THE SAME CARD FRAME IT HAD IN THE SECTION BELOW.
+
+                        Moved onto the payment, the buttons first rendered bare
+                        — a lone icon floating under a date, reading as part of
+                        the sentence above it rather than as controls. The
+                        frame is what says "these are things you can press",
+                        and it is the one the fallback section still uses, so a
+                        matched bill and an unmatched one look alike.
+                      */
+                      <div key={entry.key} className="contents">
+                        <MoneyEntryActions
+                          entry={entry}
+                          t={t}
+                          isRTL={isRTL}
+                          inline
+                          {...actionsFor(row.status, row.entries)}
+                        />
+                      </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </li>
               );
@@ -537,14 +778,14 @@ export function MoneyOrderDrawer({
             entries are the bills raised so far, which is exactly the set an
             owner can still do something about.
           */}
-          {item.entries.length > 0 && (
+          {orphanEntries.length > 0 && (
             <>
               <h3 className="mb-2.5 mt-7 text-[12px] font-semibold uppercase tracking-wider text-[var(--v2-text-muted)]">
                 {t('money.actions_title') || 'What you can do'}
               </h3>
 
               <div className="flex flex-col gap-2.5">
-                {item.entries.map(entry => (
+                {orphanEntries.map(entry => (
                   <div
                     key={entry.key}
                     className="rounded-xl border border-[var(--v2-border)] bg-[var(--v2-surface-hover)] p-3"
@@ -559,10 +800,34 @@ export function MoneyOrderDrawer({
                           item.title}
                       </p>
                     )}
-                    <MoneyEntryActions entry={entry} t={t} isRTL={isRTL} inline {...actions} />
+                    {/* No schedule row claimed this one, so there is no period
+                        to ask — the entry's own status is the only answer
+                        available, and `actionsFor` falls back to exactly that. */}
+                    <MoneyEntryActions
+                      entry={entry}
+                      t={t}
+                      isRTL={isRTL}
+                      inline
+                      {...actionsFor(entry.status, [entry])}
+                    />
                   </div>
                 ))}
               </div>
+            </>
+          )}
+
+          {/* ── why this refund happened ───────────────────────────────── */}
+          {refundAsk && (
+            <>
+              <h3 className="mb-2.5 mt-7 text-[12px] font-semibold uppercase tracking-wider text-[var(--v2-text-muted)]">
+                {t('payments.refund_request.story')}
+              </h3>
+              <RefundStory
+                ask={refundAsk}
+                t={t}
+                formatCurrency={formatCurrency}
+                formatDate={formatDate}
+              />
             </>
           )}
 

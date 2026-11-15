@@ -45,6 +45,7 @@
 import { createLogger } from '@/lib/logger';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { getStripeInvoiceService } from '@/lib/stripe/StripeInvoiceService';
+import { raisePlanSubscription } from '@/lib/payments/raisePlanSubscription';
 import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'payments', service: 'RaiseInvoiceForPayment' });
@@ -87,7 +88,7 @@ export async function raiseInvoiceForPayment(
     const { data: invoice } = await supabaseServer
       .from('payment_invoices')
       .select(
-        'id, user_id, amount, currency, due_date, client_email, client_name, invoice_number, line_items, stripe_invoice_id'
+        'id, user_id, amount, currency, due_date, client_email, client_name, invoice_number, line_items, stripe_invoice_id, booking_id'
       )
       .eq('id', invoiceId)
       .eq('user_id', userId)
@@ -110,6 +111,46 @@ export async function raiseInvoiceForPayment(
     if (!email) {
       logger.info({ invoiceId }, 'Cannot raise at Stripe: the invoice names no client address');
       return { ok: false, reason: 'not_billable' };
+    }
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A CARD PLAN IS RAISED AS A SUBSCRIPTION, NOT AS AN INVOICE.
+     *
+     * Same moment, same client, same Elements form; a different Stripe object
+     * underneath. Only a subscription payment makes Stripe KEEP the card, and
+     * without a kept card every period after the first arrives as another bill
+     * to pay by hand. `raisePlanSubscription` explains why this cannot be done
+     * any earlier or any later.
+     *
+     * `null` means "not a card plan", which is every ordinary invoice and every
+     * `collection = 'invoice'` plan. Those fall straight through to the code
+     * below, unchanged.
+     *
+     * A FAILURE also falls through, deliberately. Period one is still owed and
+     * an ordinary invoice still collects it; the client is then asked for
+     * period two by invoice, which is exactly what happened before any of this.
+     * Refusing the payment outright would be a worse answer to a Stripe hiccup.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (invoice.booking_id) {
+      const plan = await raisePlanSubscription({
+        invoiceId: invoice.id as string,
+        userId,
+        bookingId: invoice.booking_id as string,
+        connectAccountId: capability.accountId,
+        customerEmail: email,
+        customerName: invoice.client_name || email,
+      });
+
+      if (plan?.ok) return { ok: true, stripeInvoiceId: plan.stripeInvoiceId };
+
+      if (plan && !plan.ok) {
+        logger.warn(
+          { invoiceId, reason: plan.reason },
+          'Card plan could not be raised as a subscription; falling back to an invoice for this period'
+        );
+      }
     }
 
     const rawLines = Array.isArray(invoice.line_items) ? (invoice.line_items as LineItem[]) : [];

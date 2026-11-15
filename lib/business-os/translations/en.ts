@@ -273,6 +273,27 @@ export const en = {
     'gaps.reply.confirm': 'Send it now',
     'gaps.reply.discard': 'Discard draft',
     'gaps.reply.mark_handled': 'Mark as handled',
+    'gaps.refund.decline': 'Decline',
+    'gaps.refund.mark_handled': 'I handled it',
+    'gaps.refund.badge': 'Refund request',
+    'gaps.refund.rec.refund_full': 'Suggests returning it in full',
+    'gaps.refund.rec.refund_partial': 'Suggests returning part of it',
+    'gaps.refund.rec.decline': 'Suggests declining',
+    'gaps.refund.rec.needs_owner': 'Needs you to decide',
+    'gaps.refund.flow.asked': 'The client asked for',
+    'gaps.refund.flow.diary': 'Your diary says',
+    'gaps.refund.flow.rec': 'Our recommendation',
+    'gaps.refund.outcome.held': 'marked as having taken place',
+    'gaps.refund.outcome.no_show': 'marked as a no-show',
+    'gaps.refund.outcome.cancelled': 'the booking was cancelled',
+    'gaps.refund.outcome.unmarked': 'nobody marked what happened',
+    'gaps.refund.contradiction': 'They say they did not attend, but the session is marked as having taken place',
+    'gaps.refund.approve': 'Refund {amount}',
+    'gaps.refund.mark_returned': 'Mark {amount} as returned',
+    'gaps.refund.partial': 'A different amount',
+    'gaps.refund.note_fallback': 'The client asked for a refund through the portal.',
+    'gaps.refund.asked_for': 'they asked to have back',
+    'gaps.refund.declined': 'Declined',
     'gaps.reply.sent': 'Sent',
     'gaps.reply.add_link': 'Add a link',
     'gaps.reply.link_free': 'free',
@@ -311,6 +332,10 @@ export const en = {
     // ── Your plan (settings + the chrome pill) ────────────────────────────
     'plan.section_title': 'Your plan',
     'plan.loading': 'Loading your plan…',
+    'plan.amount_used_of': '{used} of {total}',
+    'plan.amounts_heading': 'What runs out each month',
+    'plan.amount_explain': 'What this is',
+    'plan.state.no_end': 'No end date',
     'plan.includes': 'What your plan includes',
     'plan.price.free_no_end': 'Free — no end date',
     'plan.price.free': 'Free',
@@ -511,6 +536,10 @@ export const en = {
     'gaps.kind.booking_unbilled': 'Done, never charged for',
     'gaps.kind.delivery_unconfirmed': 'Paid, not handed over',
     'gaps.kind.booking_cancelled': 'Client cancelled',
+    'gaps.kind.refund_requested': 'Refund requested',
+    'gap.refund_requested.via.portal_form': 'They asked through your client portal',
+    'gap.refund_requested.via.email': 'They asked by email',
+    'gap.refund_requested.via.owner': 'You recorded this request',
     'gaps.kind.booking_refunded': 'Refunded, still booked',
     'gaps.kind.meeting_upcoming': 'Coming up',
     'gaps.kind.meeting_unmarked': 'Did this happen?',
@@ -536,11 +565,26 @@ export const en = {
     'gaps.action.chase_payment': 'Chase payment',
     'gaps.action.bill_stage': 'Mark done and bill',
     'automation.chase_overdue_invoices.name': 'Chase overdue invoices',
+    'automation.assess_refund_requests.name': 'Refund requests',
+    'automation.assess_refund_requests.description': 'When a client asks for money back, it reads the booking and what was paid, and tells you what it would do — before you open the request.',
+    'automation.assess_refund_requests.watches': 'refund requests your clients have submitted',
     'automation.requires.can_send_marketing': 'I cannot email your clients on your behalf yet. That switch is off across the platform until unsubscribe handling is in place.',
     'automation.requires.sends_quotes': 'You have not sent any quotes yet, so there is nothing for this one to follow up.',
     'automation.requires.bills_for_anything': 'You are not billing for anything yet, so there is nothing for this one to chase.',
     'automation.requires.takes_bookings': 'You have no bookable services yet, so there is nothing for this one to work with.',
     'automation.requires.intake_reaches_client': 'Your intake form is not reaching clients yet, so there is nothing for this one to chase.',
+    /*
+     * ONE MESSAGE FOR EVERY AGENT REFUSED THIS WAY. Owner decision 2026-11-13.
+     *
+     * The requirement is shared, so any agent that reads a mailbox gets this
+     * same wording by declaring `mail_reaches_owner_inbox` — nobody has to
+     * write a second version of it and have the two drift apart.
+     *
+     * It leads with the verdict rather than the diagnosis: an owner on a
+     * walla.co.il or other unsupported address needs to know it will not work
+     * yet, and the second sentence is the only action that changes that.
+     */
+    'automation.requires.mail_reaches_owner_inbox': 'This mailbox is not supported yet. Connect the Gmail or Outlook account that receives your business mail, and this can start.',
     'automation.requires.default': 'This one cannot run for your business yet.',
     'automation.install_failed': 'I could not switch that on. Try again in a moment.',
     'automation.card_title': 'Working for you',
@@ -743,6 +787,7 @@ export const en = {
     'gaps.since.quote_deadline_unanswered': '{t} since you sent it',
     'gaps.since.quote_expired': 'ran out {t} ago',
     'gaps.value.owed': 'owed',
+    'gaps.value.requested': 'They asked for',
     'gaps.value.quoted': 'quoted',
     'gaps.value.to_bill': 'to bill',
     'gaps.plan_still_charging': 'plan still charging',
@@ -1663,6 +1708,10 @@ export const en = {
     // Appended to the partial note. A separate sentence rather than a clause,
     // so no translation has to agree a verb with a list whose length varies.
     'vecs.note.learning': 'Still learning: {list}.',
+    /* The vectors with NO data, named beside the ones merely learning. Their
+       own sentence because the owner's next move differs: a learning vector
+       lights on its own, a dark one needs them to start doing the thing. */
+    'vecs.note.nothing_yet': 'Nothing yet on {list}.',
 
     // Ghost projection (AI estimate before real data)
     'ghost.title': 'About 40 people a week search for a business like yours near you.',
@@ -2269,22 +2318,53 @@ export const en = {
     'crm.tab_contacts': 'Contacts',
     'crm.tab_tasks': 'Tasks',
     'crm.tab_subscribers': 'Subscribers',
-    'crm.subscribers.title': 'Newsletter subscribers',
+    /* THE HEADER OF THIS VIEW, not of the contacts page it shares a screen
+       with. The page kept saying "client list, manage your contacts and
+       relationships" over a list that is neither. */
+    'crm.subscribers.title': 'People you may email',
+    'crm.subscribers.subtitle': 'Everyone who agreed to hear from you. A contact who never agreed is not here, and an address with no contact is.',
+    /*
+     * HOW EACH PERSON ARRIVED, in words.
+     *
+     * The row printed the raw column — `website_booking`, `footer_form`,
+     * `consent` — which is the value the database stores and not a thing an
+     * owner can read. The fallback matters as much as the list: sources are
+     * written by several flows and a new one must degrade to a sentence rather
+     * than leaking a snake_case token onto the screen.
+     */
+    'crm.subscribers.source.website_booking': 'Booked on your website',
+    'crm.subscribers.source.booking': 'Booked with you',
+    'crm.subscribers.source.website_form': 'Filled in your contact form',
+    'crm.subscribers.source.website': 'Came through your website',
+    'crm.subscribers.source.landing_page': 'Came through a landing page',
+    'crm.subscribers.source.footer_form': 'Signed up on your website',
+    'crm.subscribers.source.newsletter': 'Signed up to your newsletter',
+    'crm.subscribers.source.consent': 'Ticked the consent box',
+    'crm.subscribers.source.manual': 'Added by you',
+    'crm.subscribers.source.in_person': 'Met in person',
+    'crm.subscribers.source.instagram': 'Came from Instagram',
+    'crm.subscribers.source.whatsapp': 'Came from WhatsApp',
+    'crm.subscribers.source.unknown': 'Agreed to be emailed',
     'crm.subscribers.empty': 'Nobody has agreed to be emailed yet. Anyone who ticks the consent box when they book, enquire or subscribe appears here.',
+    /* The FILTERED empty state. Names the switch, because the list being
+       empty here is a choice the owner made and can undo in one click. */
+    'crm.subscribers.empty_filtered': 'Everyone who agreed to hear from you is already in your CRM. Turn on “Include people already in the CRM” above to see them.',
     'crm.subscribers.status_pending': 'Awaiting confirmation',
     'crm.subscribers.status_confirmed': 'Confirmed',
     'crm.subscribers.status_unsubscribed': 'Unsubscribed',
     'crm.subscribers.status_promoted': 'In the CRM',
     /* Consented and already a contact — never came through the roster. */
     'crm.subscribers.status_contact': 'Contact',
-    'crm.subscribers.promote': 'Move to pipeline',
-    'crm.subscribers.promoting': 'Moving…',
+    'crm.subscribers.loading': 'Loading subscribers...',
+    'crm.subscribers.promote': 'Add to the CRM',
+    'crm.subscribers.promoting': 'Adding…',
     'crm.subscribers.subscribed_on': 'Subscribed',
     'crm.subscribers.show_promoted': 'Include people already in the CRM',
     'crm.subscribers.not_mailable': 'Not yet mailable',
     'crm.subscribers.origin': 'Newsletter subscriber since {date}',
     'crm.tab_activity': 'Activity',
     'crm.loading': 'Loading contacts...',
+    'crm.loading_board': 'Loading your board...',
     'crm.no_stages_title': 'Your pipeline has no stages yet',
     'crm.no_stages_body': 'The board needs stages to show its columns. Your contacts are still on the Contacts tab.',
     'crm.stages_failed_title': 'Your pipeline could not be loaded',
@@ -3138,6 +3218,7 @@ export const en = {
      * A kind with no label here falls back to the subject, so adding a sender
      * before its label is safe.
      */
+    'crm.journey.mail_kind.self_service_link': 'A link to a page where the client decides',
     'crm.journey.mail_kind.booking_confirmed': 'the booking confirmation',
     'crm.journey.mail_kind.booking_rescheduled': 'the new time',
     'crm.journey.mail_kind.booking_cancelled': 'the booking cancellation notice',
@@ -3835,6 +3916,47 @@ export const en = {
     'payments.method.invoice': 'Invoice',
     'payments.method.plan': 'Plan',
     'payments.method.mixed': 'Mixed',
+    'payments.filter.all': 'All',
+    'payments.page.of': '{from}–{to} of {total}',
+    'payments.page.prev': 'Previous',
+    'payments.page.next': 'Next',
+    'payments.filter.none': 'Nothing in that state',
+    'payments.group.waiting': 'Waiting to be paid',
+    'payments.group.waiting_why': 'needs you',
+    'payments.group.refunded': 'Money you returned',
+    'payments.group.refunded_why': 'closed — for the record',
+    'payments.group.paid': 'Paid',
+    'payments.group.paid_why': 'nothing to do',
+    'payments.group.cancelled': 'Cancelled',
+    'payments.group.cancelled_why': 'not money — never collected, never will be',
+    'payments.answer.owes': '{name} owes you {amount}',
+    'payments.answer.of_which_late': ', of which {amount} is already late',
+    'payments.answer.received': 'So far you have received {amount} from them.',
+    'payments.answer.rest_ok': 'Everything else is settled.',
+    'payments.answer.nothing_owed': '{name} owes you nothing.',
+    'payments.stat.waiting': 'Waiting',
+    'payments.stat.received': 'Received',
+    'payments.stat.refunded': 'Returned',
+    'payments.late_days': '{n} days late',
+    'payments.late_day': 'one day late',
+    'payments.due_on': 'due {date}',
+    'payments.due_soon': 'not due yet',
+    'payments.paid_on': 'paid {date}',
+    'payments.returned_on': 'returned {date}',
+    'payments.remind_sending': 'Sending…',
+    'payments.remind_sent': 'Reminder sent',
+    'payments.remind_failed': 'Could not send the reminder',
+    'payments.chase.already_paid': 'They have already paid — no reminder sent',
+    'payments.chase.not_due': 'Not due yet — no reminder sent',
+    'payments.chase.no_email': 'This invoice has no email address',
+    'payments.chase.not_enabled': 'Reminders are switched off in settings',
+    'payments.chase.other': 'The reminder was not sent',
+    'payments.remind': 'Send a reminder',
+    'payments.open': 'Open',
+    'payments.show': 'Show',
+    'payments.more_n': '{n} more',
+    'payments.quiet.paid': '{amount} received across {n} payments.',
+    'payments.quiet.cancelled': '{n} cancelled invoices. They count towards none of the figures above.',
     'payments.money_status.paid': 'Paid',
     'payments.money_status.partially_refunded': 'Partly refunded',
     'payments.money_status.refunded': 'Refunded',
@@ -3958,6 +4080,7 @@ export const en = {
     'payments.amount': 'Amount',
     'payments.status': 'Status',
     'payments.payment_method': 'Payment Method',
+    'payments.payment_method.manual': 'Recorded by hand',
     'payments.payment_method.card': 'Card',
     'payments.payment_method.stripe': 'Stripe',
     'payments.payment_method.bank_transfer': 'Bank Transfer',
@@ -4116,6 +4239,16 @@ export const en = {
     'payments.refund.blocked_ambiguous': 'More than one payment was collected here. Refund a specific payment from the payments list.',
     'payments.refund_singular': 'refund',
     'payments.refund_plural': 'refunds',
+    'payments.refund_request.story': 'How this went',
+    'payments.refund_request.agent_said': 'The agent looked and recommended',
+    'payments.refund_request.via.portal_form': 'through the portal form',
+    'payments.refund_request.via.email': 'by email',
+    'payments.refund_request.via.owner': 'recorded by you',
+    'payments.refund_request.still_open': 'still open — waiting on your decision',
+    'payments.refund_request.asked': 'The client asked for {amount} back',
+    'payments.refund_request.state.refunded': 'refunded',
+    'payments.refund_request.state.declined': 'declined',
+    'payments.refund_request.state.open': 'awaiting your decision',
     'payments.refund.reason.no_show': 'Client did not show up',
     'payments.refund.reason.cancelled_by_client': 'Cancelled by the client',
     'payments.refund.reason.service_not_delivered': 'Service not delivered',

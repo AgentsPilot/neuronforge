@@ -17,6 +17,7 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { pluginConnectionRepository } from '@/lib/repositories/PluginConnectionRepository';
 import type { SchedulingBooking, SchedulingService, CalendarSyncProvider } from '@/lib/repositories/SchedulingRepository';
 import type { ExternalCalendarEventInsert, CalendarProvider } from '@/lib/repositories/ExternalCalendarEventRepository';
+import { blocksTime } from '@/lib/scheduling/externalEventBlocksTime';
 
 const logger = createLogger({ service: 'CalendarSyncService' });
 
@@ -546,10 +547,29 @@ class CalendarSyncServiceImpl {
       // Prepare events for upsert
       const eventsToUpsert: ExternalCalendarEventInsert[] = [];
       const newEventIds = new Set<string>();
+      /** Events Google or Outlook marks as free, counted for the log. */
+      let skipped = 0;
 
       for (const event of externalEvents) {
         const eventId = event.id;
         if (!eventId) continue;
+
+        /*
+         * ── AN EVENT THAT DOES NOT TAKE THE TIME IS NOT IMPORTED ────────────
+         *
+         * This table has exactly one job: answering "is this hour free". It is
+         * read by `getBusySlots` and `isSlotBlocked` and by nothing else, so a
+         * row that should not block has no reason to exist in it.
+         *
+         * Skipping rather than storing-and-ignoring also repairs itself. The
+         * block below deletes every stored event missing from this pass, so a
+         * birthday imported before this change is removed on the next sync
+         * with no cleanup to run.
+         */
+        if (!blocksTime(event)) {
+          skipped++;
+          continue;
+        }
 
         newEventIds.add(eventId);
 
@@ -576,6 +596,13 @@ class CalendarSyncServiceImpl {
         } else {
           result.added++;
         }
+      }
+
+      if (skipped > 0) {
+        logger.info(
+          { userId, provider, skipped },
+          'External events that show as free were not imported; they do not block a slot'
+        );
       }
 
       // Upsert all events

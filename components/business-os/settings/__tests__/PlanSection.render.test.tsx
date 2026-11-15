@@ -23,7 +23,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { PlanSection } from '@/components/business-os/settings/PlanSection';
 import { buildCustomerPlanView } from '@/lib/business-os/entitlements/customerPlanView';
@@ -32,6 +32,7 @@ import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import { readCodeConfig } from '@/lib/business-os/entitlements/source';
 import { CREDIT_EXPLANATION } from '@/lib/i18n/creditExplanation';
 import { planCategoryLine } from '@/lib/business-os/planCategoryLine';
+import { splitIncluded } from '@/components/business-os/settings/PlanIncludes';
 
 /*
  * The REAL dictionary, in the language a test asks for.
@@ -110,9 +111,20 @@ async function renderFor(planId: string, language: Lang = 'en') {
  * so that button is on screen here too. Excluded by its EXACT test id only
  * (SA W-3), and each absence test asserts it is present.
  */
-const moneyButtons = () => screen.queryAllByRole('button').filter((button) => button.getAttribute('data-testid') !== 'plan-compare-open');
+const NOT_MONEY = /^(plan-compare-open|plan-includes-row-|plan-amount-explain-)/;
+const moneyButtons = () =>
+  screen
+    .queryAllByRole('button')
+    /*
+     * The view-only "Compare plans", and since the 2026-11-15 redesign the
+     * list's own controls: a category row opens to show what is in it, and an
+     * amount's info button opens the sentence that explains it. Neither spends
+     * anything, and this helper exists to prove nothing on the screen DOES.
+     * Excluded by exact id or id prefix (SA W-3), never by label.
+     */
+    .filter((button) => !NOT_MONEY.test(button.getAttribute('data-testid') ?? ''));
 
-/** A row's text without the explanation sentence under it — the heading and the line. */
+/** An element's text without the explanation sentence inside it. */
 function headingAndLine(row: HTMLElement): string {
   const note = row.querySelector('[data-testid^="plan-category-note-"]');
   return (row.textContent ?? '').replace(note?.textContent ?? '', '');
@@ -130,7 +142,15 @@ describe('a Founding Partner', () => {
     // ONCE: the plan name. The pill that briefly sat beside it was dropped, so a
     // second occurrence here would mean it had come back.
     expect(screen.getAllByText('Founding Partner')).toHaveLength(1);
-    expect(screen.getByText(/Free — no end date/i)).toBeInTheDocument();
+    /*
+     * Two pills since the 2026-11-15 redesign, where there was one line.
+     * `priceLine`'s joined sentence ("Free — no end date") still covers a PAID
+     * plan's price; a free one states the two facts separately, so the one that
+     * is a claim about time can be left off a dated cohort — which the test
+     * below checks at the DOM.
+     */
+    expect(screen.getByText(COPY['plan.price.free'])).toBeInTheDocument();
+    expect(screen.getByText(COPY['plan.state.no_end'])).toBeInTheDocument();
   });
 
   it('a DATED champion sees the date and nothing claiming "no end date" (SA R4-1)', async () => {
@@ -191,13 +211,21 @@ describe('a Founding Partner', () => {
   it('is told everything it has, by name', async () => {
     await renderFor('champion');
 
+    /*
+     * `hidden: true` because the section is COLLAPSED (owner decision,
+     * 2026-11-15): the figures answer the question the drawer is opened with,
+     * and what the plan can do is a longer answer behind a `<details>`. The
+     * rows are in the DOM, which is what this asserts; the Settings pop-up's
+     * own copy of this list is queried the same way.
+     */
+
     // Grouped rows: the category names are the lines, and the capability names
     // live inside each row's summary. Both halves checked, against the payload's
     // OWN strings — a substring like "Invoices" now appears in two summaries
     // (Payments, and the AI assistant's invoice control), so an exact match on the
     // row is the only unambiguous assertion.
     const payload = payloadFor('champion');
-    const included = within(screen.getByRole('list', { name: /What your plan includes/i }));
+    const included = within(screen.getByRole('list', { name: /What your plan includes/i, hidden: true }));
 
     for (const category of ['crm', 'payments']) {
       const row = payload.included.find((entry) => entry.category === category)!;
@@ -283,12 +311,30 @@ describe('a paying customer on Essentials', () => {
     //
     // A value sits inside its row's summary, in brackets beside its own name,
     // as "Email volume 10,000 per month (alerts, never blocks)".
-    const included = within(screen.getByRole('list', { name: /What your plan includes/i }));
-    expect(included.getByText(/Email volume 10,000 per month/)).toBeInTheDocument();
+    /*
+     * The email volume is a FIGURE, so since the 2026-11-15 redesign it is in
+     * the amounts band above the list rather than inside a category's summary.
+     * Its value still carries the ceiling's own words.
+     */
+    const amounts = within(screen.getByTestId('plan-amounts'));
+    expect(amounts.getByText(/10,000 per month/)).toBeInTheDocument();
+    expect(amounts.getByText(/alerts, never blocks/i)).toBeInTheDocument();
   });
 });
 
 describe('the credit allowance is shown with its number, under its own heading (slice 6, D-g / D-h)', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE 2026-11-15 REDESIGN MOVED IT, AND KEPT EVERY PROMISE D-g / D-h MADE.
+   *
+   * The allowance is a FIGURE, so it is now the first thing in the amounts band
+   * above the list rather than the first row inside it. What D-g asked for is
+   * unchanged and still asserted here: the heading, the number beside it, and
+   * the sentence that says what a credit is — the last now behind its own info
+   * button, because four lines of definition were opening a drawer that is read
+   * to check a number.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   it.each([
     // The line is the value alone: the heading already says "Credits" (user
     // decision, 2026-10-02 — no "Credits" over "Credits (…)").
@@ -297,28 +343,56 @@ describe('the credit allowance is shown with its number, under its own heading (
     ['pro', '5,000 per month', CREDIT_EXPLANATION.en.monthly],
     ['basic', '2,000 per month', CREDIT_EXPLANATION.en.monthly],
     ['trial', '1,000 in total', CREDIT_EXPLANATION.en.trial],
-  ])('%s: a first "Credits" row reads %s, with the sentence under it', async (planId, line, sentence) => {
+  ])('%s: the credits amount reads %s, and says what a credit is when asked', async (planId, line, sentence) => {
     await renderFor(planId);
 
-    const included = screen.getByRole('list', { name: /What your plan includes/i });
-    const firstRow = within(included).getAllByRole('listitem')[0];
+    const band = screen.getByTestId('plan-amounts');
 
-    // The heading, the line with its number, and the sentence — all in the FIRST
-    // row, which is the point of D-g.
-    expect(within(firstRow).getByText('Credits')).toBeInTheDocument();
-    expect(within(firstRow).getByText(line)).toBeInTheDocument();
-    // "Credits" once in the heading and line: never repeated in the line. (The
-    // sentence under it says "credits" in passing, so it is left out.)
-    expect(headingAndLine(firstRow).match(/Credits/g)).toHaveLength(1);
-    expect(within(firstRow).getByTestId('plan-category-note-credits')).toHaveTextContent(sentence);
-    // Once on the page, not repeated under other rows.
+    expect(within(band).getByText('Credits')).toBeInTheDocument();
+    /*
+     * READ ACROSS THE ELEMENTS, because the figure is no longer one of them.
+     *
+     * `PlanIncludes` splits an amount from its unit — that is what
+     * `PlanFeature.amountKind` exists to drive — so "5,000 per month" is now
+     * two nodes and `getByText` cannot see it whole. The CLAIM is unchanged:
+     * the amounts band reads this line, in this order, once.
+     *
+     * Whitespace collapsed because the split introduces layout gaps between
+     * the parts, which say nothing about what the owner reads.
+     */
+    expect((band.textContent ?? '').replace(/\s+/g, ' ')).toContain(line);
+    // "Credits" once: the heading says it, the line never repeats it.
+    expect(headingAndLine(band).match(/Credits/g)).toHaveLength(1);
+
+    // Not before it is asked for — that is the whole move.
+    expect(screen.queryByTestId('plan-category-note-credits')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('plan-amount-explain-credits'));
+
+    expect(screen.getByTestId('plan-category-note-credits')).toHaveTextContent(sentence);
+    // Once on the page, not repeated beside anything else.
     expect(screen.getAllByText(sentence)).toHaveLength(1);
   });
 
-  it('no row but the credits one carries a sentence', async () => {
+  it('nothing else on the screen carries that sentence, opened or closed', async () => {
     await renderFor('champion');
 
+    expect(screen.queryAllByTestId(/^plan-category-note-/)).toHaveLength(0);
+
+    fireEvent.click(screen.getByTestId('plan-amount-explain-credits'));
+
     expect(screen.queryAllByTestId(/^plan-category-note-/)).toHaveLength(1);
+  });
+
+  it('is in the band, not in the list of what the plan can do', async () => {
+    /* A figure and a capability are different questions. The list is now only
+       the second kind, so nothing in it repeats the allowance. */
+    await renderFor('champion');
+
+    const included = within(screen.getByRole('list', { name: /What your plan includes/i, hidden: true }));
+
+    expect(included.queryByText('Credits')).not.toBeInTheDocument();
+    expect(included.queryByText('5,000 per month')).not.toBeInTheDocument();
   });
 });
 
@@ -345,7 +419,7 @@ describe('chat is named like anything else (2026-09-27)', () => {
     // and available now, so naming it is the honest thing.
     await renderFor('pro');
 
-    const included = within(screen.getByRole('list', { name: /What your plan includes/i }));
+    const included = within(screen.getByRole('list', { name: /What your plan includes/i, hidden: true }));
     expect(included.getByText(/AI chat assistant/i)).toBeInTheDocument();
   });
 
@@ -462,18 +536,37 @@ describe('the contract with the server', () => {
     // contract test must not have.
     expect(payload.included.length).toBeGreaterThanOrEqual(3);
 
-    const included = within(screen.getByRole('list', { name: /What your plan includes/i }));
+    const included = within(screen.getByRole('list', { name: /What your plan includes/i, hidden: true }));
     expect(screen.getByText(payload.name!)).toBeInTheDocument();
+
+    /*
+     * Since 2026-11-15 a payload row lands in ONE OF TWO places, and this test
+     * follows the payload rather than assuming: a row that carries figures is
+     * in the band, the rest are rows in the list. `splitIncluded` is the
+     * component's own rule, used here as the ROUTER only — every string
+     * asserted below still comes from the builder, which is what makes a
+     * renamed field fail here.
+     */
+    const { amounts, groups } = splitIncluded(payload);
+    expect(amounts.length).toBeGreaterThan(0);
+    expect(groups.length).toBeGreaterThanOrEqual(3);
+
+    const band = within(screen.getByTestId('plan-amounts'));
+    for (const item of amounts) {
+      expect(band.getByText(item.feature.label)).toBeInTheDocument();
+    }
 
     // Grouped rows since 2026-09-27: each row prints its category label and the
     // server-built `summary` — or, for a row whose only feature is named like
     // its heading, that feature's value (2026-10-02). Both halves are asserted,
     // because a component that printed the label and dropped the line would
     // still look like a list.
-    for (const row of payload.included.slice(0, 3)) {
-      const heading = COPY[row.labelKey] ?? row.labelKey;
+    for (const group of groups.slice(0, 3)) {
+      const heading = COPY[group.labelKey] ?? group.labelKey;
       expect(included.getByText(heading)).toBeInTheDocument();
-      expect(included.getByText(planCategoryLine(heading, row)!)).toBeInTheDocument();
+      expect(
+        included.getByText(planCategoryLine(heading, { features: group.features, summary: group.summary })!)
+      ).toBeInTheDocument();
     }
     // Non-vacuity for the rule: the first row (credits) took the short form, and
     // the others kept the summary.
@@ -537,15 +630,30 @@ describe('a Hebrew or Spanish owner reads no English, and no repeated "Credits" 
       await renderFor(planId, language);
 
       const heading = translations[language]['plan.category.credits'];
-      const included = screen.getByRole('list', { name: translations[language]['plan.includes'] });
-      const firstRow = within(included).getAllByRole('listitem')[0];
       const credits = payloadFor(planId, language).included[0];
 
       expect(credits.category).toBe('credits');
-      // The rule fires in every language: the capability's own label matches the
-      // heading word for word, so the line is just the value.
-      expect(within(firstRow).getByText(credits.features[0].value)).toBeInTheDocument();
-      expect(headingAndLine(firstRow).split(heading)).toHaveLength(2);
+
+      /*
+       * CREDITS LIVE IN THE AMOUNTS BAND, not the first row of the list.
+       *
+       * This read `getAllByRole('listitem')[0]`, which was the credits row for
+       * as long as everything a plan includes was one list. `PlanIncludes`
+       * splits the two: a capability carrying a FIGURE goes to the amounts
+       * band (`plan-amounts`), and the plain features stay in the list — so
+       * row one is now "Clients (CRM)" and the assertion was reading the wrong
+       * thing entirely rather than failing on a detail.
+       *
+       * The claim is unchanged and still worth pinning: the heading appears
+       * ONCE, over the value alone, in every language.
+       *
+       * Read across elements because the band splits an amount from its unit;
+       * whitespace collapsed because that split adds layout gaps which say
+       * nothing about what the owner reads.
+       */
+      const band = screen.getByTestId('plan-amounts');
+      expect((band.textContent ?? '').replace(/\s+/g, ' ')).toContain(credits.features[0].value);
+      expect(headingAndLine(band).split(heading)).toHaveLength(2);
       // And the summary (which repeats the name) is not on the screen at all.
       expect(document.body.textContent ?? '').not.toContain(credits.summary);
     }

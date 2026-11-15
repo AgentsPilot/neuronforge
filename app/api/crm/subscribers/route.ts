@@ -96,9 +96,34 @@ export async function GET(request: NextRequest) {
       .map((c) => c.contact_id)
       .filter((id): id is string => Boolean(id));
 
-    const [{ data: contacts }, { data: consentByEmail }] = await Promise.all([
+    /*
+     * And the addresses of the consent rows that name NOBODY.
+     *
+     * `contact_id` is only written when the consent and the contact arrive
+     * together; nothing backfills it. So a person who consented on the website
+     * and became a client three weeks later keeps a consent row saying
+     * `contact_id: null`, and this screen read that as "not in the CRM": the
+     * row survived the exclude toggle and offered to add a client the owner had
+     * been working for weeks. Found on a live account, 2026-11-15.
+     *
+     * The roster addresses are left out because a roster row already wins the
+     * merge for its address, so a contact found for one could never be used.
+     */
+    const rosterEmails = new Set((roster ?? []).map((s) => s.email_normalized));
+    const unlinkedEmails = Array.from(
+      new Set(
+        (consented ?? [])
+          .filter((c) => !c.contact_id && !rosterEmails.has(c.email_normalized))
+          .map((c) => c.email_normalized)
+      )
+    );
+
+    const [{ data: contacts }, { data: byAddress }, { data: consentByEmail }] = await Promise.all([
       contactIds.length
         ? crmContactRepository.listBasic(user.id, { ids: contactIds })
+        : Promise.resolve({ data: [], error: null }),
+      unlinkedEmails.length
+        ? crmContactRepository.listBasic(user.id, { emails: unlinkedEmails })
         : Promise.resolve({ data: [], error: null }),
       marketingConsentRepository.getStateBulk(
         user.id,
@@ -106,10 +131,18 @@ export async function GET(request: NextRequest) {
       ),
     ]);
 
+    /* Keyed the way the consent table keys people, so the two sides agree. */
+    const contactsByEmail = new Map(
+      (byAddress ?? [])
+        .filter((c) => c.email)
+        .map((c) => [c.email!.trim().toLowerCase(), c] as const)
+    );
+
     const rows = buildAudience({
       roster: roster ?? [],
       consented: consented ?? [],
       contacts: contacts ?? [],
+      contactsByEmail,
       consentByEmail: consentByEmail ?? new Map(),
       includePromoted,
     });

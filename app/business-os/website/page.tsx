@@ -7156,9 +7156,17 @@ export default function WebsiteManagementPage() {
                                                 stats.splice(idx, 1);
                                                 updateBlockField('stats', stats);
                                               }}
-                                              className="absolute top-2 right-2 p-1 text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                              /* Hidden until hover is hidden FOREVER on a phone: there
+                                                 is no hover, so this was the only way to remove a stat
+                                                 and it never appeared. The repo's answer is a capability
+                                                 query rather than a breakpoint — a touch laptop is wide
+                                                 and still has no pointer, so `sm:` would leave it just as
+                                                 broken while looking fixed. `touchCanReachTheActions.guard`
+                                                 pins this spelling elsewhere. Target also raised from the
+                                                 20px it was: this one deletes. */
+                                              className="absolute top-2 end-2 inline-flex h-8 w-8 items-center justify-center text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100"
                                             >
-                                              <Trash2 className="w-3 h-3" />
+                                              <Trash2 className="w-3.5 h-3.5" />
                                             </button>
                                             <input
                                               type="text"
@@ -8694,7 +8702,7 @@ export default function WebsiteManagementPage() {
                screen overflows in BOTH directions, and the part above the top
                edge cannot be reached by scrolling anything. `dvh` because a
                phone's `vh` excludes the address bar. */
-            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 sm:p-6 w-full max-w-lg mx-4 shadow-2xl max-h-[calc(100ddvh-2rem)] overflow-y-auto"
+            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 sm:p-6 w-full max-w-lg mx-4 shadow-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             {/* Header */}
@@ -8820,7 +8828,7 @@ export default function WebsiteManagementPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/50" onClick={() => setPublishAddressOpen(false)} />
           <div
-            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-md mx-4 p-4 sm:p-6 max-h-[calc(100ddvh-2rem)] overflow-y-auto"
+            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-md mx-4 p-4 sm:p-6 max-h-[calc(100dvh-2rem)] overflow-y-auto"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
@@ -8948,7 +8956,7 @@ export default function WebsiteManagementPage() {
             stacking context.
           */}
           <div
-            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-2xl max-h-[calc(100ddvh-2rem)] sm:max-h-[80dvh] overflow-hidden flex flex-col mx-4"
+            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-2xl max-h-[calc(100dvh-2rem)] sm:max-h-[80dvh] overflow-hidden flex flex-col mx-4"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             <div className="shrink-0 bg-[var(--v2-surface)] border-b border-[var(--v2-border)] p-4 flex items-center justify-between">
@@ -9323,8 +9331,26 @@ export default function WebsiteManagementPage() {
             <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
               {labels.publish_landing_url}
             </label>
+            {/*
+              THE HOST CANNOT SHRINK, SO THE ROW HAS TO WRAP.
+              ────────────────────────────────────────────────────────────────
+              Two `whitespace-nowrap` monospace runs sit in here — the business
+              prefix and `.host/` — and neither may be truncated, because a URL
+              with letters missing from the middle is not a URL the owner can
+              check. The only item that can give way is the slug input, and
+              `flex-1 min-w-0` let it give way all the way to zero: on a phone,
+              with a long business address, the field the dialog exists to
+              collect had no width left to type into.
+
+              `flex-wrap` plus a real `basis` on the input is the fix that
+              keeps every character legible: the input takes the rest of the
+              line while there is at least 6rem of it, and drops to a line of
+              its own when there is not. The alternative the repo's row rule
+              would suggest — `truncate` on the text — is right where the text
+              is a name and wrong where it is an address.
+            */}
             <div
-              className="flex items-center gap-1 px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] focus-within:ring-2 focus-within:ring-[#4F6EF7]"
+              className="flex flex-wrap items-center gap-1 px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] focus-within:ring-2 focus-within:ring-[#4F6EF7]"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
               dir="ltr"
             >
@@ -9353,7 +9379,11 @@ export default function WebsiteManagementPage() {
                 value={publishSlugDraft}
                 onChange={(e) => setPublishSlugDraft(e.target.value)}
                 placeholder="my-page"
-                className="flex-1 min-w-0 bg-transparent text-sm font-mono text-[var(--v2-text-primary)] focus:outline-none"
+                /* `grow basis-24`, not `flex-1`: `flex-1` sets a zero basis, so
+                   the item never asks for room and never triggers the wrap that
+                   would save it. A real basis makes 6rem the point where it
+                   takes a line of its own instead. */
+                className="grow basis-24 min-w-0 bg-transparent text-sm font-mono text-[var(--v2-text-primary)] focus:outline-none"
               />
             </div>
             {publishLandingError && (

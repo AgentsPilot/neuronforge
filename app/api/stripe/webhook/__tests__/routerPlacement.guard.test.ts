@@ -345,6 +345,23 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     handleConnectInvoicePaymentFailed: { findByStripeInvoiceId: 1, setStatusFromStripe: 1, readFieldsUnscoped: 1 },
     handleConnectInvoiceFinalized: { findByStripeInvoiceId: 1, recordStripeDocuments: 1 },
     handleConnectInvoiceUncollectible: { findByStripeInvoiceId: 1, setStatusFromStripe: 1 },
+    /*
+     * A READ, AND DELIBERATELY NO WRITE.
+     *
+     * `recordPlanPeriodPaid` resolves which of our bills a Stripe invoice is,
+     * for ONE purpose: to write `invoice_id` on the payment it is inserting.
+     * Without it that column stayed null for every plan payment ever taken —
+     * measured at 5 unlinked payments on one account — so a bill and the money
+     * that settled it could not be joined, and a paid instalment counted twice:
+     * once as collected through the transaction, once as outstanding through
+     * an invoice nobody had marked paid.
+     *
+     * It does NOT settle the invoice. `handleConnectInvoicePaid` already does
+     * that, with an `accountOwns` check on the row it writes, which is why its
+     * pair above is two and not one. A second settle here would be a second
+     * writer of the same fact, with a weaker ownership check.
+     */
+    recordPlanPeriodPaid: { findByStripeInvoiceId: 1 },
   };
   const INVOICE_WRITES = ['recordStripeInvoiceId', 'markPaidFromStripeInvoice', 'markPaidFromCheckout', 'setStatusFromStripe', 'recordStripeDocuments'];
 
@@ -403,13 +420,28 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     // The nearest `accountOwns(…)` before each write must test an invoice row's
     // owner, not, say, a plan's. Moving a write above its check (the F-1 shape)
     // makes the nearest check a different one, or none.
+    let writesSeen = 0;
     for (const fn of Object.keys(INVOICE_CALLS)) {
       const node = topLevelFunction(fn)!;
       const checks = callsTo(node, 'accountOwns');
       const writes = receiverCalls(node, 'paymentInvoiceRepository').filter((c) =>
         INVOICE_WRITES.includes((c.expression as ts.PropertyAccessExpression).name.text)
       );
-      expect(writes.length).toBeGreaterThan(0);
+      /*
+       * A READ-ONLY HANDLER HAS NOTHING TO ORDER.
+       *
+       * This asserted every listed function writes, which held while every
+       * function that touched an invoice also changed one. `recordPlanPeriodPaid`
+       * only READS — it resolves which of our bills a Stripe invoice is, so it
+       * can write `invoice_id` on the PAYMENT — and the rule here is about
+       * writes coming after an ownership check.
+       *
+       * The emptiness check moves to the end rather than disappearing: the
+       * list as a whole must still contain writes, so this cannot quietly
+       * become a loop that asserts nothing.
+       */
+      if (writes.length === 0) continue;
+      writesSeen += writes.length;
       for (const write of writes) {
         const before = checks.filter((c) => c.end <= write.getStart(sf));
         const nearest = before[before.length - 1];
@@ -428,6 +460,9 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
         });
       }
     }
+
+    /* The list is not vacuous: somewhere in it, invoices are written. */
+    expect(writesSeen).toBeGreaterThan(0);
   });
 
   // CF-5 PR 3 (workplan §7.3.4): the money-row sites. Expected calls per

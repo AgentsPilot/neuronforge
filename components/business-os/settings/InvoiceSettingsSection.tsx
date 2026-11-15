@@ -1025,7 +1025,7 @@ export function InvoiceSettingsSection({
                   disabled={saving || termsMissing || countryMissing}
                   className={`text-sm font-medium disabled:opacity-50 flex items-center gap-2 ${
                     chrome
-                      ? 'px-4 py-2 bg-[var(--v2-primary)] text-white'
+                      ? 'px-4 py-2 bg-[var(--v2-primary)] text-white ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]'
                       : 'px-6 py-2.5 border transition-all'
                   }`}
                   style={chrome ? { borderRadius: 'var(--v2-radius-button)' } : configAccentButton}

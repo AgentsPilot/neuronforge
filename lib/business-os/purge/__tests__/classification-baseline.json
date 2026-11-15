@@ -1,6 +1,6 @@
 {
   "generated": "2026-10-04",
-  "count": 166,
+  "count": 167,
   "levels": {
     "abandoned_bookings": "reset",
     "admin_users": "never",
@@ -135,6 +135,7 @@
     "proposal_attachments": "reset",
     "proposal_signatures": "reset",
     "proposals": "reset",
+    "refund_requests": "reset",
     "run_memories": "optional:agents",
     "saved_payment_methods": "reset",
     "scheduling_availability_exceptions": "reset",
@@ -194,6 +195,7 @@
     "marketing_consent_state": "2026-10-07: measured live: NO FK to business_profiles; -> marketing_consent_events NO ACTION; no inbound FK, no trigger. The projection the send gate reads; deleting it would lose every suppression: never.",
     "proposal_attachments": "2026-11-11 G-18/SA-S3: a CASCADE child of proposals carrying its own user_id, so it is business owned and gets its own business_fk (20261119). Classified with its parent: reset. Excluded from the export - the owner already holds the originals, and the quote body referencing them travels with proposals.",
     "proposal_signatures": "2026-11-11 G-18/SA-S3: as proposal_attachments. Classified with its parent: reset. Excluded from the export - a signature is evidence about a third party, not the business own authored content. Append-only on UPDATE by trigger, but DELETE is left open so this reset and the CASCADE from proposals both work (20261115).",
+    "refund_requests": "2026-11-13: new table (20261121). A client asking for their money back, in their own words, and the owner's decision about it. user_id scoped, LEAF — contact_id and booking_id are both ON DELETE SET NULL, so a request outlives the rows it names and nothing points AT it. Reset, like the bookings and the prospects it sits beside: the requests belong to the business. Export EXCLUDED as activity — a third party's request, not the business's authored content; the money itself is in payment_refunds, classified on its own terms. It never holds money: amount_requested is what was ASKED.",
     "scheduling_meetings": "2026-10-17 Phase 4c: added by 20261073_scheduling_meetings.sql. FK business_profiles CASCADE (scheduling_meetings_business_fk, 20261076) and booking_id -> scheduling_bookings CASCADE. Inbound: payment_plan_installments.meeting_id SET NULL, which blocks nothing. The appointments themselves — business data, reset. PRE_BLOCKING rather than LEAF: the booking's CASCADE would otherwise empty the table first and this descriptor would report 0 rows deleted for a table that was in fact emptied.",
     "shared_agent_imports": "2026-10-04 AD-1a SC-8: no tenancy column; imported_by_user_id -> auth.users SET NULL. Actor reference on platform data: never.",
     "sla_events": "2026-10-04 AD-1a SC-8: no tenancy column; acknowledged_by -> auth.users NO ACTION. Actor reference on platform data: never. FU-9 must handle the NO ACTION FK.",

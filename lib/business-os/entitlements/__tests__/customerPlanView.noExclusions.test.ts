@@ -191,7 +191,15 @@ describe('no plan is described by what it withholds', () => {
   // `noteKey` (slice 6, D-h): a dictionary key for the sentence under the
   // credits row — a key, never a list, so it cannot carry an exclusion.
   const ROW_KEYS = ['category', 'labelKey', 'noteKey', 'features', 'summary'].sort();
-  const FEATURE_KEYS = ['capability', 'label', 'value'].sort();
+  // `amountKind`: which of the three catalog shapes carries this feature's
+  // figure — `'metered' | 'fair_use' | 'quantity' | null`, and nothing else.
+  // It joins the allow-list rather than failing it because the rule here is
+  // about EXCLUSION LISTS, and a closed union of three strings cannot hold
+  // one. The same reasoning as `labelKey` and `noteKey` above: a key or an
+  // enum is safe, an array is not, and the allow-list is what keeps the
+  // difference enforced rather than assumed.
+  const FEATURE_KEYS = ['amountKind', 'capability', 'label', 'value'].sort();
+
   // SA R4-4 asked for the badge object's keys to join this sweep. It became moot:
   // the user dropped the pill beside the plan heading, so the payload carries no
   // `badge` at all — and VIEW_KEYS above would now REJECT one, which is stronger

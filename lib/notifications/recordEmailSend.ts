@@ -169,7 +169,20 @@ export type EmailKind =
   | 'booking_recovery'
   /* About the contact, with no booking behind it. */
   | 'contact_welcome'
-  | 'contact_returning';
+  | 'contact_returning'
+  /*
+   * A link to a page where the client decides — book, reschedule, cancel, pay,
+   * intake, quote, refund. One kind for all of them, and DELIBERATELY WITHOUT
+   * a `crm.journey.mail_kind.*` label.
+   *
+   * An unlabelled kind falls back to the subject, and these subjects are
+   * already specific and already in the client's language ("שינוי מועד
+   * הפגישה", "בקשת ההחזר שלכם"). A generic label would replace something
+   * precise with something vague, which is the opposite of what labelling is
+   * for. Seven labels, one per door, would read better still — add them if the
+   * journey ever needs to group by door.
+   */
+  | 'self_service_link';
 
 /**
  * Which ATTEMPT this mail was about.

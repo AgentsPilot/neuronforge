@@ -18,7 +18,7 @@ import 'server-only';
  * config, never a user id.
  */
 
-import { groupByCategory, isHiddenFromCustomer } from './customerPlanView';
+import { groupByCategory, isHiddenFromCustomer, amountKindOf} from './customerPlanView';
 import { describePlanCapabilities, planLabel, planMonthlyPriceUsd, previewAccountFor } from './planPresentation';
 import { resolveEntitlements } from './resolver';
 import type { EntitlementConfig } from './source';
@@ -95,7 +95,16 @@ export function describePlanOffer(
   // allowance is shown with its number, read off config through the resolver.
   const features = describePlanCapabilities(resolution, catalog, locale)
     .filter((row) => row.granting && !isHiddenFromCustomer(row.capability, catalog[row.capability]))
-    .map((row) => ({ capability: row.capability, label: row.label, value: row.display }));
+    /* `amountKind` because `groupByCategory` takes `CustomerPlanFeature[]`,
+       and the field is required there. It is read straight from the catalog,
+       the same way `customerPlanView` reads it, rather than being invented
+       for this shape. */
+    .map((row) => ({
+      capability: row.capability,
+      label: row.label,
+      value: row.display,
+      amountKind: amountKindOf(catalog[row.capability]),
+    }));
 
   return {
     planName: planLabel(config, planId, locale),

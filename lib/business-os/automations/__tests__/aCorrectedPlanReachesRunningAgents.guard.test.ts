@@ -70,7 +70,26 @@ describe('the drafts check is bounded in time', () => {
      * live account. The window matches the Outlook sibling's stated intent:
      * two days, so a run that failed loses nothing.
      */
-    expect(gmail).toContain('to:{{current_reply.from_email}} newer_than:2d');
+    /*
+     * THE TWO PROPERTIES, not the exact sentence. This pinned the whole string
+     * as one substring and failed the day the query was narrowed FURTHER — a
+     * subject clause was added between the two halves, so the drafts search
+     * now asks "anything I drafted to this person about THIS thread in the
+     * last two days" instead of "anything at all to this person". Strictly
+     * safer, and the guard called it a regression.
+     *
+     * What must stay true is that the search is addressed to the sender AND
+     * bounded in time. How many clauses sit between them is the plan's
+     * business.
+     */
+    const queries = [...gmail.matchAll(/"query":\s*"((?:[^"\\]|\\.)*)"/g)].map(m => m[1]);
+
+    /* The SENT search is addressed the same way and is deliberately
+       unbounded — see the test below — so pick by the bound, not the address.
+       Exactly one query may carry a drafts window. */
+    const bounded = queries.filter(q => q.includes('newer_than:2d'));
+    expect(bounded).toHaveLength(1);
+    expect(bounded[0]).toContain('to:{{current_reply.from_email}}');
   });
 
   it('outlook does too, through the parameter its plugin actually has', () => {

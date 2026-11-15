@@ -475,6 +475,17 @@ describe('the automation catalogue', () => {
     );
 
     expect(claims).toEqual({
+      /*
+       * The refund agent names none, and could not.
+       *
+       * It is not offered from a card at all: it installs itself, because a
+       * client asking for their money back is not something an owner should
+       * have to switch on. And no detector reports a refund REQUEST — the
+       * population it serves is a table nothing watches, filled in by clients
+       * rather than noticed by the platform. Naming a detector would be
+       * claiming people it does not reach.
+       */
+      assess_refund_requests: [],
       /* Every detector on `chase_overdue_invoices` concludes the same thing,
          so it answers the whole process and names none. */
       chase_overdue_invoices: [],

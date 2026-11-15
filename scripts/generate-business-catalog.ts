@@ -71,6 +71,13 @@ const TABLES = [
    */
   'payment_refunds',
   /*
+   * A client ASKING for money back. Separate from `payment_refunds`, which is
+   * money that actually moved: a request is what somebody wants, a refund is
+   * what happened, and merging them would make "how much have I refunded"
+   * answerable with a figure nobody was ever paid.
+   */
+  'refund_requests',
+  /*
    * Payment plans: the offer, the sale, and the periods.
    *
    * Absent from this list, so the chat could not see instalment debt at all.

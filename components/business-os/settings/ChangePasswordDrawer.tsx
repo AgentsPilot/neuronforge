@@ -248,7 +248,7 @@ function ChangePasswordForm({ isChanging, onChangingChange }: ChangePasswordForm
           type="submit"
           disabled={isChanging}
           aria-busy={isChanging || undefined}
-          className="px-4 py-2 text-sm bg-[var(--v2-primary)] text-white font-medium disabled:opacity-50"
+          className="px-4 py-2 text-sm bg-[var(--v2-primary)] text-white font-medium ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
           style={{ borderRadius: 'var(--v2-radius-button)' }}
         >
           {isChanging ? (

@@ -128,6 +128,30 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
       location: event.location,
       start: event.start?.dateTime || event.start?.date,
       end: event.end?.dateTime || event.end?.date,
+      /*
+       * ── DOES THIS EVENT ACTUALLY TAKE THE TIME? ────────────────────────────
+       *
+       * Google answers in two fields and we passed on neither, so every event
+       * reached the sync looking equally busy. A birthday imported from
+       * Contacts is an ALL-DAY event, and an all-day event spans midnight to
+       * midnight — so one birthday closed a whole working day. Found on a live
+       * account: "יום הולדת שמח!" on Monday 16 November blocked 09:00 to
+       * 19:00, with nothing booked and the day open in the owner's hours.
+       *
+       *   transparency  'transparent' is Google's word for "shows as Free".
+       *                 Absent means opaque, which is busy — so only the
+       *                 explicit value is treated as free.
+       *   eventType     'birthday', 'workingLocation' and 'focusTime' are
+       *                 markers rather than commitments. Passed through raw so
+       *                 the decision lives in one place, not here.
+       *
+       * Both are read by `blocksTime` in `CalendarSyncService`. This executor
+       * only reports what Google said.
+       */
+      transparency: event.transparency ?? null,
+      event_type: event.eventType ?? null,
+      /* The camelCase twin, as the attendee fields above already do. */
+      eventType: event.eventType ?? null,
       attendees: event.attendees?.map((a: any) => ({
         email: a.email,
         // Primary format (snake_case)

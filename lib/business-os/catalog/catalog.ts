@@ -452,6 +452,55 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
        * The enquiry is a message, and what it produces is the contact.
        * ───────────────────────────────────────────────────────────────────────
        */
+      send_portal_door: {
+        labels: {
+          en: 'send a client a link to do it themselves',
+          he: 'שליחת קישור ללקוח לביצוע עצמי',
+          es: 'enviar al cliente un enlace para hacerlo por su cuenta',
+        },
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * `send`, AND THE ONLY SEND A MAILBOX AGENT HAS.
+         *
+         * What makes it safe is not the risk level — it is that this action
+         * cannot carry a message. It takes a DOOR, from a closed list, and the
+         * words come from a table in `portal-door.ts` with no free-text field.
+         * The agent chooses where to point; it cannot choose what to say.
+         *
+         * A door is a page where the CLIENT decides: a booking link does not
+         * book, a reschedule link does not reschedule, a refund form does not
+         * refund. Misread the message and they get a door they do not walk
+         * through — recoverable, and nothing was promised. An ANSWER — a price,
+         * a time, an availability — stays a draft for the owner to send.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        risk: 'send',
+        /*
+         * No confirmation, for the same reason `capture_enquiry` has none: a
+         * mailbox agent runs on a schedule with nobody watching, and a prompt
+         * nobody is there to answer is a feature that never runs.
+         *
+         * And no second switch either. Six of the nine catalogue agents
+         * already email clients unprompted and none has one; the control they
+         * share is install and pause. A door is the weakest send of the lot —
+         * a link the client chooses whether to open — so gating it alone would
+         * be an inconsistency dressed as caution. What keeps it safe is the
+         * closed door list and the copy table, not permission.
+         */
+        requiresConfirmation: false,
+        /* It writes no column of `crm_contacts`: it sends, logs, and records
+           that the door went. */
+        writesRow: false,
+        needsTarget: false,
+        /*
+         * `door` is required and closed. Everything else is optional because
+         * it can be resolved: the booking from the contact's most recent one,
+         * the thread from nothing (a portal-raised request has no conversation).
+         */
+        requiredFields: ['contact_id', 'door'],
+        optionalFields: ['booking_id', 'thread_id'],
+      },
+
       capture_enquiry: {
         labels: {
           en: 'file an enquiry that arrived by email',
@@ -928,6 +977,187 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
    * out of every list here without anything having to remember them.
    * ─────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * A CLIENT ASKING FOR THEIR MONEY BACK.
+   *
+   * A REQUEST, and never a refund. `amount_requested` is what was ASKED, typed
+   * by the client into a form; what actually came back is `payment_refunds` and
+   * nowhere else. A card can say "they asked for ₪5,000" beside "you returned
+   * ₪6,750" only because the two are kept apart.
+   *
+   * Nothing here moves money and nothing here may be taught to.
+   * `transactions.refund` is marked `movesMoney` and refused outright on any
+   * automated path, so the agent that reads this table can recommend and cannot
+   * act.
+   *
+   * IT NAMES A BOOKING, not a payment, because that is what the person asking
+   * is thinking of — "the session I cancelled", never `a876d569`. The money
+   * behind it is resolved when it matters.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  refund_requests: {
+    meaning:
+      'a client ASKING for money back, and the answer they are waiting for. Not a refund: ' +
+      'the money that actually came back is `refunds`. Asked "how much have I refunded", ' +
+      'these are never the answer — they are what somebody wants, not what was returned.',
+    table: 'refund_requests',
+    labels: {
+      one: { en: 'refund request', he: 'בקשת החזר', es: 'solicitud de reembolso' },
+      many: { en: 'refund requests', he: 'בקשות החזר', es: 'solicitudes de reembolso' },
+    },
+    aliases: ['refund asks', 'money back requests', 'בקשות החזר כספי', 'solicitudes de devolución'],
+    userScope: { kind: 'column', column: 'user_id' },
+    labelField: 'reason',
+    displayFields: ['amount_requested', 'reason', 'status', 'created_at'],
+    fields: {
+      id: { column: 'id', type: 'uuid', labels: { en: 'ID' } },
+      contact_id: {
+        column: 'contact_id',
+        type: 'uuid',
+        labels: { en: 'client', he: 'לקוח', es: 'cliente' },
+      },
+      booking_id: {
+        column: 'booking_id',
+        type: 'uuid',
+        labels: { en: 'booking', he: 'הזמנה', es: 'reserva' },
+      },
+      amount_requested: {
+        column: 'amount_requested',
+        type: 'number',
+        labels: { en: 'amount asked for', he: 'הסכום שהתבקש', es: 'importe solicitado' },
+      },
+      currency: {
+        column: 'currency',
+        type: 'string',
+        labels: { en: 'currency', he: 'מטבע', es: 'moneda' },
+      },
+      reason: {
+        column: 'reason',
+        type: 'string',
+        labels: { en: 'reason', he: 'סיבה', es: 'motivo' },
+      },
+      note: {
+        column: 'note',
+        type: 'string',
+        labels: { en: 'what they wrote', he: 'מה שהם כתבו', es: 'lo que escribieron' },
+      },
+      status: {
+        column: 'status',
+        type: 'string',
+        labels: { en: 'status', he: 'סטטוס', es: 'estado' },
+        /* The agent may only move it to `awaiting_owner`. The terminal answers
+           — refunded, declined, handled — are a person's to give, and the
+           action's field list is what keeps it that way. */
+        writable: true,
+      },
+      source: {
+        column: 'source',
+        type: 'string',
+        labels: { en: 'how it arrived', he: 'איך הגיעה', es: 'cómo llegó' },
+      },
+      recommendation: {
+        column: 'recommendation',
+        type: 'string',
+        labels: { en: 'recommendation', he: 'המלצה', es: 'recomendación' },
+        writable: true,
+      },
+      recommended_amount: {
+        column: 'recommended_amount',
+        type: 'number',
+        labels: { en: 'recommended amount', he: 'הסכום המומלץ', es: 'importe recomendado' },
+        writable: true,
+      },
+      reasoning: {
+        column: 'reasoning',
+        type: 'string',
+        labels: { en: 'reasoning', he: 'הנימוק', es: 'razonamiento' },
+        writable: true,
+      },
+      assessed_at: {
+        column: 'assessed_at',
+        type: 'datetime',
+        labels: { en: 'assessed', he: 'נבחנה', es: 'evaluada' },
+        /* Stamped when the agent has looked. Null means nothing has, which is
+           what the card reads to decide between showing a recommendation and
+           showing the request cold. */
+        writable: true,
+      },
+      created_at: {
+        column: 'created_at',
+        type: 'datetime',
+        format: 'date',
+        labels: { en: 'asked', he: 'תאריך הבקשה', es: 'solicitada' },
+      },
+      /*
+       * A reply to the CLIENT, written by the agent and sent by nobody. It
+       * reaches them only through the owner's own reply box, with their eyes
+       * on it and a second tap.
+       */
+      client_message_draft: {
+        column: 'client_message_draft',
+        type: 'string',
+        labels: { en: 'draft reply', he: 'טיוטת תשובה', es: 'borrador de respuesta' },
+        writable: true,
+      },
+      /* The payment behind the booking, resolved once so the owner's approval
+         names a transaction rather than a booking that may have two. */
+      transaction_id: {
+        column: 'transaction_id',
+        type: 'uuid',
+        labels: { en: 'payment', he: 'תשלום', es: 'pago' },
+        writable: true,
+        /* Declared because it is WRITABLE: without it the executor cannot check
+           that the payment being pointed at belongs to the same business, and
+           an agent could aim a request at another tenant's transaction. */
+        references: 'transactions',
+      },
+    },
+    actions: {
+      update: {
+        labels: {
+          en: 'record what a refund request needs',
+          he: 'רישום מה בקשת ההחזר צריכה',
+          es: 'registrar lo que necesita una solicitud de reembolso',
+        },
+        /*
+         * `write`, not `send` and emphatically not anything that moves money.
+         * The only fields an agent may set are its own opinion and the status
+         * that hands the request to the owner — see `allowedFields`.
+         */
+        risk: 'write',
+        /*
+         * No confirmation. The agent runs on a schedule with nobody watching,
+         * and a prompt nobody answers is a feature that never runs. What makes
+         * it safe is the field list, not a dialog.
+         */
+        requiresConfirmation: false,
+        requiredFields: [],
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * THE FIELD LIST IS THE SAFETY PROPERTY.
+         *
+         * An agent may write what it THINKS and may hand the request to the
+         * owner. It may not touch `amount_requested` — that is the client's
+         * own words about their own money and nothing may edit it — and it may
+         * not reach a terminal status. `refunded`, `declined` and `handled` are
+         * answers a PERSON gives; an agent writing one would close a request
+         * nobody decided.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        optionalFields: [
+          'recommendation',
+          'recommended_amount',
+          'reasoning',
+          'client_message_draft',
+          'transaction_id',
+          'assessed_at',
+          'status',
+        ],
+      },
+    },
+  },
+
   abandoned_bookings: {
     meaning:
       'CHECKOUTS NOBODY FINISHED — somebody chose a service and a time, reached the payment ' +
@@ -2160,6 +2390,49 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
 
     actions: {
       /**
+       * How much of this booking's money could still be returned.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * A READ, AND THE ONLY ANSWER ANYONE SHOULD USE.
+       *
+       * `refundableBookingsFor` is what the client's own portal lists and what
+       * the owner's refund dialog agrees with, so an agent reading the same
+       * function can never tell the owner a different story about the same
+       * money.
+       *
+       * IT EXISTS BECAUSE THE OBVIOUS QUERY IS WRONG. The refund agent used to
+       * ask for payments `where booking_id = <booking>`, which is how a website
+       * sale is stored — but an invoiced sale puts the booking on the INVOICE
+       * and the transaction carries only `invoice_id`. One hop away, and
+       * invisible. `refundableBookings.ts` names this exactly: "Matching only
+       * `booking_id` is the bug `resolveRefundTargets` documents: it reported
+       * 'no payment'." It did it again here, on a booking whose
+       * `payment_status` was `paid`, and the agent told the owner in writing
+       * that nothing had been paid.
+       *
+       * BizQL cannot express that hop — it is a join through a second table —
+       * so no filter on `find_transactions` can fix it. This is the hop, behind
+       * one reviewed function.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      refundable: {
+        labels: {
+          en: 'check what is still refundable',
+          he: 'בדיקת מה ניתן עוד להחזיר',
+          es: 'comprobar qué queda por reembolsar',
+        },
+        /* It reads. It writes nothing and sends nothing. */
+        risk: 'read',
+        requiresConfirmation: false,
+        writesRow: false,
+        needsTarget: false,
+        /* Scoped by the CLIENT, because that is the one query the underlying
+           function makes. `booking_id` narrows the answer to one booking. */
+        requiredFields: ['contact_id'],
+        optionalFields: ['booking_id'],
+      },
+
+      /**
        * Remove a booking as if it never happened — for one entered by mistake.
        *
        * `cancel` is the usual verb and keeps the record. This refuses outright
@@ -3236,6 +3509,11 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         labels: { en: 'refund a payment', he: 'החזר תשלום', es: 'reembolsar un pago' },
         risk: 'delete',
         requiresConfirmation: true,
+        /* The only action in this catalog that takes money OUT. `risk: 'delete'`
+           says it is destructive and `requiresConfirmation` says a person should
+           answer for it, but neither is read on the agent path — see the field's
+           note in catalog.schema.ts. This one is. */
+        movesMoney: true,
         writesRow: false,
         optionalFields: ['amount', 'reason'],
       },

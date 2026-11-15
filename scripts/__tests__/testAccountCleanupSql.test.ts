@@ -511,7 +511,8 @@ describe('audit row (SA TQ-5, C-7)', () => {
     expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,
     ${ACTOR}, ${ACTOR},`);
     expect(rollbackSql).not.toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
-    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261104_operator_test_account_cleanup_meeting_replaces');
+    /* The chain moved on with 20261127: 20261122 is what its rollback restores. */
+    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261122_operator_test_account_cleanup_refund_requests');
   });
 });
 
@@ -791,6 +792,17 @@ describe('applied history: a function migration is never edited once applied', (
     ['supabase/migrations/20261104_operator_test_account_cleanup_meeting_replaces.sql', '123c04b24cfde8cf3406b3ea160721b34550ed3f197302406346942c7e0cc9fa'],
     ['supabase/SQL Scripts/20261104_operator_test_account_cleanup_meeting_replaces_rollback.sql', 'f6b85388ab9c13afcef27bc8c1d8eb355d192e313f91df324104dfa043d4c7ed'],
     ['supabase/SQL Scripts/20261096_operator_test_account_cleanup_export_requests_rollback.sql', 'f05d8e27c158e563fa248c026297992a28ce7cd3caaebb569d409d4fd297fa70'],
+    // 20261120 (the five links into proposal_attachments and proposal_signatures, G-18),
+    // stamp fad5e4db3631dbc8. Applied 2026-11-13. Moved here from APPLIED_TARGET by
+    // 20261122, as the comment on that slot directs.
+    ['supabase/migrations/20261120_operator_test_account_cleanup_quote_children.sql', '7760facecfe8c8781967772ebb26a249f8e5815eb4966813ab5197018074f00a'],
+    ['supabase/SQL Scripts/20261120_operator_test_account_cleanup_quote_children_rollback.sql', 'd53308e627862c76ce1bd37cc6462145d5b78688ba215494edcd77902e8bd491'],
+    // 20261122 (refund_requests in the plan, its three links from 20261121 reviewed
+    // for G-18). Applied 2026-11-15. Moved here from APPLIED_TARGET by 20261127, as
+    // the comment on that slot directs; the bytes are unchanged, which is what the
+    // matching pins below the move demonstrate.
+    ['supabase/migrations/20261122_operator_test_account_cleanup_refund_requests.sql', '9fb52a915a27fcc36c068052bd815f0a5f95f4b5cd58e11a323e591db8e1d31b'],
+    ['supabase/SQL Scripts/20261122_operator_test_account_cleanup_refund_requests_rollback.sql', 'c63c695e0f2af387c508eb6d2115abe1e351d2cdcb9684cca219a4ce49d89890'],
   ];
 
   /** Nothing pending: 20261094 is applied (confirmed 2026-10-27), so it sits in APPLIED directly. */
@@ -805,9 +817,12 @@ describe('applied history: a function migration is never edited once applied', (
    * its bytes are final. If a pin fails, put the change in a NEW dated FUNCTION_MIGRATION.
    */
   const APPLIED_TARGET: ReadonlyArray<[string, string]> = [
-    // 20261120 (the five links into proposal_attachments and proposal_signatures, G-18), stamp fad5e4db3631dbc8.
-    [MIGRATION_FILE, '7760facecfe8c8781967772ebb26a249f8e5815eb4966813ab5197018074f00a'],
-    [ROLLBACK_FILE, 'd53308e627862c76ce1bd37cc6462145d5b78688ba215494edcd77902e8bd491'],
+    // 20261127 (the FOURTH link on refund_requests: transaction_id, added by 20261123
+    // a day after 20261122 reviewed the other three). payment_transactions is a table
+    // the plan empties, so leaving that link unreviewed makes G-18 refuse every check,
+    // delete and anonymise on prod — the same class of miss as 20261092 and 20261097.
+    [MIGRATION_FILE, '05930dd60f879266a31c2a7e3452a79ee9824b5eae3b070fac07df131c6d4ad8'],
+    [ROLLBACK_FILE, 'df18f1755d57d669d2c447c91dc75cae645abd88ea6c9a1ac1cc5740868d36e6'],
   ];
 
   it.each([...APPLIED, ...PENDING_PREVIOUS, ...APPLIED_TARGET])('%s is byte-identical to what was applied', (file, sha256) => {

@@ -1191,6 +1191,90 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
    * Non-blocking: a refund that has already left Stripe must not be reported
    * as failed because a timeline row could not be written.
    */
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CLIENT ASKED FOR THIS, AND HAS NOW BEEN ANSWERED.
+   *
+   * A client can ask for money back from the portal, which writes
+   * `refund_requests` and raises a card. The owner usually answers from that
+   * card — but they can equally answer from the Finance page or from chat, and
+   * then the money goes back and the card sits there still asking for it.
+   *
+   * So the request is settled wherever the refund was issued FROM.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * IT CANNOT AFFECT THE REFUND. Deliberately, in four ways:
+   *
+   *  1. It runs AFTER the money has moved, at the two points
+   *     `recordRefundActivity` already runs — the two places this file has
+   *     established mean "a refund really happened".
+   *  2. It is fire-and-forget inside its own try/catch, the same shape as
+   *     `recordRefundActivity`, so nothing it does can throw into the refund
+   *     path or delay the answer to the caller.
+   *  3. It reads `booking_id` with its OWN query rather than widening
+   *     `TRANSACTION_COLUMNS`, so the select the refund itself depends on is
+   *     byte-for-byte what it was.
+   *  4. It writes one column of one row of `refund_requests`, scoped to this
+   *     business and to the open statuses, and touches no money table.
+   *
+   * A failure here leaves a settled refund and a stale card, which is the
+   * state that exists today. It can never leave an unsettled refund.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const settleRefundRequest = () => {
+    void (async () => {
+      try {
+        /*
+         * Which booking this payment was for. The same two links
+         * `refundableBookingsFor` follows, for the same reason: a website sale
+         * writes `booking_id` on the transaction, while an invoiced booking
+         * leaves it null and carries the booking on the invoice.
+         */
+        const { data: txRow } = await supabaseServer
+          .from('payment_transactions')
+          .select('booking_id')
+          .eq('id', tx.id)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        let bookingId = (txRow?.booking_id as string | null) ?? null;
+
+        if (!bookingId && tx.invoice_id) {
+          const { data: invoice } = await supabaseServer
+            .from('payment_invoices')
+            .select('booking_id')
+            .eq('id', tx.invoice_id)
+            .eq('user_id', userId)
+            .maybeSingle();
+          bookingId = (invoice?.booking_id as string | null) ?? null;
+        }
+
+        if (!bookingId) return;
+
+        /* Imported here rather than at the top: this file must not grow a
+           static dependency on the request layer, which knows nothing about
+           money and must never be asked to. */
+        const { refundRequestRepository } = await import(
+          '@/lib/repositories/RefundRequestRepository'
+        );
+
+        const { data: open } = await refundRequestRepository.openForBooking(bookingId, userId);
+        if (!open) return;
+
+        /* With the payment it came out of. Nothing else ever knows this: the
+           request names a booking, and the money may sit an invoice away. */
+        await refundRequestRepository.decide(open.id, userId, 'refunded', tx.id);
+        log.info(
+          { refundRequestId: open.id, bookingId },
+          "A client's refund request was answered by this refund"
+        );
+      } catch (err) {
+        /* Logged and dropped. The refund stands. */
+        log.error({ err }, 'Could not settle the refund request this refund answers');
+      }
+    })();
+  };
+
   const recordRefundActivity = () => {
       if (tx.invoice_id || tx.user_id) {
         void (async () => {
@@ -1255,6 +1339,7 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
     );
 
     recordRefundActivity();
+    settleRefundRequest();
 
     return {
       ok: true,
@@ -1434,6 +1519,7 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
   );
 
   recordRefundActivity();
+  settleRefundRequest();
 
   return {
     ok: true,

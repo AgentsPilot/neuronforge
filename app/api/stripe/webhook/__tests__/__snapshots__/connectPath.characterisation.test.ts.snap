@@ -928,6 +928,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X7. the
     {
       "chain": [
         [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
           "insert",
           {
             "account_resolution": "recorded",
@@ -937,6 +954,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X7. the
             "contact_id": "ct-2",
             "currency": "ILS",
             "description": "Payment 3 of 3",
+            "invoice_id": null,
             "metadata": {
               "installment_count": 3,
               "installment_number": 3,
@@ -1044,9 +1062,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X7. the
         "completed",
       ],
       "type": "planRepo.close",
-    },
-    {
-      "type": "stripe.client",
     },
     {
       "chain": [
@@ -1190,9 +1205,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X8. a p
       "table": "payment_plan_installments",
       "terminal": "maybeSingle",
       "type": "db",
-    },
-    {
-      "type": "stripe.client",
     },
     {
       "chain": [
@@ -3789,6 +3801,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X30. pl
     {
       "chain": [
         [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
           "insert",
           {
             "account_resolution": "recorded",
@@ -3798,6 +3827,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X30. pl
             "contact_id": "ct-2",
             "currency": "ILS",
             "description": "Payment 1 of 3",
+            "invoice_id": null,
             "metadata": {
               "installment_count": 3,
               "installment_number": 1,
@@ -4508,6 +4538,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X34. pl
     {
       "chain": [
         [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
           "insert",
           {
             "account_resolution": "recorded",
@@ -4517,6 +4564,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X34. pl
             "contact_id": "ct-2",
             "currency": "ILS",
             "description": "Payment 1 of 3",
+            "invoice_id": null,
             "metadata": {
               "installment_count": 3,
               "installment_number": 1,
@@ -4642,9 +4690,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X34. pl
       "table": "scheduling_bookings",
       "terminal": "await",
       "type": "db",
-    },
-    {
-      "type": "stripe.client",
     },
     {
       "chain": [
@@ -4874,9 +4919,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X36. pl
         "sub_plan_1",
       ],
       "type": "planRepo.findBySubscriptionId",
-    },
-    {
-      "type": "stripe.client",
     },
     {
       "chain": [
@@ -9398,6 +9440,23 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 3. invoice
     {
       "chain": [
         [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
           "insert",
           {
             "account_resolution": "recorded",
@@ -9408,6 +9467,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 3. invoice
             "currency": "ILS",
             "description": "Payment 1 of 3",
             "fee_currency": "ILS",
+            "invoice_id": null,
             "metadata": {
               "installment_count": 3,
               "installment_number": 1,
@@ -9535,9 +9595,6 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 3. invoice
       "table": "scheduling_bookings",
       "terminal": "await",
       "type": "db",
-    },
-    {
-      "type": "stripe.client",
     },
     {
       "chain": [
@@ -13779,9 +13836,6 @@ exports[`Stripe webhook, Fix-1b: plan link ids F5-3. invoice.paid first plan per
         "sub_plan_first_f5",
       ],
       "type": "planRepo.findBySubscriptionId",
-    },
-    {
-      "type": "stripe.client",
     },
     {
       "chain": [

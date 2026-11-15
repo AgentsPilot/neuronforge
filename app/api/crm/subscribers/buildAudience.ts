@@ -99,12 +99,34 @@ export function buildAudience(input: {
   consented: ConsentRow[];
   /** The contacts named by `consented`, fetched in one round trip. */
   contacts: ContactRow[];
+  /**
+   * Contacts found by ADDRESS, for consent rows that name no contact at all.
+   * Keyed on the normalised address.
+   *
+   * ── Why the address has to be asked too ───────────────────────────────────
+   * `contact_id` is written when consent and contact arrive together, and
+   * nothing backfills it afterwards. Consent given at 15:10 on 8 Oct by
+   * somebody who became a contact on 25 Oct leaves a row that says
+   * `contact_id: null` forever, while the CRM holds that person as a client.
+   *
+   * That row then failed both halves of this screen's promise: it survived
+   * "exclude people already in the CRM", and it offered the button to add
+   * them — to an owner looking at a client they had been working for weeks.
+   * (The button could not even do it: the row's id is `consent:<address>`,
+   * which the promote route rejects as a non-uuid, so it was a control that
+   * did nothing.)
+   *
+   * Optional so the dozen existing cases read unchanged: an absent map means
+   * no consent row needed an address lookup.
+   */
+  contactsByEmail?: Map<string, ContactRow>;
   /** Live consent per normalised address, for the roster half. */
   consentByEmail: Map<string, boolean>;
   /** "Include people already in the CRM" — applied once, to both sources. */
   includePromoted: boolean;
 }): AudienceRow[] {
   const { roster, consented, contacts, consentByEmail, includePromoted } = input;
+  const contactsByEmail = input.contactsByEmail ?? new Map<string, ContactRow>();
 
   const rows: AudienceRow[] = roster
     .filter((s) => includePromoted || s.status !== 'promoted')
@@ -133,7 +155,17 @@ export function buildAudience(input: {
   for (const c of consented) {
     if (onRoster.has(c.email_normalized)) continue;
 
-    const contact = c.contact_id ? byId.get(c.contact_id) : undefined;
+    /*
+     * The id first, the address second.
+     *
+     * A row that NAMES a contact which no longer exists stays listed under its
+     * address — see the note below, that is deliberate, and the address lookup
+     * cannot undo it because `crm_contacts` has no soft delete: a deleted
+     * contact is not there to be found either way.
+     */
+    const contact =
+      (c.contact_id ? byId.get(c.contact_id) : undefined) ??
+      (c.contact_id ? undefined : contactsByEmail.get(c.email_normalized));
 
     /* The other half of the flag: a contact IS somebody already in the CRM. */
     if (contact && !includePromoted) continue;

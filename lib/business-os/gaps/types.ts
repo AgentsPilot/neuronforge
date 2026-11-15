@@ -153,7 +153,22 @@ export type GapId =
    * never charged; here, money arrived and the work has not been confirmed as
    * given.
    */
-  | 'delivery_unconfirmed';
+  | 'delivery_unconfirmed'
+  /**
+   * A client asked for their money back, and the agent has worked out what to
+   * recommend.
+   *
+   * The only gap raised by a CLIENT filling in a form rather than by the
+   * platform noticing something. It waits for the refund agent to finish:
+   * `submitted` means nobody has thought about it yet, and a card raised then
+   * would interrupt the owner with an empty recommendation panel.
+   *
+   * `blocksOn: 'owner'` without qualification. Only a person can answer
+   * somebody asking for their money back, and the agent is explicitly barred
+   * from doing it — `transactions.refund` is `movesMoney`, which no automated
+   * path may reach.
+   */
+  | 'refund_requested';
 
 /**
  * What the owner can do about a gap, if anything.
@@ -279,6 +294,15 @@ export interface GapItem {
    * the same client being answered twice.
    */
   answeredAt?: string;
+  /**
+   * How many separate conversations this person has open, when more than one.
+   *
+   * One card per person is right — three replies from one client is still one
+   * person waiting. But when the owner clears one and the card returns with
+   * the next, it reads as the same row refusing to go. The count is what tells
+   * them it is a different conversation.
+   */
+  openThreads?: number;
   /** When it became stuck, so "how long" can be shown rather than a date. */
   since: string;
   /**
@@ -350,6 +374,95 @@ export interface GapItem {
    * explaining, and a line restating the one above it is noise.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * A `note` that is a translation KEY rather than a sentence.
+   *
+   * Some notes are the client's own prose and travel as text; some are a code
+   * from a fixed list, and `service_not_delivered` on a card is the database
+   * talking to the owner in its own voice. Gaps are built server-side with no
+   * language resolved — the same reason `contextKey` exists — so the key
+   * travels and the card resolves it.
+   *
+   * Preferred over `note` where both are set. Every existing gap sets only
+   * `note` and renders exactly as it did.
+   */
+  /**
+   * The refund request this row is about, where the row IS one.
+   *
+   * Kept apart from `entityId` because that field is what the refund dialog
+   * opens ON, and the dialog opens on a BOOKING. Putting the request's id
+   * there would aim the owner's refund at a booking that does not exist —
+   * which is what it did until this field existed.
+   */
+  requestId?: string;
+  /**
+   * What the refund agent would do, and why.
+   *
+   * All absent on a request nothing has looked at — because the owner never
+   * installed the assessment, because it is switched off, or because it could
+   * not answer. The card renders the request cold in every one of those cases,
+   * which is the state this feature shipped in before the agent existed.
+   *
+   * A RECOMMENDATION. The owner presses the button, and `RefundService` caps
+   * what actually moves against what was really paid.
+   */
+  refundRecommendation?: 'refund_full' | 'refund_partial' | 'decline' | 'needs_owner';
+  /** The figure it would return, in the request's own currency. */
+  refundRecommendedAmount?: number;
+  /** Two or three sentences for the owner, in the owner's language. */
+  refundReasoning?: string;
+  /**
+   * What the business's own diary says happened to the booking.
+   *
+   * A KEY — `gaps.refund.outcome.held` / `.no_show` / `.cancelled` — because
+   * gaps carry keys, not sentences. ABSENT where nobody ever marked it, and
+   * that absence is meaningful: the card says "nobody marked it" rather than
+   * implying the session did not happen.
+   *
+   * It exists so the owner can answer a refund without going to find the
+   * booking first. Whether the session took place is usually the decision.
+   */
+  bookingOutcomeKey?: string;
+  /** When the booking was, raw ISO. The card formats it for the reader. */
+  bookingWhen?: string;
+  /**
+   * The client's reason and the diary disagree.
+   *
+   * Set only for the case that actually decides something: they chose "did not
+   * attend" and the session is marked as having taken place. Worked out in the
+   * gap rather than the card, so the card does not have to re-derive it — and
+   * flagged rather than left for the owner to notice, because two facts shown
+   * quietly side by side are easy to read past.
+   *
+   * Not an accusation. Somebody may simply have marked the diary wrong, which
+   * is why this says they disagree and never who is right.
+   */
+  bookingContradicts?: boolean;
+  /**
+   * What is really left to refund, in the request's currency.
+   *
+   * THE CEILING, and deliberately not `value`, which is what the client ASKED
+   * for. A client may ask for less than they paid, and the owner may return
+   * more as goodwill; a dialog opened on the ask can do neither.
+   */
+  refundableAmount?: number;
+  /**
+   * The money can go back the way it came.
+   *
+   * False means part of it was never through a processor, so a refund is the
+   * business returning it by hand and the platform recording that. The button
+   * must say "mark as returned" rather than "refund", and the client must not
+   * be told their money is on its way when somebody still has to send it.
+   */
+  refundViaProcessor?: boolean;
+  /**
+   * How many settled payments sit behind the booking.
+   *
+   * More than one means no single-click refund: which payment the money comes
+   * out of is a decision, and `RefundModal` is where it is made.
+   */
+  refundPaymentsCount?: number;
+  noteKey?: string;
   contextKey?: string;
   /**
    * Which session of a package this row is about.

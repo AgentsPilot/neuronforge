@@ -265,6 +265,26 @@ export interface VectorMaturityData {
    * sentence.
    */
   noteLearning: string[];
+  /**
+   * Vector KEYS with NO data at all, for the same note.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `noteLearning` names the slow ones and said nothing about the empty ones,
+   * so an owner reading "reading 4 of 7, still learning: conversion, retention"
+   * could account for six vectors and had no way to find the seventh. The one
+   * in the worst state was the one the sentence hid.
+   *
+   * A vector is `dark` when its metric is zero — not late, not nearly there,
+   * simply nothing to read — and that is worth saying out loud, because the
+   * owner's action differs: a learning vector needs time, a dark one needs them
+   * to start doing the thing at all.
+   *
+   * Keys rather than names, for the same reason as above: the client localises
+   * `insight.vector.{key}`, and an English name inside a Hebrew sentence is the
+   * bug this field was created to avoid.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  noteDark: string[];
 }
 
 // Thresholds for each vector to become "lit" (active)
@@ -4687,6 +4707,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
       let note: string;
       let noteKey: VectorMaturityData['noteKey'];
       let noteLearning: string[] = [];
+      let noteDark: string[] = [];
 
       if (litCount === 0 && learnCount === 0) {
         noteKey = 'vecs.note.cold';
@@ -4697,11 +4718,17 @@ Generate in ${langName}. Respond with ONLY a JSON object:
       } else {
         noteKey = 'vecs.note.partial';
         noteLearning = vectors.filter(v => v.state === 'learn').map(v => v.key);
+        /* The ones with nothing at all. Named for the first time: see
+           `noteDark` on the type for why their silence was the problem. */
+        noteDark = vectors.filter(v => v.state === 'dark').map(v => v.key);
         const learningVectors = vectors.filter(v => v.state === 'learn').map(v => v.name.toLowerCase());
+        const darkVectors = vectors.filter(v => v.state === 'dark').map(v => v.name.toLowerCase());
         const waitingNote = learningVectors.length > 0
           ? ` ${learningVectors.join(', ')} ${learningVectors.length === 1 ? 'needs' : 'need'} more data.`
           : '';
-        note = `Reading ${litCount} of 7.${waitingNote}`;
+        /* English fallback only; the UI reads the keys. */
+        const darkNote = darkVectors.length > 0 ? ` Nothing yet on ${darkVectors.join(', ')}.` : '';
+        note = `Reading ${litCount} of 7.${waitingNote}${darkNote}`;
       }
 
       logger.debug(
@@ -4768,6 +4795,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
           note,
           noteKey,
           noteLearning,
+          noteDark,
         },
         error: null,
       };

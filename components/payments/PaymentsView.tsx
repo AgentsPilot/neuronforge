@@ -111,8 +111,27 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
     if (openCreate) setShowInvoiceModal(true);
   }, [openCreate]);
 
+  /*
+   * `min-h-full`, not `min-h-screen` — this is INSIDE the Business OS scroller.
+   * ─────────────────────────────────────────────────────────────────────────
+   * `app/business-os/layout.tsx` is `h-[100dvh] overflow-hidden` with the body
+   * scrolling in a `flex-1 overflow-y-auto` child, so the box this fills is
+   * already shorter than the screen by the header and the tab bar. A floor of
+   * `100vh` is taller than the box holding it, so Orders carried phantom
+   * vertical scroll even with nothing in the list — and on mobile Safari `vh`
+   * also ignores the address bar, which adds the chrome's height on top.
+   *
+   * Every other Business OS page says `min-h-full` for this reason: money,
+   * crm, reports, settings, website and email-automation. Orders was the only
+   * one left on `min-h-screen`.
+   *
+   * Note the repo-wide `mobileSizing.guard.test.ts` sweep does NOT catch this:
+   * its pattern deliberately exempts `min-h-screen`, because on an ordinary
+   * page that scrolls the window a floor is harmless. The exemption is right;
+   * it just does not know about pages nested inside their own scroller.
+   */
   return (
-    <div className="min-h-screen bg-[var(--v2-bg)]">
+    <div className="min-h-full bg-[var(--v2-bg)]">
       <div className={`${PAGE_CONTAINER} py-4 sm:py-6 space-y-4`}>
 
         {/* Page Header - Compact */}
