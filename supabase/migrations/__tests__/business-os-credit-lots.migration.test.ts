@@ -845,6 +845,16 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
       // and defines no charge function, column or grant, so what L8 pins is unchanged.
       join(MIGRATIONS_DIR, '20261120_operator_test_account_cleanup_quote_children.sql'),
       join(SQL_SCRIPTS_DIR, '20261120_operator_test_account_cleanup_quote_children_rollback.sql'),
+      // 20261122 (refund_requests and its first three links) and 20261127 (the fourth,
+      // `transaction_id`, which 20261123 added a day later) with their rollbacks: the same
+      // again. Each is the generated cleanup function, which counts and deletes one test
+      // account's rows by user_id and defines no charge function, column or grant — so what
+      // L8 pins is unchanged. They name the charge objects only because the function reads
+      // them while emptying an account.
+      join(MIGRATIONS_DIR, '20261122_operator_test_account_cleanup_refund_requests.sql'),
+      join(SQL_SCRIPTS_DIR, '20261122_operator_test_account_cleanup_refund_requests_rollback.sql'),
+      join(MIGRATIONS_DIR, '20261127_operator_test_account_cleanup_refund_transaction_fk.sql'),
+      join(SQL_SCRIPTS_DIR, '20261127_operator_test_account_cleanup_refund_transaction_fk_rollback.sql'),
     ];
     const allowed = new Set(
       [CHARGES_MIGRATION, CHARGES_ROLLBACK, ...indexOnly, ...testAccountCleanup].map((file) => relative(ROOT, file))
