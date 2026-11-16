@@ -5,6 +5,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isOpenStatus } from '@/lib/business-os/insight/openStatuses';
 import { createLogger } from '@/lib/logger';
 import { BaselineCalculator } from '../../metrics/BaselineCalculator';
 import { resolveBusinessTimezone } from '@/lib/business-os/businessDay';
@@ -91,27 +92,77 @@ export abstract class BaseDetector implements Detector {
   }
 
   /**
-   * Check if detector is on cooldown for this user
+   * May this detector RAISE its finding again, given when it last raised one?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN INSIGHT THAT IS STILL OPEN IS NEVER ON COOLDOWN.
+   *
+   * Reported 2026-11-15: a refund card read "4 Refunds in 30 Days, 36.4% Rate"
+   * while the account had SEVEN refunds of seventeen payments. The count was
+   * right when it was raised, on 13 November, and nothing had corrected it
+   * since — on the same row, `surface_count` was 60.
+   *
+   * The cooldown is why, and it could never have expired. It was measured from
+   * `last_surfaced_at`, which `markManySurfaced` stamps every time the
+   * dashboard LISTS the insight, so each page load pushed the window a week
+   * further out. The detector returned `null` before computing anything, and
+   * `createInsight`'s existing-row branch — which refreshes every figure and
+   * rewrites the headline when a quoted number moves — was never reached.
+   * Looking at the card was what stopped it being corrected.
+   *
+   * So the question this method asks is narrowed to the one it is for: "this
+   * finding was closed recently, do not raise it again yet". A finding that is
+   * still on the owner's screen is not a re-notification question at all. Its
+   * figures have to follow the data, and the path that updates them starts
+   * here.
+   *
+   * AND THE WINDOW IS MEASURED FROM WHEN IT WAS RAISED.
+   *
+   * `detected_at`, not `last_surfaced_at`: how recently a finding was made is a
+   * fact about the finding, not about whether anybody has looked at it. The
+   * regression `markManySurfaced` records — a null stamp letting a weekly
+   * detector re-fire every fifteen minutes — cannot come back through this
+   * door, because `detected_at` is written on every insert and every update.
+   * ───────────────────────────────────────────────────────────────────────────
    */
   protected async isOnCooldown(userId: string): Promise<boolean> {
     const cooldownHours = this.definition.cooldownHours;
 
     const { data } = await this.supabase
       .from('insights')
-      .select('last_surfaced_at')
+      .select('status, detected_at, created_at')
       .eq('user_id', userId)
       .eq('detector_id', this.definition.id)
-      .order('last_surfaced_at', { ascending: false })
+      .order('detected_at', { ascending: false })
       .limit(1)
       .single();
 
-    if (!data?.last_surfaced_at) {
+    if (!data) {
       this.silencedByCooldown = false;
       return false;
     }
 
-    const lastSurfaced = new Date(data.last_surfaced_at);
-    const cooldownEnd = new Date(lastSurfaced.getTime() + cooldownHours * 60 * 60 * 1000);
+    /* On screen right now: evaluate, so the open row is refreshed. */
+    if (isOpenStatus(data.status)) {
+      this.silencedByCooldown = false;
+      return false;
+    }
+
+    /* `created_at` only as a fallback for a row written before `detected_at`
+       was set; a row with neither is not evidence of a recent finding. */
+    const raisedAtValue = data.detected_at ?? data.created_at;
+    if (!raisedAtValue) {
+      this.silencedByCooldown = false;
+      return false;
+    }
+
+    const raisedAt = new Date(raisedAtValue);
+    if (Number.isNaN(raisedAt.getTime())) {
+      this.silencedByCooldown = false;
+      return false;
+    }
+
+    const cooldownEnd = new Date(raisedAt.getTime() + cooldownHours * 60 * 60 * 1000);
 
     const onCooldown = new Date() < cooldownEnd;
     /* Recorded for the engine, which has to tell a silenced detector from a

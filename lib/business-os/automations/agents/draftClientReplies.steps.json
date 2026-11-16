@@ -4,11 +4,11 @@
     "id": "step1",
     "type": "action",
     "name": "Scan the mailbox for new replies, headers only",
-    "description": "THE FIRST THING THAT HAPPENS, and nothing about any client is read before it. HEADERS ONLY, AND THAT IS THE PRIVACY DESIGN, not a saving. Scanning before anyone knows who is a client means this pass sees whatever arrived — the owner's accountant, their landlord, a newsletter — so what it is allowed to fetch has to be the narrowest thing that still identifies a sender. `metadata` is exactly that: addresses, subject and a snippet, and no body. A non-client's actual words are therefore never pulled into the run at all, rather than being fetched and dropped a step later. The body is fetched in step 6, after the sender is confirmed to be somebody this business has written to. The alternative was scoping this query to known client addresses, which cannot be done without loading the client list FIRST — the order this design deliberately rejects. `{{input.scan_days}}` is the ONLY thing defining 'new', and `planInputs` derives it from the agent's own cadence rather than this file naming a number: a weekly agent with a two-day window would never see the five days in between, and would miss them silently. It carries a day of slack for a failed run, so a reply can surface on two consecutive runs; step 8's `already_handled` outcome is what catches the second pass.\n\nAND NOT WHAT IT HAS ALREADY ESCALATED. `-label:\"AgentPilot/Needs you\"` removes every thread this agent has already handed to the owner, which step13b labelled at the moment it did so.\n\nIt is the mailbox answering a question the watermark cannot. `scan_after` moves forward each run, so in ordinary service a message is seen once — but the window carries a ten-minute overlap, a run can be triggered by hand, and a failed run leaves the watermark where it was. In each of those a thread is read twice, and twice means a second escalation on a card that is already asking for the same answer. Observed on 2026-11-10: two `reply_needs_owner` rows on one thread.\n\nNOT `is:unread`, deliberately, though it would be the obvious filter now that step16 marks what it processed. The agent is not the only reader of this mailbox: an owner who opens a client's mail on their phone and does not answer it would make it invisible to the agent for good. Read state means 'somebody looked'; the label means 'this agent dealt with it', and only the second is safe to filter on.\n\nA thread stops being excluded when the label is removed, which is what an owner does when they want the agent to look again. ONE MORE EXCLUSION, added with the refund outcome: a thread already labelled AgentPilot/Refund has been handed to the refund agent, so re-reading it would classify the same request again every run and write a second row for it. The clause only ever REMOVES messages from the scan, and nothing carries that label until the new branch below applies it, so for every existing mailbox this query returns exactly what it returned before.",
+    "description": "THE FIRST THING THAT HAPPENS, and nothing about any client is read before it. HEADERS ONLY, AND THAT IS THE PRIVACY DESIGN, not a saving. Scanning before anyone knows who is a client means this pass sees whatever arrived — the owner's accountant, their landlord, a newsletter — so what it is allowed to fetch has to be the narrowest thing that still identifies a sender. `metadata` is exactly that: addresses, subject and a snippet, and no body. A non-client's actual words are therefore never pulled into the run at all, rather than being fetched and dropped a step later. The body is fetched in step 6, after the sender is confirmed to be somebody this business has written to. The alternative was scoping this query to known client addresses, which cannot be done without loading the client list FIRST — the order this design deliberately rejects. `{{input.scan_days}}` is the ONLY thing defining 'new', and `planInputs` derives it from the agent's own cadence rather than this file naming a number: a weekly agent with a two-day window would never see the five days in between, and would miss them silently. It carries a day of slack for a failed run, so a reply can surface on two consecutive runs; step 8's `already_handled` outcome is what catches the second pass.\n\nAND NOT WHAT IT HAS ALREADY ESCALATED. `-label:\"AgentPilot/Needs you\"` removes every thread this agent has already handed to the owner, which step13b labelled at the moment it did so.\n\nIt is the mailbox answering a question the watermark cannot. `scan_after` moves forward each run, so in ordinary service a message is seen once — but the window carries a ten-minute overlap, a run can be triggered by hand, and a failed run leaves the watermark where it was. In each of those a thread is read twice, and twice means a second escalation on a card that is already asking for the same answer. Observed on 2026-11-10: two `reply_needs_owner` rows on one thread.\n\nNOT `is:unread`, deliberately, though it would be the obvious filter now that step16 marks what it processed. The agent is not the only reader of this mailbox: an owner who opens a client's mail on their phone and does not answer it would make it invisible to the agent for good. Read state means 'somebody looked'; the label means 'this agent dealt with it', and only the second is safe to filter on.\n\nA thread stops being excluded when the label is removed, which is what an owner does when they want the agent to look again. EVERY OUTCOME NOW LEAVES A MARK, AND THIS QUERY READS ALL OF THEM. `AgentPilot/Seen` is the third exclusion: it is applied to the two outcomes that previously left nothing the scan could act on — `ignore` and `already_handled` — and to a stranger the triage declined. Before it, those messages were protected only by the watermark, which cannot cover the three cases that re-read a thread: the deliberate ten-minute overlap, a run started by hand, and a FAILED run that leaves `last_run` where it was and re-scans the same window on its next attempt, up to five times. That is how one thread got two `reply_needs_owner` rows on 2026-11-10, and it is also how the same classification got paid for more than once.\n\nNOT `AgentPilot/Drafted`, deliberately, though the draft branch now applies it. A draft is self-clearing — send it and it moves to `sent`, discard it and the next run should write a fresh one — and `step7b` already checks the drafts folder for exactly this conversation. Excluding the label here would break that on purpose-built behaviour: an owner who throws a draft away would never get another. The label is there so the owner can SEE what the agent drafted, not to stop it looking again.\n\nAND THE MACHINE CATEGORIES, MOVED ONE STAGE EARLIER. `step5z` has always dropped Gmail's own promotions, social, updates and forums categories, but it sits past the per-message history read, so every newsletter still cost a database round trip, and 20,198 of them were paid for in one 40-hour window. Worse, this query takes the newest 50 messages: on a busy mailbox bulk mail CONSUMES THOSE SLOTS and a real client reply can fall outside the scan entirely. Excluding the same four categories Google has already sorted, at the point of asking, fixes both. The one thing it costs: a known client whose reply Gmail miscategorises is no longer seen. That is rare — a reply threads with our own sent mail, which Gmail does not file as bulk — and removing the four `-category:` clauses restores the old behaviour exactly.",
     "plugin": "google-mail",
     "action": "search_emails",
     "params": {
-      "query": "after:{{input.scan_after}} -label:\"AgentPilot/Needs you\" -label:\"AgentPilot/Handled\"",
+      "query": "after:{{input.scan_after}} -label:\"AgentPilot/Needs you\" -label:\"AgentPilot/Handled\" -label:\"AgentPilot/Seen\" -category:promotions -category:social -category:updates -category:forums",
       "max_results": 50,
       "include_attachments": false,
       "content_level": "metadata",
@@ -310,6 +310,21 @@
                       "output_schema": {
                         "type": "object"
                       }
+                    },
+                    {
+                      "step_id": "step11b",
+                      "id": "step11b",
+                      "type": "action",
+                      "name": "Show in the mailbox that a reply is waiting",
+                      "description": "SO THE OWNER CAN SEE IT WITHOUT OPENING THE PRODUCT. A draft appears in Gmail with nothing saying where it came from; this names it as the agent's work on the thread it answers.\n\nTHE ONE LABEL `step1` DOES NOT EXCLUDE, and that is deliberate rather than an omission. The drafts folder is the dedupe for this outcome (`step7b`, scoped to this conversation) and it is SELF-CLEARING: send the draft and it leaves `drafts`, so `step7` finds it and the next read answers `already_handled`; discard it and the next run writes a fresh one, which is right because the owner threw the first away. Excluding this label would turn a discarded draft into silence for ever.",
+                      "plugin": "google-mail",
+                      "action": "modify_email",
+                      "params": {
+                        "message_id": "{{current_reply.id}}",
+                        "add_labels": [
+                          "AgentPilot/Drafted"
+                        ]
+                      }
                     }
                   ]
                 },
@@ -455,6 +470,51 @@
                       "output_schema": {
                         "type": "object"
                       }
+                    },
+                    {
+                      "step_id": "step15b",
+                      "id": "step15b",
+                      "type": "action",
+                      "name": "Mark it seen so it is not judged twice",
+                      "description": "`already_handled` wrote an activity row and left nothing on the message, so the scan could not tell it had been judged. The watermark normally hides it, but not across the ten-minute overlap, not on a run started by hand, and not after a failed run — and a failed run retries up to five times, re-paying this classification each time. `AgentPilot/Seen` is the mark `step1` excludes. It does NOT mark the message read: `step16` already does that for everything, and read state is deliberately not a scan filter.",
+                      "plugin": "google-mail",
+                      "action": "modify_email",
+                      "params": {
+                        "message_id": "{{current_reply.id}}",
+                        "add_labels": [
+                          "AgentPilot/Seen"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "step_id": "step12i",
+                  "id": "step12i",
+                  "type": "conditional",
+                  "name": "Or note that it needed nothing",
+                  "description": "THE OUTCOME THAT LEFT NO TRACE AT ALL. `ignore` is the right answer for an out-of-office, a bounce or a bare 'thanks', and it correctly writes no activity and shows the owner nothing — but it also left the message unmarked, so the agent could be asked to judge it again, at the full price of the classifier, in every case the watermark does not cover. This branch exists only to leave the mark; it writes nothing to the business and tells the owner nothing, which is what `ignore` means.",
+                  "condition": {
+                    "conditionType": "simple",
+                    "field": "decision.outcome",
+                    "operator": "equals",
+                    "value": "ignore"
+                  },
+                  "steps": [
+                    {
+                      "step_id": "step12ib",
+                      "id": "step12ib",
+                      "type": "action",
+                      "name": "Mark it seen",
+                      "description": "The same label the other quiet outcome uses, for the same reason: `step1` excludes it, so a message judged not to need anybody is judged once.",
+                      "plugin": "google-mail",
+                      "action": "modify_email",
+                      "params": {
+                        "message_id": "{{current_reply.id}}",
+                        "add_labels": [
+                          "AgentPilot/Seen"
+                        ]
+                      }
                     }
                   ]
                 }
@@ -586,6 +646,38 @@
                       "output_variable": "enquiry_note",
                       "output_schema": {
                         "type": "object"
+                      }
+                    },
+                    {
+                      "step_id": "step5f",
+                      "id": "step5f",
+                      "type": "action",
+                      "name": "Flag the enquiry in the mailbox too",
+                      "description": "A new enquiry is work waiting for the owner, which is what `AgentPilot/Needs you` already means on this mailbox, so a stranger worth knowing carries the same mark as a client question the agent would not answer. It is also what stops the triage being paid for twice: `step1` excludes this label, and without it a declined-then-reconsidered stranger could be re-judged inside the overlap window.",
+                      "plugin": "google-mail",
+                      "action": "modify_email",
+                      "params": {
+                        "message_id": "{{current_reply.id}}",
+                        "add_labels": [
+                          "AgentPilot/Needs you"
+                        ]
+                      }
+                    }
+                  ],
+                  "else_steps": [
+                    {
+                      "step_id": "step5g",
+                      "id": "step5g",
+                      "type": "action",
+                      "name": "Mark a declined stranger seen",
+                      "description": "THE MOST EXPENSIVE THING THE AGENT USED TO FORGET. A stranger the triage declines — a supplier, a recruiter, a cold approach that got past the category tests — wrote nothing anywhere, so the next run judged them again, and judging a stranger is a MODEL CALL (`step5b`). This is the one cost on this agent that scales with the size of the mailbox rather than the size of the business, which is why it is the one that must not be paid twice for the same message.\n\nThe label says only that this agent has looked. Nothing is written to the business, no contact is created and the owner is told nothing, because the triage said this is not a customer.",
+                      "plugin": "google-mail",
+                      "action": "modify_email",
+                      "params": {
+                        "message_id": "{{current_reply.id}}",
+                        "add_labels": [
+                          "AgentPilot/Seen"
+                        ]
                       }
                     }
                   ]

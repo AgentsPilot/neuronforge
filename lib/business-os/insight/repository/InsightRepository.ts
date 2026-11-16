@@ -9,6 +9,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { OPEN_STATUSES } from '@/lib/business-os/insight/openStatuses';
 import { resolveUserLanguage } from '@/lib/business-os/userLanguage';
 import { createLogger } from '@/lib/logger';
 import { cancellationCost, type CancellationCost } from '@/lib/business-os/reports/cancellationCost';
@@ -713,7 +714,9 @@ function movementOf(health: {
   };
 }
 
-const OPEN_STATUSES = ['new', 'viewed'] as const;
+/* Moved to `lib/business-os/insight/openStatuses` so `BaseDetector` can ask the
+   same question — a finding still on the dashboard is never on cooldown — from
+   one definition rather than a second copy of this list. */
 
 /** The figures an insight's own sentence is built from. */
 interface StoredInsightFacts {

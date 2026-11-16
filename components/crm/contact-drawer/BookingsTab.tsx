@@ -8606,7 +8606,34 @@ export function BookingsTab({
                                               built before this field existed
                                               behaves exactly as it did.
                                             */}
+                                            {/*
+                                              AND THE PACKAGE'S OWN STATE, NOT
+                                              THE CARD'S.
+                                              ─────────────────────────────────
+                                              The two `session.booking` tests
+                                              below ask the HOST booking — the
+                                              consultation the package was sold
+                                              from — which stays confirmed
+                                              while the container it sold is
+                                              cancelled. So the button survived
+                                              on a called-off package, which is
+                                              the screenshot on "Quotation
+                                              issues" (2026-11-15): a journey
+                                              reading "Cancelled · Nov 15" with
+                                              "Add another meeting" under it.
+
+                                              `packageCalledOff` is resolved
+                                              where the container is already in
+                                              hand (`CRMContactDrawerV2`, the
+                                              package step) and travels with
+                                              the step. The two tests below
+                                              stay for the unabsorbed case,
+                                              where card and container are one
+                                              booking and the flag is computed
+                                              from that same row.
+                                            */}
                                             {onAddPackageMeeting &&
+                                              step.metadata?.packageCalledOff !== true &&
                                               session.booking.status !== 'cancelled' &&
                                               session.booking.meeting_status !== 'cancelled' &&
                                               step.metadata?.packageFull !== true && (
