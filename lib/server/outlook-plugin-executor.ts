@@ -119,6 +119,8 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       // Added for the reply-drafting agent — see the note below.
       within_days,
       to_address,
+      // Added so the agent can skip what it has already marked — see the note below.
+      exclude_categories,
     } = params;
 
     // Build OData filter
@@ -162,6 +164,34 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
     }
     if (to_address) {
       filter.push(`toRecipients/any(r:r/emailAddress/address eq ${this.odataString(to_address)})`);
+    }
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * SKIP WHAT WE HAVE ALREADY JUDGED — the counterpart of Gmail's
+     * `-label:"AgentPilot/Seen"`.
+     *
+     * `modify_message` can now write a category, which is the only mark
+     * Outlook offers that is both visible to the owner and safe to filter on.
+     * Writing one is useless without this: the agent would mark a message and
+     * then read it again on the next overlap anyway, and re-judging a message
+     * costs a model call.
+     *
+     * `not(categories/any(...))` is the OData form, and it is the reason this
+     * is a `$filter` rather than a `$search` — the block below records that
+     * Graph refuses a messages request carrying both.
+     *
+     * A message with NO categories satisfies this: `any` over an empty
+     * collection is false, so `not(false)` is true. That is what makes it safe
+     * to add to a mailbox where nothing is marked yet — it removes messages
+     * from the scan and can never remove one that carries no category.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const excluded = (Array.isArray(exclude_categories) ? exclude_categories : exclude_categories ? [exclude_categories] : [])
+      .map((c: unknown) => String(c).trim())
+      .filter((c: string) => c.length > 0);
+    for (const category of excluded) {
+      filter.push(`not(categories/any(c:c eq ${this.odataString(category)}))`);
     }
 
     if (from_date) {
@@ -442,7 +472,7 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
   }
 
   private async modifyMessage(connection: any, params: any): Promise<any> {
-    const { message_id, is_read, folder, importance } = params;
+    const { message_id, is_read, folder, importance, add_categories } = params;
 
     const updates: any = {};
 
@@ -453,12 +483,73 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       updates.importance = importance;
     }
 
-    const response = await this.makeGraphRequest(
-      connection,
-      `/me/messages/${message_id}`,
-      'PATCH',
-      updates
-    );
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * CATEGORIES: OUTLOOK'S ANSWER TO A GMAIL LABEL.
+     *
+     * The reply-drafting agent marks every message it has judged, so the next
+     * scan can skip it — without a mark, the same classification is paid for
+     * again on the ten-minute overlap, on a manual run, and on every attempt
+     * of a failed run. On Gmail that mark is a label. Outlook has no labels,
+     * and this action offered only read state, a folder move and an importance
+     * flag: moving a client's mail is far heavier than tagging it, and read
+     * state is not a safe scan filter because the OWNER also reads their mail.
+     *
+     * Graph has carried `categories` on a message all along; nothing here
+     * exposed it.
+     *
+     * READ, MERGE, THEN WRITE — and that is not optional. A PATCH of
+     * `categories` REPLACES the array, so writing `['AgentPilot/Seen']`
+     * straight out would silently delete every category the owner had put on
+     * that message by hand. So the current list is fetched first and the new
+     * values are added to it, and a category already present is not written
+     * twice.
+     *
+     * The extra GET is skipped entirely unless a caller asks for a category,
+     * so no existing call pays for it.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const wanted = (Array.isArray(add_categories) ? add_categories : add_categories ? [add_categories] : [])
+      .map((c: unknown) => String(c).trim())
+      .filter((c: string) => c.length > 0);
+
+    if (wanted.length > 0) {
+      const current = await this.makeGraphRequest(
+        connection,
+        `/me/messages/${message_id}?$select=categories`,
+        'GET'
+      );
+      const existing: string[] = Array.isArray(current?.categories) ? current.categories : [];
+      const merged = [...existing];
+      for (const category of wanted) {
+        if (!merged.some(c => String(c).toLowerCase() === category.toLowerCase())) {
+          merged.push(category);
+        }
+      }
+      /* Nothing to write when the owner, or an earlier run, already set them. */
+      if (merged.length !== existing.length) {
+        updates.categories = merged;
+      }
+    }
+
+    /*
+     * NOTHING TO CHANGE IS NOT A REASON TO WRITE. A caller asking only for a
+     * category that is already on the message leaves `updates` empty, and a
+     * PATCH with an empty body is a request that can only fail or do nothing.
+     * Read the message instead, so the return shape is the same either way.
+     */
+    const response = Object.keys(updates).length > 0
+      ? await this.makeGraphRequest(
+          connection,
+          `/me/messages/${message_id}`,
+          'PATCH',
+          updates
+        )
+      : await this.makeGraphRequest(
+          connection,
+          `/me/messages/${message_id}?$select=id,isRead`,
+          'GET'
+        );
 
     // Handle folder move if specified
     if (folder) {

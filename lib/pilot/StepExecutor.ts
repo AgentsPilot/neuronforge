@@ -1816,6 +1816,28 @@ export class StepExecutor {
     // letters → the actual named keys. ~50 tokens; only fires on
     // post-rows_to_objects shapes, so 2D-array and scalar inputs are
     // unaffected.
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE VOLATILE PARTS GO LAST, SO THE STATIC PART CAN BE CACHED.
+     *
+     * A provider prompt cache matches on a PREFIX. These two blocks — the data
+     * shape hint and today's date — both change: the first with the shape of
+     * the data, the second every day. They used to be PREPENDED, which put two
+     * moving blocks in front of the ~4,300 tokens that never move, so nothing
+     * after them could ever be reused.
+     *
+     * Measured on production before this change: the receptionist's classifier
+     * sends 4,871 input tokens to receive 37, 936 times in 40 hours, and only
+     * 8% of those calls hit the cache. A hit costs $0.00207 against $0.00379
+     * cold — the cache was working and almost never being reached.
+     *
+     * So they are collected here and appended AFTER the static instruction and
+     * its output schema. Same text, same facts, same information available to
+     * the model; only the order changes. The wording moved from "the
+     * instruction below" to "above" because that is now where it sits.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    let volatilePreamble = '';
     if (step.type === 'ai_processing') {
       // DataPreprocessor may unwrap `{ input: [...] }` into the array itself,
       // so check both shapes: the unwrapped array OR `.input` nested inside a
@@ -1836,7 +1858,7 @@ export class StepExecutor {
               .join(', ');
             shapeHint =
               `INPUT DATA SHAPE: The input below is an array of ${aiInput.length} object(s) with these named keys: ${JSON.stringify(keys)}. ` +
-              `If the instruction below references columns by letter or sheet position (e.g. "column A", "column G", or "2D array of rows"), ` +
+              `If the instruction above references columns by letter or sheet position (e.g. "column A", "column G", or "2D array of rows"), ` +
               `treat them as positional aliases for these keys (${positional}). Use the named keys directly when extracting values.\n\n`;
           }
         }
@@ -1850,9 +1872,9 @@ export class StepExecutor {
       const todayISO = today.toISOString().slice(0, 10);
       const todayHuman = today.toUTCString().slice(0, 16); // e.g. "Sun, 17 May 2026"
       const datePreamble =
-        `CURRENT DATE: Today is ${todayISO} (${todayHuman}). When the instruction below references "today", "now", "the next N days", ` +
+        `CURRENT DATE: Today is ${todayISO} (${todayHuman}). When the instruction above references "today", "now", "the next N days", ` +
         `"this week", or any other temporal anchor, use this date as the reference point. Dates in the input data may use formats like DD/MM/YYYY or D/M/YYYY — interpret them in that locale unless explicitly told otherwise.\n\n`;
-      promptString = shapeHint + datePreamble + promptString;
+      volatilePreamble = shapeHint + datePreamble;
     }
 
     // I3: Append JSON output instruction when output_schema is defined
@@ -1863,6 +1885,16 @@ export class StepExecutor {
         `  - "${name}": ${prop.type || 'string'}${prop.description ? ` — ${prop.description}` : ''}`
       ).join('\n');
       promptString += `\n\nIMPORTANT: Respond with a valid JSON object containing these fields:\n${fields}\n\nRespond ONLY with the JSON object. No markdown code blocks, no text before or after. Ensure HTML content in string values is properly escaped.`;
+    }
+
+    /*
+     * The moving parts, after everything fixed. Built above, appended here so
+     * the cacheable prefix is the integrity rule, the step's own instruction
+     * and its output schema — all three identical on every run of this step.
+     * See the note above the shape hint for the measurement behind this.
+     */
+    if (volatilePreamble) {
+      promptString += `\n\n${volatilePreamble}`;
     }
 
     // WP-3: Route ai_processing steps through callLLMDirect (lightweight, no runAgentKit overhead).
@@ -2151,6 +2183,30 @@ export class StepExecutor {
          */
         ...(rejectsSamplingParameters(model) ? {} : { temperature: 0.3 }),
         max_tokens: cappedMaxTokens,
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * ROUTE EVERY RUN OF THIS STEP AT THE SAME CACHE.
+         *
+         * The prefix of this prompt is now identical on every run of a given
+         * step (see the reorder note above `volatilePreamble`), but a provider
+         * cache is per machine and requests land wherever. This key asks for
+         * them to be kept together, which is the difference between a cache
+         * that exists and a cache that is reached.
+         *
+         * Measured before this: 8% of these calls hit the cache, and a hit
+         * costs $0.00207 against $0.00379 cold. This one step was 81% of all
+         * platform model spend.
+         *
+         * Keyed on the agent and the step, so two agents running the same
+         * catalogue plan do not contend, and a step's own prompt change simply
+         * stops matching — content is what the provider compares, so a stale
+         * key can never return another step's answer.
+         *
+         * The precedent is the chat planner, which was the only call site in
+         * the repo sending one of these.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        prompt_cache_key: `pilot-step-${context.agentId || 'noagent'}-${stepId}`,
       },
       {
         userId: context.userId,

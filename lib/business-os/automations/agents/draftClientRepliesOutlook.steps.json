@@ -11,7 +11,12 @@
       "within_days": "{{input.scan_days}}",
       "max_results": 50,
       "content_level": "metadata",
-      "folder": "inbox"
+      "folder": "inbox",
+      "exclude_categories": [
+        "AgentPilot/Needs you",
+        "AgentPilot/Handled",
+        "AgentPilot/Seen"
+      ]
     },
     "output_variable": "inbound",
     "output_schema": {
@@ -301,6 +306,21 @@
                       "output_schema": {
                         "type": "object"
                       }
+                    },
+                    {
+                      "step_id": "step11b",
+                      "id": "step11b",
+                      "type": "action",
+                      "name": "Show in the mailbox that a reply is waiting",
+                      "description": "The Gmail twin labels the thread `AgentPilot/Drafted` so the owner can see the agent wrote something; this is the same mark as an Outlook category. NOT excluded by `step1`, deliberately: the drafts folder is the dedupe for this outcome (`step7b`, scoped to this conversation) and it is self-clearing. Send the draft and it leaves `drafts`, so `step7` finds it and the next read answers `already_handled`; discard it and the next run writes a fresh one, which is right, because the owner threw the first away. Excluding this category would turn a discarded draft into silence for ever.",
+                      "plugin": "outlook",
+                      "action": "modify_message",
+                      "params": {
+                        "message_id": "{{current_reply.id}}",
+                        "add_categories": [
+                          "AgentPilot/Drafted"
+                        ]
+                      }
                     }
                   ]
                 },
@@ -345,12 +365,15 @@
                       "id": "step13b",
                       "type": "action",
                       "name": "Flag the message, since Outlook has no labels",
-                      "description": "THE OUTLOOK ANSWER TO GMAIL'S LABEL, AND NOT THE SAME ANSWER.\n\nGmail's twin tags the thread `AgentPilot/Needs you`, which is additive: it marks the mail without moving it or changing what it claims to be. Outlook has no labels at all. `modify_message` offers read state, a folder move and an importance flag, and of the three only importance is comparably light — moving a client's mail into a folder takes it out of the inbox the owner is actually reading, which is a bigger act than the card is entitled to.\n\nSo an escalation is raised to high importance. In Outlook that is a red marker beside the row, which is close to what the Gmail label buys: something visible in the mailbox saying this one is waiting on you.\n\nWHAT IT DOES NOT BUY. Gmail excludes already-escalated threads from the next scan with `-label:`; there is no equivalent exclusion here, because importance is a flag an owner sets for their own reasons and filtering on it would skip their mail as well as ours. The Outlook plan leans on the `scan_days` watermark alone, exactly as it did before.",
+                      "description": "THE OUTLOOK ANSWER TO GMAIL'S LABEL, AND NOW IT IS THE SAME ANSWER.\n\nTwo marks, doing two different jobs. High importance is the one the OWNER sees: a red marker beside the row, saying this one is waiting on them. The category is the one the AGENT sees, and it is what this plan previously had no way to write.\n\nIT USED TO SAY THERE WAS NO EQUIVALENT. That was true of the three parameters this action exposed — read state, a folder move, an importance flag — and none of them can be filtered on safely: the owner sets importance for their own reasons, moving a client's mail takes it out of the inbox they are reading, and read state means 'somebody looked', which includes them. Filtering on any of those would skip the owner's own mail along with ours.\n\nGraph has carried `categories` on a message all along; nothing exposed it. `modify_message` now takes `add_categories`, merging into whatever the owner already set rather than replacing it, and `search_emails` takes `exclude_categories`. So `step1` can skip what has been dealt with, exactly as the Gmail twin does with `-label:`, and the Outlook plan no longer leans on the watermark alone — which mattered, because the watermark cannot cover the ten-minute overlap, a manual run, or a failed run re-scanning its window up to five times.",
                       "plugin": "outlook",
                       "action": "modify_message",
                       "params": {
                         "message_id": "{{current_reply.id}}",
-                        "importance": "high"
+                        "importance": "high",
+                        "add_categories": [
+                          "AgentPilot/Needs you"
+                        ]
                       },
                       "output_variable": "flagged_in_mail",
                       "output_schema": {
@@ -397,12 +420,15 @@
                       "id": "step13rb",
                       "type": "action",
                       "name": "Mark the message, so it is not read again",
-                      "description": "THE OUTLOOK HALF OF GMAIL'S `step13rb`, and it can do less. Gmail labels the thread `AgentPilot/Handled`, and step 1 excludes that label — so a door-handled thread is invisible to every later scan. Outlook's `modify_message` offers `is_read`, `importance` and `folder`; it has no label, and Graph categories are not wired. So this marks the message READ, which is the closest thing available and the same thing Gmail does on this branch.\n\nWHAT THAT DOES NOT BUY, said plainly rather than left to be discovered: an Outlook thread stays in scope until the scan window moves past it, so it may be classified again and spend another model call. It cannot send a second door — `send_portal_door_contacts` refuses that with `already_sent` — so the client is never written to twice. The cost is tokens, not a duplicate email.\n\nThe branch exists in both plans because `oneAgentTwoMailboxes` requires it: the two must differ only in plumbing, and a missing step here is how one mailbox quietly grows behaviour the other does not have.",
+                      "description": "THE OUTLOOK HALF OF GMAIL'S `step13rb`, and it can now do the same thing. Gmail labels the thread `AgentPilot/Handled` and step 1 excludes that label, so a door-handled thread is invisible to every later scan.\n\nTHIS USED TO MARK READ AND NOTHING ELSE, and the comment here admitted what that cost: 'an Outlook thread stays in scope until the scan window moves past it, so it may be classified again and spend another model call.' Read state was the closest thing available, and it is not a safe scan filter — the owner reads their own mail, so excluding read messages would hide a genuine unread reply the moment they glanced at it on a phone.\n\nGraph categories are wired now. `AgentPilot/Handled` is a real mark that `step1` excludes through `exclude_categories`, so the thread is out of scope for good and the repeat classification is not paid for. The read flag stays because it is still correct on this branch — the client has their page and the owner has nothing left to do — but it carries no logic.\n\nThe branch exists in both plans because `oneAgentTwoMailboxes` requires it: the two must differ only in plumbing, and a missing step here is how one mailbox quietly grows behaviour the other does not have.",
                       "plugin": "outlook",
                       "action": "modify_message",
                       "params": {
                         "message_id": "{{current_reply.id}}",
-                        "is_read": true
+                        "is_read": true,
+                        "add_categories": [
+                          "AgentPilot/Handled"
+                        ]
                       }
                     }
                   ]
@@ -440,6 +466,51 @@
                       "output_variable": "handled_note",
                       "output_schema": {
                         "type": "object"
+                      }
+                    },
+                    {
+                      "step_id": "step15b",
+                      "id": "step15b",
+                      "type": "action",
+                      "name": "Mark it seen so it is not judged twice",
+                      "description": "`already_handled` wrote an activity row and left nothing on the message, so the scan could not tell it had been judged. The watermark normally hides it, but not across the ten-minute overlap, not on a run started by hand, and not after a failed run - and a failed run retries up to five times, re-paying this classification each time. `AgentPilot/Seen` is the category `step1` excludes. It does not mark the message read: `step16` already does that for everything, and read state is deliberately not a scan filter.",
+                      "plugin": "outlook",
+                      "action": "modify_message",
+                      "params": {
+                        "message_id": "{{current_reply.id}}",
+                        "add_categories": [
+                          "AgentPilot/Seen"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "step_id": "step12i",
+                  "id": "step12i",
+                  "type": "conditional",
+                  "name": "Or note that it needed nothing",
+                  "description": "THE OUTCOME THAT LEFT NO TRACE AT ALL. `ignore` is the right answer for an out-of-office, a bounce or a bare thank-you, and it correctly writes no activity and shows the owner nothing - but it also left the message unmarked, so the agent could be asked to judge it again, at the full price of the classifier, in every case the watermark does not cover. This branch exists only to leave the mark; it writes nothing to the business and tells the owner nothing, which is what `ignore` means.",
+                  "condition": {
+                    "conditionType": "simple",
+                    "field": "decision.outcome",
+                    "operator": "equals",
+                    "value": "ignore"
+                  },
+                  "steps": [
+                    {
+                      "step_id": "step12ib",
+                      "id": "step12ib",
+                      "type": "action",
+                      "name": "Mark it seen",
+                      "description": "The same category the other quiet outcome uses, for the same reason: `step1` excludes it, so a message judged not to need anybody is judged once.",
+                      "plugin": "outlook",
+                      "action": "modify_message",
+                      "params": {
+                        "message_id": "{{current_reply.id}}",
+                        "add_categories": [
+                          "AgentPilot/Seen"
+                        ]
                       }
                     }
                   ]
@@ -571,6 +642,38 @@
                       "output_variable": "enquiry_note",
                       "output_schema": {
                         "type": "object"
+                      }
+                    },
+                    {
+                      "step_id": "step5f",
+                      "id": "step5f",
+                      "type": "action",
+                      "name": "Flag the enquiry in the mailbox too",
+                      "description": "A new enquiry is work waiting for the owner, which is what `AgentPilot/Needs you` already means on this mailbox, so a stranger worth knowing carries the same mark as a client question the agent would not answer. It is also what stops the triage being paid for twice: `step1` excludes this category.",
+                      "plugin": "outlook",
+                      "action": "modify_message",
+                      "params": {
+                        "message_id": "{{current_reply.id}}",
+                        "add_categories": [
+                          "AgentPilot/Needs you"
+                        ]
+                      }
+                    }
+                  ],
+                  "else_steps": [
+                    {
+                      "step_id": "step5g",
+                      "id": "step5g",
+                      "type": "action",
+                      "name": "Mark a declined stranger seen",
+                      "description": "THE MOST EXPENSIVE THING THE AGENT USED TO FORGET. A stranger the triage declines - a supplier, a recruiter, a cold approach - wrote nothing anywhere, so the next run judged them again, and judging a stranger is a MODEL CALL (`step5b`). This is the one cost on this agent that scales with the size of the mailbox rather than the size of the business, which is why it must not be paid twice for the same message. The category says only that this agent has looked: nothing is written to the business, no contact is created, and the owner is told nothing, because the triage said this is not a customer.",
+                      "plugin": "outlook",
+                      "action": "modify_message",
+                      "params": {
+                        "message_id": "{{current_reply.id}}",
+                        "add_categories": [
+                          "AgentPilot/Seen"
+                        ]
                       }
                     }
                   ]

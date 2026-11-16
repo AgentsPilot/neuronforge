@@ -990,6 +990,25 @@ function foldPackageMeetings(
         metadata: {
           count: ordered.length,
           containerId,
+          /*
+           * ── THE ONE FACT THE BUTTON COULD NOT SEE ─────────────────────────
+           *
+           * `packageCalledOff` is resolved above from the CONTAINER, falling
+           * back to the card — and it was used only to grey this step. The
+           * control that adds a session read `session.booking.status`
+           * instead, which on a package sold from a consultation is the HOST
+           * booking: confirmed, while the container it names is cancelled.
+           *
+           * So "Add another meeting" stayed on a package the owner had called
+           * off. Reported with a screenshot on 2026-11-15 (ClickUp "Quotation
+           * issues"): a card whose journey reads "Cancelled · Nov 15" with the
+           * button still under it.
+           *
+           * Carried in the metadata rather than recomputed in the tab: the
+           * container lookup lives here, and two copies of this question are
+           * how the two rows came to be confused in the first place.
+           */
+          packageCalledOff,
           packageFull: (() => {
             const sold = proposals.find(
               proposal => proposal.package_booking_id === containerId
