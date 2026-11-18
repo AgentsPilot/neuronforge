@@ -82,6 +82,14 @@ const TIER: Record<string, number> = {
   refund_requested: 2,
   meeting_auto_completed: 4,
   stage_awaiting_completion: 4,
+  /*
+   * Below every errand, on purpose.
+   *
+   * A quote nobody has written is a client waiting on an answer today. These
+   * are patterns over 180 days, and they will still be true tomorrow — so they
+   * belong on the card, under everything somebody is actually waiting for.
+   */
+  client_needs_a_word: 5,
 };
 
 /** Anything unrecognised sorts below everything named. Adding a gap is safe. */

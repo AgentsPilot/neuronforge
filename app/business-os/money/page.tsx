@@ -31,6 +31,7 @@ import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 import { MoneyFlowPage } from '@/components/business-os/money/MoneyFlowPage';
+import { NotYetGate } from '@/components/business-os/setup/NotYetGate';
 
 function MoneyPageContent() {
   const searchParams = useSearchParams();
@@ -38,7 +39,7 @@ function MoneyPageContent() {
   return <MoneyFlowPage openCreate={searchParams.get('action') === 'create'} />;
 }
 
-export default function MoneyPage() {
+function MoneyPage() {
   return (
     <div className="min-h-full bg-[var(--v2-bg)]">
       {/* `useSearchParams` opts the tree into client rendering, and Next
@@ -48,5 +49,21 @@ export default function MoneyPage() {
         <MoneyPageContent />
       </Suspense>
     </div>
+  );
+}
+
+/**
+ * Wrapped, with the page itself untouched above.
+ *
+ * The gate decides whether this area's configuration is finished; when it is,
+ * it renders the page exactly as before. Written as a wrapper rather than an
+ * early return inside the component so the page keeps its own hooks and its
+ * own Suspense boundaries, and so removing the gate is deleting one function.
+ */
+export default function MoneyPageGated() {
+  return (
+    <NotYetGate area="money">
+      <MoneyPage />
+    </NotYetGate>
   );
 }

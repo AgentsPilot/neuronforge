@@ -202,7 +202,21 @@ export function SearchableDropdown({
                 value={option}
                 className="flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-start transition-colors data-[focus]:bg-[var(--v2-primary)]/10 data-[selected]:bg-[var(--v2-primary)]/15 data-[selected]:font-medium"
               >
-                {option.icon && <span className="text-base leading-none">{option.icon}</span>}
+                {/*
+                  THE THEME'S TEXT COLOUR, EXPLICITLY.
+
+                  This span inherited nothing — the row sets no colour and the
+                  label beside it sets its own — so a TEXT icon fell back to the
+                  browser default and rendered black. Nobody noticed while every
+                  icon in the platform was a flag: emoji carry their own colour.
+                  The currency picker passes "$", "€", "₪", and on a dark theme
+                  they were black on a dark row.
+                */}
+                {option.icon && (
+                  <span className="text-base leading-none text-[var(--v2-text-primary)]">
+                    {option.icon}
+                  </span>
+                )}
                 <span className="flex-1 text-sm text-[var(--v2-text-primary)]">
                   <bdi>{option.label}</bdi>
                 </span>

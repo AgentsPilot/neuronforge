@@ -28,6 +28,22 @@ interface Props {
   };
   /** If true, show embedded onboarding after account creation instead of redirecting */
   useEmbeddedOnboarding?: boolean;
+  /**
+   * Where "Create New Account" goes, when the host has its own create flow.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Added so the configuration dialog can show THIS choice screen without
+   * losing `StripeConnectPrepare`. That component exists for a measured
+   * reason — a single press used to open an American account for an Israeli
+   * business, because `accounts.country` is immutable and the old code sent
+   * `country: 'US'` — and it is also why the dialog had no way to connect an
+   * EXISTING account: it jumped straight past this screen.
+   *
+   * Absent, the create branch uses this wizard's own country step, which is
+   * what the onboarding build screen does today.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  onCreateNew?: () => void;
 }
 
 type WizardStep = 'choice' | 'country' | 'personal' | 'address' | 'business' | 'review' | 'processing' | 'embedded' | 'success' | 'error';
@@ -287,7 +303,7 @@ function SearchableSelect({
 );
 }
 
-export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, existingAccount, useEmbeddedOnboarding = true }: Props) {
+export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, existingAccount, useEmbeddedOnboarding = true, onCreateNew }: Props) {
   const { t, language, isRTL } = useLanguage();
 
   // Wizard state
@@ -900,10 +916,16 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
   // Render choice step
   const renderChoice = () => (
     <div className="space-y-6">
+      {/*
+        NO ICON TILE ABOVE THE HEADING.
+        ─────────────────────────────────────────────────────────────────────
+        A 64px gradient square sat here carrying a card glyph, directly above a
+        heading that says "Connect Stripe" and two options that each carry
+        their own icon. Three card marks on one screen, the largest of them
+        decorative. The dialog that hosts this already shows a card icon in its
+        own header, so it was the fourth.
+      */}
       <div className="text-center mb-8">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #635BFF 0%, #4F46E5 100%)' }}>
-          <CreditCard className="w-8 h-8 text-white" />
-        </div>
         <h2 className="text-2xl font-bold text-[var(--v2-text-primary)]">
           {t('payments.stripe.wizard.title_choice') || 'Connect Stripe'}
         </h2>
@@ -914,12 +936,25 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
 
       <div className="grid gap-4">
         <button
-          onClick={() => setStep('country')}
+          /*
+            The host's own create flow where it has one, this wizard's country
+            step otherwise. The configuration dialog has `StripeConnectPrepare`
+            — country, then the profile blockers, then the account — which
+            exists because one press here used to create an American account
+            for an Israeli business. It had no way to offer "connect existing"
+            at all, so it now opens this screen and takes the create branch
+            back.
+          */
+          onClick={() => (onCreateNew ? onCreateNew() : setStep('country'))}
           className="p-6 text-start rounded-xl border-2 border-[var(--v2-border)] hover:border-[#635BFF] transition-all bg-[var(--v2-surface)] group"
         >
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <CreditCard className="w-7 h-7 text-[#635BFF]" />
+            {/* Stripe's own indigo, solid, with a white glyph. These were
+                translucent blue-to-purple and purple-to-pink gradients: two
+                different washes on one screen, neither of them Stripe's
+                colour, and a 20% tint under a tinted icon reads as disabled. */}
+            <div className="w-14 h-14 rounded-xl flex items-center justify-center" style={{ background: '#635BFF' }}>
+              <CreditCard className="w-7 h-7 text-white" />
             </div>
             <div className="flex-1">
               <p className="font-semibold text-lg text-[var(--v2-text-primary)]">
@@ -939,8 +974,11 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
           className="p-6 text-start rounded-xl border-2 border-[var(--v2-border)] hover:border-[#635BFF] transition-all bg-[var(--v2-surface)] group disabled:opacity-50"
         >
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Link2 className="w-7 h-7 text-purple-600" />
+            {/* The same fill as its sibling: two options of equal standing,
+                and a pink one beside an indigo one read as different kinds of
+                thing. */}
+            <div className="w-14 h-14 rounded-xl flex items-center justify-center" style={{ background: '#635BFF' }}>
+              <Link2 className="w-7 h-7 text-white" />
             </div>
             <div className="flex-1">
               <p className="font-semibold text-lg text-[var(--v2-text-primary)]">

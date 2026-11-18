@@ -15,6 +15,7 @@ import { createLogger } from '@/lib/logger';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
 import type { HealthMeasures } from '@/hooks/useInsights';
+import { NotYetGate } from '@/components/business-os/setup/NotYetGate';
 
 /**
  * An overview of the business, not a ledger.
@@ -206,7 +207,7 @@ interface PaymentStats {
   primary_currency: string | null;
 }
 
-export default function ReportsPage() {
+function ReportsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { t, language, formatCurrency } = useLanguage();
@@ -653,5 +654,19 @@ export default function ReportsPage() {
       </div>
 
     </div>
+  );
+}
+
+/**
+ * Wrapped, with the page itself untouched above. See `NotYetGate`: it renders
+ * this exactly as before once overview's own configuration is finished, and a
+ * signpost until then. A wrapper rather than an early return, so the page
+ * keeps its own hooks and Suspense boundaries.
+ */
+export default function ReportsPageGated() {
+  return (
+    <NotYetGate area="overview">
+      <ReportsPage />
+    </NotYetGate>
   );
 }

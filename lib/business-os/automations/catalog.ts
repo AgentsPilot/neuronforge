@@ -53,6 +53,23 @@ export const AUTOMATION_AGENTS: AutomationAgent[] = [
      * decides whether it arrives cold or with an answer attached.
      */
     coversGap: 'refund_requested',
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A REFUND PRESUPPOSES A PAYMENT.
+     *
+     * This was the one agent in the catalogue with no requirement at all, so it
+     * installed for everybody — including a business that bills nothing, which
+     * then watched "Refund requests · Nothing to do" run every morning against
+     * money that cannot exist. Reported from exactly that account.
+     *
+     * `bills_for_anything` is the same answer `chase_overdue_invoices` already
+     * uses, and it is the honest one: a business that never charges can never
+     * be asked for anything back. The field was always supported — the route
+     * enforces it on install and refuses with `requirement_unmet` — this entry
+     * simply never declared one.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    requires: 'bills_for_anything',
     nameKey: 'automation.assess_refund_requests.name',
     descriptionKey: 'automation.assess_refund_requests.description',
     watchesKey: 'automation.assess_refund_requests.watches',

@@ -264,9 +264,41 @@ export function ownerTasks(input: OwnerTaskInput, language: OwnerTaskLanguage): 
     ? rows.some(row => row.is_scheduled !== false)
     : hasServices && input.sellsScheduled !== false;
 
+  const businessTakesCards = money === 'card_online' || money === 'mixed';
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN UNSETTLED ROW DOES NOT CANCEL THE OWNER'S OWN ANSWER.
+   *
+   * This read `rows.some(row => row.collection === 'online')` as soon as any
+   * row existed, so the business-wide answer stopped counting the moment the
+   * build created a draft. The drafts it creates carry `collection: null` —
+   * the money question is per service and is settled in the services editor,
+   * which the owner has not opened yet — so the test was false for every
+   * account on this screen.
+   *
+   * Measured end to end. The owner told the interview "the client pays online
+   * by card: needs a payment gateway", the build created two drafts, and the
+   * plan screen listed working hours, invoicing and bank details as tasks and
+   * NO Stripe task at all. Opening the services editor then showed "Card
+   * payments need a connected processor" with nothing to press, because that
+   * editor is mounted outside the configuration provider there. So the one
+   * thing the platform genuinely could not do for them was the one thing never
+   * put in front of them, and the only screen that mentioned it was a dead end.
+   *
+   * The null is read the same way `invoicesSome` reads it below, and for the
+   * same reason: unsettled means the paperwork is still owed, not that it is
+   * not. The difference is that an invoice needs no connection and a card
+   * does, so an unsettled row plus a card answer is a Stripe task.
+   *
+   * A row that HAS settled on something else does not drag it back: a
+   * catalogue of three invoiced services and no nulls asks for no processor.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const collectsOnline = rows.length
     ? rows.some(row => row.collection === 'online')
-    : hasServices && (money === 'card_online' || money === 'mixed');
+      || (businessTakesCards && rows.some(row => row.collection == null))
+    : hasServices && businessTakesCards;
 
   /*
    * `!== 'online'` per row, deliberately: a service whose collection is null

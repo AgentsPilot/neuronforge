@@ -29,6 +29,7 @@
 
 export type BosCronJobId =
   | 'calendar-sync'
+  | 'client-standing'
   | 'lead-response'
   | 'insight-automations'
   | 'insight-actions'
@@ -330,6 +331,37 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
       { kind: 'atLeast', key: 'failed', value: 1 },
       { kind: 'atLeast', key: 'hitLimit', value: 1 },
     ],
+  },
+  {
+    /*
+     * One snapshot per client per day, which is what makes the two halves of
+     * the window comparable at all: the standing is read from what the row
+     * says it was on a date, not recomputed from scratch on every read.
+     *
+     * 02:40 UTC, ahead of `insight-metrics` at 03:00 on purpose — the drift
+     * detector reads standing, so standing has to be written first.
+     */
+    id: 'client-standing',
+    path: '/api/cron/client-standing',
+    schedule: '40 2 * * *',
+    ...DAILY,
+    /* The route declares `maxDuration = 300`, so this is measured, not assumed. */
+    timeLimitSeconds: 300,
+    timeLimitSource: 'maxDuration',
+    label: 'Client standing',
+    description: 'Writes how each client has behaved, one snapshot a day',
+    scheduleWords: 'Daily at 02:40 UTC',
+    drainsQueue: null,
+    /* The keys `stats` in the route actually carries. `unchanged` is counted
+       rather than skipped silently: a day where nothing moved is a result. */
+    counts: [
+      { key: 'accounts', path: ['data', 'accounts'], label: 'businesses processed' },
+      { key: 'clients', path: ['data', 'clients'], label: 'clients read' },
+      { key: 'written', path: ['data', 'written'], label: 'snapshots written' },
+      { key: 'unchanged', path: ['data', 'unchanged'], label: 'unchanged' },
+      { key: 'failed', path: ['data', 'failed'], label: 'businesses that failed' },
+    ],
+    partlyDoneWhen: [{ kind: 'atLeast', key: 'failed', value: 1 }],
   },
   {
     id: 'insight-metrics',

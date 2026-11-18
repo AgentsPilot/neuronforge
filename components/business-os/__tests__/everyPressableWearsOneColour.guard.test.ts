@@ -71,8 +71,18 @@ describe('no pressable keeps a hardcoded orange', () => {
   it('the reach journey button lost its hex and its glow', () => {
     expect(REACH).not.toContain('background: #F97316');
     expect(REACH).not.toContain('rgba(249,115,22,0.9)');
-    /* `.crj-ic`, the station icon, still has its gradient and its 0.7 shadow. */
-    expect(REACH).toContain('linear-gradient(120deg, #FFB454');
+    /*
+     * The whole file is now free of hardcoded orange.
+     *
+     * This used to anchor on `.crj-ic` keeping its gradient, as proof the file
+     * had not simply been emptied. That element is gone: the journey was
+     * rebuilt and the station no longer draws a gradient icon, so the anchor
+     * is the token instead — the one colour a pressable here may paint with,
+     * and the business's own brand rather than our orange.
+     */
+    expect(REACH).not.toContain('#FFB454');
+    expect(REACH).not.toContain('#F97316');
+    expect(REACH).toContain('var(--v2-primary)');
   });
 
   it('the dashboard CTA and the preview publish lost the 135deg gradient', () => {

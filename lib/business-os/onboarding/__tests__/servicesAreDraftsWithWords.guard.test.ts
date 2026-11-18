@@ -150,16 +150,35 @@ describe('how the work runs is asked at all', () => {
 
   it('raises the question ceiling with it, rather than starving the last field', () => {
     /*
-     * The cap was once a hardcoded number below the field count, and the last
-     * field in the order was never reached: not declined, never asked.
+     * This read `toBe(BRIEF_FIELDS.length)`, one question per field, because a
+     * cap below the count left the last field never asked.
+     *
+     * That is no longer the contract, and the newer reasoning is in
+     * `businessBrief.test.ts`: six was measured on a live run and six is too
+     * many, so the budget is deliberately smaller than the number of pillars
+     * and something goes unasked on every run. What protects the two pillars
+     * that feed a whole section is that the picker is told they come first,
+     * not arithmetic. Bounded here from the same two sides, so adding a field
+     * still cannot quietly starve them.
      */
-    expect(MAX_FOLLOW_UPS).toBe(BRIEF_FIELDS.length);
+    expect(MAX_FOLLOW_UPS).toBeLessThan(BRIEF_FIELDS.length);
+    expect(MAX_FOLLOW_UPS).toBeGreaterThanOrEqual(
+      BRIEF_FIELDS.filter(field => field.feedsASection).length + 2
+    );
   });
 
   it('asks for the steps of the WORK, not the steps of paying', () => {
     const delivery = BRIEF_FIELDS.find(field => field.key === 'delivery')!;
-    expect(delivery.meaning).toMatch(/not the steps of paying/);
-    expect(delivery.example).toMatch(/what comes first/i);
+    /*
+     * The rule moved on: payment and booking are now asked for as PLACES IN
+     * THE ORDER, because nothing else in the interview records where they sit.
+     * What is still excluded is what anything costs, which is the half that
+     * belongs to the service rows rather than to a description.
+     */
+    expect(delivery.meaning).toMatch(/Not what anything costs/);
+    /* The example asks the owner to replay one moment rather than describe a
+       process: "A new client just told you... What happens next?" */
+    expect(delivery.example).toMatch(/What happens next\?/i);
   });
 
   it('is asked by recall, like the rest of them', () => {

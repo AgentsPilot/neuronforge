@@ -1501,7 +1501,21 @@ export function ProposalBuilderModal({
    * the owner finding that out after writing the whole quote.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  const expiryValid = validUntil.length > 0 && validUntil >= localToday();
+  /*
+   * ── AN EXPIRED QUOTE BEING READ IS NOT AN INVALID FORM ───────────────────
+   *
+   * `readOnly` is this modal opened to LOOK at a quote that already happened,
+   * and a quote that already happened almost always ran out: accepted on the
+   * 11th, good until the 12th, read today. Validating its deadline against
+   * today told the owner "that date has already passed. A quote has to stay
+   * open until at least today" about a job they won a week ago — reported
+   * against an ACCEPTED proposal, where there is nothing to fix and no field to
+   * fix it in.
+   *
+   * The rule still binds every path that WRITES one, which is the only place it
+   * ever meant anything. Nothing here is submittable.
+   */
+  const expiryValid = readOnly || (validUntil.length > 0 && validUntil >= localToday());
 
   /*
    * A breakdown that is on must have something in it: zero items cannot

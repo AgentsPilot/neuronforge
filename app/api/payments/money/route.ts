@@ -39,6 +39,7 @@ import {
   isLateEntry,
   isLatePeriod,
   itemFlow,
+  outstandingOf,
   todayKey,
   totalMoney,
   type MoneyItem,
@@ -157,8 +158,33 @@ const QuerySchema = z.object({
 /** Which rows a filter keeps. Applied after grouping, so it filters ROWS not sources. */
 function matchesFilter(item: MoneyItem, filter: string): boolean {
   switch (filter) {
+    /*
+     * ── UNPAID ASKS THE SAME QUESTION THE FIGURE ANSWERS ────────────────────
+     *
+     * This read the ROLLED-UP STATUS, and the Outstanding figure sums
+     * `outstandingOf` — entries awaiting payment PLUS a plan's unbilled owed
+     * periods. The two disagree whenever an item's entries roll up to something
+     * that is neither owed nor settled, because `rollUpStatus` returns early
+     * for those and never looks at the schedule underneath.
+     *
+     * `refunded` is the case that bites. Live account 2026-11-16, booking
+     * 620f1457: a 30 USD invoice raised, paid, then refunded in full, with the
+     * plan's second period still pending at 30 USD and never invoiced. The
+     * figure counted that 30 — correctly, it is owed — while the row rolled up
+     * to `refunded` and the list refused to show it. Outstanding read 170 and
+     * the rows beneath it added to 140.
+     *
+     * So the filter now asks what the figure asks. This is the same correction
+     * the `overdue` case below already carries, for the same reason: clicking a
+     * figure must never produce a shorter list than the number promised.
+     *
+     * Note this deliberately does NOT change what the row's status BADGE says.
+     * That row is genuinely refunded and genuinely owes money, and the badge is
+     * about the entries; the money owed is what the figure and this filter are
+     * about.
+     */
     case 'unpaid':
-      return ['awaiting_payment', 'overdue', 'failed'].includes(item.status);
+      return outstandingOf(item) > 0;
     /*
      * Late, which is a subset of unpaid rather than a rival to it.
      *

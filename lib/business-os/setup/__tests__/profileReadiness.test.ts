@@ -11,6 +11,11 @@ import {
 const FULL_PROFILE: BusinessProfileFields = {
   company_name: 'International School of Parenting',
   vertical: 'tutor',
+  /* Gates since the onboarding chat turned out to ask for neither. Part of the
+     fixture rather than a case of their own, so every assertion below goes on
+     measuring the field it names. */
+  phone: '+972501234567',
+  email: 'hello@example.com',
   logo_url: 'https://example.com/logo.png',
 };
 
@@ -92,6 +97,43 @@ describe('[smoke] business profile readiness', () => {
     ]);
   });
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CONTACT DETAILS, AND WHY THEY ARE GATES.
+   *
+   * They were deliberately excluded once, on the argument that a page without
+   * them still works because the enquiry form catches everything. What that
+   * argument missed is that NOTHING ELSE ASKS: the onboarding chat has no
+   * question for either, so an account that never opened settings had no phone
+   * and no public email, and no screen ever said so.
+   *
+   * They gate the PROFILE step, where they are typed. They deliberately do not
+   * gate an invoice — `journeyReadiness` lists both in `NOT_NEEDED_TO_INVOICE`,
+   * because a document is valid with a company name, a tax id, an address and a
+   * way to be paid. Without that exemption this change would have stopped every
+   * invoiced service on every account with no public phone number.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('asks for the public phone and email', () => {
+    expect(missingProfileFields({ ...FULL_PROFILE, phone: null }, FULL_SETTINGS)).toEqual(['phone']);
+    expect(missingProfileFields({ ...FULL_PROFILE, email: null }, FULL_SETTINGS)).toEqual(['email']);
+    expect(missingProfileFields({ ...FULL_PROFILE, phone: '  ' }, FULL_SETTINGS)).toEqual(['phone']);
+  });
+
+  it('names who the business is before how to reach it', () => {
+    /* The order is read aloud by the dashboard and the settings strip. */
+    expect(missingProfileFields({ company_name: null, vertical: null }, null)).toEqual([
+      'company_name',
+      'business_type',
+      'industry',
+      'company_size',
+      'primary_goal',
+      'technical_level',
+      'phone',
+      'email',
+    ]);
+  });
+
   it('reports everything missing for an account with nothing set', () => {
     // The second test account: an organizations row exists with settings {}.
     expect(missingProfileFields(null, null)).toEqual([
@@ -101,6 +143,8 @@ describe('[smoke] business profile readiness', () => {
       'company_size',
       'primary_goal',
       'technical_level',
+      'phone',
+      'email',
     ]);
     expect(isBusinessProfileComplete(null, null)).toBe(false);
   });

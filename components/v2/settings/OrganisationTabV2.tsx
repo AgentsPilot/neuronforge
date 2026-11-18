@@ -196,11 +196,33 @@ export default function OrganisationTabV2() {
     try {
       setLoading(true)
 
-      const { data, error } = await supabase
-        .from('organizations')
-        .select('id, name, settings')
-        .eq('owner_user_id', user.id)
-        .single()
+      /*
+       * TWO ROWS, because the name and the four answers live apart.
+       *
+       * The name field on this screen used to read and write
+       * `organizations.name`, and that is a tenancy label rather than a
+       * business name: `get_or_create_user_organization` seeds it with the
+       * account EMAIL at signup, and nothing on the server reads it. So an
+       * owner who named their business in the onboarding chat opened this
+       * screen and found their email in the name box, and saving it here
+       * changed nothing any invoice, booking page or email would ever show.
+       *
+       * The name is `business_profiles.company_name`, in both directions now.
+       * The four answers stay on the organisation row, where
+       * `missingProfileFields` and `journeyReadiness` read them.
+       */
+      const [{ data, error }, businessRes] = await Promise.all([
+        supabase
+          .from('organizations')
+          .select('id, settings')
+          .eq('owner_user_id', user.id)
+          .single(),
+        supabase
+          .from('business_profiles')
+          .select('company_name')
+          .eq('user_id', user.id)
+          .maybeSingle()
+      ])
 
       if (error) {
         if (error.code === 'PGRST116') {
@@ -212,10 +234,10 @@ export default function OrganisationTabV2() {
         return
       }
 
-      setOrgData(data)
+      setOrgData({ ...data, name: businessRes.data?.company_name || '' })
       const settings = (data.settings || {}) as Partial<BusinessSettings>
       setFormData({
-        name: data.name || '',
+        name: businessRes.data?.company_name || '',
         industry: settings.industry || '',
         company_size: settings.company_size || '',
         primary_goal: settings.primary_goal || '',
@@ -248,18 +270,35 @@ export default function OrganisationTabV2() {
         work_hours_per_day: formData.work_hours_per_day
       }
 
-      // Update organisation
-      const { error } = await supabase
-        .from('organizations')
-        .update({
-          name: formData.name,
-          settings: newSettings,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', orgData.id)
-        .eq('owner_user_id', user.id)
+      /*
+       * The four answers to the organisation row, the NAME to
+       * `business_profiles.company_name` — see `loadOrganization` for why.
+       *
+       * An upsert rather than an update: `business_profiles` is per user and a
+       * V2-only account may have no row at all, and an update would then write
+       * the name nowhere while this function reported success. `onConflict` is
+       * the same key the Business OS settings form uses.
+       */
+      const [{ error }, { error: nameError }] = await Promise.all([
+        supabase
+          .from('organizations')
+          .update({
+            settings: newSettings,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', orgData.id)
+          .eq('owner_user_id', user.id),
+        supabase
+          .from('business_profiles')
+          .upsert({
+            user_id: user.id,
+            company_name: formData.name,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'user_id' })
+      ])
 
       if (error) throw error
+      if (nameError) throw nameError
 
       // Update local state
       setOrgData({

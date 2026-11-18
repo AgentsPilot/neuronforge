@@ -179,19 +179,26 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * and anonymise (seen live 2026-10-30, the closurespike admin check). The same
  * class as 20261092. Chained on 20261096, stamp b1203c526bc9ec91, live.
  */
-export const FUNCTION_MIGRATION = '20261127_operator_test_account_cleanup_refund_transaction_fk';
+/*
+ * 20261130: crm_client_standing joins the plan (20261128). Its two links are
+ * reviewed in INBOUND_FOREIGN_KEYS above — one to business_profiles, one to
+ * crm_contacts, both tables the plan empties, so leaving either unreviewed
+ * makes G-18 refuse every check, delete and anonymise on prod. 20261127 is
+ * applied history and is never regenerated, which is why this is a new file.
+ */
+export const FUNCTION_MIGRATION = '20261130_operator_test_account_cleanup_client_standing';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261122_operator_test_account_cleanup_refund_requests';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261127_operator_test_account_cleanup_refund_transaction_fk';
 /**
  * What this migration changes, for its header (comment lines, no semicolons or
  * apostrophes: the file must stay paste-safe). Rewritten with each new
  * FUNCTION_MIGRATION; the applied files keep their own.
  */
 export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
-  'Reviews the fourth foreign key on refund_requests for G-18: transaction_id, added by 20261123',
-  '20261122 reviewed the three that 20261121 created. The agent migration added a link to payment_transactions a day later and it was never reviewed',
-  'payment_transactions is a table the plan empties, so an unreviewed link pointing at it makes G-18 refuse every check, delete and anonymise on prod',
-  'The column records which payment answered a request, written when the money actually moves',
+  'Adds crm_client_standing to the plan and reviews its two foreign keys for G-18: user_id to business_profiles and contact_id to crm_contacts',
+  'The table is the daily snapshot of how each client has behaved, created by 20261128. One row per client per day, written only when the picture changed',
+  'Both parents are tables the plan empties, so an unreviewed link pointing at either makes G-18 refuse every check, delete and anonymise on prod',
+  'Classified as derived data: a Reset drops the snapshots and the nightly job rebuilds today from the sessions, instalments and refunds that remain',
   'Nothing else in the plan changes. Same 8 argument signature as 20261104',
 ];
 /**
@@ -200,9 +207,9 @@ export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
  * each new FUNCTION_MIGRATION.
  */
 export const ROLLBACK_CONSEQUENCE: ReadonlyArray<string> = [
-  'The restored 20261122 function does not know refund_requests.transaction_id (20261123)',
-  'While that column exists, G-18 of the restored function sees an unreviewed link pointing at payment_transactions and refuses every check, delete and anonymise',
-  'Redeploy a build that pins the 20261122 stamp after running this file'
+  'The restored 20261127 function does not know crm_client_standing (20261128)',
+  'While that table exists, G-18 of the restored function sees its two unreviewed links pointing at business_profiles and crm_contacts and refuses every check, delete and anonymise',
+  'Redeploy a build that pins the 20261127 stamp after running this file'
 ];
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
@@ -520,6 +527,11 @@ export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, strin
   ['credit_transactions', 'credit_transactions_token_usage_id_fkey', 'user_id'],
   ['crm_activities', 'crm_activities_business_fk', 'user_id'],
   ['crm_activities', 'crm_activities_contact_id_fkey', 'user_id'],
+  /* The two links on the standing snapshots (20261128). Both owned through the
+     row's own `user_id`: a snapshot belongs to the business that holds the
+     client, and the contact link only says which client it describes. */
+  ['crm_client_standing', 'crm_client_standing_business_fk', 'user_id'],
+  ['crm_client_standing', 'crm_client_standing_contact_id_fkey', 'user_id'],
   ['crm_contacts', 'crm_contacts_business_fk', 'user_id'],
   ['crm_pipeline_stages', 'crm_pipeline_stages_business_fk', 'user_id'],
   ['crm_tasks', 'crm_tasks_business_fk', 'user_id'],

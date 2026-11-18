@@ -20,6 +20,10 @@ import { TipsStepper, Tip } from './TipsStepper';
 import { FunnelMap, FunnelStation, FunnelGap, GhostProjection } from './FunnelMap';
 import { FunnelDrawer, type DrawerContent } from './FunnelDrawer';
 import { SystemReadiness, type ReadinessAttention } from './SystemReadiness';
+import { YourServicesPanel, type CatalogueService } from './YourServicesPanel';
+import { ClockAndCurrencyCard } from './ClockAndCurrencyCard';
+import { ClientReachJourney } from './ClientReachJourney';
+import { BeingFoundCard } from './BeingFoundCard';
 import { UsageCard } from '@/components/business-os/UsageCard';
 import { CHANNEL_LABELS, type ChannelRow } from './ChannelSourcesSection';
 import { ChannelsOverviewCard } from './ChannelsOverviewCard';
@@ -30,7 +34,6 @@ import type { HandledEntry } from './HandledSection';
 import { DailyBriefingCard } from './DailyBriefingCard';
 import { NeedsYouCard, type GapView } from './NeedsYouCard';
 import { RunningAgentsCard } from './RunningAgentsCard';
-import { ClientReachJourney } from './ClientReachJourney';
 import type { InstalledAgentRow, OperationalItem } from './InsightAdvisorCard';
 import { briefingLines } from '@/lib/business-os/briefing/briefingLines';
 import { InsightAdvisorCard } from './InsightAdvisorCard';
@@ -315,6 +318,60 @@ interface LiveDashboardProps {
   onConfigureClick?: (stepId: string) => void;
   onAction?: (action: string, data?: unknown) => void;
   /**
+   * EVERY service, drafts included, read once by the page.
+   *
+   * Deliberately separate from `setupShape`, which is built from the PUBLISHED
+   * catalogue and must stay that way: `theGatesDoNotContradict` pins that a
+   * draft decides nothing about what the business is or what blocks it.
+   *
+   * This is the other half of the same account, and the one surface allowed to
+   * talk about drafts: the card that says which service to finish next. Nothing
+   * here reaches readiness, the stations or any gate.
+   */
+  catalogue?: CatalogueService[];
+  /** Opens the services editor on one row. */
+  onOpenService?: (serviceId: string) => void;
+  /**
+   * The owner has said their catalogue is finished.
+   *
+   * Read from `dismissed_setup_steps`, which the setup checklist has used for
+   * this exact purpose for some time. The platform cannot infer it: a business
+   * selling one thing and a business that has added one thing so far look
+   * identical from here.
+   */
+  servicesDone?: boolean;
+  /** Record that answer, and move the setup on. */
+  onServicesDone?: () => void;
+  /**
+   * Any live page, or ANY active smart link, a contact form included.
+   *
+   * Separate from `is_reachable`, which the stats route restricts to booking
+   * and payment links. That rule is right for "is this business open"; this one
+   * answers "can somebody looking for them land anywhere of theirs", which is
+   * what the first station asks and nothing more.
+   */
+  findableByLink?: boolean;
+  /**
+   * Has a human confirmed the clock and the currency?
+   *
+   * Step 0, and the only one with no way past it — see `ClockAndCurrencyCard`
+   * for why these two cannot be deferred like the rest.
+   */
+  clockConfirmed?: boolean;
+  /** Fired once both are stored, so the host can re-read and move on. */
+  onClockConfirmed?: () => void;
+  /** The owner has said they do not want a link. From `dismissed_setup_steps`. */
+  websiteSkipped?: boolean;
+  /** Record that, which also ends the setup where no mailbox is offered. */
+  onSkipWebsite?: () => void;
+  /** Bring the link step back for an owner who changed their mind. */
+  onUnskipWebsite?: () => void;
+  /** They do not want the mailbox read, for now. */
+  mailboxSkipped?: boolean;
+  onSkipMailbox?: () => void;
+  /** Something went live: re-read the stats so the gates and tabs catch up. */
+  onReachChanged?: () => void;
+  /**
    * The mailbox lead channel, read once by the page.
    *
    * Two surfaces on this card need it and must not disagree: the connections
@@ -521,6 +578,19 @@ export function LiveDashboard({
   briefing,
   onConfigureClick,
   onAction,
+  catalogue,
+  onOpenService,
+  servicesDone = false,
+  onServicesDone,
+  findableByLink = false,
+  clockConfirmed = true,
+  onClockConfirmed,
+  websiteSkipped = false,
+  onSkipWebsite,
+  onUnskipWebsite,
+  mailboxSkipped = false,
+  onSkipMailbox,
+  onReachChanged,
   inboxChannel,
   assistantOpen = false,
   onToggleAssistant,
@@ -990,6 +1060,39 @@ export function LiveDashboard({
     const repliesOff = inboxChannel.problems.includes('replies_off');
 
     /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * CAN AN ENQUIRY REACH THIS BUSINESS AT ALL? The question the rows below
+     * were asking in the wrong terms.
+     *
+     * `replies_off` is an ACCOUNT-level fact — one `lead_autosend_enabled`
+     * switch, read in `inboxChannel` whether or not a mailbox exists — but the
+     * row that says it out loud was shown only when `channels.length > 0`.
+     * That gate reads "a mailbox is connected", and a mailbox is one of two
+     * ways an enquiry arrives. The other is a form on one of our own pages,
+     * which is how most accounts receive one, and those accounts could not see
+     * the row at all.
+     *
+     * Measured: an owner who asked for lead capture during onboarding, with
+     * `lead_autosend_enabled: false` (the column's default, and nothing in
+     * onboarding ever sets it). Enquiries would file, the alert email would go
+     * to the owner, no client would ever be answered, and no readiness row
+     * anywhere said so — while this row's own copy, "Website leads are not
+     * being answered", described their situation exactly.
+     *
+     * A LIVE PAGE IS THE TEST, and specifically not `isReachable`. That flag
+     * counts an active smart link, and a booking or payment link captures a
+     * booking rather than an enquiry — so a booking-link-only business would
+     * be told its enquiries were going unanswered when no enquiry can arrive,
+     * which is the "a website they do not have" mistake recorded below. Every
+     * recipe in `lib/website-builder/recipes.ts`, the landing one included,
+     * carries a `contact_form` block, so a live page of ours DOES mean a form
+     * is standing there.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    const livePages = (ownedSurfaces?.website ?? 0) + (ownedSurfaces?.landing ?? 0);
+    const enquiriesCanArrive = inboxChannel.channels.length > 0 || livePages > 0;
+
+    /*
        ── IT TICKS, IT DOES NOT VANISH ────────────────────────────────────────
        This row was added only while replies were OFF, so switching them on
        removed it from the list entirely. Every other readiness step stays and
@@ -1001,10 +1104,16 @@ export function LiveDashboard({
        `action` only while there is something to do: a finished step offering a
        button to finish it again is the other half of the same confusion.
     */
-    if (inboxChannel.channels.length > 0) {
+    if (enquiriesCanArrive) {
       return [
         ...setupItems,
         {
+          /*
+           * The id keeps its name. It is read nowhere else — the page switches
+           * on `action`, not on this — and renaming it would strand the owner's
+           * stored state for the row (its snooze, its place in the list) for no
+           * gain. What changed is which businesses see it, not what it is.
+           */
           id: 'inbox-channel-replies',
           /* The step reads as its own state. "Website leads are not being
              answered" beside a tick is a sentence arguing with its own icon. */
@@ -1087,6 +1196,30 @@ export function LiveDashboard({
       setupShape.hasOwnWebsite === true && setupShape.leadsArriveByEmail === true;
     const noMailboxAtAll = inboxChannel.channels.length === 0;
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * STILL BUILT HERE, BUT NO LONGER APPENDED TO THE END.
+     *
+     * The ITEM — its title, its sentence, its action — belongs here, because
+     * only the dashboard knows whether a mailbox is already connected. What
+     * does not belong here is its POSITION: `resolveSetup` walks `SETUP_STEPS`
+     * and orders by that list, so a row pushed onto the end of the items array
+     * was invisible to the ordering model and came out last whatever it was
+     * worth. It ranked below "choose your colours and fonts" for a business
+     * whose enquiries arrive by email, and `nextStep` could never point the
+     * card's callout at it.
+     *
+     * `inbox-channel` is now a node in the graph, sitting above the cosmetic
+     * steps and carrying the same `hasOwnWebsite && leadsArriveByEmail` rule
+     * as `readsItsOwnEnquiryMail` below. So this item is just an item: the
+     * graph decides where it goes and whether it applies at all.
+     *
+     * The shape test stays here as well, deliberately. It is cheap, it keeps
+     * this function readable on its own, and `resolveSetup` dropping a step
+     * whose item is absent means the two can only ever agree to hide it —
+     * never to show something the shape refuses.
+     * ───────────────────────────────────────────────────────────────────────
+     */
     if (noMailboxAtAll && readsItsOwnEnquiryMail) {
       return [
         ...setupItems,
@@ -1103,8 +1236,49 @@ export function LiveDashboard({
       ];
     }
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AND THE BUSINESS WHOSE ENQUIRY FORM IS A LINK NOBODY HAS SHARED.
+     *
+     * Reached only when both rows above declined: no mailbox channel, no live
+     * page of ours, and no own-site mail to read. The `website` step says such
+     * a business is reachable, and it is — an active booking link is a door.
+     * But a booking link only takes somebody who has already decided.
+     *
+     * THE FORM IS NOT MISSING. `/c/{code}/contact` is a standalone page that
+     * exists for every account with no `website_pages` row behind it, so the
+     * row does not ask anybody to build anything: the work is knowing the link
+     * is there and putting it somewhere clients look. That is why the copy says
+     * share rather than create, and why this is not keyed on creating a page.
+     *
+     * Measured on an owner who said during onboarding that they wanted help
+     * capturing leads: two smart links, no page, `lead_autosend_enabled: false`,
+     * and not one row on this card about any of it. The question they asked was
+     * the one thing readiness never mentioned.
+     *
+     * RECOMMENDED, NOT REQUIRED. A business genuinely selling off a booking
+     * link alone is working, and a required row would call a running account
+     * unfinished for declining a door it does not want.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (livePages === 0) {
+      return [
+        ...setupItems,
+        {
+          id: 'lead-capture',
+          title: t('leads.capture.readiness.title') || 'Share your enquiry form',
+          description:
+            t('leads.capture.readiness.desc') ||
+            'Your booking link takes people who are ready. Your contact form link catches everyone else, files them as a lead and replies with your booking link. Copy it from your links page.',
+          completed: false,
+          required: false,
+          action: 'create_capture_link',
+        },
+      ];
+    }
+
     return setupItems;
-  }, [setupItems, inboxChannel, setupShape, t]);
+  }, [setupItems, inboxChannel, setupShape, ownedSurfaces, t]);
 
   /**
    * The journey, built from what happened rather than from how long it has been.
@@ -1404,7 +1578,308 @@ export function LiveDashboard({
    * readiness card below, so the path and the list can never both claim the
    * screen — or both leave it empty.
    */
-  const showReachJourney = setupGraph.steps.length > 0 && !isReadyForClients(setupGraph);
+  /*
+   * `showReachJourney` is gone with the card it gated.
+   *
+   * It decided whether the reach journey took the lifecycle rail's slot. The
+   * journey now lives inside `SystemReadiness`, which resolves the same graph
+   * and renders it there, so nothing on this screen has to choose between the
+   * two any more. Both the setup view and the phase logic below were moved off
+   * it in the same change — they ask about the PHASES, not about the graph.
+   */
+
+  /**
+   * Is the services panel drawing?
+   *
+   * Asked once and read twice, because the journey below has to know: it stands
+   * its callout down when something above it has already named the next move,
+   * and a panel that renders nothing must not silence the only sentence left.
+   * Two separate tests of the same condition is how that goes wrong quietly.
+   */
+  /**
+   * THE BUSINESS PROFILE COMES FIRST, WITH OR WITHOUT A CATALOGUE.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A service editor is a strange first screen for a business that has no name,
+   * no trade and no address. That name goes on the booking page, on every
+   * invoice and in every email, so a service finished first is finished on top
+   * of a blank — and the business type decides the shape of the rest of the
+   * setup.
+   *
+   * It is also the one step owed by an account with NOTHING to sell, which is
+   * why the panel below renders for an empty catalogue too.
+   *
+   * Read off the item the page already computed from `profile_readiness`, so
+   * this agrees with the readiness list and the settings chips rather than
+   * deciding for itself what a complete profile is.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const profileItem = setupItems.find(item => item.id === 'profile');
+  const profileOutstanding = Boolean(profileItem && !profileItem.completed);
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE SETUP IS A SEQUENCE, AND THIS IS WHERE IT IS KEPT.
+   *
+   *   1  the business profile   who you are. Goes on the page, the invoice and
+   *                             every email, so nothing below it means much
+   *                             until it is answered.
+   *   2  your services          what you sell. Each names its own requirements
+   *                             in its own editor.
+   *   3  being found            how a client reaches you, which depends
+   *                             entirely on what the interview was told.
+   *
+   * Step 3 is NOT "build a website". The `website` item already branches on the
+   * answer — `publish_website` for a business we are building a site for,
+   * `create_booking_link` for one that kept its own — and this reads that item
+   * rather than deciding again. A business with its own site is reached two
+   * ways at once, so it gets the second button as well: a link to book through,
+   * and the mailbox that turns its site's enquiries into leads.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const websiteItemForSetup = setupItems.find(item => item.id === 'website');
+
+  const firstStep = useMemo(() => {
+    if (!onAction) return null;
+
+    /* `t` returns the KEY when a translation is missing, so fall back by hand. */
+    const tr = (key: string, fallback: string) => {
+      const value = t(key);
+      return value === key ? fallback : value;
+    };
+
+    /*
+     * Phase 3 has its own card now — see `BeingFoundCard`. It needs state this
+     * slot cannot carry: it fetches the booking link, publishes it in place,
+     * shows the address to copy, and offers a skip. A `FirstStep` is a title, a
+     * sentence and a button.
+     */
+    if (!profileOutstanding) return null;
+
+    const missing = profileItem?.missing ?? [];
+    const firstDraft = (catalogue ?? []).find(service => service.status !== 'active');
+
+    return {
+      title: tr('setup.profile.todo', 'Tell me about your business'),
+      /* What is actually missing, in the words the form uses, because "complete
+         your profile" sends nobody anywhere. */
+      body: missing.length
+        ? `${tr('readiness.stillNeeds', 'Still needs:')} ${missing.join(' · ')}`
+        : tr('setup.profile.why', 'Your name, trade and address go on your booking page, your invoices and every email you send.'),
+      cta: tr('setup.profile.cta', 'Add your details'),
+      onPress: () => onAction('complete_profile'),
+      /* Only here. After the profile the catalogue genuinely is next; after the
+         catalogue the owner has just said they are done with it. */
+      then: firstDraft
+        ? tr('services.panel.then', 'Then: {name}').replace('{name}', firstDraft.service_name)
+        : null,
+    };
+  }, [profileOutstanding, profileItem, onAction, t, servicesDone, websiteItemForSetup, setupShape, catalogue]);
+
+  /**
+   * Is the setup panel drawing?
+   *
+   * Asked once and read twice, because the journey below has to know: it stands
+   * its callout down when something above it has already named the next move,
+   * and a panel that renders nothing must not silence the only sentence left.
+   * Two separate tests of the same condition is how that goes wrong quietly.
+   */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A VISIT IS NOT AN ARRIVAL.
+   *
+   * This counted `found` — visitors over 30 days — and that made the guard
+   * trip on the owner's own curiosity. Opening your own booking link to see
+   * what a client sees registers a visit, and the setup view vanished
+   * mid-setup, replaced by a dashboard of zeroes. Reported as "why am I here?",
+   * with contacts, bookings and payments all still at zero.
+   *
+   * What marks a business as running is somebody actually turning up: a
+   * contact, a booking, a payment. Those cannot be produced by looking at your
+   * own page, and any one of them is enough to say this account has left the
+   * setup behind.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const nobodyHasArrived =
+    (stats.touch ?? 0) === 0 && (stats.booked ?? 0) === 0 && (stats.paid ?? 0) === 0;
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * A PHASE IS ANSWERED WHEN IT IS DONE **OR** DECLINED.
+   *
+   * Without this the setup could not end. `showReachJourney` is true while
+   * anything compulsory is outstanding, and `website` is `mandatory: 'always'`
+   * — so an owner who said "I do not need a booking link" stayed in the setup
+   * view permanently, looking at a one-line card with the whole dashboard
+   * hidden behind it. The same for a business that never wants the site we
+   * offered to build, and for one that declines the mailbox.
+   *
+   * Declining is not completing, and nothing here pretends otherwise: the
+   * readiness graph still reports the gap, the stations still show it, and the
+   * publish gates still refuse. What changes is only whether the dashboard goes
+   * on treating this account as mid-setup — which is a question about the
+   * owner's attention, not about the business being ready.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /**
+   * Is the mailbox stage still an open question?
+   *
+   * The same four conditions `everyPhaseAnswered` reads for it, so the card
+   * that asks and the flag that waits cannot disagree — the disagreement being
+   * precisely what left a setup with nothing on screen to finish.
+   */
+  const mailboxStillOwed =
+    setupShape.hasOwnWebsite === true
+    && setupShape.leadsArriveByEmail === true
+    && !mailboxSkipped
+    && (inboxChannel?.channels?.length ?? 0) === 0;
+
+  const everyPhaseAnswered =
+    !profileOutstanding
+    && servicesDone
+    && (websiteItemForSetup?.completed === true || websiteSkipped)
+    && (
+      mailboxSkipped
+      || (inboxChannel?.channels?.length ?? 0) > 0
+      || setupShape.hasOwnWebsite !== true
+      || setupShape.leadsArriveByEmail !== true
+    );
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE WALKTHROUGH COUNTS PHASES. THE GRAPH COUNTS CONFIGURATION.
+   * ───────────────────────────────────────────────────────────────────────────
+   * The line under the greeting counted `setupGraph.mandatoryDone` of
+   * `mandatoryTotal` even while the owner was mid-walkthrough, and those are
+   * the graph's compulsory NODES — which know nothing about the phases the
+   * cards actually walk. So the greeting read "6 of 6 essentials done"
+   * directly above a card still asking a question: every compulsory node was
+   * satisfied, and the catalogue, the link and the mailbox were still open.
+   *
+   * Built from the same four clauses as `everyPhaseAnswered` above, in the
+   * same order the cards ask them, so the count and the flag cannot disagree.
+   * The mailbox is counted only where it is offered at all — a business
+   * without its own site is never asked, and must not be told it is one step
+   * short of finishing something it was never shown.
+   */
+  const setupPhases: boolean[] = [
+    !profileOutstanding,
+    servicesDone,
+    websiteItemForSetup?.completed === true || websiteSkipped,
+  ];
+  if (setupShape.hasOwnWebsite === true && setupShape.leadsArriveByEmail === true) {
+    setupPhases.push(mailboxSkipped || (inboxChannel?.channels?.length ?? 0) > 0);
+  }
+  const phasesAnswered = setupPhases.filter(Boolean).length;
+  const phasesTotal = setupPhases.length;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * TELL THE TAB BAR WHEN THE WALKTHROUGH IS OVER.
+   *
+   * The bar cannot work this out for itself. It reads `setup-status`, which
+   * answers about STEPS — and the steps say "a service is live" the moment the
+   * first one is published, which is the middle of the setup, not the end of
+   * it. So Money, Online presence and Business overview all opened while the
+   * owner was still being walked through, and the walkthrough carried on
+   * underneath a full navigation bar.
+   *
+   * This component is the only place that knows: `everyPhaseAnswered` is the
+   * question "has the owner finished being walked through", and it includes the
+   * phases a step list cannot see — a catalogue declared finished, a website
+   * skipped, a mailbox declined.
+   *
+   * Written to the same session key the bar already reads and announced on the
+   * same event it already listens for, so nothing new is invented to carry it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.sessionStorage.setItem('bos_setup_complete', everyPhaseAnswered ? '1' : '0');
+      window.dispatchEvent(new Event('bos:setup-changed'));
+    } catch {
+      /* Private mode. The bar falls back to its own reading, which is the
+         behaviour before this existed. */
+    }
+  }, [everyPhaseAnswered]);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * KEYED ON THE PHASES, NOT ON THE READINESS GRAPH.
+   *
+   * This read `servicesPanelShowing`, which is built from `showReachJourney`,
+   * which is `!isReadyForClients`. Publishing the booking link completes the
+   * `website` step — and with nothing else compulsory outstanding, the graph
+   * went READY. So the setup surfaces unmounted the instant the link went live,
+   * the whole dashboard unfolded, and the mailbox phase was never offered.
+   * Reported as "the dashboard is visible before the user said Yes".
+   *
+   * The graph answers "can a client reach this business". The phases answer
+   * "has the owner finished being walked through it". They are different
+   * questions and the second one owns this view.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const setupMode = Boolean(nobodyHasArrived && !everyPhaseAnswered);
+
+  const servicesPanelShowing = Boolean(
+    setupMode && onOpenService && (firstStep || (catalogue && catalogue.length > 0))
+  );
+
+  /**
+   * THE DASHBOARD IS THE SETUP, WHILE THERE IS STILL SETUP TO DO.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * An account that has never put a service in front of a client has nothing to
+   * report: no bookings, no money, no funnel, no agents worth watching. Drawing
+   * eleven sections of empty charts under the one card that matters buries it,
+   * and every one of those sections has its own idea of what is missing — which
+   * is how the same work came to be described three times in three vocabularies
+   * on one screen.
+   *
+   * So while that is true the page is the three things the setup needs: the
+   * service to finish, what you sell, and whether a client could reach you.
+   *
+   * NARROWER THAN "NOT READY FOR CLIENTS", DELIBERATELY. `isReadyForClients` is
+   * false for any compulsory gap, including on a business that has been trading
+   * for months and has just had its invoice details emptied. Hiding that
+   * account's funnel, money and agents would be a far worse bug than the one
+   * this fixes. See `nobodyHasArrived` below, which is what keeps a working
+   * business out of this view.
+   *
+   * An account with no catalogue at all is also excluded: it keeps the full
+   * dashboard, where the readiness card is the thing asking it for services.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /*
+   * PUBLISHING ONE SERVICE IS NOT THE END OF THE SETUP.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This read "nothing has ever been published", so the moment the first
+   * service went live the whole operational dashboard appeared — eleven
+   * sections of zeroes — over an account that still has a draft service, no
+   * hours and no way to be found. Reported as "the dashboard is showing up".
+   *
+   * The boundary is not the first publish. It is whether there is still setup
+   * to do, which is what `servicesPanelShowing` already answers: the profile is
+   * outstanding, or there is a catalogue to work through.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND THE GUARD THAT KEEPS A REAL BUSINESS OUT OF IT.
+   *
+   * Dropping the publish test alone would have taken the dashboard away from
+   * anyone mid-edit on a working account — a business with one live service and
+   * one draft is extremely ordinary. So the setup view is only for an account
+   * where NOBODY HAS EVER ARRIVED: no one found, no one booked, nobody paid.
+   *
+   * That is a deliberately blunt test and it is the safe direction. Being wrong
+   * towards "show the dashboard" costs a new owner a screen of zeroes for one
+   * session; being wrong the other way hides a trading business's money and
+   * agents from it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+
+
 
   /**
    * Who gets the top row, and what the row is then shaped like.
@@ -1454,6 +1929,7 @@ export function LiveDashboard({
     <NeedsYouCard gaps={gaps ?? []} onChanged={onGapsChanged} fill />
   ) : (
     <SystemReadiness
+      findableByLink={findableByLink}
       items={readinessItems}
       shape={setupShape}
       attention={readinessAttention}
@@ -1487,9 +1963,39 @@ export function LiveDashboard({
     const reached = (key: string) =>
       journey.nodes.some(node => node.key === key && node.state === 'reached');
 
-    // Reachability is a fact about what is live; readiness is a fact about
-    // what is configured. A business can be fully configured and still have
-    // nothing a client can open, and that is still setup.
+    /*
+     * Reachability is a fact about what is live; readiness is a fact about
+     * what is configured. A business can be fully configured and still have
+     * nothing a client can open, and that is still setup.
+     *
+     * ── AND SO IS AN UNANSWERED PHASE ────────────────────────────────────
+     * `setupMode` is the third thing, and the one this line was missing. An
+     * account can be reachable AND have nothing compulsory outstanding while
+     * the owner is still being walked through — a mailbox offered and not yet
+     * answered, say. This line then read "You're live and nobody has arrived
+     * yet" directly above a setup card still asking a question, which is the
+     * dashboard telling an owner they are finished and showing them they are
+     * not.
+     *
+     * Four surfaces answered this question with three different tests: the
+     * cards on `everyPhaseAnswered`, the assistant and this line on
+     * `isReadyForClients`, the tabs on "a service is live". They now all read
+     * the same one.
+     */
+    /*
+     * Mid-walkthrough, the honest count is the phases the cards are walking,
+     * not the graph's compulsory nodes. See `setupPhases`: the graph can read
+     * complete while the catalogue, the link and the mailbox are all still
+     * open questions, and it said so out loud as "6 of 6 essentials done".
+     */
+    if (setupMode) {
+      return {
+        key: 'liveDashboard.status.walkthrough',
+        vars: { done: phasesAnswered, total: phasesTotal },
+      };
+    }
+    /* Walkthrough over, but something compulsory is outstanding or nothing is
+       live yet. Now the graph IS the subject, and its count is the right one. */
     if (!isReadyForClients(setupGraph) || !hasPublished) {
       return {
         key: 'liveDashboard.status.setup',
@@ -1502,7 +2008,7 @@ export function LiveDashboard({
       return { key: 'liveDashboard.status.arriving', vars: { found: stats.found } };
     }
     return { key: 'liveDashboard.status.live_quiet', vars: {} };
-  }, [setupGraph, hasPublished, journey, stats.found]);
+  }, [setupGraph, hasPublished, journey, stats.found, setupMode, phasesAnswered, phasesTotal]);
 
   /**
    * The funnel as one ordered list, visitors first.
@@ -1665,7 +2171,26 @@ export function LiveDashboard({
        * pipeline means `incomparable`, and the connector honestly says so.
        */
       const ends = gapEndsFor(from, to);
-      const verdict = resolveGap(ends.from, ends.to, hasPublished);
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * "LIVE" HERE MEANS "SOMEBODY COULD APPEAR", NOT "COULD TRANSACT".
+       *
+       * This passed `hasPublished`, which excludes contact-form links because
+       * it answers whether the business can be BOOKED. The funnel is not asking
+       * that. It measures people arriving, and on this account they already
+       * can: through the live enquiry form, or typed in by hand on the People
+       * page. Neither needs a booking link.
+       *
+       * So every connector read "create your booking link to start measuring",
+       * which told an owner that nothing could be counted until they did a
+       * thing that has no bearing on counting. The map is empty because nobody
+       * has come yet, and `empty` says exactly that — "nobody here yet".
+       *
+       * `setup` survives for the account it was written for: no links, no
+       * pages, nothing anyone could arrive at.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const verdict = resolveGap(ends.from, ends.to, hasPublished || findableByLink);
 
       /*
        * EVERY VERDICT SAYS SOMETHING, INCLUDING THE SILENT ONES.
@@ -1678,7 +2203,21 @@ export function LiveDashboard({
        * had nothing to report.
        */
       let lb: string | undefined;
-      if (verdict.kind === 'setup') lb = t('gap.setup') || 'publish your site to start measuring';
+      /*
+       * "Publish your site" is wrong for a business that never asked for one.
+       *
+       * `reachesByLink` is the same answer the tip beside this map already
+       * uses — `tip.setup.link.desc` has said "create your booking link" for
+       * some time — and this connector label was the half that never got the
+       * variant. A contractor who declined a website read "publish your site"
+       * across every gap in the diagram, about work the platform is not doing
+       * for them and they did not ask for.
+       */
+      if (verdict.kind === 'setup') {
+        lb = reachesByLink
+          ? t('gap.setup.link') || 'create your booking link to start measuring'
+          : t('gap.setup') || 'publish your site to start measuring';
+      }
       else if (verdict.kind === 'empty') lb = t('gap.empty') || 'nobody here yet';
       else if (verdict.kind === 'tooEarly') lb = t('gap.tooEarly') || 'too early to tell';
       else if (verdict.kind === 'watching') lb = t('gap.watchConversion') || 'watching';
@@ -1692,15 +2231,37 @@ export function LiveDashboard({
   const tips: Tip[] = useMemo(() => {
     const result: Tip[] = [];
 
-    // Setup mode - tip to publish
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE TIP AND THE STATION BESIDE IT HAVE TO AGREE.
+     *
+     * This read bare `!hasPublished` while the funnel two lines above reads
+     * `hasPublished || findableByLink` — so an account with a live enquiry
+     * form was shown "Found you" as the badge and, in the same card, "Create
+     * your booking link. Everything else on this page waits on it."
+     *
+     * Both halves were wrong for that account. It HAD been found: a form a
+     * client can send a message through is a way in. And nothing else waited
+     * on it — an active quoted service bills on acceptance, with no booking
+     * link anywhere in the path. The sentence was written for an account with
+     * nothing live at all, and kept running after that stopped being true.
+     *
+     * So the same test as the funnel, and a different sentence for the
+     * findable case: the booking link is an improvement to offer, not a
+     * precondition to claim. The reach journey already draws this distinction
+     * (`reach.blocked.website_link_found`); this is the same one in the tip.
+     * ───────────────────────────────────────────────────────────────────────
+     */
     if (!hasPublished) {
       result.push({
         at: 'found',
         n: 1,
         t: t('tip.setup.title') || 'One thing to do',
-        s: reachesByLink
-          ? t('tip.setup.link.desc')
-          : t('tip.setup.desc'),
+        s: findableByLink
+          ? t('tip.setup.link.found')
+          : reachesByLink
+            ? t('tip.setup.link.desc')
+            : t('tip.setup.desc'),
         about: funnelStations.find(station => station.k === 'found')?.lb,
       });
       return result;
@@ -1965,7 +2526,8 @@ export function LiveDashboard({
      * pressing a healthy connector would otherwise open a panel about a
      * different pair of stages entirely.
      */
-    const leak = pickLeak(funnelNodes, hasPublished, pickedKey, gapEndsFor);
+    /* Same question, same answer: see the note on `resolveGap` above. */
+    const leak = pickLeak(funnelNodes, hasPublished || findableByLink, pickedKey, gapEndsFor);
     if (!leak || leak.key !== pickedKey) return null;
 
     const { from, to } = leak;
@@ -2275,12 +2837,21 @@ export function LiveDashboard({
     if (!hasPublished) {
       return {
         t: t('ghost.title') || 'About 40 people a week search for a business like yours nearby.',
-        s: t('ghost.sub') || 'That\'s the pool this map will fill from once you\'re live.',
+        /*
+         * "Once you're live" is not true of a business whose enquiry form is
+         * already taking messages. `hasPublished` excludes form links — it
+         * means "can transact" — so this sentence went on promising a state
+         * the owner had partly reached, under a map that was nonetheless
+         * empty for a reason worth naming: nothing is BOOKABLE yet.
+         */
+        s: findableByLink
+          ? t('ghost.sub.found') || 'That\'s the pool this map will fill from once a client can book you.'
+          : t('ghost.sub') || 'That\'s the pool this map will fill from once you\'re live.',
         tag: t('ghost.tag') || 'My estimate from your area and category — not your numbers.',
       };
     }
     return undefined;
-  }, [hasPublished, t]);
+  }, [hasPublished, findableByLink, t]);
 
   // Footer replay data from REAL autonomous work
   const replayData: ReplayModal = useMemo(() => {
@@ -2408,7 +2979,24 @@ export function LiveDashboard({
                 finished setup, so a failed stats call hides the button rather
                 than making the account look ready.
               */}
-              {onToggleAssistant && isReadyForClients(setupGraph) && (
+              {/*
+                AND NOT WHILE A SETUP PHASE IS STILL OPEN.
+                ─────────────────────────────────────────────────────────────
+                `isReadyForClients` answers about COMPULSORY work, and the
+                setup view answers about the owner's attention — two different
+                questions, and this account fell between them: every blocking
+                step cleared, the mailbox phase still unanswered, so the
+                assistant appeared beside the setup cards.
+
+                That is the exact state the note above was written to prevent.
+                Nothing the assistant says connects a mailbox, so offering it
+                there can only postpone the work the card is naming.
+
+                `setupMode` is the dashboard's own answer to "is this owner
+                still being walked through", and every other setup surface
+                already reads it. The assistant now waits for the same answer.
+              */}
+              {onToggleAssistant && !setupMode && isReadyForClients(setupGraph) && (
                 <button
                   onClick={onToggleAssistant}
                   aria-expanded={assistantOpen}
@@ -2585,7 +3173,32 @@ export function LiveDashboard({
         )}
       </div>
 
-      {(
+      {/*
+        ──────────────────────────────────────────────────────────────────────
+        STEP 0. THE ONLY STEP WITH NOTHING BESIDE IT.
+        ──────────────────────────────────────────────────────────────────────
+        Every other step on this dashboard can be parked: an owner who does not
+        have an answer says so and the setup moves on. These two cannot, and
+        the reason is that they are not answers — they are the UNITS every
+        later answer is expressed in. A service priced before the currency is
+        settled is priced in a guess; hours set before the clock is settled are
+        hours in somebody else's day. Confirming them afterwards does not
+        re-price the service or move the booking.
+
+        `business_currency_lock` makes the second half permanent: once an
+        invoice exists the currency cannot be changed at all, and the API
+        answers 409 CURRENCY_LOCKED. So the window in which this is a decision
+        closes on its own, early, and whatever was guessed becomes the answer.
+
+        Rendered ALONE deliberately. Everything below reads from one or both,
+        so drawing the services panel beside it would be offering work that
+        would have to be redone. One card, one button, then the rest.
+      */}
+      {setupMode && !clockConfirmed && (
+        <ClockAndCurrencyCard onConfirmed={() => onClockConfirmed?.()} />
+      )}
+
+      {(clockConfirmed || !setupMode) && (
         <>
       {/*
         Which journey belongs in this slot.
@@ -2614,9 +3227,202 @@ export function LiveDashboard({
         make, so the lifecycle rail stays and the readiness card below says the
         check could not run.
       */}
-      {showReachJourney ? (
-        <ClientReachJourney graph={setupGraph} onAction={onAction} />
-      ) : (
+      {/*
+        WHAT YOU SELL COMES FIRST, AND THE JOURNEY EXPLAINS IT.
+        ────────────────────────────────────────────────────────────────────────
+        The reach journey answers "can a client get to you", which is the right
+        question and the wrong first thing to read while the catalogue is still
+        drafts: its answer is a list of gaps, and every gap is a consequence of
+        a service nobody has finished yet.
+
+        So the service goes above it. One named thing to finish, then the
+        journey saying what that leaves standing. The journey is unchanged and
+        still renders from the graph alone; this card renders from the
+        catalogue alone and feeds nothing into it.
+
+        Drawn in the same slot condition as the journey, so a business that is
+        ready for clients gets neither and keeps its lifecycle rail.
+      */}
+      {/*
+        Phase 3, being found. Drawn only once the profile is answered and the
+        owner has said their catalogue is finished — the two phases before it.
+        The card decides for itself when it has nothing left to say.
+      */}
+      {/*
+        ────────────────────────────────────────────────────────────────────
+        THE CARD OUTLIVES THE LINK, BECAUSE IT OWNS THE STAGE AFTER IT.
+        ────────────────────────────────────────────────────────────────────
+        This was gated on the website step being INCOMPLETE, so publishing the
+        booking link completed that step and unmounted the card — taking the
+        mailbox sub-stage it owns with it.
+
+        The result was a dashboard in setup mode with nothing on it to do:
+        `everyPhaseAnswered` still waited on the mailbox, so the services panel
+        and the stations stayed, the first-step card was gone (the profile was
+        answered), the being-found card was gone (the link was live), and the
+        one question still outstanding had no surface anywhere. Reported as
+        "publishing the smart link break the whole process".
+
+        So the card renders while EITHER stage is outstanding. It already knows
+        which one it is in: `linkStageDone` goes true the moment the link is
+        active, and `showMailbox` then draws the second stage. It returns null
+        by itself when both are settled, which is the condition this gate was
+        trying — and failing — to express.
+      */}
+      {servicesPanelShowing && !profileOutstanding && servicesDone && websiteItemForSetup
+        && onAction
+        && (!websiteItemForSetup.completed || mailboxStillOwed) && (
+        <BeingFoundCard
+          /*
+            ──────────────────────────────────────────────────────────────────
+            THE MODE IS A PROPERTY OF THE BUSINESS, NOT OF THE STEP'S STATE.
+            ──────────────────────────────────────────────────────────────────
+            This read `action === 'create_booking_link'`, and that action is
+            rewritten the instant the link goes live: the stats route pushes
+            the website step a second time, completed, with `open_website`.
+            So one refetch after publishing, the mode flipped from 'link' to
+            'site' and the card swapped its whole body — the address and its
+            Copy button vanished mid-read, and with them the "Next: my
+            mailbox" button, which lives in the link body. The mailbox stage
+            was then unreachable while `everyPhaseAnswered` still waited on
+            it: a setup with nothing on screen to finish.
+
+            `reachesByLink` is the same answer taken from the interview
+            (`online_presence_mode`), which publishing does not touch. A
+            business reached by a link stays reached by a link afterwards.
+            The action is still read, as the fallback for an older account
+            whose presence mode was never recorded.
+          */
+          mode={
+            reachesByLink || websiteItemForSetup.action === 'create_booking_link'
+              ? 'link'
+              : 'site'
+          }
+          onOpenWebsite={() => onAction(websiteItemForSetup.action!, { stepId: 'website' })}
+          /* The pair the interview actually asked, the same gate the readiness
+             row uses: a site of their own, whose enquiries arrive by email. */
+          offerMailbox={
+            setupShape.hasOwnWebsite === true
+            && setupShape.leadsArriveByEmail === true
+            /* Declined is an answer: the stage stops being offered, and the
+               setup can therefore finish. */
+            && !mailboxSkipped
+          }
+          mailboxConnected={(inboxChannel?.channels?.length ?? 0) > 0}
+          onConnectMailbox={() => onAction('connect_inbox_channel', { stepId: 'website' })}
+          onPublished={() => onReachChanged?.()}
+          onSkip={() => onSkipWebsite?.()}
+          onSkipMailbox={() => onSkipMailbox?.()}
+          onUnskip={() => onUnskipWebsite?.()}
+          skipped={websiteSkipped}
+        />
+      )}
+
+      {servicesPanelShowing && (
+        <YourServicesPanel
+          services={catalogue ?? []}
+          onOpenService={onOpenService!}
+          onAddService={onAction ? () => onAction('add_services') : undefined}
+          firstStep={firstStep}
+          /*
+           * ───────────────────────────────────────────────────────────────────
+           * CLOSED UNTIL THE BUSINESS DETAILS ARE IN.
+           *
+           * `profileOutstanding` is the same condition that puts "Tell me about
+           * your business" in the card above, so the screen asks for one thing
+           * and offers exactly one way to do it. While it was open, the card
+           * named the profile and the list beneath handed out an Open button
+           * per row plus "+ New service" — three invitations to do the step
+           * after next, each landing in an editor that would then ask for
+           * hours, invoice details and a processor.
+           *
+           * It unlocks by itself: the profile completes, `profileOutstanding`
+           * goes false, and the same list is live with no further decision.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          locked={profileOutstanding}
+          /* The being-found card owns the next move once the catalogue phase
+             is over, so the panel must not draw a second one. */
+          suppressNext={servicesDone}
+          /*
+           * ─────────────────────────────────────────────────────────────────
+           * ONLY ONCE SOMETHING IS ACTUALLY LIVE.
+           *
+           * "That is all my services" ends the catalogue phase, and offering it
+           * while every row is still a draft lets an owner declare themselves
+           * finished with nothing a client can buy — then move on to being
+           * found, and publish a link to an empty catalogue.
+           *
+           * The question this button answers is "is there anything MORE", and
+           * that only makes sense once there is something. Until then the
+           * phase's own work is unfinished and the card above says so.
+           *
+           * Not before the profile is answered, and not again once they have
+           * said yes.
+           * ─────────────────────────────────────────────────────────────────
+           */
+          onNoMoreServices={
+            !profileOutstanding
+            && !servicesDone
+            && onServicesDone
+            && (catalogue ?? []).some(service => service.status === 'active')
+              ? onServicesDone
+              : undefined
+          }
+        />
+      )}
+
+      {/*
+        ───────────────────────────────────────────────────────────────────────
+        THE THREE STOPS, DURING SETUP.
+        ───────────────────────────────────────────────────────────────────────
+        They live inside the readiness card, which is part of the operational
+        dashboard and therefore behind the gate below — so moving that gate up
+        took the stops off the setup screen with it. An owner lost the one
+        picture telling them whether a client could reach them at all.
+
+        Rendered here as their own strip, which is where the setup design put
+        them: the next-step card, what you sell, and then whether any of it can
+        be reached. `nextIsNamedAbove` keeps the callout down, because the card
+        at the top of this screen already names the one thing to do and two
+        cards answering that is what the rework removed.
+
+        The same component and the same resolved graph as the readiness card
+        uses afterwards, so the picture cannot change meaning when the setup
+        ends and it moves house.
+      */}
+      {setupMode && setupGraph.steps.length > 0 && (
+        <ClientReachJourney graph={setupGraph} onAction={onAction} nextIsNamedAbove />
+      )}
+
+      {/*
+        ───────────────────────────────────────────────────────────────────────
+        EVERYTHING BELOW IS THE RUNNING BUSINESS, THE LIFECYCLE RAIL INCLUDED.
+        ───────────────────────────────────────────────────────────────────────
+        The rail was left unconditional when the reach journey stopped taking
+        its slot, and that put a timeline about first bookings and forty-two
+        day milestones on the screen of an account with two draft services and
+        nothing sold. Reported as "your journey timeline is still there".
+
+        It belongs with the rest of the operational dashboard: it reports a
+        business that has started, and during setup there is nothing for it to
+        report. The three setup cards above own the screen until the phases are
+        answered. See `setupMode`.
+      */}
+      {!setupMode && (
+      <>
+      {/*
+        THE REACH JOURNEY MOVED INTO THE READINESS CARD.
+
+        It used to take this slot whenever the business was not ready, pushing
+        the lifecycle rail out of the way — two cards describing one subject,
+        with the readiness list below saying it a third time. `SystemReadiness`
+        now renders it from the same resolved graph, so there is one place that
+        answers "can a client reach you" and one picture of it.
+
+        The rail is therefore unconditional again, as it was before the journey
+        was given this slot.
+      */}
       <>
       {/*
           The journey — every node a fact about this business.
@@ -2858,7 +3664,7 @@ export function LiveDashboard({
       </div>
 
       </>
-      )}
+
 
       {/* The assistant, directly under the journey.
 
@@ -2921,6 +3727,7 @@ export function LiveDashboard({
       {heroIsTasks && (
         <div style={{ marginBottom: 16 }}>
           <SystemReadiness
+            findableByLink={findableByLink}
             items={readinessItems}
             shape={setupShape}
             attention={readinessAttention}
@@ -3093,7 +3900,26 @@ export function LiveDashboard({
         </div>
       )}
 
-      {briefingForCard ? (
+      {/*
+        ───────────────────────────────────────────────────────────────────────
+        NO VERDICT UNTIL THERE IS SOMETHING TO REPORT A VERDICT ON.
+        ───────────────────────────────────────────────────────────────────────
+        This card reads the week back to the owner: who arrived, who got in
+        touch, what was booked and what was paid. Before anything is published
+        it has none of that, and its `!hasPublished` branch filled the gap by
+        repeating the setup — "Nothing can reach you yet. All that's left is a
+        booking link" — which is the readiness card's subject, said a second
+        time, further down the page, in a card whose whole shape promises
+        figures.
+
+        It had also gone stale in the way everything keyed on `hasPublished`
+        did: that flag excludes contact-form links, so it claimed nothing could
+        reach a business whose enquiry form has been live all along.
+
+        So the card waits. The readiness card owns the setup; this one owns the
+        week, and starts when there is a week to own.
+      */}
+      {hasPublished && (briefingForCard ? (
         <div className="lv-day-week-row">
           <DailyBriefingCard
             lines={briefingForCard.lines}
@@ -3142,7 +3968,7 @@ export function LiveDashboard({
             if (index >= 0) setCurrentInsightIndex(index);
           }}
         />
-      )}
+      ))}
 
       {/* Tips Stepper */}
       {tips.length > 0 && (
@@ -3309,6 +4135,9 @@ export function LiveDashboard({
           (ReportCard, MyDaySection) long enough for both to be forgotten. */}
 
         </>
+      )}
+
+      </>
       )}
     </section>
   );

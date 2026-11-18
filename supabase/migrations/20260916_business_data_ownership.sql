@@ -88,6 +88,10 @@ DECLARE
     'crm_contacts',
     'crm_pipeline_stages',
     'crm_tasks',
+    -- A client's standing over time. Existing databases get the constraint
+    -- from 20261128; naming it here is what makes a FRESH install correct,
+    -- the same pairing as `refund_requests` below.
+    'crm_client_standing',
     'contact_documents',
     -- Scheduling
     'scheduling_bookings',

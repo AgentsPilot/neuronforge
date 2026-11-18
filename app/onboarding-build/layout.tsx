@@ -53,9 +53,12 @@ export default async function OnboardingBuildLayout({
           parsed: language and direction, the dark class, and the custom tokens
           (SA RC-2, TH-1). */}
       <OwnerDirScript language={initialLanguage.language} />
-      <V2ThemeScript />
+      {/* The same as the chat it follows, for the reason given there. One flow:
+          a light interview handing over to a dark plan screen would be worse
+          than either consistently. */}
+      <V2ThemeScript mode="light" />
       <V2CustomTokensStyle tokens={customTokens} />
-      <V2ThemeProvider customTokens={customTokens} customTokensKnown={customTokensKnown}>
+      <V2ThemeProvider customTokens={customTokens} customTokensKnown={customTokensKnown} mode="light">
         <LanguageProvider initial={initialLanguage}>
           {children}
         </LanguageProvider>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { serviceShapeFields } from '@/lib/business-os/serviceShape';
 import { serviceShapeValues, collectionToPersist } from '@/lib/business-os/serviceEditValues';
 import { serviceMoneyLine } from '@/lib/business-os/serviceMoneyLine';
@@ -13,7 +13,9 @@ import { createLogger } from '@/lib/logger';
 import type { SchedulingService, PaymentType, InstallmentFrequency, FirstPaymentDue, ServiceCurrency, ServiceCollection, ServiceSaleMode } from '@/lib/repositories/SchedulingRepository';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 import { useGapFixOptional } from '@/components/business-os/setup/useGapFix';
+import { ServiceWizard } from '@/components/scheduling/ServiceWizard';
 import { gapFixAction } from '@/lib/business-os/journeyGapFix';
+import { serviceRequirements, type ServiceRequirementId } from '@/lib/business-os/setup/serviceRequirements';
 
 const logger = createLogger({ module: 'SchedulingServicesList' });
 
@@ -176,6 +178,10 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
    * the optional variant, and the button renders only where it leads somewhere.
    */
   const connectPayments = useGapFixOptional('processor');
+  /* The same pairing every gap uses: the tab and the words travel together. */
+  const setHours = useGapFixOptional('hours');
+  const setInvoiceDetails = useGapFixOptional('invoicing');
+
   /**
    * Their site has no services section, and now there is something to put in
    * it. Set only after a successful publish — see the note there.
@@ -256,6 +262,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     });
   }, [recentlyEditedId, publishError, noticeSeq]);
   // Row editing state - stores all editable values for a row
+
+
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
 
   /**
@@ -339,6 +347,153 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     first_payment_days: 0
   });
   const [savingRow, setSavingRow] = useState(false);
+
+  /**
+   * Whether the business can already honour what a service asks for.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `serviceRequirements` says WHICH things this service needs. It is pure and
+   * knows nothing about the account, so these two answer the other half: are
+   * the hours set, are the invoice details complete. The processor arrives as
+   * `processorReady`, which this list has always received.
+   *
+   * Read directly rather than through `/api/business-os/journey-readiness`,
+   * which looks like the obvious source and is not: it returns the gaps that
+   * BLOCK, so an absent `invoicing` gap means "complete OR not applicable to
+   * the stored row" and the two are indistinguishable. The editor is asking
+   * about values the owner is typing right now, which may not be what is
+   * stored, so it needs the business facts on their own.
+   *
+   * The same two reads the onboarding build screen used before it stopped
+   * configuring anything, and for the same reason: positive evidence that the
+   * work exists, rather than the absence of a complaint about it.
+   *
+   * `null` means not asked yet, and nothing is drawn as missing on an unknown.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [businessReady, setBusinessReady] = useState<{ hours: boolean; invoice: boolean } | null>(null);
+
+  /*
+   * Bumped when a panel this row sent the owner to has closed.
+   *
+   * `noticeSeq` only moves on a save made HERE, and the hours are saved in a
+   * different component on a different tab — so a row that sent somebody to set
+   * their working hours stayed amber after they had set them, and the only way
+   * to see it go green was to close and reopen the editor.
+   */
+  const [readyProbe, setReadyProbe] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const [hours, invoice] = await Promise.all([
+        (async () => {
+          try {
+            const response = await fetch('/api/scheduling/availability');
+            if (!response.ok) return true;
+            const body = await response.json();
+            const week = body?.availability;
+            /* An object with at least one day carrying a window. */
+            return !!week && Object.values(week).some((day: unknown) =>
+              Array.isArray(day) ? day.length > 0 : !!(day as { enabled?: boolean })?.enabled
+            );
+          } catch {
+            /* Fails OPEN: a row drawn as outstanding because a request failed
+               would send an owner to re-enter hours they already have. */
+            return true;
+          }
+        })(),
+        (async () => {
+          try {
+            const response = await fetch('/api/business-os/invoice-settings');
+            if (!response.ok) return true;
+            const body = await response.json();
+            const invoiceData = body?.data ?? body;
+            const has = (value: unknown) => typeof value === 'string' && value.trim().length > 0;
+            const address = invoiceData?.invoice_address;
+            /* The same four `missingInvoiceFields` asks for, in the same order,
+               so this row and the publish gate cannot disagree about done. */
+            return (
+              has(invoiceData?.invoice_company_name)
+              && has(invoiceData?.invoice_tax_id)
+              && !!address
+              && (has(address.street) || has(address.line1) || has(address.city))
+              && (
+                (has(invoiceData?.invoice_bank_name) && has(invoiceData?.invoice_bank_account))
+                || has(invoiceData?.invoice_payment_instructions)
+              )
+            );
+          } catch {
+            return true;
+          }
+        })(),
+      ]);
+
+      if (!cancelled) setBusinessReady({ hours, invoice });
+    })();
+
+    return () => { cancelled = true; };
+    /* Re-read whenever a dialog that could have changed them closes — the fix
+       buttons below open exactly those panels. `noticeSeq` bumps on every save
+       and is the cheapest existing signal that something was edited;
+       `readyProbe` covers the saves that happen on another tab entirely. */
+  }, [noticeSeq, readyProbe]);
+
+  /**
+   * Is this requirement already satisfied by the business?
+   *
+   * Component level rather than inside the editor, because two surfaces need
+   * the same answer: the rows under each question, and the Publish button in
+   * the header above them. Two copies would eventually disagree, and the
+   * disagreement would read as the button refusing something the rows say is
+   * fine.
+   *
+   * Unknown counts as satisfied. See `businessReady`.
+   */
+  const requirementMet = useCallback(
+    (id: ServiceRequirementId): boolean => {
+      if (id === 'processor') return processorReady;
+      if (businessReady === null) return true;
+      return id === 'hours' ? businessReady.hours : businessReady.invoice;
+    },
+    [businessReady, processorReady]
+  );
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT WOULD STOP THIS SERVICE GOING LIVE, READ OFF THE STORED ROW.
+   *
+   * The stored row, NOT the form. `handlePublish` posts the service id and
+   * nothing else, so it publishes what is on the server — the comment on that
+   * button has said so since typing a price and pressing Publish put the old
+   * row in front of clients. A button disabled from unsaved values would be
+   * refusing a state that is not the one being published.
+   *
+   * Every requirement here is one the server already refuses:
+   *
+   *   hours      a blocking journey gap, answered `not_ready`
+   *   invoice    the same, via `invoicing`
+   *   processor  `processor_required`, for a priced card service
+   *
+   * So this never blocks something publish would have allowed. It moves the
+   * refusal to before the press, where it can be acted on, and leaves the gate
+   * as the authority — including for everything this cannot see, like the
+   * duration and the catalogue.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const publishBlockers = useCallback(
+    (row: Partial<SchedulingService> | undefined): ServiceRequirementId[] => {
+      if (!row) return [];
+      return serviceRequirements({
+        is_scheduled: row.is_scheduled,
+        price: row.price,
+        collection: row.collection as 'online' | 'invoice' | null | undefined,
+        sale_mode: row.sale_mode,
+      }).filter(id => !requirementMet(id));
+    },
+    [requirementMet]
+  );
 
   // Valid currencies for services
   const validCurrencies: ServiceCurrency[] = ['USD', 'EUR', 'ILS', 'GBP'];
@@ -556,7 +711,32 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         autoEditConsumedRef.current = true;
         // Start editing this service
         setEditingRowId(serviceToEdit.id);
-        setEditRowValues({
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * THE BASELINE, WHICH THIS PATH NEVER TOOK.
+         *
+         * `startRowEdit` — clicking a row in the list — ends with
+         * `setEditRowBaseline(rowFingerprint(initial))`. This path, the one
+         * the dashboard's services card and the chat both use, built the same
+         * values and never recorded them. `editRowBaseline` stayed null, and
+         * `isRowDirty` is `editRowBaseline !== null && …`, so it was false for
+         * the whole life of the editor. Two controls read it, and both broke
+         * in opposite directions:
+         *
+         *   Save    `disabled={… || (!isNew && !isRowDirty)}` — permanently
+         *           disabled. Reported as "the save is not available", and
+         *           mistaken (by me) for the free-service rule.
+         *   Publish `disabled={… || (!isNew && isRowDirty)}` — never guarded,
+         *           so it published the STORED row while the screen showed
+         *           different answers. Reported as choosing "no meeting" and
+         *           "quote" and being told the service needs a price: the row
+         *           on the server was still a card service with no price, and
+         *           the gate was reading it correctly.
+         *
+         * One missing line, two bugs that look unrelated.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        const initial = {
           name: serviceToEdit.service_name,
           description: optimisticUpdates[serviceToEdit.id]?.description ?? serviceToEdit.description ?? '',
           /*
@@ -603,7 +783,9 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           installment_frequency: serviceToEdit.installment_frequency || 'monthly',
           first_payment_due: serviceToEdit.first_payment_due || 'on_booking',
           first_payment_days: serviceToEdit.first_payment_days || 0
-        });
+        };
+        setEditRowValues(initial);
+        setEditRowBaseline(rowFingerprint(initial));
         // Signal that we consumed the auto-edit
         onAutoEditConsumed?.();
       }
@@ -1537,6 +1719,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     const isDraft = effective ? effective.status === 'draft' : true;
 
     /*
+     * What would stop THIS row going live, from the row as the server holds it
+     * — optimistic updates included, since those are what a save just wrote.
+     * See `publishBlockers`: it only ever names requirements the publish gate
+     * refuses on its own.
+     */
+    const blockers = publishBlockers(effective ?? undefined);
+
+    /*
      * No width here.
      *
      * This carried `w-full`, and a `w-28` added at the call site does not beat
@@ -1576,7 +1766,182 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
      * Required in the schema, so it is marked required on the field and said
      * out loud here.
      */
+    /**
+     * ─────────────────────────────────────────────────────────────────────────
+     * WHAT THIS SERVICE ASKS FOR, UNDER THE ANSWER THAT ASKED IT.
+     *
+     * The requirements are derived from the form's LIVE values, not from the
+     * stored row: the owner switches "They pay by card" to "You invoice them"
+     * and the processor row goes while they watch, because the thing that
+     * needed it is no longer true. A requirement that only appeared after
+     * saving would be a consequence detached from its cause.
+     *
+     * Whether each is already satisfied comes from `businessReady` and
+     * `processorReady` — facts about the account, not about this service.
+     *
+     * Nothing here refuses anything. The publish gate is still the authority
+     * and still answers `duration_required`, `processor_required` and
+     * `not_ready`; this exists so an owner meets the requirement where the
+     * choice is made rather than after pressing a button that refuses them.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const needs = serviceRequirements({
+      is_scheduled: values.is_scheduled,
+      price: values.price === '' ? null : parseFloat(values.price),
+      collection: values.collection,
+      sale_mode: values.sale_mode,
+    });
+
+    /** One row: what it is, why this service needs it, and the way to do it. */
+    const requirementRow = (id: ServiceRequirementId) => {
+      const met = requirementMet(id);
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE PROCESSOR WAITS FOR THE INVOICE DETAILS. SHOWN, AND NOT YET LIVE.
+       *
+       * `serviceRequirements` already orders them and says why: with no Stripe
+       * a card service IS invoiced, so the invoice details are what make it
+       * work at all and the processor is the upgrade on top. Reversed, an owner
+       * meets a five-minute account application before the two-minute thing
+       * that is actually required, and abandoning it leaves a card service
+       * whose fallback cannot issue a document either.
+       *
+       * Until now that order was only the order they were PRINTED in: two amber
+       * rows, two live buttons, nothing saying which came first. The obvious
+       * thing to press was the one named Stripe, which is the wrong one and the
+       * long one, and nothing would have said so until they came back.
+       *
+       * DISABLED RATHER THAN HIDDEN. The owner can see what is coming and that
+       * it is not their turn yet; a row that simply appears later is a surprise,
+       * and one that is missing reads as a feature being withheld. It wakes by
+       * itself when the invoice details land, with no decision to make.
+       *
+       * A rule about OUTSTANDING work only: a satisfied processor still shows
+       * its green row, so this can never hide something that is done.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const waitingFor =
+        id === 'processor' && !met && needs.includes('invoice') && !requirementMet('invoice');
+
+      const open =
+        id === 'hours' ? setHours : id === 'invoice' ? setInvoiceDetails : connectPayments;
+
+      const fix = gapFixAction(id === 'invoice' ? 'invoicing' : id === 'hours' ? 'hours' : 'processor');
+      const fixLabel = t(fix.key) === fix.key ? fix.fallback : t(fix.key);
+
+      return (
+        <div
+          key={id}
+          className="flex items-start gap-2.5 px-3 py-2.5 mt-2"
+          style={{
+            borderRadius: 'var(--v2-radius-button)',
+            /* Three faces: done, asked for, and not your turn yet. Amber for a
+               row that cannot be acted on would be a second alarm about work
+               nobody can start. */
+            border: met
+              ? '1px solid rgba(34, 197, 139, 0.35)'
+              : waitingFor
+                ? '1px solid var(--v2-border)'
+                : '1px solid rgba(240, 163, 60, 0.45)',
+            background: met
+              ? 'rgba(34, 197, 139, 0.08)'
+              : waitingFor
+                ? 'var(--v2-bg)'
+                : 'rgba(240, 163, 60, 0.08)',
+            opacity: waitingFor ? 0.75 : 1,
+          }}
+          role={met || waitingFor ? undefined : 'status'}
+        >
+          {met
+            ? <Check className="h-3.5 w-3.5 flex-shrink-0 mt-0.5 text-emerald-500" />
+            : waitingFor
+              ? <Clock className="h-3.5 w-3.5 flex-shrink-0 mt-0.5 text-[var(--v2-text-muted)]" />
+              : <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5 text-amber-500" />}
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] font-medium text-[var(--v2-text-primary)] m-0">
+              {t(`config.services.needs.${id}`)}
+            </p>
+            <p className="text-[11.5px] text-[var(--v2-text-secondary)] m-0 mt-0.5 leading-snug">
+              {met
+                ? t(`config.services.needs.${id}.done`)
+                : waitingFor
+                  ? t('config.services.needs.processor.after_invoice')
+                  : t(`config.services.needs.${id}.why`)}
+            </p>
+          </div>
+          {/* Only where there is a dialog to open. This list also renders
+              outside Business OS, and a button that goes nowhere is worse than
+              the sentence alone. */}
+          {!met && open && (
+            <button
+              type="button"
+              /*
+               * ONE TAB, because this answers one sentence.
+               *
+               * The row above says what this service needs and why. Opening the
+               * whole configuration dialog in reply — services, availability,
+               * payments, invoice, business, brand — answers a question nobody
+               * asked and leaves an owner mid-service looking for the way back.
+               * `solo` shows only the tab that clears THIS requirement.
+               */
+              onClick={
+                waitingFor
+                  ? undefined
+                  : () => open({ solo: true, onClose: () => setReadyProbe(n => n + 1) })
+              }
+              disabled={waitingFor}
+              title={waitingFor ? t('config.services.needs.processor.after_invoice') : undefined}
+              className={`flex-shrink-0 px-2.5 py-1.5 text-[11.5px] font-semibold rounded-lg transition-all ${
+                waitingFor ? 'cursor-not-allowed' : 'ap-primary-lift active:scale-[0.97]'
+              }`}
+              /* Dimmed and neutral while it waits: a primary-coloured button is
+                 an instruction, and this one is not an instruction yet. */
+              style={
+                waitingFor
+                  ? {
+                      background: 'var(--v2-surface)',
+                      color: 'var(--v2-text-muted)',
+                      border: '1px solid var(--v2-border)',
+                      opacity: 0.7,
+                    }
+                  : { background: 'var(--v2-primary)', color: '#fff' }
+              }
+            >
+              {fixLabel}
+            </button>
+          )}
+        </div>
+      );
+    };
+
     const nameMissing = !values.name.trim();
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * NOTHING TO SELL: no appointment, and no money.
+     *
+     * The journey for this shape is `Service → Details` — a name, a form, a
+     * confirmation. Nothing is held in a diary, nothing is charged, and the
+     * platform delivers nothing, so what the row actually does is collect a
+     * name. The intake form and the website enquiry form already do that.
+     *
+     * Three routes refuse it (create, save, publish) and all three answer
+     * `nothing_to_sell`. This is the same test on this side of the wire, so
+     * the owner meets a disabled button with a reason instead of filling in a
+     * form and being turned away by it.
+     *
+     * A quote is exempt: its amount is settled in the proposal, so an unpriced
+     * quote is a priced service whose price is not known yet.
+     *
+     * `> 0` rather than the `priceIsFree` flag below, which only counts an
+     * explicit zero on a SAVED service. Publishing an unpriced one is the same
+     * nothing, and a new row starts at '0' already.
+     */
+    const nothingToSell =
+      values.is_scheduled === false
+      && values.sale_mode !== 'proposal'
+      && !(parseFloat(values.price) > 0);
 
     const descriptionMissing = !values.description.trim();
 
@@ -1727,59 +2092,28 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     const diaryStop = journeySteps.map(journeyText);
     const moneyStop = [
       /*
-       * THE CARD WARNING, ON THE FLOW RATHER THAN UNDER THE PILLS.
+       * ───────────────────────────────────────────────────────────────────────
+       * THE CARD WARNING IS GONE FROM HERE. IT IS A REQUIREMENT ROW NOW.
        *
-       * It used to sit beneath the shape choice, which put it inside the block
-       * that now hides when there is no price -- so the one message an owner
-       * must not miss could vanish for a reason that has nothing to do with it.
+       * This stop used to open with an amber line — "Card payments need a
+       * connected processor. Until one is, your client reaches a payment step
+       * that cannot charge them" — plus a Connect payments button. That was
+       * right while nothing else said it, and it became a SECOND VOICE the
+       * moment the shape question grew its own requirement rows: choosing "They
+       * pay by card" now draws a row that names the processor, says what is
+       * missing and carries the button, directly under the choice that caused
+       * it.
        *
-       * FIRST in the stop, and amber, because it is the only line here that
-       * says something is WRONG rather than describing what happens. The
-       * sentence under it already reads "Stripe is not connected, so they
-       * cannot pay by card"; this is the part that looks like a warning.
+       * Two warnings about one fact, a few centimetres apart, in different
+       * colours, with two buttons going to the same tab. The row wins because
+       * it sits where the decision is made; this account of the flow goes back
+       * to describing what happens, which is its job.
        *
-       * The condition is the one it had under the pills, unchanged. Moving it
-       * here, a `price > 0` was added that had never been part of it — so the
-       * warning disappeared on exactly the service most likely to be mid-setup,
-       * which is when an owner most needs telling that card will not work.
+       * The degradation itself is unchanged and still stated: `moneySentence`
+       * says a card service with no Stripe is invoiced instead, and `processor`
+       * stays deliberately non-blocking in `isBlockingGap`.
+       * ───────────────────────────────────────────────────────────────────────
        */
-      saleShape === 'card' && !processorReady ? (
-        <span key="no-processor" className="flex items-start gap-1.5 text-amber-600 dark:text-amber-400">
-          <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
-          <span>
-            {t('config.services.collection.no_processor')}
-            {/*
-              THE WAY OUT, beside the sentence that says what is wrong.
-              ──────────────────────────────────────────────────────────────
-              The card chip is offered again rather than hidden, so this line
-              is now reachable by choosing it — which makes a warning with no
-              action a dead end. `gapFixAction('processor')` supplies both the
-              destination and the label, the same pairing every other gap uses,
-              so the tab and the words cannot drift apart.
-
-              Rendered only where there is a dialog to open: this list also
-              renders outside Business OS, and a button that goes nowhere is
-              worse than the sentence alone.
-            */}
-            {connectPayments && (
-              <>
-                {' '}
-                <button
-                  type="button"
-                  onClick={() => connectPayments()}
-                  className="underline underline-offset-2 font-medium hover:opacity-80"
-                >
-                  {(() => {
-                    const fix = gapFixAction('processor');
-                    const label = t(fix.key);
-                    return label === fix.key ? fix.fallback : label;
-                  })()}
-                </button>
-              </>
-            )}
-          </span>
-        </span>
-      ) : null,
       moneySentence,
       state_scheduled_after(),
     ].filter(Boolean) as React.ReactNode[];
@@ -1908,893 +2242,126 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       );
     };
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * FOUR QUESTIONS, IN PLACE OF ONE PANEL THAT ASKED THEM ALL AT ONCE.
+     *
+     * Everything above this line is unchanged and still the authority: the
+     * values, `publishBlockers` read from the STORED row, `requirementMet`,
+     * `nothingToSell`, the save and publish handlers. What changed is that the
+     * panel no longer decides what a half-answered field means — `serviceWizard`
+     * does, once, and the screens only draw its answer.
+     *
+     * The bug this closes, in the owner's words: an unpriced service showed
+     * "No price set yet", "Free", "Nothing is collected" and a lit "They pay by
+     * card" chip, all at the same time.
+     * ───────────────────────────────────────────────────────────────────────
+     */
     return (
-      <>
-        {/* Header: what this is, and what can be done to it. The four actions
-            used to be hover-revealed buttons sharing a 9% cell with the status
-            badge — they landed on top of it, and Publish could not be clicked
-            reliably. Here they have room and are visible without hovering. */}
-        <div className="flex items-start gap-3 px-5 py-4 border-b border-[var(--v2-border)] flex-shrink-0">
-          {/*
-            The way back, on a phone only.
-
-            ──────────────────────────────────────────────────────────────────
-            Below `md` this panel is the whole screen, so without this the only
-            way out of a service is Cancel at the very bottom of the form. It
-            does exactly what Cancel does and nothing more — same handler, same
-            consequences — so it introduces no behaviour the owner has not
-            already met, including the existing truth that leaving a service
-            drops unsaved edits, on a phone or a desktop alike.
-
-            Hidden where there is no list to go back to: the landing-page
-            wizard embeds this panel on its own.
-
-            The glyph is the one thing here that cannot be done with logical
-            properties. `ms`/`me` flip with direction; a chevron does not — it
-            is a picture of an arrow, and in Hebrew "back" points the other way.
-          */}
-          {!hideServiceList && (
-            <button
-              type="button"
-              onClick={isNew ? cancelNewRow : cancelRowEdit}
-              className="md:hidden flex items-center gap-1 -ms-2 px-2 py-1.5 text-[13px] font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all flex-shrink-0"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              {isRTL ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-              {t('config.services.all') || t('config.tab.services')}
-            </button>
-          )}
-
-          <div className="min-w-0">
-            {/*
-              The name, once there is one, and nothing before that.
-
-              This read "Add a service" while the name field directly beneath it
-              was empty and focused — a heading repeating the button just
-              pressed, above the field that answers it. As soon as the owner
-              types, it becomes the name, so the placeholder was only ever on
-              screen for the seconds when it said least.
-
-              Rendered only when there is something to say, so the status line
-              below moves up rather than sitting under a blank row.
-            */}
-            {(values.name || effective?.service_name) && (
-              <h3 className="text-[15px] font-semibold text-[var(--v2-text-primary)] truncate">
-                {values.name || effective?.service_name}
-              </h3>
-            )}
-            {/* Published · active · saved a moment ago — one line, because
-                the three are one answer to "where does this stand". A single
-                word could only ever say one of them. */}
-            <p className="text-[12px] text-[var(--v2-text-secondary)] mt-0.5">
-              {isNew
-                ? t('config.services.new_hint')
-                : [
-                    isDraft ? t('scheduling.service.draft') : t('config.services.published'),
-                    /* On/off only means something once published. A draft read
-                       "Draft · Active", which are opposite answers to the one
-                       question the owner is asking — can a client book this. */
-                    isDraft
-                      ? null
-                      : effective?.is_active
-                        ? t('scheduling.service.active')
-                        : t('scheduling.service.inactive'),
-                    recentlyEditedId === service?.id ? t('config.services.saved_just_now') : null,
-                  ].filter(Boolean).join(' · ')}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-1.5 ms-auto flex-shrink-0">
-            {!isNew && service && (
-              <>
-                {isDraft && (
-                  /*
-                   * ───────────────────────────────────────────────────────────
-                   * NOT WHILE THERE ARE UNSAVED EDITS.
-                   *
-                   * `handlePublish` POSTs the service id and nothing else, so
-                   * it publishes WHAT IS ON THE SERVER. Typing a price and
-                   * then pressing Publish, which sat enabled and teal an inch
-                   * from Save, put the old row in front of clients and left
-                   * the new one unsaved.
-                   *
-                   * Worst immediately after onboarding, which is where most
-                   * people meet this list: the chat creates every service as a
-                   * draft with NO price and NO duration, so the first thing an
-                   * owner does here is type one, and the row they would have
-                   * published is the empty one.
-                   *
-                   * `isRowDirty` already existed and the Save button beside
-                   * this one already used it. Publish simply never asked.
-                   * Disabled rather than save-then-publish, because publishing
-                   * is deliberately a separate act from saving: a draft is
-                   * meant to be savable without going live.
-                   * ───────────────────────────────────────────────────────────
-                   */
-                  <button
-                    onClick={(e) => handlePublish(service.id, e)}
-                    disabled={publishingId === service.id || (!isNew && isRowDirty)}
-                    title={
-                      !isNew && isRowDirty
-                        ? t('scheduling.service.publish_save_first')
-                        : t('scheduling.service.publish')
-                    }
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 transition-all disabled:opacity-50 ${recentlyEditedId === service.id ? 'publish-pulse' : ''}`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {publishingId === service.id
-                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      : <Check className="h-3.5 w-3.5" />}
-                    {t('scheduling.service.publish')}
-                  </button>
-                )}
-                {/* Pause belongs to a service clients can actually reach.
-                    A draft has nothing to pause, and the switch standing there
-                    showing "on" was the lie behind the round trip described on
-                    `handleToggleActive`: an edited service reads `is_active`
-                    true while its status is `draft`, so it looked live when no
-                    client could book it. Publish is the only move a draft has,
-                    and it is already the only button shown. */}
-                {!isDraft && (
-                  <button
-                    onClick={(e) => handleToggleActive(e, service)}
-                    disabled={togglingId === service.id}
-                    title={effective?.is_active ? t('scheduling.service.deactivate') : t('scheduling.service.activate')}
-                    aria-label={effective?.is_active ? t('scheduling.service.deactivate') : t('scheduling.service.activate')}
-                    className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all disabled:opacity-50"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {togglingId === service.id
-                      ? <Loader2 className="h-4 w-4 animate-spin" />
-                      : effective?.is_active ? <Pause className="h-4 w-4" /> : <Power className="h-4 w-4" />}
-                  </button>
-                )}
-                <button
-                  onClick={(e) => handleDeleteClick(e, service)}
-                  title={t('button.delete')}
-                  aria-label={t('button.delete')}
-                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-red-500 hover:bg-red-500/10 transition-all"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* The three questions */}
-        <div className="flex-1 overflow-y-auto scrollbar-thin min-h-0 px-5 py-4 flex flex-col gap-5">
-
-          {/* Saved is not live.
-              An edited service returns to draft, so the owner has done half of
-              the act and the half that reaches clients is still waiting. Said
-              here, next to the button that finishes it. */}
-          {/* A publish that did not happen, said out loud. */}
-          {!isNew && service && publishError?.serviceId === service.id && (
-            <div
-              ref={publishNoticeRef}
-              className="flex items-start gap-2.5 px-3.5 py-3 text-[12.5px]"
-              style={{
-                borderRadius: 'var(--v2-radius-button)',
-                backgroundColor: 'rgba(220, 38, 38, 0.10)',
-                border: '1px solid rgba(220, 38, 38, 0.35)',
-                color: 'var(--v2-text-primary)',
-              }}
-              role="alert"
-            >
-              <AlertCircle className="h-4 w-4 flex-shrink-0 mt-px text-red-500" />
-              <span>{publishError.message}</span>
-            </div>
-          )}
-
-          {!isNew && service && recentlyEditedId === service.id && isDraft && !publishError && (
-            <div
-              ref={publishNoticeRef}
-              className="flex items-start gap-2.5 px-3.5 py-3 text-[12.5px]"
-              style={{
-                borderRadius: 'var(--v2-radius-button)',
-                backgroundColor: 'rgba(245, 158, 11, 0.10)',
-                border: '1px solid rgba(245, 158, 11, 0.35)',
-                color: 'var(--v2-text-primary)',
-              }}
-              role="status"
-            >
-              <AlertCircle className="h-4 w-4 flex-shrink-0 mt-px text-amber-500" />
-              <span>
-                {t(
-                  pausedByEditId === service.id
-                    ? 'config.services.paused_publish_prompt'
-                    : 'config.services.saved_publish_prompt'
-                )}
-              </span>
-            </div>
-          )}
-
-          <FlowPair stop={<FlowStop head={t('scheduling.flow.head.read')} lines={identityStop} />}>
-          <section>
-            <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
-              {t('scheduling.modal.section.service')}
-            </h4>
-            <p className="text-[12px] text-[var(--v2-text-muted)] mt-0.5 mb-3">
-              {t('config.services.q.what_hint')}
-            </p>
-            <div className="flex flex-col gap-3">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                  {t('config.services.column.service')}
-                  <span className="text-red-500 ms-0.5">*</span>
-                </span>
-                <input
-                  type="text"
-                  value={values.name}
-                  onChange={(e) => setValues(prev => ({ ...prev, name: e.target.value }))}
-                  className={`${field} w-full`}
-                  style={fieldStyle}
-                  autoFocus
-                />
-              </label>
-
-              {/* In place. This was a button that opened a dialog for one text
-                  field; the panel has room for the field itself. The dialog is
-                  still there for the case that opens it by itself — publishing
-                  a service that has no description yet. */}
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                  {t('config.services.short_description')}
-                  <span className="text-red-500 ms-0.5">*</span>
-                </span>
-                {/*
-                  Why it is worth writing, said before the box rather than after
-                  a save is refused.
-
-                  This field is not decoration and not a note to self: clients
-                  read it at the moment they book, it is the body copy of any
-                  landing page built for the service, and it is what the
-                  insight side reads to work out what this business actually
-                  sells. A service called "Session" with no description is
-                  indistinguishable from any other, to a client and to us.
-                */}
-                <span className="text-[11.5px] leading-relaxed text-[var(--v2-text-muted)]">
-                  {t('config.services.short_description_why')}
-                </span>
-                {/* A textarea, because a description is prose. A single-line
-                    input hid everything past the first line behind a cursor,
-                    for the one field on this panel whose whole job is to be
-                    read. `resize-y` so an owner who writes more can see more. */}
-                <textarea
-                  value={values.description}
-                  onChange={(e) => setValues(prev => ({ ...prev, description: e.target.value }))}
-                  placeholder={t('config.services.short_description_placeholder')}
-                  rows={3}
-                  className={`${field} w-full resize-y leading-relaxed`}
-                  style={fieldStyle}
-                />
-              </label>
-            </div>
-          </section>
-          </FlowPair>
-
-          {/* ──────────────────────────────────────────────────────────────────
-              2 · WHAT THE CLIENT GETS
-
-              Its own question now. It shared a section with "how is it sold",
-              under a hint that called them "these two answers" — two decisions
-              of different kinds in one row, one about the calendar and one
-              about money.
-              ────────────────────────────────────────────────────────────────── */}
-          <FlowPair stop={<FlowStop head={t('scheduling.flow.head.diary')} lines={diaryStop} />}>
-          <section className="border-t border-[var(--v2-border)] pt-4">
-            <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
-              {t('scheduling.modal.section.client_gets')}
-            </h4>
-            {/* The hint that was here said what the explanation panel below now
-                says, and said it in grey micro-type above the question rather
-                than under the answer. */}
-            <div className="flex flex-col gap-3 mt-2">
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                  {t('config.services.column.needs_time')}
-                </span>
-                {/* Explained like the shape below it. This pair had no
-                    explanation at all, and it is the one that decides whether
-                    the client is ever asked for a time. */}
-                {/*
-                  NO `why` AND NO `eg` HERE ANY MORE.
-
-                  They said what the flow beside this section now says, and said
-                  it first: "שום דבר לא נקבע ביומן. קונים ומתחילים" sat under
-                  the control while the identical sentence sat level with it on
-                  the spine. Two answers to one question, a centimetre apart, is
-                  how an owner learns to read neither.
-
-                  The spine wins because it also carries the length, the window
-                  and the day's cap, so the consequence of this choice is told
-                  once and told whole. The `why`/`eg` support stays on
-                  `segmentWithWhy` for the money shape, which still earns it.
-                */}
-                {segmentWithWhy([
-                  {
-                    value: 'yes',
-                    label: t('config.services.needs_time.yes'),
-                    active: values.is_scheduled === true,
-                    onClick: () => setValues(prev => ({ ...prev, is_scheduled: true })),
-                  },
-                  {
-                    value: 'no',
-                    label: t('config.services.needs_time.no'),
-                    active: values.is_scheduled === false,
-                    onClick: () => setValues(prev => ({ ...prev, is_scheduled: false })),
-                  },
-                ])}
-              </div>
-
-              {/* Absent, not disabled.
-                  A service nobody books against a slot has no length and no gap
-                  after it — those are facts about an appointment. Two greyed
-                  fields showing "—" put a question on screen that has already
-                  been answered, and invited the owner to wonder what they had
-                  done wrong. Answer "no" and they simply are not asked.
-
-                  The values behind them are untouched: turning scheduling back
-                  on brings the same numbers back rather than defaults. */}
-              {/* On their own line, because the explanation above is a panel
-                  rather than a line: bottom-aligning two small number fields
-                  against it left them floating beside a block. */}
-              {!timeDisabled && (
-                <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                      {t('config.services.column.duration')}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        value={values.duration}
-                        onChange={(e) => setValues(prev => ({ ...prev, duration: e.target.value }))}
-                        className={`${field} w-20 tabular-nums`}
-                        style={fieldStyle}
-                      />
-                      <span className="text-[12px] text-[var(--v2-text-muted)]">
-                        {t('scheduling.service.minutes')}
-                      </span>
-                    </div>
-                  </label>
-
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                      {t('scheduling.service.gap')}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        value={values.buffer}
-                        onChange={(e) => setValues(prev => ({ ...prev, buffer: e.target.value }))}
-                        className={`${field} w-20 tabular-nums`}
-                        style={fieldStyle}
-                      />
-                      <span className="text-[12px] text-[var(--v2-text-muted)]">
-                        {t('scheduling.service.minutes')}
-                      </span>
-                    </div>
-                  </label>
-                </div>
-              )}
-            </div>
-          </section>
-          </FlowPair>
-
-          {/* ──────────────────────────────────────────────────────────────────
-              3 · HOW IT IS SOLD AND PAID
-
-              One question where there were two. "How it is collected" lived
-              inside the price row and appeared only once a price had been
-              typed, so the control that decides whether this business can be
-              paid at all was reached by typing a number first.
-
-              The three options are the three real shapes. The consequence of
-              the chosen one sits under the group, which is what `segmentWithWhy`
-              is for — testers read "By quote" as a statement about pricing
-              policy and chose it for ordinary priced services.
-              ────────────────────────────────────────────────────────────────── */}
-          <FlowPair stop={<FlowStop head={t('scheduling.flow.head.money')} lines={moneyStop} last />}>
-          <section className="border-t border-[var(--v2-border)] pt-4">
-            <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
-              {t('scheduling.modal.section.sold_paid')}
-            </h4>
-            <p className="text-[12px] text-[var(--v2-text-muted)] mt-0.5 mb-3">
-              {t('config.services.q.paid_hint')}
-            </p>
-
-            {/*
-              NO `why` AND NO `eg` HERE EITHER.
-
-              The money stop on the spine says what this choice produces, and
-              says it with the real figures: the price, the split, the cadence,
-              whether a payment link goes with the invoice, and — when Stripe is
-              missing — that the card option will not work. These lines said a
-              shape-shaped version of the same thing, one control-height away.
-
-              The processor distinction they carried is not lost. It is the
-              difference between `invoice_once` and `invoice_once_link`, which
-              `serviceMoneyLine` already decides and the stop already shows, so
-              an owner with Stripe still learns their invoice carries a payment
-              link — from the sentence about their own service rather than from
-              a note about the option.
-            */}
-            {/*
-              AT A PRICE OF NOTHING THERE IS NO SHAPE TO CHOOSE.
-
-              `serviceMoneyLine` answers `free` on any price that is not above
-              zero and never consults the collection shape, so card, invoice
-              and quote were all three offered, one of them lit, and whichever
-              the owner pressed changed nothing they could see: the sentence
-              below went on reading "Nothing is collected."
-
-              The gate is `moneyLine.key`, not `price`, because that function
-              already holds the order these questions are answered in: a quoted
-              service is settled at `proposal` BEFORE price is consulted, so a
-              quote never hides its own shapes and cannot become a one-way door.
-
-              `|| isNew` because that reasoning does NOT reach a service being
-              created. A new DIRECT service has no price yet, so the key is
-              `free` and all three disappeared — the first question an owner
-              answers, gone before they could answer it. Measured, not assumed:
-              a probe mounted the new-service editor and found none of the three
-              buttons rendering.
-
-              An empty price is a question still open; a saved service left at
-              nothing has answered it. Only the second hides the shapes.
-            */}
-            {/*
-                ALL THREE, ALWAYS. The two that need a figure grey out.
-                ─────────────────────────────────────────────────────────────
-                The gate was `moneyLine.key !== 'free' || isNew`, and it hid
-                the whole group on a SAVED service with no price. Onboarding
-                now creates every service as a placeholder with no price, so
-                that is every service a new owner opens: the first question
-                about how they sell was missing, and "by quote" — the one
-                answer that fits a service with no figure — was the one they
-                could not reach.
-
-                Greyed, not gone. Card and invoice both describe how an amount
-                arrives, so they need an amount; "by quote" is a statement
-                about pricing policy and is exactly what an owner with no
-                figure may want. The disabled pair still shows the question was
-                asked, and the note under the group says what unlocks them.
-            */}
-            {!priceIsFree && (
-              <div className="flex flex-col gap-2.5 mb-3">
-                {/*
-                  THE EDITOR OFFERS CARD, AND GATES IT.
-                  ──────────────────────────────────────────────────────────
-                  This chip was hidden without a connected processor, on the
-                  reasoning that a question the editor knows the answer to is a
-                  trap with an apology underneath it. That removed a choice
-                  instead of enabling it: an owner who decides today to start
-                  taking cards found no way to say so, and nothing anywhere
-                  told them the option existed behind a connection they could
-                  make in a minute.
-
-                  So it is offered, and choosing it raises the same kind of
-                  gate invoicing raises — the notice under the chips names what
-                  is missing and its button goes to the payments tab. That is
-                  `gapFixAction('processor')`, the mapping every other gap
-                  already uses, so the tab and the label cannot disagree.
-
-                  Nothing about the degradation changes: a card service with no
-                  processor is still INVOICED by every public surface, the money
-                  sentence still says so, and `processor` stays deliberately
-                  NON-blocking in `isBlockingGap` — the owner can save and
-                  publish, because an invoice is a real way to be paid. The
-                  gate informs and offers the fix; it does not refuse the work.
-                */}
-                {segmentWithWhy([
-                  {
-                    value: 'card',
-                    label: t('scheduling.modal.shape.card'),
-                    active: saleShape === 'card',
-                    onClick: () => pickShape('card'),
-                  },
-                  {
-                    value: 'invoice',
-                    label: t('scheduling.modal.shape.invoice'),
-                    active: saleShape === 'invoice',
-                    onClick: () => pickShape('invoice'),
-                  },
-                  {
-                    value: 'quote',
-                    label: t('scheduling.modal.shape.quote'),
-                    active: saleShape === 'quote',
-                    onClick: () => pickShape('quote'),
-                  },
-                ])}
-
-
-                {/* Says which of the two nothings this is, because the field
-                    cannot: an empty box and a typed 0 look identical and mean
-                    opposite things. */}
-                {priceUnset && values.sale_mode !== 'proposal' && (
-                  <p className="text-[12px] text-[var(--v2-text-muted)] m-0 max-w-[52ch] leading-snug">
-                    {t('config.services.shape.no_price_yet')}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {moneyDisabled ? (
-              /* Quoted: the amount and how it arrives are settled in the
-                 proposal, per job. Saying so beats three disabled controls —
-                 and saying WHY beats "Set per quote", which reads as a setting
-                 the owner should go and find. */
-              <p className="text-[12.5px] leading-relaxed text-[var(--v2-text-muted)] max-w-[60ch]">
-                {t('scheduling.modal.quote_note')}
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* The price is the number being decided. The currency is not
-                    a question here at all — it is stated, so the owner can see
-                    what they are typing into.
-
-                    This row used to offer all four as a segment, which read as
-                    an invitation and was one: changing it does not convert
-                    anything, it relabels. 300 stays 300, so USD → ILS is a 73%
-                    price cut nobody typed, and every invoice already raised
-                    keeps the old currency, so the reports fracture with no FX
-                    rate to put them back together.
-
-                    A service is still free to be priced in another currency —
-                    an Israeli business charging a US client in USD is the case
-                    the whole design exists for. That is settled where a service
-                    is created, not edited in passing beside the amount. */}
-                <label className="flex flex-col gap-1.5 sm:col-span-2">
-                  <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                    {t('config.services.column.price')}
-                  </span>
-                  {/* One line: how much, in what, and when it is taken.
-                      They are one sentence about the money — splitting "מתי
-                      נגבה" onto a row of its own made it read as a separate
-                      setting rather than as the end of the price. */}
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    {/* The currency sits INSIDE the amount, on its leading
-                        edge, the way it does on a bank form — it is part of
-                        what is being typed, not a setting standing beside it.
-                        A hairline divides the fixed part from the typed part,
-                        so the two still read as one control.
-
-                        Symbol and code together: the glyph alone is ambiguous
-                        across the set we support — '$' is USD here, but an
-                        owner scanning the row cannot know that from the glyph,
-                        and USD vs ILS is the whole question.
-
-                        Logical properties (`border-e`, not `border-r`) so the
-                        affix follows the writing direction by itself. Line
-                        ~1745 below makes the same point about not branching on
-                        `isRTL` where CSS already knows.
-
-                        Sized to the number it holds, not to the row it sits in.
-                        `flex-1` made it swallow whatever the rest of the line
-                        left over, so a field for four digits stretched across
-                        half the panel. */}
-                    <div
-                      className="w-44 flex items-stretch overflow-hidden bg-[var(--v2-bg)] border border-[var(--v2-border)] focus-within:ring-1 focus-within:border-transparent"
-                      style={fieldStyle}
-                    >
-                      <span
-                        className="flex items-center gap-1.5 px-3 select-none whitespace-nowrap bg-[var(--v2-surface)] border-e border-[var(--v2-border)] text-[11.5px] tracking-wide text-[var(--v2-text-secondary)]"
-                        title={t('config.services.currency_fixed')}
-                      >
-                        <span className="text-[14px] text-[var(--v2-text-primary)]">
-                          {getCurrencySymbol(values.currency)}
-                        </span>
-                        {values.currency}
-                      </span>
-                      <input
-                        type="number"
-                        value={values.price}
-                        onChange={(e) => setValues(prev => ({ ...prev, price: e.target.value }))}
-                        className="flex-1 min-w-0 bg-transparent px-3 py-2.5 text-[15px] tabular-nums text-[var(--v2-text-primary)] focus:outline-none"
-                      />
-                    </div>
-
-                    {/* "How it is collected" was here, reached only by typing a
-                        price first. It is the shape question above now, asked
-                        once and before the money — along with its consequence
-                        line and the missing-processor warning. */}
-                  </div>
-                </label>
-
-                {/* The plan, in place.
-                    This was a button that opened a modal holding four fields —
-                    for a question that belongs directly under the price it
-                    splits. The extra fields appear only when there is a plan to
-                    describe, so a service paid in one go still shows one line. */}
-                <div className="flex flex-col gap-2.5 sm:col-span-2">
-                  <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                    {t('config.services.column.payment')}
-                  </span>
-
-                  {price > 0 ? (
-                    <>
-                      {segment([
-                        {
-                          value: 'full',
-                          label: t('scheduling.modal.payment_full'),
-                          active: values.payment_type !== 'installments',
-                          onClick: () => setValues(prev => ({
-                            ...prev, payment_type: 'full', installment_count: 1,
-                          })),
-                        },
-                        {
-                          value: 'installments',
-                          label: t('scheduling.modal.payment_installments'),
-                          active: values.payment_type === 'installments',
-                          onClick: () => setValues(prev => ({
-                            ...prev,
-                            payment_type: 'installments',
-                            installment_count: prev.installment_count > 1 ? prev.installment_count : 2,
-                          })),
-                        },
-                      ])}
-
-                      {values.payment_type === 'installments' && (
-                        <div className="flex flex-wrap items-end gap-x-4 gap-y-3 ps-0.5">
-                          {/* One line, read in order: how many, how often, and
-                              when the first one is taken. They describe a single
-                              arrangement, so they sit together rather than being
-                              spread to the edges of the panel. */}
-                          <label className="flex flex-col gap-1.5">
-                            <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                              {t('scheduling.modal.installment_count')}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              {/* Two digits at most — 24 is the ceiling — so the
-                                  field is sized for two, leaving the split
-                                  beside it room to stay on one line. */}
-                              <input
-                                type="number"
-                                min={2}
-                                max={24}
-                                value={values.installment_count}
-                                onChange={(e) => setValues(prev => ({
-                                  ...prev,
-                                  installment_count: Math.max(2, Math.min(24, parseInt(e.target.value) || 2)),
-                                }))}
-                                className={`${field} w-14 tabular-nums`}
-                                style={fieldStyle}
-                              />
-                              {/* What one period actually costs. The owner is
-                                  splitting a total; the split is the answer. */}
-                              <span className="text-[12px] text-[var(--v2-text-muted)] tabular-nums whitespace-nowrap">
-                                {values.installment_count >= 2
-                                  ? `${getCurrencySymbol(values.currency)}${(price / values.installment_count).toFixed(2)} ${t('scheduling.modal.per_installment')}`
-                                  : ''}
-                              </span>
-                            </div>
-                          </label>
-                          <label className="flex flex-col gap-1.5">
-                            <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                              {t('scheduling.modal.installment_frequency')}
-                            </span>
-                            <Select
-                              value={values.installment_frequency}
-                              onValueChange={(value) => setValues(prev => ({
-                                ...prev, installment_frequency: value as InstallmentFrequency,
-                              }))}
-                            >
-                              <SelectTrigger
-                                className="h-9 px-3 text-[13px] bg-[var(--v2-bg)] border-[var(--v2-border)] text-[var(--v2-text-primary)]"
-                                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                              >
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)]">
-                                <SelectItem value="weekly" className="text-[var(--v2-text-primary)]">{t('scheduling.modal.frequency_weekly')}</SelectItem>
-                                <SelectItem value="biweekly" className="text-[var(--v2-text-primary)]">{t('scheduling.modal.frequency_biweekly')}</SelectItem>
-                                <SelectItem value="monthly" className="text-[var(--v2-text-primary)]">{t('scheduling.modal.frequency_monthly')}</SelectItem>
-                                <SelectItem value="quarterly" className="text-[var(--v2-text-primary)]">{t('scheduling.modal.frequency_quarterly')}</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </label>
-
-                          <div className="flex flex-col gap-1.5">
-                            <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                              {t('scheduling.modal.first_payment_due')}
-                            </span>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {segment([
-                                {
-                                  value: 'on_booking',
-                                  label: t('scheduling.modal.payment_on_booking'),
-                                  active: values.first_payment_due === 'on_booking',
-                                  onClick: () => setValues(prev => ({
-                                    ...prev, first_payment_due: 'on_booking', first_payment_days: 0,
-                                  })),
-                                },
-                                {
-                                  value: 'days_after',
-                                  label: t('scheduling.modal.payment_days_after'),
-                                  active: values.first_payment_due === 'days_after',
-                                  onClick: () => setValues(prev => ({
-                                    ...prev,
-                                    first_payment_due: 'days_after',
-                                    first_payment_days: prev.first_payment_days || 7,
-                                  })),
-                                },
-                              ])}
-                              {values.first_payment_due === 'days_after' && (
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={365}
-                                    value={values.first_payment_days}
-                                    onChange={(e) => setValues(prev => ({
-                                      ...prev,
-                                      first_payment_days: Math.max(1, Math.min(365, parseInt(e.target.value) || 1)),
-                                    }))}
-                                    className={`${field} w-20`}
-                                    style={fieldStyle}
-                                  />
-                                  <span className="text-[12px] text-[var(--v2-text-muted)]">
-                                    {t('scheduling.modal.days_after_booking')}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-[12.5px] text-[var(--v2-text-muted)]">
-                      {t('journey.pay.free')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          </section>
-          </FlowPair>
-        </div>
-
-        {/* The consequence, on screen with the settings that produce it.
-            This was folded behind a chevron, which is how a business discovered
-            its booking link led nowhere — from a client's email. Turn off
-            "needs a time" above and the date step disappears while you watch. */}
-        <div className="flex-shrink-0 border-t border-[var(--v2-border)] bg-[var(--v2-bg)] px-5 py-3 flex flex-col gap-2.5">
-          <div>
-            <span className="block text-[10.5px] font-semibold tracking-wide uppercase text-[var(--v2-text-muted)] mb-2">
-              {t('journey.label')}
-            </span>
-            <ClientJourneyStrip
-              compact
-              intakeEnabled={intakeEnabled}
-              processorReady={processorReady}
-              service={{
-                scheduled: values.is_scheduled !== false,
-                collection: (values.collection as ServiceCollection | null) ?? null,
-                price: moneyDisabled ? null : (Number.isFinite(price) ? price : null),
-                saleMode: (values.sale_mode as ServiceSaleMode | null) ?? 'direct',
-              }}
-            />
-          </div>
-
-          {/*
-            The other half of the consequence, and the half nothing said.
-
-            The strip draws what the CLIENT walks through; this says what
-            happens to the MONEY — the figure, the split, the cadence and who
-            chases it. Five controls decided that between them and the panel
-            never once added them up, so an owner learned the answer from their
-            first client. It sits beside the strip because they are one thought:
-            what the client does, and what you get for it.
-          */}
-          {/*
-            THE SAME ACCOUNT, STACKED, FOR A PANEL TOO NARROW FOR THE SPINE.
-
-            From `md:` up each fact sits beside the section that causes it and
-            this is hidden, because saying everything twice on one screen is
-            how an owner learns to read neither. Below that there is one column
-            and no room for a second, so this is the whole account — same
-            resolvers, same sentences, different shape.
-          */}
-          <div className="md:hidden border-t border-[var(--v2-border)] pt-2.5">
-            <span className="block text-[10.5px] font-semibold tracking-wide uppercase text-[var(--v2-text-muted)] mb-1">
-              {t('scheduling.modal.how_it_works')}
-            </span>
-            {/*
-              THE JOURNEY FIRST, THE MONEY LAST.
-
-              The client's own order: what happens when they find this, then
-              what it costs them. Money last because it is the line the owner
-              already knows and the ones above it are the ones they have never
-              been told.
-
-              Separate lines rather than one paragraph: six facts run together
-              are a wall, and the owner is looking for ONE of them. Lines that
-              merely repeat a platform default are dropped by `serviceJourney`,
-              so this list is short for an ordinary service and only grows where
-              the owner has actually changed something.
-            */}
-            <ul className="space-y-1">
-              {journeySteps.map(step => (
-                <li
-                  key={step.key}
-                  className="text-[12.5px] leading-relaxed text-[var(--v2-text-primary)] flex gap-1.5"
-                >
-                  <span className="text-[var(--v2-text-muted)] flex-shrink-0" aria-hidden="true">
-                    ·
-                  </span>
-                  <span>{journeyText(step)}</span>
-                </li>
-              ))}
-              {/*
-                `moneyStop`, not `moneySentence`: the stop also carries the card
-                warning and what follows the payment, and a phone must not be
-                the one screen that loses the warning.
-              */}
-              {moneyStop.map((line, i) => (
-                <li key={i} className="text-[12.5px] leading-relaxed text-[var(--v2-text-primary)] flex gap-1.5">
-                  <span className="text-[var(--v2-text-muted)] flex-shrink-0" aria-hidden="true">
-                    ·
-                  </span>
-                  <span>{line}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-
-        {/* Save and cancel */}
-        <div className="flex-shrink-0 border-t border-[var(--v2-border)] px-5 py-3 flex items-center justify-end gap-2">
-          {/*
-            Why Save is greyed out, beside the greyed-out button.
-
-            A disabled control with no reason is its own defect: the owner
-            presses it, nothing happens, and there is nowhere to look. The only
-            blocking condition worth a sentence is the missing description —
-            "nothing has changed" explains itself, because they have just saved.
-          */}
-          {(nameMissing || descriptionMissing) && (
-            <span className="me-auto text-[12px] text-[var(--v2-text-muted)]">
-              {/* The name first: it is the field above, and fixing them in the
-                  order they appear is one less thing to work out. */}
-              {nameMissing
-                ? t('config.services.name_required')
-                : t('config.services.description_required')}
-            </span>
-          )}
-          <button
-            onClick={isNew ? cancelNewRow : cancelRowEdit}
-            className="px-3.5 py-2 text-[13px] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          >
-            {t('button.cancel')}
-          </button>
-          {/*
-            Save is live only when there is something to save AND the service
-            can describe itself.
-
-            It was `disabled={saving}` alone, which left the button active the
-            instant a save finished. Pressing it again re-sent identical values
-            and re-raised the publish prompt — the owner asked to publish a
-            second time for a write that changed nothing.
-
-            A new service is exempt from the dirty check: it always has
-            something to save. It is not exempt from the description.
-          */}
-          <button
-            onClick={() => (isNew ? saveNewRow() : saveRowEdit(service!.id))}
-            disabled={saving || nameMissing || descriptionMissing || (!isNew && !isRowDirty)}
-            className="inline-flex items-center gap-2 px-4 py-2 text-[13px] font-medium text-white transition-all disabled:opacity-50"
-            style={{ borderRadius: 'var(--v2-radius-button)', backgroundColor: CONFIG_COLOR }}
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            {t('button.save')}
-          </button>
-        </div>
-      </>
+      <ServiceWizard
+        /*
+         * The editor's state carries more than the four questions read —
+         * buffer, currency, the instalment schedule — so the wizard is handed
+         * only its own fields and gives them back the same way.
+         */
+        values={{
+          name: values.name,
+          description: values.description,
+          duration: values.duration,
+          is_scheduled: values.is_scheduled,
+          price: values.price,
+          collection: values.collection,
+          sale_mode: values.sale_mode,
+          payment_type: values.payment_type,
+          /* The schedule travels with the plan. Without these three the
+             instalment controls received `undefined`, drew nothing usable and
+             lost every change on the next render. */
+          installment_count: values.installment_count,
+          installment_frequency: values.installment_frequency,
+          first_payment_due: values.first_payment_due,
+          first_payment_days: values.first_payment_days,
+        }}
+        onChange={next =>
+          setValues(prev => ({
+            ...prev,
+            name: next.name,
+            description: next.description,
+            duration: next.duration,
+            is_scheduled: next.is_scheduled,
+            price: next.price,
+            sale_mode: next.sale_mode,
+            payment_type: next.payment_type,
+            installment_count: next.installment_count,
+            installment_frequency: next.installment_frequency,
+            first_payment_due: next.first_payment_due,
+            first_payment_days: next.first_payment_days,
+            /*
+             * `null` folds back to what was there.
+             *
+             * The wizard clears the collection for a free service and a quote,
+             * which is right for the ROW — but the editor's own state does not
+             * hold null, and it does not need to: `serviceShapeFields` clears
+             * the column on save for exactly those two shapes. Keeping the
+             * last value in the form changes nothing stored and leaves the
+             * card/invoice choice where it was if the owner switches back.
+             */
+            collection: next.collection ?? prev.collection,
+          }))
+        }
+        isNew={isNew}
+        isDraft={isDraft}
+        saving={saving}
+        /* A new service has never been saved, so it always has something to
+           save. An existing one is compared against the baseline the editor
+           took when it opened — the same test the old panel's Save used. */
+        dirty={isNew || isRowDirty}
+        /* The parent already tracks which row is being published, and
+           `handlePublish` refuses a second press while one is in flight. */
+        publishing={Boolean(service && publishingId === service.id)}
+        currencySymbol={getCurrencySymbol(values.currency)}
+        currencyCode={values.currency}
+        /* Facts about the BUSINESS, from the same tests the gates use. */
+        invoiceReady={requirementMet('invoice')}
+        processorReady={processorReady}
+        hoursReady={requirementMet('hours')}
+        /*
+         * Each opens the one panel that clears it, and nothing else —
+         * `solo` hides the other five tabs. The probe re-reads readiness when
+         * the panel closes, so a requirement goes green without a reload.
+         */
+        onFixInvoice={
+          setInvoiceDetails
+            ? () => setInvoiceDetails({ solo: true, onClose: () => setReadyProbe(n => n + 1) })
+            : undefined
+        }
+        onConnectProcessor={
+          connectPayments
+            ? () => connectPayments({ solo: true, onClose: () => setReadyProbe(n => n + 1) })
+            : undefined
+        }
+        onFixHours={
+          setHours
+            ? () => setHours({ solo: true, onClose: () => setReadyProbe(n => n + 1) })
+            : undefined
+        }
+        blockers={blockers}
+        nothingToSell={nothingToSell}
+        onSave={() => (isNew ? saveNewRow() : saveRowEdit(service!.id))}
+        /*
+         * Publishing stays the server's call. `handlePublish` wants the event
+         * only to stop it bubbling into the row beneath, and there is no row
+         * beneath a footer button.
+         */
+        onPublish={
+          service && isDraft
+            ? () => handlePublish(service.id, { stopPropagation: () => {} } as React.MouseEvent)
+            : undefined
+        }
+        onClose={() => {
+          setEditingRowId(null);
+          setIsAddingNewRow(false);
+        }}
+      />
     );
   };
 

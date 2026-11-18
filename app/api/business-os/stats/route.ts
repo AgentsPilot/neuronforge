@@ -739,6 +739,25 @@ export async function GET(request: NextRequest) {
       // had chosen a booking link looked like one that had answered nothing —
       // and every rule downstream fell back to its "we don't know" branch,
       // which is what told it to publish a website it had declined.
+      /*
+       * `has_website` and `leads_arrive_by_email`: the two answers the presence
+       * mode cannot carry, asked for at last.
+       *
+       * `business_shape` has REPORTED both for some time, and reported them as
+       * null for every account, because this select never asked for them —
+       * `(businessProfile as any)?.has_website ?? null` on an object without
+       * the key is null, silently and forever. So a business that kept its own
+       * site and told the interview its enquiries arrive by email looked
+       * exactly like one that answered neither, and the mailbox step was never
+       * offered to anybody.
+       *
+       * Safe to add now: the columns exist (20261105_own_site_and_lead_arrival),
+       * which is what the warning beside `business_shape` was waiting for.
+       *
+       * The comment lives HERE and not in the template literal below, which is
+       * the mistake this replaced: that string is sent to PostgREST verbatim,
+       * so a comment inside it is part of the column list.
+       */
       supabaseServer
         .from('business_profiles')
         .select(`
@@ -749,7 +768,9 @@ export async function GET(request: NextRequest) {
           collection_method,
           calendar_sync_enabled,
           calendar_sync_provider,
-          theme
+          theme,
+          has_website,
+          leads_arrive_by_email
         `)
         .eq('user_id', user.id)
         .maybeSingle(),
@@ -773,7 +794,16 @@ export async function GET(request: NextRequest) {
         // already being made: the website's copy for a service is written from
         // its description, so a service without one gets a paragraph the model
         // guessed from its name.
-        .select('service_name, description, is_scheduled, collection, price')
+        /*
+         * `sale_mode` IS NOT OPTIONAL HERE, and leaving it out was a bug.
+         *
+         * A quote carries `collection: null` and no price on purpose —
+         * `serviceShapeFields` clears both, because what a quote collects is
+         * settled in the quote. So a catalogue of quotes read as a catalogue
+         * that takes no money, and the dashboard told a contractor who sells
+         * nothing but quoted jobs "nothing you sell takes money".
+         */
+        .select('service_name, description, is_scheduled, collection, price, sale_mode')
         .eq('user_id', user.id)
         .eq('status', 'active'),
       // Stripe connection check - stripe_connect_accounts table
@@ -1180,7 +1210,15 @@ export async function GET(request: NextRequest) {
                * the dashboard that its invoicing was complete while the
                * publish gate, which selects everything, refused it.
                */
-              'company_name, vertical, logo_url, invoice_company_name, invoice_tax_id, invoice_address, invoice_bank_name, invoice_bank_account, invoice_payment_instructions, invoice_document_type, invoice_prices_include_tax'
+              /*
+               * `phone` and `email` for the same reason: they are profile
+               * gates now, and a column left out of a select arrives as
+               * undefined, which `hasValue` reads as empty. Omitting them
+               * would have told every account on the platform that its
+               * contact details were missing while the settings form showed
+               * them filled in.
+               */
+              'company_name, vertical, phone, email, logo_url, invoice_company_name, invoice_tax_id, invoice_address, invoice_bank_name, invoice_bank_account, invoice_payment_instructions, invoice_document_type, invoice_prices_include_tax'
             )
             .eq('user_id', user.id)
             .maybeSingle(),
@@ -1969,7 +2007,7 @@ export async function GET(request: NextRequest) {
     const hasPaidServices = (paidServicesCount || 0) > 0;
 
     // Three answers, all read from the services rather than asked.
-    const shapes = (serviceShapes || []) as Array<{ service_name?: string | null; description?: string | null; is_scheduled?: boolean | null; collection?: string | null; price?: number | null }>;
+    const shapes = (serviceShapes || []) as Array<{ service_name?: string | null; description?: string | null; is_scheduled?: boolean | null; collection?: string | null; price?: number | null; sale_mode?: string | null }>;
     /** Services the website has nothing to say about. */
     const servicesWithoutDescription = shapes
       .filter(x => !x.description || x.description.trim().length === 0)
@@ -1977,7 +2015,32 @@ export async function GET(request: NextRequest) {
       .filter(Boolean);
     const scheduledServicesCount = shapes.filter(x => x.is_scheduled !== false).length;
     const onlineServicesCount = shapes.filter(x => x.collection === 'online' && (x.price || 0) > 0).length;
-    const invoicedServicesCount = shapes.filter(x => x.collection === 'invoice' && (x.price || 0) > 0).length;
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A QUOTE IS AN INVOICED SERVICE. The same rule `countServices` applies.
+     *
+     * This read `collection === 'invoice' && price > 0` and nothing else,
+     * while `businessShape.countServices` — the function every other surface
+     * goes through — counts `sale_mode === 'proposal'` as well. Two
+     * implementations of one question, and the dashboard had the wrong one.
+     *
+     * What it cost: a proposal has no collection and no price by design, so a
+     * business selling quoted work scored zero invoiced and zero online
+     * services. `moneyMoves` went false, `invoicing.applies` and
+     * `payments.applies` both went false, the graph dropped both steps, and
+     * the reach journey read the absence as "this business was never asked for
+     * a way to be paid" — printing "Pay you · nothing you sell takes money" to
+     * a contractor whose only live service bills by quote.
+     *
+     * `ProposalAcceptanceService.raiseInvoice` writes a `payment_invoices` row
+     * the moment a client accepts, so acceptance IS a bill. That is why
+     * `theGatesDoNotContradict` pins a quote as money moving, and why it has to
+     * be counted here too.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const invoicedServicesCount = shapes.filter(
+      x => x.sale_mode === 'proposal' || (x.collection === 'invoice' && (x.price || 0) > 0)
+    ).length;
 
     // Get or generate user_code for lead capture links
     let userCode = businessProfile?.user_code || null;

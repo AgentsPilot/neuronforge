@@ -88,7 +88,16 @@ function previewPayload(state: OnboardingState) {
   return {
     businessProfile: {
       ...collected.businessProfile,
-      // The translated vertical, for the UI.
+      /*
+       * The translated vertical, for the UI.
+       *
+       * EMPTY when the extraction could not read a trade. `getVerticalLabel`
+       * returns nothing for `default` and `other` — they are our fallbacks, not
+       * answers — and both of the screens that render this hide the chip on a
+       * falsy value. It used to print "Service Provider", so a business whose
+       * trade we had failed to read was shown one on the plan panel and then
+       * told by the dashboard that its business type was missing.
+       */
       verticalDisplayName: collected.businessProfile?.vertical
         ? onboardingConfigurationService.getVerticalDisplayName(
             collected.businessProfile.vertical,
@@ -504,6 +513,17 @@ function calculateProgress(step: string): number {
     'service_details': 4,
     'payment_collection': 5,  // How does the money reach you?
     'client_acquisition': 5,  // Q4: How do clients find you?
+    /*
+     * The two follow-ups to Q4, neither of which had an entry here.
+     *
+     * A step this map does not know returns 0, and the comment above says what
+     * that does: the bar goes BACKWARDS. So every owner who said they had their
+     * own website — the only ones `lead_arrival` is asked of — watched the
+     * progress bar fall to nothing on the second-to-last question. Six, not
+     * five: they are a step further on than Q4, and the plan is seven.
+     */
+    'lead_form': 6,           // Q4b-1: does anybody fill in a form on your site?
+    'lead_arrival': 6,        // Q4b-2: do those enquiries reach a mailbox?
     'client_tracking': 6,     // Q5: How do you track clients?
     'preview': 7,
     'preview_adjustment': 7,

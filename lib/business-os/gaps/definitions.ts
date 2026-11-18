@@ -467,6 +467,28 @@ const quoteAwaitingClient: GapDefinition = {
         .eq('user_id', userId)
         .in('status', ['sent', 'viewed'])
         .lt('sent_at', hoursAgo(now, 72))
+        /*
+         * ── ONE QUOTE, ONE CARD ───────────────────────────────────────────────
+         *
+         * A quote with a live deadline belongs to `quote_deadline_unanswered`,
+         * which asks the same question about the same rows (`status in (sent,
+         * viewed)`) and answers it better: it carries the date the offer lapses.
+         * This gap had no deadline condition at all, so that gap was a strict
+         * subset of it and every quote with a future `valid_until` produced TWO
+         * cards about one object. Nothing dedupes by `entityId` across gaps, so
+         * both reached the owner.
+         *
+         * Reported on a live account (2026-11-16): an expired quote was extended
+         * from the 13th to the 17th, which flipped its status back to `sent` and
+         * so turned the single `quote_expired` card into two — read, reasonably,
+         * as "the old card is still there".
+         *
+         * Null is kept: a quote with no expiry date has no deadline gap to own
+         * it, and it is exactly the one that goes quiet forever. A date already
+         * in the past is kept too, for the window between lapsing and the hourly
+         * `expireLapsedQuotes` writing the state.
+         */
+        .or(`valid_until.is.null,valid_until.lt.${now.toISOString().slice(0, 10)}`)
         .order('sent_at', { ascending: true })
         .limit(50);
 
@@ -2340,7 +2362,7 @@ const quoteDeadlineUnanswered: GapDefinition = {
     safely('quote_deadline_unanswered', async () => {
       const { data } = await supabaseServer
         .from('proposals')
-        .select('id, contact_id, status, title, total, currency, sent_at, valid_until, contact:crm_contacts(first_name, last_name, email)')
+        .select('id, contact_id, status, title, total, currency, sent_at, valid_until, extended_at, extended_from, contact:crm_contacts(first_name, last_name, email)')
         .eq('user_id', userId)
         .in('status', ['sent', 'viewed'])
         .lt('sent_at', hoursAgo(now, 72))
@@ -2362,9 +2384,23 @@ const quoteDeadlineUnanswered: GapDefinition = {
           contactId: row.contact_id as string,
           name: personName(contact),
           note: str(row.title),
-          /* Still the day it was SENT: "how long have they had it" is the
-             question the row answers, and the deadline is shown separately. */
-          since: (row.sent_at as string) || new Date().toISOString(),
+          /*
+           * ── THE CLOCK RESTARTS WHEN THE OWNER PUTS IT BACK ────────────────
+           *
+           * The day it was sent, UNLESS it has been extended since. "How long
+           * have they had it" is still the question, but an extended quote is a
+           * fresh window: the client has had THIS offer since the extension,
+           * and the owner has acted in between.
+           *
+           * Dating it from `sent_at` regardless is what made an extension look
+           * like nothing had happened. Live account, 2026-11-16: an owner
+           * extended a lapsed quote from the 13th to the 17th and the card came
+           * back still dated the 13th, which reads as the same stale alert.
+           */
+          since:
+            (row.extended_at as string | null) ||
+            (row.sent_at as string) ||
+            new Date().toISOString(),
           /*
            * The day the price is withdrawn by its own terms.
            *
@@ -2382,8 +2418,12 @@ const quoteDeadlineUnanswered: GapDefinition = {
           /* Opened or not. "They read it and said nothing" is a different
              conversation from "it never got looked at", and the deadline row
              offered the same chase for both. */
-          contextKey:
-            row.status === 'viewed'
+          contextKey: row.extended_at
+            ? /* The owner's own last action, named. Beats either "read it" or
+                 "never opened it", because what changed most recently is that
+                 THEY moved the deadline. */
+              'gaps.context.quote_extended'
+            : row.status === 'viewed'
               ? 'gaps.context.quote_viewed'
               : 'gaps.context.quote_unopened',
           value: Number(row.total) || undefined,
@@ -3073,6 +3113,161 @@ const clientReplyWaiting: GapDefinition = {
     }),
 };
 
+/**
+ * A client whose record has more than one thing wrong with it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE ONLY ROW HERE ABOUT THE CLIENT'S CONDUCT, NOT THE OWNER'S
+ *
+ * Every other gap is an errand the owner owes. This is the other side, and
+ * nothing in the product watched it: of 49 detectors, thirteen name a contact
+ * and almost every one measures the business's own conduct towards them.
+ *
+ * ── SCORED AGAINST THIS BUSINESS, NOT AGAINST A RULE ────────────────────────
+ *
+ * It asked "did they miss 40% of their sessions" until 2026-11-16. Two
+ * objections killed that, and the live data carried both: on one account the
+ * clients sit at 25%, 23%, 21% and 16% missed, so a fixed line flags all of
+ * them or none; and a client who buys fifty sessions cancels more of them than
+ * one who buys six, which makes counts evidence of nothing.
+ *
+ * `clientScore` measures each client against what THIS business's clients
+ * actually do — median and spread, rates shrunk towards the norm so a
+ * three-session client cannot shout, and a prior where a business is too small
+ * to have a norm at all.
+ *
+ * ── AND STILL A COMBINATION ─────────────────────────────────────────────────
+ *
+ * The score has to clear the line AND be driven by two different things. "We
+ * are human and sometimes things happen": one bad stretch, however unusual,
+ * stays on the client's own badge where the owner meets it only when they are
+ * already looking at that person.
+ *
+ * ── NO DUPLICATE ALERTS ─────────────────────────────────────────────────────
+ *
+ * Money outstanding today is NOT a concern here. `invoice_unpaid` already
+ * carries it, with a chase button this row cannot offer, and two rows about
+ * one unpaid invoice is the card contradicting itself.
+ *
+ * ── NO ONE-CLICK ACTION ─────────────────────────────────────────────────────
+ *
+ * `action: null`, like `meeting_upcoming`. What this needs is a conversation —
+ * asking for a deposit, or for payment before the next hour is held — in the
+ * owner's words and their judgement about a relationship. The card already
+ * carries "open the client", which is where that is decided.
+ */
+const clientNeedsAWord: GapDefinition = {
+  id: 'client_needs_a_word',
+  /* The owner's move: only they can decide what to ask for. */
+  blocksOn: 'owner',
+  /* True the moment it is true: the judgement behind it is already slow, taken
+     over 180 days and across weeks of snapshots. */
+  staleAfterHours: 0,
+  action: null,
+  find: (userId, now) =>
+    safely('client_needs_a_word', async () => {
+      const { computeClientStandings } = await import('@/lib/business-os/clients/clientStandingStore');
+      const { persistedWeeks } = await import('@/lib/business-os/clients/clientConcerns');
+      const { businessNorm, scoreClient, drivingSignals, displayScore, bandFromScore, FLAG_AT } =
+        await import('@/lib/business-os/clients/clientScore');
+
+      const standings = await computeClientStandings(supabaseServer, userId);
+      if (standings.length === 0) return [];
+
+      /*
+       * Every snapshot for this account in one read, then grouped. A client has
+       * only a handful — a row is written when the band moves, and otherwise at
+       * most weekly — so this is cheaper than a query per person.
+       */
+      const { data: snapshots } = await supabaseServer
+        .from('crm_client_standing')
+        .select('contact_id, band, as_of')
+        .eq('user_id', userId)
+        .order('as_of', { ascending: false });
+
+      const historyOf = new Map<string, Array<{ band: string; as_of: string }>>();
+      for (const row of snapshots ?? []) {
+        const key = String(row.contact_id);
+        const list = historyOf.get(key) ?? [];
+        list.push({ band: String(row.band), as_of: String(row.as_of) });
+        historyOf.set(key, list);
+      }
+
+      /* What this business's own clients do, before anybody is called unusual. */
+      const norm = businessNorm(standings.map(entry => entry.profile));
+
+      const flagged = standings
+        .map(entry => {
+          const weeks = persistedWeeks(historyOf.get(entry.contactId) ?? [], now);
+          const scored = scoreClient({ profile: entry.profile, norm, persistedWeeks: weeks });
+          return { entry, scored, driving: drivingSignals(scored) };
+        })
+        /* The line, and the combination. Neither alone is enough. */
+        .filter(({ scored, driving }) => scored.score >= FLAG_AT && driving.length >= 2);
+
+      if (flagged.length === 0) return [];
+
+      /* Scoped: `.in('id', …)` alone is a cross-tenant read under the service role. */
+      const { data: contacts } = await supabaseServer
+        .from('crm_contacts')
+        .select('id, first_name, last_name, email')
+        .eq('user_id', userId)
+        .in('id', flagged.map(({ entry }) => entry.contactId));
+
+      const nameOf = new Map(
+        (contacts ?? []).map(row => [
+          String(row.id),
+          `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || String(row.email ?? ''),
+        ])
+      );
+
+      return flagged
+        .map(({ entry, scored, driving }) => {
+          const name = nameOf.get(entry.contactId);
+          if (!name) return null;
+
+          const run = (historyOf.get(entry.contactId) ?? []).filter(
+            row => row.band === 'watch' || row.band === 'at_risk'
+          );
+          const oldest = run.length > 0 ? run[run.length - 1].as_of : null;
+
+          return {
+            contactId: entry.contactId,
+            name,
+            /* How long this has been true, where the snapshots can say. */
+            since: oldest ?? now.toISOString(),
+            entityId: entry.contactId,
+            /*
+             * Only what actually drove the score. A signal worth no points is
+             * not a reason, and "0 of 9 payments late" beside a name reads as
+             * an accusation about the thing they did right.
+             */
+            /*
+             * The score as a figure, 0–100, with the card's own firing line at
+             * 60 — so every row here reads 60 or more and two of them can be
+             * ranked against each other. The raw score is a sum of weighted
+             * deviations and answers no question an owner asks.
+             */
+            score: displayScore(scored.score),
+            /*
+             * The same WORD the drawer badge shows, from the same score. The
+             * card said only "more than one thing keeps going wrong" while the
+             * badge beside that client's name said "needs attention" — two
+             * vocabularies for one judgement, which is how an owner stops
+             * trusting either.
+             */
+            band: bandFromScore(scored.score),
+            concerns: driving.map(signal => ({
+              key: signal.key,
+              count: signal.count,
+              ...(signal.of === undefined ? {} : { of: signal.of }),
+            })),
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null);
+    }),
+};
+
 export const GAP_DEFINITIONS: GapDefinition[] = [
   enquiryUnanswered,
   clientReplyWaiting,
@@ -3094,6 +3289,8 @@ export const GAP_DEFINITIONS: GapDefinition[] = [
   quoteExpired,
   bookingUnbilled,
   deliveryUnconfirmed,
+  /* The only row here about the CLIENT's conduct rather than the owner's. */
+  clientNeedsAWord,
 ];
 
 /* ------------------------------------------------------------------ helpers */

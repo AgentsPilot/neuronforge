@@ -60,8 +60,13 @@ describe('the drawer asks for the dense layout', () => {
 
     /* And it still opens the SAME detail drawer. The list changed; the
        drill-down did not, which is what kept this a layout change rather than
-       a second way to look at money. */
-    expect(DRAWER).toMatch(/setDetail\(item\)/);
+       a second way to look at money.
+
+       `orderFor(item)` rather than `item` since a part-paid order is listed
+       twice — its owed half under Waiting and its collected half under Paid —
+       and both rows must open the WHOLE order. Still one drill-down; the row
+       just has to say which record it is a view of. */
+    expect(DRAWER).toMatch(/setDetail\((?:item|orderFor\(item\))\)/);
     expect(DRAWER).toMatch(/<MoneyOrderDrawer/);
   });
 

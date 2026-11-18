@@ -105,7 +105,8 @@ describe('FR-R9: the registry is vercel.json', () => {
      * SA C-6: a literal on purpose. A slice landing beside another that also
      * adds a job must conflict on this line and set the new total by hand.
      */
-    expect(BOS_CRON_JOBS).toHaveLength(22);
+    /*   +  client-standing            added 2026-11-18 */
+    expect(BOS_CRON_JOBS).toHaveLength(23);
   });
 
   it('ids are unique, match their path, and satisfy the database job rule', () => {

@@ -145,7 +145,14 @@ describe('the field is required', () => {
     // Checked in the client too: `min` on a date input is advisory, and a
     // browser submits an invalid date control anyway. Without this the owner
     // writes a whole quote before the server refuses it.
-    expect(modal).toContain('const expiryValid = validUntil.length > 0 && validUntil >= localToday()');
+    /*
+     * `readOnly ||` was added in front when the builder gained its view mode
+     * for an existing quote: nothing is sent from there, so a past date on a
+     * quote already out is not a reason to disable the screen. The condition
+     * that matters is unchanged and still asserted: when the owner is actually
+     * writing one, the date must be present and not in the past.
+     */
+    expect(modal).toContain('const expiryValid = readOnly || (validUntil.length > 0 && validUntil >= localToday())');
     expect(modal).toMatch(/const canSend =[\s\S]{0,200}expiryValid/);
   });
 

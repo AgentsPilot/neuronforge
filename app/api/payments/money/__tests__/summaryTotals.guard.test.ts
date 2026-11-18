@@ -126,3 +126,54 @@ describe('the money route pages within the chosen kind', () => {
     expect(searched).not.toContain('item.kind');
   });
 });
+
+/**
+ * A figure and the list behind it must count the same money.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE REPORTED BUG
+ *
+ * Outstanding read 170 while the rows beneath it added to 140. Live account
+ * 2026-11-16, booking 620f1457: a 30 USD invoice raised, paid, then refunded in
+ * full, with the payment plan's second period still pending at 30 USD and never
+ * invoiced.
+ *
+ * `totalMoney` sums `outstandingOf` — entries awaiting payment PLUS a plan's
+ * unbilled owed periods — so it counted that 30, correctly. The `unpaid` filter
+ * asked the item's ROLLED-UP status instead, and `rollUpStatus` returns early
+ * for any entry status that is neither owed nor settled: with one `refunded`
+ * entry it answers `refunded` and never looks at the schedule underneath. So
+ * the row was excluded from the list while its money stayed in the figure.
+ *
+ * `overdue` already carried this correction, with a comment saying clicking a
+ * figure must not show a shorter list than the number promised. `unpaid` did
+ * not. This pins both.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('every KPI filter counts what its figure counts', () => {
+  it('unpaid asks for owed money, not for a rolled-up status', () => {
+    const unpaid = route.slice(route.indexOf("case 'unpaid':"), route.indexOf("case 'overdue':"));
+
+    /* The status list cannot answer this: a refunded or partially refunded item
+       can still owe an unbilled plan period. */
+    expect(unpaid).not.toContain("includes(item.status)");
+    expect(unpaid).toContain('outstandingOf(item) > 0');
+  });
+
+  it('overdue still counts entries AND plan periods', () => {
+    const overdue = route.slice(route.indexOf("case 'overdue':"), route.indexOf("case 'paid':"));
+
+    expect(overdue).toContain('isLateEntry');
+    expect(overdue).toContain('isLatePeriod');
+  });
+
+  it('the figure and the filter share one definition of owed', () => {
+    /*
+     * `outstandingOf` is the per-row twin of what `totalMoney` sums. Importing
+     * it here is what keeps the two from drifting: a second, local definition
+     * of "owed" in this route is how the 170-versus-140 gap opened.
+     */
+    expect(route).toContain('outstandingOf');
+    expect(route).toMatch(/import \{[\s\S]*outstandingOf[\s\S]*\} from '@\/lib\/payments\/moneyItems'/);
+  });
+});

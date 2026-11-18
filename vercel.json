@@ -11,6 +11,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/client-standing",
+      "schedule": "40 2 * * *"
+    },
+    {
       "path": "/api/cron/insight-metrics",
       "schedule": "0 3 * * *"
     },

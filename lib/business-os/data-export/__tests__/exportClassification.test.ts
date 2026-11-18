@@ -303,14 +303,15 @@ describe('T-7 planned expires (DE-7 for tables, DE-8b for files)', () => {
   // MX-1a on top: 164 with the two export history tables (exclude, the export history itself).
   // +2 quote children (2026-11-11): 166 = 38 include + 0 planned + 128 exclude.
   // +refund_requests (2026-11-13): 167 = 38 include + 0 planned + 129 exclude.
+  // +crm_client_standing (2026-11-18, derived): 168 = 38 include + 0 planned + 130 exclude.
   //   A client's refund request. Excluded as ACTIVITY: their words about their
   //   money, not the business's authored content. The refund itself lives in
   //   payment_refunds and is classified on its own terms.
   //   proposal_attachments and proposal_signatures, both excluded: the owner already holds
   //   the attached files, and a signature is evidence about a third party rather than the
   //   business's own authored content.
-  it('no table descriptor is planned (non-vacuous: every one of the 167 is include or exclude)', () => {
-    expect(PURGE_DESCRIPTORS).toHaveLength(167);
+  it('no table descriptor is planned (non-vacuous: every one of the 168 is include or exclude)', () => {
+    expect(PURGE_DESCRIPTORS).toHaveLength(168);
     expect(PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned').map((d) => d.table)).toEqual([]);
     expect(PURGE_DESCRIPTORS.every((d) => d.export.kind === 'include' || d.export.kind === 'exclude')).toBe(true);
     expect(PLANNED_TABLES_ALLOWED).toBe(false);
@@ -1378,21 +1379,22 @@ describe('DE-5 M-1 the client-money classifications are pinned', () => {
   // MX-1a on top: 164 = 38 include + 0 planned + 126 exclude (the two export history tables).
   // +2 quote children (2026-11-11): 166 = 38 include + 0 planned + 128 exclude.
   // +refund_requests (2026-11-13): 167 = 38 include + 0 planned + 129 exclude.
+  // +crm_client_standing (2026-11-18, derived): 168 = 38 include + 0 planned + 130 exclude.
   //   A client's refund request. Excluded as ACTIVITY: their words about their
   //   money, not the business's authored content. The refund itself lives in
   //   payment_refunds and is classified on its own terms.
   //   proposal_attachments and proposal_signatures, both excluded: the owner already holds
   //   the attached files, and a signature is evidence about a third party rather than the
   //   business's own authored content.
-  it('the classification totals: 167 = 38 include + 0 planned + 129 exclude', () => {
+  it('the classification totals: 168 = 38 include + 0 planned + 130 exclude', () => {
     const kinds = { include: 0, planned: 0, exclude: 0 } as Record<string, number>;
     const bySlice: Record<string, number> = {};
     for (const d of PURGE_DESCRIPTORS) {
       kinds[d.export.kind] += 1;
       if (d.export.kind === 'planned') bySlice[d.export.slice] = (bySlice[d.export.slice] ?? 0) + 1;
     }
-    expect(PURGE_DESCRIPTORS).toHaveLength(167);
-    expect(kinds).toEqual({ include: 38, planned: 0, exclude: 129 });
+    expect(PURGE_DESCRIPTORS).toHaveLength(168);
+    expect(kinds).toEqual({ include: 38, planned: 0, exclude: 130 });
     expect(bySlice).toEqual({});
   });
 

@@ -511,8 +511,8 @@ describe('audit row (SA TQ-5, C-7)', () => {
     expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,
     ${ACTOR}, ${ACTOR},`);
     expect(rollbackSql).not.toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
-    /* The chain moved on with 20261127: 20261122 is what its rollback restores. */
-    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261122_operator_test_account_cleanup_refund_requests');
+    /* The chain moved on with 20261130: 20261127 is what its rollback restores. */
+    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261127_operator_test_account_cleanup_refund_transaction_fk');
   });
 });
 
@@ -803,6 +803,12 @@ describe('applied history: a function migration is never edited once applied', (
     // matching pins below the move demonstrate.
     ['supabase/migrations/20261122_operator_test_account_cleanup_refund_requests.sql', '9fb52a915a27fcc36c068052bd815f0a5f95f4b5cd58e11a323e591db8e1d31b'],
     ['supabase/SQL Scripts/20261122_operator_test_account_cleanup_refund_requests_rollback.sql', 'c63c695e0f2af387c508eb6d2115abe1e351d2cdcb9684cca219a4ce49d89890'],
+    // 20261127 (refund_requests.transaction_id reviewed for G-18). Moved here from
+    // APPLIED_TARGET by 20261130, as the comment on that slot directs; the bytes are
+    // unchanged, which is what these pins demonstrate. Regenerating it in place was
+    // attempted and reverted: an applied function migration is never edited.
+    ['supabase/migrations/20261127_operator_test_account_cleanup_refund_transaction_fk.sql', '05930dd60f879266a31c2a7e3452a79ee9824b5eae3b070fac07df131c6d4ad8'],
+    ['supabase/SQL Scripts/20261127_operator_test_account_cleanup_refund_transaction_fk_rollback.sql', 'df18f1755d57d669d2c447c91dc75cae645abd88ea6c9a1ac1cc5740868d36e6'],
   ];
 
   /** Nothing pending: 20261094 is applied (confirmed 2026-10-27), so it sits in APPLIED directly. */
@@ -817,12 +823,17 @@ describe('applied history: a function migration is never edited once applied', (
    * its bytes are final. If a pin fails, put the change in a NEW dated FUNCTION_MIGRATION.
    */
   const APPLIED_TARGET: ReadonlyArray<[string, string]> = [
-    // 20261127 (the FOURTH link on refund_requests: transaction_id, added by 20261123
-    // a day after 20261122 reviewed the other three). payment_transactions is a table
-    // the plan empties, so leaving that link unreviewed makes G-18 refuse every check,
-    // delete and anonymise on prod — the same class of miss as 20261092 and 20261097.
-    [MIGRATION_FILE, '05930dd60f879266a31c2a7e3452a79ee9824b5eae3b070fac07df131c6d4ad8'],
-    [ROLLBACK_FILE, 'df18f1755d57d669d2c447c91dc75cae645abd88ea6c9a1ac1cc5740868d36e6'],
+    // 20261130 (crm_client_standing joins the plan, created by 20261128, and its two
+    // links are reviewed: user_id to business_profiles and contact_id to crm_contacts).
+    // Both parents are tables the plan empties, so leaving either unreviewed makes G-18
+    // refuse every check, delete and anonymise on prod — the same class of miss as
+    // 20261092, 20261097 and 20261127.
+    //
+    // NOT YET APPLIED to prod as this is pinned: a cleanup migration is applied before
+    // its PR merges, so this must be run against prod and its stamp confirmed live
+    // before #663 goes in.
+    [MIGRATION_FILE, '25e15f004a981125c0a4624ae245876f832b01dc4975b35d8b6b16cb9681173c'],
+    [ROLLBACK_FILE, 'f2e7398ed4d3f02f26461449806f8922d80661c8fcafe7ccbeb6bac813004a00'],
   ];
 
   it.each([...APPLIED, ...PENDING_PREVIOUS, ...APPLIED_TARGET])('%s is byte-identical to what was applied', (file, sha256) => {

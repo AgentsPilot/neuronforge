@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { getVerticalLabel, isKnownVertical } from '@/lib/business-os/verticalLabels';
 
 interface BusinessSettings {
   work_hours_per_day?: number;
@@ -44,7 +45,7 @@ interface BusinessProfile {
 
 export function BusinessTab() {
   const { user } = useAuth();
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [successMessage, setSuccessMessage] = useState('');
@@ -165,6 +166,18 @@ export function BusinessTab() {
           work_hours_per_day: businessForm.work_hours_per_day,
         };
 
+        /*
+         * ⚠️ THIS COMPONENT IS RENDERED NOWHERE, and this write is the reason
+         * to leave it that way without fixing it first.
+         *
+         * `organizations.name` is a tenancy label seeded with the account email
+         * at signup; the business name is `business_profiles.company_name`,
+         * which is what the onboarding chat writes and what every reader uses.
+         * `BusinessProfileSection` and the V2 Organisation tab both write the
+         * name to `company_name` now. Mounting this screen as it stands would
+         * reintroduce the split: an owner would name their business here and
+         * see no invoice, booking page or email change.
+         */
         const { error: orgError } = await supabase
           .from('organizations')
           .update({
@@ -381,17 +394,25 @@ export function BusinessTab() {
       </div>
 
       {/* Business Profile from Onboarding (read-only display) */}
-      {businessProfile && (businessProfile.vertical || businessProfile.website_url) && (
+      {businessProfile && (isKnownVertical(businessProfile.vertical) || businessProfile.website_url) && (
         <div className="pt-6 border-t border-[var(--v2-border)]">
           <h4 className="text-base font-semibold text-[var(--v2-text-primary)] mb-3">
             {t('settings.business.profile_title')}
           </h4>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-            {businessProfile.vertical && (
+            {/*
+              The sentinel is not a business type, and the raw key is not a
+              label. This printed `vertical.replace(/_/g, ' ')`, so an account
+              whose trade was never read displayed "default" — and a Hebrew
+              account read "home services" either way. Gated on the same
+              question the dashboard's readiness row asks, and named through the
+              table that has the words in all three languages.
+            */}
+            {isKnownVertical(businessProfile.vertical) && (
               <div className="p-3 bg-[var(--v2-bg)] border border-gray-200 dark:border-gray-700" style={{ borderRadius: 'var(--v2-radius-button)' }}>
                 <p className="text-xs text-[var(--v2-text-muted)]">{t('settings.business.vertical')}</p>
-                <p className="text-sm font-medium text-[var(--v2-text-primary)] capitalize mt-0.5">
-                  {businessProfile.vertical.replace(/_/g, ' ')}
+                <p className="text-sm font-medium text-[var(--v2-text-primary)] mt-0.5">
+                  {getVerticalLabel(businessProfile.vertical, language)}
                 </p>
               </div>
             )}

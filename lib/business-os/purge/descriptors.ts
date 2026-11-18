@@ -1199,6 +1199,9 @@ const IN_SCOPE: PurgeDescriptor[] = [
   { table: 'crm_pipeline_stages', level: 'purge', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: CRM_PIPELINE_STAGES_EXPORT,
     notes: 'Seeded by /api/onboarding/build; Reset keeps them so the board still works.' },
   { table: 'crm_tasks', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: CRM_TASKS_EXPORT },
+  { table: 'crm_client_standing', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+    export: exclude(EXPORT_REASON.CACHE, 'a reading of how a client has behaved, recomputed from the sessions, instalments and refunds that ARE exported. Exporting the reading as well would hand somebody a judgement about a third party that the underlying rows already state as facts'),
+    notes: 'Snapshots, one per contact per day, written only when the picture changed (20261128). Derived: a Reset drops them and the next run of the job rebuilds today from source rows. The HISTORY cannot be rebuilt, which is the point of keeping it — see the migration header.' },
   { table: 'contact_documents', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: CONTACT_DOCUMENTS_EXPORT,
     notes: 'Rows index objects in the contact-documents bucket. NOTE: ContactDocumentsRepository soft-deletes, which is why the snapshot must NOT read through it (B-4).' },
 

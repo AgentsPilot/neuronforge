@@ -46,7 +46,6 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Plus, Search, X } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 import {
   monthCompletions,
@@ -253,10 +252,41 @@ export function MoneySearchField({
     };
   }, [panelOpen]);
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE BOX HOLDS WHAT WAS TYPED. THE PARSER DOES NOT GET TO EDIT IT.
+   *
+   * `free` is rebuilt from the parsed terms, and the parser normalises
+   * whitespace: `flush` does `pending.join(' ').trim()`. So rendering `free`
+   * straight into the input erased a space ON THE KEYSTROKE THAT TYPED IT —
+   * "John" + space came back as "John", and a first name and a last name could
+   * not be searched for together at all. The text search itself was fine; it
+   * was unreachable.
+   *
+   * So the typed string lives here and the parser reads it, never the reverse.
+   * `pushed` is the exact string this component last sent up: when that is what
+   * comes back, the box is already right and is left alone. Anything else — a
+   * chip added or dropped, the clear button, a filter set from elsewhere — is a
+   * change the box did not make, and it resyncs.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [draft, setDraft] = useState(free);
+  const pushed = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (pushed.current !== null && pushed.current === value) return;
+    setDraft(free);
+  }, [value, free]);
+
   /** Replace the free text, keeping every chip. */
   const setFree = (next: string) => {
+    setDraft(next);
+
     const kept = chips.map(term => term.raw).join(' ');
-    onChange([kept, next].filter(Boolean).join(' '));
+    const combined = [kept, next].filter(Boolean).join(' ');
+
+    pushed.current = combined;
+    onChange(combined);
   };
 
   /** Take one offer: it replaces the text it was a reading OF. */
@@ -400,11 +430,14 @@ export function MoneySearchField({
         <input
           ref={inputRef}
           type="text"
-          value={free}
+          value={draft}
           /*
            * Editing REPLACES the free text and keeps the chips, by rebuilding
            * the string as "chips + what is now typed". Appending to the raw
            * value instead sent the caret to the end on every keystroke.
+           *
+           * `draft`, not `free`: see the note on `setFree`. Rendering the
+           * parsed text here is what made a space untypeable.
            */
           onChange={event => setFree(event.target.value)}
           onKeyDown={onKeyDown}

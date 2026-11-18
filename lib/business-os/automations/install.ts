@@ -543,8 +543,43 @@ export async function ensureEssentialAutomations(userId: string): Promise<void> 
         .filter(Boolean) as string[]
     );
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * ESSENTIAL STILL MEANS "IF THIS BUSINESS CAN USE IT".
+     *
+     * `essential` says the agent is installed without being offered — the owner
+     * never asked for it, so it must be there before the thing it watches for
+     * happens. It was being read as "install unconditionally", and the two are
+     * not the same.
+     *
+     * Measured: a contractor selling one quoted job, with no invoice, no
+     * payment and no price anywhere, had the refund agent reinstalled every
+     * time the dashboard rendered. Deleting it changed nothing; it came back on
+     * the next page view, ran each morning and reported "Nothing to do" against
+     * money that cannot exist.
+     *
+     * `automationApplies` is the same check the install ROUTE already makes and
+     * refuses with `requirement_unmet`. This path never asked, so the one way
+     * an agent can arrive without the owner's involvement was the one way it
+     * could arrive unwanted.
+     *
+     * Not a cache: asked per render, like the route, because the answer changes
+     * the day a business raises its first invoice — and that is exactly when
+     * this agent should appear.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const { automationApplies } = await import('@/lib/business-os/gaps/automationApplies');
+
     for (const automation of essential) {
       if (have.has(automation.id)) continue;
+
+      if (!(await automationApplies(userId, automation as never))) {
+        logger.info(
+          { userId, automationId: automation.id, requires: automation.requires },
+          'Skipped an essential agent this business cannot use yet'
+        );
+        continue;
+      }
 
       const outcome = await installAutomation(userId, automation);
 

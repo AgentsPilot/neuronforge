@@ -76,10 +76,24 @@ export function V2ThemeProvider({
   children,
   customTokens: serverCustomTokens = NO_CUSTOM_TOKENS,
   customTokensKnown = true,
+  mode: segmentMode = 'owner',
 }: {
   children: React.ReactNode
   customTokens?: V2CustomTokens
   customTokensKnown?: boolean
+  /**
+   * Whose theme this segment paints.
+   *
+   * `'owner'` is every segment but onboarding: the stored choice, else the OS.
+   * `'light'` paints light regardless, reads nothing and WRITES NOTHING — see
+   * `V2_THEME_SCRIPT_FORCE_LIGHT` for why onboarding needs that rather than a
+   * default.
+   *
+   * Whatever a layout passes here it MUST also pass to `V2ThemeScript`, or the
+   * two disagree and the class flips after mount, which is the flash the parity
+   * test exists to catch.
+   */
+  mode?: 'owner' | 'light'
 }) {
   const [mounted, setMounted] = useState(false)
   const [mode, setMode] = useState<ThemeMode>('light')
@@ -92,7 +106,14 @@ export function V2ThemeProvider({
    * `--v2-*` variable (custom tokens first, defaults otherwise). Called from the
    * mount effect and from the mode effect below.
    */
-  const applyTheme = (themeMode: ThemeMode) => {
+  /**
+   * @param persist whether to record this as the owner's choice. False in the
+   *        forced-light segment, and the reason is the whole point of that
+   *        mode: writing `'light'` there would overwrite a dark preference the
+   *        owner set on their dashboard, so onboarding would silently change
+   *        the look of the rest of the product.
+   */
+  const applyTheme = (themeMode: ThemeMode, persist = true) => {
     const root = document.documentElement
     const isDark = themeMode === 'dark'
 
@@ -104,7 +125,7 @@ export function V2ThemeProvider({
     }
 
     // Save preference
-    localStorage.setItem(V2_THEME_STORAGE_KEY, themeMode)
+    if (persist) localStorage.setItem(V2_THEME_STORAGE_KEY, themeMode)
 
     // Inject CSS variables into root, using custom tokens where available
     const colors = isDark ? {
@@ -276,14 +297,23 @@ export function V2ThemeProvider({
   useIsomorphicLayoutEffect(() => {
     // Check localStorage for saved preference, otherwise the system preference.
     // V2ThemeScript makes the same decision before paint (parity test T-S2).
-    const savedMode = localStorage.getItem(V2_THEME_STORAGE_KEY) as ThemeMode
+    /*
+     * A forced-light segment reads nothing and writes nothing: the stored key
+     * is a DEVICE key that survives sign-out, so reading it is how the previous
+     * owner's dark mode reached the next owner's first-run interview. The
+     * script above has already removed the class before paint.
+     */
+    const savedMode =
+      segmentMode === 'light' ? null : (localStorage.getItem(V2_THEME_STORAGE_KEY) as ThemeMode)
     const initialMode: ThemeMode = savedMode
       ? savedMode
-      : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      : segmentMode === 'light'
+        ? 'light'
+        : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 
     // Written to the DOM here, in the layout phase, so a client-side entry into
     // an owner segment has the right theme before its first paint (SA RC-1).
-    applyTheme(initialMode)
+    applyTheme(initialMode, segmentMode !== 'light')
 
     // The context state follows as a transition. A synchronous update here, on
     // the hydration commit, would reach the children's Suspense boundary while
@@ -303,7 +333,11 @@ export function V2ThemeProvider({
     // running would strip the `.dark` that V2ThemeScript and the mount effect
     // set, and persist 'light'.
     if (!mounted) return
-    applyTheme(mode)
+    /* Same `persist` rule as the mount effect, and this call is the one that
+       would have broken the promise: it re-runs whenever the custom tokens
+       correction lands, so a forced-light segment would have written 'light'
+       over a dark preference a second or two after the page settled. */
+    applyTheme(mode, segmentMode !== 'light')
     // Deps: applyTheme reads only mode and customTokens
   }, [mode, mounted, customTokens])
 

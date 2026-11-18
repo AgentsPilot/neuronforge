@@ -18,6 +18,14 @@ export interface BusinessProfileFields {
   company_name?: string | null;
   vertical?: string | null;
   /**
+   * The PUBLIC contact details — what a client uses to reach this business.
+   *
+   * Not the account's login email: that is `auth.users.email` and it is often
+   * a personal address nobody wants printed on a booking page.
+   */
+  phone?: string | null;
+  email?: string | null;
+  /**
    * `business_profiles.logo_url`. Optional in this type on purpose: the column
    * arrives with the logo migration, and until it does the caller has no value
    * to pass. Treated as missing, never as a reason to fail.
@@ -31,6 +39,28 @@ export interface OrganizationSettings {
   company_size?: string | null;
   primary_goal?: string | null;
   technical_level?: string | null;
+  /**
+   * What the owner calls their business, in their own words.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE ANSWER THAT HAD NOWHERE TO GO.
+   *
+   * `business_profiles.vertical` is a PIPELINE KEY, picked from a fixed list,
+   * and `default` is a legitimate value for a business the list cannot
+   * describe. The check below is right to refuse the sentinel — and until this
+   * field existed it also made the gap unfixable: no question asked for a
+   * business type, no form could set one, and the dashboard asked for it
+   * anyway. Measured on a renovation contractor, who read "Business type:
+   * Service Provider" in settings and "business type missing" on the dashboard
+   * in the same session.
+   *
+   * So the two facts are now separate. The pipeline stays whatever fits, even
+   * when that is the generic board; this holds what the business IS, free text,
+   * answered in settings. Either one satisfies the gate: a trade we have a
+   * preset for needs no typing, and a trade we do not can still be named.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  business_type?: string | null;
 }
 
 export type ProfileField =
@@ -53,7 +83,34 @@ export type ProfileField =
   | 'industry'
   | 'company_size'
   | 'primary_goal'
-  | 'technical_level';
+  | 'technical_level'
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * 'phone' AND 'email' — ASKED FOR, BECAUSE NOTHING ELSE EVER ASKS.
+   *
+   * These were deliberately excluded, on the argument that a contact section
+   * falls back to the enquiry form so a page without them still works. That
+   * argument is sound about the PAGE and wrong about the BUSINESS, and the
+   * thing it missed is where the answer would otherwise come from:
+   *
+   *   the onboarding chat has no question for either. Not a skipped one, not
+   *   an optional one — no question exists, so a business that never opens
+   *   settings has no way to be reachable by phone or by mail, and nothing in
+   *   the product ever mentions it.
+   *
+   * A prompt was the previous answer and a prompt is only as good as the
+   * screen it appears on. Making them part of the profile step puts them in
+   * the one place every account is walked through, once, at the start.
+   *
+   * WHAT THIS DOES NOT DO: it does not block an invoice. `journeyReadiness`
+   * lists both in `NOT_NEEDED_TO_INVOICE`, because a legal document needs a
+   * company name, a tax id, an address and a way to be paid — not a phone
+   * number. The gate they reach is the profile step, which is where they are
+   * typed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  | 'phone'
+  | 'email';
 
 /** Fields from `business_profiles` that the invoice settings section writes. */
 export interface InvoiceFields {
@@ -110,8 +167,9 @@ const UNKNOWN_VERTICALS = new Set(['default', 'other']);
  * ─────────────────────────────────────────────────────────────────────────────
  * NOT every field the form exposes. This comment used to claim that it was, and
  * the claim was false: `BusinessProfileSection` also writes `website_url`,
- * `phone`, `email`, `address`/`address_parts` and `logo_url`, none of which are
- * counted here.
+ * `address`/`address_parts` and `logo_url`, none of which are counted here.
+ * (`phone` and `email` were in that list and have since joined the gates — see
+ * `ProfileField` for why.)
  *
  * The distinction is deliberate, and it is not "the whole form". A field
  * belongs in this list only if the platform BREAKS without it:
@@ -122,6 +180,8 @@ const UNKNOWN_VERTICALS = new Set(['default', 'other']);
  *   company_size     | the four answers the setup and the AI read to decide
  *   primary_goal     | what this account needs
  *   technical_level /
+ *   phone           \  how a client reaches this business. NOTHING ELSE ASKS:
+ *   email           /  the onboarding chat has no question for either
  *
  * Deliberately NOT gates, each for a reason worth keeping:
  *
@@ -132,8 +192,6 @@ const UNKNOWN_VERTICALS = new Set(['default', 'other']);
  *                finishing setup inverts the product.
  *   address      the invoice needs one and `missingInvoiceFields` gates it
  *                there, on `invoice_address`, where it is actually used.
- *   phone/email  a contact section falls back to the enquiry form, so a page
- *                without them still works. Worth PROMPTING for, never a gate.
  *
  * The rule, so the next person does not "complete" this list: a gate is a
  * thing that is broken without an answer, not a thing it would be nice to
@@ -160,15 +218,47 @@ export function missingProfileFields(
    * these: we did. Measured on a real account whose readiness card read
    * "Business details — complete" with `vertical: 'default'`, which is the one
    * field in this list that decides the shape of the whole setup.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * UNLESS THE OWNER HAS SAID IT THEMSELVES, which is the other half of the
+   * same argument.
+   *
+   * A sentinel is not an answer from US. It can still be sitting beside one
+   * the owner gave: `settings.business_type` is free text, typed in settings,
+   * for the trades the preset list has no key for — a contractor, a caterer, a
+   * garage. Refusing those too made this gate unsatisfiable rather than strict,
+   * and a gate nobody can pass stops being read. See the field's own note.
+   *
+   * The pipeline is deliberately NOT required to change for that: we have no
+   * renovation preset, the generic board is a reasonable one, and manufacturing
+   * a preset key out of typed words would hand somebody stages they did not
+   * choose — the exact failure `normalizeVertical` records.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  if (!hasValue(profile?.vertical) || UNKNOWN_VERTICALS.has(profile!.vertical!.trim().toLowerCase())) {
+  const verticalIsAnswer =
+    hasValue(profile?.vertical) && !UNKNOWN_VERTICALS.has(profile!.vertical!.trim().toLowerCase());
+
+  if (!verticalIsAnswer && !hasValue(settings?.business_type)) {
     missing.push('business_type');
   }
   if (!hasValue(settings?.industry)) missing.push('industry');
   if (!hasValue(settings?.company_size)) missing.push('company_size');
   if (!hasValue(settings?.primary_goal)) missing.push('primary_goal');
   if (!hasValue(settings?.technical_level)) missing.push('technical_level');
+
+  /*
+   * How a client reaches this business, asked here because nowhere else asks.
+   *
+   * Last in the list on purpose: the list is read out in order on the dashboard
+   * and in the settings strip, and who the business is comes before how to
+   * reach it.
+   *
+   * `hasValue` is the whole test. A phone number's shape is the form's problem
+   * — `toE164` and the phone input handle that — and a second opinion here
+   * would let the two disagree about the same string.
+   */
+  if (!hasValue(profile?.phone)) missing.push('phone');
+  if (!hasValue(profile?.email)) missing.push('email');
 
   return missing;
 }

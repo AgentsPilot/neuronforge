@@ -16,7 +16,7 @@ Object.defineProperty(globalThis, 'TextEncoder', { value: TextEncoder, configura
 const { renderToStaticMarkup } = require('react-dom/server') as typeof import('react-dom/server');
 import { createRoot } from 'react-dom/client';
 
-import { V2ThemeScript, V2_THEME_SCRIPT } from '../V2ThemeScript';
+import { V2ThemeScript, V2_THEME_SCRIPT, V2_THEME_SCRIPT_FORCE_LIGHT } from '../V2ThemeScript';
 import { V2ThemeProvider } from '../theme-provider';
 import { V2_THEME_STORAGE_KEY } from '../themeMode';
 
@@ -114,6 +114,95 @@ describe('T-S3/T-S4 edge cases', () => {
     expect(runScript).not.toThrow();
     expect(isDark()).toBe(false);
     spy.mockRestore();
+  });
+});
+
+/**
+ * The onboarding pairing, which has the same contract and one extra promise.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY IT EXISTS. `v2-theme-mode` is a DEVICE key by deliberate design, excluded
+ * from the keys sign-out clears on the grounds that it identifies nobody, so it
+ * outlives the owner who set it. Reported from testing: the second owner to
+ * onboard on a browser got the first one's dark mode, and a mere default could
+ * not fix it because a value WAS stored.
+ *
+ * So this mode reads nothing. The extra promise is that it also WRITES nothing:
+ * an owner who chose dark on their dashboard must still have dark after passing
+ * through onboarding, and `applyTheme` persists on every call unless told not
+ * to. That is asserted here because nothing else would notice it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('T-S6 the forced-light segment', () => {
+  const runForced = () => new Function(V2_THEME_SCRIPT_FORCE_LIGHT)();
+
+  it.each(CASES)('paints light whatever is stored: %p, OS dark %p', (stored, osDark) => {
+    mockOs(osDark);
+    if (stored !== null) localStorage.setItem(V2_THEME_STORAGE_KEY, stored);
+    /* The class a previous segment may have left on the element. */
+    document.documentElement.classList.add('dark');
+
+    runForced();
+
+    expect(isDark()).toBe(false);
+  });
+
+  it.each(CASES)('and the provider agrees, with no flip: %p, OS dark %p', async (stored, osDark) => {
+    mockOs(osDark);
+    if (stored !== null) localStorage.setItem(V2_THEME_STORAGE_KEY, stored);
+    runForced();
+
+    const flips: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const r of records) {
+        if (r.attributeName !== 'class') continue;
+        const was = (r.oldValue ?? '').split(/\s+/).includes('dark');
+        if (was !== isDark()) flips.push(`${was}->${isDark()}`);
+      }
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeOldValue: true });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(<V2ThemeProvider mode="light"><span /></V2ThemeProvider>);
+    });
+    await act(async () => {});
+    observer.takeRecords();
+    observer.disconnect();
+    act(() => root.unmount());
+    host.remove();
+
+    expect(flips).toEqual([]);
+    expect(isDark()).toBe(false);
+  });
+
+  it('leaves a dark preference exactly as it found it', async () => {
+    /* The promise the whole mode depends on. A write here would mean passing
+       through onboarding silently relit the rest of the product. */
+    mockOs(false);
+    localStorage.setItem(V2_THEME_STORAGE_KEY, 'dark');
+    runForced();
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(<V2ThemeProvider mode="light"><span /></V2ThemeProvider>);
+    });
+    await act(async () => {});
+    act(() => root.unmount());
+    host.remove();
+
+    expect(localStorage.getItem(V2_THEME_STORAGE_KEY)).toBe('dark');
+  });
+
+  it('still persists in an owner segment, which is the behaviour it must not break', () => {
+    /* The control for the test above: `persist` defaults to true everywhere
+       else, and a mode prop that silently disabled it would be invisible. */
+    expect(V2_THEME_SCRIPT).toContain(JSON.stringify(V2_THEME_STORAGE_KEY));
+    expect(V2_THEME_SCRIPT_FORCE_LIGHT).not.toContain(JSON.stringify(V2_THEME_STORAGE_KEY));
   });
 });
 

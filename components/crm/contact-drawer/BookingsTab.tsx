@@ -33,6 +33,7 @@ import {
   type LucideIcon
 } from 'lucide-react';
 import { STATUS_TONE } from '@/lib/payments/moneyStatusTone';
+import { QuoteSubNodes } from '@/components/crm/contact-drawer/QuoteSubNodes';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { CollapsibleSection } from '../CollapsibleSection';
@@ -711,6 +712,26 @@ interface ProposalVersion {
   status: string;
   /** When this version stopped — decided, or sent and still open. */
   at: string | null;
+  /*
+   * Every moment, for the sub-node spine below the row.
+   *
+   * `at` above is one date because a one-line row has room for one. The spine
+   * needs all of them: a quote sent, lapsed, extended and then read has four,
+   * and naming only the last made an extension look like an untouched send.
+   * `extendedAt` and `extendedFrom` arrive with migration 20261129 and are null
+   * until then, which simply draws one fewer sub-node.
+   */
+  createdAt?: string | null;
+  sentAt?: string | null;
+  viewedAt?: string | null;
+  decidedAt?: string | null;
+  stoppedAt?: string | null;
+  validUntil?: string | null;
+  extendedAt?: string | null;
+  extendedFrom?: string | null;
+  supersedesId?: string | null;
+  createdInvoiceId?: string | null;
+  createdPlanId?: string | null;
   isCurrent: boolean;
   /** The first file sent with this version, if any. */
   documentName: string | null;
@@ -3676,6 +3697,21 @@ export function BookingsTab({
                                   )
                                     ? (step.metadata?.versions as ProposalVersion[])
                                     : [];
+                                  /*
+                                    ── OLDEST FIRST, BECAUSE IT IS A STORY ────────────
+                                    This listed newest-first, which is right for a ledger
+                                    and wrong for a negotiation: the first number is the
+                                    REASON the second one exists, and reading the answer
+                                    before the question made a revision chain something
+                                    you had to reconstruct. Each version now carries its
+                                    own spine of sub-nodes, which runs forwards in time —
+                                    so a backwards list of forwards stories read as
+                                    neither.
+
+                                    Copied rather than reversed in place: `metadata` is
+                                    shared, and `reverse()` mutates.
+                                  */
+                                  const orderedVersions = [...proposalVersions].reverse();
                                   const isPaymentStep = step.key === 'payment';
                                   const isConfirmationStep = step.key === 'confirmation';
                                   /* The job ending, as its own node. Not the meeting
@@ -5487,9 +5523,11 @@ export function BookingsTab({
                                           NEGOTIATION, and then the first number
                                           is the reason the second one exists.
 
-                                          Read newest-first, matching the strip
-                                          above, and each row is one sentence:
-                                          how much, what happened, when.
+                                          Read OLDEST-first: the first number is
+                                          the reason the second one exists, and
+                                          each version's own spine runs forwards
+                                          in time, so a backwards list of
+                                          forwards stories read as neither.
                                         */}
                                         {/*
                                           Shown from the FIRST version, not the second.
@@ -5512,8 +5550,21 @@ export function BookingsTab({
                                                 border: '1px solid var(--v2-border)',
                                               }}
                                             >
-                                              {proposalVersions.map(version => {
+                                              {orderedVersions.map((version, versionIndex) => {
                                                 const tone = VERSION_TONES[version.status] ?? VERSION_TONES.sent;
+
+                                                /*
+                                                  The version this one replaced, when it is the
+                                                  line directly above. Matched on `supersedes_id`
+                                                  rather than on position: the chain is recorded,
+                                                  and guessing it from the order would invent a
+                                                  link between two unrelated quotes.
+                                                */
+                                                const previousVersion = orderedVersions[versionIndex - 1];
+                                                const replaced =
+                                                  previousVersion && version.supersedesId === previousVersion.id
+                                                    ? previousVersion
+                                                    : null;
 
                                                 return (
                                                   <div
@@ -5525,6 +5576,38 @@ export function BookingsTab({
                                                         : 'transparent',
                                                     }}
                                                   >
+                                                  {/*
+                                                    ── THE BRANCH, DRAWN ───────────────────────
+                                                    A revision is a NEW quote chained to the one
+                                                    it replaced, not an edit of it. Listing the
+                                                    two as neighbours said they were related and
+                                                    never that one came OUT of the other, so a
+                                                    negotiation read as two unconnected prices.
+                                                  */}
+                                                  {replaced && (
+                                                    <div
+                                                      className="mb-2 flex items-start gap-2 px-2 py-1.5 text-[11.5px]"
+                                                      style={{
+                                                        borderRadius: '8px',
+                                                        color: 'var(--v2-text-muted)',
+                                                        background:
+                                                          'color-mix(in srgb, var(--v2-primary) 7%, transparent)',
+                                                        border:
+                                                          '1px dashed color-mix(in srgb, var(--v2-primary) 38%, transparent)',
+                                                      }}
+                                                    >
+                                                      <span aria-hidden="true" className="shrink-0">
+                                                        {isRTL ? '↲' : '↳'}
+                                                      </span>
+                                                      <span>
+                                                        {(
+                                                          t('crm.proposal.replaces_above') ||
+                                                          'Priced again. {amount} above stays on the record.'
+                                                        ).replace('{amount}', replaced.amount)}
+                                                      </span>
+                                                    </div>
+                                                  )}
+
                                                   {/*
                                                     Every version opens, whatever became of it.
                                                     ─────────────────────────────────────────
@@ -5586,6 +5669,21 @@ export function BookingsTab({
                                                     >
                                                       {version.amount}
                                                     </span>
+
+                                                    {/* What this price replaced, so a revision
+                                                        shows its own movement. The superseded
+                                                        row strikes its OWN amount through too —
+                                                        this is the same fact said where the
+                                                        comparison is actually made. */}
+                                                    {replaced && (
+                                                      <span
+                                                        className="shrink-0 text-[11.5px] tabular-nums line-through"
+                                                        style={{ color: 'var(--v2-text-muted)', opacity: 0.8 }}
+                                                        title={t('crm.proposal.replaces_above_title') || 'The price this one replaced'}
+                                                      >
+                                                        {replaced.amount}
+                                                      </span>
+                                                    )}
 
                                                     <span
                                                       className="text-[12px]"
@@ -5791,6 +5889,57 @@ export function BookingsTab({
                                                         ) : null}
                                                       </p>
                                                     )}
+
+                                                    {/*
+                                                      THE VERSION'S OWN STORY, under the version.
+                                                      ─────────────────────────────────────────
+                                                      The row above says where this version got
+                                                      to. This says how it got there: sent,
+                                                      lapsed, put back on the table, read. The
+                                                      extension sub-node is the one that was
+                                                      missing — an owner who extended a lapsed
+                                                      quote saw a row still dated to the original
+                                                      send and concluded nothing had happened.
+
+                                                      Only for the version being read, so a long
+                                                      negotiation does not unroll five spines at
+                                                      once: `isCurrent` is the one the strip
+                                                      already highlights.
+                                                    */}
+                                                    {/* Every version, not only the
+                                                        current one: a revision chain
+                                                        whose superseded half showed as a
+                                                        bare line told half the story.
+                                                        The replaced ones start folded. */}
+                                                    <QuoteSubNodes
+                                                        defaultOpen={version.isCurrent}
+                                                        version={version}
+                                                        formatDateTime={formatDateTime}
+                                                        formatShortDate={iso =>
+                                                          formatShortDate(iso, { withYear: false })
+                                                        }
+                                                        t={t}
+                                                        isRTL={isRTL}
+                                                        onExtend={onExtendQuote}
+                                                        /* A revision is a NEW proposal that
+                                                           supersedes this one, carrying the
+                                                           objection it was refused on so the
+                                                           owner prices against something they
+                                                           can read. The same builder the
+                                                           declined-quote banner opens. */
+                                                        onPriceAgain={
+                                                          onOpenProposalBuilder
+                                                            ? proposalId =>
+                                                                onOpenProposalBuilder(booking.id, {
+                                                                  supersedesId: proposalId,
+                                                                  declineReason:
+                                                                    version.declineReason ?? null,
+                                                                  declineNote:
+                                                                    version.declineNote ?? null,
+                                                                })
+                                                            : undefined
+                                                        }
+                                                      />
                                                   </div>
                                                 );
                                               })}

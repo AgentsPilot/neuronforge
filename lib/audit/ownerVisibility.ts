@@ -105,6 +105,13 @@ export const AUDIT_ENTITY_OWNER_VISIBILITY = {
   // customer account, so 'owner' shows it to nobody but that admin, and the
   // owner policy's NOT IN list (and so its migration) is unchanged.
   exchange_rate: 'owner',
+  /*
+   * The owner's own payment account. Connecting it, pausing cards, disconnecting
+   * and deleting are all their own actions against their own row, and this trail
+   * is what answers "when did my payouts stop" — so 'owner', and the owner
+   * policy's NOT IN list (and its migration) is unchanged.
+   */
+  stripe_connect_account: 'owner',
 } as const satisfies Record<EntityType, AuditOwnerVisibility>;
 
 /**

@@ -185,6 +185,66 @@ export async function PUT(
       }
     }
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A SERVICE THAT HOLDS NO TIME AND TAKES NO MONEY IS NOT A SERVICE.
+     *
+     * Its client journey is `Service → Details`: somebody picks a name, types
+     * their details, and receives a confirmation. Nothing is held in a diary,
+     * nothing is charged, and the platform delivers nothing. The row collects a
+     * name, which is what the intake form and the website enquiry form already
+     * do, and do better.
+     *
+     * Refused on SAVE and not only on publish, deliberately. A draft is a
+     * service being written; this shape is not an unfinished service, it is a
+     * finished nothing, and leaving it saveable means an owner can build one,
+     * come back a week later and still have it.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * WHY THIS ONE CANNOT FREEZE A ROW, WHICH THE CARD GATE ABOVE ONCE DID.
+     *
+     * That gate refused every edit to a live card row on a processorless
+     * account, including the edit that would fix it, because the fix —
+     * connecting Stripe — lived OUTSIDE the form. The owner had nothing they
+     * could type to get unstuck.
+     *
+     * Here both repairs are in the same payload: set a price, or turn the
+     * appointment on. Either one changes the condition being tested, so the
+     * very next save goes through. There is no state an owner can be held in.
+     *
+     * A quote is never caught: its amount is settled in the proposal, which is
+     * the whole point of quoting, so `sale_mode: 'proposal'` is a priced
+     * service whose price is not known yet.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const current = await schedulingServiceRepository.findById(serviceId, user.id);
+
+    /* What the row will BE after this save: the field if it was sent, the
+       stored value if it was not. Testing only the payload would let a
+       one-field edit slip the gate. */
+    const willBeScheduled =
+      validated.is_scheduled ?? current.data?.is_scheduled ?? true;
+    const willBePrice =
+      validated.price !== undefined ? validated.price : current.data?.price;
+    const willBeQuoted =
+      (validated.sale_mode ?? current.data?.sale_mode) === 'proposal';
+
+    if (!willBeScheduled && !willBeQuoted && !(Number(willBePrice) > 0)) {
+      requestLogger.warn(
+        { userId: user.id, serviceId },
+        'Save refused: the service would hold no time and take no money'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'nothing_to_sell',
+          error:
+            'This takes no appointment and no payment, so there is nothing for a client to book. Give it a price, or switch the appointment on. To collect enquiries instead, use your intake form.',
+        },
+        { status: 400 }
+      );
+    }
+
     // 3. Update service
     //
     // The schema tolerates nulls on the instalment fields because older clients
