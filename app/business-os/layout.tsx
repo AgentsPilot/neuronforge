@@ -17,6 +17,8 @@ import { readPlanBadge } from '@/lib/business-os/entitlements/readPlanBadge';
 import { redirectIfAwaitingPayment } from '@/lib/business-os/invites/paymentHoldGate';
 import { readInitialLanguage } from '@/lib/business-os/readInitialLanguage';
 import { readOwnerIdentity } from '@/lib/business-os/readOwnerIdentity';
+/* One fact, so the tab bar's first frame is not a guess. See the module. */
+import { readSetupStance } from '@/lib/business-os/readSetupStance';
 import { OwnerDirScript } from '@/components/business-os/OwnerDirScript';
 import '@/lib/design-system-v2/v2-theme-tokens.css';
 import { V2ThemeScript } from '@/lib/design-system-v2/V2ThemeScript';
@@ -117,11 +119,14 @@ export default async function BusinessOSLayout({
   // gear). Read here with the pill and AFTER the hold, for the same reasons:
   // the name lives in `profiles`, which only a repository may read, and the
   // header is a client component. Never rejects; `null` keeps the gear.
-  const [planBadge, initialLanguage, paymentNotice, ownerIdentity] = await Promise.all([
+  const [planBadge, initialLanguage, paymentNotice, ownerIdentity, setupStance] = await Promise.all([
     readPlanBadge(),
     initialLanguagePending,
     readPaymentNotice(),
     readOwnerIdentity(),
+    /* In the same parallel block as the rest, so the page waits on the slowest
+       read it was already making rather than on this one. */
+    readSetupStance(),
   ]);
   // Already in flight since before the hold: no extra round trip. `known` is
   // false only when a cold read missed its deadline; the provider then
@@ -172,7 +177,30 @@ export default async function BusinessOSLayout({
                 with nothing able to bring it back.
               */}
               <div
-                className={`flex h-[100dvh] w-full flex-col overflow-hidden ${spaceGrotesk.variable} ${inter.variable}`}
+                /*
+                  ───────────────────────────────────────────────────────────
+                  THE GROUND LIVES HERE, BECAUSE THIS ELEMENT SURVIVES A
+                  NAVIGATION AND THE PAGE UNDER IT DOES NOT.
+                  ───────────────────────────────────────────────────────────
+                  Every page paints `--v2-bg` on its own root. This column had
+                  nothing, so moving between tabs unmounted the only painted
+                  element and showed whatever was behind it for a frame.
+
+                  What is behind it is white: `body` takes `--background`,
+                  which turns dark only under `prefers-color-scheme: dark`,
+                  while the app's own theme is the `dark` class that
+                  `V2ThemeScript` stamps from localStorage. An owner running
+                  the app dark on a light machine therefore had a white
+                  document under every page, and saw it flash on every tab
+                  change. Reported as "moving between tabs show a white page
+                  for a glance".
+
+                  Painting it here fixes the flash at its cause: there is no
+                  longer a frame with nothing painted. `globals.css` also
+                  teaches `body` about the dark class, for the places this
+                  column does not cover.
+                */
+                className={`flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--v2-bg)] ${spaceGrotesk.variable} ${inter.variable}`}
               >
                 {/*
                   The chrome lives here, not in each page.
@@ -195,7 +223,14 @@ export default async function BusinessOSLayout({
                     this any more. */}
                 <div className="relative z-50 shrink-0">
                   <BusinessOSHeader planBadge={planBadge} ownerInitials={ownerIdentity?.initials ?? null} />
-                  <BusinessOSTabs />
+                  {/*
+                    The bar's first frame, decided here rather than guessed.
+                    `hasArrived` false means nobody has been added or paid, so
+                    this account is being walked through and the four capability
+                    tabs would only be taken away a moment later. The session
+                    key the dashboard writes still has the final word.
+                  */}
+                  <BusinessOSTabs initialSetupDone={setupStance.hasArrived ? true : false} />
                   <PlanPaymentBanner notice={paymentNotice} />
                 </div>
 

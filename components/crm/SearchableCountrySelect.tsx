@@ -87,8 +87,23 @@ export function SearchableCountrySelect({ value, onChange, labels }: SearchableC
         className="flex items-center gap-2 px-3 py-2 min-w-[100px] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:border-[#8B5CF6] transition-colors text-sm"
         style={{ borderRadius: 'var(--v2-radius-button)' }}
       >
+        {/*
+            ─────────────────────────────────────────────────────────────────
+            THE FLAG IS NOT ALWAYS A FLAG, SO IT NEEDS A COLOUR.
+
+            This is a regional-indicator pair, which macOS and iOS draw as a
+            flag — and an emoji ignores `color`, so none was ever set here.
+            Windows ships no flag glyphs at all: it falls back to the two
+            LETTERS, "IL" for Israel, and those are ordinary text.
+
+            With no colour on the span they took the inherited default, which
+            is near-black, and the country code sat invisible on a dark
+            surface beside a perfectly readable "+972". Reported from a
+            Windows machine in dark mode, and unreproducible on a Mac.
+            ─────────────────────────────────────────────────────────────────
+          */}
         {value && (
-          <span className="text-lg leading-none">
+          <span className="text-lg leading-none text-[var(--v2-text-primary)]">
             {String.fromCodePoint(...[...value.toUpperCase()].map(c => 127397 + c.charCodeAt(0)))}
           </span>
         )}
@@ -140,7 +155,8 @@ export function SearchableCountrySelect({ value, onChange, labels }: SearchableC
                         : 'hover:bg-[#8B5CF6]/10 text-[var(--v2-text-primary)]'
                     }`}
                   >
-                    <span className="text-lg leading-none">
+                    {/* The same fallback, in the list. See the note above. */}
+                    <span className="text-lg leading-none text-[var(--v2-text-primary)]">
                       {String.fromCodePoint(...[...country.toUpperCase()].map(c => 127397 + c.charCodeAt(0)))}
                     </span>
                     <span className="flex-1 text-sm">{labels[country] || en[country]}</span>

@@ -976,7 +976,7 @@ const refundRequested: GapDefinition = {
     safely('refund_requested', async () => {
       const { data } = await supabaseServer
         .from('refund_requests')
-        .select('id, contact_id, booking_id, amount_requested, currency, reason, note, created_at, source, recommendation, recommended_amount, reasoning, assessed_at')
+        .select('id, contact_id, booking_id, amount_requested, currency, reason, note, created_at, source, recommendation, recommended_amount, reasoning, client_message_draft, assessed_at')
         .eq('user_id', userId)
         /*
          * ─────────────────────────────────────────────────────────────────────
@@ -1181,6 +1181,17 @@ const refundRequested: GapDefinition = {
         refundRecommendedAmount:
           typeof r.recommended_amount === 'number' ? r.recommended_amount : undefined,
         refundReasoning: str(r.reasoning) || undefined,
+        /*
+         * The reply the agent drafted FOR THE CLIENT, which the card seeds its
+         * reply box with.
+         *
+         * The agent has been writing this into `refund_requests` since it
+         * shipped and nothing read it, so every owner met an empty box under a
+         * recommendation that had already worked out what to say. The same
+         * silent drop this file's siblings warn about: a field nobody names
+         * does not travel.
+         */
+        refundClientDraft: str(r.client_message_draft) || undefined,
         /*
          * WHAT THE DIARY SAYS, so the owner never has to go and look.
          *

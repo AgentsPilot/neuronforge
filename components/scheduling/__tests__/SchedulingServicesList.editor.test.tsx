@@ -77,9 +77,30 @@ const settle = () => act(async () => { await Promise.resolve(); });
 async function openEditor(
   options: { processorReady?: boolean; service?: Partial<SchedulingService> } = {}
 ) {
-  global.fetch = jest.fn(() =>
-    Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) } as Response)
-  ) as unknown as typeof fetch;
+  /*
+   * Answers PER URL, because the list no longer takes the processor from its
+   * prop alone: it reads `/api/payments/stripe-connect` and
+   * `/api/plugin-connections` live, so that an owner who connects Stripe from
+   * the publish step stops being told to connect one. A blanket `{success:
+   * true}` makes every account look unconnected, which is a true answer to a
+   * question this fixture was not meaning to ask.
+   */
+  const connected = options.processorReady ?? true;
+  global.fetch = jest.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    const body =
+      url.includes('/api/payments/stripe-connect')
+        ? {
+            success: true,
+            data: connected
+              ? { charges_enabled: true, details_submitted: true, paused_at: null }
+              : null,
+          }
+        : url.includes('/api/plugin-connections')
+          ? { plugins: [] }
+          : { success: true };
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response);
+  }) as unknown as typeof fetch;
 
   const service = { ...SERVICE, ...(options.service ?? {}) } as SchedulingService;
   render(

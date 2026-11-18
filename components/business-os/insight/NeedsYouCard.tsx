@@ -177,6 +177,53 @@ export interface GapItemView {
    * story.
    */
   eventAt?: string | null;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT A REFUND REQUEST CARRIES.
+   *
+   * This view type is written by hand, and every one of these was already
+   * being read by the card while missing from here: `requestId`,
+   * `refundReasoning`, `refundRecommendedAmount`, `refundViaProcessor` and
+   * `noteKey` all resolved to a type error that `next.config.js` ignores, so
+   * the code worked and the compiler could not help anybody who touched it.
+   *
+   * Declared now, together, because adding one more undeclared field to the
+   * pile was the alternative.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /** The refund request this row is about, so declining can settle it. */
+  requestId?: string | null;
+  /** What the refund agent concluded, and why. */
+  refundRecommendation?: string | null;
+  refundRecommendedAmount?: number | null;
+  refundReasoning?: string | null;
+  /**
+   * The reply the refund agent drafted for the client.
+   *
+   * Seeds the reply box, as a SUGGESTION rather than a draft: no Gmail draft
+   * stands behind it. The agent wrote one from the day it shipped and nothing
+   * read it, so the box opened empty under a finished recommendation.
+   */
+  refundClientDraft?: string | null;
+  /** What is left to return, which is the ceiling on any amount offered. */
+  refundableAmount?: number | null;
+  refundPaymentsCount?: number | null;
+  /**
+   * False when the money did not arrive through a processor, so the platform
+   * can only RECORD that the owner returned it. Changes the button's word.
+   */
+  refundViaProcessor?: boolean | null;
+  /** The note as a KEY, resolved in the reader's language by the card. */
+  noteKey?: string | null;
+  /** What the diary says happened, for answering without leaving the card. */
+  bookingOutcomeKey?: string | null;
+  bookingWhen?: string | null;
+  bookingContradicts?: boolean | null;
+  /** How this client has behaved, where the row makes a claim about them. */
+  concerns?: unknown;
+  score?: number | null;
+  band?: string | null;
 }
 
 export interface GapView {
@@ -1285,6 +1332,130 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
   const openContact = (contactId: string) =>
     router.push(`/business-os/crm?contact=${contactId}`);
 
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE THREE ANSWERS TO A REFUND REQUEST, IN ONE PLACE.
+   *
+   * These lived only in the per-item list. The LEAD row — the promoted one,
+   * drawn with the reply box, and the only row most owners ever see because
+   * the rest stay folded — rendered the generic action instead. So a refund
+   * request arriving as the most urgent thing offered one button, "Refund it",
+   * and no way to return a different amount or to decline. Reported from a
+   * live account with exactly that card on screen.
+   *
+   * A function rather than a copy: two definitions of "what may be done about
+   * money going back" would drift, and the direction they drift in is an owner
+   * on one surface being offered something the other refuses.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const refundDecisions = (
+    gap: GapView,
+    item: GapItemView,
+    state: RowState
+  ) => (
+    <>
+        {gap.id === 'refund_requested' &&
+          item.requestId &&
+          canApproveInOneClick(item) && (
+            <button
+              type="button"
+              onClick={() => void approveRefund(gap, item)}
+              disabled={state.kind === 'working' || state.kind === 'done'}
+              className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
+              style={{
+                background: 'var(--v2-primary)',
+                color: '#fff',
+                border: '1px solid var(--v2-primary)',
+              }}
+            >
+              {state.kind === 'done' ? (
+                <Check className="w-3.5 h-3.5" aria-hidden="true" />
+              ) : (
+                <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
+              )}
+              {t(
+                item.refundViaProcessor === false
+                  ? 'gaps.refund.mark_returned'
+                  : 'gaps.refund.approve'
+              ).replace(
+                '{amount}',
+                typeof item.refundRecommendedAmount === 'number' && item.currency
+                  ? new Intl.NumberFormat(undefined, {
+                      style: 'currency',
+                      currency: item.currency,
+                      maximumFractionDigits: 2,
+                    }).format(item.refundRecommendedAmount)
+                  : ''
+              )}
+            </button>
+          )}
+
+        {/*
+          ANY OTHER AMOUNT — the existing dialog, opened on its
+          partial tab with everything already filled in. Not a
+          second way to move money: the same dialog every other
+          surface uses, reached one step further along.
+        */}
+        {gap.id === 'refund_requested' && item.requestId && item.entityId && (
+          <button
+            type="button"
+            onClick={() =>
+              setRefunding({
+                bookingId: item.entityId as string,
+                /* THE CEILING IS WHAT IS LEFT, not what was
+                   asked: a client may ask for less than they
+                   paid, and the owner may return more as
+                   goodwill. Opening on the ask forbade both. */
+                amount:
+                  typeof item.refundableAmount === 'number'
+                    ? item.refundableAmount
+                    : typeof item.value === 'number'
+                      ? item.value
+                      : 0,
+                currency: item.currency || '',
+                name: item.name,
+                startPartial: true,
+                prefillAmount: item.refundRecommendedAmount,
+                reasonKey: item.noteKey?.replace('payments.refund.reason.', ''),
+                reasonNote: item.quote?.trim() || item.refundReasoning?.trim(),
+              })
+            }
+            disabled={state.kind === 'working' || state.kind === 'done'}
+            className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
+            style={{
+              borderColor: 'var(--v2-border)',
+              color: 'var(--v2-text-secondary)',
+              background: 'transparent',
+            }}
+          >
+            {t('gaps.refund.partial')}
+          </button>
+        )}
+
+        {gap.id === 'refund_requested' && item.requestId && (
+          <button
+            type="button"
+            onClick={() => void answerRefund(gap, item, 'declined')}
+            disabled={state.kind === 'working' || state.kind === 'done'}
+            className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
+            style={{
+              borderColor: 'var(--v2-border)',
+              color: 'var(--v2-text-secondary)',
+              background: 'transparent',
+            }}
+          >
+            {state.kind === 'done' ? (
+              <Check className="w-3.5 h-3.5" aria-hidden="true" />
+            ) : null}
+            {state.kind === 'done'
+              ? t('gaps.refund.declined')
+              : t('gaps.refund.decline')}
+          </button>
+        )}
+    </>
+  );
+
   return (
     <div
       style={{
@@ -1397,7 +1568,20 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
               contactId={lead.item.contactId}
               threadId={lead.item.threadId}
               draftId={lead.item.draftId}
-              draftBody={lead.item.draftBody}
+              /*
+                 THE AGENT'S REPLY, WHEREVER IT CAME FROM.
+
+                 The mail agent files its answer as `draftBody`; the refund
+                 agent writes one into the request as `client_message_draft`
+                 and nothing read it, so an owner met an empty box under a
+                 recommendation that had already worked out what to say.
+
+                 Passed as the same prop deliberately: with no `draftId` the
+                 box calls it a SUGGESTION rather than a draft, which is the
+                 honest label for both — nothing was filed at a mailbox, and
+                 the owner is expected to finish it.
+              */
+              draftBody={lead.item.draftBody ?? lead.item.refundClientDraft}
               subject={lead.item.subject}
               provider={lead.item.viaProvider}
               answeredAt={lead.item.answeredAt}
@@ -1925,7 +2109,8 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                             contactId={item.contactId}
                             threadId={item.threadId}
                             draftId={item.draftId}
-                            draftBody={item.draftBody}
+                            /* The same pairing as the lead row above. */
+                            draftBody={item.draftBody ?? item.refundClientDraft}
                             subject={item.subject}
                             provider={item.viaProvider}
                             answeredAt={item.answeredAt}
@@ -2393,104 +2578,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                         relabel `MoneyEntryActions` already makes.
                         ─────────────────────────────────────────────────────
                       */}
-                      {gap.id === 'refund_requested' &&
-                        item.requestId &&
-                        canApproveInOneClick(item) && (
-                          <button
-                            type="button"
-                            onClick={() => void approveRefund(gap, item)}
-                            disabled={state.kind === 'working' || state.kind === 'done'}
-                            className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
-                            style={{
-                              background: 'var(--v2-primary)',
-                              color: '#fff',
-                              border: '1px solid var(--v2-primary)',
-                            }}
-                          >
-                            {state.kind === 'done' ? (
-                              <Check className="w-3.5 h-3.5" aria-hidden="true" />
-                            ) : (
-                              <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
-                            )}
-                            {t(
-                              item.refundViaProcessor === false
-                                ? 'gaps.refund.mark_returned'
-                                : 'gaps.refund.approve'
-                            ).replace(
-                              '{amount}',
-                              typeof item.refundRecommendedAmount === 'number' && item.currency
-                                ? new Intl.NumberFormat(undefined, {
-                                    style: 'currency',
-                                    currency: item.currency,
-                                    maximumFractionDigits: 2,
-                                  }).format(item.refundRecommendedAmount)
-                                : ''
-                            )}
-                          </button>
-                        )}
-
-                      {/*
-                        ANY OTHER AMOUNT — the existing dialog, opened on its
-                        partial tab with everything already filled in. Not a
-                        second way to move money: the same dialog every other
-                        surface uses, reached one step further along.
-                      */}
-                      {gap.id === 'refund_requested' && item.requestId && item.entityId && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setRefunding({
-                              bookingId: item.entityId as string,
-                              /* THE CEILING IS WHAT IS LEFT, not what was
-                                 asked: a client may ask for less than they
-                                 paid, and the owner may return more as
-                                 goodwill. Opening on the ask forbade both. */
-                              amount:
-                                typeof item.refundableAmount === 'number'
-                                  ? item.refundableAmount
-                                  : typeof item.value === 'number'
-                                    ? item.value
-                                    : 0,
-                              currency: item.currency || '',
-                              name: item.name,
-                              startPartial: true,
-                              prefillAmount: item.refundRecommendedAmount,
-                              reasonKey: item.noteKey?.replace('payments.refund.reason.', ''),
-                              reasonNote: item.quote?.trim() || item.refundReasoning?.trim(),
-                            })
-                          }
-                          disabled={state.kind === 'working' || state.kind === 'done'}
-                          className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
-                          style={{
-                            borderColor: 'var(--v2-border)',
-                            color: 'var(--v2-text-secondary)',
-                            background: 'transparent',
-                          }}
-                        >
-                          {t('gaps.refund.partial')}
-                        </button>
-                      )}
-
-                      {gap.id === 'refund_requested' && item.requestId && (
-                        <button
-                          type="button"
-                          onClick={() => void answerRefund(gap, item, 'declined')}
-                          disabled={state.kind === 'working' || state.kind === 'done'}
-                          className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
-                          style={{
-                            borderColor: 'var(--v2-border)',
-                            color: 'var(--v2-text-secondary)',
-                            background: 'transparent',
-                          }}
-                        >
-                          {state.kind === 'done' ? (
-                            <Check className="w-3.5 h-3.5" aria-hidden="true" />
-                          ) : null}
-                          {state.kind === 'done'
-                            ? t('gaps.refund.declined')
-                            : t('gaps.refund.decline')}
-                        </button>
-                      )}
+                      {refundDecisions(gap, item, state)}
 
                       {item.subject && CONVERSATION_GAPS.has(gap.id) && (
                         <button

@@ -371,7 +371,29 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
    * `null` means not asked yet, and nothing is drawn as missing on an unknown.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  const [businessReady, setBusinessReady] = useState<{ hours: boolean; invoice: boolean } | null>(null);
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE PROCESSOR JOINED THESE TWO, AND THE REASON IS THE BUG IT CAUSED.
+   *
+   * This read the hours and the invoice details live, and took the processor
+   * from the `processorReady` PROP alone. That prop is `stripeConnected` in
+   * `ConfigurationDialog`, decided when that component last checked.
+   *
+   * So an owner who pressed Connect on the publish step, completed Stripe, and
+   * came back still met "A card account. Until it is connected, this service
+   * is invoiced instead" with a Connect button beside it. Everything they had
+   * just done was real and stored; the one surface that asked for it had no
+   * way of hearing about it. Reported as "after configuring stripe it keeps
+   * the card as not completed".
+   *
+   * `readyProbe` already bumps when that panel closes, and now re-reads all
+   * three, so the row answers for the account as it is rather than as it was
+   * when the dialog opened.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [businessReady, setBusinessReady] = useState<
+    { hours: boolean; invoice: boolean; processor: boolean | null } | null
+  >(null);
 
   /*
    * Bumped when a panel this row sent the owner to has closed.
@@ -387,7 +409,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     let cancelled = false;
 
     (async () => {
-      const [hours, invoice] = await Promise.all([
+      const [hours, invoice, processor] = await Promise.all([
         (async () => {
           try {
             const response = await fetch('/api/scheduling/availability');
@@ -428,9 +450,51 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             return true;
           }
         })(),
+        /*
+         * Is there a card account that can actually charge?
+         *
+         * The same row and the same two conditions `ConfigurationDialog` reads
+         * for `stripeConnected`: onboarding finished, or an active OAuth
+         * connection. Written out here rather than imported because that
+         * component holds it in state behind its own fetch, and a second
+         * component asking the same endpoint is cheaper than a prop that
+         * cannot be refreshed from this side.
+         *
+         * `null` on any doubt, which hands the answer back to the prop below
+         * rather than inventing one. Failing OPEN like its two siblings would
+         * be wrong here: claiming a processor that is not connected hides the
+         * Connect button, and the owner would have no way to reach it.
+         */
+        (async () => {
+          try {
+            const [account, plugins] = await Promise.all([
+              fetch('/api/payments/stripe-connect'),
+              fetch('/api/plugin-connections'),
+            ]);
+            if (!account.ok) return null;
+
+            const row = (await account.json())?.data ?? null;
+            const onboarded = Boolean(row?.charges_enabled && row?.details_submitted && !row?.paused_at);
+
+            let oauth = false;
+            if (plugins.ok) {
+              const body = await plugins.json();
+              oauth = Boolean(
+                (body?.plugins ?? []).some(
+                  (conn: { plugin_key?: string; status?: string }) =>
+                    conn.plugin_key === 'stripe' && conn.status === 'active'
+                )
+              );
+            }
+
+            return onboarded || oauth;
+          } catch {
+            return null;
+          }
+        })(),
       ]);
 
-      if (!cancelled) setBusinessReady({ hours, invoice });
+      if (!cancelled) setBusinessReady({ hours, invoice, processor });
     })();
 
     return () => { cancelled = true; };
@@ -453,7 +517,9 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
    */
   const requirementMet = useCallback(
     (id: ServiceRequirementId): boolean => {
-      if (id === 'processor') return processorReady;
+      /* The live read wins where it has an answer; the prop is the fallback,
+         which is exactly the behaviour before the probe learned to ask. */
+      if (id === 'processor') return businessReady?.processor ?? processorReady;
       if (businessReady === null) return true;
       return id === 'hours' ? businessReady.hours : businessReady.invoice;
     },
@@ -2322,7 +2388,10 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         currencyCode={values.currency}
         /* Facts about the BUSINESS, from the same tests the gates use. */
         invoiceReady={requirementMet('invoice')}
-        processorReady={processorReady}
+        /* Through `requirementMet`, not the raw prop: the prop is decided when
+           the dialog last checked, and an owner who just finished Stripe from
+           the publish step would still be told to connect one. */
+        processorReady={requirementMet('processor')}
         hoursReady={requirementMet('hours')}
         /*
          * Each opens the one panel that clears it, and nothing else —

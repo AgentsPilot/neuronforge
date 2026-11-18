@@ -96,8 +96,11 @@ export function WebsiteCountrySelect({ value, onChange, isRTL = false, hasError 
         }`}
         style={{ minHeight: '42px' }}
       >
+        {/* `ap-ink`, like the code beside it: on Windows this is not a flag
+            but the two letters of the country, and an uncoloured span renders
+            them near-black. See `SearchableCountrySelect` for the whole note. */}
         {value && (
-          <span className="text-xl leading-none">
+          <span className="text-xl leading-none ap-ink">
             {getFlagEmoji(value)}
           </span>
         )}
@@ -147,7 +150,8 @@ export function WebsiteCountrySelect({ value, onChange, isRTL = false, hasError 
                         : 'ap-hover ap-ink-2'
                     }`}
                   >
-                    <span className="text-xl leading-none">
+                    {/* The same fallback, in the list. */}
+                    <span className="text-xl leading-none ap-ink">
                       {getFlagEmoji(country)}
                     </span>
                     <span className="flex-1 text-sm truncate">{en[country]}</span>

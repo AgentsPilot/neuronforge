@@ -134,6 +134,26 @@ export function BeingFoundCard({
    * ───────────────────────────────────────────────────────────────────────────
    */
   const [confirmingDecline, setConfirmingDecline] = useState(false);
+  /**
+   * "I will publish it later" has been pressed, and nothing has been recorded.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The same gate as `confirmingDecline`, for the same reason: the consequence
+   * before the decision rather than after it.
+   *
+   * An owner who parks their page has, at that instant, no way for a client to
+   * reach them — and until this gate existed nothing said so and nothing
+   * offered an alternative. Worse, the offer could not be made AFTER the
+   * press: parking answers the website phase, which ends the walkthrough and
+   * unmounts this card, so a card drawn "after skipping" is a card nobody ever
+   * sees.
+   *
+   * Both answers record the skip. The link is an offer, never a condition:
+   * declining it is one press and locks nothing, and the link is still on the
+   * Online presence tab afterwards.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [confirmingSiteWait, setConfirmingSiteWait] = useState(false);
   const [loading, setLoading] = useState(mode === 'link');
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -443,6 +463,109 @@ export function BeingFoundCard({
     linkStageDone && !showMailbox && !justPublished && mode === 'link' && !skipped;
   if (nothingLeft) return null;
 
+  /*
+   * The site, parked. The same quiet line the link gets, for the same reason.
+   *
+   * Without this, pressing "I will publish it later" recorded the answer and
+   * then drew the identical "Your page is built and not yet live" card again,
+   * which reads as the product not having heard. A parked step says so, and
+   * offers the way back.
+   */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * PARKING THE PAGE, WITH THE ALTERNATIVE OFFERED FIRST.
+   *
+   * Reached by "I will publish it later", which now opens this instead of
+   * recording the skip. Both answers below record it, so nothing is locked:
+   * an owner who wants neither presses the second and the setup moves on.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (confirmingSiteWait) {
+    return (
+      <div className="bfc" style={{ direction: isRTL ? 'rtl' : 'ltr', fontFamily: font }}>
+        <div className="bfc-head">
+          <span className="bfc-eyebrow">{tr('found.stage.one', 'Being found')}</span>
+        </div>
+        <h3 style={{ fontFamily: display }}>
+          {tr('found.site.wait.title', 'Until your page is live, nobody can find you')}
+        </h3>
+        <p>
+          {tr(
+            'found.site.wait.body',
+            'Taking more time with your page is fine. While it waits there is nothing for a client to open, so nobody can book you.'
+          )}
+        </p>
+        <p className="bfc-keep">
+          {tr(
+            'found.site.wait.why',
+            'A booking link works today: one address that shows what you sell, lets a client pick a time and leave their details. Put it in your signature or a message. It keeps working once your page is live, and can sit on it.'
+          )}
+        </p>
+
+        <div className="bfc-actions">
+          <button
+            type="button"
+            className="bfc-btn ap-primary-lift"
+            onClick={async () => {
+              /* Publish, then record the page as parked either way: the link
+                 answers being found, the page is still theirs to finish. */
+              const live = await publish();
+              if (live) onSkip();
+            }}
+            disabled={loading || publishing || !link}
+          >
+            {publishing
+              ? tr('found.link.publishing', 'Publishing...')
+              : tr('found.site.wait.publish', 'Publish a booking link')}
+          </button>
+
+          {/*
+            THE REJECTION, AND IT IS A REAL ANSWER.
+
+            An owner may have their own site, their own buttons, or simply want
+            nothing published until the page is ready. One press, the skip is
+            recorded, the setup moves on, and the link is still waiting on the
+            Online presence tab if they change their mind.
+          */}
+          <button
+            type="button"
+            className="bfc-skip"
+            onClick={() => {
+              setConfirmingSiteWait(false);
+              onSkip();
+            }}
+          >
+            {tr('found.site.wait.decline', 'No, I will wait for my page')}
+          </button>
+        </div>
+
+        {error && (
+          <p className="bfc-error" role="alert">
+            {error}
+          </p>
+        )}
+        {sheet}
+      </div>
+    );
+  }
+
+  /*
+   * Parked, as one quiet line. Rarely seen: parking answers the website phase,
+   * which usually ends the walkthrough and unmounts this card. Kept for the
+   * window where a mailbox stage is still outstanding.
+   */
+  if (skipped && !showMailbox && mode === 'site') {
+    return (
+      <div className="bfc bfc-quiet" style={{ direction: isRTL ? 'rtl' : 'ltr', fontFamily: font }}>
+        <span>{tr('found.site.skipped', 'Your page is built and waiting. You said you would publish it later.')}</span>
+        <button type="button" className="bfc-skip" onClick={onUnskip}>
+          {tr('found.site.reconsider', 'Review and publish it now')}
+        </button>
+        {sheet}
+      </div>
+    );
+  }
+
   /* Skipped, with no mailbox stage to carry the offer: one line and nothing else. */
   if (skipped && !showMailbox && !justPublished && mode === 'link' && !link?.is_active) {
     return (
@@ -639,6 +762,30 @@ export function BeingFoundCard({
           <div className="bfc-actions">
             <button type="button" className="bfc-btn ap-primary-lift" onClick={onOpenWebsite}>
               {tr('reach.fix.website', 'Review and publish')}
+            </button>
+            {/*
+              ─────────────────────────────────────────────────────────────────
+              A WAY PAST THIS, WHICH THE LINK BRANCH HAD AND THIS ONE DID NOT.
+              ─────────────────────────────────────────────────────────────────
+              An owner who asked us to build their page met one button:
+              "Review and publish". Publishing a page is not a two-minute job
+              and it is reasonable to want it later, but the only two controls
+              on the card were that and nothing, so the setup could not move on
+              and the step could not be answered. The link branch has offered
+              "I do not need a link" throughout.
+
+              The same `onSkip`, which records the website step as parked. It
+              is an answer, never a claim that the page is live: the readiness
+              graph still reports the gap, the station still shows it, and the
+              page is still not published.
+            */}
+            {/* Opens the gate. Records nothing: see `confirmingSiteWait`. */}
+            <button
+              type="button"
+              className="bfc-skip"
+              onClick={() => setConfirmingSiteWait(true)}
+            >
+              {tr('found.skip.site', 'I will publish it later')}
             </button>
           </div>
         </>

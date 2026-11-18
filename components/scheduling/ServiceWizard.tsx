@@ -96,6 +96,10 @@ export interface ServiceWizardProps {
   currencyCode: string;
 
   /** Facts about the BUSINESS, which a service cannot know about itself. */
+  /* Accepted and no longer read: step 3 stopped asking for the setting up, and
+     step 4 answers the same question from `blockers`, which is the publish
+     gate itself. Kept on the contract so the one caller does not have to
+     change, and so the pair cannot drift apart. */
   invoiceReady: boolean;
   processorReady: boolean;
   hoursReady: boolean;
@@ -346,13 +350,9 @@ export function ServiceWizard({
             <StepMoney
               values={values}
               onChange={onChange}
+              /* No `facts`: the setting-up rows moved to step 4, which builds
+                 them from the publish gate rather than from these flags. */
               currencySymbol={currencySymbol}
-              facts={{
-                invoiceReady,
-                processorReady,
-                onFixInvoice,
-                onConnectProcessor,
-              }}
             />
           )}
 

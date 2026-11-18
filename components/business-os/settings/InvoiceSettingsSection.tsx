@@ -283,6 +283,37 @@ export function InvoiceSettingsSection({
     settings.invoice_payment_terms_days === undefined ||
     (settings.invoice_payment_terms_days as unknown as string) === '';
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * SAVE REFUSES WHILE A REQUIRED FIELD IS EMPTY, AND SAYS WHICH.
+   *
+   * The button read `saving || termsMissing || countryMissing` — two fields
+   * out of the four or five this panel marks required. So an owner could mark
+   * every field with a red asterisk, leave the company name, the tax number,
+   * the address and the bank details blank, press Save, and be told it saved.
+   *
+   * Nothing downstream accepted that. `missingInvoiceFields` is what
+   * `InvoiceDeliveryService` calls before it sends a document and what the
+   * proposal route calls before it lets a quote out, so the refusal simply
+   * arrived later, at the worst moment: the owner believed the step was done,
+   * the dashboard still listed it as outstanding, and the first real symptom
+   * was a quote that would not send.
+   *
+   * The SAME list the panel already renders above (`missing={missingRequired}`)
+   * now gates the button, so what is marked required, what is listed as still
+   * needed, and what Save insists on are one answer rather than three.
+   *
+   * ── WHY THIS IS NOT MERELY ANNOYING ────────────────────────────────────────
+   *
+   * A panel that blocks saving can trap somebody mid-thought, which is a real
+   * cost. It is worth paying here because these fields are not preferences:
+   * an invoice that does not say who sent it and where the money goes is not a
+   * document any authority recognises, and a half-filled save reads as done to
+   * every surface that asks.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const requiredMissing = missingRequired.length > 0;
+
   // Load invoice settings
   useEffect(() => {
     if (expanded && loading) {
@@ -1229,12 +1260,31 @@ export function InvoiceSettingsSection({
                       {errorMessage}
                     </p>
                   )) ||
+                  /*
+                    Why Save is not available, beside Save itself. A disabled
+                    button with the reason only in a tooltip is a button that
+                    looks broken: the fields are marked, but a mark on a field
+                    the owner has scrolled past does not explain the control
+                    under their cursor.
+                  */
+                  (requiredMissing && (
+                    <p className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      {(t('settings.invoice.still_needed') || 'Still needed') + ': '}
+                      {missingRequired.map(fieldLabel).join(', ')}
+                    </p>
+                  )) ||
                   null
                 }
               >
                 <button
                   onClick={saveSettings}
-                  disabled={saving || termsMissing || countryMissing}
+                  disabled={saving || termsMissing || countryMissing || requiredMissing}
+                  title={
+                    requiredMissing
+                      ? 'Still needed: ' + missingRequired.map(fieldLabel).join(', ')
+                      : undefined
+                  }
                   className={`text-sm font-medium disabled:opacity-50 flex items-center gap-2 ${
                     chrome
                       ? 'px-4 py-2 bg-[var(--v2-primary)] text-white ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]'

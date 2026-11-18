@@ -128,7 +128,28 @@ function rememberedSetupState(): boolean | null {
   }
 }
 
-export function BusinessOSTabs() {
+export function BusinessOSTabs({
+  /*
+   * ─────────────────────────────────────────────────────────────────────────
+   * THE FIRST FRAME'S ANSWER, FROM THE SERVER.
+   *
+   * Without it this bar opened on `null` — unknown, which shows everything —
+   * and an owner arriving from the chat saw all six tabs for about two seconds
+   * before `LiveDashboard` mounted, said "still in setup", and took four of
+   * them away. Reported from production.
+   *
+   * `readSetupStance` answers the one half that is knowable without the
+   * walkthrough's own state: has anybody arrived. It fails OPEN, so a slow or
+   * failed read still shows everything, which is the asymmetry this bar has
+   * always been built on.
+   *
+   * The session key still wins where it exists: the dashboard knows about
+   * phases a count cannot see, and it is the component that decides when the
+   * walkthrough is over.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  initialSetupDone = null,
+}: { initialSetupDone?: boolean | null } = {}) {
   const pathname = usePathname();
   const { t, isRTL } = useLanguage();
   const { openConfiguration } = useConfigurationDialog();
@@ -150,7 +171,9 @@ export function BusinessOSTabs() {
    * failure than briefly showing a new account a tab it cannot use yet.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  const [setupDone, setSetupDone] = useState<boolean | null>(rememberedSetupState);
+  const [setupDone, setSetupDone] = useState<boolean | null>(
+    () => rememberedSetupState() ?? initialSetupDone
+  );
   /**
    * The steps that ARE finished, so a tab can come back one at a time.
    *
