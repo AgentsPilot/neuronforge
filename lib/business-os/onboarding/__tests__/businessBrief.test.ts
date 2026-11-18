@@ -647,7 +647,14 @@ describe('the picker is told the rules, not left to infer them', () => {
   });
 
   it('asks for recall over reasoning', () => {
-    expect(prompt).toMatch(/Ask for what they can REMEMBER/);
+    /*
+     * Same rule, rephrased when the examples stopped being pinned to "the last
+     * client". That phrasing presumed a past client, which a business that has
+     * not opened yet does not have — so the rule now names the property it was
+     * always about: answerable from what the owner already knows, rather than
+     * something they have to work out.
+     */
+    expect(prompt).toMatch(/Ask for what they ALREADY KNOW, not what they must work out or invent/);
   });
 
   it('forbids presupposing the shape of the work', () => {

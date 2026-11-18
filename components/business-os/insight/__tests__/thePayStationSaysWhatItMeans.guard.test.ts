@@ -142,7 +142,16 @@ describe('the journey stays a presentation of the graph', () => {
      * shape here, or to ask whether Stripe is connected. Both would be a second
      * opinion, and the first thing to disagree with the publish gate.
      */
-    expect(SOURCE).toContain('step.mandatory && STATION_STEPS[station].includes');
+    /*
+     * The journey was rebuilt and the two reads are now separate expressions,
+     * which is the same guarantee in two halves: `mandatory` is taken from the
+     * step the graph hands over, and what blocks a station is `graph.blocking`
+     * filtered by that station's steps. Neither asks about the shape, and
+     * neither asks whether Stripe is connected.
+     */
+    expect(SOURCE).toContain('if (next?.mandatory) return next;');
+    expect(SOURCE).toContain('graph.blocking.filter(step =>');
+    expect(SOURCE).toContain('STATION_STEPS[station].includes');
     /*
      * The RULES, not the words. An earlier version of this forbade the string
      * "stripe" anywhere in the code and failed on the caveat's own English
@@ -198,7 +207,12 @@ describe('the journey stays a presentation of the graph', () => {
      * muted type say "not in use"; either accent colour would say something
      * about work.
      */
-    const rule = SOURCE.slice(SOURCE.indexOf('.crj-stn.idle {'), SOURCE.indexOf('.crj-link.idle'));
+    /* The station is `.crj-cell[data-state="idle"]` since the rebuild; it was
+       `.crj-stn.idle`. The rule it carries is the same one. */
+    const rule = SOURCE.slice(
+      SOURCE.indexOf('.crj-cell[data-state="idle"] {'),
+      SOURCE.indexOf('.crj-cell[data-state="idle"] .crj-dot')
+    );
     expect(rule).not.toBe('');
     expect(rule).toContain('border-style: dashed');
     expect(rule).not.toContain('#22C58B');

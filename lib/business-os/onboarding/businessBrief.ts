@@ -499,10 +499,24 @@ export const BRIEF_FIELDS: BriefField[] = [
  * expect — and produces questions about parking. Told what actually stops
  * people buying, it answers those instead.
  *
- * Five is still a ceiling and rarely the cost: the model declines to ask about
+ * It is still a ceiling and rarely the cost: the model declines to ask about
  * anything the owner's description already covers, so a story written with any
  * care spends fewer. The cap exists to stop a conversation becoming a form,
  * not to ration the questions that have already proved worth asking.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AND THEN DELIBERATELY SMALLER AGAIN, which the paragraph above predates.
+ *
+ * One per field was measured on a live run at six fields, and six questions is
+ * too many: all six were asked, two returned nothing usable, and the owner's
+ * verdict was that the interview asks too much. So something goes unasked on
+ * every run by design.
+ *
+ * What stops that being a section-feeding pillar is no longer arithmetic: the
+ * picker is handed the number of questions left and told that the two pillars
+ * feeding a whole section come first. Raising this to `BRIEF_FIELDS.length`
+ * puts the six-question interview back, so it stays a literal — bounded from
+ * both sides by `businessBrief.test.ts`, which is where the reasoning lives.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export const MAX_FOLLOW_UPS = 4;

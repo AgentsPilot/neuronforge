@@ -120,6 +120,16 @@ const SQL_LOGIN_DELETE_ALLOW_LIST: ReadonlyArray<{ file: string; why: string }> 
       'Never edited once applied; scripts/__tests__/testAccountCleanupSql.test.ts pins its bytes.',
   },
   {
+    // 20261122 (the refund requests). It WAS PREVIOUS_MIGRATION_FILE until 20261130 moved that on
+    // to 20261127, so it joins the ones named on their own — exactly as 20261120 did before it.
+    // Built from the generator's constant: its name spells the cleanup function, so R-7 forbids
+    // a literal.
+    file: `supabase/migrations/${INITIAL_FUNCTION_MIGRATION.replace('20261041', '20261122')}_refund_requests.sql`,
+    why:
+      'Operator exception OX-1r: an older applied version of the same secret-gated cleanup function. ' +
+      'Never edited once applied; scripts/__tests__/testAccountCleanupSql.test.ts pins its bytes.',
+  },
+  {
     // 20261120 (the quote children). It WAS PREVIOUS_MIGRATION_FILE until 20261127 moved that on
     // to 20261122, so it joins the ones named on their own — exactly as 20261104 did before it.
     // Built from the generator's constant: its name spells the cleanup function, so R-7 forbids
@@ -276,6 +286,16 @@ const SQL_AUTH_WRITE_ALLOW_LIST: ReadonlyArray<{ file: string; shapes: ReadonlyA
     shapes: ALL_AUTH_WRITE_SHAPES,
     why:
       'SA Review 2 §D (DE-10b.1): the previous, applied version of the same generated, secret-gated cleanup ' +
+      'function, with the same reviewed anonymise writes. Never edited once applied; ' +
+      'scripts/__tests__/testAccountCleanupSql.test.ts pins its bytes.',
+  },
+  {
+    // 20261122 (the refund requests), displaced from PREVIOUS_MIGRATION_FILE by 20261130, so it is
+    // named on its own now. Same reviewed writes, never edited, pinned by sha256.
+    file: `supabase/migrations/${INITIAL_FUNCTION_MIGRATION.replace('20261041', '20261122')}_refund_requests.sql`,
+    shapes: ALL_AUTH_WRITE_SHAPES,
+    why:
+      'SA Review 2 §D (DE-10b.1): an older applied version of the same generated, secret-gated cleanup ' +
       'function, with the same reviewed anonymise writes. Never edited once applied; ' +
       'scripts/__tests__/testAccountCleanupSql.test.ts pins its bytes.',
   },
@@ -710,7 +730,14 @@ describe('repo-wide guard: no deletion paths outside the purge engine (C-34)', (
       expect(SQL_AUTH_WRITE_ALLOW_LIST.find((e) => e.file === quoteChildren)?.shapes).toEqual(ALL_AUTH_WRITE_SHAPES);
       expect(PREVIOUS_MIGRATION_FILE).not.toBe(quoteChildren);
 
-      /* And refund_requests takes the previous slot. */
+      /* Displaced from PREVIOUS_MIGRATION_FILE by 20261130, so refund_requests joins
+         the ones named on their own — exactly as the quote children did before it. */
+      const refundRequests = `supabase/migrations/${INITIAL_FUNCTION_MIGRATION.replace('20261041', '20261122')}_refund_requests.sql`;
+      expect(SQL_LOGIN_DELETE_ALLOW_LIST.map((e) => e.file)).toContain(refundRequests);
+      expect(SQL_AUTH_WRITE_ALLOW_LIST.find((e) => e.file === refundRequests)?.shapes).toEqual(ALL_AUTH_WRITE_SHAPES);
+      expect(PREVIOUS_MIGRATION_FILE).not.toBe(refundRequests);
+
+      /* And the refund transaction FK takes the previous slot. */
       /* BUILT, never written out. `testCleanupSecret` (R-7) requires the
          cleanup function's name to appear in exactly one file, and a migration
          filename contains it as a substring — so spelling this path literally
@@ -718,7 +745,7 @@ describe('repo-wide guard: no deletion paths outside the purge engine (C-34)', (
          sibling path above is constructed for the same reason; this one was
          the exception. */
       expect(PREVIOUS_MIGRATION_FILE).toBe(
-        `supabase/migrations/${INITIAL_FUNCTION_MIGRATION.replace('20261041', '20261122')}_refund_requests.sql`
+        `supabase/migrations/${INITIAL_FUNCTION_MIGRATION.replace('20261041', '20261127')}_refund_transaction_fk.sql`
       );
     });
 

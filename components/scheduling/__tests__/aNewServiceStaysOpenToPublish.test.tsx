@@ -141,7 +141,21 @@ async function createService() {
   fireEvent.change(description, { target: { value: 'Typed description' } });
   await settle();
 
-  const save = screen.getByText('Save').closest('button') as HTMLButtonElement;
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * CONTINUE IS WHAT SAVES, because the editor is a wizard now.
+   *
+   * There was a single `Save` on the old one-page panel. The wizard asks four
+   * questions in turn, and the step footer saves whatever has changed before
+   * moving on — "Saved as a draft as you go" is the note beside it. So the
+   * press that files the new service is the first Continue, and the final step
+   * offers "Keep as a draft" for a row with nothing left to answer.
+   *
+   * Driving it through Continue is also the honest fixture: it is the control
+   * an owner actually presses to create a service.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const save = screen.getByText('Continue').closest('button') as HTMLButtonElement;
   expect(save.disabled).toBe(false);
 
   fireEvent.click(save);
@@ -174,12 +188,21 @@ describe('after saving a new service', () => {
      * massage" at 250. A row that merely failed to close would still be
      * holding the typed text, which is the trap this wording exists to avoid.
      */
-    const values = Array.from(document.querySelectorAll('input')).map(
-      input => (input as HTMLInputElement).value
-    );
-    expect(values).toContain('Deep tissue massage');
-    expect(values).toContain('250');
-    expect(values).not.toContain('Typed name');
+    const shown = () =>
+      Array.from(document.querySelectorAll('input')).map(input => (input as HTMLInputElement).value);
+
+    expect(shown()).toContain('Deep tissue massage');
+    expect(shown()).not.toContain('Typed name');
+
+    /*
+     * The price is the second proof, and it is one question further in: the
+     * wizard asks what the service is, then what it costs. Stepping to it is
+     * part of the assertion rather than a detour — a row that had merely
+     * failed to close would carry the typed values here too.
+     */
+    fireEvent.click(screen.getByText('Continue').closest('button') as HTMLButtonElement);
+    await settle();
+    expect(shown()).toContain('250');
   });
 
   it('saved it as a draft, which is why staying open matters', async () => {

@@ -171,11 +171,31 @@ describe('both screens read one list', () => {
      * outstanding things would be the honesty bug this file opens with.
      */
     expect(PAGES.build).toMatch(/const outstanding = buildSteps\.filter\(step => step\.yours\)/);
-    expect(PAGES.build).toMatch(/outstandingCost/);
-    /* Each branch says where it is done, in all three languages. */
-    expect(PAGES.build).toMatch(/Waiting for you on your dashboard\./);
-    expect(PAGES.build).toMatch(/מחכה לך בדשבורד\./);
-    expect(PAGES.build).toMatch(/Te espera en tu dashboard\./);
+    /*
+     * `outstandingCost` is gone, and deliberately.
+     *
+     * It named what stopping here would cost — "your clients cannot book yet"
+     * — on a screen that no longer lists the work it was describing. The work
+     * is sequenced on the dashboard now, one step at a time, so this screen
+     * saying it as well was a second plan read before the owner had seen the
+     * first. The telling did not go: it moved to the step it belongs to, which
+     * is where the owner can act on it.
+     *
+     * What this screen must still do is know there is work and say where it
+     * happens. The three sentences below are that promise, and they are all
+     * asserted in all three languages.
+     */
+    expect(PAGES.build).toMatch(/leaveForDashboard/);
+    /*
+     * Where it happens, in all three languages. This asserted the branch copy
+     * ("Waiting for you on your dashboard."), which belonged to the per-task
+     * cards and went with them. The door itself carries the same answer now,
+     * and it is the only way off this screen, so an owner cannot reach the end
+     * of the build without being pointed at the dashboard.
+     */
+    expect(PAGES.build).toMatch(/Go to Dashboard/);
+    expect(PAGES.build).toMatch(/עבור לדשבורד/);
+    expect(PAGES.build).toMatch(/Ir al dashboard/);
   });
 
   it('leaves by one door, whether or not anything is outstanding', () => {

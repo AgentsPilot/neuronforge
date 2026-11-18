@@ -99,6 +99,10 @@ const BUSINESS_OWNED_20260916: readonly string[] = [
   'crm_contacts',
   'crm_pipeline_stages',
   'crm_tasks',
+  /* The daily standing snapshots (20261128). Named in 20260916's array so a
+     FRESH install gets the constraint, the same pairing as `refund_requests`:
+     an existing database takes it from 20261128's own ALTER. */
+  'crm_client_standing',
   'contact_documents',
   'scheduling_bookings',
   'scheduling_meetings',
@@ -168,7 +172,8 @@ const BUSINESS_OWNED_20260916: readonly string[] = [
 const DYNAMIC_FK_MIGRATIONS: readonly DynamicFkMigration[] = [
   {
     file: '20260916_business_data_ownership.sql',
-    sha256: '831600cbf9bc7e1743c5c366abe1b7b2832f3b8f967848848d484a37c84037d9',
+    /* Re-pinned 2026-11-18 when crm_client_standing joined the array above. */
+    sha256: 'c7333695375fd84a5dd261da24985c0ee63433f2f7c990b1af4888e05b768a5f',
     expands: BUSINESS_OWNED_20260916.map((table) => ({
       child: table,
       columns: ['user_id'],

@@ -51,7 +51,20 @@ describe('G-1 the provider, the sheet, the script, the style and the read always
   it.each(MOUNTING_LAYOUTS)('%s passes the same tokens to the style and the provider', (file) => {
     const text = code(read(file));
     expect(text).toContain('<V2CustomTokensStyle tokens={customTokens} />');
-    expect(text).toContain('<V2ThemeProvider customTokens={customTokens} customTokensKnown={customTokensKnown}>');
+    /*
+     * The two props, not the whole tag.
+     *
+     * This matched the opening tag as one exact string, so a layout that adds
+     * any further prop failed even while passing the tokens correctly — which
+     * is what the onboarding layouts now do with `mode="light"` (they are
+     * light-only by design, and the business theme must not darken them).
+     * What G-1 is actually about is that the provider and the style are handed
+     * the SAME tokens, so that is what is asserted.
+     */
+    const tag = text.slice(text.indexOf('<V2ThemeProvider'));
+    const open = tag.slice(0, tag.indexOf('>') + 1);
+    expect(open).toContain('customTokens={customTokens}');
+    expect(open).toContain('customTokensKnown={customTokensKnown}');
   });
 });
 

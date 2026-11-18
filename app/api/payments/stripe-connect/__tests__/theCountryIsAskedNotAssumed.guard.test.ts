@@ -86,7 +86,9 @@ describe('the country is asked, not assumed', () => {
 
     /* Starts empty, and the continue button is disabled while it is empty. */
     expect(prepare).toMatch(/useState\(''\)/);
-    expect(prepare).toContain('disabled={!country}');
+    /* `disabled={!country || !businessType}` now: the gate grew a second
+       condition, so match the country half rather than the whole expression. */
+    expect(prepare).toContain('disabled={!country');
   });
 
   it('create-minimal requires a supported country and defaults none', () => {
@@ -161,7 +163,18 @@ describe('the embedded form asks for as little as it can, in our colours', () =>
     expect(component).not.toMatch(/colorPrimary:\s*'#635BFF'/);
     expect(component).not.toMatch(/colorBackground:\s*'#ffffff'/);
 
-    expect(component).toContain("token('--v2-primary'");
+    /*
+     * The accent is `CONFIG_ACCENT`, not `--v2-primary`.
+     *
+     * `--v2-primary` is the BUSINESS's brand colour at runtime, so on an
+     * account whose website is orange, Stripe's own button came back orange
+     * inside a dialog painted with the configuration accent — the embedded
+     * form wearing a third colour. Every host of this component renders in
+     * that dialog, so the dialog's accent is the correct source. What the
+     * guard is for is unchanged: the colours come from our tokens and
+     * constants, never from Stripe's literals.
+     */
+    expect(component).toContain('const accent = CONFIG_ACCENT');
     expect(component).toContain("token('--v2-surface'");
   });
 });
@@ -292,6 +305,15 @@ describe('what we already know is sent, not asked again', () => {
     /* The request body carries the country and nothing else. */
     const schema = route.slice(route.indexOf('createMinimalSchema'), route.indexOf('export async function'));
     expect(schema).not.toContain('business_profile');
-    expect(schema).not.toContain('individual');
+    /*
+     * No person or company BLOCK from the client — those are read on the
+     * server from the profile. Narrowed from the bare word 'individual',
+     * which now appears legitimately: `business_type` is the owner's own
+     * answer and is the one fact the body may carry besides the country.
+     * The sibling test above requires that enum, so forbidding the word
+     * outright made the two assertions contradict each other.
+     */
+    expect(schema).not.toMatch(/individual:\s*z\./);
+    expect(schema).not.toMatch(/company:\s*z\./);
   });
 });

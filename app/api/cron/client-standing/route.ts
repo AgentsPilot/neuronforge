@@ -33,6 +33,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { snapshotClientStandings } from '@/lib/business-os/clients/clientStandingStore';
+import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 
@@ -56,7 +57,14 @@ function verifyCronSecret(request: NextRequest): boolean {
   return authHeader === `Bearer ${cronSecret}`;
 }
 
-export async function GET(request: NextRequest) {
+/*
+ * Wrapped by `withCronRunRecord` below rather than exported directly.
+ *
+ * Without it this job ran but left no trace in `bos_cron_runs`, so it had no
+ * run history and could never show as late or stopped on the crons page — the
+ * one job on the schedule nobody could tell had failed.
+ */
+async function runJob(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
@@ -109,3 +117,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+export const GET = withCronRunRecord('client-standing', runJob);

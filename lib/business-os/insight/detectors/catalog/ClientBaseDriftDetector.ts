@@ -171,6 +171,16 @@ export class ClientBaseDriftDetector extends BaseDetector {
        */
       baselineValue: 0,
       thresholdValue: this.definition.threshold,
+      /*
+       * H15: the denominator behind the rate.
+       *
+       * This claim is "a rate across your clients moved", and a rate without
+       * its population is the shape of claim that produced a figure nobody
+       * could check. The population is the clients measurable in BOTH halves
+       * of the window, which is the same count the narration quotes and the
+       * same one `minSamples` gates on.
+       */
+      sampleSize: clientsInvolved,
       percentChange: 0,
       direction: 'above',
       affectedEntityType: 'contact',
