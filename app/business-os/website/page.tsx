@@ -4526,7 +4526,25 @@ function WebsiteManagementPage() {
               {/* ACTIONS — moved out of the identity column and pushed to the
                   end of the row, so every row's controls sit in one place
                   rather than under a name of unpredictable length. */}
-              <div className="flex items-center gap-2 shrink-0 lg:ms-auto lg:order-last">
+              {/*
+                  ───────────────────────────────────────────────────
+                  IT WRAPS ON A PHONE, BECAUSE IT DOES NOT FIT.
+                  ───────────────────────────────────────────────────
+                  Six controls on one nowrap row with `shrink-0`:
+                  Deactivate, edit, "How to share this", share, preview
+                  and delete. On a desktop they sit at the end of the
+                  header and there is room. On a phone the header is a
+                  column, this row gets the card's width, and the row
+                  is wider than that — so it ran past the card and the
+                  delete control was cut off at the edge, reachable
+                  only by a horizontal scroll nobody looks for.
+
+                  Wrapping below `lg` costs a second line when it is
+                  needed and nothing when it is not. The desktop row is
+                  unchanged: `lg:flex-nowrap` and `lg:shrink-0` restore
+                  exactly what was there.
+                */}
+              <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap lg:shrink-0 lg:ms-auto lg:order-last">
                   {/* Activate/Deactivate toggle */}
                   {!link.is_active ? (
                     <button
@@ -4870,7 +4888,25 @@ function WebsiteManagementPage() {
               {/* ACTIONS — at the end of the row, like the smart-link rows, so
                   every entry's controls sit in the same place whatever its name
                   or address happens to be. */}
-              <div className="flex items-center gap-2 shrink-0 lg:ms-auto lg:order-last">
+              {/*
+                  ───────────────────────────────────────────────────
+                  IT WRAPS ON A PHONE, BECAUSE IT DOES NOT FIT.
+                  ───────────────────────────────────────────────────
+                  Six controls on one nowrap row with `shrink-0`:
+                  Deactivate, edit, "How to share this", share, preview
+                  and delete. On a desktop they sit at the end of the
+                  header and there is room. On a phone the header is a
+                  column, this row gets the card's width, and the row
+                  is wider than that — so it ran past the card and the
+                  delete control was cut off at the edge, reachable
+                  only by a horizontal scroll nobody looks for.
+
+                  Wrapping below `lg` costs a second line when it is
+                  needed and nothing when it is not. The desktop row is
+                  unchanged: `lg:flex-nowrap` and `lg:shrink-0` restore
+                  exactly what was there.
+                */}
+              <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap lg:shrink-0 lg:ms-auto lg:order-last">
                 {/* Sized and weighted like the smart-link row's actions below —
                     the two lists sit in one card and had two different button
                     scales, so a landing page's Edit read as the heavier thing. */}

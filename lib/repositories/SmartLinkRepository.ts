@@ -5,7 +5,6 @@
  */
 
 import { createLogger } from '@/lib/logger';
-import { platformOrigin } from '@/lib/utils/origins';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { resolveChannel } from '@/lib/business-os/channel-insights/channelFromReferrer';
 
@@ -877,8 +876,22 @@ export class SmartLinkRepository {
       result.contact = existing?.find(l => l.destination_type === 'form') as SmartLink || null;
       result.payment = existing?.find(l => l.destination_type === 'payment') as SmartLink || null;
 
-      // Create missing links
-      const baseUrl = platformOrigin();
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * NO ORIGIN IN A STORED DESTINATION.
+       *
+       * This built the destination from the platform origin and stored it,
+       * so the link
+       * carried the environment it was CREATED in for the rest of its life. A
+       * link made on localhost sent production visitors to localhost, and one
+       * made on a preview deployment kept sending people to that preview after
+       * it was replaced.
+       *
+       * The destination is a path now, and `/go/[code]` resolves it against
+       * the request that arrives — which is the only origin that is correct by
+       * construction, in every environment, without anything being configured.
+       * ───────────────────────────────────────────────────────────────────────
+       */
 
       /**
        * A link still addressed to this account.
@@ -899,7 +912,7 @@ export class SmartLinkRepository {
         destinationType: 'booking' | 'form',
         path: string
       ): Promise<SmartLink | null> => {
-        const destinationUrl = `${baseUrl}/c/${userCode}/${path}`;
+        const destinationUrl = `/c/${userCode}/${path}`;
 
         if (addressesThisAccount(existingLink)) return existingLink;
 

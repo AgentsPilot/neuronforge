@@ -367,7 +367,30 @@ const WIZARD_CSS = `
         border-top: 1px solid var(--v2-border);
       }
       .sw-foot-side { display: flex; align-items: center; gap: 14px; }
+      /*
+        ─────────────────────────────────────────────────────────────────────
+        AN ICON BESIDE ITS LABEL, NOT ABOVE IT.
+
+        This had no display, so it was a plain button, and Tailwind's preflight
+        sets svg to display:block. That put the arrow on its own line with the
+        word Back underneath it. On a phone, where the footer stretches this to
+        full width, the arrow drifted to the far left and read as a stray
+        control nobody could press, which is how it was reported.
+
+        inline-flex is what sw-primary already uses for exactly this reason.
+        The gap replaces the space character that used to separate them, which
+        a flex container would otherwise collapse.
+
+        NO BACKTICKS IN HERE. This whole stylesheet is one template literal, so
+        a backtick around a class name ends it and the file stops parsing. That
+        has happened three times in this file now.
+        ─────────────────────────────────────────────────────────────────────
+      */
       .sw-quiet {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
         border: none;
         background: transparent;
         color: var(--v2-text-secondary);
