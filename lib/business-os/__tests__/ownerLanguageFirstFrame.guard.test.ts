@@ -90,10 +90,18 @@ describe('G-2: the language read is started before the payment hold, used only a
   it('/business-os: (ii) the Promise.all over the plan pill and the pending language comes after the gate', () => {
     const { text, gate } = positions('app/business-os/layout.tsx');
     // Plan payments P-6a.2 added the payment banner read as a third element
-    // (SA C-13), and the header's owner initials are the fourth: same shape,
-    // same reason, read with the pill and after the gate.
+    // (SA C-13), the header's owner initials are the fourth, and
+    // `readSetupStance` is the fifth: same shape, same reason, read with the
+    // pill and after the gate.
+    //
+    // MATCHED BY ITS ENDS, NOT ELEMENT BY ELEMENT. The old pattern spelled the
+    // whole list with `\s*` between entries, so it broke on the fifth read and
+    // would have broken on a comment between any two of them — reporting a
+    // violated ordering rule when the ordering was never touched. What this
+    // test is about is that the block comes AFTER the gate, so it pins the
+    // opening, the last read, and the close.
     const all = text.search(
-      /await Promise\.all\(\[\s*readPlanBadge\(\),\s*initialLanguagePending,\s*readPaymentNotice\(\),\s*readOwnerIdentity\(\),?\s*\]\)/
+      /await Promise\.all\(\[[\s\S]*?readPlanBadge\(\),[\s\S]*?initialLanguagePending,[\s\S]*?readSetupStance\(\),?\s*\]\)/
     );
     expect(all).toBeGreaterThan(gate);
   });
