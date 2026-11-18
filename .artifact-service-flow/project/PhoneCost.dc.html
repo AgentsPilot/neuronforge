@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phone · what it costs</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+body{margin:0;font-family:Inter,system-ui,sans-serif;color:#F1F5F9}
+a{color:#D14E97}a:hover{color:#E879B5}
+</style>
+</helmet>
+
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #0F172A; display: flex; flex-direction: column">
+
+  <!-- a full-screen sheet, not a dialog: there is no room for a frame around a frame -->
+  <div style="display: flex; align-items: center; gap: 12px; padding: 16px 18px 14px; border-bottom: 1px solid #334155">
+    <button type="button" aria-label="Back" style="border: none; background: transparent; color: #CBD5E1; cursor: pointer; padding: 10px; margin: -10px">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+    </button>
+    <div style="flex: 1; min-width: 0">
+      <p style="margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Renovation Consultation</p>
+      <p style="margin: 1px 0 0; font-size: 11.5px; color: #94A3B8">Step 2 of 4</p>
+    </div>
+    <button type="button" aria-label="Close" style="border: none; background: transparent; color: #94A3B8; cursor: pointer; padding: 10px; margin: -10px">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+
+  <!-- four dashes instead of four labels: the words do not fit and the position does the work -->
+  <div style="display: flex; gap: 5px; padding: 12px 18px 0">
+    <span style="flex: 1; height: 3px; border-radius: 2px; background: #22C58B"></span>
+    <span style="flex: 1; height: 3px; border-radius: 2px; background: #D14E97"></span>
+    <span style="flex: 1; height: 3px; border-radius: 2px; background: #334155"></span>
+    <span style="flex: 1; height: 3px; border-radius: 2px; background: #334155"></span>
+  </div>
+
+  <div style="flex: 1; overflow: hidden; padding: 18px 18px 0; display: flex; flex-direction: column; gap: 14px">
+
+    <div>
+      <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 600; letter-spacing: -0.01em">What does it cost?</h2>
+      <p style="margin: 5px 0 0; font-size: 13px; line-height: 1.5; color: #CBD5E1">One answer. Everything after it follows from this.</p>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 9px">
+
+      <button type="button" aria-pressed="false"
+              style="text-align: start; cursor: pointer; border: 1px solid #475569; background: #0F172A; border-radius: 14px; padding: 14px; display: flex; gap: 11px; align-items: flex-start; font-family: Inter, sans-serif; min-height: 44px">
+        <span style="width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid #64748B; flex: 0 0 auto; margin-top: 1px"></span>
+        <span style="min-width: 0">
+          <span style="display: block; font-size: 14px; font-weight: 600">It is free</span>
+          <span style="display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.45; color: #94A3B8">Nothing is collected.</span>
+        </span>
+      </button>
+
+      <!-- the chosen answer expands in place; the others stay one line each -->
+      <div style="border: 1.5px solid #D14E97; background: rgba(209,78,151,0.10); border-radius: 14px; padding: 14px">
+        <span style="display: flex; gap: 11px; align-items: flex-start">
+          <span style="width: 18px; height: 18px; border-radius: 50%; border: 5px solid #D14E97; background: #0F172A; flex: 0 0 auto; margin-top: 1px"></span>
+          <span style="min-width: 0">
+            <span style="display: block; font-size: 14px; font-weight: 600">I charge a set price</span>
+            <span style="display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.45; color: #CBD5E1">The same amount every time.</span>
+          </span>
+        </span>
+
+        <div style="margin-top: 13px">
+          <label for="p" style="display: block; font-size: 11.5px; font-weight: 600; color: #CBD5E1; margin-bottom: 6px">Price</label>
+          <span style="display: flex; align-items: stretch; border: 1px solid #475569; border-radius: 12px; overflow: hidden; background: #0F172A">
+            <span style="display: grid; place-items: center; padding: 0 13px; background: #1E293B; color: #CBD5E1; font-size: 13px; font-weight: 600">$ USD</span>
+            <input id="p" type="text" value="300" inputmode="decimal"
+                   style="flex: 1; min-width: 0; border: none; background: transparent; color: #F1F5F9; font-size: 17px; font-weight: 600; font-family: Inter, sans-serif; padding: 12px 13px">
+          </span>
+        </div>
+
+        <div style="margin-top: 11px; display: flex; gap: 7px">
+          <span style="flex: 1; text-align: center; border: 1.5px solid #D14E97; background: rgba(209,78,151,0.14); border-radius: 999px; padding: 10px 8px; font-size: 12.5px; font-weight: 600">Paid in full</span>
+          <span style="flex: 1; text-align: center; border: 1px solid #475569; border-radius: 999px; padding: 10px 8px; font-size: 12.5px; color: #CBD5E1">Instalments</span>
+        </div>
+      </div>
+
+      <button type="button" aria-pressed="false"
+              style="text-align: start; cursor: pointer; border: 1px solid #475569; background: #0F172A; border-radius: 14px; padding: 14px; display: flex; gap: 11px; align-items: flex-start; font-family: Inter, sans-serif; min-height: 44px">
+        <span style="width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid #64748B; flex: 0 0 auto; margin-top: 1px"></span>
+        <span style="min-width: 0">
+          <span style="display: block; font-size: 14px; font-weight: 600">I price it per job</span>
+          <span style="display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.45; color: #94A3B8">You send a quote instead.</span>
+        </span>
+      </button>
+
+    </div>
+
+    <!-- the client-view rail becomes a line you can open, not a column -->
+    <button type="button" aria-expanded="false"
+            style="width: 100%; text-align: start; cursor: pointer; border: 1px solid #334155; background: #1E293B; border-radius: 12px; padding: 12px 13px; display: flex; align-items: center; gap: 10px; font-family: Inter, sans-serif; min-height: 44px">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" style="flex: 0 0 auto" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>
+      <span style="flex: 1; min-width: 0">
+        <span style="display: block; font-size: 12.5px; font-weight: 600">What your client sees</span>
+        <span style="display: block; margin-top: 1px; font-size: 11.5px; color: #94A3B8">60 min · $300 · pays by…</span>
+      </span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" style="flex: 0 0 auto" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+
+  </div>
+
+  <!-- one thumb-reachable action, pinned, above the home indicator -->
+  <div style="padding: 14px 18px 26px; border-top: 1px solid #334155; background: #0F172A">
+    <button type="button" style="width: 100%; border: none; background: #D14E97; color: #fff; font-size: 15px; font-weight: 600; font-family: Inter, sans-serif; padding: 15px; border-radius: 14px; cursor: pointer; min-height: 52px">Continue</button>
+    <p style="margin: 9px 0 0; text-align: center; font-size: 11.5px; color: #64748B">Saved as a draft as you go</p>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

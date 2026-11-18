@@ -175,6 +175,30 @@ export async function GET(request: NextRequest) {
       data: {
         userName,
         greeting: greetingFor(day.localHour),
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * THE CLOCK, REPORTED OUTSIDE THE BRIEFING.
+         *
+         * It was only ever inside `briefing`, and `briefing` is null whenever
+         * its generation fails or returns nothing — an LLM call in a try/catch
+         * that only warns. So the dashboard, which reads
+         * `myDay.briefing?.timezone` to decide whether the timezone step is
+         * done, saw `undefined` on any request where the narrative happened
+         * not to be produced, and told an owner with a confirmed zone to go
+         * and set their timezone. Measured on an account holding
+         * `America/New_York` with `timezone_confirmed_at` stamped: the step
+         * flipped between done and outstanding with nothing changed.
+         *
+         * A missing narrative is not a missing timezone. Same honesty rule as
+         * below — keyed on `timezone_confirmed_at`, never on a truthy value,
+         * because the column defaulted to 'UTC' for accounts nobody ever asked.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        timezone:
+          preferences?.timezone_confirmed_at && preferences?.timezone
+            ? day.timezone
+            : undefined,
+        timezoneConfirmed: Boolean(preferences?.timezone_confirmed_at && preferences?.timezone),
         briefing: briefing && {
           narrative: briefing.narrative,
           date: day.date,

@@ -31,7 +31,7 @@
  * next to the button, because afterwards there is nothing to see.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   INBOX_CADENCE_DEFAULT,
@@ -42,7 +42,7 @@ import {
 } from '@/lib/business-os/leads/inboxProviders';
 import { parseInterval, type ScheduleInterval } from '@/lib/business-os/schedule/interval';
 import { IntervalPicker } from '@/components/business-os/schedule/IntervalPicker';
-import { Loader2, Mail, Check, AlertTriangle, X } from 'lucide-react';
+import { Loader2, Mail, Check, AlertTriangle, X, Lock } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { PluginIcon } from '@/components/PluginIcon';
 import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
@@ -436,6 +436,40 @@ export function InboxChannelSetupDialog({
    * screen that is asking for the mailbox.
    * ─────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * The mailbox screen one can continue with, if there is an obvious one.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * WHY SCREEN ONE NEEDED A NEXT BUTTON AT ALL
+   *
+   * It had none: the tiles were the only way forward, and the footer showed a
+   * lone Back. That is fine while a tile says "Connect", because pressing it is
+   * plainly the thing to do. It stops being fine the moment one says the
+   * mailbox is connected — the owner has done the thing the screen asked for,
+   * the screen looks finished, and the only control that moves is the one they
+   * have no reason to press twice. Reported exactly that way: "I connected to
+   * Outlook but it doesn't move."
+   *
+   * So the footer now matches screens two and three, and this is what it acts
+   * on. Already set up counts as ready: pressing it re-points the same agent,
+   * which the tile's own comment records as deliberate and idempotent.
+   *
+   * `null` when two mailboxes are ready and neither has been pressed, because
+   * then there is a real choice and the tiles are where it is made. One ready
+   * mailbox needs no choosing, which is the common case and the reported one.
+   * ─────────────────────────────────────────────────────────────────────────────
+   */
+  const readyProvider = useMemo<InboxProvider | null>(() => {
+    const ready = SUPPORTED_PROVIDERS.filter(p => {
+      const channelRow = (live?.channels ?? []).find(c => c.provider === p);
+      const broken = Boolean(channelRow?.problems?.includes('mailbox_disconnected'));
+      return (live?.connectable ?? []).includes(p) || (Boolean(channelRow) && !broken);
+    });
+
+    if (provider && ready.includes(provider)) return provider;
+    return ready.length === 1 ? ready[0] : null;
+  }, [live, provider]);
+
   const connectMailbox = useCallback(
     async (p: InboxProvider) => {
       setBusy(true);
@@ -480,12 +514,38 @@ export function InboxChannelSetupDialog({
            pressed a tile meaning "use this one", and making them press the same
            tile again is a step that exists only because we changed state. */
         const next = await refreshStatus();
-        if (next?.connectable.includes(p)) {
-          setProvider(p);
-          setBusy(false);
-          await loadSamples(p);
-          return;
-        }
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * UNCONDITIONALLY, AND THE `if` THAT USED TO GUARD IT WAS THE BUG.
+         *
+         * This read `if (next?.connectable.includes(p)) { … }` with no else, so
+         * a status read that did not list the provider ended the function with
+         * no advance, no error and nothing on screen. Reported exactly that
+         * way: "I connected to Outlook but it doesn't move."
+         *
+         * `connectable` is "connected AND no channel yet", which is a narrower
+         * thing than "the connect worked", and it can legitimately be false the
+         * moment after a successful sign-in: the owner already had a channel
+         * for this provider and is re-pointing it, or the status GET raced the
+         * row this very popup just wrote. Both left the owner staring at a tile
+         * they had just used.
+         *
+         * The OAuth promise above has already resolved success, so the honest
+         * next move is the one they asked for. If the mailbox is somehow not
+         * readable after all, `loadSamples` says so and returns them here —
+         * which is a real answer rather than silence.
+         *
+         * `next` is still read: it is what repaints the tiles behind the
+         * picker, and the status is worth refreshing whether or not it gates
+         * anything.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        void next;
+        setProvider(p);
+        setBusy(false);
+        await loadSamples(p);
+        return;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -640,7 +700,7 @@ export function InboxChannelSetupDialog({
           {/* ── 1. the mailbox ─────────────────────────────────────────── */}
           {step === 1 && (
             <>
-              <div className="text-base font-semibold mb-1">{copy.whichMailbox}</div>
+              <div className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">{copy.whichMailbox}</div>
 
               {/* Belt and braces. Every entry point already hides itself when
                   there is nothing connected, so reaching here means one of them
@@ -768,14 +828,33 @@ export function InboxChannelSetupDialog({
                   );
                 })}
               </div>
-              <p className="text-xs text-[var(--v2-text-muted)] mt-4 mb-0">{copy.onlyMatching}</p>
+              {/*
+                ─────────────────────────────────────────────────────────────
+                THE MOST IMPORTANT SENTENCE ON THE SCREEN, drawn as the
+                faintest. It was 12px muted, below the tiles, in the type the
+                rest of this dialog uses for asides.
+
+                It is the one that answers "what are you about to read of
+                mine". An owner deciding whether to hand over a mailbox is
+                deciding on exactly this, so it is promoted to a bordered row
+                with the lock beside it: still not a heading, no longer fine
+                print, and visibly a commitment rather than a footnote.
+                ─────────────────────────────────────────────────────────────
+              */}
+              <div
+                className="flex items-start gap-2 mt-4 p-3 border border-[var(--v2-border)] text-[13px] leading-snug text-[var(--v2-text-secondary)]"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--v2-text-muted)]" aria-hidden="true" />
+                <span>{copy.onlyMatching}</span>
+              </div>
             </>
           )}
 
           {/* ── 2. the one click that is the configuration ──────────────── */}
           {step === 2 && (
             <>
-              <div className="text-base font-semibold mb-1">{copy.pick}</div>
+              <div className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">{copy.pick}</div>
               <p className="text-sm text-[var(--v2-text-secondary)] mb-4">{copy.pickHint}</p>
 
               {/* Still reading the mailbox. Shown HERE rather than on the
@@ -964,7 +1043,7 @@ export function InboxChannelSetupDialog({
                 that each is sent their booking link, or that it happens from
                 now on rather than to the list in front of them.
               */}
-              <div className="text-base font-semibold mb-1">{copy.whatHappens}</div>
+              <div className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">{copy.whatHappens}</div>
               <p className="text-sm text-[var(--v2-text-secondary)] mb-4">{copy.whatHappensHint}</p>
 
               <div className="text-xs font-medium text-[var(--v2-text-muted)] mb-1.5">
@@ -1117,6 +1196,29 @@ export function InboxChannelSetupDialog({
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 {copy.different}
+              </button>
+            )}
+
+            {/*
+              Screen one's Next, which it never had. See `readyProvider`: the
+              tiles were the only way forward, and a tile that says the mailbox
+              is already connected does not look like the way forward. Same
+              control, same place and same styling as screens two and three, so
+              the footer means one thing throughout the wizard.
+            */}
+            {step === 1 && readyProvider && (
+              <button
+                type="button"
+                onClick={() => {
+                  setProvider(readyProvider);
+                  void loadSamples(readyProvider);
+                }}
+                disabled={busy}
+                className="px-4 py-2 text-sm font-medium text-white disabled:opacity-50 flex items-center gap-2 ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
+                style={{ background: 'var(--v2-primary)', borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+                {copy.next}
               </button>
             )}
 

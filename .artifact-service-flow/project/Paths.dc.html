@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Three shapes</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+body{margin:0;font-family:Inter,system-ui,sans-serif;color:#F1F5F9}
+a{color:#D14E97}a:hover{color:#E879B5}
+</style>
+</helmet>
+
+<div style="width: 1120px; height: 780px; box-sizing: border-box; background: #0F172A; padding: 28px; display: flex; flex-direction: column; gap: 18px">
+
+  <div>
+    <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 22px; font-weight: 600; letter-spacing: -0.01em">One answer decides the rest of the flow</h2>
+    <p style="margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: #CBD5E1; max-width: 80ch">Step 2 is the only branch in the whole editor. Two of the three paths end there, which is why asking it early is worth more than asking it well.</p>
+  </div>
+
+  <div style="flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; min-height: 0">
+
+    <!-- free -->
+    <div style="border: 1px solid #334155; border-radius: 16px; background: #1E293B; padding: 18px; display: flex; flex-direction: column; gap: 14px">
+      <div>
+        <span style="display: inline-block; padding: 4px 10px; border-radius: 999px; background: rgba(148,163,184,0.16); font-size: 11px; font-weight: 600; color: #CBD5E1">It is free</span>
+        <h3 style="margin: 10px 0 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 16px; font-weight: 600">Two questions, then publish</h3>
+      </div>
+
+      <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px">
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #22C58B"></span><span style="font-size: 12.5px">What it is</span></li>
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #22C58B"></span><span style="font-size: 12.5px">It is free</span></li>
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #334155"></span><span style="font-size: 12.5px; color: #64748B; text-decoration: line-through">How you get paid</span></li>
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #22C58B"></span><span style="font-size: 12.5px">Publish</span></li>
+      </ol>
+
+      <div style="border-top: 1px solid #334155; padding-top: 12px">
+        <p style="margin: 0; font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #94A3B8">Asks for</p>
+        <p style="margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: #CBD5E1">Your working hours, and nothing else. No invoice details, no card account.</p>
+      </div>
+
+      <div style="margin-top: auto; border: 1px solid rgba(239,68,68,0.35); background: rgba(239,68,68,0.07); border-radius: 11px; padding: 10px 11px">
+        <p style="margin: 0; font-size: 11.5px; line-height: 1.5; color: #FCA5A5">Free <em>and</em> no appointment is refused: nothing is held and nothing is charged, so there is nothing for a client to book.</p>
+      </div>
+    </div>
+
+    <!-- set price -->
+    <div style="border: 1.5px solid #D14E97; border-radius: 16px; background: linear-gradient(180deg, rgba(209,78,151,0.10), transparent 60%), #1E293B; padding: 18px; display: flex; flex-direction: column; gap: 14px">
+      <div>
+        <span style="display: inline-block; padding: 4px 10px; border-radius: 999px; background: rgba(209,78,151,0.18); font-size: 11px; font-weight: 600; color: #F9A8D4">I charge a set price</span>
+        <h3 style="margin: 10px 0 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 16px; font-weight: 600">The only path with a third step</h3>
+      </div>
+
+      <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px">
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #22C58B"></span><span style="font-size: 12.5px">What it is</span></li>
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #22C58B"></span><span style="font-size: 12.5px">$300, paid in full</span></li>
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #D14E97"></span><span style="font-size: 12.5px; font-weight: 600">Card, or you invoice</span></li>
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #22C58B"></span><span style="font-size: 12.5px">Publish</span></li>
+      </ol>
+
+      <div style="border-top: 1px solid #334155; padding-top: 12px">
+        <p style="margin: 0; font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #94A3B8">Asks for</p>
+        <p style="margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: #CBD5E1">Hours, then your invoice details, then a card account if they pay by card.</p>
+      </div>
+
+      <div style="margin-top: auto; border: 1px solid rgba(245,158,11,0.4); background: rgba(245,158,11,0.07); border-radius: 11px; padding: 10px 11px">
+        <p style="margin: 0; font-size: 11.5px; line-height: 1.5; color: #FDE68A">Invoice details come <strong>before</strong> Stripe. With no card account the service is invoiced, so the paperwork is what makes it work at all.</p>
+      </div>
+    </div>
+
+    <!-- quote -->
+    <div style="border: 1px solid #334155; border-radius: 16px; background: #1E293B; padding: 18px; display: flex; flex-direction: column; gap: 14px">
+      <div>
+        <span style="display: inline-block; padding: 4px 10px; border-radius: 999px; background: rgba(148,163,184,0.16); font-size: 11px; font-weight: 600; color: #CBD5E1">I price it per job</span>
+        <h3 style="margin: 10px 0 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 16px; font-weight: 600">No price, and no card question</h3>
+      </div>
+
+      <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px">
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #22C58B"></span><span style="font-size: 12.5px">What it is</span></li>
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #22C58B"></span><span style="font-size: 12.5px">Priced per job</span></li>
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #334155"></span><span style="font-size: 12.5px; color: #64748B; text-decoration: line-through">How you get paid</span></li>
+        <li style="display: flex; gap: 9px; align-items: center"><span style="width: 7px; height: 7px; border-radius: 50%; background: #22C58B"></span><span style="font-size: 12.5px">Publish</span></li>
+      </ol>
+
+      <div style="border-top: 1px solid #334155; padding-top: 12px">
+        <p style="margin: 0; font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #94A3B8">Asks for</p>
+        <p style="margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: #CBD5E1">Your invoice details, because accepting a quote raises a real invoice. Never a card account: what a quote collects is decided in the quote.</p>
+      </div>
+
+      <div style="margin-top: auto; border: 1px solid #334155; background: #0F172A; border-radius: 11px; padding: 10px 11px">
+        <p style="margin: 0; font-size: 11.5px; line-height: 1.5; color: #94A3B8">The client requests, you send a quote, they accept, the invoice follows. The booking can happen before any of that.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="border: 1px solid #334155; border-radius: 14px; background: #1E293B; padding: 14px 16px">
+    <p style="margin: 0; font-size: 12.5px; line-height: 1.6; color: #CBD5E1"><strong style="color: #F1F5F9">Why this is the right cut:</strong> it is the model the code already holds. <code style="font-family: ui-monospace, monospace; font-size: 12px; color: #F9A8D4">serviceRequirements</code> asks whether it is quoted, then whether money moves, then how it is collected — these three branches exactly. The editor is the only layer that flattened them into one row of chips.</p>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1120,"height":780}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

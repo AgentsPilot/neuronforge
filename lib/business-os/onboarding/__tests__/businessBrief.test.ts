@@ -56,7 +56,10 @@ describe('the contract itself', () => {
     for (const field of BRIEF_FIELDS) {
       expect(field.meaning.length).toBeGreaterThan(20);
       expect(field.earnsItsQuestion.length).toBeGreaterThan(20);
-      expect(field.example).toMatch(/\?$/);
+      /* The question mark may now be followed by the trailing illustration:
+         `…what is better for the client? (e.g. less stress)`. See
+         `carries one short illustration` below for why that bracket exists. */
+      expect(field.example).toMatch(/\?(?:\s*\(e\.g\.[^)]*\))?$/);
     }
   });
 
@@ -68,17 +71,103 @@ describe('the contract itself', () => {
     }
   });
 
-  it('allows one question per field, and no more', () => {
+  it('costs fewer questions than there are fields, and says so out loud', () => {
     /*
-     * It was four against five fields, so the last in the order was never
-     * reached — not declined, never asked: the loop exits on the count before
-     * the model is consulted again. Measured, that field was always
-     * `objections`, the one that feeds the whole FAQ.
+     * ─────────────────────────────────────────────────────────────────────────
+     * THIS TEST USED TO READ `toBe(BRIEF_FIELDS.length)`, one question per
+     * field, and the reason is worth keeping: at four against five fields the
+     * last in the order was never reached, not declined but never asked,
+     * because the loop exits on the count before the model is consulted. That
+     * field was `objections`, which feeds the whole FAQ.
      *
-     * Tied to the list rather than written as a number, so adding a field
-     * cannot silently starve the one below it.
+     * Six was then measured on a live run and six is too many. All six were
+     * asked and two returned nothing usable; the owner's verdict was that
+     * there are too many questions.
+     *
+     * So the budget is deliberately SMALLER than the number of pillars, which
+     * means something goes unasked on every run. What stops that being the
+     * FAQ is no longer arithmetic: the picker is handed the number of questions
+     * left and told that the two section-feeding pillars come first. Both parts
+     * are asserted below, because a budget smaller than the field count is only
+     * safe while they exist.
+     * ─────────────────────────────────────────────────────────────────────────
      */
-    expect(MAX_FOLLOW_UPS).toBe(BRIEF_FIELDS.length);
+    expect(MAX_FOLLOW_UPS).toBeLessThan(BRIEF_FIELDS.length);
+    /* Enough to reach both section-feeders and still learn something else. */
+    expect(MAX_FOLLOW_UPS).toBeGreaterThanOrEqual(
+      BRIEF_FIELDS.filter(field => field.feedsASection).length + 2
+    );
+  });
+
+  it('carries one short illustration, in the shape the interface styles', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * EVERY QUESTION SHOWS WHAT KIND OF ANSWER IS WANTED, and the shape is not
+     * cosmetic: the chat bubble renders a TRAILING `(e.g. …)` smaller and
+     * muted, and it finds it by looking at the end of the string. Woven into
+     * the sentence it is styled as part of the question.
+     *
+     * Measured across two live runs, both failure directions:
+     *
+     *   NONE — five of six questions were abstract, and "what is better for
+     *   the client?" returned "they happy with the results".
+     *
+     *   TOO BIG, OR INSIDE THE SENTENCE — "Who do you help most often, such as
+     *   new homeowners or people facing water damage?" returned "water
+     *   damage", and "…what is better for the client? For example, reduced
+     *   stress." returned "reduce stress and budget control". Both answers are
+     *   the illustration handed straight back.
+     *
+     * So: present, trailing, bracketed, one, and short. Four words is the cap
+     * because the fifth makes it an answer.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    for (const field of BRIEF_FIELDS) {
+      const match = /\((e\.g\.[^)]*)\)$/.exec(field.example);
+
+      expect([field.key, Boolean(match)]).toEqual([field.key, true]);
+
+      const words = match![1].replace(/^e\.g\.\s*/, '').trim().split(/\s+/);
+      expect([field.key, words.length]).toEqual([field.key, expect.any(Number)]);
+      expect(words.length).toBeLessThanOrEqual(4);
+      /* An "or" makes it a menu, and a menu is answered by picking from it. */
+      expect([field.key, match![1]]).not.toMatchObject([
+        field.key,
+        expect.stringMatching(/\bor\b|,/),
+      ]);
+    }
+  });
+
+  it('tells the model the shape, rather than leaving it to copy the samples', () => {
+    /* The samples set the register; the rule is what holds when the model
+       rephrases per trade. Both halves, since the interface depends on the
+       bracket being last. */
+    const fs = require('fs') as typeof import('fs');
+    const path = require('path') as typeof import('path');
+    const manager = fs.readFileSync(
+      path.join(process.cwd(), 'lib/services/OnboardingConversationManager.ts'),
+      'utf8'
+    );
+
+    expect(manager).toMatch(/\(e\.g\. <two to four words>\)/);
+    expect(manager).toMatch(/must be the LAST thing in the string/);
+  });
+
+  it('tells the picker its budget, and what to spend it on first', () => {
+    /*
+     * The two halves that make a budget smaller than the field count safe. A
+     * source guard, because both live in the prompt: the number is interpolated
+     * into the user message and the priority is a rule in the system message.
+     */
+    const fs = require('fs') as typeof import('fs');
+    const path = require('path') as typeof import('path');
+    const manager = fs.readFileSync(
+      path.join(process.cwd(), 'lib/services/OnboardingConversationManager.ts'),
+      'utf8'
+    );
+
+    expect(manager).toMatch(/Questions left, including this one: \$\{questionsLeft\}/);
+    expect(manager).toMatch(/Objections and delivery write whole sections/);
   });
 });
 
@@ -257,7 +346,7 @@ describe('no example is ever shown to an owner', () => {
   });
 
   it('every example still ends in a question mark, for the register it sets', () => {
-    for (const field of BRIEF_FIELDS) expect(field.example).toMatch(/\?$/);
+    for (const field of BRIEF_FIELDS) expect(field.example).toMatch(/\?(?:\s*\(e\.g\.[^)]*\))?$/);
   });
 });
 
@@ -352,8 +441,28 @@ describe('every question asks exactly one thing', () => {
      * The exact shape of both offenders. `delivery` is deliberately NOT caught:
      * its second clause follows a COLON and narrows the ask rather than adding
      * a subject to it.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * ONE NAMED EXCEPTION, and it is a risk being carried deliberately.
+     *
+     * `audience` is the reviewed recommendation "Who do you help most often,
+     * and what usually brings them to you?", which does join two halves. They
+     * are halves of one topic — who, and why they come — rather than the two
+     * unrelated asks this guard was written for, and the alternative wordings
+     * all presumed a past client, which a business that has not opened cannot
+     * answer.
+     *
+     * The failure this guard records happened on THIS field, so the exception
+     * is the one place to watch: an answer that covers who but not why, or why
+     * but not who, means split the question and ask the trigger as a follow-up.
+     * Every other field is still held to the rule.
+     * ─────────────────────────────────────────────────────────────────────────
      */
+    const JOINS_TWO_HALVES_OF_ONE_TOPIC = ['audience'];
+
     for (const field of BRIEF_FIELDS) {
+      if (JOINS_TWO_HALVES_OF_ONE_TOPIC.includes(field.key)) continue;
+
       expect([field.key, field.example]).not.toMatchObject([
         field.key,
         expect.stringMatching(/,\s*(and|or)\s+(what|who|whom|when|where|why|how|which)\b/i),
@@ -443,30 +552,75 @@ describe('the questions ask for a memory, not an opinion', () => {
     }
   });
 
-  it('attributes any judgement to the client, where it asks for one at all', () => {
-    // The one field that cannot be answered from pure recall.
-    const differentiators = BRIEF_FIELDS.find(field => field.key === 'differentiators')!;
-    expect(differentiators.example).toMatch(/clients? (told|tell|said|say)/i);
-  });
-
-  it('asks the objection as something somebody actually said', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THREE GUARDS WERE REVERSED HERE, AND THIS RECORDS WHAT THEY USED TO SAY.
+   *
+   * They required the opposite of what the examples now do:
+   *
+   *   differentiators  had to match /clients? (told|tell|said|say)/
+   *   objections       had to match /asked|ask|said|say|told|tell/
+   *   audience         had to match /recently|last|think of/
+   *
+   * All three enforced the same design: attribute every judgement to a client,
+   * and anchor every question in one remembered person. The reasoning is in the
+   * contract's header and it was not wrong about adjectives.
+   *
+   * It was wrong about two other things, and that is why these are inverted
+   * rather than deleted: owners do not know why they were chosen, so a question
+   * demanding a client's words gets how they were FOUND or gets a quote the
+   * owner made up, and a business that has not opened yet cannot answer any
+   * question pinned to a past client at all.
+   *
+   * So the rule became: never require a client to have spoken, never require a
+   * client to have existed. Deleting the guards would have left nothing saying
+   * so, and the next person would have "fixed" the examples back.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('never requires the owner to quote a client, which is how a quote gets invented', () => {
     /*
-     * The same verb set its sibling above accepts.
-     *
-     * This read /asked|said/ — past tense only — while the differentiators
-     * guard one test up accepts (told|tell|said|say). Nothing justified the
-     * difference: what both are protecting is that the answer be a REPORTED
-     * UTTERANCE rather than the owner's own reading, and tense has no bearing
-     * on that. The narrower pattern rejected "What did the last client SAY
-     * they were worried about?", which is exactly what the field asks for.
+     * `meaning` is where a real quote is still preferred: both fields tell the
+     * recorder to keep an answer as the owner's own view unless they report a
+     * client saying it. The QUESTION must not demand one.
      */
-    const objections = BRIEF_FIELDS.find(field => field.key === 'objections')!;
-    expect(objections.example).toMatch(/\b(asked|ask|said|say|told|tell)\b/i);
+    for (const key of ['differentiators', 'objections']) {
+      const field = BRIEF_FIELDS.find(f => f.key === key)!;
+
+      expect([key, field.example]).not.toMatchObject([
+        key,
+        expect.stringMatching(/\b(client|clients|customer|customers|they|somebody|someone)\s+(told|said)\b/i),
+      ]);
+    }
   });
 
-  it('asks for one specific client rather than a demographic', () => {
-    const audience = BRIEF_FIELDS.find(field => field.key === 'audience')!;
-    expect(audience.example).toMatch(/recently|last|think of/i);
+  it('never presumes the business already has clients', () => {
+    /*
+     * The whole set is asked of businesses that have not opened yet. "Your last
+     * client", "the last person who came to you" and "recently" all make the
+     * question unanswerable for them, and an unanswerable question is answered
+     * with an invention.
+     */
+    for (const field of BRIEF_FIELDS) {
+      expect([field.key, field.example]).not.toMatchObject([
+        field.key,
+        expect.stringMatching(/\b(your|the)\s+last\s+(client|customer|person)\b|\blast person who\b|\brecently\b/i),
+      ]);
+    }
+  });
+
+  it('keeps the owner off the subject of themselves', () => {
+    /*
+     * The adjective defence, which is what survives from the reversed guards.
+     * Asking an owner what a CLIENT values is a question about somebody else;
+     * asking what makes them special is a self-portrait, and the answer is
+     * "professional".
+     */
+    for (const field of BRIEF_FIELDS) {
+      expect([field.key, field.example]).not.toMatchObject([
+        field.key,
+        expect.stringMatching(/what makes (you|your business)|why (you|should|would)|unique|special|the best/i),
+      ]);
+    }
   });
 
   it('carries no em dash, which the register would propagate to the owner', () => {

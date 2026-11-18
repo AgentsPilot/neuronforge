@@ -16,6 +16,7 @@ import { InvoiceSettingsSection } from '@/components/business-os/settings/Invoic
 import { TabFooter, TabFooterSlot, TabFooterSlotProvider } from '@/components/business-os/settings/TabFooter';
 import { StripeConnectWizard } from '@/components/payments/StripeConnectWizard';
 import { StripeEmbeddedOnboarding } from '@/components/payments/StripeEmbeddedOnboarding';
+import { StripeConnectPrepare } from '@/components/payments/StripeConnectPrepare';
 import { createLogger } from '@/lib/logger';
 import type { SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import {
@@ -176,6 +177,12 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
   const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null);
 
   const [showStripeWizard, setShowStripeWizard] = useState(false);
+  /* The country and confirmation screens, which run BEFORE any account exists. */
+  const [showStripePrepare, setShowStripePrepare] = useState(false);
+  /* How many answers Stripe is still waiting for. Null until we have asked. */
+  const [stripeCurrentlyDue, setStripeCurrentlyDue] = useState<number | null>(null);
+  /** What Stripe is still waiting for, named. See `stripeRequirementLabels`. */
+  const [stripeDueFields, setStripeDueFields] = useState<Array<{ id: string; label: string }>>([]);
   const [showEmbeddedOnboarding, setShowEmbeddedOnboarding] = useState(false); // Embedded onboarding for continue flow
   const [stripeContinueMode, setStripeContinueMode] = useState(false); // Whether wizard is in continue mode
   const [stripeAccountData, setStripeAccountData] = useState<{
@@ -391,10 +398,24 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
       // If refreshFromStripe is true, first sync the latest status from Stripe API
       if (refreshFromStripe) {
         try {
-          await fetch('/api/payments/stripe-connect/refresh-status', {
+          const refreshResponse = await fetch('/api/payments/stripe-connect/refresh-status', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
           });
+
+          /*
+           * The response was discarded here. It carries the one number an
+           * owner with an unfinished account actually wants: how many answers
+           * Stripe is still waiting for. "Setup incomplete" is a verdict;
+           * "four details left" is a task.
+           */
+          const refreshBody = await refreshResponse.json().catch(() => null);
+          const due = refreshBody?.data?.currently_due_count;
+          setStripeCurrentlyDue(typeof due === 'number' ? due : null);
+          /* The named half of the same answer. Whatever could not be named is
+             absent from this list and still counted above. */
+          const named = refreshBody?.data?.currently_due;
+          setStripeDueFields(Array.isArray(named) ? named : []);
         } catch (err) {
           // Continue even if refresh fails - we'll use cached data
           logger.warn({ err }, 'Failed to refresh status from Stripe');
@@ -490,41 +511,54 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     }
   };
 
-  const handleConnectStripe = async () => {
-    // Simplified flow: Create minimal account and show embedded onboarding directly
-    if (!stripeConnected) {
-      try {
-        setStripeLoading(true);
+  /*
+   * ONE PRESS NO LONGER CREATES AN ACCOUNT.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This used to POST `create-minimal` with `country: 'US'` the instant the
+   * button was pressed, with the comment "can be changed in Stripe's form". It
+   * cannot: `accounts.country` is immutable once the account exists, the
+   * settlement currency is derived from it, and every account this platform has
+   * ever opened is therefore American. An Israeli owner was asked for a Social
+   * Security Number and a US routing number, and could not be paid in shekels
+   * at all.
+   *
+   * So the press now opens `StripeConnectPrepare`, which asks the country,
+   * shows what we already know, and only then creates the account. Nothing
+   * reaches Stripe until the owner has seen both.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const handleConnectStripe = () => {
+    if (stripeConnected) return;
+    /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * THE CHOICE FIRST, BECAUSE ONE OF THE TWO ANSWERS WAS UNREACHABLE HERE.
+     *
+     * This went straight to `StripeConnectPrepare`, which creates a NEW
+     * account. An owner who already has Stripe had nowhere to say so from the
+     * dashboard: the OAuth path exists, is built, and lives one screen inside
+     * `StripeConnectWizard` — the choice screen the onboarding build shows,
+     * "Create New Account" or "Connect Existing Account". Reported by an owner
+     * who had met that screen during onboarding and could not find it again.
+     *
+     * So the wizard opens on its choice. Its create branch is handed straight
+     * back to `prepare` through `onCreateNew`, so the country question and the
+     * profile blockers that component exists for are not skipped — see the
+     * note on it below.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    setShowStripeWizard(true);
+  };
 
-        // Create minimal account - Stripe's embedded onboarding will collect everything
-        const response = await fetch('/api/payments/stripe-connect/create-minimal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ country: 'US' }), // Default to US, can be changed in Stripe's form
-        });
+  /** The account exists now — hand over to Stripe's embedded form. */
+  const handlePrepareCreated = () => {
+    setShowStripePrepare(false);
+    setShowEmbeddedOnboarding(true);
+  };
 
-        const result = await response.json();
-
-        if (result.success) {
-          // Account created (or exists) - show embedded onboarding
-          if (result.accountId) {
-            setStripeAccountData({
-              stripe_account_id: result.accountId,
-              stripe_email: null,
-              country: 'US',
-              business_type: 'individual',
-            });
-          }
-          setShowEmbeddedOnboarding(true);
-        } else {
-          logger.error({ error: result.error }, 'Failed to create Stripe account');
-        }
-      } catch (error) {
-        logger.error({ err: error }, 'Failed to initiate Stripe connection');
-      } finally {
-        setStripeLoading(false);
-      }
-    }
+  /** Backed out before anything was created, so there is nothing to clean up. */
+  const handlePrepareCancel = () => {
+    setShowStripePrepare(false);
   };
 
   const handleContinueOnboarding = async () => {
@@ -1163,12 +1197,36 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                       onExit={handleEmbeddedOnboardingExit}
                     />
                   </div>
+                ) : showStripePrepare ? (
+                  /* Country, then what we already know. No account yet. */
+                  <StripeConnectPrepare
+                    onCreated={handlePrepareCreated}
+                    onCancel={handlePrepareCancel}
+                    /* The blockers are all fields of the business details tab,
+                       which is in this same dialog: fix them without losing
+                       the place they were trying to get to. */
+                    onFixProfile={() => {
+                      setShowStripePrepare(false);
+                      setActiveTab('business');
+                    }}
+                  />
                 ) : showStripeWizard ? (
                   <StripeConnectWizard
                     onComplete={handleWizardComplete}
                     onCancel={handleWizardCancel}
                     continueOnboarding={stripeContinueMode}
                     existingAccount={stripeAccountData || undefined}
+                    /* "Create new" comes back here rather than running the
+                       wizard's own country step: `StripeConnectPrepare` asks
+                       the country AND holds the profile blockers, and it was
+                       written because one press used to open an American
+                       account for a business that was not American. The
+                       wizard keeps the other branch, the OAuth connect, which
+                       is the one this tab could not reach at all. */
+                    onCreateNew={() => {
+                      setShowStripeWizard(false);
+                      setShowStripePrepare(true);
+                    }}
                   />
                 ) : (
                   <>
@@ -1219,6 +1277,37 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                                 <Check className="h-4 w-4" />
                                 {t('config.stripe.connected') || 'Connected'}
                               </span>
+
+                              {/*
+                                * TAKING PAYMENTS AND BEING PAID ARE TWO PERMISSIONS.
+                                *
+                                * Stripe answers them separately — `charges_enabled` and
+                                * `payouts_enabled` — and an owner is routinely granted the
+                                * first days before the second, while an ID is checked. One
+                                * "Connected" pill for both states leaves that owner unable
+                                * to tell whether their money is coming, so the pending half
+                                * is named whenever it is actually pending.
+                                *
+                                * Only when we hold the account row: the OAuth plugin path
+                                * reports no capabilities, and silence is not "pending".
+                                */}
+                              {stripeAccountData?.charges_enabled && stripeAccountData?.payouts_enabled === false && (
+                                <span
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-full"
+                                  style={{
+                                    backgroundColor: 'var(--v2-status-warning-bg)',
+                                    color: 'var(--v2-status-warning-text)',
+                                    border: '1px solid var(--v2-status-warning-border)',
+                                  }}
+                                  title={
+                                    t('config.stripe.payouts_pending_desc') ||
+                                    'Stripe is still checking your details. Payments you collect are held, not lost.'
+                                  }
+                                >
+                                  <Clock className="h-4 w-4" />
+                                  {t('config.stripe.payouts_pending') || 'Payouts pending'}
+                                </span>
+                              )}
                               <button
                                 onClick={handleDisconnectStripe}
                                 className="text-sm text-[var(--v2-text-muted)] hover:text-amber-500 transition-colors"
@@ -1239,8 +1328,48 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                                 style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' }}
                               >
                                 <Clock className="h-4 w-4" />
-                                {t('config.stripe.setup_incomplete') || 'Setup Incomplete'}
+                                {/* A count when we have one, so this reads as a
+                                    task with an end rather than a verdict. */}
+                                {stripeCurrentlyDue && stripeCurrentlyDue > 0
+                                  ? (t('config.stripe.details_left') || '{count} details left').replace(
+                                      '{count}',
+                                      String(stripeCurrentlyDue)
+                                    )
+                                  : t('config.stripe.setup_incomplete') || 'Setup Incomplete'}
                               </span>
+
+                              {/*
+                                ──────────────────────────────────────────────
+                                WHICH DETAILS, not just how many.
+
+                                Stripe's `currently_due` is the authoritative
+                                list of what is MANDATORY right now — its own
+                                answer, for this account, in this country, for
+                                this business type. Nothing we could infer
+                                would be as accurate, and we were already
+                                fetching it and keeping only the length.
+
+                                An owner who closed the form half way now reads
+                                "Date of birth · Home address · Where to pay
+                                you" and knows whether to press Continue now or
+                                go and find their passport.
+
+                                `basis-full` so it takes its own line under the
+                                chip and the button rather than stretching the
+                                row; the row wraps on a narrow dialog anyway.
+                              */}
+                              {stripeDueFields.length > 0 && (
+                                <span className="basis-full text-xs text-[var(--v2-text-secondary)] leading-relaxed [text-wrap:pretty]">
+                                  {t('config.stripe.still_needs') || 'Stripe still needs:'}{' '}
+                                  {stripeDueFields
+                                    .map(field => {
+                                      const key = `stripe.due.${field.id}`;
+                                      const translated = t(key);
+                                      return translated === key ? field.label : translated;
+                                    })
+                                    .join(' · ')}
+                                </span>
+                              )}
                               <button
                                 onClick={handleContinueOnboarding}
                                 disabled={stripeLoading}

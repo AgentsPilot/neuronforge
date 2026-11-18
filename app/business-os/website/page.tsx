@@ -43,6 +43,7 @@ import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 import { getTranslatedTemplateName, getTranslatedVertical, getTranslatedBrandVoice } from '@/lib/website-builder/templateLabels';
 import { ShareMenu } from '@/components/business-os/ShareMenu';
 import { ShareGuide } from '@/components/business-os/ShareGuide';
+import { NotYetGate } from '@/components/business-os/setup/NotYetGate';
 
 const logger = createLogger({ module: 'WebsitePage' });
 
@@ -882,7 +883,7 @@ function gapLabel(
   }
 }
 
-export default function WebsiteManagementPage() {
+function WebsiteManagementPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   // `t` as well as `language`: the guidance and the publish warning are keyed
@@ -9545,5 +9546,19 @@ export default function WebsiteManagementPage() {
       </Dialog>
 
     </div>
+  );
+}
+
+/**
+ * Wrapped, with the page itself untouched above. See `NotYetGate`: it renders
+ * this exactly as before once presence's own configuration is finished, and a
+ * signpost until then. A wrapper rather than an early return, so the page
+ * keeps its own hooks and Suspense boundaries.
+ */
+export default function WebsiteManagementPageGated() {
+  return (
+    <NotYetGate area="presence">
+      <WebsiteManagementPage />
+    </NotYetGate>
   );
 }

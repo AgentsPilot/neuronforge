@@ -165,6 +165,12 @@ const computedConfigurationSchema = z.object({
      with their own site may take every enquiry by phone. Decides which offer
      the dashboard makes, never anything that gets built. */
   leads_arrive_by_email: z.boolean().nullish(),
+  /* Somebody fills in a form on their own site (Q4b-1), asked before the
+     mailbox question because that one presumes the enquiries this one
+     establishes. Named here so it survives into `extracted_data` — Zod strips
+     what it does not name, and an answer collected and then dropped is worse
+     than one never asked. No column of its own. */
+  site_has_form: z.boolean().nullish(),
   payment_mode: z.enum(['none', 'upfront', 'invoicing', 'installments']),
   needs_stripe_connect: z.boolean(),
   /** Clients fill in a form before their appointment. */
@@ -411,16 +417,44 @@ export async function POST(request: NextRequest) {
        * rather than guess. An absent key would leave a previous answer standing
        * on a re-run, which for a question that was re-asked is wrong.
        *
-       * ⚠️ BOTH WRITES ARE COMMENTED OUT UNTIL THE MIGRATION IS APPLIED.
+       * ───────────────────────────────────────────────────────────────────────
+       * THE MIGRATION IS APPLIED, AND THESE TWO WRITES ARE LIVE AGAIN.
        *
-       * `20261105_own_site_and_lead_arrival.sql` adds them. Until it has run,
-       * naming either one here makes the upsert fail with 42703 and this route
-       * returns 500 "Failed to save profile" — onboarding cannot complete at
-       * all. Re-enable these two lines in the same change that applies the
-       * migration, not before.
+       * They were commented out because `20261105_own_site_and_lead_arrival.sql`
+       * had not run, and naming an absent column here fails the whole upsert
+       * with 42703 — a 500 from this route means onboarding cannot complete at
+       * all. That caution was right.
+       *
+       * It then outlived the migration, and the cost was invisible: both
+       * answers were collected in the chat, carried all the way through the
+       * configuration, and dropped here. Everything downstream reads the
+       * columns — `businessShape`, `setupGraph`, and the dashboard's own-site
+       * lead offer, which needs `has_website === true && leads_arrive_by_email
+       * === true` — so that offer could never appear for any account, and the
+       * owner who answered the question was never served by their answer.
+       *
+       * Verified before re-enabling: both columns exist on `business_profiles`
+       * in the live database, checked one at a time (PostgREST rejects a whole
+       * select for one unknown name, so a combined query cannot say which is
+       * missing).
+       * ───────────────────────────────────────────────────────────────────────
        */
-      // profileData.has_website = configuration.has_website ?? null;
-      // profileData.leads_arrive_by_email = configuration.leads_arrive_by_email ?? null;
+      profileData.has_website = configuration.has_website ?? null;
+      profileData.leads_arrive_by_email = configuration.leads_arrive_by_email ?? null;
+      /*
+       * `lead_autosend_enabled` IS DELIBERATELY NOT WRITTEN HERE.
+       *
+       * A Q4c consent question briefly fed it from the interview. Withdrawn on
+       * the owner's instruction: the reply agent writes to clients in the
+       * business's name, and that is a choice to make from the dashboard once
+       * they can see what it would answer — the readiness row says out loud
+       * when replies are off and switches them on in a click.
+       *
+       * So the column keeps its default (false) through onboarding, and the
+       * only writers are that row and the settings panel. Do not "complete"
+       * this by defaulting it true: an upsert carrying the field would also
+       * stamp over a switch an owner had turned on themselves.
+       */
       profileData.needs_stripe_connect = configuration.needs_stripe_connect;
       /*
        * HOW THE MONEY ARRIVES, in its own column and not only inside the blob.
@@ -792,7 +826,9 @@ export async function POST(request: NextRequest) {
        * It is deliberately the weaker source, used only when the browser said
        * nothing.
        */
-      const { zone, source: zoneSource, confirmed, rejected } = resolveOnboardingTimezone(
+      /* `confirmed` is deliberately not destructured any more: nothing here
+         may mark a zone as answered. See the upsert below. */
+      const { zone, source: zoneSource, rejected } = resolveOnboardingTimezone(
         validated.timezone,
         request.headers.get('x-vercel-ip-timezone') || request.headers.get('cf-timezone')
       );
@@ -828,30 +864,37 @@ export async function POST(request: NextRequest) {
 
         if (unset) {
           /*
-           * CONFIRMED ONLY IF A HUMAN COULD HAVE SEEN IT.
+           * ───────────────────────────────────────────────────────────────────
+           * THE ZONE IS STORED. NOBODY HAS CONFIRMED IT.
            *
-           * The browser's zone is shown in the flow and accepted by finishing
-           * the build, so it is an answer: recorded as confirmed, and the
-           * readiness card stops asking.
+           * This used to stamp `timezone_confirmed_at` whenever the value came
+           * from the BROWSER, on the reasoning that "the browser's zone is
+           * shown in the flow and accepted by finishing the build, so it is an
+           * answer". That reasoning no longer holds, and arguably never quite
+           * did: the build screen sends `Intl.DateTimeFormat().resolvedOptions()
+           * .timeZone` and has never DISPLAYED it, so finishing the build
+           * accepted nothing anybody had read.
            *
-           * The edge's guess is not. It is derived from an IP nobody was shown
-           * and never appeared on screen, so marking it confirmed would silence
-           * the question on behalf of someone who was never asked it — exactly
-           * the failure 20261007 exists to correct, rebuilt one layer up. The
-           * zone is still STORED, because a likely zone beats none for every
-           * hour the platform has to render meanwhile; the card then asks, and
-           * the answer it gets overwrites this.
+           * It is now decisively wrong, because there IS a screen that shows
+           * it: step 0 on the dashboard asks the owner to confirm the clock and
+           * the currency before anything is priced or booked, and it is gated
+           * on exactly this column. Stamping it here skipped that step for
+           * every account built from a browser — measured: a profile created
+           * at 15:15:10 and a confirmation stamped at 15:15:17, with no human
+           * involved in between.
            *
-           * So the two columns keep doing their two jobs: `timezone` is the
-           * best value available, `timezone_confirmed_at` is whether anybody
-           * has actually said.
+           * The two columns keep doing their two jobs, which the old comment
+           * already said and this now actually honours: `timezone` is the best
+           * value available, `timezone_confirmed_at` is whether anybody has
+           * said. The browser's guess is a good default and step 0 prefills
+           * from it, so confirming is one press rather than a question.
+           * ───────────────────────────────────────────────────────────────────
            */
           const { error: zoneError } = await supabaseServer
             .from('user_preferences')
             .upsert({
               user_id: user.id,
               timezone: zone,
-              ...(confirmed ? { timezone_confirmed_at: new Date().toISOString() } : {}),
               updated_at: new Date().toISOString(),
             }, { onConflict: 'user_id' });
 

@@ -49,6 +49,10 @@ export const BUSINESS_OWNED_TABLES = [
   'crm_contacts',
   'crm_pipeline_stages',
   'crm_tasks',
+  /* How a client has behaved, snapshotted (20261128). Business-owned like the
+     contacts it is about: a new business must not inherit the previous
+     holder's reading of its clients. */
+  'crm_client_standing',
   'contact_documents',
   // Scheduling
   'scheduling_bookings',

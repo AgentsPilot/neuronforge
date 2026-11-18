@@ -21,7 +21,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { CountrySelect } from '@/components/ui/CountrySelect';
 import { AdminAreaField } from '@/components/ui/AdminAreaField';
 import { AddressAutocomplete } from '@/components/ui/AddressAutocomplete';
@@ -49,6 +49,7 @@ import {
   Sparkles,
   Mail,
   MapPin,
+  Store,
 } from 'lucide-react';
 import PhoneInput, { getCountryCallingCode, parsePhoneNumber } from 'react-phone-number-input';
 import type { Country } from 'react-phone-number-input';
@@ -60,9 +61,16 @@ import { MediaUploader } from '@/components/website/MediaUploader';
 import { toE164 } from '@/lib/branding/phone';
 import { safeExternalUrl } from '@/lib/branding/externalUrl';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { getVerticalLabel } from '@/lib/business-os/verticalLabels';
+import {
+  getVerticalLabel,
+  isKnownVertical,
+  SELECTABLE_VERTICALS,
+} from '@/lib/business-os/verticalLabels';
 import { CONFIG_ACCENT, configAccentButton } from '@/components/business-os/configAccent';
 import { TabFooter } from '@/components/business-os/settings/TabFooter';
+import { RequiredMark, RequiredStrip } from '@/components/business-os/settings/RequiredMark';
+import { missingProfileFields } from '@/lib/business-os/setup/profileReadiness';
+import { industryForVertical } from '@/lib/business-os/setup/industryForVertical';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'BusinessProfileSection' });
@@ -75,6 +83,17 @@ const logger = createLogger({ module: 'BusinessProfileSection' });
  * lets the owner correct it.
  */
 const COUNTRY_BY_LANGUAGE: Record<string, Country> = { he: 'IL', es: 'ES', en: 'US' };
+
+/**
+ * The business-type picker's value for "none of these is what we are".
+ *
+ * Not a vertical and never stored as one: it selects the free-text field, whose
+ * answer goes to `organizations.settings.business_type` while the pipeline key
+ * stays on the generic preset. Prefixed so it cannot collide with a real key —
+ * `other` would have, and `other` is one of the two sentinels this whole change
+ * exists to stop treating as an answer.
+ */
+const OWN_WORDS = '__own_words__';
 
 /** The calling code for a country, or the US as a last resort. */
 function getCallingCode(country: Country): string {
@@ -325,18 +344,86 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
     show_logo_on_smart_links: true,
   });
   const [savingBranding, setSavingBranding] = useState(false);
+  /*
+   * The organisation's four answers. NOT its name.
+   *
+   * `organizations.name` is a TENANCY LABEL, not the business name, and this
+   * form used to write the business name into it as well. One fact in two
+   * columns is what produced the bug above: the field offered whichever was
+   * non-empty, which on a chat-built account is the label — and the label is
+   * seeded with the ACCOUNT EMAIL by `get_or_create_user_organization`, so an
+   * owner who had not saved yet was shown their own email as their business
+   * name.
+   *
+   * `business_profiles.company_name` is the single answer, and it is the one
+   * every reader that matters already used: the invoice, the booking page, the
+   * outbound mail, `missingProfileFields`. Nothing on the server reads the
+   * label at all — every other query against that row asks for `settings` or
+   * `id` — so it is left as signup wrote it.
+   */
   const [orgSettings, setOrgSettings] = useState({
-    name: '',
     industry: '',
     company_size: '',
     primary_goal: '',
     technical_level: '',
     work_hours_per_day: 8,
+    /**
+     * What the owner calls their business, when our preset list has no word for
+     * it. Stored in `organizations.settings`, not on the profile: the profile's
+     * `vertical` is a pipeline key and this is prose. See the field's note in
+     * `profileReadiness`.
+     */
+    business_type: '',
   });
 
   // Organization ID for updates
   const [orgId, setOrgId] = useState<string | null>(null);
   const [businessLoaded, setBusinessLoaded] = useState(false);
+
+  /**
+   * Which business type the picker is showing.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS NOT JUST `businessProfile.vertical`.
+   *
+   * The picker has to tell three states apart and that column can only hold
+   * two of them: a preset trade, our fallback, and "none of these, here is
+   * what we are". The last of those lives in `organizations.settings
+   * .business_type` — prose, which is not a pipeline key — so the control reads
+   * from both and this says which of them is in front of the owner.
+   *
+   * Empty means nothing has been chosen, which is the state that made the
+   * dashboard ask: before this control existed, a business the preset list
+   * could not describe was stuck on `default` for ever, shown as "Service
+   * Provider" in this very section, and reported missing one screen away.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [businessTypeChoice, setBusinessTypeChoice] = useState<string>('');
+
+  /**
+   * Does this value carry any digits beyond its calling code?
+   *
+   * `parsePhoneNumber` throws on some inputs rather than returning undefined —
+   * every other call in this file wraps it for that reason — and a save must
+   * never fail over a question this cheap. The fallback strips a leading `+`
+   * and the longest calling code it could be, then asks whether anything is
+   * left.
+   */
+  const hasNationalDigits = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+
+    try {
+      const parsed = parsePhoneNumber(trimmed);
+      if (parsed?.nationalNumber) return true;
+    } catch {
+      /* Falls through to the digit test below. */
+    }
+
+    /* Calling codes are one to three digits, so anything longer than four
+       characters after the `+` has national digits in it. */
+    return trimmed.replace(/\D/g, '').length > 3;
+  };
 
   /** The country the public phone field composes against. */
   const [phoneCountry, setPhoneCountry] = useState<Country>(
@@ -352,7 +439,27 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
   const changePhoneCountry = (country: Country) => {
     setPhoneCountry(country);
     setBusinessProfile(b => {
-      if (!b.phone.trim()) return b;
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * AN EMPTY FIELD GETS THE CALLING CODE, and this line is the bug fix.
+       *
+       * It used to return unchanged when there was no number yet, which looks
+       * harmless and is not: `PhoneInput` runs in `international` mode, where
+       * the box holds a full `+…` number and `country` is only the DEFAULT for
+       * parsing. Picking a country therefore moved the flag and wrote nothing,
+       * leaving the box empty — so the first digits typed were read as the
+       * start of an international number.
+       *
+       * Reported exactly that way: pick the United States, type 20…, and the
+       * field shows `+20` — Egypt — because "20" is a calling code and there
+       * was no `+1` in front of it for the digits to attach to.
+       *
+       * Seeding `+1` makes the next keystroke a NATIONAL digit, which is what
+       * the owner is typing. `saveBusiness` drops a value that never grew past
+       * its prefix, so a country picked and then abandoned stores nothing.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (!b.phone.trim()) return { ...b, phone: `+${getCallingCode(country)}` };
 
       let national = '';
       try {
@@ -369,6 +476,33 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
     });
   };
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE FIELD OPENS READY TO TYPE INTO.
+   *
+   * `PhoneInput` is in `international` mode, so an empty box has nothing for
+   * digits to attach to and the first ones typed are read as a calling code —
+   * type 20 and the field becomes `+20`, Egypt. `changePhoneCountry` seeds the
+   * code when a country is PICKED, which left one case: the owner who never
+   * touches the picker because the flag beside the box is already right.
+   *
+   * Reported as "the phone number has no +1 so I need to reselect the country".
+   *
+   * Once, when the load finishes, and only into an empty field: a stored number
+   * is never touched, and the seed is not an answer — `hasNationalDigits` keeps
+   * a bare prefix out of the save and out of the required-field count.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    if (!businessLoaded) return;
+    setBusinessProfile(b =>
+      b.phone.trim() ? b : { ...b, phone: `+${getCallingCode(phoneCountry)}` }
+    );
+    /* `phoneCountry` is deliberately not a dependency: changing it is the
+       picker's job, and re-running here would fight `changePhoneCountry`. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessLoaded]);
+
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
 
   useEffect(() => {
@@ -382,7 +516,8 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
 
         const [businessRes, orgRes, brandingRes] = await Promise.all([
           supabase.from('business_profiles').select('vertical, sub_vertical, company_name, description, website_url, clients_per_week, revenue_tier, phone, email, address, address_parts, extracted_data, website_analysis').eq('user_id', user.id).maybeSingle(),
-          supabase.from('organizations').select('id, name, settings').eq('owner_user_id', user.id).maybeSingle(),
+          /* `name` deliberately not selected — see the `orgSettings` comment. */
+          supabase.from('organizations').select('id, settings').eq('owner_user_id', user.id).maybeSingle(),
           // Logo columns arrive with the business-logo migration. Asked for
           // separately because PostgREST rejects an entire select when one named
           // column is absent — folded into the query above, an un-migrated
@@ -403,7 +538,24 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
           description: readBusinessDescription(businessRes.data),
           website_url: businessRes.data.website_url || '',
           phone: businessRes.data.phone || '',
-          email: businessRes.data.email || '',
+          /*
+           * ───────────────────────────────────────────────────────────────────
+           * THE ACCOUNT'S OWN EMAIL AS THE PREFILL, never a blank box.
+           *
+           * This is the address a CLIENT writes to, so it is genuinely a
+           * different fact from the one they sign in with — and for most of the
+           * businesses this product onboards they are the same address. Nothing
+           * in onboarding asks for it, so the field opened empty on a step that
+           * now REQUIRES it, which is a question with an obvious answer sitting
+           * one table away.
+           *
+           * A PREFILL, not a write: it appears in the box, the owner sees it,
+           * and saving the form is what stores it. An owner who publishes from
+           * a different address clears it and types theirs, the same as any
+           * other suggested value on this screen.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          email: businessRes.data.email || user?.email || '',
           address: businessRes.data.address || '',
           /*
            * An address that predates the structured form keeps every character,
@@ -445,6 +597,16 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
         if (normalized.phone !== savedPhone) {
           setBusinessProfile(b => ({ ...b, phone: normalized.phone }));
         }
+      } else if (user?.email) {
+        /*
+         * NO PROFILE ROW YET, and the account's email is still the best answer.
+         *
+         * `maybeSingle` returns null for an account whose profile has not been
+         * created — which is every account between signing up and finishing
+         * the build. The branch above never runs for them, so without this the
+         * prefill would reach exactly the owners who have typed the least.
+         */
+        setBusinessProfile(b => ({ ...b, email: user.email as string }));
       }
 
       if (brandingRes.data) {
@@ -458,14 +620,50 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
         setOrgId(orgRes.data.id);
         const settings = (orgRes.data.settings || {}) as Record<string, unknown>;
         setOrgSettings({
-          name: orgRes.data.name || '',
-          industry: (settings.industry as string) || '',
+          /*
+           * Derived from the trade when nothing is stored — see
+           * `industryForVertical`. A barber should not have to translate "I cut
+           * hair" into a market category to satisfy a required field, and the
+           * answer is already in `vertical`.
+           *
+           * Only when EMPTY: an owner's own pick is never overwritten, and a
+           * vertical we could not read derives nothing.
+           */
+          industry:
+            (settings.industry as string)
+            || industryForVertical(businessRes.data?.vertical)
+            || '',
           company_size: (settings.company_size as string) || '',
           primary_goal: (settings.primary_goal as string) || '',
           technical_level: (settings.technical_level as string) || '',
           work_hours_per_day: (settings.work_hours_per_day as number) || 8,
+          business_type: (settings.business_type as string) || '',
         });
       }
+
+      /*
+       * The picker's state: the two columns read together — the preset key when
+       * it is a real answer, the owner's own words when they gave some, and
+       * otherwise nothing, which is what "not set" means.
+       *
+       * OUTSIDE the organisation block deliberately. Every account built by the
+       * onboarding chat has no `organizations` row — the comment on the save
+       * path records that, and it is why the four answers beside this one are
+       * written through the API — so initialising in there would leave the
+       * picker reading "not set" for a business whose trade we know perfectly
+       * well, on exactly the accounts this screen matters most for.
+       */
+      const ownWords = (
+        ((orgRes.data?.settings || {}) as Record<string, unknown>).business_type as string | undefined
+      )?.trim();
+
+      setBusinessTypeChoice(
+        isKnownVertical(businessRes.data?.vertical)
+          ? (businessRes.data!.vertical as string)
+          : ownWords
+            ? OWN_WORDS
+            : ''
+      );
     } catch (error) {
         logger.error({ err: error }, 'Failed to load the business profile');
       } finally {
@@ -476,15 +674,50 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
     return () => { cancelled = true; };
   }, [user?.id]);
 
+  /**
+   * The business types on offer, named in the reader's language.
+   *
+   * Sorted by the LABEL rather than by the key, because the keys are English
+   * and two of the three interfaces are not: alphabetised by key, a Hebrew
+   * picker would run in an order with no relation to the words on screen.
+   * "Something else" is pinned last — it is the way out of the list, not a
+   * member of it.
+   */
+  const verticalOptions = useMemo(
+    () => [
+      ...SELECTABLE_VERTICALS
+        .map(value => ({ value, label: getVerticalLabel(value, language) }))
+        .sort((a, b) => a.label.localeCompare(b.label, language)),
+      { value: OWN_WORDS, label: t('settings.business.vertical_own_words') },
+    ],
+    [language, t]
+  );
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TRADES THIS PRODUCT ACTUALLY ONBOARDS.
+   *
+   * This list read `b2b_saas`, `ecommerce`, `manufacturing`, `finance`,
+   * `nonprofit` — a B2B software company's categories, on a screen whose
+   * `vertical` picker two fields above offers hairdresser, contractor, dentist
+   * and dog groomer. A barber choosing an industry had one honest answer
+   * available and it was "Other", and the two fields disagreed about what kind
+   * of business this is while sitting in the same section.
+   *
+   * Ten categories that cover all twenty-nine verticals, named the way an owner
+   * would describe themselves rather than the way a market analyst would.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const industryOptions = [
-    { value: 'b2b_saas', label: t('settings.industry.b2b_saas') },
-    { value: 'ecommerce', label: t('settings.industry.ecommerce') },
-    { value: 'agency', label: t('settings.industry.agency') },
-    { value: 'healthcare', label: t('settings.industry.healthcare') },
-    { value: 'manufacturing', label: t('settings.industry.manufacturing') },
-    { value: 'finance', label: t('settings.industry.finance') },
+    { value: 'professional_services', label: t('settings.industry.professional_services') },
+    { value: 'health', label: t('settings.industry.health') },
+    { value: 'beauty', label: t('settings.industry.beauty') },
+    { value: 'fitness', label: t('settings.industry.fitness') },
     { value: 'education', label: t('settings.industry.education') },
-    { value: 'nonprofit', label: t('settings.industry.nonprofit') },
+    { value: 'home_trades', label: t('settings.industry.home_trades') },
+    { value: 'events', label: t('settings.industry.events') },
+    { value: 'pet_services', label: t('settings.industry.pet_services') },
+    { value: 'retail', label: t('settings.industry.retail') },
     { value: 'other', label: t('settings.industry.other') },
   ];
 
@@ -600,7 +833,17 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: businessProfile.phone.trim(),
+          /*
+           * A BARE CALLING CODE IS NOT A PHONE NUMBER.
+           *
+           * Choosing a country seeds `+1` so the next keystroke is a national
+           * digit (see `changePhoneCountry`). An owner who picks a country and
+           * then types nothing must not have `+1` stored and counted as an
+           * answer — `missingProfileFields` only asks whether the column holds
+           * something, so a prefix would satisfy a required field with no way
+           * for a client to call.
+           */
+          phone: hasNationalDigits(businessProfile.phone) ? businessProfile.phone.trim() : '',
           email: businessProfile.email.trim(),
           /*
            * BOTH are sent: the parts are the truth, the line is what every
@@ -625,7 +868,9 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
            */
           address_id: editingAddress ?? reusedAddress,
           organization: {
-            name: orgSettings.name,
+            /* No `name`: the business name is `company_name`, written by the
+               upsert above. This row carries the four answers and nothing the
+               owner thinks of as their business name. */
             // Null, not undefined: an answer the owner cleared has to be
             // cleared on the row, and an undefined field is dropped by JSON
             // before it ever reaches the server.
@@ -634,6 +879,13 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
             primary_goal: orgSettings.primary_goal || null,
             technical_level: orgSettings.technical_level || null,
             work_hours_per_day: orgSettings.work_hours_per_day,
+            /* Only meaningful when the picker is on "something else"; cleared
+               otherwise, so a preset chosen afterwards does not leave stale
+               prose standing beside it as a second answer. */
+            business_type:
+              businessTypeChoice === OWN_WORDS
+                ? orgSettings.business_type.trim() || null
+                : null,
           },
         }),
       });
@@ -663,6 +915,63 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
     }
   };
 
+  /*
+   * WHAT IS STILL MANDATORY, asked of the rule rather than written out here.
+   *
+   * `missingProfileFields` is the function the readiness card, the publish gate
+   * and `journeyReadiness` all read, so the asterisks below and the dashboard
+   * cannot disagree about what this business owes. Run against the values
+   * CURRENTLY IN THE FORM, not the ones last saved, so a mark clears as the
+   * owner types rather than after a round trip.
+   *
+   * `business_type` is resolved exactly as `saveBusiness` resolves it — the
+   * typed words count only while "something else" is the chosen preset — so the
+   * mark describes what the save will actually store.
+   */
+  const missingRequired = useMemo(
+    () =>
+      missingProfileFields(
+        {
+          company_name: businessProfile.company_name,
+          vertical: businessProfile.vertical,
+          /* Public contact details, gates since nothing in onboarding asks for
+             them. See `ProfileField`.
+             `hasNationalDigits`, not the raw value: the field is seeded with a
+             calling code so it can be typed into, and `+1` on its own is not a
+             number a client can call. */
+          phone: hasNationalDigits(businessProfile.phone) ? businessProfile.phone : '',
+          email: businessProfile.email,
+        },
+        {
+          industry: orgSettings.industry,
+          company_size: orgSettings.company_size,
+          primary_goal: orgSettings.primary_goal,
+          technical_level: orgSettings.technical_level,
+          business_type:
+            businessTypeChoice === OWN_WORDS ? orgSettings.business_type.trim() || null : null,
+        }
+      ),
+    [
+      businessProfile.company_name,
+      businessProfile.vertical,
+      businessProfile.phone,
+      businessProfile.email,
+      orgSettings.industry,
+      orgSettings.company_size,
+      orgSettings.primary_goal,
+      orgSettings.technical_level,
+      orgSettings.business_type,
+      businessTypeChoice,
+    ]
+  );
+
+  /* What the rule asks for: the six that describe the business, plus the two
+     that say how to reach it. */
+  const REQUIRED_TOTAL = 8;
+
+  /** The name THIS form puts on a field, shared with the dashboard's list. */
+  const fieldLabel = (field: string): string => t(`setup.field.${field}`) || field;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-10">
@@ -683,10 +992,119 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
         </div>
       </div>
 
+      {/*
+        What is mandatory, in the same words the dashboard uses.
+        ───────────────────────────────────────────────────────────────────────
+        The six marked fields are spread over two sections below, so the list
+        goes at the top: an owner arriving from "Still needs: Business name ·
+        Industry" sees the same two names here and an asterisk on each box.
+        Everything unmarked is genuinely optional, which is the other half of
+        what this says.
+      */}
+      <RequiredStrip
+        missing={missingRequired}
+        total={REQUIRED_TOTAL}
+        labelFor={fieldLabel}
+        stillNeedsLabel={t('readiness.stillNeeds')}
+        doneLabel={t('settings.required.allSet')}
+        note={t('settings.required.note')}
+      />
+
       <FormSection title={t('settings.business.section_identity')}>
+        {/* Company Name */}
+        <div>
+          <label className={FIELD_LABEL}>
+            {t('settings.business.org_name')}
+            <RequiredMark reason={t('settings.required.company_name')} />
+          </label>
+          <div className="relative">
+            <Building2 className={`w-4 h-4 absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`} />
+            {/*
+              ───────────────────────────────────────────────────────────────
+              ONE FACT, ONE COLUMN.
+
+              This read `company_name || orgSettings.name`, and the two are not
+              the same thing. `organizations.name` is a TENANCY LABEL: the row
+              is created the first time anything needs an `org_id`, long before
+              anybody is asked what the business is called, and because the
+              column is NOT NULL it is seeded with the account's EMAIL ADDRESS
+              — see `get_or_create_user_organization`.
+
+              So the fallback showed two wrong things at different times. On a
+              new account it offered the owner their own email as their company
+              name. On an account whose profile had been cleared it showed a
+              name that `missingProfileFields` — which reads `company_name`
+              alone, as do the invoice, the booking page and every email —
+              correctly reported as missing. The field said one thing and the
+              readiness row beside it said the opposite, and both were right
+              about different columns.
+
+              `company_name` is the owner's answer. An empty one shows the
+              placeholder, which asks the question rather than pretending it
+              has been answered.
+
+              Nothing is lost by dropping the fallback: the save below writes
+              BOTH columns, so any name entered through this form is already in
+              `company_name`. The only path that wrote the org row alone was
+              the browser-direct one this route replaced, and the comment on
+              `business-profile/route.ts` records that it silently stored
+              nothing at all.
+              ───────────────────────────────────────────────────────────────
+            */}
+            <input
+              type="text"
+              value={businessProfile.company_name}
+              onChange={(e) => {
+                setBusinessProfile(b => ({ ...b, company_name: e.target.value }));
+                /* Still written to both: the org row keeps a human label
+                   instead of an email once there is a real name to give it. */
+                setOrgSettings(o => ({ ...o, name: e.target.value }));
+              }}
+              placeholder={t('settings.business.org_name_placeholder')}
+              className={`${FIELD_BASE} ${isRTL ? 'pr-10 pl-3' : 'pl-10 pr-3'}`}
+              style={FIELD_RADIUS}
+            />
+          </div>
+        </div>
+
+        {/*
+          The business's own website, for a business that has one.
+
+          Sits with the identity fields rather than with the public contact
+          details below: those are what a CLIENT uses to reach the business,
+          while this is a fact about the business that happens to be
+          published. It reaches the public contact page, the email branding,
+          and — only when there is no bookable page anywhere on this platform
+          — a booking email's "book again" link.
+        */}
+        <div>
+          <label className={FIELD_LABEL}>{t('settings.business.website')}</label>
+          <input
+            type="url"
+            inputMode="url"
+            value={businessProfile.website_url}
+            onChange={(e) => setBusinessProfile(b => ({ ...b, website_url: e.target.value }))}
+            placeholder="https://example.com"
+            // Latin script, left to right, even in Hebrew: a URL is not
+            // prose, and mirroring it puts the scheme on the wrong end.
+            dir="ltr"
+            className={`${FIELD_BASE} px-3`}
+            style={FIELD_RADIUS}
+          />
+          <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 leading-snug">
+            {t('settings.business.website_hint')}
+          </p>
+        </div>
+
         {/* Business Logo — the single source for invoices, emails, booking
             pages, smart links and the website. Spans both columns: the
-            uploader, its hint and its checkbox need the room. */}
+            uploader, its hint and its checkbox need the room.
+
+            AFTER the name and the website, not before them. It led the
+            section and was the first thing an owner met on this screen —
+            an upload box, optional, in front of the two required fields
+            the form exists to collect. The mandatory answers come first
+            now, and the picture follows them. */}
         <div className="sm:col-span-2">
           <label className={FIELD_LABEL}>{t('settings.business.logo')}</label>
           <div className="flex items-start gap-3 p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={FIELD_RADIUS}>
@@ -748,54 +1166,6 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
           </div>
         </div>
 
-        {/* Company Name */}
-        <div>
-          <label className={FIELD_LABEL}>{t('settings.business.org_name')}</label>
-          <div className="relative">
-            <Building2 className={`w-4 h-4 absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`} />
-            <input
-              type="text"
-              value={businessProfile.company_name || orgSettings.name}
-              onChange={(e) => {
-                setBusinessProfile(b => ({ ...b, company_name: e.target.value }));
-                setOrgSettings(o => ({ ...o, name: e.target.value }));
-              }}
-              placeholder={t('settings.business.org_name_placeholder')}
-              className={`${FIELD_BASE} ${isRTL ? 'pr-10 pl-3' : 'pl-10 pr-3'}`}
-              style={FIELD_RADIUS}
-            />
-          </div>
-        </div>
-
-        {/*
-          The business's own website, for a business that has one.
-
-          Sits with the identity fields rather than with the public contact
-          details below: those are what a CLIENT uses to reach the business,
-          while this is a fact about the business that happens to be
-          published. It reaches the public contact page, the email branding,
-          and — only when there is no bookable page anywhere on this platform
-          — a booking email's "book again" link.
-        */}
-        <div>
-          <label className={FIELD_LABEL}>{t('settings.business.website')}</label>
-          <input
-            type="url"
-            inputMode="url"
-            value={businessProfile.website_url}
-            onChange={(e) => setBusinessProfile(b => ({ ...b, website_url: e.target.value }))}
-            placeholder="https://example.com"
-            // Latin script, left to right, even in Hebrew: a URL is not
-            // prose, and mirroring it puts the scheme on the wrong end.
-            dir="ltr"
-            className={`${FIELD_BASE} px-3`}
-            style={FIELD_RADIUS}
-          />
-          <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 leading-snug">
-            {t('settings.business.website_hint')}
-          </p>
-        </div>
-
         {/* What the business does, as it described itself.
             Shown here because this is the text the website generator writes a
             homepage from, and the invoices and emails inherit its tone — so it
@@ -834,6 +1204,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
         <div>
           <label htmlFor="business-phone" className={FIELD_LABEL}>
             {t('settings.business.phone')}
+            <RequiredMark reason={t('settings.required.phone')} />
           </label>
           {/* A phone number is Latin digits and reads left-to-right even on a
               Hebrew form. */}
@@ -861,6 +1232,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
         <div>
           <label htmlFor="business-email" className={FIELD_LABEL}>
             {t('settings.business.public_email')}
+            <RequiredMark reason={t('settings.required.email')} />
           </label>
           <div className="relative">
             <Mail className={`w-4 h-4 absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`} />
@@ -1075,9 +1447,99 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
       </FormSection>
 
       <FormSection title={t('settings.business.section_profile')}>
+        {/*
+          ── BUSINESS TYPE ─────────────────────────────────────────────────────
+          The field the dashboard asks for, and until now the only one on that
+          readiness row with nowhere to answer it. `vertical` was written by the
+          onboarding extraction and displayed read-only; a business the preset
+          list could not place sat on `default` for ever, was printed here as
+          "Service Provider", and was reported missing one screen away.
+
+          Two controls because there are two different answers. The picker sets
+          `vertical`, which is a pipeline key. "Something else" takes the
+          owner's own words instead and leaves the pipeline generic, because
+          inventing a key out of typed prose is how somebody ends up with stages
+          they never chose.
+        */}
+        <div className="relative">
+          <label className={FIELD_LABEL}>
+            {t('settings.business.vertical')}
+            <RequiredMark reason={t('settings.required.business_type')} />
+          </label>
+          <button
+            onClick={() => setOpenDropdown(openDropdown === 'vertical' ? null : 'vertical')}
+            className={`${FIELD_BASE} px-3 flex items-center justify-between hover:bg-[var(--v2-surface)]`}
+            style={FIELD_RADIUS}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <Store className="w-4 h-4 shrink-0 text-[var(--v2-text-muted)]" />
+              <span className={`truncate ${businessTypeChoice ? 'text-[var(--v2-text-primary)]' : 'text-[var(--v2-text-muted)]'}`}>
+                {businessTypeChoice === OWN_WORDS
+                  ? t('settings.business.vertical_own_words')
+                  : businessTypeChoice
+                    ? getVerticalLabel(businessTypeChoice, language)
+                    : t('settings.business.vertical_placeholder')}
+              </span>
+            </div>
+            <ChevronDown className={`w-4 h-4 shrink-0 text-[var(--v2-text-muted)] transition-transform ${openDropdown === 'vertical' ? 'rotate-180' : ''}`} />
+          </button>
+          {openDropdown === 'vertical' && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setOpenDropdown(null)} />
+              <div className="absolute z-50 w-full mt-1 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg max-h-48 overflow-y-auto scrollbar-thin" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+                {verticalOptions.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => {
+                      setBusinessTypeChoice(opt.value);
+                      /*
+                       * A trade chosen from the list IS the pipeline key. The
+                       * own-words option deliberately moves the column to the
+                       * fallback instead: leaving a previously chosen trade
+                       * standing there would satisfy the readiness gate with a
+                       * value the owner has just told us is wrong.
+                       */
+                      setBusinessProfile(b => ({
+                        ...b,
+                        vertical: opt.value === OWN_WORDS ? 'default' : opt.value,
+                      }));
+                      setOpenDropdown(null);
+                    }}
+                    className={`w-full px-3 py-2.5 text-sm text-[var(--v2-text-primary)] flex items-center justify-between hover:bg-[var(--v2-bg)] ${businessTypeChoice === opt.value ? 'bg-[var(--v2-bg)]' : ''}`}
+                  >
+                    <span className="truncate">{opt.label}</span>
+                    {businessTypeChoice === opt.value && <Check className="w-4 h-4 shrink-0" style={{ color: CONFIG_ACCENT }} />}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {businessTypeChoice === OWN_WORDS && (
+          <div>
+            <label className={FIELD_LABEL}>{t('settings.business.vertical_describe')}</label>
+            <input
+              type="text"
+              value={orgSettings.business_type}
+              onChange={(e) => setOrgSettings(o => ({ ...o, business_type: e.target.value }))}
+              placeholder={t('settings.business.vertical_describe_placeholder')}
+              maxLength={100}
+              className={`${FIELD_BASE} px-3`}
+              style={FIELD_RADIUS}
+            />
+            <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 leading-snug">
+              {t('settings.business.vertical_describe_hint')}
+            </p>
+          </div>
+        )}
+
         {/* Industry Dropdown */}
         <div className="relative">
-          <label className={FIELD_LABEL}>{t('settings.business.industry')}</label>
+          <label className={FIELD_LABEL}>
+            {t('settings.business.industry')}
+            <RequiredMark reason={t('settings.required.industry')} />
+          </label>
           <button
             onClick={() => setOpenDropdown(openDropdown === 'industry' ? null : 'industry')}
             className={`${FIELD_BASE} px-3 flex items-center justify-between hover:bg-[var(--v2-surface)]`}
@@ -1112,7 +1574,10 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
 
         {/* Company Size Dropdown */}
         <div className="relative">
-          <label className={FIELD_LABEL}>{t('settings.business.company_size')}</label>
+          <label className={FIELD_LABEL}>
+            {t('settings.business.company_size')}
+            <RequiredMark reason={t('settings.required.company_size')} />
+          </label>
           <button
             onClick={() => setOpenDropdown(openDropdown === 'company_size' ? null : 'company_size')}
             className={`${FIELD_BASE} px-3 flex items-center justify-between hover:bg-[var(--v2-surface)]`}
@@ -1147,7 +1612,10 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
 
         {/* Primary Goal Dropdown */}
         <div className="relative">
-          <label className={FIELD_LABEL}>{t('settings.business.primary_goal')}</label>
+          <label className={FIELD_LABEL}>
+            {t('settings.business.primary_goal')}
+            <RequiredMark reason={t('settings.required.primary_goal')} />
+          </label>
           <button
             onClick={() => setOpenDropdown(openDropdown === 'primary_goal' ? null : 'primary_goal')}
             className={`${FIELD_BASE} px-3 flex items-center justify-between hover:bg-[var(--v2-surface)]`}
@@ -1182,7 +1650,10 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
 
         {/* Technical Level Dropdown */}
         <div className="relative">
-          <label className={FIELD_LABEL}>{t('settings.business.technical_level')}</label>
+          <label className={FIELD_LABEL}>
+            {t('settings.business.technical_level')}
+            <RequiredMark reason={t('settings.required.technical_level')} />
+          </label>
           <button
             onClick={() => setOpenDropdown(openDropdown === 'technical_level' ? null : 'technical_level')}
             className={`${FIELD_BASE} px-3 flex items-center justify-between hover:bg-[var(--v2-surface)]`}
@@ -1241,13 +1712,24 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
       </FormSection>
 
       {/* Read-only Business Profile from Onboarding */}
-      {(businessProfile.website_url || businessProfile.clients_per_week > 0 || businessProfile.revenue_tier || businessProfile.vertical) && (
+      {(businessProfile.website_url || businessProfile.clients_per_week > 0 || businessProfile.revenue_tier || isKnownVertical(businessProfile.vertical)) && (
         <div className="pt-4 border-t border-[var(--v2-border)]">
           <p className="text-xs font-semibold uppercase tracking-wide text-[var(--v2-text-muted)] mb-2">
             {t('settings.business.profile_subtitle')}
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {businessProfile.vertical && (
+            {/*
+              A SENTINEL IS NOT SHOWN HERE AT ALL.
+
+              This printed `getVerticalLabel('default')` — "Service Provider" —
+              for a business whose trade had never been read, so the owner saw a
+              business type in settings while the dashboard reported that same
+              field missing. The label function now returns nothing for a
+              sentinel; the tile is gated on the same question so it does not
+              render an empty row instead. What is set is set in the picker
+              above, which is where it can also be changed.
+            */}
+            {isKnownVertical(businessProfile.vertical) && (
               <div className="p-2 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={FIELD_RADIUS}>
                 <p className="text-[10px] text-[var(--v2-text-muted)]">{t('settings.business.vertical')}</p>
                 <p className="text-xs font-medium text-[var(--v2-text-primary)]">

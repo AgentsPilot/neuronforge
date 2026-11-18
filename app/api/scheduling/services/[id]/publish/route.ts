@@ -110,6 +110,45 @@ export async function POST(
      * nothing here to be inconsistent with.
      * ─────────────────────────────────────────────────────────────────────────
      */
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * AND NOTHING THAT HOLDS NO TIME AND TAKES NO MONEY GOES LIVE.
+     *
+     * Its journey is `Service → Details`: a name, a form, a confirmation. No
+     * diary entry, no charge, no delivery. Publishing it puts a bookable thing
+     * in front of clients that does nothing when booked.
+     *
+     * It passed every other gate here, and that is why this exists:
+     * `duration_required` asks only of a scheduled service, and the price,
+     * processor and invoicing gates ask only where money moves. A service with
+     * neither answered slipped between them.
+     *
+     * The save gate in `../route.ts` refuses the same shape with the same code,
+     * so this is the second of two rather than the only one. Both say the same
+     * sentence, and both name the intake form, which is the thing that
+     * genuinely does collect a name.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (
+      toPublish.data?.is_scheduled === false
+      && toPublish.data.sale_mode !== 'proposal'
+      && !(Number(toPublish.data.price) > 0)
+    ) {
+      requestLogger.warn(
+        { userId: user.id, serviceId: id },
+        'Publish refused: the service holds no time and takes no money'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'nothing_to_sell',
+          error:
+            'This takes no appointment and no payment, so there is nothing for a client to book. Give it a price, or switch the appointment on. To collect enquiries instead, use your intake form.',
+        },
+        { status: 400 }
+      );
+    }
+
     if (
       toPublish.data?.collection
       && toPublish.data.sale_mode !== 'proposal'

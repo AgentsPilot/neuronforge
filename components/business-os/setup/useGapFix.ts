@@ -40,6 +40,26 @@ export interface RunGapFixOptions {
   onClose?: () => void | Promise<void>;
   /** Fired before the dialog opens, for callers that are themselves modal. */
   onOpen?: () => void;
+  /**
+   * Open the dialog showing ONLY the tab this gap is fixed on.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * For a fix launched from inside another screen, which is a different act
+   * from "open my settings".
+   *
+   * The reported case: the service editor says "Clients pick a time for this
+   * one, so there has to be a time to pick" and offers "Set your working
+   * hours". Pressing it opened the whole configuration dialog — services,
+   * availability, payments, invoice, business, brand — six tabs, in answer to
+   * one sentence about one thing. An owner mid-service is handed the entire
+   * settings surface and has to find their way back.
+   *
+   * `visibleTabs` already existed for exactly this and nothing used it from
+   * here. One tab, one job, and closing it returns them to what they were
+   * doing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  solo?: boolean;
 }
 
 export function useGapFix() {
@@ -57,6 +77,7 @@ export function useGapFix() {
       }
 
       openConfiguration(fix.tab, {
+        visibleTabs: options.solo ? [fix.tab] : undefined,
         onClose: () => {
           void options.onClose?.();
         },
@@ -93,6 +114,7 @@ export function useGapFixOptional(
       if (fix.target !== 'dialog') return;
       options.onOpen?.();
       dialog?.openConfiguration(fix.tab, {
+        visibleTabs: options.solo ? [fix.tab] : undefined,
         onClose: () => {
           void options.onClose?.();
         },

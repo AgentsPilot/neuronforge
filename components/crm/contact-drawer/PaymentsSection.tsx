@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Receipt, CreditCard, Plus, DollarSign, Calendar, ExternalLink, FileText, RotateCcw } from 'lucide-react';
 import { RefundModal } from '@/components/payments/RefundModal';
 import { createLogger } from '@/lib/logger';
-import { buildMoneyItems, itemFlow, totalMoney, type MoneyEntry, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
+import { buildMoneyItems, itemFlow, totalMoney, unpaidPeriods, type MoneyEntry, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
 import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import { buildEntryActions } from '@/lib/payments/entryActions';
 /* The money page's drawer, not the orders page's.
@@ -319,6 +319,19 @@ export function PaymentsSection({
    */
   type MoneyGroup = 'waiting' | 'refunded' | 'paid' | 'cancelled';
 
+  /**
+   * Marks the PAID half of an order that is still partly owed.
+   *
+   * A suffix rather than a flag on the item, because these rows travel through
+   * `MoneyItem[]` and a field the type does not have would need a cast at every
+   * stop. The suffix is stripped by `orderFor` so the drawer still opens the
+   * whole order, not the half-row that was clicked.
+   */
+  const SETTLED_SUFFIX = '::collected';
+
+  /** And the mirror: the OWED half of an order that is not itself waiting. */
+  const OWED_SUFFIX = '::owed';
+
   const groupOf = (status: string): MoneyGroup => {
     switch (status) {
       case 'refunded':
@@ -343,6 +356,107 @@ export function PaymentsSection({
       cancelled: [],
     };
     for (const item of moneyItems) out[groupOf(String(item.status))].push(item);
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * MONEY THAT ARRIVED IS LISTED UNDER PAID, EVEN ON AN ORDER STILL OWED.
+     *
+     * The groups are per ORDER and an order has one status, so a plan with one
+     * period paid and one owed is not `paid` and lands wholly in WAITING. Its
+     * collected half then appeared in no list while still counting toward "you
+     * have received" — a contact read "received $873" above two paid rows of
+     * $500 and $333, and the missing $40 was the paid period of a $40 + $40
+     * plan sitting in Waiting.
+     *
+     * So the collected entries are listed as their own row. They ARE separate
+     * invoices — INV-00014 paid and INV-00015 owed, in that live case — so this
+     * is not the same money twice; it is the two halves each shown where it
+     * belongs. The waiting row keeps the outstanding figure, which is what the
+     * owner is actually owed.
+     *
+     * `itemFlow` decides what counts as collected, entry by entry, rather than
+     * a status list copied here. The row and the totals above it therefore
+     * cannot disagree about what "received" means.
+     *
+     * `plan` is dropped and the date is the latest payment: this row is the
+     * money, not the agreement, and `paid {date}` has to name the day it
+     * actually arrived.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    for (const item of [...out.waiting]) {
+      const collectedEntries = item.entries.filter(
+        entry => itemFlow({ ...item, plan: undefined, entries: [entry] }).collected > 0
+      );
+
+      if (!collectedEntries.length) continue;
+
+      const paidOn = collectedEntries
+        .map(entry => String(entry.date))
+        .sort()
+        .pop();
+
+      out.paid.push({
+        ...item,
+        plan: undefined,
+        entries: collectedEntries,
+        /* Suffixed so React keys stay unique and `orderFor` can find its way
+           back to the whole order when the row is opened. */
+        key: `${item.key}${SETTLED_SUFFIX}`,
+        date: paidOn ?? item.date,
+        status: 'paid',
+      } as MoneyItem);
+    }
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AND THE MIRROR: MONEY STILL OWED ON AN ORDER THAT IS NOT WAITING.
+     *
+     * An order's one status is the state of its LAST event, so a plan whose
+     * first period was refunded reads `refunded` and lands under "Money you
+     * returned" — while a later period of it is still live, still due, and
+     * still counted in "waiting".
+     *
+     * Seen live: a contact's Waiting tile read $170 over six rows totalling
+     * $140. The missing $30 was booking 620f1457, refunded on 11 Nov with its
+     * second period left running. Not a refund bug: the two sibling orders
+     * that DID stop carry `cancel_reason: client_unresponsive` and
+     * `client_not_paying`, so an owner stopped those deliberately and nobody
+     * stopped this one. The money is genuinely owed; it was simply invisible.
+     *
+     * Debt that nobody can see is the worst thing for this panel to hide,
+     * because the whole group is headed "needs you".
+     *
+     * `plan` is KEPT here, unlike the settled row above: the outstanding
+     * figure usually comes from an unpaid PERIOD rather than from an entry,
+     * and dropping the plan would make the row report zero.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    for (const group of ['paid', 'refunded', 'cancelled'] as MoneyGroup[]) {
+      for (const item of [...out[group]]) {
+        const flow = itemFlow(item);
+        if (flow.outstanding <= 0) continue;
+
+        /* The soonest thing still to be paid, so `due {date}` names the next
+           deadline rather than the order's own date, which has passed. */
+        const nextDue = unpaidPeriods(item)
+          .map(period => String(period.dueDate ?? ''))
+          .filter(Boolean)
+          .sort()[0];
+
+        out.waiting.push({
+          ...item,
+          entries: item.entries.filter(
+            entry => itemFlow({ ...item, plan: undefined, entries: [entry] }).outstanding > 0
+          ),
+          key: `${item.key}${OWED_SUFFIX}`,
+          date: nextDue || item.date,
+          /* `overdue` earns the chasing colour and the "late by n days" line;
+             anything else is merely waiting. `totals.overdue` decided this,
+             not a second comparison of dates here. */
+          status: flow.overdue > 0 ? 'overdue' : 'awaiting_payment',
+        } as MoneyItem);
+      }
+    }
 
     /* Inside WAITING: late first, then by due date. The oldest debt is the one
        they should be chasing, and it should not be below a bill due next month. */
@@ -379,6 +493,16 @@ export function PaymentsSection({
    * the same pass by the same rules, so the sentence can never contradict
    * itself again.
    */
+
+  /** The whole order behind a row, which for a half-row is not itself. */
+  const orderFor = (row: MoneyItem): MoneyItem => {
+    const key = String(row.key);
+    const suffix = [SETTLED_SUFFIX, OWED_SUFFIX].find(s => key.endsWith(s));
+    if (!suffix) return row;
+
+    const base = key.slice(0, -suffix.length);
+    return moneyItems.find(item => String(item.key) === base) ?? row;
+  };
 
   /* How many rows each group shows before "show more". WAITING starts open
      because it is the work; the rest start closed because they are history. */
@@ -810,8 +934,13 @@ export function PaymentsSection({
               </p>
 
               {/* The three figures that are actually money, each labelled in
-                  the reader's own words rather than an accounting term. */}
-              <div className="flex flex-wrap gap-2 px-1 pt-1">
+                  the reader's own words rather than an accounting term.
+
+                  `pt-3`, not `pt-1`: the sentence above states the same two
+                  figures these tiles repeat, and with a single step between
+                  them the tiles read as a continuation of the sentence rather
+                  than as a summary of it. */}
+              <div className="flex flex-wrap gap-2 px-1 pt-3">
                 {(
                   [
                     /* The same three colours the bar and the chips use, so a
@@ -1117,6 +1246,28 @@ export function PaymentsSection({
                                       {new Date(item.date).getTime() > Date.now() && (
                                         <span className="opacity-70"> · {t('payments.due_soon')}</span>
                                       )}
+                                      {/*
+                                        NO "already paid" NOTE HERE, AND THAT
+                                        WAS LEARNED THE HARD WAY.
+                                        ───────────────────────────────────────
+                                        A part-paid order's collected money was
+                                        first reported on this line, as
+                                        "· $25.00 already paid". On a two-period
+                                        plan the halves are usually EQUAL, so
+                                        the row read:
+
+                                          $25.00  …  due Nov 10 · $25.00 already paid
+
+                                        Two identical figures, one owed and one
+                                        received, with nothing to say which was
+                                        which. The owner has to read the line
+                                        twice and still guess.
+
+                                        The collected half is a row of its own
+                                        under Paid now, which is where money
+                                        that arrived belongs. This line stays
+                                        about one thing: when the rest is due.
+                                      */}
                                     </>
                                   ) : group === 'refunded' ? (
                                     t('payments.returned_on').replace('{date}', formatDate(item.date))
@@ -1242,10 +1393,16 @@ export function PaymentsSection({
                               )}
 
                               {/* The SAME drawer as before. The list changed;
-                                  what opens from it did not. */}
+                                  what opens from it did not.
+
+                                  `orderFor`, because a settled-half row is one
+                                  side of an order and the drawer is about the
+                                  order: opening it on the half would hide the
+                                  period still owed, which is the thing the
+                                  owner most likely opened it to see. */}
                               <button
                                 type="button"
-                                onClick={() => setDetail(item)}
+                                onClick={() => setDetail(orderFor(item))}
                                 className="shrink-0 self-center rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold"
                                 style={{
                                   borderColor: 'var(--v2-border)',

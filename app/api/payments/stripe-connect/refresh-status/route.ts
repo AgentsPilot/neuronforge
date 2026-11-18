@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
+import { describeRequirements } from '@/lib/payments/stripeRequirementLabels';
 import { createLogger } from '@/lib/logger';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { StripeConnectRepository } from '@/lib/repositories/PaymentRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { settlementCurrencyFor } from '@/lib/payments/countryCurrency';
 
 const logger = createLogger({ module: 'StripeConnectRefreshStatus' });
 
@@ -68,7 +70,15 @@ export async function POST(request: NextRequest) {
       details_submitted: status.detailsSubmitted,
       onboarding_completed: status.chargesEnabled && status.payoutsEnabled,
       country: status.country,
-      currency: status.defaultCurrency || 'USD',
+      /*
+       * `|| 'USD'` stood here, and this route runs every time the payments
+       * dialog opens: an account whose currency we recorded correctly had it
+       * overwritten with dollars on the next read, whenever Stripe happened not
+       * to report a default currency (which it does not until the account is
+       * far enough through onboarding). Fall back to what we already believe,
+       * and to the country's own currency, before inventing one.
+       */
+      currency: status.defaultCurrency || account.currency || settlementCurrencyFor(status.country),
       business_type: status.businessType,
     });
 
@@ -85,6 +95,23 @@ export async function POST(request: NextRequest) {
         onboarding_completed: status.chargesEnabled && status.payoutsEnabled,
         country: status.country,
         currency: status.defaultCurrency,
+        /*
+         * How many answers Stripe is still waiting for, AND which ones.
+         *
+         * The names used to be withheld on the reasoning that they are
+         * Stripe's internal keys — `individual.verification.document` — and
+         * that printing those would be worse than a count. True of the raw
+         * keys, and it left the owner with a number and no idea whether it
+         * meant two minutes of typing or a passport scan.
+         *
+         * `describeRequirements` is the translation layer that was missing: it
+         * collapses the parts of one fact (a date of birth arrives as three
+         * entries), strips the per-account person prefix, and DROPS anything
+         * it does not recognise rather than guessing. So the count stays the
+         * authority and the list is whatever can be named honestly.
+         */
+        currently_due_count: status.currentlyDue.length,
+        currently_due: describeRequirements(status.currentlyDue),
       },
     });
 

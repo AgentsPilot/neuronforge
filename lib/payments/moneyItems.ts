@@ -1099,7 +1099,13 @@ const SETTLED_PERIOD_STATUSES = ['paid', 'cancelled'];
  * ignored plans entirely, so a business eleven months into a twelve-month plan
  * saw a row reading "$666.67 due" above a card reading zero.
  */
-function unpaidPeriods(item: MoneyItem): MoneyPeriod[] {
+/*
+ * Exported for the contact drawer, which has to name the DATE the next unpaid
+ * period falls due. Reusing this rather than re-filtering `plan.periods` at the
+ * call site: `billedAsAnEntry` is the double-count guard, and a second copy of
+ * that rule would be the place the two answers start to differ.
+ */
+export function unpaidPeriods(item: MoneyItem): MoneyPeriod[] {
   return (item.plan?.periods ?? []).filter(
     period =>
       !SETTLED_PERIOD_STATUSES.includes(period.status) && !billedAsAnEntry(period)

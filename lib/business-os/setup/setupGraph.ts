@@ -33,7 +33,32 @@ export type StepId =
   | 'intake'
   | 'service_descriptions'
   | 'meta_insights'
-  | 'google_business';
+  | 'google_business'
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE LEAD STEPS, and why they are spelled with hyphens when everything
+   * above is not.
+   *
+   * These three ids are not new strings: `LiveDashboard` has been appending
+   * items under exactly these names, and `resolveSetup` walks `SETUP_STEPS`
+   * and looks each node's id up in the items — so an item whose id is not a
+   * node here is never drawn. All three were therefore invisible. They
+   * inflated the "optional" count on the card and rendered nothing, including
+   * the one whose copy reads "Website leads are not being answered": the
+   * sentence describing the one silent failure in the whole chain could not
+   * reach a screen.
+   *
+   * Renaming them to match the convention would mean renaming them in the
+   * dashboard too, and the ids are what the card's own state keys on. The
+   * spelling is the smaller wrong.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /** Are form enquiries answered? The silent one — see the node. */
+  | 'inbox-channel-replies'
+  /** The agent that reads enquiries out of the owner's own mailbox. */
+  | 'inbox-channel'
+  /** Is there anywhere for somebody to ASK something? */
+  | 'lead-capture';
 
 
 /**
@@ -397,6 +422,51 @@ export const SETUP_STEPS: GraphNode[] = [
   },
   // Sync blocks slots; with no slots there is nothing to protect. Theirs to do:
   // Google and Outlook ask them to approve access in their own account.
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE OWNER'S OWN MAILBOX. FIRST OF THE OPTIONAL STEPS, BECAUSE THEY ASKED.
+   *
+   * This is the one step on the list the owner went out of their way to
+   * request: the interview asks whether their site has a form and where those
+   * enquiries land, and an account only reaches `leads_arrive_by_email: true`
+   * by saying "my own site emails me, read it". Calendar sync, the intake form
+   * and the brand look are all things WE offer. Ranking a feature we suggested
+   * above a capability they asked for is the list telling an owner we were not
+   * listening.
+   *
+   * It is also the only one of the four whose absence loses business: an
+   * enquiry nobody reads is a client who went elsewhere. A missing calendar
+   * sync risks a double booking, which is an apology; an unstyled invoice is
+   * still an invoice.
+   *
+   * ── WHY THIS CANNOT JUMP THE COMPULSORY WORK ─────────────────────────────
+   *
+   * Position only orders within a group. `SystemReadiness` splits the graph
+   * into `essential` (mandatory, or done) and `recommended` (everything else),
+   * and this node is `optional`, so it can never appear above an outstanding
+   * compulsory step however early it sits here. `reachFocus` is the same
+   * story: it takes the graph's `next` only when that step is mandatory, and
+   * otherwise points at whatever is blocking a station.
+   *
+   * ── APPLIES ──────────────────────────────────────────────────────────────
+   *
+   * Both answers, and `null` where either is unasked — the direction the whole
+   * graph fails in. An owner who never answered is not offered an agent that
+   * may have nothing to read; the option stays on the channels card for
+   * anyone who goes looking.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  {
+    id: 'inbox-channel',
+    requires: [],
+    owner: 'user',
+    mandatory: 'optional',
+    applies: shape =>
+      shape.hasOwnWebsite === null || shape.leadsArriveByEmail === null
+        ? null
+        : shape.hasOwnWebsite === true && shape.leadsArriveByEmail === true,
+  },
+
   {
     id: 'calendar',
     requires: ['availability'],
@@ -571,6 +641,7 @@ export const SETUP_STEPS: GraphNode[] = [
   // where the look of the site, the invoices and the emails is set.
   { id: 'design', requires: [], owner: 'platform', mandatory: 'optional', belongsTo: 'website' },
 
+
   // The accounts a business already has, connected so we can say where clients
   // came from. Two steps, because they are two connections: a Meta login that
   // brings Facebook and its linked Instagram at once, and a Google one covering
@@ -593,6 +664,40 @@ export const SETUP_STEPS: GraphNode[] = [
   // put in front of a business as the thing to do next.
   { id: 'meta_insights', requires: [], owner: 'user', mandatory: 'optional', neverSuggested: true },
   { id: 'google_business', requires: [], owner: 'user', mandatory: 'optional', neverSuggested: true },
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT HAPPENS TO SOMEBODY WHO WRITES IN.
+   *
+   * Three nodes, and the dashboard emits at most one of them per account —
+   * which is why they share a position here rather than being ordered against
+   * each other. `LiveDashboard` decides which applies, from facts this graph
+   * does not hold (a connected mailbox, a live page of ours, the two own-site
+   * answers), and a node with no item is skipped by `resolveSetup`.
+   *
+   * `requires: []` on all three, deliberately. The obvious edge — "answering
+   * enquiries needs a website first" — is wrong twice over: the item only
+   * exists once something can already receive an enquiry, and `website` is
+   * satisfied by a booking link that cannot. Requiring it would lock the row
+   * behind a step that does not answer the same question.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /*
+   * MANDATORY, and the only one of the three that is.
+   *
+   * The state it names is the one failure in the whole chain that reports
+   * nothing: enquiries are filed, the CRM looks healthy, the owner gets their
+   * alert, no request fails anywhere, and no client is ever answered. Nobody
+   * can diagnose that from outside, so readiness says it out loud.
+   *
+   * It is only emitted where an enquiry can actually arrive, so it cannot nag
+   * a business that has nothing to answer.
+   */
+  { id: 'inbox-channel-replies', requires: [], owner: 'platform', mandatory: 'always' },
+  /* A door for the person who wants to ask before they book. Recommended: a
+     business selling off a booking link alone is working, and calling that
+     unfinished would be us arguing with a running account. */
+  { id: 'lead-capture', requires: [], owner: 'platform', mandatory: 'optional' },
 ];
 
 /** Where a step stands once the graph is resolved against real data. */

@@ -1,6 +1,6 @@
 {
   "generated": "2026-10-04",
-  "count": 167,
+  "count": 168,
   "levels": {
     "abandoned_bookings": "reset",
     "admin_users": "never",
@@ -73,6 +73,7 @@
     "contact_documents": "reset",
     "credit_transactions": "never",
     "crm_activities": "reset",
+    "crm_client_standing": "reset",
     "crm_contacts": "reset",
     "crm_pipeline_stages": "purge",
     "crm_tasks": "reset",

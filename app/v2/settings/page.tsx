@@ -76,25 +76,34 @@ export default function V2SettingsPage() {
     try {
       setLoading(true)
 
-      // Load all data in parallel (including organisation via join)
-      const [profileRes, preferencesRes, notificationsRes] = await Promise.all([
-        supabase.from('profiles').select('*, organizations:org_id(id, name)').eq('id', user.id).single(),
+      /*
+       * Load all data in parallel.
+       *
+       * The business name comes from `business_profiles.company_name`, NOT from
+       * `organizations.name` as it used to. That column is a tenancy label
+       * seeded with the account EMAIL at signup, so every account that came
+       * through the onboarding chat and never opened this screen saw its own
+       * email offered here as the organisation's name. `company_name` is the
+       * name the owner actually gave — the chat writes it, and the invoice,
+       * booking page and outbound mail all read it.
+       */
+      const [profileRes, preferencesRes, notificationsRes, businessRes] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', user.id).single(),
         supabase.from('user_preferences').select('*').eq('user_id', user.id).single(),
-        supabase.from('notification_settings').select('*').eq('user_id', user.id).single()
+        supabase.from('notification_settings').select('*').eq('user_id', user.id).single(),
+        supabase.from('business_profiles').select('company_name').eq('user_id', user.id).maybeSingle()
       ])
 
       // Set profile data - merge profile and preferences
       if (profileRes.data) {
-        // Extract organisation name from joined data
-        const orgData = profileRes.data.organizations as { id: string; name: string } | null
         const profileData = {
           ...profileRes.data,
           // Add preferences data
           preferred_currency: preferencesRes.data?.preferred_currency || 'USD',
           timezone: preferencesRes.data?.timezone,
           preferred_language: preferencesRes.data?.preferred_language,
-          // Add organisation name
-          organisation_name: orgData?.name || ''
+          // The business name, from the one column that holds it
+          organisation_name: businessRes.data?.company_name || ''
         }
         setProfile(profileData)
         setProfileForm(profileData)

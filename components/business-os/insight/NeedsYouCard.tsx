@@ -32,6 +32,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Send, Check, Clock, AlertCircle, FileText, Bell, Receipt, Undo2, CalendarX, CalendarSearch, UserRound, Bot, Mail } from 'lucide-react';
+import { ClientStandingPill } from '@/components/business-os/clients/ClientStandingPill';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CurrencyCode } from '@/lib/business-os/LanguageContext';
 // One definition, in the registry that owns the vocabulary. Declared here too,
@@ -51,6 +52,19 @@ export interface GapItemView {
   contactId: string;
   name: string;
   note: string | null;
+  /**
+   * What is wrong with this client — `client_needs_a_word` only.
+   *
+   * Keys and counts rather than a sentence, rendered through the same copy the
+   * drawer badge uses, so a client reads the same way wherever they appear. A
+   * row may carry any combination of them, which is why no single dictionary
+   * sentence could have stated it.
+   */
+  concerns?: Array<{ key: 'attendance' | 'lateness' | 'persistence'; count: number; of?: number }> | null;
+  /** How far past the line this client is, 0–100, the line at 60. */
+  score?: number | null;
+  /** The word for it, shared with the drawer badge. */
+  band?: 'reliable' | 'watch' | 'at_risk' | null;
   /**
    * The subject of the message this row is about. See `GapItem.subject`.
    *
@@ -2028,6 +2042,84 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                               return (phrase ?? fallback).replace('{t}', waitedFor(item.since, t));
                             })()}
                           </span>
+
+                          {/*
+                            WHAT IS ACTUALLY WRONG, in the badge's own words.
+                            ───────────────────────────────────────────────────
+                            `client_needs_a_word` is the one row that can carry
+                            any combination of concerns — missing sessions,
+                            paying late, and the whole thing having stayed true
+                            for weeks — so no single dictionary sentence could
+                            have stated it. The keys are the ones the drawer
+                            badge uses, so a client reads the same way wherever
+                            they are shown.
+                          */}
+                          {/*
+                            THE SCORE, AS A FIGURE TO RANK BY.
+                            ───────────────────────────────────────────────────
+                            Owner's request, 2026-11-16. 0–100 with the card's
+                            own firing line at 60, so every row here reads 60 or
+                            more and two of them can be put in order at a
+                            glance. The raw score is a sum of weighted standard
+                            deviations — unbounded, and an answer to no question
+                            anybody asks.
+
+                            It leads the strip rather than trailing it: a figure
+                            at the end of a line of facts reads as one more
+                            fact, and this one is the summary of them.
+                          */}
+                          {/*
+                            THE SAME PILL THE DRAWER DRAWS.
+                            ───────────────────────────────────────────────────
+                            One component, so a client cannot read "needs
+                            attention" beside their own name and something else
+                            on the dashboard. The word is the judgement; the
+                            figure only ranks two flagged clients against each
+                            other, which words cannot do.
+
+                            `sm`, because this one sits inside a row of small
+                            facts rather than beside a heading.
+                          */}
+                          {item.band && (
+                            <>
+                              <ClientStandingPill
+                                band={item.band}
+                                score={item.score}
+                                size="sm"
+                              />
+                              <span aria-hidden="true">·</span>
+                            </>
+                          )}
+
+                          {(() => {
+                            /*
+                             * `persistence` is left out HERE and nowhere else.
+                             * The clock to the left already says "true for 5
+                             * weeks now", and printing "like this for 5 weeks"
+                             * beside it states one fact twice in one strip.
+                             * It still earns its points in the score and still
+                             * shows on surfaces that have no clock.
+                             */
+                            const shown = (item.concerns ?? []).filter(
+                              concern => concern.key !== 'persistence'
+                            );
+                            if (shown.length === 0) return null;
+
+                            return (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="truncate">
+                                  {shown
+                                    .map(concern =>
+                                      t(`client.concern.${concern.key}`)
+                                        .replace('{count}', String(concern.count))
+                                        .replace('{of}', String(concern.of ?? ''))
+                                    )
+                                    .join(' · ')}
+                                </span>
+                              </>
+                            );
+                          })()}
 
                           {/* The date itself, because the figure beside it is
                               relative and nothing else on this row can be

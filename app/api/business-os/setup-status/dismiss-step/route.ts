@@ -12,7 +12,34 @@ import { z } from 'zod';
 const logger = createLogger({ module: 'DismissStepAPI' });
 
 const DismissStepSchema = z.object({
-  stepId: z.enum(['services', 'availability', 'payments', 'calendar', 'website']),
+  /*
+   * `mailbox` is not a step in `setup-status`'s own list, and is here anyway.
+   *
+   * The setup's last phase offers to read the enquiries a business's website
+   * emails it. Declining that is an answer and has to be recorded somewhere, or
+   * the phase never ends: the card keeps offering, and the dashboard keeps
+   * hiding behind a setup that cannot be finished.
+   *
+   * It rides in the same array for the same reason `undo` is on this route
+   * rather than its own: one place where "the owner said no" lives.
+   */
+  stepId: z.enum(['services', 'availability', 'payments', 'calendar', 'website', 'mailbox']),
+  /**
+   * Undo it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Dismissing was one-way, which is fine for a checklist row somebody is tired
+   * of seeing and wrong for a setup phase. An owner who answers "I do not need
+   * a booking link" and changes their mind a minute later had no way back: the
+   * step stays dismissed, so the card that offers to publish the link never
+   * returns.
+   *
+   * The same endpoint rather than a second one, because this is the same fact
+   * with the opposite value, and two routes writing one array is how they come
+   * to disagree about its shape.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  undo: z.boolean().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -31,7 +58,7 @@ export async function POST(request: NextRequest) {
 
     // 2. Validate input
     const body = await request.json();
-    const { stepId } = DismissStepSchema.parse(body);
+    const { stepId, undo } = DismissStepSchema.parse(body);
 
     requestLogger.info({ userId: user.id, stepId }, 'Dismissing setup step');
 
@@ -74,8 +101,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!currentDismissed.includes(stepId)) {
-      const updatedDismissed = [...currentDismissed, stepId];
+    const alreadyDismissed = currentDismissed.includes(stepId);
+    const shouldWrite = undo ? alreadyDismissed : !alreadyDismissed;
+
+    if (shouldWrite) {
+      const updatedDismissed = undo
+        ? currentDismissed.filter(step => step !== stepId)
+        : [...currentDismissed, stepId];
 
       const { error: updateError } = await supabaseServer
         .from('business_profiles')
@@ -90,9 +122,15 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      requestLogger.info({ userId: user.id, stepId, dismissed: updatedDismissed }, 'Setup step dismissed');
+      requestLogger.info(
+        { userId: user.id, stepId, dismissed: updatedDismissed },
+        undo ? 'Setup step brought back' : 'Setup step dismissed'
+      );
     } else {
-      requestLogger.info({ userId: user.id, stepId }, 'Step already dismissed');
+      requestLogger.info(
+        { userId: user.id, stepId, undo },
+        undo ? 'Step was not dismissed' : 'Step already dismissed'
+      );
     }
 
     return NextResponse.json({ success: true });

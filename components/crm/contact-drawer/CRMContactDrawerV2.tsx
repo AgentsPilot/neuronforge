@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { ClientStandingBadge } from './ClientStandingBadge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   AlertCircle,
@@ -191,6 +192,28 @@ export interface DrawerProposal {
   viewed_at: string | null;
   decided_at: string | null;
   created_at: string;
+  /** When an agreed job was stopped part-way. Null while it is running. */
+  stopped_at?: string | null;
+  /** The version this one replaced, so the chain can be drawn rather than inferred. */
+  supersedes_id?: string | null;
+  /** The plan acceptance raised, beside the invoice it also raised. */
+  created_plan_id?: string | null;
+  /**
+   * When a lapsed quote was put back on the table, and the deadline it carried
+   * before that. Both arrive with migration 20261129.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * OPTIONAL ON PURPOSE, AND NOT ONLY FOR THE ROLLOUT WINDOW.
+   *
+   * The route spreads the row (`...p`), so these appear the moment the columns
+   * exist and are simply absent before that. Declaring them optional means the
+   * journey renders one fewer sub-node against the old schema instead of
+   * throwing — which matters, because this drawer is the screen an owner is
+   * looking at when they wonder whether their extension worked.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  extended_at?: string | null;
+  extended_from?: string | null;
   /** The request this quote answers. Null for rows predating the link. */
   booking_id: string | null;
   /** Days to pay agreed on this version. Null inherits the business default. */
@@ -217,6 +240,29 @@ export interface DrawerProposal {
   package_booking_id: string | null;
   /** The proposal document sent with THIS version, when there was one. */
   document: { name: string; size: number | null } | null;
+  /**
+   * How many files this version carried, and who agreed to it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TYPE WAS BEHIND THE ROUTE, AND NOTHING SAID SO.
+   *
+   * `/api/business-os/proposals` has returned all three since the quote gained
+   * attachments and a signature: `attachmentCount` so the paperclip can count
+   * rather than imply one, `signedBy` and `signedAt` as the dispute-settling
+   * fact on the version it belongs to. The consumer below reads them. This
+   * interface never declared them, so every read was a type error — invisible,
+   * because `next.config.js` ignores type errors (CLAUDE.md § Common Gotchas
+   * says fix them anyway).
+   *
+   * `attachmentCount` is NOT optional and NOT nullable: the route computes a
+   * length, so it is always a number, and `0` is the honest answer for a
+   * version that carried nothing. Declaring it optional would invite a `?? 0`
+   * that hides a route stopping sending it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  attachmentCount: number;
+  signedBy: string | null;
+  signedAt: string | null;
   created_invoice_id: string | null;
   /** The invoice acceptance raised, when this quote has been accepted. */
   invoice: {
@@ -1569,6 +1615,36 @@ export function buildJourneySteps(
           // it was answered, sent if it is still open. `created_at` would date a
           // revision to when the owner started typing it.
           at: v.decided_at || v.sent_at || v.created_at,
+          /*
+           * ── AND NOW EVERY MOMENT, NOT JUST THE LAST ONE ───────────────────
+           *
+           * `at` above is where the version GOT TO. It is the right single date
+           * for a one-line row and the wrong amount of information for a
+           * journey: a quote that was sent, lapsed, extended and then read has
+           * four moments and the row could only ever name one of them, so an
+           * extension looked exactly like an untouched send.
+           *
+           * Passed as primitives, like everything else on this metadata, so the
+           * presentational component renders them rather than deciding anything
+           * about the records they came from.
+           */
+          createdAt: v.created_at ?? null,
+          sentAt: v.sent_at ?? null,
+          viewedAt: v.viewed_at ?? null,
+          decidedAt: v.decided_at ?? null,
+          stoppedAt: v.stopped_at ?? null,
+          validUntil: v.valid_until ?? null,
+          /* Undefined until migration 20261129 is applied; the journey then
+             draws one more sub-node without any other change. */
+          extendedAt: v.extended_at ?? null,
+          extendedFrom: v.extended_from ?? null,
+          /* Which version this one replaced, so the chain is drawn from the
+             record instead of guessed from the order. */
+          supersedesId: v.supersedes_id ?? null,
+          /* What acceptance produced. Carried by the row since the quote
+             system shipped, and never shown anywhere. */
+          createdInvoiceId: v.created_invoice_id ?? null,
+          createdPlanId: v.created_plan_id ?? null,
           isCurrent: v.id === proposal?.id,
           documentName: v.document?.name ?? null,
           /* How many files this version carried, so the paperclip can count
@@ -5571,6 +5647,24 @@ export function CRMContactDrawerV2({
                   >
                     {getStageLabel()}
                   </Badge>
+                  {/*
+                    WHERE THEY ARE IN YOUR PIPELINE, AND WHAT THEY ARE LIKE TO
+                    DEAL WITH — two different questions, side by side.
+
+                    The stage is the owner's own decision about a client. This
+                    is the record: sessions missed, payments late, counted over
+                    180 days from facts the product already holds. It renders
+                    nothing below the evidence floor.
+
+                    A BADGE, BESIDE A BADGE. It used to render the counts as a
+                    second line under the pill, which inside this
+                    `items-center` row broke the line and read as a sentence of
+                    accusation next to the client's own name. It is now the
+                    pill alone — the word and the score — and the counts are in
+                    its hover title, so the claim is still checkable without
+                    being shouted.
+                  */}
+                  <ClientStandingBadge contactId={contact.id} />
                 </div>
                 <div className="flex items-center gap-3 mt-1.5 text-xs text-[var(--v2-text-muted)] flex-wrap">
                   <span>

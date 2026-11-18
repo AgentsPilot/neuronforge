@@ -311,6 +311,41 @@ describe('the processor the owner cannot see', () => {
   });
 
   /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND SAYS NOTHING ABOUT CARDS ON A SERVICE THAT CHARGES NOTHING.
+   *
+   * Reported with a screenshot: appointment "No", price 0, and the panel
+   * warning that card payments need a processor directly above its own
+   * sentence saying "Nothing is collected. This service is free." Both drawn
+   * at once, about one service.
+   *
+   * The pair below is the whole rule, and they must be read together — the
+   * first is the fix and the second is the regression the fix could cause,
+   * which has happened here once already.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const FREE_ON_CARD = { ...SERVICE, collection: 'online', price: 0 } as unknown as SchedulingService;
+  const UNPRICED_ON_CARD = { ...SERVICE, collection: 'online', price: null } as unknown as SchedulingService;
+
+  it('says nothing about a processor when the service is free', async () => {
+    await openEditor({ processorReady: false, service: FREE_ON_CARD });
+
+    expect(screen.queryByText(/Card payments need a connected processor/)).not.toBeInTheDocument();
+  });
+
+  it('still warns when the price is merely UNANSWERED, which is not the same as free', async () => {
+    /*
+     * The distinction a form field erases: '' and '0' are both falsy, and only
+     * one of them is an answer. An owner who chose card and has not yet typed
+     * an amount is exactly who needs telling that card will not work, and a
+     * `price > 0` test here hid it from them once before.
+     */
+    await openEditor({ processorReady: false, service: UNPRICED_ON_CARD });
+
+    says(/Card payments need a connected processor/);
+  });
+
+  /*
    * The half that makes the warning actionable. Without a dialog provider
    * there is nowhere to send the owner, so `useGapFixOptional` returns null
    * and only the sentence renders — which is what this harness mounts.

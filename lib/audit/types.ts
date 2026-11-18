@@ -125,6 +125,16 @@ export const AUDIT_ENTITY_TYPES = [
   // 1a); the entity id is the currency code (audit_trail.entity_id is TEXT).
   // Owner-visible with the admin's own id as user_id (ownerVisibility.ts).
   'exchange_rate',
+  // One business's Stripe Connect account (a row in stripe_connect_accounts);
+  // the entity id is the Stripe account id (`acct_…`), which is why
+  // audit_trail.entity_id being TEXT matters here too. Written by six routes
+  // under /api/payments/stripe-connect — create, create-minimal,
+  // create-account-custom, callback, disconnect and delete — every one of which
+  // has been logging this entity type since before it was listed, so each sat
+  // on a type error that `next.config.js` ignored. Owner-visible: connecting,
+  // pausing and deleting a payment account are all the owner's own actions, and
+  // this trail is what answers "when did my payouts stop".
+  'stripe_connect_account',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

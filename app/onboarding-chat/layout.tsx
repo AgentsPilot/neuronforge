@@ -52,9 +52,23 @@ export default async function OnboardingChatLayout({
           parsed: language and direction, the dark class, and the custom tokens
           (SA RC-2, TH-1). */}
       <OwnerDirScript language={initialLanguage.language} />
-      <V2ThemeScript />
+      {/*
+        LIGHT, whatever is stored. Not a default: the stored key is a DEVICE
+        key that survives sign-out, so the second owner to onboard on a browser
+        inherited the first one's dark mode, which is how this was reported.
+
+        These screens are composed light — the plan panel, the chips, the brand
+        mixes described at the top of `page.tsx` — and the flow carries no theme
+        control, so the owner cannot act on what they are given. Nothing is
+        written: their own preference is intact when they leave onboarding.
+        See `V2_THEME_SCRIPT_FORCE_LIGHT`.
+
+        The same value goes to the provider below. They must agree or the class
+        flips after mount.
+      */}
+      <V2ThemeScript mode="light" />
       <V2CustomTokensStyle tokens={customTokens} />
-      <V2ThemeProvider customTokens={customTokens} customTokensKnown={customTokensKnown}>
+      <V2ThemeProvider customTokens={customTokens} customTokensKnown={customTokensKnown} mode="light">
         <LanguageProvider initial={initialLanguage}>
           {children}
         </LanguageProvider>

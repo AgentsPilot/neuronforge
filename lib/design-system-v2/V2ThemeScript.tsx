@@ -18,6 +18,44 @@ import { V2_THEME_STORAGE_KEY } from './themeMode';
  */
 export const V2_THEME_SCRIPT = `(function(){try{var m=localStorage.getItem(${JSON.stringify(V2_THEME_STORAGE_KEY)});var d=m?m==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.classList.toggle('dark',d);}catch(e){}})();`;
 
-export function V2ThemeScript() {
-  return <script dangerouslySetInnerHTML={{ __html: V2_THEME_SCRIPT }} />;
+/**
+ * LIGHT, whatever is stored and whatever the OS says. Reads nothing.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * FOR ONBOARDING, AND NOT AS A DEFAULT BUT AS THE ANSWER.
+ *
+ * Two facts decide this. The onboarding screens are the most illustrated in the
+ * product — the plan panel, the chips, the brand mixes described at the top of
+ * `onboarding-chat/page.tsx` — and they are composed light. And there is no
+ * theme control anywhere in that flow, so the owner cannot act on the theme
+ * they are given.
+ *
+ * A default would not have been enough. `v2-theme-mode` is a DEVICE key by
+ * deliberate design (see `PERSON_SCOPED_STORAGE_KEYS`, where theme keys are
+ * excluded on the grounds that they identify nobody), so it survives sign-out:
+ * the second owner to onboard on a browser inherits the first one's dark mode.
+ * Reported exactly that way. Reading the key at all is therefore the bug.
+ *
+ * The owner's real preference is NOT touched: nothing here writes, and the
+ * provider is told not to persist in this mode either. Leaving onboarding
+ * restores whatever they had.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const V2_THEME_SCRIPT_FORCE_LIGHT = `(function(){try{document.documentElement.classList.remove('dark');}catch(e){}})();`;
+
+/** Whose theme a segment paints: the owner's, or light regardless. */
+export type ThemeSegmentMode = 'owner' | 'light';
+
+/**
+ * @param mode defaults to `'owner'`, which is every segment but onboarding.
+ *        Both bodies are build-time constants: the prop selects one, and
+ *        neither carries props or request data.
+ *
+ * Whichever is chosen, `V2ThemeProvider` must be given the SAME value in that
+ * layout, or it reverses the decision after mount: the parity test covers both
+ * pairings.
+ */
+export function V2ThemeScript({ mode = 'owner' }: { mode?: ThemeSegmentMode } = {}) {
+  const body = mode === 'light' ? V2_THEME_SCRIPT_FORCE_LIGHT : V2_THEME_SCRIPT;
+  return <script dangerouslySetInnerHTML={{ __html: body }} />;
 }

@@ -152,7 +152,28 @@ async function takesBookings(userId: string): Promise<boolean> {
   try {
     const { data, error } = await schedulingServiceRepository.listAll(userId, true);
     if (error) throw error;
-    return (data ?? []).length > 0;
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A SERVICE IS NOT A BOOKING UNLESS A TIME IS HELD.
+     *
+     * This counted active services and stopped there, so a catalogue of one
+     * quoted job — no appointment, no diary entry, nothing to be early or late
+     * for — answered "yes, this business takes bookings". The owner was then
+     * offered "Remind everyone before a meeting", with lead times and a
+     * warning about their change deadline, for meetings that cannot exist.
+     *
+     * `is_scheduled` is the column that decides it, and it is the same one the
+     * readiness graph reads for `takesAppointments` and the publish gate reads
+     * before demanding a duration. Everything else about this requirement was
+     * already right; it simply never asked.
+     *
+     * `!== false` rather than `=== true`: rows written before the flag existed
+     * carry null, and those WERE bookings. Unknown stays bookable, which is the
+     * direction that cannot take a working reminder away from somebody.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    return (data ?? []).some(service => service.is_scheduled !== false);
   } catch (err) {
     logger.warn({ err, userId }, 'Could not resolve bookable services; not offering the meeting reminder');
     return false;

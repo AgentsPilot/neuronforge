@@ -89,173 +89,121 @@ describe('both screens read one list', () => {
     expect(PAGES.plan).toMatch(/\{yoursCards\.length\}/);
   });
 
-  it('gives every task on the build screen somewhere to go', () => {
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE BUILD SCREEN CONFIGURES NOTHING, AND THAT IS NOW THE INVARIANT.
+   *
+   * Nine assertions used to live here, pinning the machinery that let this
+   * screen finish the owner's work in place: a handler routing every task key
+   * to a dialog, six mounted dialogs, a `PROOF_OF_DONE` map asking the server
+   * whether each card's work existed, and a reconciliation pass keeping the
+   * cards honest in both directions.
+   *
+   * Every one of them was written to fix a real, measured bug, and the list is
+   * worth keeping because it is the argument for the change:
+   *
+   *   · a dialog's close button counted as "done", so opening the availability
+   *     and shutting it again took the card away
+   *   · then nothing settled at all, so a card nagged about finished work
+   *   · then an absent `journeyGaps` gap was read as completion, which on a
+   *     catalogue of drafts means "we could not see anything", and the cards
+   *     stayed hidden for an owner who reported it twice
+   *   · `bank` settled on a button press, so a blank tax ID passed here and
+   *     was refused by the publish gate, whose card no longer existed
+   *   · two buttons that looked alike, the louder of which threw the work away
+   *   · a card for `services` with a button that routed nowhere
+   *
+   * Six bugs in one feature, and they share a cause rather than being six
+   * accidents: this screen was a SECOND place to configure the business, one
+   * click after the interview, with its own order, its own words and its own
+   * idea of when a task was finished. Keeping all of that correct meant
+   * keeping it in agreement with the dialogs, the publish gate and the
+   * dashboard, and it never fully was.
+   *
+   * So the work moved to where it is unambiguous: a service asks for what IT
+   * needs, in the editor where it is changed, at the moment the owner chooses
+   * the thing that creates the requirement. This screen reports what was built
+   * and opens the door.
+   *
+   * What is pinned below is that it stays that way. The old assertions cannot
+   * simply be deleted — each of them was load-bearing — so they are replaced
+   * by the one rule that makes all six bugs unreachable.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('opens no configuration dialog of its own', () => {
     /*
-     * MEASURED. `services` was added to the shared list and not to
-     * `openOwnerStep`, so its card rendered with a working-looking "Fill in
-     * details" button that did nothing at all. Reported as "why is the service
-     * dialog not opened when clicking on this one".
+     * The six that were mounted here. A closed, always-open-false instance of
+     * `LazyConfigurationDialog` is deliberately kept and is NOT this: it draws
+     * nothing, fetches nothing and exists only to warm the chunk, which
+     * `lazyDialogs.guard` pins separately. So the test is for an OPENED one.
+     */
+    expect(PAGES.build).not.toMatch(/<LazyConfigurationDialog\s+isOpen\b(?!=\{false\})/);
+    expect(PAGES.build).not.toMatch(/initialTab=/);
+    expect(PAGES.build).not.toMatch(/visibleTabs=/);
+    expect(PAGES.build).not.toMatch(/StripeConnectWizard/);
+    expect(PAGES.build).not.toMatch(/InvoiceSettingsSection/);
+    expect(PAGES.build).not.toMatch(/InboxChannelSetupDialog/);
+  });
+
+  it('keeps no second opinion about whether a task is finished', () => {
+    /*
+     * `PROOF_OF_DONE` and the reconciliation pass were this screen's own
+     * answer to "is this done", maintained alongside the publish gate's. One
+     * question with two answers is what produced the hidden-card bug, and the
+     * only way to keep them in step was to keep asking.
      *
-     * A card naming work the screen cannot route to is worse than no card: it
-     * reads as broken rather than as unfinished. So every key the module can
-     * produce has to appear in the handler, and adding the next one without a
-     * destination fails here rather than going quiet on screen.
+     * Nothing here settles anything now, so there is nothing to keep in step.
      */
-    const handler = /const openOwnerStep[\s\S]*?\n  \};/.exec(PAGES.build)?.[0] ?? '';
-    expect(handler).not.toBe('');
-
-    for (const key of OWNER_TASK_KEYS) {
-      expect(handler).toContain(`'${key}'`);
-    }
+    expect(PAGES.build).not.toMatch(/PROOF_OF_DONE/);
+    expect(PAGES.build).not.toMatch(/settleOwnerStep/);
+    expect(PAGES.build).not.toMatch(/verifyOwnerStep/);
+    expect(PAGES.build).not.toMatch(/closeOwnerStep/);
+    /* And it no longer writes the session key that recorded those claims. */
+    expect(PAGES.build).not.toMatch(/setItem\('onboarding_build_settled'/);
   });
 
-  it('never settles a card just because its dialog closed', () => {
+  it('still names the work, so arriving at the dashboard is not a surprise', () => {
     /*
-     * ───────────────────────────────────────────────────────────────────────
-     * WRONG IN THREE WAYS IN A ROW, WHICH IS WHY THIS IS PINNED.
-     *
-     * 1. `onClose={() => settleOwnerStep(id)}` — opening a card and shutting
-     *    it marked the work done. "I opened the availability, didn't wait for
-     *    a sec and closed the dialog, the card got disappeared."
-     *
-     * 2. Plain `setOpenStep(null)` — nothing was ever settled, so a card the
-     *    owner HAD finished stayed on screen nagging about finished work.
-     *
-     * 3. Asking `journeyGaps` and settling when the gap was absent. That
-     *    cannot work on an account fresh out of onboarding: asked without
-     *    naming services, the readiness route filters `is_active = true`, a
-     *    catalogue of DRAFTS matches nothing, and the gap check short-circuits
-     *    into "ready". The route's own comment warns of exactly this — "we
-     *    found nothing to check" must not read as "nothing is wrong" — and
-     *    the cards stayed hidden for the owner who reported it twice.
-     * ───────────────────────────────────────────────────────────────────────
+     * Removing the doing must not become removing the telling. An owner who
+     * finishes the interview with hours and bank details outstanding is told
+     * so here, in the same words the plan card used, and told where it
+     * happens. A screen that reports a finished build and quietly omits three
+     * outstanding things would be the honesty bug this file opens with.
      */
-    expect(PAGES.build).not.toMatch(/onClose=\{\(\) => settleOwnerStep\(/);
-    expect(PAGES.build).toMatch(/PROOF_OF_DONE/);
+    expect(PAGES.build).toMatch(/const outstanding = buildSteps\.filter\(step => step\.yours\)/);
+    expect(PAGES.build).toMatch(/outstandingCost/);
+    /* Each branch says where it is done, in all three languages. */
+    expect(PAGES.build).toMatch(/Waiting for you on your dashboard\./);
+    expect(PAGES.build).toMatch(/מחכה לך בדשבורד\./);
+    expect(PAGES.build).toMatch(/Te espera en tu dashboard\./);
   });
 
-  it('asks whether the work exists, never whether a gap is absent', () => {
+  it('leaves by one door, whether or not anything is outstanding', () => {
     /*
-     * THE LESSON FROM (3). An absent gap means "nothing blocked us", which on
-     * a draft catalogue means "we could not see anything" — not "it is done".
-     * Completion has to be positively observed.
+     * The way out used to be a secondary, bordered "I'll do this later" sitting
+     * under cards with filled buttons on them — a choice drawn as a retreat.
+     * With nothing to configure here there is nothing to retreat from, so the
+     * owner with three things left and the owner with none get the same
+     * primary button, and neither is made to feel they skipped a step.
      */
-    const proof = /const PROOF_OF_DONE[\s\S]*?\n  \};/.exec(PAGES.build)?.[0] ?? '';
-    expect(proof).not.toBe('');
-
-    /* Direct reads, each answering "is the work there?" */
-    expect(proof).toMatch(/\/api\/scheduling\/availability/);
-    expect(proof).toMatch(/\/api\/scheduling\/services/);
-
-    /* And no reliance on the gap check for this question. */
-    expect(proof).not.toMatch(/journey-readiness/);
-  });
-
-  it('reconciles the cards with the server in BOTH directions', () => {
-    /*
-     * MEASURED. The reconciliation only ever dropped false claims, never added
-     * a true one, so a business that had finished a task saw its card come
-     * back the moment the session cache was cleared or the page was opened in
-     * another tab. Reported as working hours showing outstanding on a business
-     * that had set them, with the publish gate disagreeing.
-     *
-     * Safe in both directions BECAUSE the proofs are positive evidence: hours
-     * either exist or they do not. A task with no proof is still never touched
-     * either way, which is why `intake` keeps whatever state it had.
-     */
-    /* Anchored on CODE. `PAGES.build` is comment-stripped, so a regex keyed
-       on the heading above the effect matches nothing at all. */
-    const effect =
-      /const verifiable = Object\.keys\(PROOF_OF_DONE\)[\s\S]*?\n  \}, \[buildComplete\]\);/
-        .exec(PAGES.build)?.[0] ?? '';
-    expect(effect).not.toBe('');
-
-    /* Reads every verifiable task, not only the ones already claimed. */
-    expect(effect).toMatch(/Object\.keys\(PROOF_OF_DONE\)\.filter\(id => PROOF_OF_DONE\[id\]\)/);
-    /* And acts on both answers. */
-    expect(effect).toMatch(/next\[id\] = true/);
-    expect(effect).toMatch(/delete next\[id\]/);
-  });
-
-  it('settles the services card on one published service, not on a full catalogue', () => {
-    /*
-     * Onboarding drafts rows from a COUNT, and a business may open with one of
-     * them. Holding the card up until every row carries a price and a length
-     * turned a reasonable choice into an outstanding chore.
-     *
-     * `active` rather than merely filled in: publishing is the moment a
-     * service passes the gate, so that is the moment there is something a
-     * client can actually buy.
-     */
-    const proof = /const PROOF_OF_DONE[\s\S]*?\n  \};/.exec(PAGES.build)?.[0] ?? '';
-    expect(proof).toMatch(/rows\.some\(\(row: \{ status\?: string \| null \}\) => row\?\.status === 'active'\)/);
-    expect(proof).not.toMatch(/rows\.every\(/);
-  });
-
-  it('settles only on a verified completion, never on our own failure to check', () => {
-    /*
-     * The cost of being wrong is asymmetric: an extra card is a moment's
-     * annoyance, a missing one is a business that cannot take a booking and
-     * was told it was finished. A throwing or falsy check settles nothing.
-     */
-    const closer = /const closeOwnerStep = async[\s\S]*?\n  \};/.exec(PAGES.build)?.[0] ?? '';
-    expect(closer).not.toBe('');
-    expect(closer).toMatch(/if \(!proof\) return;/);
-    expect(closer).toMatch(/if \(await proof\(\)\) \{[\s\S]*?settleOwnerStep\(id\)/);
-    expect(closer).toMatch(/catch/);
-  });
-
-  it('leaves unverifiable work alone rather than guessing it is done', () => {
-    /*
-     * Intake's work is READING a form the platform generated and switched on,
-     * which leaves no trace. Claiming it was read would be the first bug all
-     * over again, so it has no proof and is never settled by this path.
-     */
-    const proof = /const PROOF_OF_DONE[\s\S]*?\n  \};/.exec(PAGES.build)?.[0] ?? '';
-    expect(proof).toMatch(/intake: undefined/);
-    expect(proof).toMatch(/stripe: undefined/);
-  });
-
-  it('checks the invoice details against the four the publish gate asks for', () => {
-    /*
-     * MEASURED. `bank` was the one card that settled on a button press rather
-     * than on the work being done: an owner filled in their bank name and
-     * account, left the tax ID blank, pressed Done, and watched the card go.
-     * Publishing then refused them over a field whose card no longer existed.
-     *
-     * The four are `missingInvoiceFields`': a company name, a tax ID and an
-     * address make the invoice a legal document, and a payment method is how
-     * the client learns where to send the money. Checking three of them would
-     * reopen the same hole one field narrower.
-     */
-    const proof = /const PROOF_OF_DONE[\s\S]*?\n  \};/.exec(PAGES.build)?.[0] ?? '';
-    expect(proof).toMatch(/invoice_company_name/);
-    expect(proof).toMatch(/invoice_tax_id/);
-    expect(proof).toMatch(/invoice_address/);
-    expect(proof).toMatch(/invoice_bank_account|invoice_payment_instructions/);
-  });
-
-  it('offers one button that commits, not two that look alike', () => {
-    /*
-     * The panel has its own Save, which writes. The screen drew a second,
-     * wider, brighter button beneath it that only marked the card settled, so
-     * the louder of the two threw the work away. Reported as "the save and
-     * done together can mislead the user", which is exactly right.
-     */
-    expect(PAGES.build).not.toMatch(/settleOwnerStep\('bank'\)/);
-    expect(PAGES.build).toMatch(/onSaved=\{\(\) => \{ void verifyOwnerStep\('bank'\); \}\}/);
-  });
-
-  it('never traps somebody in a dialog they cannot complete', () => {
-    /*
-     * An owner may change their mind, or may genuinely have no tax ID. The
-     * close button closes FIRST and verifies after, so nothing about being
-     * incomplete can hold the dialog open, and the screen keeps its own way
-     * out to the dashboard.
-     */
-    const closer = /const closeOwnerStep = async[\s\S]*?\n  \};/.exec(PAGES.build)?.[0] ?? '';
-    expect(closer).toMatch(/\{\s*setOpenStep\(null\);/);
     expect(PAGES.build).toMatch(/leaveForDashboard/);
+    expect(PAGES.build).not.toMatch(/I'll do this later/);
+  });
+
+  it('asks the owner to sequence nothing', () => {
+    /*
+     * `dependsOn` is still filled by `ownerTasks` and still read by the plan
+     * card. What went is this screen's attempt to render it: a measured curve
+     * joining the blocking row to the waiting one, and "you can fill this in
+     * now, but publishing waits for your hours" under the card.
+     *
+     * That note was the clearest statement of the problem being solved. A
+     * requirement belongs to the service that creates it, named where it is
+     * created, not to a graph the owner holds in their head.
+     */
+    expect(PAGES.build).not.toMatch(/publishing waits for/);
+    expect(PAGES.build).not.toMatch(/const blockedBy\b/);
+    expect(PAGES.build).not.toMatch(/linkEnds/);
   });
 
   it('gives the two cards that share a subject distinct React keys', () => {
@@ -268,11 +216,26 @@ describe('both screens read one list', () => {
     expect(PAGES.build).toMatch(/key=\{`\$\{step\.yours \? 'yours' : 'built'\}-\$\{step\.id\}`\}/);
   });
 
-  it('mounts something for every task the build screen will open', () => {
-    /* The handler setting state is half of it; the other half is a branch that
-       renders when it does. Both were present for the original four. */
+  it('draws every task the list can produce, in whatever language', () => {
+    /*
+     * REPLACES "mounts something for every task the build screen will open".
+     *
+     * That test existed because a task could be added to the shared list and
+     * not to this screen's dialog router, leaving a card with a button that
+     * went nowhere. There is no router now, so the failure it caught cannot
+     * happen — but the thing underneath it still matters: a key the module can
+     * produce must still get an ICON here, or its branch renders with an empty
+     * square where the subject should be.
+     *
+     * Keyed off `OWNER_TASK_KEYS` for the same reason as before: the next task
+     * added to the shared module fails here rather than going quiet on screen.
+     */
+    const icons = /const icons: Record<string, React\.ReactNode> = \{[\s\S]*?\n    \};/
+      .exec(PAGES.build)?.[0] ?? '';
+    expect(icons).not.toBe('');
+
     for (const key of OWNER_TASK_KEYS) {
-      expect(PAGES.build).toMatch(new RegExp(`openStep === '${key}'`));
+      expect(icons).toContain(`${key}:`);
     }
   });
 });
@@ -361,6 +324,60 @@ describe('what the one list actually decides', () => {
 
     expect(tasks).toContain('stripe');
     expect(tasks).not.toContain('bank');
+  });
+
+  it('owes a processor when the drafts have not settled the money and the owner said card', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE CASE EVERY BUILD SCREEN ACTUALLY SHOWS, and it was missing.
+     *
+     * The build creates drafts with `collection: null` — the money question is
+     * per service and is settled in the services editor, which the owner has
+     * not opened yet. The rule read `rows.some(collection === 'online')` as
+     * soon as any row existed, so the owner's own answer stopped counting the
+     * moment the drafts appeared, and the test was false for every account on
+     * that screen.
+     *
+     * Measured end to end: an owner who answered "the client pays online by
+     * card" saw working hours, invoicing and bank details listed, no Stripe
+     * step at all, and then a services editor warning that card payments need
+     * a connected processor. The one thing only they could do was the one
+     * thing never put in front of them.
+     *
+     * `bank` stays too, on the same nulls: an unsettled row owes the paperwork
+     * either way, and which paperwork is not known until it is settled.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const tasks = ownerTasks(
+      {
+        services: [
+          { is_scheduled: true, collection: null },
+          { is_scheduled: true, collection: null },
+        ],
+        collectionMethod: 'card_online',
+      },
+      EN
+    ).map(task => task.key);
+
+    expect(tasks).toContain('stripe');
+  });
+
+  it('owes no processor when the rows have settled on something else', () => {
+    /* The other half: a settled catalogue is the truth, and a card answer left
+       over from the interview does not drag a processor back in. */
+    const tasks = ownerTasks(
+      {
+        services: [
+          { is_scheduled: true, collection: 'invoice' },
+          { is_scheduled: false, collection: 'invoice' },
+        ],
+        collectionMethod: 'card_online',
+      },
+      EN
+    ).map(task => task.key);
+
+    expect(tasks).not.toContain('stripe');
+    expect(tasks).toContain('bank');
   });
 
   it('owes both where the catalogue is mixed, which one answer cannot describe', () => {

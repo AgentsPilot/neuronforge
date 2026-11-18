@@ -94,6 +94,28 @@ export type GapId =
    */
   | 'stage_awaiting_completion'
   /**
+   * A client whose own record has crossed the line — missed sessions they
+   * booked, or money past its date.
+   *
+   * The only gap that is not an errand the owner owes. Everything else here is
+   * work left undone; this is the client's side, which nothing in the product
+   * watched until 2026-11-16. Judged by `clientStanding`, which refuses to
+   * judge on thin evidence and never counts a session the BUSINESS called off.
+   */
+  /**
+   * A client whose record has MORE THAN ONE thing wrong with it.
+   *
+   * The only gap about the client's conduct rather than the owner's, and the
+   * only one that needs a combination before it says anything: missing what
+   * they book, paying late as a habit, and the whole thing having stayed true
+   * across weeks. One of those alone is a person having a hard month — see
+   * `clientConcerns` for why that bar exists.
+   *
+   * It never reports money outstanding today: `invoice_unpaid` has that, with
+   * a chase button this cannot offer.
+   */
+  | 'client_needs_a_word'
+  /**
    * A meeting the PLATFORM closed off, still open to being corrected.
    *
    * ───────────────────────────────────────────────────────────────────────────
@@ -305,6 +327,48 @@ export interface GapItem {
   openThreads?: number;
   /** When it became stuck, so "how long" can be shown rather than a date. */
   since: string;
+
+  /**
+   * A count and what it is out of — "4 of 16 sessions", "3 of 11 payments".
+   *
+   * Only the two client-conduct gaps set them, and they exist because the
+   * SENTENCE has to carry the numbers. `note` cannot: it renders beside the
+   * line as the owner's own text, and these are the product's words about a
+   * person, which have to be grammatical in three languages. The dictionary
+   * owns the sentence; these fill its slots.
+   */
+  /**
+   * What is wrong, as keys and counts rather than a sentence.
+   *
+   * Only `client_needs_a_word` sets them. They are rendered through the SAME
+   * copy the drawer badge uses, so one set of words describes a client
+   * wherever they appear — and because a row may carry any combination of
+   * them, no single dictionary sentence could have said it.
+   */
+  /*
+   * `drift` is in this list because `ScoreSignal` has it: a client can be
+   * flagged for having got worse against their OWN history, with no single
+   * count high enough to flag on its own. Omitting it here did not drop the
+   * concern at runtime, it just failed to typecheck the gap that produces it.
+   */
+  concerns?: Array<{
+    key: 'attendance' | 'lateness' | 'persistence' | 'drift';
+    count: number;
+    of?: number;
+  }>;
+
+  /**
+   * How far past the line this client is, 0–100, with the line itself at 60.
+   *
+   * A rank, never a probability: it exists so two flagged clients can be put
+   * in order, and so the owner can see at a glance whether this is a client
+   * who just crossed or one who is far past. The counts beside it are what
+   * makes it checkable.
+   */
+  score?: number;
+
+  /** The word for that score — the one the drawer badge uses, not a second one. */
+  band?: 'reliable' | 'watch' | 'at_risk';
   /**
    * When the question became ANSWERABLE, where that is not when it arose.
    *

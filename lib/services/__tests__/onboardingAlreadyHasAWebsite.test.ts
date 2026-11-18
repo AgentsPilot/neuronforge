@@ -39,26 +39,38 @@
 
 import { OnboardingConversationManager } from '@/lib/services/OnboardingConversationManager';
 
-/** The three chips, exactly as `getResponseTemplates` writes them. */
-const CHIPS = {
-  en: {
-    build: 'Build me a professional website',
-    own: 'I already have a website',
-    channels: 'Connect Facebook, Instagram or Google: see where clients come from',
-  },
-  he: {
-    build: 'שאבנה לך אתר מקצועי',
-    own: 'כבר יש לי אתר',
-    channels: 'לחבר פייסבוק, אינסטגרם או גוגל: לראות מאיפה מגיעים הלקוחות',
-  },
-  es: {
-    build: 'Que te construya un sitio web profesional',
-    own: 'Ya tengo un sitio web',
-    channels: 'Conectar Facebook, Instagram o Google: ver de dónde vienen tus clientes',
-  },
-} as const;
+type Language = 'en' | 'he' | 'es';
 
-type Language = keyof typeof CHIPS;
+/**
+ * The three chips, READ FROM THE TEMPLATES rather than copied here.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THIS FILE USED TO HOLD ITS OWN COPY OF THE WORDS, AND THAT IS HOW THE
+ * CHANNELS CHIP CAME TO BE BROKEN FOR SIX DAYS WITH THE SUITE GREEN.
+ *
+ * The chip was reworded on 2026-11-10 to "Show me where my clients come from",
+ * which left behind every keyword the parser matched on. The test went on
+ * asserting that `'Connect Facebook, Instagram or Google: see where clients
+ * come from'` is read as a request for channel insights — true, and about a
+ * string no owner was shown. Measured on a real test account: the tick saved
+ * `needs_channel_insights: false` and `acquisition_channels: []`.
+ *
+ * A test that keeps its own copy of the copy tests the copy it keeps. These are
+ * now the strings the chat actually offers, so a rewording either keeps working
+ * or turns this file red.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function chips(language: Language): { build: string; own: string; channels: string } {
+  const manager = new OnboardingConversationManager() as unknown as {
+    getResponseTemplates(language: Language): Record<string, any>;
+  };
+  const [build, own, channels] = manager.getResponseTemplates(language)
+    .client_acquisition_options as string[];
+
+  return { build, own, channels };
+}
+
+const LANGUAGES: Language[] = ['en', 'he', 'es'];
 
 interface Extraction {
   acquisition_channels: string[];
@@ -79,8 +91,28 @@ function read(language: Language, ...picked: string[]): Extraction {
   return manager.extractClientAcquisition(picked.join(', '));
 }
 
-describe.each(Object.keys(CHIPS) as Language[])('the website chips in %s', language => {
-  const chip = CHIPS[language];
+describe.each(LANGUAGES)('the website chips in %s', language => {
+  const chip = chips(language);
+
+  /*
+   * The one assertion that would have caught the rewording.
+   *
+   * Each chip has to be READ AS SOMETHING. A tick that answers nothing is the
+   * failure mode this whole file exists for, and it is invisible from the three
+   * tests below, which each check one chip against one expectation: a chip that
+   * stops being recognised simply stops being the subject of its test.
+   */
+  it('reads every chip it offers as an answer to something', () => {
+    for (const [name, text] of Object.entries(chip)) {
+      const result = read(language, text);
+      const answered =
+        result.needs_website ||
+        result.needs_channel_insights ||
+        result.has_website === true;
+
+      expect({ chip: name, text, answered }).toEqual({ chip: name, text, answered: true });
+    }
+  });
 
   it('reads "I already have one" as having one, and NOT as wanting one built', () => {
     const result = read(language, chip.own);

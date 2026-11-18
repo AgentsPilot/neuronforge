@@ -23,6 +23,8 @@ import { AdminAreaField } from '@/components/ui/AdminAreaField';
 import { AddressAutocomplete } from '@/components/ui/AddressAutocomplete';
 import { SavedAddressPicker } from '@/components/ui/SavedAddressPicker';
 import { legacyCountryToCode } from '@/lib/geo/countries';
+import { taxIdRule } from '@/lib/payments/taxId';
+import { bankCheckFor } from '@/lib/payments/bankDetails';
 import { CONFIG_ACCENT, configAccentButton } from '@/components/business-os/configAccent';
 import { TabFooter } from '@/components/business-os/settings/TabFooter';
 import { StripeConnectStatus } from '@/components/payments/StripeConnectStatus';
@@ -31,6 +33,8 @@ import {
   resolveDocumentType,
   type DocumentType,
 } from '@/lib/payments/documentType';
+import { RequiredMark, RequiredStrip } from '@/components/business-os/settings/RequiredMark';
+import { missingInvoiceFields } from '@/lib/business-os/setup/profileReadiness';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'InvoiceSettingsSection' });
@@ -196,7 +200,83 @@ export function InvoiceSettingsSection({
     invoice_tax_id: settings.invoice_tax_id,
   }) === 'tax_invoice';
 
+  /*
+   * EVERYTHING this panel owes, by the rule that enforces it.
+   *
+   * `missingInvoiceFields` is what `InvoiceDeliveryService` calls before it
+   * sends a document and what the proposal route calls before it lets a quote
+   * go out — so an owner can read here, in advance, the exact list that would
+   * otherwise refuse them at the moment they press send. Run against the live
+   * form values, so the list shortens as they type.
+   *
+   * The tax ID is in or out of it by document type, which is why `taxIdRequired`
+   * above and this cannot drift: both resolve it the same way.
+   */
+  const missingRequired = missingInvoiceFields({
+    invoice_company_name: settings.invoice_company_name,
+    invoice_tax_id: settings.invoice_tax_id,
+    invoice_document_type: settings.invoice_document_type || null,
+    invoice_prices_include_tax: settings.invoice_prices_include_tax,
+    invoice_address: settings.invoice_address,
+    invoice_bank_name: settings.invoice_bank_name,
+    invoice_bank_account: settings.invoice_bank_account,
+    invoice_payment_instructions: settings.invoice_payment_instructions,
+  });
+
+  const needs = (field: string): boolean => missingRequired.includes(field as never);
+
+  /** The name the dashboard's "Still needs" list uses, so both read alike. */
+  const fieldLabel = (field: string): string => t(`setup.field.${field}`) || field;
+
+  /* Three for a receipt or an ordinary invoice, four for a tax invoice. The
+     count follows the document picker, like the tax ID mark itself. */
+  const requiredTotal = taxIdRequired ? 4 : 3;
+
   const countryMissing = !legacyCountryToCode(settings.invoice_address?.country);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT A TAX NUMBER LOOKS LIKE WHERE THIS BUSINESS BILLS FROM.
+   *
+   * The field was free text with no limit: forty digits typed, forty digits
+   * saved, and the first person to find out was a client holding an invoice
+   * carrying a number no authority recognises. `missingInvoiceFields` can see
+   * that this field is EMPTY and ask for it; it cannot see that the content is
+   * wrong, so nothing downstream would ever have caught it.
+   *
+   * Read from the invoice address, which is the country the document is issued
+   * from — not the client's, and not the Stripe account's. An address that has
+   * not been filled in yet gives the permissive rule, so an owner is never
+   * stopped from typing their own number because we do not know where they are.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const invoiceCountry = legacyCountryToCode(settings.invoice_address?.country);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT A BANK ACCOUNT LOOKS LIKE WHERE THIS BUSINESS BANKS.
+   *
+   * `hasPaymentMethod` — the test every gate in the platform reads — only asks
+   * whether these fields are NON-EMPTY. So a transposed IBAN passes every check
+   * we have and reaches a client on an invoice, the money does not arrive, and
+   * nobody can say why.
+   *
+   * Two shapes, because there are two in practice: an IBAN carries the bank
+   * inside it, and a US account needs a routing number beside it. The country
+   * decides which is asked for, and `bankDetails` decides what can honestly be
+   * checked — a typo, and nothing more.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const bank = bankCheckFor(invoiceCountry);
+  const accountProblem = settings.invoice_bank_account.trim()
+    ? bank.checkAccount(settings.invoice_bank_account, invoiceCountry)
+    : null;
+  const routingProblem = settings.invoice_bank_routing.trim()
+    ? bank.checkRouting(settings.invoice_bank_routing)
+    : null;
+
+  const taxRule = taxIdRule(invoiceCountry);
+  const taxIdProblem = settings.invoice_tax_id.trim() ? taxRule.check(settings.invoice_tax_id) : null;
 
   const termsMissing =
     settings.invoice_payment_terms_days === null ||
@@ -411,6 +491,28 @@ export function InvoiceSettingsSection({
             </div>
           ) : (
             <>
+              {/*
+                THE FOUR THAT STOP A DOCUMENT GOING OUT, listed before them.
+                ─────────────────────────────────────────────────────────────
+                This panel already marked the tax ID, and marked it well: only
+                when the document type calls for one. Nothing marked the other
+                three, and they are the ones `InvoiceDeliveryService` and the
+                proposal send route refuse on — so an owner met the list for the
+                first time as a refusal, at the moment they pressed send, named
+                in a dialog away from the boxes that fix it.
+
+                Same words as that refusal and as the dashboard, because all
+                three now read `missingInvoiceFields`.
+              */}
+              <RequiredStrip
+                missing={missingRequired}
+                total={requiredTotal}
+                labelFor={fieldLabel}
+                stillNeedsLabel={t('readiness.stillNeeds')}
+                doneLabel={t('settings.required.invoiceAllSet')}
+                note={t('settings.required.invoiceNote')}
+              />
+
               {/* Stripe Connect Section */}
               {showProcessor && (
                 <div className="mb-4">
@@ -445,6 +547,9 @@ export function InvoiceSettingsSection({
                 <div>
                   <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
                     {t('settings.invoice.company_name') || 'Company Name (for invoices)'}
+                    {/* Required for every document type: a bill has to say who
+                        sent it. `missingInvoiceFields` asks for it first. */}
+                    <RequiredMark reason={t('settings.required.invoice_company_name')} />
                   </label>
                   <div className="relative">
                     <Building2
@@ -602,16 +707,47 @@ export function InvoiceSettingsSection({
                       </span>
                     )}
                   </label>
+                  {/*
+                    Formatted as it is typed, and capped at the country's own
+                    length. The separators are inserted rather than asked for:
+                    a number that LOOKS like the one on the document is one an
+                    owner can proofread, and nobody should have to remember
+                    where the dash goes in an EIN.
+                  */}
                   <input
                     type="text"
                     value={settings.invoice_tax_id}
                     onChange={(e) =>
-                      setSettings((prev) => ({ ...prev, invoice_tax_id: e.target.value }))
+                      setSettings((prev) => ({
+                        ...prev,
+                        invoice_tax_id: taxRule.format(e.target.value),
+                      }))
                     }
-                    placeholder={t('settings.invoice.tax_id_placeholder') || 'XX-XXXXXXX'}
+                    inputMode={taxRule.alphanumeric ? 'text' : 'numeric'}
+                    /* Generous: the formatted value carries separators the cap
+                       does not count, and a hard stop mid-number is worse than
+                       a sentence underneath. */
+                    maxLength={taxRule.maxLength + 6}
+                    placeholder={taxRule.placeholder}
+                    aria-invalid={taxIdProblem ? true : undefined}
                     className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
+
+                  {/*
+                    SAID, NOT REFUSED.
+                    ──────────────────────────────────────────────────────────
+                    Formats change and this table knows the common cases rather
+                    than the whole world. A rule that blocks a save is a
+                    business that cannot invoice at all the day its country's
+                    format moves, so the sentence appears and the save goes
+                    through.
+                  */}
+                  {taxIdProblem && (
+                    <p className="mt-1.5 text-[11.5px] leading-snug" style={{ color: '#B45309' }}>
+                      {taxIdProblem}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -785,6 +921,9 @@ export function InvoiceSettingsSection({
                 <label className="flex items-center gap-2 text-xs font-medium text-[var(--v2-text-primary)]">
                   <MapPin className="w-4 h-4 text-[var(--v2-text-muted)]" />
                   {t('settings.invoice.address') || 'Business Address'}
+                  {/* Street, city and country. Postal code and state are
+                      deliberately not required — see `hasUsableAddress`. */}
+                  <RequiredMark reason={t('settings.required.invoice_address')} />
                 </label>
 
                 {/*
@@ -919,7 +1058,31 @@ export function InvoiceSettingsSection({
                 <label className="flex items-center gap-2 text-xs font-medium text-[var(--v2-text-primary)]">
                   <CreditCard className="w-4 h-4 text-[var(--v2-text-muted)]" />
                   {t('settings.invoice.bank_details') || 'Bank Details (for wire transfers)'}
+                  {needs('payment_method') && (
+                    <RequiredMark reason={t('settings.required.invoice_payment_method')} />
+                  )}
                 </label>
+
+                {/*
+                  ONE OF TWO, which is why neither carries a plain asterisk once
+                  it is satisfied.
+
+                  `hasPaymentMethod` accepts bank name AND account, OR written
+                  instructions below. Marking both groups unconditionally would
+                  say "fill in both", which is false and is the kind of demand
+                  that makes an owner invent a bank they do not use. So the mark
+                  appears on both while NEITHER is answered, and goes from both
+                  the moment one is: the client can be told where the money
+                  goes, which is all the rule ever asked.
+
+                  The routing number deliberately never counts — it is a US
+                  convention most of the world has no equivalent for.
+                */}
+                {needs('payment_method') && (
+                  <p className="text-[11px] leading-snug" style={{ color: '#92400E' }}>
+                    {t('settings.required.payment_either')}
+                  </p>
+                )}
 
                 <input
                   type="text"
@@ -932,27 +1095,72 @@ export function InvoiceSettingsSection({
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 />
 
-                <div className="grid grid-cols-2 gap-3">
-                  <input
-                    type="text"
-                    value={settings.invoice_bank_account}
-                    onChange={(e) =>
-                      setSettings((prev) => ({ ...prev, invoice_bank_account: e.target.value }))
-                    }
-                    placeholder={t('settings.invoice.bank_account') || 'Account number'}
-                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  />
-                  <input
-                    type="text"
-                    value={settings.invoice_bank_routing}
-                    onChange={(e) =>
-                      setSettings((prev) => ({ ...prev, invoice_bank_routing: e.target.value }))
-                    }
-                    placeholder={t('settings.invoice.bank_routing') || 'Routing number'}
-                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  />
+                {/*
+                  ONE FIELD OR TWO, DECIDED BY THE COUNTRY.
+                  ──────────────────────────────────────────────────────────
+                  An IBAN carries the bank, the branch and the account in one
+                  value, so asking for a routing number beside it is asking for
+                  something that does not exist — and the old two-up grid did
+                  exactly that for every European and Israeli business.
+
+                  Where a routing number IS real, the two stay side by side,
+                  because they are one answer given in two halves.
+                */}
+                <div className={bank.mode === 'iban' ? '' : 'grid grid-cols-2 gap-3'}>
+                  <div>
+                    <input
+                      type="text"
+                      value={settings.invoice_bank_account}
+                      onChange={(e) =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          invoice_bank_account: bank.format(e.target.value),
+                        }))
+                      }
+                      placeholder={bank.accountPlaceholder}
+                      aria-label={bank.accountLabel}
+                      aria-invalid={accountProblem ? true : undefined}
+                      className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    />
+                    {/*
+                      SAID, NOT REFUSED — the same rule as the tax ID above.
+                      A checksum catches a typo and nothing else: an IBAN that
+                      passes may still belong to somebody else, and only the
+                      bank knows. So a save is never blocked over it.
+                    */}
+                    {accountProblem && (
+                      <p className="mt-1.5 text-[11.5px] leading-snug" style={{ color: '#B45309' }}>
+                        {accountProblem}
+                      </p>
+                    )}
+                  </div>
+
+                  {bank.routingLabel && (
+                    <div>
+                      <input
+                        type="text"
+                        value={settings.invoice_bank_routing}
+                        onChange={(e) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            invoice_bank_routing: e.target.value.replace(/\D/g, '').slice(0, 9),
+                          }))
+                        }
+                        inputMode="numeric"
+                        placeholder={bank.routingPlaceholder ?? ''}
+                        aria-label={bank.routingLabel}
+                        aria-invalid={routingProblem ? true : undefined}
+                        className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      />
+                      {routingProblem && (
+                        <p className="mt-1.5 text-[11.5px] leading-snug" style={{ color: '#B45309' }}>
+                          {routingProblem}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -961,6 +1169,10 @@ export function InvoiceSettingsSection({
                 <label className="flex items-center gap-2 text-xs font-medium text-[var(--v2-text-primary)] mb-1">
                   <MessageSquare className="w-4 h-4 text-[var(--v2-text-muted)]" />
                   {t('settings.invoice.payment_instructions') || 'Payment Instructions'}
+                  {/* The other half of the pair above. */}
+                  {needs('payment_method') && (
+                    <RequiredMark reason={t('settings.required.invoice_payment_method')} />
+                  )}
                 </label>
                 <textarea
                   value={settings.invoice_payment_instructions}

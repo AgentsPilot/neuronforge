@@ -585,6 +585,17 @@ export async function GET(request: NextRequest) {
            * from the card and the decline button never rendered.
            */
           noteKey: item.noteKey ?? null,
+          /*
+           * What is wrong with this client, as keys and counts. Named here for
+           * the reason this list keeps repeating: an unnamed field is dropped
+           * in silence, and without it `client_needs_a_word` would render a
+           * name with no reason under it — the one row that must never do
+           * that, because it is the only one making a claim about a person.
+           */
+          concerns: item.concerns ?? null,
+          /* Named for the same reason as everything else here. */
+          score: item.score ?? null,
+          band: item.band ?? null,
           /* The refund request this row is about, so declining can settle it.
              Kept apart from `entityId`, which the refund dialog opens ON. */
           requestId: item.requestId ?? null,
