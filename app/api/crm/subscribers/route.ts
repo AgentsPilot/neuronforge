@@ -199,6 +199,51 @@ export async function POST(request: NextRequest) {
     }
 
     /*
+     * ───────────────────────────────────────────────────────────────────────
+     * IS THIS PERSON ALREADY A CONTACT? ASK BEFORE CREATING ONE.
+     *
+     * `promoted_contact_id` above only stops the SAME roster row being
+     * promoted twice. It says nothing about a contact that reached the CRM by
+     * another door — a booking, an enquiry, an import — after this row was
+     * written.
+     *
+     * The trigger on `crm_contacts` covers the other direction: a contact
+     * created later links the roster row by email, which then makes the button
+     * idempotent. It cannot cover this one, because nothing fires when the
+     * owner presses Promote.
+     *
+     * So an owner with a client who later subscribed, or a subscriber who
+     * later booked while the roster row was written under a different address,
+     * got a SECOND contact for a person already in their CRM. Found on a live
+     * account: two rows, one address, 28 minutes apart.
+     *
+     * Matched the way every other capture path matches — `emailLikePattern`
+     * through the shared repository, so case and surrounding space cannot
+     * split one person into two.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const { data: already } = await crmContactRepository.findByEmail(
+      subscriber.email,
+      user.id
+    );
+
+    if (already) {
+      /* Link the roster row to the contact they already are, and tell the
+         caller the same thing a double-press is told: this is that person. */
+      await businessSubscriberRepository.markPromoted(user.id, subscriber.email, already.id);
+
+      requestLogger.info(
+        { subscriberId: subscriber.id, contactId: already.id },
+        'Subscriber already had a contact; linked rather than duplicated'
+      );
+
+      return NextResponse.json({
+        success: true,
+        data: { contactId: already.id, alreadyPromoted: true },
+      });
+    }
+
+    /*
      * The start of this owner's board, through the repository that owns the
      * table. This was an inline `crm_pipeline_stages` read ending `|| 'lead'`
      * — one of seven such copies, and a direct Supabase call from a route.

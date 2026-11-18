@@ -48,8 +48,29 @@ function buildPostMessageResponse(
     ? '<h3>Authorization Successful!</h3><p>Closing window...</p>'
     : '';
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * NO OPENER IS NORMAL, AND THE CONNECTION IS ALREADY SAVED.
+   *
+   * Google's consent pages send `Cross-Origin-Opener-Policy`, which swaps the
+   * browsing context group and leaves `window.opener` NULL when the popup
+   * comes back to us. Nothing is wrong when that happens: the token exchange
+   * ran in the route above and the connection is stored before a byte of this
+   * HTML is written.
+   *
+   * This branch used to say "Please close this window and try again", in red,
+   * on a successful connection. An owner who follows that instruction
+   * reconnects an account that was already connected, and the one who does not
+   * is left looking at an error and a window that never closes, because the
+   * `window.close()` was inside the opener branch.
+   *
+   * So: say what happened, and close. The opener cannot be told, so the page
+   * that opened this window finds out by asking — see `waitForOAuthCompletion`,
+   * which verifies the connection when the popup closes without a message.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const noOpenerFallback = payload.success
-    ? `\n            } else {\n              document.body.innerHTML += '<p style="color: red;">Error: Could not communicate with parent window. Please close this window and try again.</p>';`
+    ? `\n            } else {\n              document.body.innerHTML = '<h3>Connected</h3><p>You can close this window and carry on.</p>';\n              setTimeout(() => window.close(), 1200);`
     : `\n            } else {\n              window.close();`;
 
   return new NextResponse(

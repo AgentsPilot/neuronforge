@@ -480,6 +480,14 @@ export function StepCost({ values, onChange, currencySymbol, currencyCode }: Ste
    3 · HOW THE MONEY REACHES YOU — a set price only
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * What the business has in place.
+ *
+ * KEPT, though this step no longer reads it: the shape is the vocabulary the
+ * wizard uses for "ready to invoice" and "can actually charge", and step 4
+ * answers the same two questions from `publishBlockers`. Deleting it would
+ * only move the definition.
+ */
 export interface BusinessFacts {
   /** Invoice details complete, from the same test the publish gate uses. */
   invoiceReady: boolean;
@@ -493,8 +501,7 @@ export function StepMoney({
   values,
   onChange,
   currencySymbol,
-  facts,
-}: Omit<StepProps, 'currencyCode'> & { facts: BusinessFacts }) {
+}: Omit<StepProps, 'currencyCode'>) {
   const amount = values.price.trim() ? currencySymbol + values.price.trim() : 'the amount';
 
   return (
@@ -537,50 +544,30 @@ export function StepMoney({
       </div>
 
       {/*
-        What THIS answer asks of the business, in the order it is owed.
-        Invoice details before the processor, always: with no card account the
-        service is invoiced instead, so the paperwork is what makes it work at
-        all and Stripe is the upgrade on top.
+        ───────────────────────────────────────────────────────────────────────
+        THE SETTING UP BELONGS TO STEP 4, AND IT WAS ASKED FOR HERE AS WELL.
+        ───────────────────────────────────────────────────────────────────────
+        This step used to carry two requirement rows under a "Taking a card
+        needs" heading: the invoice details, with a Fill them in button, and a
+        card account, with Connect. Step 4 already lists BOTH, built from
+        `publishBlockers` — the real gate — with the same two actions.
+
+        So an owner met the same two jobs twice, and the first time was in the
+        middle of answering a different question. This step asks one thing,
+        "how does the money reach you", and the owner should be able to answer
+        it and move on.
+
+        The copy is not lost. Step 4 states each job against what actually
+        blocks publishing, and it is more accurate there: a card account is
+        `optional` on that list, because a service with no processor still
+        publishes and is invoiced instead, while the row here called it
+        outstanding work.
+
+        The one thing this step DID say that the gate does not — that a card
+        service with no Stripe is invoiced for now — is said by the client rail
+        beside it, in the client's own terms: "Gets an invoice, for now.
+        Nobody is turned away."
       */}
-      {values.collection !== null && (
-        <div className="sw-needs">
-          <p className="sw-label sw-label-block">
-            {values.collection === 'online' ? 'Taking a card needs' : 'Invoicing needs'}
-          </p>
-
-          <Requirement
-            state={facts.invoiceReady ? 'done' : 'now'}
-            title="Your invoice details"
-            note={
-              facts.invoiceReady
-                ? 'Company name, address and how to pay you. Already filled in.'
-                : values.collection === 'online'
-                  ? 'First, and this surprises people: with no card account connected yet, this service is invoiced instead. These details are what make it work at all.'
-                  : 'They go on every invoice. It is where your client learns where to send the money.'
-            }
-            action={facts.invoiceReady ? undefined : { label: 'Fill them in', onPress: facts.onFixInvoice }}
-          />
-
-          {values.collection === 'online' && (
-            <Requirement
-              state={facts.processorReady ? 'done' : facts.invoiceReady ? 'now' : 'waiting'}
-              title="A card account"
-              note={
-                facts.processorReady
-                  ? 'Connected. Cards are charged when a client books.'
-                  : facts.invoiceReady
-                    ? 'About five minutes with Stripe. Until it is connected, this service is invoiced instead.'
-                    : 'Opens as soon as your invoice details are in. About five minutes with Stripe.'
-              }
-              action={
-                facts.processorReady || !facts.invoiceReady
-                  ? undefined
-                  : { label: 'Connect', onPress: facts.onConnectProcessor }
-              }
-            />
-          )}
-        </div>
-      )}
     </>
   );
 }

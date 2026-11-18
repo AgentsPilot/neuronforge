@@ -604,6 +604,9 @@ export async function GET(request: NextRequest) {
           refundRecommendation: item.refundRecommendation ?? null,
           refundRecommendedAmount: item.refundRecommendedAmount ?? null,
           refundReasoning: item.refundReasoning ?? null,
+          /* The drafted reply. Named here or it is dropped in silence, which
+             is what kept the reply box empty under a finished recommendation. */
+          refundClientDraft: item.refundClientDraft ?? null,
           /* What the business's own diary says happened, and when — so the
              owner can answer without going to look for the booking. Named
              here because an unnamed field is dropped in silence. */

@@ -120,6 +120,35 @@ body {
   font-family: "Heebo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
+/*
+ * THE DOCUMENT FOLLOWS THE APP'S THEME, NOT ONLY THE MACHINE'S.
+ *
+ * `--background` above turns dark under `prefers-color-scheme: dark` and
+ * nothing else. But the app's theme is the `dark` class that `V2ThemeScript`
+ * stamps on <html> from localStorage, and the two disagree for anybody who
+ * runs the product dark on a light machine, or light on a dark one.
+ *
+ * The result was a white document behind every dark page. Mostly invisible,
+ * because each page paints its own ground — until a frame where no page is
+ * painted: route transitions (a white flash on every tab change), short pages,
+ * and the rubber-band area past the end of a scroll.
+ *
+ * `:not([data-public-surface])` keeps this away from the pages a business's
+ * own client sees. Those take their ground from the business's theme below,
+ * and must not inherit the owner's dark mode.
+ */
+html.dark:not([data-public-surface]) body {
+  background: #0a0a0a;
+  color: #ededed;
+}
+
+/* And its mirror: the app held in light mode on a dark machine, where the
+   media query above would otherwise paint the document black. */
+html:not(.dark):not([data-public-surface]) body {
+  background: #ffffff;
+  color: #171717;
+}
+
 /* ==========================================================================
    PUBLIC CUSTOMER-FACING SURFACES
 

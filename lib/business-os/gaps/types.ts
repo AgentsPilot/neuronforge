@@ -475,6 +475,8 @@ export interface GapItem {
   refundRecommendedAmount?: number;
   /** Two or three sentences for the owner, in the owner's language. */
   refundReasoning?: string;
+  /** The reply the agent drafted for the client, to seed the reply box. */
+  refundClientDraft?: string;
   /**
    * What the business's own diary says happened to the booking.
    *

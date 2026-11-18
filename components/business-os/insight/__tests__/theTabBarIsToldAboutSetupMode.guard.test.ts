@@ -82,6 +82,17 @@ describe('who writes the setup key, and from what', () => {
 describe('how the bar reads it', () => {
   const tabs = code(read(TABS));
 
+  it('prefers the session key over the server seed, and falls back to it', () => {
+    /*
+     * Order matters and is easy to get backwards. The dashboard knows about
+     * phases a server-side count cannot see, so its answer wins wherever it
+     * exists; the seed only fills the first frame, which is what stopped an
+     * owner arriving from the chat watching four tabs vanish after two
+     * seconds.
+     */
+    expect(tabs).toContain('rememberedSetupState() ?? initialSetupDone');
+  });
+
   it('treats an unknown answer as "show everything"', () => {
     /*
      * The asymmetry that matters: hiding four tabs from a business that has
