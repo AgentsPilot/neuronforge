@@ -1791,18 +1791,34 @@ export function LiveDashboard({
    *
    * Written to the same session key the bar already reads and announced on the
    * same event it already listens for, so nothing new is invented to carry it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND THE ANSWER IS `setupMode`, NOT `everyPhaseAnswered`. THIS COST A
+   * PRODUCTION ACCOUNT ITS NAVIGATION.
+   *
+   * `everyPhaseAnswered` asks whether the owner has pressed through every
+   * phase of the walkthrough, and one of those phases is "my catalogue is
+   * finished" — recorded as `services` in `dismissed_setup_steps`. An account
+   * that predates the walkthrough, or simply never pressed that button, has an
+   * empty list and therefore can NEVER satisfy it.
+   *
+   * Written as the bar's authority, that permanently removed People, Money,
+   * Online presence and Business overview from a live business with 10
+   * contacts, 63 bookings and 52 payments behind it. Reported as "all tabs are
+   * gone" within minutes of the deploy.
+   *
+   * `setupMode` is the question actually being asked: it is
+   * `nobodyHasArrived && !everyPhaseAnswered`, so the moment anybody has
+   * touched, booked or paid, this account is not being walked through
+   * whatever the phases say, and the bar must show everything its
+   * capabilities allow. A brand-new account with nothing is still restricted,
+   * which is the behaviour the walkthrough wants.
+   *
+   * Declared BELOW `setupMode` on purpose: a dependency array is evaluated
+   * during render, so naming it from an effect written above its `const`
+   * throws on the temporal dead zone.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      window.sessionStorage.setItem('bos_setup_complete', everyPhaseAnswered ? '1' : '0');
-      window.dispatchEvent(new Event('bos:setup-changed'));
-    } catch {
-      /* Private mode. The bar falls back to its own reading, which is the
-         behaviour before this existed. */
-    }
-  }, [everyPhaseAnswered]);
 
   /*
    * ───────────────────────────────────────────────────────────────────────────
@@ -1821,6 +1837,20 @@ export function LiveDashboard({
    * ───────────────────────────────────────────────────────────────────────────
    */
   const setupMode = Boolean(nobodyHasArrived && !everyPhaseAnswered);
+
+  /* The write itself. See the long note above `setupMode`'s neighbours: the
+     bar is told whether this owner is being WALKED THROUGH, which is exactly
+     what `setupMode` means, and never whether every phase was pressed. */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.sessionStorage.setItem('bos_setup_complete', setupMode ? '0' : '1');
+      window.dispatchEvent(new Event('bos:setup-changed'));
+    } catch {
+      /* Private mode. The bar falls back to its own reading, which is the
+         behaviour before this existed. */
+    }
+  }, [setupMode]);
 
   const servicesPanelShowing = Boolean(
     setupMode && onOpenService && (firstStep || (catalogue && catalogue.length > 0))
