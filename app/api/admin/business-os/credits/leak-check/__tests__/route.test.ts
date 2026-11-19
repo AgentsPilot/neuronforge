@@ -42,6 +42,56 @@ const mockReads = {
   listUsageCallsForAccount: jest.fn(),
   countPlatformCalls: jest.fn(),
 };
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE CLOCK, FROZEN, BECAUSE THREE OF THEM ARE READ.
+ *
+ * Dates here are read at three different moments: the fixtures through `dayOf`
+ * when a test builds them, the injected `now()` when the report is computed,
+ * and the ROUTE'S OWN `new Date()` when it validates the query. Straddle UTC
+ * midnight between any two and they disagree about which day "yesterday" is,
+ * so the window excludes the row the test just planted.
+ *
+ * Not hypothetical: the merge queue ran this at 00:01:32 UTC, it failed by
+ * exactly one day, and a green PR was dropped out of the queue. Merging near
+ * midnight is an ordinary event in a repo that merges through a queue.
+ *
+ * Freezing the system clock is what makes all three agree, since the route's
+ * own read cannot be injected. Only `Date` is faked — every timer API is left
+ * real, so nothing here can hang waiting for a tick that never comes.
+ *
+ * Noon on a fixed date: far from both boundaries, so no offset in this file
+ * can cross one.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const FROZEN_NOW = new Date('2026-06-15T12:00:00.000Z');
+
+const REAL_TIMERS_ONLY_DATE_IS_FAKED = [
+  'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate',
+  'clearImmediate', 'nextTick', 'queueMicrotask', 'performance',
+  'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback',
+  'cancelIdleCallback', 'hrtime',
+] as const;
+
+/*
+ * AT MODULE SCOPE, NOT IN `beforeAll`.
+ *
+ * The `it.each` tables below call `dayOf` while Jest is COLLECTING tests,
+ * which happens before any hook runs. Frozen in a hook, those strings would
+ * still come from the real clock while the route read the frozen one — the
+ * same disagreement in a new place, and one that hides rather than fails,
+ * because a date far in the real future still satisfies most of these
+ * assertions for the wrong reason.
+ */
+jest.useFakeTimers({
+  now: FROZEN_NOW,
+  doNotFake: [...REAL_TIMERS_ONLY_DATE_IS_FAKED] as never,
+});
+
+afterAll(() => {
+  jest.useRealTimers();
+});
+
 const mockDepsFactory = jest.fn(() => ({ ...mockReads, now: () => new Date() }));
 jest.mock('@/lib/business-os/credits/creditLeakCheckDeps', () => ({
   creditLeakCheckDeps: () => mockDepsFactory(),
