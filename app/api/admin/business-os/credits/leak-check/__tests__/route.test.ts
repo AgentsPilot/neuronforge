@@ -44,55 +44,26 @@ const mockReads = {
 };
 /*
  * ─────────────────────────────────────────────────────────────────────────────
- * ONE CLOCK, FROZEN, BECAUSE THREE OF THEM ARE READ.
+ * ONE INSTANT, INJECTED. NO GLOBAL CLOCK FAKING.
  *
- * Dates here are read at three different moments: the fixtures through `dayOf`
- * when a test builds them, the injected `now()` when the report is computed,
- * and the ROUTE'S OWN `new Date()` when it validates the query. Straddle UTC
- * midnight between any two and they disagree about which day "yesterday" is,
- * so the window excludes the row the test just planted.
+ * Dates are read in two places that run at different moments: the fixtures
+ * through `dayOf`, and the route through the clock on these deps. Straddle UTC
+ * midnight between them and they disagree about which day "yesterday" is, so
+ * the window excludes the row the test just planted. The merge queue ran this
+ * at 00:01:32 UTC and it failed by exactly one day.
  *
- * Not hypothetical: the merge queue ran this at 00:01:32 UTC, it failed by
- * exactly one day, and a green PR was dropped out of the queue. Merging near
- * midnight is an ordinary event in a repo that merges through a queue.
+ * Both now come from one frozen instant, which is possible because the route
+ * takes its clock from here: it used to read `new Date()` itself for query
+ * validation, and that read could not be injected, so the only way to pin it
+ * was to fake `Date` for the whole process.
  *
- * Freezing the system clock is what makes all three agree, since the route's
- * own read cannot be injected. Only `Date` is faked — every timer API is left
- * real, so nothing here can hang waiting for a tick that never comes.
- *
- * Noon on a fixed date: far from both boundaries, so no offset in this file
+ * Noon on a fixed date, far from either boundary, so no offset in this file
  * can cross one.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 const FROZEN_NOW = new Date('2026-06-15T12:00:00.000Z');
 
-const REAL_TIMERS_ONLY_DATE_IS_FAKED = [
-  'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate',
-  'clearImmediate', 'nextTick', 'queueMicrotask', 'performance',
-  'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback',
-  'cancelIdleCallback', 'hrtime',
-] as const;
-
-/*
- * AT MODULE SCOPE, NOT IN `beforeAll`.
- *
- * The `it.each` tables below call `dayOf` while Jest is COLLECTING tests,
- * which happens before any hook runs. Frozen in a hook, those strings would
- * still come from the real clock while the route read the frozen one — the
- * same disagreement in a new place, and one that hides rather than fails,
- * because a date far in the real future still satisfies most of these
- * assertions for the wrong reason.
- */
-jest.useFakeTimers({
-  now: FROZEN_NOW,
-  doNotFake: [...REAL_TIMERS_ONLY_DATE_IS_FAKED] as never,
-});
-
-afterAll(() => {
-  jest.useRealTimers();
-});
-
-const mockDepsFactory = jest.fn(() => ({ ...mockReads, now: () => new Date() }));
+const mockDepsFactory = jest.fn(() => ({ ...mockReads, now: () => new Date(FROZEN_NOW) }));
 jest.mock('@/lib/business-os/credits/creditLeakCheckDeps', () => ({
   creditLeakCheckDeps: () => mockDepsFactory(),
 }));
@@ -128,7 +99,8 @@ const asAdmin = () => {
   mockIsAdmin.mockResolvedValue(true);
 };
 
-const dayOf = (offsetDays: number) => new Date(Date.now() + offsetDays * DAY).toISOString().slice(0, 10);
+/* Offsets from the same instant the route is given. */
+const dayOf = (offsetDays: number) => new Date(FROZEN_NOW.getTime() + offsetDays * DAY).toISOString().slice(0, 10);
 
 /** One plan account with one uncharged call yesterday. */
 function oneLeakYesterday() {
