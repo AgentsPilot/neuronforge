@@ -57,6 +57,30 @@ export type AutomationRequirement =
   | 'sends_quotes'
   | 'bills_for_anything'
   /**
+   * Money has reached this business, by any route.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT THE SAME QUESTION AS `bills_for_anything`, and conflating them cost a
+   * live account its refund agent.
+   *
+   * `bills_for_anything` counts INVOICES, which is right for an agent that
+   * chases invoices: a business that has never raised one has nothing for it
+   * to chase. But a service set to collect ONLINE charges the card directly
+   * and records a `payment_transactions` row with no invoice behind it. Such a
+   * business takes money every day and has never billed anybody in the sense
+   * that table means.
+   *
+   * Seen on eomer3@gmail.com: one succeeded $50 card payment, zero invoices,
+   * and the refund agent reporting "Cannot run — you are not billing for
+   * anything yet" while a client's refund request for that very payment sat
+   * unassessed in the queue.
+   *
+   * So this asks what actually matters to a refund: has money ever arrived,
+   * from which a refund could be made. Either proof counts.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  | 'takes_money'
+  /**
    * The platform may lawfully send a marketing email on this owner's behalf.
    *
    * ───────────────────────────────────────────────────────────────────────────

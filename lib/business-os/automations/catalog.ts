@@ -62,14 +62,22 @@ export const AUTOMATION_AGENTS: AutomationAgent[] = [
      * then watched "Refund requests · Nothing to do" run every morning against
      * money that cannot exist. Reported from exactly that account.
      *
-     * `bills_for_anything` is the same answer `chase_overdue_invoices` already
-     * uses, and it is the honest one: a business that never charges can never
-     * be asked for anything back. The field was always supported — the route
-     * enforces it on install and refuses with `requirement_unmet` — this entry
-     * simply never declared one.
+     * `bills_for_anything` was the first answer, borrowed from
+     * `chase_overdue_invoices`, and it was the WRONG one. That gate counts
+     * invoices, which is right for an agent that chases invoices and wrong for
+     * this one: a service collecting ONLINE charges the card directly and
+     * records a transaction with no invoice behind it. Such a business takes
+     * money daily, reads as billing for nothing, and had its refund agent
+     * refused — measured on eomer3@gmail.com, where a client's request for a
+     * $50 card payment sat unassessed under "Cannot run · you are not billing
+     * for anything yet".
+     *
+     * `takes_money` asks what a refund actually needs: has money ever arrived,
+     * by invoice or by card. The field was always supported — the route
+     * enforces it on install and refuses with `requirement_unmet`.
      * ─────────────────────────────────────────────────────────────────────────
      */
-    requires: 'bills_for_anything',
+    requires: 'takes_money',
     nameKey: 'automation.assess_refund_requests.name',
     descriptionKey: 'automation.assess_refund_requests.description',
     watchesKey: 'automation.assess_refund_requests.watches',

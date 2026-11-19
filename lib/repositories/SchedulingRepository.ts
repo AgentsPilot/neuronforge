@@ -915,8 +915,17 @@ export class SchedulingServiceRepository {
    * dropped on the next, because the list of columns the public may see was
    * narrower than the list of settings the business had made.
    */
+  /*
+   * `buffer_minutes` is here because the SLOT GRID is built from it.
+   *
+   * The gap a business keeps between appointments spaces the times a client is
+   * offered, together with the service's length (`lib/scheduling/slotInterval`).
+   * The website route read it from its own query and the smart link could not
+   * see it at all, so one public surface offered a tighter slot than the other
+   * for the same service.
+   */
   static readonly PUBLIC_COLUMNS =
-    'id, service_name, description, duration_minutes, price, currency, ' +
+    'id, service_name, description, duration_minutes, buffer_minutes, price, currency, ' +
     'is_active, is_scheduled, collection, sale_mode, advance_booking_days, ' +
     'min_notice_hours';
 

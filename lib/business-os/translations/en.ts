@@ -276,17 +276,64 @@ export const en = {
     'gaps.refund.decline': 'Decline',
     'gaps.refund.mark_handled': 'I handled it',
     'gaps.refund.badge': 'Refund request',
+    /* The client in one line, under the headline: is this a pattern, how
+       long have they been here, and how do I reach them. */
+    'gaps.client.no_refunds': 'No refunds before this one',
+    'gaps.client.refunds': '{n} refunds before this',
+    'gaps.client.one_refund': '1 refund before this',
+    'gaps.client.first_booking': '1st booking with you',
+    'gaps.client.bookings': '{n} bookings with you',
+    'gaps.client.since': 'client since {date}',
     'gaps.refund.rec.refund_full': 'Suggests returning it in full',
     'gaps.refund.rec.refund_partial': 'Suggests returning part of it',
     'gaps.refund.rec.decline': 'Suggests declining',
     'gaps.refund.rec.needs_owner': 'Needs you to decide',
     'gaps.refund.flow.asked': 'The client asked for',
-    'gaps.refund.flow.diary': 'Your diary says',
+    'gaps.refund.flow.diary': 'The booking this is about',
     'gaps.refund.flow.rec': 'Our recommendation',
+    'gaps.refund.whole_amount': 'the whole amount they paid',
+    /* The recommendation as a SENTENCE. `gaps.refund.rec.*` are labels for
+       a chip; a panel the owner reads should say the thing. */
+    'gaps.refund.said.refund_full': 'A full refund is the ordinary answer here',
+    'gaps.refund.said.refund_partial': 'Returning part of it is the ordinary answer here',
+    'gaps.refund.said.decline': 'There are grounds to decline this one',
+    'gaps.refund.said.needs_owner': 'We cannot decide this one for you',
+    'gaps.refund.your_reply': 'Your reply to {name}',
     'gaps.refund.outcome.held': 'marked as having taken place',
     'gaps.refund.outcome.no_show': 'marked as a no-show',
     'gaps.refund.outcome.cancelled': 'the booking was cancelled',
     'gaps.refund.outcome.unmarked': 'nobody marked what happened',
+    /* The booking grid: four facts that decide a refund, so the owner
+       never has to open the booking to answer. */
+    'gaps.refund.fact.service': 'Service',
+    'gaps.refund.fact.when': 'When it happens',
+    'gaps.refund.fact.paid': 'What you were paid',
+    'gaps.refund.fact.refundable': 'Refundable right now',
+    'gaps.refund.fact.minutes': '{n} minutes',
+    'gaps.refund.fact.not_yet': 'It has not happened yet',
+    /* With the distance, where there is one: a session tomorrow and a session
+       in March are both "not yet" and are not the same decision. */
+    'gaps.refund.fact.not_yet_days': 'In {n} days, it has not happened yet',
+    'gaps.refund.fact.already_happened': 'It has already happened',
+    'gaps.refund.fact.nothing_back': 'Nothing refunded on this booking yet',
+    /* The same tile once money HAS gone back. "Nothing refunded yet" over a
+       booking the owner refunded an hour ago is the one sentence on this card
+       that could make them refund it twice. */
+    'gaps.refund.fact.all_back': 'You have already refunded all of it',
+    'gaps.refund.fact.part_back': '{amount} already refunded',
+    'gaps.refund.fact.unknown': 'Not recorded',
+    /* How the money arrived, said beside the figure. The keys are the
+       `payment_transactions.payment_method` values; a route with no copy here
+       prints nothing rather than a raw column value. */
+    'gaps.refund.paid_by.card': 'by card',
+    'gaps.refund.paid_by.cash': 'in cash',
+    'gaps.refund.paid_by.bank_transfer': 'by bank transfer',
+    /* The order things happened in, which is what an owner otherwise
+       reconstructs by opening three screens. */
+    'gaps.refund.when.paid': 'Paid',
+    'gaps.refund.when.booked': 'Booked',
+    'gaps.refund.when.asked': 'Asked for a refund',
+    'gaps.refund.when.session': 'Session',
     'gaps.refund.contradiction': 'They say they did not attend, but the session is marked as having taken place',
     'gaps.refund.approve': 'Refund {amount}',
     'gaps.refund.mark_returned': 'Mark {amount} as returned',
@@ -316,7 +363,8 @@ export const en = {
     'gaps.lead.say.enquiry_unanswered': '{name} got in touch, and nobody has replied.',
     'gaps.lead.say.client_reply_waiting': '{name} wrote back, and is still waiting on you.',
     'gaps.lead.say.invoice_unpaid': '{name} has not paid this invoice.',
-    'gaps.lead.say.intake_outstanding': '{name} has not returned the form yet.',
+    'gaps.lead.say.refund_requested': '{name} wants {amount} back.',
+    'gaps.lead.say.intake_outstanding': '{name} has not returned their intake form, and their appointment is coming up.',
     'gaps.lead.say.quote_awaiting_client': '{name} has not answered the quote yet.',
     'gaps.lead.say.client_needs_a_word': 'More than one thing keeps going wrong with {name}.',
     'gaps.lead.say.meeting_unmarked': 'You have not said what happened at the meeting with {name}.',
@@ -539,6 +587,26 @@ export const en = {
     'gaps.kind.booking_cancelled': 'Client cancelled',
     'gaps.kind.refund_requested': 'Refund requested',
     'gap.refund_requested.via.portal_form': 'They asked through your client portal',
+    /* ONE PHRASE, age inside it. Joined with a dot it read "They asked
+       through your client portal · 19 November 2026" — two fragments
+       about the same event, and the date answered a question nobody had
+       asked. */
+    'gaps.ago': '{t} ago',
+    'gaps.refund.asked_via': 'Asked {age} in {where}',
+    /* The same phrase without the age, for a row that already shows a clock. */
+    'gaps.refund.asked_in': 'Asked in {where}',
+    /* The icon beside the door to the booking, on a request that came by mail. */
+    'gaps.refund.open_email': 'Open the email they sent',
+    /* The third card's title, beside "The booking this is about" and "Your
+       reply to {name}". It names the author, because this one is a machine. */
+    'gaps.refund.ai_assessment': 'AI assessment',
+    /* The fold over the booking facts. Most refunds are decided on the
+       headline and the assessment, so the detail starts closed — and the
+       button is named for what is behind it, not for the act of opening. */
+    'gaps.refund.booking_info': 'Booking info',
+    'gaps.refund.where.portal_form': 'your client portal',
+    'gaps.refund.where.email': 'an email',
+    'gaps.refund.where.owner': 'your own records',
     'gap.refund_requested.via.email': 'They asked by email',
     'gap.refund_requested.via.owner': 'You recorded this request',
     'gaps.kind.booking_refunded': 'Refunded, still booked',
@@ -573,6 +641,7 @@ export const en = {
     'automation.requires.can_send_marketing': 'I cannot email your clients on your behalf yet. That switch is off across the platform until unsubscribe handling is in place.',
     'automation.requires.sends_quotes': 'You have not sent any quotes yet, so there is nothing for this one to follow up.',
     'automation.requires.bills_for_anything': 'You are not billing for anything yet, so there is nothing for this one to chase.',
+    'automation.requires.takes_money': 'Nobody has paid you yet, so there is nothing to refund.',
     'automation.requires.takes_bookings': 'You have no bookable services yet, so there is nothing for this one to work with.',
     'automation.requires.intake_reaches_client': 'Your intake form is not reaching clients yet, so there is nothing for this one to chase.',
     /*
@@ -1717,6 +1786,7 @@ export const en = {
     'settings.required.technical_level': 'Required: it sets how much we do for you.',
     'settings.required.phone': 'Required: how a client reaches you. Nothing in setup asks for it anywhere else.',
     'settings.required.email': 'Required: how a client reaches you, and where enquiries land.',
+    'settings.required.address': 'Required: street, city and country. Postal code is optional.',
     'settings.required.invoiceAllSet': 'Your invoices and receipts are ready to send.',
     'settings.required.invoiceNote': 'Needed before an invoice or receipt can be sent.',
     'settings.required.invoice_company_name': 'Required: a bill has to say who sent it.',

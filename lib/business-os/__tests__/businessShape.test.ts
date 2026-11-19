@@ -44,16 +44,48 @@ const freeConsultation: ServiceFacts = {
 };
 
 describe('countServices', () => {
-  it('counts only published services', () => {
+  it('counts only published services for what the account is DOING', () => {
     const counts = countServices([
       scheduledCardService,
       { ...scheduledInvoicedService, status: 'draft' },
       { ...product, status: 'inactive' },
     ]);
 
+    /* These two decide the hours question and the settings tabs. A draft must
+       not move either under a half-written thought. */
     expect(counts.activeServices).toBe(1);
+    expect(counts.scheduledServices).toBe(1);
+  });
+
+  it('but counts the whole catalogue for whether money moves', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE DEADLOCK THIS CASE EXISTS FOR.
+     *
+     * The money counts were taken from published services too, and that made
+     * them unanswerable: `journeyReadiness` refuses to publish a paid service
+     * until the invoice details are filled in, and the step that asks for them
+     * only appears once a PUBLISHED service takes money.
+     *
+     * So an owner configured both services, connected Stripe, and read "Pay you
+     * — nothing you sell takes money" on the dashboard. Nothing they could do
+     * in the configuration dialog would change it.
+     *
+     * A draft's price answers "does this business need a way to be paid". It
+     * does not answer "which tabs does this account need today", and the case
+     * above keeps those two apart.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const counts = countServices([
+      { ...scheduledCardService, status: 'draft' },
+      { ...scheduledInvoicedService, status: 'draft' },
+    ]);
+
+    expect(counts.activeServices).toBe(0);
+    expect(counts.catalogueServices).toBe(2);
     expect(counts.onlineServices).toBe(1);
-    expect(counts.invoicedServices).toBe(0);
+    expect(counts.invoicedServices).toBe(1);
+    expect(counts.hasPricedServices).toBe(true);
   });
 
   it('treats a service that never answered is_scheduled as an appointment', () => {

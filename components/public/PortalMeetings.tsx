@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { CalendarClock, CheckCheck, ChevronLeft, ChevronRight, X } from 'lucide-react';
 
 import { PublicCard } from '@/components/public/PublicCard';
-import { formatPublicDate, publicT } from '@/lib/i18n/public-pages';
+import { formatPublicDate, formatPublicTime, publicT } from '@/lib/i18n/public-pages';
 import type { PublicBrand } from '@/lib/branding/publicBranding';
 
 export interface PortalMeeting {
@@ -255,7 +255,7 @@ export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProp
                       — a product, or the container a package hangs from. It is
                       still something the client has. */}
                   {meeting.startTime
-                    ? formatPublicDate(
+                    ? `${formatPublicDate(
                         new Date(meeting.startTime),
                         brand.locale,
                         {
@@ -266,7 +266,24 @@ export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProp
                         // The business's clock. Same instant, same day as the
                         // owner's contact drawer reports it.
                         timeZone
-                      )
+                      )} · ${formatPublicTime(
+                        new Date(meeting.startTime),
+                        brand.locale,
+                        /*
+                          ── THE HOUR, WHICH THIS ROW NEVER SAID ─────────────
+                          The list gave a client the DAY of every appointment
+                          they had and never the time, so "23 November" was all
+                          they could check a booking against. The instant was
+                          on the row the whole time; only the date half of it
+                          was being printed.
+
+                          The same zone as the date above, and for the same
+                          reason: reading one half on the business's clock and
+                          the other on the device's is how a row names the
+                          right hour on the wrong day.
+                        */
+                        timeZone ?? undefined
+                      )}`
                     : t('portal.no_date')}
                   {/*
                     A package says so on its own row, because the date beside

@@ -69,7 +69,7 @@ import {
 import { CONFIG_ACCENT, configAccentButton } from '@/components/business-os/configAccent';
 import { TabFooter } from '@/components/business-os/settings/TabFooter';
 import { RequiredMark, RequiredStrip } from '@/components/business-os/settings/RequiredMark';
-import { missingProfileFields } from '@/lib/business-os/setup/profileReadiness';
+import { missingSettingsProfileFields } from '@/lib/business-os/setup/profileReadiness';
 import { industryForVertical } from '@/lib/business-os/setup/industryForVertical';
 import { createLogger } from '@/lib/logger';
 
@@ -918,11 +918,15 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
   /*
    * WHAT IS STILL MANDATORY, asked of the rule rather than written out here.
    *
-   * `missingProfileFields` is the function the readiness card, the publish gate
-   * and `journeyReadiness` all read, so the asterisks below and the dashboard
-   * cannot disagree about what this business owes. Run against the values
-   * CURRENTLY IN THE FORM, not the ones last saved, so a mark clears as the
-   * owner types rather than after a round trip.
+   * `missingSettingsProfileFields` wraps `missingProfileFields` — the function
+   * the readiness card, the publish gate and `journeyReadiness` all read — so
+   * the asterisks below and the dashboard cannot disagree about any field those
+   * gates hold. Run against the values CURRENTLY IN THE FORM, not the ones last
+   * saved, so a mark clears as the owner types rather than after a round trip.
+   *
+   * The ONE field it adds is the business address, which this form requires and
+   * no gate does. That is deliberate and measured: `missingSettingsProfileFields`
+   * records what putting it in the shared list would have refused.
    *
    * `business_type` is resolved exactly as `saveBusiness` resolves it — the
    * typed words count only while "something else" is the chosen preset — so the
@@ -930,7 +934,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
    */
   const missingRequired = useMemo(
     () =>
-      missingProfileFields(
+      missingSettingsProfileFields(
         {
           company_name: businessProfile.company_name,
           vertical: businessProfile.vertical,
@@ -949,13 +953,17 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
           technical_level: orgSettings.technical_level,
           business_type:
             businessTypeChoice === OWN_WORDS ? orgSettings.business_type.trim() || null : null,
-        }
+        },
+        /* The third argument is the only thing this list has that the gates'
+           list does not. See `missingSettingsProfileFields`. */
+        businessProfile.address_parts
       ),
     [
       businessProfile.company_name,
       businessProfile.vertical,
       businessProfile.phone,
       businessProfile.email,
+      businessProfile.address_parts,
       orgSettings.industry,
       orgSettings.company_size,
       orgSettings.primary_goal,
@@ -965,9 +973,33 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
     ]
   );
 
-  /* What the rule asks for: the six that describe the business, plus the two
-     that say how to reach it. */
-  const REQUIRED_TOTAL = 8;
+  /* What the rule asks for: the six that describe the business, the two that say
+     how to reach it, and the address — this form's own, see
+     `missingSettingsProfileFields`. */
+  const REQUIRED_TOTAL = 9;
+
+  /*
+   * Save is not available while any of those nine is empty.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The form marked its mandatory fields and listed what was outstanding at the
+   * top, and then saved anyway — so an owner could read "Still needs: Industry ·
+   * Business phone", press Save, see "Saved", and reasonably believe they were
+   * done. The refusal came later and somewhere else: `missingProfileFields` is
+   * what the readiness card reads and what `journeyReadiness` blocks a publish
+   * over, so the first real symptom was a website that would not go live.
+   *
+   * The SAME list the strip renders now gates the button, which is what the
+   * invoice panel already does for its own four fields. One answer to "what does
+   * this business owe", not three.
+   *
+   * The cost is real — a blocked Save can trap somebody mid-thought — and it is
+   * the same trade the invoice panel took: these are not preferences. A profile
+   * with no business type decides the wrong setup, and a half-filled save reads
+   * as finished to every surface that asks.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const requiredMissing = missingRequired.length > 0;
 
   /** The name THIS form puts on a field, shared with the dashboard's list. */
   const fieldLabel = (field: string): string => t(`setup.field.${field}`) || field;
@@ -1252,6 +1284,9 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
         <div className="sm:col-span-2">
           <label htmlFor="business-address" className={FIELD_LABEL}>
             {t('settings.business.public_address')}
+            {/* Street, city and country. Marked like the other eight, from the
+                same derived list — never hand-written. */}
+            <RequiredMark reason={t('settings.required.address')} />
           </label>
           {/*
             The business's address book. Renders nothing while it is empty,
@@ -1791,12 +1826,29 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
               {errorMessage}
             </p>
           )) ||
+          /*
+            Why Save is not available, beside Save itself. A disabled button
+            whose reason lives only in a tooltip looks broken: the fields are
+            marked and the strip lists them, but neither is on screen once the
+            owner has scrolled down to the button.
+          */
+          (requiredMissing && (
+            <p className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              {t('readiness.stillNeeds')} {missingRequired.map(fieldLabel).join(', ')}
+            </p>
+          )) ||
           null
         }
       >
         <button
           onClick={saveBusiness}
-          disabled={saving || addressCountryMissing}
+          disabled={saving || addressCountryMissing || requiredMissing}
+          title={
+            requiredMissing
+              ? `${t('readiness.stillNeeds')} ${missingRequired.map(fieldLabel).join(', ')}`
+              : undefined
+          }
           className="flex items-center gap-2 px-6 py-2.5 text-sm font-medium border transition-all disabled:opacity-50"
           style={configAccentButton}
         >

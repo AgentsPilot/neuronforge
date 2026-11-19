@@ -50,6 +50,8 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { busyMeetings } from '@/lib/scheduling/busyMeetings';
 import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
 import { computeOpenTime, slotsInWindows } from '@/lib/scheduling/openTime';
+/* One rhythm for the owner's grid and the client's page. */
+import { slotStepMinutes } from '@/lib/scheduling/slotInterval';
 import { businessDateKey, shiftBusinessDateKey, safeTimezone } from '@/lib/scheduling/businessTime';
 import { hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
 import {
@@ -400,6 +402,16 @@ export async function GET(request: NextRequest) {
         windows: open.free,
         timeZone: timezone,
         durationMinutes,
+        /*
+         * The same rhythm the client is offered: the appointment plus the gap
+         * the business keeps after it (`slotInterval.ts`).
+         *
+         * The default here was the duration alone, which read 09:00, 10:00,
+         * 11:00 for a 60-minute service with 15 minutes after it — while the
+         * booking page, which has to leave the gap between real appointments,
+         * reads 09:00, 10:15, 11:30. One diary, two accounts of it.
+         */
+        stepMinutes: slotStepMinutes(durationMinutes, bufferMinutes),
         /* An hour that has gone is not bookable, and the server refuses it —
            so offering it is a click that ends in a refusal. */
         notBefore: now,

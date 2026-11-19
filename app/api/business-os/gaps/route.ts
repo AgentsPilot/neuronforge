@@ -618,6 +618,24 @@ export async function GET(request: NextRequest) {
           refundableAmount: item.refundableAmount ?? null,
           refundViaProcessor: item.refundViaProcessor ?? null,
           refundPaymentsCount: item.refundPaymentsCount ?? null,
+          /* The booking a refund is about, and who is asking. Named here one
+             by one like everything else in this list — an unnamed field is
+             dropped in silence, which is how the drafted reply reached the
+             card as an empty box. */
+          paidAmount: item.paidAmount ?? null,
+          paidAt: item.paidAt ?? null,
+          paidMethod: item.paidMethod ?? null,
+          /* The mail a refund came in, where it came in one. Named here like
+             everything else in this list, or it is dropped in silence. */
+          sourceThreadId: item.sourceThreadId ?? null,
+          sourceThreadProvider: item.sourceThreadProvider ?? null,
+          bookedAt: item.bookedAt ?? null,
+          serviceMinutes: item.serviceMinutes ?? null,
+          servicePrice: item.servicePrice ?? null,
+          contactEmail: item.contactEmail ?? null,
+          clientSince: item.clientSince ?? null,
+          refundsBefore: item.refundsBefore ?? null,
+          bookingsWithYou: item.bookingsWithYou ?? null,
           /* The subject of the message that started this row, on the mail gaps.
              Named here because this list is written out field by field — see the
              note below, which this field is the second instance of. */

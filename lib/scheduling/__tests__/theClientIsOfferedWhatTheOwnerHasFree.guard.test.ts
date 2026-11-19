@@ -170,8 +170,15 @@ describe('both booking pages mean the same hour by "09:00"', () => {
 
   it('a wall clock becomes an instant through the business zone', () => {
     /* `setHours` on a Date means the hour where the SERVER is, which on Vercel
-       is UTC — the owner's whole offset, applied to every published slot. */
-    expect(smartLink).toContain('businessInstant(dateKey, window.start, timezone)');
+       is UTC — the owner's whole offset, applied to every published slot.
+
+       The window's opening is still what the clock is read from; it is turned
+       into minutes (`toMins(window.start)`) so the slot arithmetic is shared
+       with the website, and back into a clock for this conversion. What this
+       case is actually about — that the conversion goes through the BUSINESS
+       zone and never through the server's — is unchanged. */
+    expect(smartLink).toContain('toMins(window.start)');
+    expect(smartLink).toContain('businessInstant(dateKey, toClock(startMins), timezone)');
     expect(smartLink).not.toMatch(/setHours\(startHour/);
   });
 

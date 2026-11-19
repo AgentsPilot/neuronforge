@@ -33,6 +33,9 @@ const BLANK: WizardValues = {
   name: '',
   description: '',
   duration: '60',
+  /* No gap, which is both the commonest answer and the one an unanswered row
+     resolves to. The cases that care set it explicitly. */
+  buffer: '',
   is_scheduled: true,
   price: '',
   collection: null,
@@ -143,6 +146,20 @@ describe('what counts as answered', () => {
     expect(stepAnswered('what', values({ name: 'X', is_scheduled: false, duration: '' }))).toBe(true);
   });
 
+  it('but the gap after it never blocks, because none is a real answer', () => {
+    /*
+     * `buffer_minutes` is honoured by every booking surface and most services
+     * want none of it. Tested because the field sits beside the length on the
+     * same step, and the obvious next edit is to require it the same way —
+     * which would stop an owner on a question they answered by leaving alone.
+     */
+    const booked = { name: 'X', is_scheduled: true, duration: '60' };
+
+    expect(stepAnswered('what', values({ ...booked, buffer: '' }))).toBe(true);
+    expect(stepAnswered('what', values({ ...booked, buffer: '0' }))).toBe(true);
+    expect(stepAnswered('what', values({ ...booked, buffer: '15' }))).toBe(true);
+  });
+
   it('the cost step is unanswered until one of the three shapes is chosen', () => {
     expect(stepAnswered('cost', values({ price: '' }))).toBe(false);
     expect(stepAnswered('cost', values({ price: '0' }))).toBe(true);
@@ -202,18 +219,20 @@ describe('moving through the steps', () => {
 });
 
 describe('where it opens', () => {
-  it('on the first thing not yet answered', () => {
+  it('at the beginning, whatever is already answered', () => {
+    /*
+     * It used to jump to the first unanswered step, which for a chat-written
+     * service meant landing on `cost` with the name — the thing the owner came
+     * to change — behind an unexpected Back press. The chat's names are a guess
+     * from the owner's own words, so the first screen is usually the one they
+     * want.
+     */
     expect(openingStep(values({ name: '' }))).toBe('what');
-    expect(openingStep(values({ name: 'X', price: '' }))).toBe('cost');
-    expect(openingStep(values({ name: 'X', price: '250', collection: null }))).toBe('money');
+    expect(openingStep(values({ name: 'X', price: '' }))).toBe('what');
+    expect(openingStep(values({ name: 'X', price: '250', collection: null }))).toBe('what');
   });
 
-  it('on the first step when everything already has an answer', () => {
-    /*
-     * Not the review. A service with nothing outstanding opens where an owner
-     * would start reading it, and `?? 'what'` is what says so — jumping a
-     * finished service to the last step would answer a question nobody asked.
-     */
+  it('including a service with nothing outstanding', () => {
     expect(openingStep(values({ name: 'X', price: '250', collection: 'invoice' }))).toBe('what');
     expect(openingStep(values({ name: 'X', sale_mode: 'proposal' }))).toBe('what');
   });

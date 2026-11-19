@@ -2327,13 +2327,20 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       <ServiceWizard
         /*
          * The editor's state carries more than the four questions read —
-         * buffer, currency, the instalment schedule — so the wizard is handed
-         * only its own fields and gives them back the same way.
+         * currency, and the rest of the row — so the wizard is handed only its
+         * own fields and gives them back the same way.
+         *
+         * `buffer` used to be on the withheld list, and that was the whole of
+         * the bug: the rail inside the wizard READ it back ("keeps 15 clear
+         * afterwards") while nothing could change it, so the sentence described
+         * a number set by the database default or by the modal on the old
+         * scheduling page. Both save paths below already write it.
          */
         values={{
           name: values.name,
           description: values.description,
           duration: values.duration,
+          buffer: values.buffer,
           is_scheduled: values.is_scheduled,
           price: values.price,
           collection: values.collection,
@@ -2353,6 +2360,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             name: next.name,
             description: next.description,
             duration: next.duration,
+            buffer: next.buffer,
             is_scheduled: next.is_scheduled,
             price: next.price,
             sale_mode: next.sale_mode,

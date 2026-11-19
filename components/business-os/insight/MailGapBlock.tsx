@@ -34,6 +34,9 @@
  */
 
 import { Bot, Mail } from 'lucide-react';
+/* Client-safe by construction: that module holds the channel's provider facts
+   precisely so a `'use client'` file can read them. */
+import { mailThreadUrl } from '@/lib/business-os/leads/inboxProviders';
 
 /*
  * ─────────────────────────────────────────────────────────────────────────────
@@ -74,6 +77,15 @@ export interface MailGapBlockProps {
   note?: string | null;
   /** The mail thread to open, where one was recorded. */
   threadId?: string | null;
+  /**
+   * Which mailbox it is in — `google-mail` or `outlook`.
+   *
+   * The link was Gmail's address for everyone, written when Gmail was the only
+   * mailbox the channel read. It reads both now, and an owner on Microsoft was
+   * being sent to a Google mailbox they may not have. Absent falls back to
+   * Gmail, which is where every thread recorded before then came from.
+   */
+  provider?: string | null;
   /** Translation key for where this row came from. */
   contextKey?: string | null;
   /** When it arrived, already formatted by the caller in the owner's locale. */
@@ -94,6 +106,7 @@ export function MailGapBlock({
   quote,
   note,
   threadId,
+  provider,
   contextKey,
   when,
   dense = false,
@@ -230,7 +243,7 @@ export function MailGapBlock({
         */}
         {threadId && (
           <a
-            href={`https://mail.google.com/mail/#all/${encodeURIComponent(threadId)}`}
+            href={mailThreadUrl(threadId, provider)}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 mt-1.5 text-[11.5px] font-semibold hover:underline"
