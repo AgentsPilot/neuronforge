@@ -950,6 +950,14 @@ export function shapeFromProfile(profile: {
   onlineServices?: number;
   invoicedServices?: number;
   activeServices?: number;
+  /**
+   * The catalogue INCLUDING drafts, which is what the two money counts above
+   * are drawn from. See the note beside `collectsOnlineNow` below.
+   *
+   * Optional, and falls back to `activeServices`: a caller that has not been
+   * taught the difference keeps exactly the behaviour it had.
+   */
+  catalogueServices?: number;
 }): BusinessShape {
   const collection = ((): CollectionMethod | null => {
     // The explicit answer wins once the chat starts asking it.
@@ -988,11 +996,33 @@ export function shapeFromProfile(profile: {
       ? true
       : presence === null ? null : false;
 
-  const collectsOnlineNow = hasServices
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE MONEY QUESTIONS ARE ASKED OF THE WHOLE CATALOGUE, DRAFTS INCLUDED.
+   *
+   * `hasServices` above is about what this account is DOING — it decides
+   * whether the hours question is asked and which settings tabs exist — and a
+   * draft must not move those under a half-written thought.
+   *
+   * "Does this business need a card processor, and does it owe invoice
+   * paperwork" is a different question, and gating it on publication made it
+   * unanswerable: `journeyReadiness` refuses to publish a paid service until
+   * the invoice details are done, and the invoice-details step only appears
+   * once a PUBLISHED service takes money. An owner who had configured both
+   * services and connected Stripe was told "nothing you sell takes money", was
+   * never asked for the details, and could not publish. See `countServices`.
+   *
+   * Falls back to `activeServices` when the caller has not sent the catalogue
+   * count, so nothing that has not been taught the difference changes.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const hasCatalogue = (profile.catalogueServices ?? profile.activeServices ?? 0) > 0;
+
+  const collectsOnlineNow = hasCatalogue
     ? (profile.onlineServices ?? 0) > 0
     : null;
 
-  const invoicesNow = hasServices
+  const invoicesNow = hasCatalogue
     ? (profile.invoicedServices ?? 0) > 0
     : null;
 

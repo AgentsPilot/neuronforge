@@ -37,13 +37,16 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CurrencyCode } from '@/lib/business-os/LanguageContext';
 // One definition, in the registry that owns the vocabulary. Declared here too,
 // the two would drift the first time an action was added.
-import type { GapAction } from '@/lib/business-os/gaps/types';
+import type { GapAction, GapItem } from '@/lib/business-os/gaps/types';
 import { RefundModal } from '@/components/payments/RefundModal';
 import { ExtendQuoteDialog } from './ExtendQuoteDialog';
 import { RefundGapBlock } from '@/components/business-os/insight/RefundGapBlock';
 import { MailGapBlock } from './MailGapBlock';
 import { MailReplyBox } from './MailReplyBox';
 import { mostUrgent, tasksOf } from '@/lib/business-os/gaps/mostUrgent';
+/* Client-safe by construction — that module exists so a `'use client'` file
+   can read the channel's provider facts without pulling the server bundle. */
+import { mailThreadUrl } from '@/lib/business-os/leads/inboxProviders';
 /* One resolver for 'he' → 'he-IL', shared with the billing and invite copy.
    A second mapping here would drift the first time a language is added. */
 import { localeFor } from '@/components/business-os/settings/planUpgradeCopy';
@@ -51,7 +54,10 @@ import { localeFor } from '@/components/business-os/settings/planUpgradeCopy';
 export interface GapItemView {
   contactId: string;
   name: string;
-  note: string | null;
+  /* OPTIONAL, like `GapItem.note`. Required here, no `GapItem` could satisfy
+     the view at all: every call passing one was a type error, which is how
+     three of them accumulated behind the ignored build. */
+  note?: string | null;
   /**
    * What is wrong with this client — `client_needs_a_word` only.
    *
@@ -60,7 +66,15 @@ export interface GapItemView {
    * row may carry any combination of them, which is why no single dictionary
    * sentence could have stated it.
    */
-  concerns?: Array<{ key: 'attendance' | 'lateness' | 'persistence'; count: number; of?: number }> | null;
+  /*
+   * TAKEN FROM `GapItem`, never re-typed.
+   *
+   * This listed three keys by hand while the source had four: `drift` was
+   * added there and nothing here knew, so every call passing a `GapItem` to
+   * this view became a type error — the same way `note` did. Deriving it means
+   * the next key added to the source cannot silently break the card.
+   */
+  concerns?: GapItem['concerns'] | null;
   /** How far past the line this client is, 0–100, the line at 60. */
   score?: number | null;
   /** The word for it, shared with the drawer badge. */
@@ -103,7 +117,10 @@ export interface GapItemView {
    */
   answeredAt?: string | null;
   since: string;
-  entityId: string | null;
+  /* OPTIONAL, like `GapItem.entityId`. The last of the required-and-nullable
+     fields that made a plain `GapItem` unassignable to this view — the same
+     shape `note` had, found one layer down once that was fixed. */
+  entityId?: string | null;
   /**
    * The booking to open, where `entityId` is not itself one.
    *
@@ -195,7 +212,10 @@ export interface GapItemView {
   /** The refund request this row is about, so declining can settle it. */
   requestId?: string | null;
   /** What the refund agent concluded, and why. */
-  refundRecommendation?: string | null;
+  /* The same closed set `RefundGapBlock` accepts. Widened to `string` here,
+     every pass into that block was a type error — and a typo in a fifth value
+     would have rendered a blank recommendation rather than failing. */
+  refundRecommendation?: 'refund_full' | 'refund_partial' | 'decline' | 'needs_owner' | null;
   refundRecommendedAmount?: number | null;
   refundReasoning?: string | null;
   /**
@@ -209,6 +229,22 @@ export interface GapItemView {
   /** What is left to return, which is the ceiling on any amount offered. */
   refundableAmount?: number | null;
   refundPaymentsCount?: number | null;
+  /* The booking a refund is about, and who is asking. Named here or the
+     card never sees them — the same silent drop as every field above. */
+  paidAmount?: number | null;
+  paidAt?: string | null;
+  paidMethod?: string | null;
+  /** The mail a refund request came in, where it came in one. See `GapItem`. */
+  sourceThreadId?: string | null;
+  /** And which mailbox it is in: `google-mail` or `outlook`. */
+  sourceThreadProvider?: string | null;
+  bookedAt?: string | null;
+  serviceMinutes?: number | null;
+  servicePrice?: number | null;
+  contactEmail?: string | null;
+  clientSince?: string | null;
+  refundsBefore?: number | null;
+  bookingsWithYou?: number | null;
   /**
    * False when the money did not arrive through a processor, so the platform
    * can only RECORD that the owner returned it. Changes the button's word.
@@ -220,10 +256,16 @@ export interface GapItemView {
   bookingOutcomeKey?: string | null;
   bookingWhen?: string | null;
   bookingContradicts?: boolean | null;
-  /** How this client has behaved, where the row makes a claim about them. */
-  concerns?: unknown;
-  score?: number | null;
-  band?: string | null;
+  /*
+   * `concerns`, `score` and `band` are declared ONCE, above.
+   *
+   * They were added to this interface a second time here, loosely typed
+   * (`unknown`, `string`), which TypeScript reads as redeclaring the same
+   * properties: three `Duplicate identifier` errors plus two `Subsequent
+   * property declarations must have the same type`. The earlier declarations
+   * are the real ones — they carry the literal unions the drawer badge shares
+   * — so the weaker copy is gone rather than the typed one.
+   */
 }
 
 export interface GapView {
@@ -466,6 +508,225 @@ function moneyHeld(item: GapItemView): boolean {
  */
 const CONVERSATION_GAPS = new Set<string>(['client_reply_waiting']);
 
+/**
+ * The name the owner would use writing to them: the first one.
+ *
+ * "Your reply to Tal Omer" is how a form addresses somebody; "Your reply to
+ * Tal" is how a person does, and this box is a person writing. Falls back to
+ * the whole string, which is what a one-word name already is.
+ */
+/**
+ * How long ago, as the origin sentence needs it.
+ *
+ * `waitedFor` gives the span — "3h", "2d" — or "just now" under an hour.
+ * "just now ago" is not English, so only the span takes the suffix.
+ */
+function agoOf(since: string, t: (key: string) => string): string {
+  const span = waitedFor(since, t);
+  return span === t('gaps.just_now') ? span : t('gaps.ago').replace('{t}', span);
+}
+
+function firstNameOf(name: string): string {
+  return name.trim().split(/\s+/)[0] || name;
+}
+
+/**
+ * The client, in one line under the headline.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY A LINE AND NOT A PANEL
+ *
+ * A refund asks the owner to judge a person as well as a booking, and the
+ * question is small: is this a pattern, how long have they been here, and how
+ * do I reach them. A panel of tiles answered that and pushed the decision
+ * another screen down; a list of past refunds is a page of its own.
+ *
+ * Every part is optional and the line renders only what it has. `refundsBefore`
+ * ABSENT means the count could not be read, and says nothing at all — a
+ * confident "no refunds" on an unreadable count is a claim about somebody's
+ * history that nobody checked.
+ */
+function ClientLine({
+  item,
+  contextKey,
+  age,
+  t,
+  language,
+}: {
+  /** Where the request came from, as a key — see the note below. */
+  contextKey?: string | null;
+  /** How long ago they asked, relative — "3h ago", "just now". */
+  age?: string | null;
+  /*
+   * The four fields this reads, not the whole view type.
+   *
+   * `GapItem` and `GapItemView` have drifted — the view's optional strings are
+   * `| null` where the item's are `| undefined` — so demanding the view here
+   * made every list row that passes a plain `GapItem` a type error, for a
+   * component that touches four fields. Asking for the shape it uses makes it
+   * work from both, and stops this line inheriting a disagreement it has no
+   * part in.
+   */
+  item: {
+    contactEmail?: string | null;
+    clientSince?: string | null;
+    refundsBefore?: number | null;
+    bookingsWithYou?: number | null;
+  };
+  t: (key: string) => string;
+  language?: string;
+}) {
+  const parts: string[] = [];
+
+  if (typeof item.refundsBefore === 'number') {
+    parts.push(
+      item.refundsBefore === 0
+        ? t('gaps.client.no_refunds')
+        : item.refundsBefore === 1
+          ? t('gaps.client.one_refund')
+          : t('gaps.client.refunds').replace('{n}', String(item.refundsBefore))
+    );
+  }
+
+  if (typeof item.bookingsWithYou === 'number' && item.bookingsWithYou > 0) {
+    parts.push(
+      item.bookingsWithYou === 1
+        ? t('gaps.client.first_booking')
+        : t('gaps.client.bookings').replace('{n}', String(item.bookingsWithYou))
+    );
+  }
+
+  if (item.clientSince) {
+    parts.push(
+      t('gaps.client.since').replace(
+        '{date}',
+        new Date(item.clientSince).toLocaleDateString(language || undefined, {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        })
+      )
+    );
+  }
+
+  /* Nothing known about them is not a line worth a row of its own. */
+  /*
+   * ONE PHRASE: "Asked 3h ago in your client portal".
+   *
+   * This was `t(contextKey)` and the age joined by a dot, which read as two
+   * fragments about one event — and the age was the long date, answering a
+   * question nobody asked. `where` is the last segment of the context key, so
+   * a new source adds one short noun and nothing else.
+   *
+   * Falls back to the context sentence whole when the composed form has no
+   * copy for that source, so an unmapped origin still says something true.
+   */
+  const source = contextKey ? contextKey.split('.').pop() ?? '' : '';
+  const where = source ? t(`gaps.refund.where.${source}`) : '';
+  const hasWhere = Boolean(where) && !where.startsWith('gaps.');
+  /*
+   * The phrase is SPLIT at the `{where}` slot rather than substituted into it,
+   * because the source is the one part of this line worth a colour: it is how
+   * the owner knows whether this came through a form they control or an email
+   * they have to go and read. Splitting keeps the slot wherever the language
+   * puts it — Hebrew ends the sentence with it — instead of assuming it comes
+   * last.
+   */
+  /*
+   * The age is carried only where the row does not already show a clock. A
+   * list row has "waiting 4h" of its own under it, and saying 4h twice on one
+   * row is how this card got busy in the first place.
+   */
+  const asked = hasWhere
+    ? age
+      ? t('gaps.refund.asked_via').replace('{age}', age)
+      : t('gaps.refund.asked_in')
+    : '';
+  const [beforeWhere, afterWhere] = hasWhere ? asked.split('{where}') : ['', ''];
+  const origin = hasWhere ? null : contextKey ? t(contextKey) : null;
+
+  if (!parts.length && !item.contactEmail && !contextKey) return null;
+
+
+  return (
+    <>
+      {/*
+        HOW TO REACH THEM, AND WHERE IT CAME FROM — on one line, in the header.
+
+        The origin used to live inside the block and the age beside the title,
+        so a card said when it arrived twice and said where it came from below
+        the thing it came about. Both belong to the request, and the request is
+        the headline — so they sit under it, and the block starts at the
+        booking.
+      */}
+      <p className="text-[11.5px] text-[var(--v2-text-muted)] mb-0.5 flex flex-wrap items-center gap-x-1.5">
+        {item.contactEmail && (
+          <a
+            href={`mailto:${item.contactEmail}`}
+            className="underline decoration-[var(--v2-border)] underline-offset-2 hover:text-[var(--v2-text-secondary)]"
+            style={{ unicodeBidi: 'plaintext' }}
+          >
+            {item.contactEmail}
+          </a>
+        )}
+        {(hasWhere || origin) && (
+          <>
+            {item.contactEmail && <span aria-hidden="true">·</span>}
+            {hasWhere ? (
+              <span>
+                {beforeWhere}
+                <span className="font-medium" style={{ color: 'var(--v2-warning, #d97706)' }}>
+                  {where}
+                </span>
+                {afterWhere}
+              </span>
+            ) : (
+              <span>{origin}</span>
+            )}
+          </>
+        )}
+      </p>
+
+      {parts.length > 0 && (
+        <p className="text-[11.5px] text-[var(--v2-text-muted)] mb-1.5 flex flex-wrap items-center gap-x-1.5">
+          {parts.map((part, i) => (
+            <span key={part} className={i === 0 ? 'font-medium text-[var(--v2-text-secondary)]' : ''}>
+              {i > 0 && <span aria-hidden="true" className="me-1.5">·</span>}
+              {part}
+            </span>
+          ))}
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * May this row be answered from the card?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A CONVERSATION IS NOT THE ONLY THING WORTH ANSWERING.
+ *
+ * The list gated its reply box on `CONVERSATION_GAPS` alone, which holds one
+ * entry: `client_reply_waiting`. The PROMOTED row has never had that condition
+ * — it shows the box on anything with a subject — so a refund request showed
+ * its drafted reply while it was the next thing up, and lost it the moment the
+ * list was expanded and the same request became a row. Same request, same
+ * draft, two different cards.
+ *
+ * Reported from exactly that: "it was there before and it is gone now", on a
+ * refund whose `client_message_draft` was sitting in the database the whole
+ * time.
+ *
+ * So the question is not "is this a mail thread" but "is there something here
+ * to send". A refund request has no thread to reply into — `MailReplyBox`
+ * already handles that by offering no Send and pointing at the mailbox — but it
+ * does have a reply the agent wrote, and an owner who wants to edit it.
+ */
+function canAnswerHere(gapId: string, item: { refundClientDraft?: string | null }): boolean {
+  return CONVERSATION_GAPS.has(gapId) || Boolean(item.refundClientDraft);
+}
+
 const VALUE_LABEL: Record<string, string> = {
   /* What the work came to, and nobody has asked for it. Not held: the client
      has not been charged at all. */
@@ -608,7 +869,7 @@ function rowKey(gap: GapView, item: GapItemView): string {
 }
 
 export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProps) {
-  const { t, isRTL, formatCurrency, language } = useLanguage();
+  const { t, isRTL, formatCurrency, language, timeZoneOptions } = useLanguage();
 
   /**
    * The amount in the currency THE CLIENT WAS CHARGED.
@@ -623,8 +884,16 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
     const code = (currency || '').toUpperCase();
     // Only the four it knows. An unrecognised code would render as a symbol
     // for a currency nobody was charged, so fall back to the plain figure.
+    /*
+     * `showFree: false`, because zero here is not a price.
+     *
+     * `formatCurrency` says "Free" for 0, which is right on a service nobody
+     * is charged for and wrong on every figure this card shows: a booking with
+     * nothing left to refund would have read "Refundable right now · Free"
+     * over money the owner had just sent back.
+     */
     return SUPPORTED_CURRENCIES.includes(code as CurrencyCode)
-      ? formatCurrency(amount, { currencyOverride: code as CurrencyCode })
+      ? formatCurrency(amount, { currencyOverride: code as CurrencyCode, showFree: false })
       : `${amount.toLocaleString()}${code ? ` ${code}` : ''}`;
   };
   const router = useRouter();
@@ -1238,7 +1507,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
      * second entry point that forgot to pass the flag would silently skip the
      * question, and the question is the whole point.
      */
-    if (LEAVES_THE_BUILDING.has(action) && rows[key]?.kind !== 'confirming') {
+    if (Boolean(action) && LEAVES_THE_BUILDING.has(action as string) && rows[key]?.kind !== 'confirming') {
       setRow(key, { kind: 'confirming' });
       return;
     }
@@ -1416,7 +1685,12 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                 currency: item.currency || '',
                 name: item.name,
                 startPartial: true,
-                prefillAmount: item.refundRecommendedAmount,
+                /* `?? undefined`, because the state field is `number |
+                   undefined` and the item's is `number | null | undefined`.
+                   A null reaching it is the dialog opening prefilled with
+                   nothing, which is what it already does — the cast simply
+                   says so instead of failing a check the build ignores. */
+                prefillAmount: item.refundRecommendedAmount ?? undefined,
                 reasonKey: item.noteKey?.replace('payments.refund.reason.', ''),
                 reasonNote: item.quote?.trim() || item.refundReasoning?.trim(),
               })
@@ -1524,6 +1798,15 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
             {leadSentence(lead.gapId, lead.item, t, money)}
           </p>
 
+          {/* Who you are answering, in one line. See `ClientLine`. */}
+          <ClientLine
+            item={lead.item}
+            contextKey={lead.item.contextKey}
+            age={agoOf(lead.item.since, t)}
+            t={t}
+            language={language}
+          />
+
           {/*
             ONE BLOCK, BOTH POSITIONS. See `MailGapBlock` — this markup existed
             twice and drifted twice, so the same client waiting in the same way
@@ -1539,11 +1822,21 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
               note={lead.item.note}
               subject={lead.item.subject}
               quote={lead.item.quote}
-              contextKey={lead.item.contextKey}
-              when={startedOn(lead.item.since, language)}
               recommendation={lead.item.refundRecommendation}
               recommendedAmount={lead.item.refundRecommendedAmount}
               reasoning={lead.item.refundReasoning}
+              /* The booking in full, so the owner answers without opening it. */
+              paidAmount={lead.item.paidAmount}
+              paidAt={lead.item.paidAt}
+              paidMethod={lead.item.paidMethod}
+              bookedAt={lead.item.bookedAt}
+              serviceMinutes={lead.item.serviceMinutes}
+              servicePrice={lead.item.servicePrice}
+              refundableAmount={lead.item.refundableAmount}
+              askedAt={lead.item.since}
+              money={money}
+              /* Every hour on the card read on the business's clock. */
+              timeZoneOptions={timeZoneOptions}
               t={t}
             />
           ) : (
@@ -1552,8 +1845,8 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
               quote={lead.item.quote}
               note={lead.item.noteKey ? t(lead.item.noteKey) : lead.item.note}
               threadId={lead.item.threadId}
-              contextKey={lead.item.contextKey}
-              when={startedOn(lead.item.since, language)}
+              /* Which mailbox to open it in. See `MailGapBlockProps.provider`. */
+              provider={lead.item.viaProvider}
               t={t}
             />
           )}
@@ -1563,6 +1856,15 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
             row has never had, and the reason every fact above it was being
             assembled only to be abandoned at the door to Gmail.
           */}
+          {lead.gapId === 'refund_requested' && lead.item.subject && (
+            <h3
+              className="text-[10.5px] font-bold uppercase mt-3 mb-1.5 text-[var(--v2-text-muted)]"
+              style={{ letterSpacing: '0.06em' }}
+            >
+              {t('gaps.refund.your_reply').replace('{name}', firstNameOf(lead.item.name))}
+            </h3>
+          )}
+
           {lead.item.subject && (
             <MailReplyBox
               contactId={lead.item.contactId}
@@ -1633,6 +1935,20 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                 (ENTITY_IS_A_BOOKING.has(lead.gapId) ? lead.item.entityId : null);
               return (
                 <>
+                  {/* The mail it came in, in the same slot the list rows keep
+                      it. See the note at the list row's copy. */}
+                  {lead.item.sourceThreadId && (
+                    <a
+                      href={mailThreadUrl(lead.item.sourceThreadId, lead.item.sourceThreadProvider)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={t('gaps.refund.open_email')}
+                      title={t('gaps.refund.open_email')}
+                      className="inline-flex items-center justify-center p-1.5 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-colors"
+                    >
+                      <Mail className="w-4 h-4" aria-hidden="true" />
+                    </a>
+                  )}
                   <button
                     type="button"
                     onClick={() => openRecord(lead.gapId, lead.item)}
@@ -1648,7 +1964,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                   </button>
                   {/* Not where the reply box already offers it. See
                       `THE_REPLY_BOX_DOES_THIS`. */}
-                  {!THE_REPLY_BOX_DOES_THIS.has(leadAction) && (
+                  {!Boolean(leadAction) && THE_REPLY_BOX_DOES_THIS.has(leadAction as string) && (
                   <button
                     type="button"
                     onClick={() => act(leadGap!, lead.item as GapItemView)}
@@ -2060,6 +2376,28 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                           )}
                         </p>
 
+                        {/* The same one-line client history the promoted row
+                            carries. See `ClientLine`.
+
+                            `contextKey` is passed here too: without it the
+                            expanded row showed the email and nothing else, so
+                            where the request came from was visible only while
+                            the card was collapsed — the one state in which the
+                            owner is not yet deciding anything.
+
+                            The `age` goes here for a refund and nowhere else:
+                            its clock strip is gone, so this line is the only
+                            place the wait is stated. Every other gap keeps the
+                            strip, and passing the age here would print it
+                            twice. */}
+                        <ClientLine
+                          item={item}
+                          contextKey={item.contextKey}
+                          age={gap.id === 'refund_requested' ? agoOf(item.since, t) : null}
+                          t={t}
+                          language={language}
+                        />
+
                         {/*
                           ─────────────────────────────────────────────────────
                           THE REPLY, ON THE LIST ROW TOO.
@@ -2095,30 +2433,47 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                             quote={item.quote}
                             note={item.noteKey ? t(item.noteKey) : item.note}
                             threadId={item.threadId}
+                            provider={item.viaProvider}
                             contextKey={item.contextKey}
                             dense
                             t={t}
                           />
                         )}
 
-                        {/* The same box the promoted row gets, and only
-                            where there is a conversation to reply INTO. See
-                            `CONVERSATION_GAPS`. */}
-                        {item.subject && CONVERSATION_GAPS.has(gap.id) && (
-                          <MailReplyBox
-                            contactId={item.contactId}
-                            threadId={item.threadId}
-                            draftId={item.draftId}
-                            /* The same pairing as the lead row above. */
-                            draftBody={item.draftBody ?? item.refundClientDraft}
-                            subject={item.subject}
-                            provider={item.viaProvider}
-                            answeredAt={item.answeredAt}
-                            language={language}
-                            onDone={onChanged}
-                            t={t}
-                          />
-                        )}
+                        {/* The same box the promoted row gets, wherever there
+                            is something to send: a conversation to reply into,
+                            or a reply the agent already drafted. See
+                            `canAnswerHere` — gating on `CONVERSATION_GAPS`
+                            alone is what made a refund's draft appear on the
+                            promoted card and vanish from the list. */}
+                        {/*
+                          A REFUND'S BOX IS NOT HERE. See the one under
+                          `RefundGapBlock` below.
+
+                          The reply only makes sense AFTER the thing it is
+                          replying about. A mail row reads block-then-box
+                          because `MailGapBlock` sits directly above; a refund
+                          row's block is rendered under the whole row, for the
+                          width it needs, so a box here would open with a
+                          suggested answer above the request it answers.
+                        */}
+                        {gap.id !== 'refund_requested' &&
+                          item.subject &&
+                          canAnswerHere(gap.id, item) && (
+                            <MailReplyBox
+                              contactId={item.contactId}
+                              threadId={item.threadId}
+                              draftId={item.draftId}
+                              /* The same pairing as the lead row above. */
+                              draftBody={item.draftBody ?? item.refundClientDraft}
+                              subject={item.subject}
+                              provider={item.viaProvider}
+                              answeredAt={item.answeredAt}
+                              language={language}
+                              onDone={onChanged}
+                              t={t}
+                            />
+                          )}
 
                         <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 flex items-center gap-1">
                           {/*
@@ -2163,6 +2518,18 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                               <span aria-hidden="true">·</span>
                             </>
                           )}
+                          {/*
+                            NO CLOCK STRIP ON A REFUND, because its header
+                            already carries the wait.
+
+                            "waiting 4h · Nov 19" under a line reading "Asked
+                            4h ago in your client portal" states one fact
+                            twice and dates it two ways. Every other gap keeps
+                            the strip: the header phrase belongs to the refund
+                            request, and nothing else has one.
+                          */}
+                          {gap.id !== 'refund_requested' && (
+                            <>
                           <Clock className="w-3 h-3 shrink-0" />
                           {/*
                             * "17 days" alone is a measurement, not a fact.
@@ -2227,6 +2594,8 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                               return (phrase ?? fallback).replace('{t}', waitedFor(item.since, t));
                             })()}
                           </span>
+                            </>
+                          )}
 
                           {/*
                             WHAT IS ACTUALLY WRONG, in the badge's own words.
@@ -2309,7 +2678,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                           {/* The date itself, because the figure beside it is
                               relative and nothing else on this row can be
                               matched against the diary or the drawer. */}
-                          {onDay(item.since, language) && (
+                          {gap.id !== 'refund_requested' && onDay(item.since, language) && (
                             <span className="shrink-0 text-[var(--v2-text-muted)]">
                               {' · '}
                               <bdi>{onDay(item.since, language)}</bdi>
@@ -2395,7 +2764,9 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                           */}
                           {/* The origin moved into `MailGapBlock`'s badge for
                               mail rows; anything else keeps it here. */}
-                          {item.contextKey && !item.subject && (
+                          {/* A refund says it in its header line, in one
+                              phrase with the age inside it. See `ClientLine`. */}
+                          {item.contextKey && !item.subject && gap.id !== 'refund_requested' && (
                             <>
                               <span aria-hidden="true">·</span>
                               <span className="text-[var(--v2-text-secondary)]">{t(item.contextKey)}</span>
@@ -2515,6 +2886,42 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                         `entityId`. See `ENTITY_IS_A_BOOKING` for why that set is listed rather than
                         inferred.
                       */}
+                      {/*
+                        THE MAIL IT CAME IN, beside the door to the booking.
+
+                        A refund that arrived by email has a thread behind it,
+                        and the card carries only a quote from it. The owner's
+                        question — what else did they say, is this the third
+                        time they have written — is answered in the mail and
+                        nowhere else.
+
+                        Only when there IS a thread: a request filled in on the
+                        portal has no mail to open, and an icon that lands on an
+                        empty mailbox reads as a broken product.
+                      */}
+                      {/*
+                        THE CONTROLS AS ONE WRAPPING ROW ON A PHONE.
+
+                        These are direct children of the row, which is a column
+                        under `sm` — so four of them stacked, one per line, and
+                        the text they belong to scrolled off the top. Wrapped,
+                        they sit on one line that wraps as needed; `sm:contents`
+                        dissolves this wrapper from `sm` up, so the desktop
+                        layout is byte-for-byte what it was.
+                      */}
+                      <div className="flex flex-wrap items-center gap-2 sm:contents">
+                      {item.sourceThreadId && (
+                        <a
+                          href={mailThreadUrl(item.sourceThreadId, item.sourceThreadProvider)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={t('gaps.refund.open_email')}
+                          title={t('gaps.refund.open_email')}
+                          className="shrink-0 self-start inline-flex items-center justify-center p-1.5 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-surface)] transition-colors"
+                        >
+                          <Mail className="w-4 h-4" aria-hidden="true" />
+                        </a>
+                      )}
                       <button
                         type="button"
                         onClick={() => openRecord(gap.id, item)}
@@ -2577,6 +2984,19 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                         promise something the second cannot do — the same
                         relabel `MoneyEntryActions` already makes.
                         ─────────────────────────────────────────────────────
+                      */}
+                      {/*
+                        A REFUND DECIDES HERE TOO, in the row every other gap
+                        keeps its action in.
+
+                        It used to render at the foot of the block instead, so
+                        that one gap put its buttons in a place no other row
+                        did: an owner working down the list found the controls
+                        in the top row four times and at the bottom of the
+                        fifth. The facts, the timeline and the recommendation
+                        are all still above the fold of the block — this moves
+                        where the buttons SIT, not what the owner has read by
+                        the time they reach them.
                       */}
                       {refundDecisions(gap, item, state)}
 
@@ -2666,6 +3086,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                           )}
                         </button>
                       )}
+                      </div>
                     </div>
 
                     {/*
@@ -2689,25 +3110,76 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                       ─────────────────────────────────────────────────────────
                     */}
                     {gap.id === 'refund_requested' && (
-                      <RefundGapBlock
-                        value={item.value}
-                        currency={item.currency}
-                        noteKey={item.noteKey}
-                        note={item.note}
-                        subject={item.subject}
-                        quote={item.quote}
-                        contextKey={item.contextKey}
-                        /* What the diary says happened, so the owner can answer
-                           without going to find the booking. */
-                        bookingOutcomeKey={item.bookingOutcomeKey}
-                        bookingWhen={item.bookingWhen}
-                        bookingContradicts={item.bookingContradicts}
-                        recommendation={item.refundRecommendation}
-                        recommendedAmount={item.refundRecommendedAmount}
-                        reasoning={item.refundReasoning}
-                        dense
-                        t={t}
-                      />
+                      <>
+                        <RefundGapBlock
+                          value={item.value}
+                          currency={item.currency}
+                          noteKey={item.noteKey}
+                          note={item.note}
+                          subject={item.subject}
+                          quote={item.quote}
+                          /* What the diary says happened, so the owner can answer
+                             without going to find the booking. */
+                          bookingOutcomeKey={item.bookingOutcomeKey}
+                          bookingWhen={item.bookingWhen}
+                          bookingContradicts={item.bookingContradicts}
+                          recommendation={item.refundRecommendation}
+                          recommendedAmount={item.refundRecommendedAmount}
+                          reasoning={item.refundReasoning}
+                          /* The booking in full, so the owner answers without opening it. */
+                          paidAmount={item.paidAmount}
+                          paidAt={item.paidAt}
+                          paidMethod={item.paidMethod}
+                          bookedAt={item.bookedAt}
+                          serviceMinutes={item.serviceMinutes}
+                          servicePrice={item.servicePrice}
+                          refundableAmount={item.refundableAmount}
+                          askedAt={item.since}
+                          money={money}
+                          timeZoneOptions={timeZoneOptions}
+                          dense
+                          t={t}
+                        />
+
+                        {/*
+                          AND THE ANSWER, UNDER WHAT IT IS ANSWERING.
+
+                          The box used to render further up, beside where a mail
+                          row puts it — which left a refund opening with a
+                          suggested reply ABOVE the request, the amount, the
+                          diary and the recommendation it was a reply to. The
+                          owner read the answer before the question.
+
+                          It follows the block for the same reason the block
+                          sits down here at all: this is the full-width part of
+                          the row, and the reply is the last step of the three
+                          the block lays out.
+                        */}
+                        {gap.id === 'refund_requested' && item.subject && (
+                          <h3
+                            className="text-[10.5px] font-bold uppercase mt-3 mb-1.5 text-[var(--v2-text-muted)]"
+                            style={{ letterSpacing: '0.06em' }}
+                          >
+                            {t('gaps.refund.your_reply').replace('{name}', firstNameOf(item.name))}
+                          </h3>
+                        )}
+
+                        {item.subject && canAnswerHere(gap.id, item) && (
+                          <MailReplyBox
+                            contactId={item.contactId}
+                            threadId={item.threadId}
+                            draftId={item.draftId}
+                            draftBody={item.draftBody ?? item.refundClientDraft}
+                            subject={item.subject}
+                            provider={item.viaProvider}
+                            answeredAt={item.answeredAt}
+                            language={language}
+                            onDone={onChanged}
+                            t={t}
+                          />
+                        )}
+
+                      </>
                     )}
 
                     {item.queued && state.kind === 'idle' && (

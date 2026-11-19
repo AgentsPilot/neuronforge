@@ -477,6 +477,63 @@ export interface GapItem {
   refundReasoning?: string;
   /** The reply the agent drafted for the client, to seed the reply box. */
   refundClientDraft?: string;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE BOOKING A REFUND IS ABOUT, so the owner can answer without leaving.
+   *
+   * A refund card offers to move money. Deciding needs more than the ask: what
+   * was bought, what was actually paid and when, and when the session is. Every
+   * one of these comes off a lookup the refund gap already makes.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /** What the client actually paid on this booking, in `currency`. */
+  paidAmount?: number;
+  /** When that money left their account, ISO. */
+  paidAt?: string;
+  /**
+   * The mail thread a refund request arrived in, where it arrived in one.
+   *
+   * Set only for `source: 'email'` requests — the receptionist records the
+   * thread it read them out of. The card offers it as a door to the original
+   * message; it deliberately is NOT `threadId`, which decides where a reply
+   * goes.
+   */
+  sourceThreadId?: string;
+  /**
+   * Which mailbox that thread is in — `google-mail` or `outlook`.
+   *
+   * Read from the business's own live mail connection, not from the request:
+   * the thread id alone does not say which provider issued it, and a link to
+   * the wrong one sends an owner to a mailbox they may not have.
+   */
+  sourceThreadProvider?: string;
+  /**
+   * How it arrived — `card`, `cash`, `bank_transfer`.
+   *
+   * Said beside the amount because it decides what refunding MEANS here: card
+   * money goes back through the processor in a click, cash has to be handed
+   * over and the platform only records that it was.
+   */
+  paidMethod?: string;
+  /** When the booking was made, ISO — not when the session is. */
+  bookedAt?: string;
+  /** How long the service runs, in minutes. */
+  serviceMinutes?: number;
+  /** The service's list price, which may differ from what was paid. */
+  servicePrice?: number;
+
+  /*
+   * WHO IS ASKING, in one line rather than a panel. A count answers "is this a
+   * pattern"; the list of past refunds belongs on a page of its own.
+   */
+  contactEmail?: string;
+  /** When this person became a client, ISO. */
+  clientSince?: string;
+  /** Refunds they have had before this request. Absent when unreadable. */
+  refundsBefore?: number;
+  /** How many bookings they have made with this business. */
+  bookingsWithYou?: number;
   /**
    * What the business's own diary says happened to the booking.
    *

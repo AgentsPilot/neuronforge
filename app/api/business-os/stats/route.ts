@@ -234,10 +234,15 @@ interface CapabilityStats {
     active_services_count: number;
     /** Services a client picks a time for — decides whether hours are needed. */
     scheduled_services_count: number;
-    /** Priced services collected by card at booking — decides whether Stripe is needed. */
+    /**
+     * Priced services collected by card at booking — decides whether Stripe is
+     * needed. DRAFTS INCLUDED, unlike the two counts above: see the query.
+     */
     online_services_count: number;
-    /** Priced services billed afterwards — decides whether bank details are needed. */
+    /** Priced services billed afterwards — decides whether bank details are needed. Drafts included. */
     invoiced_services_count: number;
+    /** Everything in the catalogue, published or not — what the two counts above are drawn from. */
+    catalogue_services_count: number;
     /** Names of active services with no description — the website cannot describe them. */
     services_without_description: string[];
     open_days_count: number;
@@ -803,9 +808,22 @@ export async function GET(request: NextRequest) {
          * that takes no money, and the dashboard told a contractor who sells
          * nothing but quoted jobs "nothing you sell takes money".
          */
-        .select('service_name, description, is_scheduled, collection, price, sale_mode')
-        .eq('user_id', user.id)
-        .eq('status', 'active'),
+        /*
+         * `status` RIDES ALONG, AND THE FILTER IS GONE.
+         *
+         * This asked for published services only, and three of the counts below
+         * are right to want that. The two MONEY counts were not: a service
+         * configured to take a card is the answer to "does this business need a
+         * processor" whether or not it has been published yet, and
+         * `journeyReadiness` will not let it be published until the invoice
+         * details — asked for only when a published service takes money — are
+         * done. Owners met that as "nothing you sell takes money" beside a
+         * connected Stripe account. See `businessShape.countServices`.
+         *
+         * So the rows come back whole and each count takes the subset it means.
+         */
+        .select('service_name, description, is_scheduled, collection, price, sale_mode, status')
+        .eq('user_id', user.id),
       // Stripe connection check - stripe_connect_accounts table
       supabaseServer
         .from('stripe_connect_accounts')
@@ -2007,13 +2025,21 @@ export async function GET(request: NextRequest) {
     const hasPaidServices = (paidServicesCount || 0) > 0;
 
     // Three answers, all read from the services rather than asked.
-    const shapes = (serviceShapes || []) as Array<{ service_name?: string | null; description?: string | null; is_scheduled?: boolean | null; collection?: string | null; price?: number | null; sale_mode?: string | null }>;
-    /** Services the website has nothing to say about. */
-    const servicesWithoutDescription = shapes
+    const shapes = (serviceShapes || []) as Array<{ service_name?: string | null; description?: string | null; is_scheduled?: boolean | null; collection?: string | null; price?: number | null; sale_mode?: string | null; status?: string | null }>;
+    /*
+     * The published subset, for the counts that describe what this account is
+     * DOING. A draft must not move the settings tabs or raise the hours
+     * question under a half-written thought — the argument `countServices`
+     * records, which holds for these three and not for the money counts below.
+     */
+    const publishedShapes = shapes.filter(x => x.status === 'active');
+    /** Services the website has nothing to say about. Published: nothing else is on it. */
+    const servicesWithoutDescription = publishedShapes
       .filter(x => !x.description || x.description.trim().length === 0)
       .map(x => x.service_name || '')
       .filter(Boolean);
-    const scheduledServicesCount = shapes.filter(x => x.is_scheduled !== false).length;
+    const scheduledServicesCount = publishedShapes.filter(x => x.is_scheduled !== false).length;
+    /* Drafts INCLUDED from here down. See the query. */
     const onlineServicesCount = shapes.filter(x => x.collection === 'online' && (x.price || 0) > 0).length;
     /*
      * ───────────────────────────────────────────────────────────────────────
@@ -2815,6 +2841,7 @@ export async function GET(request: NextRequest) {
         scheduled_services_count: scheduledServicesCount,
         online_services_count: onlineServicesCount,
         invoiced_services_count: invoicedServicesCount,
+        catalogue_services_count: shapes.length,
         services_without_description: servicesWithoutDescription,
         open_days_count: openDaysCount,
         stripe_connected: stripeConnected,

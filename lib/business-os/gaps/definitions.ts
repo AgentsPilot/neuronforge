@@ -976,7 +976,7 @@ const refundRequested: GapDefinition = {
     safely('refund_requested', async () => {
       const { data } = await supabaseServer
         .from('refund_requests')
-        .select('id, contact_id, booking_id, amount_requested, currency, reason, note, created_at, source, recommendation, recommended_amount, reasoning, client_message_draft, assessed_at')
+        .select('id, contact_id, booking_id, amount_requested, currency, reason, note, created_at, source, source_thread_id, recommendation, recommended_amount, reasoning, client_message_draft, assessed_at')
         .eq('user_id', userId)
         /*
          * ─────────────────────────────────────────────────────────────────────
@@ -1022,13 +1022,70 @@ const refundRequested: GapDefinition = {
       const contactIds = [...new Set(rows.map(r => r.contact_id as string))];
       const bookingIds = [...new Set(rows.map(r => r.booking_id).filter(Boolean) as string[])];
 
+      /*
+       * `email` and `created_at` alongside the name, because the card reaches
+       * the person and dates the relationship: a mailto for the owner who
+       * wants to write outside the box, and "client since" so a refund asked
+       * by somebody who arrived this morning reads differently from one asked
+       * by a client of two years. Both ride on the select already here.
+       */
       const { data: people } = await supabaseServer
         .from('crm_contacts')
-        .select('id, first_name, last_name')
+        .select('id, first_name, last_name, email, created_at')
         .eq('user_id', userId)
         .in('id', contactIds);
 
       const named = new Map((people || []).map(p => [p.id as string, personName(p)]));
+      const emailFor = new Map((people || []).map(p => [p.id as string, str(p.email)]));
+      const sinceFor = new Map((people || []).map(p => [p.id as string, str(p.created_at)]));
+
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * HOW OFTEN THIS PERSON HAS ASKED BEFORE, and how much they have booked.
+       *
+       * The one question a refund history has to answer ON A CARD is whether
+       * this is a pattern. A count answers it; the list belongs on a page, and
+       * a list here pushed the decision another screen down.
+       *
+       * Counted from `payment_transactions`, not from `refund_requests`: a
+       * request that was declined is not a refund, and money returned outside
+       * this card — the Finance page, the drawer — is. `refunded_amount > 0`
+       * is the same test the money list uses for "something came back".
+       *
+       * Fails soft: an unreadable count must not cost the owner the card, and
+       * the line simply does not render rather than claiming a confident zero.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const refundsBeforeFor = new Map<string, number>();
+      const bookingsWithYouFor = new Map<string, number>();
+      try {
+        const [returned, theirBookings] = await Promise.all([
+          supabaseServer
+            .from('payment_transactions')
+            .select('contact_id')
+            .eq('user_id', userId)
+            .in('contact_id', contactIds)
+            .gt('refunded_amount', 0),
+          supabaseServer
+            .from('scheduling_bookings')
+            .select('contact_id')
+            .eq('user_id', userId)
+            .in('contact_id', contactIds),
+        ]);
+
+        for (const cid of contactIds) {
+          refundsBeforeFor.set(
+            cid,
+            (returned.data || []).filter(r => r.contact_id === cid).length
+          );
+          bookingsWithYouFor.set(
+            cid,
+            (theirBookings.data || []).filter(r => r.contact_id === cid).length
+          );
+        }
+      } catch {
+        /* Left empty on purpose: the card renders without the history line. */
+      }
 
       /*
        * What they booked, so the card can say which thing this is about.
@@ -1054,20 +1111,39 @@ const refundRequested: GapDefinition = {
        * ───────────────────────────────────────────────────────────────────────
        */
       const outcomeFor = new Map<string, { outcome: string | null; when: string | null }>();
+      /** What was bought and when it was bought, per booking. */
+      const shapeFor = new Map<
+        string,
+        { minutes: number | null; price: number | null; bookedAt: string | null }
+      >();
       if (bookingIds.length > 0) {
+        /* `created_at`, and the service's own shape, because the card states
+           what was bought and when it was bought: an hour at $50 booked four
+           days before the session reads differently from one booked in March.
+           ONE STRING LITERAL still — see the note above. */
         const { data: bookings } = await supabaseServer
           .from('scheduling_bookings')
-          .select('id, start_time, status, meeting_status, service:scheduling_services(service_name)')
+          .select('id, start_time, created_at, status, meeting_status, service:scheduling_services(service_name, duration_minutes, price, currency)')
           .eq('user_id', userId)
           .in('id', bookingIds);
 
         for (const b of bookings || []) {
           const row = b as Record<string, unknown>;
           const service = row.service;
-          const name = Array.isArray(service)
-            ? (service[0] as Record<string, unknown>)?.service_name
-            : (service as Record<string, unknown>)?.service_name;
+          const svc = (Array.isArray(service) ? service[0] : service) as
+            | Record<string, unknown>
+            | undefined;
+          const name = svc?.service_name;
           if (name) titleFor.set(row.id as string, String(name));
+
+          /* What was bought, and when it was bought. Both are facts about the
+             BOOKING rather than about the money, so they live beside the
+             title rather than in `moneyFor`. */
+          shapeFor.set(row.id as string, {
+            minutes: typeof svc?.duration_minutes === 'number' ? svc.duration_minutes : null,
+            price: typeof svc?.price === 'number' ? svc.price : null,
+            bookedAt: typeof row.created_at === 'string' ? row.created_at : null,
+          });
 
           /*
            * A CANCELLED BOOKING OUTRANKS ITS MEETING STATUS. A session marked
@@ -1100,19 +1176,76 @@ const refundRequested: GapDefinition = {
        * couple of lookups, not fifty.
        * ─────────────────────────────────────────────────────────────────────
        */
+      /*
+       * WHICH MAILBOX, so a link to the original mail opens the right one.
+       *
+       * Asked once per call and only when something actually came in by mail:
+       * a business whose requests all arrive through the portal pays nothing
+       * for this. An owner on Microsoft was otherwise sent to Gmail — a
+       * mailbox they may not have, to read a message that was never there.
+       */
+      let mailProvider: string | null = null;
+      if (rows.some(r => r.source_thread_id)) {
+        try {
+          const { pluginConnectionRepository } = await import(
+            '@/lib/repositories/PluginConnectionRepository'
+          );
+          const { data: connections } = await pluginConnectionRepository.findActiveByUser(userId);
+          /* `plugin_key ?? plugin_name`, the same pair `automationApplies`
+             reads: rows disagree on which one carries the key. */
+          const keyOf = (c: unknown) =>
+            String(
+              (c as { plugin_key?: string; plugin_name?: string }).plugin_key ??
+                (c as { plugin_name?: string }).plugin_name ??
+                ''
+            );
+          const mailbox = (connections || []).find(c =>
+            ['google-mail', 'outlook'].includes(keyOf(c))
+          );
+          mailProvider = mailbox ? keyOf(mailbox) : null;
+        } catch {
+          /* The link falls back to Gmail, which is where every thread recorded
+             before both mailboxes were supported came from. */
+        }
+      }
+
       const moneyFor = new Map<
         string,
-        { refundable: number; viaProcessor: boolean; payments: number }
+        {
+          refundable: number;
+          viaProcessor: boolean;
+          payments: number;
+          paid: number;
+          paidAt: string | null;
+          method: string | null;
+        }
       >();
       try {
         const { refundableBookingsFor } = await import('@/lib/payments/refundableBookings');
         for (const cid of contactIds) {
-          const list = await refundableBookingsFor({ userId, contactId: cid });
+          /* `includeSettled` because this card EXPLAINS a request rather than
+             offering a refund: a booking already returned in full still has to
+             say what was paid, when, and that nothing is left. Without it the
+             two money tiles and "the whole amount they paid" disappeared from
+             the card the moment the owner acted. */
+          const list = await refundableBookingsFor({
+            userId,
+            contactId: cid,
+            includeSettled: true,
+          });
           for (const b of list) {
             moneyFor.set(b.bookingId, {
               refundable: b.refundable,
               viaProcessor: b.viaProcessor,
               payments: b.payments,
+              /* ALREADY FETCHED, and previously thrown away. The card has to
+                 say what was actually paid and when, or "refund $50" is a
+                 figure with nothing behind it. One call, four facts. */
+              paid: b.paid,
+              paidAt: b.paidAt,
+              /* Card or cash: the card says it beside the amount, because it
+                 decides whether the money goes back in a click or by hand. */
+              method: b.method,
             });
           }
         }
@@ -1220,6 +1353,23 @@ const refundRequested: GapDefinition = {
         /* False means the money must be returned by hand and the platform
            only records it — a different button, and a different promise. */
         refundViaProcessor: moneyFor.get(str(r.booking_id) ?? '')?.viaProcessor,
+        /*
+         * WHAT WAS ACTUALLY PAID, and when, and what for. The card offers to
+         * return money; the owner should not have to open the booking to find
+         * out what money there is. All of it rides on lookups this gap was
+         * already making — see `moneyFor` and `shapeFor`.
+         */
+        paidAmount: moneyFor.get(str(r.booking_id) ?? '')?.paid,
+        paidAt: moneyFor.get(str(r.booking_id) ?? '')?.paidAt ?? undefined,
+        paidMethod: moneyFor.get(str(r.booking_id) ?? '')?.method ?? undefined,
+        bookedAt: shapeFor.get(str(r.booking_id) ?? '')?.bookedAt ?? undefined,
+        serviceMinutes: shapeFor.get(str(r.booking_id) ?? '')?.minutes ?? undefined,
+        servicePrice: shapeFor.get(str(r.booking_id) ?? '')?.price ?? undefined,
+        /* Who you are answering, in one line rather than a section. */
+        contactEmail: emailFor.get(r.contact_id as string) ?? undefined,
+        clientSince: sinceFor.get(r.contact_id as string) ?? undefined,
+        refundsBefore: refundsBeforeFor.get(r.contact_id as string),
+        bookingsWithYou: bookingsWithYouFor.get(r.contact_id as string),
         /* More than one payment behind the booking: no one-click. */
         refundPaymentsCount: moneyFor.get(str(r.booking_id) ?? '')?.payments,
         bookingContradicts:
@@ -1232,6 +1382,19 @@ const refundRequested: GapDefinition = {
            row rather than assumed: the email path writes `email` here, and
            assuming `portal_form` would be right today and quietly wrong then. */
         contextKey: `gap.refund_requested.via.${str(r.source) || 'portal_form'}`,
+        /*
+         * THE MAIL IT CAME IN, where it came in one.
+         *
+         * A request the receptionist read out of the mailbox has a thread
+         * behind it, and that thread is the only place the client's actual
+         * words in full exist — the card carries a quote. Carried as its OWN
+         * field rather than as `threadId`, which decides where a reply is
+         * sent: changing that for every refund is a different decision from
+         * offering a door to the mail.
+         */
+        sourceThreadId: str(r.source_thread_id) ?? undefined,
+        /* And which mailbox it is in. See `mailProvider` above. */
+        sourceThreadProvider: mailProvider ?? undefined,
       }));
     }),
 };

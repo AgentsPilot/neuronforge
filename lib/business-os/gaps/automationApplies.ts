@@ -128,6 +128,8 @@ async function resolve(
       return canSendMarketing(userId);
     case 'bills_for_anything':
       return billsForAnything(userId);
+    case 'takes_money':
+      return takesMoney(userId);
     case 'mail_reaches_owner_inbox':
       return mailReachesOwnerInbox(userId);
     default:
@@ -272,6 +274,53 @@ async function billsForAnything(userId: string): Promise<boolean> {
     return (count ?? 0) > 0;
   } catch (err) {
     logger.warn({ err, userId }, 'Could not resolve whether this business bills; not offering the invoice chase');
+    return false;
+  }
+}
+
+/**
+ * Has money ever actually reached this business?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AN INVOICE IS NOT THE ONLY WAY TO BE PAID, which is the whole reason this
+ * exists beside `billsForAnything`.
+ *
+ * A service set to collect ONLINE charges the client's card and writes a
+ * `payment_transactions` row. No invoice is raised, so a business running
+ * entirely that way has zero rows in `payment_invoices` while taking money
+ * every day. Gating a REFUND agent on invoices therefore refused it to exactly
+ * the businesses most able to refund: the ones holding card payments.
+ *
+ * Measured on eomer3@gmail.com — one succeeded $50 card payment, zero
+ * invoices, and a client's refund request for that payment sitting unassessed
+ * because the agent read as "cannot run".
+ *
+ * Either proof counts, and an invoice of any status still counts: the question
+ * is whether money has ever moved, not whether anything is outstanding now.
+ *
+ * Unreadable counts as no, hiding the offer: the same direction every gate in
+ * this file fails in.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function takesMoney(userId: string): Promise<boolean> {
+  try {
+    if (await billsForAnything(userId)) return true;
+
+    /*
+     * `succeeded` only. A failed or pending attempt is not money that arrived,
+     * and a business whose single card attempt was declined has nothing to
+     * refund.
+     */
+    const { count, error } = await supabaseServer
+      .from('payment_transactions')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('status', 'succeeded');
+
+    if (error) throw error;
+    return (count ?? 0) > 0;
+  } catch (err) {
+    logger.warn({ err, userId }, 'Could not resolve whether this business takes money; not offering the agent');
     return false;
   }
 }

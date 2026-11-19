@@ -65,6 +65,30 @@ export interface WizardValues {
   name: string;
   description: string;
   duration: string;
+  /**
+   * The gap kept AFTER this service, before the next client can be offered a
+   * time. `buffer_minutes` on the row.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A FIELD THE COLUMN HAD AND NO SCREEN DID.
+   *
+   * `buffer_minutes` has existed since the first scheduling migration, every
+   * public booking surface honours it (`lib/scheduling/slotInterval` and the
+   * widening of what counts as taken), and in Business OS there was nowhere to
+   * set one: the chat stopped collecting it when the old services form was
+   * retired — on the stated grounds that the editor "has a field for each" —
+   * and the editor that replaced that form never had this one. The only
+   * surviving control is the modal on the V2 scheduling page, outside Business
+   * OS. Of 35 live services, 18 carried a gap from the old paths and 17 had
+   * none that anybody could have chosen.
+   *
+   * Empty string means not answered, the same convention `price` uses, and it
+   * is read as no gap. Unlike the length it NEVER blocks the step: plenty of
+   * services genuinely need no gap, and `stepAnswered` would otherwise stop an
+   * owner on a question they have already answered by leaving it alone.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  buffer: string;
   is_scheduled: boolean;
   /** Empty string means NOT ANSWERED. `'0'` means free. They are different. */
   price: string;
@@ -169,7 +193,9 @@ export function stepsFor(values: Pick<WizardValues, 'price' | 'sale_mode'>): Wiz
 export function stepAnswered(step: WizardStep, values: WizardValues): boolean {
   if (step === 'what') {
     if (!values.name.trim()) return false;
-    /* A booked service needs a length; one that books nothing does not. */
+    /* A booked service needs a length; one that books nothing does not.
+       The GAP is deliberately not tested: no gap is a real answer, and the
+       commonest one. See `WizardValues.buffer`. */
     return values.is_scheduled ? values.duration.trim() !== '' : true;
   }
 
@@ -206,18 +232,27 @@ export function previousStep(step: WizardStep, values: WizardValues): WizardStep
 }
 
 /**
- * Where to open an EXISTING service.
+ * Where to open an EXISTING service: at the beginning, always.
  *
- * The first step it has not answered, and `what` when it has answered them all
- * — a finished service opens on its own beginning rather than on its publish
- * screen, because somebody reopening it is far more likely to be changing a
- * detail than reviewing the gate.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This used to jump to the first UNANSWERED step, which for the services the
+ * onboarding chat writes — a name, a length, no price — meant opening on
+ * `cost`. The reasoning was that it saves a press on the one question nobody
+ * has answered.
  *
- * This matters most for the services the onboarding chat writes: a name, a
- * length, and no price at all. They open on `cost`, which is the one question
- * nobody has answered, instead of on a name that is already correct.
+ * It costs more than it saves. An owner opening a service during setup is
+ * usually there to look at the whole thing before publishing it, and the name
+ * is the first thing they want to change: the chat's names are a guess from
+ * their own words, and "Initial Consultation Phase" is not what most people
+ * would call it. Landing on the money question put the one field they came to
+ * edit behind a Back press they had no reason to expect.
+ *
+ * The stepper still shows what is answered and what is not, so nothing is
+ * hidden by starting at the front. Reported from the configuration dialog:
+ * "when we click on the service to update and publish it needs to be in the
+ * first step so we can change the service name if needed".
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function openingStep(values: WizardValues): WizardStep {
-  const steps = stepsFor(values);
-  return steps.find(step => !stepAnswered(step, values)) ?? 'what';
+  return stepsFor(values)[0] ?? 'what';
 }

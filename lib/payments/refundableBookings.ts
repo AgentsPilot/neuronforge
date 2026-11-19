@@ -46,6 +46,15 @@ export interface RefundableBooking {
   /** What they actually paid, so the client can recognise the booking. */
   paid: number;
   /**
+   * How it was paid — `card`, `cash`, `bank_transfer`, as the transaction
+   * recorded it, or null where nothing was.
+   *
+   * The owner's card says it beside the amount: money that came in by card
+   * goes back the same way in a click, and money handed over in cash has to be
+   * returned by hand. The figure alone does not say which.
+   */
+  method: string | null;
+  /**
    * When the money left their account, ISO. The client's own strongest memory
    * of a payment, and what this list is ordered by.
    */
@@ -115,14 +124,34 @@ function serviceName(d?: {
 export async function refundableBookingsFor(params: {
   userId: string;
   contactId: string;
+  /**
+   * KEEP BOOKINGS WITH NOTHING LEFT TO REFUND. Off by default.
+   *
+   * Every caller that OFFERS a refund wants the default: a booking already
+   * returned in full must not be listed as something to return again, and
+   * dropping it is what the client's portal, the refund dialog and bizql all
+   * rely on.
+   *
+   * The owner's refund card is not offering anything — it is explaining a
+   * request that has already been made. It has to say what was paid and when
+   * even once the money has gone back, because "you already refunded this in
+   * full" is the answer to the request, and it was the one fact the card could
+   * not state: the booking vanished from this list the moment it was refunded,
+   * taking the paid amount and the payment date with it, and the card then
+   * showed the ask with no money behind it at all.
+   *
+   * `refundable` comes back as 0 for these, which is true and is what every
+   * one-click path already tests before it offers a button.
+   */
+  includeSettled?: boolean;
 }): Promise<RefundableBooking[]> {
-  const { userId, contactId } = params;
+  const { userId, contactId, includeSettled = false } = params;
   if (!contactId) return [];
 
   /* Every payment this client has made to this business. One query. */
   const { data: txs, error } = await supabaseServer
     .from('payment_transactions')
-    .select('id, amount, refunded_amount, currency, status, booking_id, invoice_id, paid_at, stripe_payment_intent_id, stripe_charge_id')
+    .select('id, amount, refunded_amount, currency, status, booking_id, invoice_id, paid_at, payment_method, stripe_payment_intent_id, stripe_charge_id')
     .eq('user_id', userId)
     .eq('contact_id', contactId)
     .in('status', SETTLED);
@@ -187,6 +216,9 @@ export async function refundableBookingsFor(params: {
          one of them can be reached through the processor. See the interface. */
       payments: number;
       viaProcessor: boolean;
+      /* How the money arrived — 'card', 'cash', 'bank_transfer'. See the
+         interface. */
+      method: string | null;
     }
   >();
 
@@ -198,6 +230,7 @@ export async function refundableBookingsFor(params: {
       booking_id?: string | null;
       invoice_id?: string | null;
       paid_at?: string | null;
+      payment_method?: string | null;
       stripe_payment_intent_id?: string | null;
       stripe_charge_id?: string | null;
     };
@@ -254,10 +287,16 @@ export async function refundableBookingsFor(params: {
       invoiceNumber: seen?.invoiceNumber ?? invoiceNumber,
       payments: (seen?.payments ?? 0) + 1,
       viaProcessor: (seen?.viaProcessor ?? true) && txViaProcessor,
+      /* The first one found. Two payments on one booking can differ — a card
+         deposit and a cash balance — and naming one route is better than
+         naming none; the dialog states each payment's own. */
+      method: seen?.method ?? tx.payment_method ?? null,
     });
   }
 
-  const withMoney = [...byBooking.entries()].filter(([, v]) => v.minor > 0);
+  const withMoney = [...byBooking.entries()].filter(
+    ([, v]) => v.minor > 0 || includeSettled
+  );
   if (withMoney.length === 0) return [];
 
   /* And what to call them. */
@@ -340,6 +379,7 @@ export async function refundableBookingsFor(params: {
         currency: money.currency,
         paid: money.paid,
         paidAt: money.paidAt,
+        method: money.method,
         requestedAt: askedAt.get(bookingId) ?? null,
         invoiceNumber: money.invoiceNumber,
         payments: money.payments,

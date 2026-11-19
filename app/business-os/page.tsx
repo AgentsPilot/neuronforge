@@ -707,6 +707,13 @@ function BusinessOSContent() {
               scheduledServices: s.scheduling?.scheduled_services_count ?? 0,
               onlineServices: s.scheduling?.online_services_count ?? 0,
               invoicedServices: s.scheduling?.invoiced_services_count ?? 0,
+              /* The whole catalogue, drafts included — what the two money
+                 counts above are drawn from, and what decides whether this
+                 business is asked for a processor and invoice details at all.
+                 Without it a service configured to take a card answers nothing
+                 until it is published, and it cannot be published until the
+                 details it never asked for are filled in. */
+              catalogueServices: s.scheduling?.catalogue_services_count ?? 0,
             })
           );
 

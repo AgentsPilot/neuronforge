@@ -79,6 +79,16 @@ interface StepProps {
 
 const LENGTHS = ['30', '45', '60', '90'];
 
+/**
+ * The gap kept AFTER a service, offered as the answers people actually give.
+ *
+ * `'0'` leads, because none is the commonest honest answer and the one an owner
+ * should not have to hunt for: a call needs no turnaround, a treatment room
+ * does. The database default is 15, which is why services created through the
+ * older paths carry one nobody chose.
+ */
+const GAPS = ['0', '10', '15', '30'];
+
 export function StepWhat({ values, onChange }: Omit<StepProps, 'currencySymbol' | 'currencyCode'>) {
   const set = (patch: Partial<WizardValues>) => onChange({ ...values, ...patch });
 
@@ -135,7 +145,7 @@ export function StepWhat({ values, onChange }: Omit<StepProps, 'currencySymbol' 
           <button
             type="button"
             aria-pressed={!values.is_scheduled}
-            onClick={() => set({ is_scheduled: false, duration: '' })}
+            onClick={() => set({ is_scheduled: false, duration: '', buffer: '' })}
             className={!values.is_scheduled ? 'sw-choice sw-choice-on' : 'sw-choice'}
           >
             <span className="sw-choice-head">
@@ -177,6 +187,68 @@ export function StepWhat({ values, onChange }: Omit<StepProps, 'currencySymbol' 
               />
             </label>
           </div>
+
+          {/*
+            ───────────────────────────────────────────────────────────────────
+            THE GAP AFTER IT, WHICH THIS WIZARD DESCRIBED BEFORE IT COULD SET.
+            ───────────────────────────────────────────────────────────────────
+            `buffer_minutes` is honoured by every public booking surface and by
+            the owner's own grid, and the rail beside this already reads it back
+            — "runs 60 minutes, and keeps 15 clear afterwards, so it costs the
+            day 75". The number in that sentence came from the database default
+            or from the modal on the old scheduling page, because the editor
+            that replaced the services form never carried a control for it: the
+            value was held in state, seeded from the row and saved again
+            untouched.
+
+            So the sentence promised something the screen could not do. Here it
+            is, next to the length, because the two are one question — how long
+            it takes, and how long you need before the next client.
+
+            Asked only of something that holds a slot, like the length above.
+          */}
+          <p className="sw-label sw-label-block" style={{ marginTop: 14 }}>
+            And how long do you need after it?
+          </p>
+          <div className="sw-pills">
+            {GAPS.map(minutes => {
+              /* An unanswered gap IS no gap, so both read as the same answer
+                 — `''` is what a row that never chose one looks like here. */
+              const chosen =
+                minutes === '0'
+                  ? values.buffer.trim() === '' || values.buffer.trim() === '0'
+                  : values.buffer.trim() === minutes;
+
+              return (
+                <button
+                  key={minutes}
+                  type="button"
+                  aria-pressed={chosen}
+                  onClick={() => set({ buffer: minutes })}
+                  className={chosen ? 'sw-pill sw-pill-on' : 'sw-pill'}
+                >
+                  {minutes === '0' ? 'No gap' : minutes + ' min'}
+                </button>
+              );
+            })}
+            <label className="sw-pill sw-pill-other">
+              <input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                step={5}
+                value={GAPS.includes(values.buffer.trim()) ? '' : values.buffer}
+                onChange={event => set({ buffer: event.target.value })}
+                placeholder="Another gap"
+                aria-label="Another gap in minutes"
+                className="sw-pill-input"
+              />
+            </label>
+          </div>
+          <p className="sw-hint" style={{ marginTop: 8 }}>
+            Kept clear before the next client can be offered a time. It comes out
+            of your day, so leave it at none unless you need it.
+          </p>
         </div>
       )}
     </>

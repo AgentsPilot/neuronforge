@@ -229,7 +229,34 @@ export function LanguageProvider({
   const [userId, setUserId] = useState<string | null>(null);
   // Deliberately not the browser's zone as the initial value. See `timezone`
   // on LanguageContextType.
-  const [timezone, setTimezone] = useState<string>('UTC');
+  /*
+   * ── THE FIRST GUESS IS THE BROWSER'S, NOT UTC ─────────────────────────────
+   *
+   * This opened at 'UTC' and became the business's real zone only once the
+   * locale request came back, so every surface that buckets an instant into a
+   * CALENDAR DAY did it twice, under two different rules, a few hundred
+   * milliseconds apart. The scheduling grid is the visible one: it sorts
+   * appointments into day columns with this value, so the first paint can put
+   * an evening appointment on the wrong day and the second move it.
+   *
+   * The browser's own zone is a far better opening bid than UTC — for almost
+   * every owner it IS the answer — and it costs nothing, because the stored
+   * value still overwrites it a moment later. `safeTimezone` keeps a browser
+   * that reports something unusable from poisoning the value.
+   *
+   * It is a GUESS, not an authority: `user_preferences.timezone` remains the
+   * only thing that decides what hour a client is shown, and NULL there still
+   * means "not asked" for the readiness gate, which reads the row and never
+   * this context.
+   */
+  const [timezone, setTimezone] = useState<string>(() => {
+    if (typeof Intl === 'undefined') return 'UTC';
+    try {
+      return safeTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    } catch {
+      return 'UTC';
+    }
+  });
 
   // Load language and currency from localStorage and database on mount
   useEffect(() => {

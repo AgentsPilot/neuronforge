@@ -18,7 +18,11 @@ import { schedulingServiceRepository } from '@/lib/repositories/SchedulingReposi
 import { windowsForDate, hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { busyMeetings, overlapsBusy } from '@/lib/scheduling/busyMeetings';
+import { busyMeetings } from '@/lib/scheduling/busyMeetings';
+/* One grid for every public surface. See the module. */
+import { slotStepMinutes, FALLBACK_SLOT_MINUTES } from '@/lib/scheduling/slotInterval';
+/* The same slot arithmetic the website runs. See the module. */
+import { offeredStarts, busySpansOn } from '@/lib/scheduling/offeredStarts';
 import { externalBusy } from '@/lib/scheduling/externalBusy';
 import { businessInstant, safeTimezone, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 /* How far ahead a business takes bookings — one number, read by the repository
@@ -43,6 +47,15 @@ interface Service {
   description: string | null;
   /** Null where the service declares no length — a product, or a fee-per-client. */
   duration_minutes: number | null;
+  /**
+   * The gap this business keeps BETWEEN appointments.
+   *
+   * Read by the subdomain booking page since the buffer was first honoured and
+   * never by this one, so the same service offered a tighter slot through a
+   * smart link than through the website. It spaces the grid together with the
+   * length (`lib/scheduling/slotInterval`) and widens what counts as taken.
+   */
+  buffer_minutes: number | null;
   price: number | null;
   currency: string;
   /** Does booking this involve picking a time? Decides the date step. */
@@ -134,6 +147,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       name: s.service_name,
       description: s.description,
       duration_minutes: s.duration_minutes,
+      buffer_minutes: s.buffer_minutes ?? null,
       price: s.price,
       currency: s.currency || 'USD',
       // Normalised the same way the sibling route does, so the two cannot
@@ -221,6 +235,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const slots = await calculateAvailableSlots(
       ownerId,
       selectedService.duration_minutes,
+      selectedService.buffer_minutes,
       businessProfile.scheduling_availability,
       timezone,
       date,
@@ -258,6 +273,11 @@ async function calculateAvailableSlots(
    * interval is the smallest honest block to hold.
    */
   durationMinutes: number | null,
+  /**
+   * The gap kept between appointments. Spaces the grid with the length, and
+   * widens what counts as taken — both of which the subdomain page already did.
+   */
+  bufferMinutes: number | null,
   /** Raw JSON from the profile; shapes are normalised by `windowsForDay`. */
   availability: unknown,
   timezone: string,
@@ -271,6 +291,7 @@ async function calculateAvailableSlots(
 ): Promise<TimeSlot[]> {
   const slots: TimeSlot[] = [];
   const now = new Date();
+
 
   /*
    * The closed days, once, for the whole window the loop below walks.
@@ -341,11 +362,6 @@ async function calculateAvailableSlots(
    */
   const ownerCalendar = await externalBusy(userId, startDate, endDate.toISOString());
 
-  /* Same half-open test as the meetings, so a calendar event ending at 10:00
-     does not withhold the 10:00 slot. */
-  const overlapsExternal = (start: Date, end: Date) =>
-    overlapsBusy(start, end, ownerCalendar);
-
   // Generate slots for each day
   for (let i = 0; i < daysAhead; i++) {
     /*
@@ -367,46 +383,105 @@ async function calculateAvailableSlots(
     // the client cannot book. Reading only the first would quietly hide the
     // second; reading `.start` off the list, which is what this did, hid both.
     for (const window of windowsForDate(availability, dateKey, timeOff)) {
-      // Generate time slots (30-minute intervals)
-      const slotInterval = 30; // minutes
-      const blockMinutes = durationMinutes ?? slotInterval;
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE SAME TIMES THE WEBSITE OFFERS, FROM THE SAME ARITHMETIC.
+       *
+       * This walked its own grid — `const slotInterval = 30`, a second copy of
+       * the literal in `availableSlots.ts` — and the two agreed only because
+       * both said thirty. Neither had anything to do with the service.
+       *
+       * Both now ask `offeredStarts`, which packs each FREE stretch from its
+       * own beginning so an opening that holds the appointment is never left
+       * unoffered, and `slotStepMinutes`, which spaces starts by the length
+       * plus the business's gap so a day of them tiles exactly.
+       *
+       * THE GRID IS STILL WALKED AS WELL, and both lists are offered together:
+       * this endpoint answers with every candidate and an `available` flag, so
+       * the page can show a taken hour greyed rather than silently missing.
+       * Dropping the grid would have emptied that out.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      /* The block HELD is the service's own length — the gap sits after it, in
+         the step. `FALLBACK_SLOT_MINUTES` where the service declares no
+         length, which is what this always did. */
+      const blockMinutes = durationMinutes ?? FALLBACK_SLOT_MINUTES;
+      const slotInterval = slotStepMinutes(durationMinutes, bufferMinutes);
 
-      /* `09:00` means nine o'clock WHERE THE BUSINESS IS. `setHours` on a Date
-         means nine o'clock where the server is, which on Vercel is UTC — so
-         the published day was shifted by the owner's whole offset. */
-      let currentTime = businessInstant(dateKey, window.start, timezone);
-      const dayEnd = businessInstant(dateKey, window.end, timezone);
+      const toMins = (clock: string) => {
+        const [h, m] = clock.split(':').map(Number);
+        return h * 60 + m;
+      };
+      const toClock = (at: number) =>
+        `${String(Math.floor(at / 60)).padStart(2, '0')}:${String(at % 60).padStart(2, '0')}`;
 
-      while (currentTime.getTime() + blockMinutes * 60 * 1000 <= dayEnd.getTime()) {
+      const windowStartMins = toMins(window.start);
+      const windowEndMins = toMins(window.end);
+
+      /* Everything taken on THIS day, on the business's clock, widened by the
+         gap — the same conversion the website runs. */
+      const busySpans = [
+        ...busySpansOn({ date: dateKey, timezone, rows: busy, bufferMinutes }),
+        ...busySpansOn({ date: dateKey, timezone, rows: ownerCalendar, bufferMinutes }),
+      ];
+
+      const packed = offeredStarts({
+        windowStart: windowStartMins,
+        windowEnd: windowEndMins,
+        durationMinutes: blockMinutes,
+        stepMinutes: slotInterval,
+        busy: busySpans,
+      });
+
+      const grid: number[] = [];
+      for (let at = windowStartMins; at + blockMinutes <= windowEndMins; at += slotInterval) {
+        grid.push(at);
+      }
+
+      /*
+       * WHAT IS BOOKABLE IS THE PACKED LIST. The grid only fills the page in.
+       *
+       * Both are offered so a taken hour can be shown greyed rather than
+       * silently missing, but availability is decided by membership of
+       * `packed` alone. Letting a grid time be available too made this page
+       * offer 12:45 AND 12:47 on a day broken up by an off-grid meeting: two
+       * starts that overlap, where the website offered only the one that
+       * packs. The pages have to agree.
+       */
+      const bookable = new Set(packed);
+      const candidates = Array.from(new Set([...grid, ...packed])).sort((a, b) => a - b);
+
+      for (const startMins of candidates) {
+        /* `09:00` means nine o'clock WHERE THE BUSINESS IS. `setHours` on a
+           Date means nine o'clock where the server is, which on Vercel is UTC
+           — so the published day was shifted by the owner's whole offset. */
+        const currentTime = businessInstant(dateKey, toClock(startMins), timezone);
         const slotEnd = new Date(currentTime.getTime() + blockMinutes * 60 * 1000);
 
         // Check if slot is in the past
         const isPast = currentTime < now;
 
-        // Check for conflicts with existing bookings
-        /* Half-open, so back-to-back appointments are bookable. The three
-           hand-written comparisons this replaces treated an end that equalled
-           a start as a clash. */
-        const hasConflict = overlapsBusy(currentTime, slotEnd, busy);
+        /*
+         * Free, by the one test both public pages share: it came out of
+         * `offeredStarts`, which already subtracted every taken stretch and the
+         * business's gap around each of them — appointments and synced calendar
+         * events alike.
+         */
+        const isFree = bookable.has(startMins);
 
         /*
-         * The same four gates the other surfaces apply. This endpoint checked
-         * two of them, so a smart link offered hours the subdomain withheld:
-         * an hour the owner is busy in elsewhere, an hour too soon to prepare
-         * for, and an hour further out than the business takes bookings.
+         * The other two gates this endpoint used to skip, so a smart link
+         * offered hours the subdomain withheld: an hour too soon to prepare
+         * for, and one further out than the business takes bookings.
          */
-        const hasExternalConflict = overlapsExternal(currentTime, slotEnd);
         const tooSoon = currentTime.getTime() < now.getTime() + noticeHours * 60 * 60 * 1000;
         const tooFar = currentTime.getTime() > now.getTime() + advanceDays * 24 * 60 * 60 * 1000;
 
         slots.push({
           start: currentTime.toISOString(),
           end: slotEnd.toISOString(),
-          available: !isPast && !hasConflict && !hasExternalConflict && !tooSoon && !tooFar
+          available: isFree && !isPast && !tooSoon && !tooFar
         });
-
-        // Move to next slot
-        currentTime = new Date(currentTime.getTime() + slotInterval * 60 * 1000);
       }
     }
   }

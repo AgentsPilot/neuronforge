@@ -25,6 +25,36 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Loader2, Search } from 'lucide-react';
 
+/**
+ * The mark beside every label on this form, because every field is required.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SEEN AS AN ASTERISK, HEARD AS A WORD.
+ *
+ * The red `*` is what the owner asked for and what a form reader expects, but
+ * an asterisk alone is a shape with no name: a screen reader announces "star",
+ * or nothing at all, and the field sounds optional.
+ *
+ * So the mark is `aria-hidden` and the word rides behind it in `sr-only`. One
+ * fact, told the way each reader can take it. The inputs carry `required` and
+ * `aria-required` besides, and the reason group carries `aria-required` because
+ * a row of buttons has no required state of its own.
+ */
+function Required({ t }: { t: (key: string) => string }) {
+  return (
+    <>
+      <span
+        className="ms-1 text-sm font-bold"
+        style={{ color: 'var(--ap-danger)' }}
+        aria-hidden="true"
+      >
+        *
+      </span>
+      <span className="sr-only">{t('refund.required')}</span>
+    </>
+  );
+}
+
 /** One line the client can choose. Shaped by `/api/book/manage/[token]`. */
 export interface RefundableBooking {
   bookingId: string;
@@ -76,7 +106,16 @@ export function RefundPanel({ token, bookings, locale, t, onSent, onChoose }: Pr
     const free = bookings.filter(b => !b.requestedAt);
     return free.length === 1 ? free[0].bookingId : null;
   });
-  const [reason, setReason] = useState<string>('cancelled_by_client');
+  /*
+   * NOTHING IS PRE-ANSWERED. Every field on this form is the client's to fill.
+   *
+   * `reason` defaulted to `cancelled_by_client`, which is a claim about why
+   * somebody wants their money back, made on their behalf before they had said
+   * anything. The owner then read it as the client's own words and answered on
+   * that basis. A refund is a dispute about money, and a guessed reason is the
+   * worst kind of default: it looks like an answer.
+   */
+  const [reason, setReason] = useState<string | null>(null);
   const [amount, setAmount] = useState<string>('');
   const [note, setNote] = useState('');
   const [filter, setFilter] = useState('');
@@ -225,15 +264,27 @@ export function RefundPanel({ token, bookings, locale, t, onSent, onChoose }: Pr
   /* Headings earn their place only once there is more than one. */
   const showHeadings = groups.length > 1;
 
-  /* Defaults to everything still refundable, and can be reduced but never
-     raised: the cap is what the database would refuse anyway. */
+  /*
+   * EVERY FIELD IS ASKED FOR, NONE IS ASSUMED.
+   *
+   * The amount used to fall back to the whole refundable sum when the box was
+   * left empty, so a client who never typed a figure still asked for all of it
+   * — and the owner received a request that looked deliberate. The cap is still
+   * the cap: it can be reduced, never raised, because the database would refuse
+   * anyway. What changed is that the figure has to be typed.
+   */
   const max = booking?.refundable ?? 0;
-  const asked = amount === '' ? max : Number(amount);
-  const overMax = asked > max + 1e-9;
-  const tooSmall = asked <= 0;
+  const asked = Number(amount);
+  const amountMissing = amount.trim() === '' || !Number.isFinite(asked);
+  const overMax = !amountMissing && asked > max + 1e-9;
+  const tooSmall = !amountMissing && asked <= 0;
+  const noteMissing = note.trim() === '';
+  /* The booking is required too, but it gates this whole block: the fields do
+     not render until one is chosen. */
+  const incomplete = amountMissing || overMax || tooSmall || !reason || noteMissing;
 
   async function submit() {
-    if (!booking || busy) return;
+    if (!booking || busy || incomplete || !reason) return;
     setBusy(true);
     setError(null);
 
@@ -247,7 +298,9 @@ export function RefundPanel({ token, bookings, locale, t, onSent, onChoose }: Pr
           booking_id: booking.bookingId,
           amount: asked,
           reason,
-          note: note.trim() || undefined,
+          /* Always present now, so the owner never reads a request with the
+             explanation missing. */
+          note: note.trim(),
         }),
       });
 
@@ -507,15 +560,40 @@ export function RefundPanel({ token, bookings, locale, t, onSent, onChoose }: Pr
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-bold" style={{ color: 'var(--ap-text)' }}>
               {t('refund.how_much')}
+              <Required t={t} />
             </span>
             <input
               type="number"
               inputMode="decimal"
               min={0}
               max={max}
-              step="0.01"
+              /*
+               * `any`, not `0.01`.
+               *
+               * The step is what the browser's up/down arrows move by, and at
+               * `0.01` a client nudging the figure changed it by a CENT at a
+               * time. Nobody asks for a refund in cents; they move whole
+               * units, and thirty presses to go from 50 to 20 is not a
+               * control.
+               *
+               * `any` leaves the arrows on their default step of one AND lifts
+               * the step constraint, so a figure like 49.50 can still be
+               * typed. Setting `1` instead would move the arrows correctly and
+               * then call a half-unit amount invalid, which is a real amount
+               * for a real refund.
+               */
+              step="any"
               value={amount}
-              placeholder={String(max)}
+              required
+              aria-required="true"
+              /*
+               * NO PLACEHOLDER OF THE MAXIMUM.
+               *
+               * A greyed `400` in an empty box reads as a value already there,
+               * which is the whole reason the old silent fallback to the full
+               * amount went unnoticed. The cap is stated underneath in words
+               * instead, where it cannot be mistaken for an answer.
+               */
               onChange={e => setAmount(e.target.value)}
               className="h-11 px-3 text-base"
               style={{
@@ -531,9 +609,12 @@ export function RefundPanel({ token, bookings, locale, t, onSent, onChoose }: Pr
           </label>
 
           {/* WHY */}
-          <fieldset className="flex flex-col gap-1.5">
+          {/* `aria-required` on the group: a row of buttons has no required
+              state of its own, so without it only sighted readers are told. */}
+          <fieldset className="flex flex-col gap-1.5" aria-required="true">
             <legend className="mb-1.5 text-sm font-bold" style={{ color: 'var(--ap-text)' }}>
               {t('refund.why')}
+              <Required t={t} />
             </legend>
             <div className="flex flex-wrap gap-2">
               {REASONS.map(key => {
@@ -563,11 +644,14 @@ export function RefundPanel({ token, bookings, locale, t, onSent, onChoose }: Pr
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-bold" style={{ color: 'var(--ap-text)' }}>
               {t('refund.note')}
+              <Required t={t} />
             </span>
             <textarea
               rows={3}
               value={note}
               maxLength={2000}
+              required
+              aria-required="true"
               onChange={e => setNote(e.target.value)}
               className="p-3 text-base"
               style={{
@@ -589,7 +673,7 @@ export function RefundPanel({ token, bookings, locale, t, onSent, onChoose }: Pr
           <button
             type="button"
             onClick={submit}
-            disabled={busy || overMax || tooSmall}
+            disabled={busy || incomplete}
             className="flex h-11 items-center justify-center gap-2 px-5 font-bold transition-opacity disabled:opacity-50"
             style={{
               borderRadius: 'var(--ap-radius-md)',

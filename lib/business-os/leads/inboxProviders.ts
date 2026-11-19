@@ -33,6 +33,36 @@ export const PROVIDER_NAMES: Record<InboxProvider, string> = {
 };
 
 /**
+ * The web address that opens one thread, in the mailbox it actually lives in.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS NOT A GMAIL URL WITH A BRANCH BOLTED ON
+ *
+ * Both surfaces that link to a thread — the mail gap block and the refund card
+ * — were written with Gmail's address hardcoded, because Gmail was the only
+ * mailbox the channel supported when they were written. It supports both now,
+ * so an owner on Microsoft was being sent to a Google mailbox they may not
+ * even have, to read a message that was never there.
+ *
+ * Gmail's `#all/<id>` takes a THREAD id, which is what the Gmail plugin
+ * returns and what we store. Outlook's read deep link takes a message id, and
+ * the Outlook plugin's `thread_id` is a conversation id — so this is the
+ * closest address Microsoft publishes rather than a guaranteed one. Unverified
+ * against a live Outlook mailbox; if it lands short, the fix is to store the
+ * message id beside the thread id, not to branch further here.
+ *
+ * Unknown provider falls back to Gmail, which is where every thread recorded
+ * before this existed came from.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function mailThreadUrl(threadId: string, provider?: InboxProvider | string | null): string {
+  const id = encodeURIComponent(threadId);
+  return provider === 'outlook'
+    ? `https://outlook.office.com/mail/deeplink/read/${id}`
+    : `https://mail.google.com/mail/#all/${id}`;
+}
+
+/**
  * The mailboxes a channel can actually be built on. Both, and this list is
  * where every surface agrees on that.
  *

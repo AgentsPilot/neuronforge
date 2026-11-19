@@ -340,6 +340,34 @@ export function SchedulingCalendarView({
   const weekStartsOnSunday = language === 'he';
 
   const [currentWeek, setCurrentWeek] = useState(() => getStartOfWeek(new Date(), weekStartsOnSunday));
+
+  /*
+   * ── THE WEEK FOLLOWS THE LANGUAGE, BECAUSE THE LABELS ALREADY DO ──────────
+   *
+   * `weekStartsOnSunday` is read from `language`, and `language` opens at 'en'
+   * and is reassigned from localStorage AFTER mount. `dayNames` below recompute
+   * on every render; this did not, because a `useState` initialiser runs once.
+   *
+   * So a Hebrew owner got a MONDAY-start week wearing Sunday-first headings:
+   * every column sat one day off the name above it, and an appointment on the
+   * last column was filed under the wrong weekday entirely.
+   *
+   * Recomputed from a day INSIDE the week on screen rather than from today, so
+   * an owner who has paged forward three weeks stays where they are instead of
+   * being thrown back. Midweek is the safe reference: shifting the start by one
+   * day cannot push it out of the week it belongs to.
+   */
+  useEffect(() => {
+    setCurrentWeek(previous => {
+      const midweek = new Date(previous);
+      midweek.setDate(previous.getDate() + 3);
+
+      const corrected = getStartOfWeek(midweek, weekStartsOnSunday);
+      /* Same week already: return the SAME object, so this never loops and
+         never re-fires the fetch that hangs off `currentWeek`. */
+      return corrected.getTime() === previous.getTime() ? previous : corrected;
+    });
+  }, [weekStartsOnSunday]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   /*
    * ───────────────────────────────────────────────────────────────────────────

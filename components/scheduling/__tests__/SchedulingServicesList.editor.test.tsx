@@ -164,13 +164,14 @@ describe('pressing a shape', () => {
      * price, so the one answer that needs a figure could not record itself.
      */
     /*
-     * An unpriced service opens ON the cost question, because that is the
-     * first thing it has no answer for — so there is no Continue to press
-     * first, and the amount field is not on screen until the shape asking for
+     * Every service opens on the FIRST step now, so the name can be changed
+     * without a Back press nobody expects. The cost question is one Continue
+     * away, and the amount field is not on screen until the shape asking for
      * it is chosen. That field appearing IS the fix: the owner pressed the
      * option and nothing opened.
      */
     await openEditor({ service: { price: null as unknown as number } });
+    await goOn();
 
     expect(document.querySelectorAll('input')).toHaveLength(0);
 

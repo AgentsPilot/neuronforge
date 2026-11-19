@@ -852,12 +852,34 @@ export function InvoiceSettingsSection({
                       <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
                         {t('settings.invoice.tax_rate')}
                       </label>
+                      {/*
+                        ───────────────────────────────────────────────────────
+                        THE ARROWS MOVE BY A POINT, NOT BY A HUNDREDTH.
+                        ───────────────────────────────────────────────────────
+                        `step={0.01}` took 17 to 17.01, which is nobody's tax
+                        rate. Reported as "the tax % adds 0.01 instead of 1".
+
+                        `min` was the other half of it, and the half that is
+                        easy to miss: on a number input the minimum is the STEP
+                        BASE, so a floor of 0.01 makes the valid values 0.01,
+                        1.01, 2.01 … and the arrows land on them whatever the
+                        step says. A whole-number base is what lets a press of
+                        the arrow produce a whole number.
+
+                        It is a floor of zero rather than of one because a
+                        fractional rate is real — Switzerland charges 8.1 — and
+                        it stays typable here: `max` does not move the base, and
+                        the route accepts anything above 0 and below 100
+                        (`z.number().gt(0).lt(100)`), which is the rule that
+                        actually decides. Zero itself is refused there, as it
+                        always was: `min` never stopped anyone typing it.
+                      */}
                       <input
                         type="number"
                         inputMode="decimal"
-                        min={0.01}
+                        min={0}
                         max={99.99}
-                        step={0.01}
+                        step={1}
                         value={settings.invoice_tax_rate}
                         onChange={(e) =>
                           setSettings((prev) => ({ ...prev, invoice_tax_rate: e.target.value }))

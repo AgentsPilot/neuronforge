@@ -270,6 +270,51 @@ export function isBusinessProfileComplete(
   return missingProfileFields(profile, settings).length === 0;
 }
 
+/** Everything above, plus the address — which only the settings form insists on. */
+export type SettingsProfileField = ProfileField | 'address';
+
+/**
+ * What the business settings form will not save without.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS A SECOND LIST AND NOT A LONGER FIRST ONE.
+ *
+ * The owner asked for the business address to be mandatory. `missingProfileFields`
+ * is the wrong place to put it, and the note above it says why in advance: that
+ * list is read by the readiness card, by `journeyReadiness` and by the publish
+ * gate, so adding a field there does not make a form stricter — it refuses a
+ * website publish.
+ *
+ * Measured before writing this, on the live database: of 8 business profiles, 4
+ * have a usable address, 3 have part of one and 1 has nothing. Adding `address`
+ * to the gate list would therefore have stopped half the accounts on the
+ * platform from publishing, over a field they were never asked for and whose
+ * absence breaks nothing they are doing today.
+ *
+ * So the ASK is honoured where the ask was made. This form holds the one place
+ * a business address is typed, it is the only caller of this function, and it
+ * blocks its own Save on the answer. Nothing downstream reads it, which is the
+ * point: an owner is stopped while they are in the form with the field in front
+ * of them, not later, somewhere else, by a refusal they cannot connect to it.
+ *
+ * The address test is `hasUsableAddress` — street, city, country — the same one
+ * the invoice gate applies to `invoice_address`, so an owner is not asked for a
+ * postal code their country does not write.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function missingSettingsProfileFields(
+  profile: BusinessProfileFields | null | undefined,
+  settings: OrganizationSettings | null | undefined,
+  address: InvoiceAddress | null | undefined
+): SettingsProfileField[] {
+  const missing: SettingsProfileField[] = [...missingProfileFields(profile, settings)];
+
+  /* Last, like phone and email: who the business is comes before where it is. */
+  if (!hasUsableAddress(address)) missing.push('address');
+
+  return missing;
+}
+
 /**
  * An address is enough to put on an invoice when it says where the business is.
  *
