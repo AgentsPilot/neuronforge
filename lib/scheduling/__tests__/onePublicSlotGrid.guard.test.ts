@@ -241,12 +241,20 @@ describe('the gap between appointments reaches every public surface', () => {
     expect(call).not.toContain('bookedBuffer()');
   });
 
-  it('and the smart link widens what it tests against', () => {
+  it('and the smart link widens through the SHARED conversion', () => {
+    /*
+     * It used to widen the candidate slot by hand, with its own
+     * `guardedStart`/`guardedEnd` pair. `busySpansOn` does it now — for
+     * appointments and for synced calendar events alike — which is the same
+     * code the website runs, so the two cannot disagree about what a taken
+     * hour is.
+     */
     const body = code(read(SMART_LINK));
 
-    expect(body).toContain('bufferMinutes');
-    expect(body).toMatch(/overlapsBusy\(guardedStart, guardedEnd/);
-    expect(body).toMatch(/overlapsExternal\(guardedStart, guardedEnd\)/);
+    expect(body).toMatch(/busySpansOn\(\{ date: dateKey, timezone, rows: busy, bufferMinutes \}\)/);
+    expect(body).toMatch(/busySpansOn\(\{ date: dateKey, timezone, rows: ownerCalendar, bufferMinutes \}\)/);
+    /* And the hand-rolled widening is gone, not merely unused. */
+    expect(body).not.toContain('guardedStart');
   });
 
   it('which it can only do because the column is public', () => {
