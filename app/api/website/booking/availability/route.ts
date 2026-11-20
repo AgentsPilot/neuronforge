@@ -14,6 +14,9 @@ import { getUser } from '@/lib/auth';
 import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
 import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { busyMeetings, overlapsBusy } from '@/lib/scheduling/busyMeetings';
+/* One slot rule for every public door into this diary. See the modules. */
+import { slotStepMinutes } from '@/lib/scheduling/slotInterval';
+import { offeredStarts, busySpansOn } from '@/lib/scheduling/offeredStarts';
 /* The owner's synced calendar holds their time too — one definition, read by
    every surface that asks whether an hour is free. */
 import { externalBusy } from '@/lib/scheduling/externalBusy';
@@ -54,6 +57,14 @@ interface Service {
    * caller falls back to the same 24 the reschedule route uses.
    */
   min_notice_hours?: number | null;
+  /**
+   * The gap the business keeps AFTER this appointment.
+   *
+   * Spaces the starts together with the length (`slotInterval`) and widens what
+   * counts as taken. This page honoured neither: it walked a flat half-hour and
+   * knew nothing about the gap, while the sibling booking pages applied both.
+   */
+  buffer_minutes?: number | null;
   is_scheduled?: boolean;
   collection?: 'online' | 'invoice' | null;
   /** Bought outright, or quoted first. The booking modal's resolver reads it. */
@@ -275,6 +286,7 @@ export async function GET(request: NextRequest) {
       /* How far ahead the strip may run, and how soon it may start. */
       advance_booking_days: s.advance_booking_days ?? null,
       min_notice_hours: s.min_notice_hours ?? null,
+      buffer_minutes: s.buffer_minutes ?? null,
       collection: s.collection ?? null,
       sale_mode: s.sale_mode ?? 'direct',
       paymentPlan: plansByService[s.id],
@@ -306,6 +318,41 @@ export async function GET(request: NextRequest) {
       timeOff = offResult.data ?? [];
     }
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE DIARY IS READ BEFORE THE SLOTS ARE MADE, NOT AFTER.
+     *
+     * This endpoint used to lay a flat half-hourly grid across the day and
+     * then mark whatever clashed. That is what leaves time standing in the
+     * corner: a 45-minute service with a 15-minute gap, booked at 09:00 and
+     * 11:00, has 09:45 to 11:00 genuinely free and the grid lands on 09:45 and
+     * 10:30 — both clashing — so an hour the owner can see in their diary is
+     * offered to nobody.
+     *
+     * `offeredStarts` packs each FREE stretch instead, and to do that it has to
+     * know what is taken while the starts are being placed. So the read moves
+     * up here, over the same window `timeOff` already uses, and is passed down.
+     *
+     * Both halves fail soft, as they did below: a diary we cannot read must not
+     * take the booking page down. An empty list simply means nothing is known
+     * to be taken, which is this endpoint's long-standing behaviour.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    let busy: Array<{ start_time: string; end_time: string }> = [];
+    if (hasAvailabilityConfigured && availabilitySettings && serviceId) {
+      const from = date || businessDateKey(new Date(), timezone);
+      const to = date || shiftBusinessDateKey(from, daysAhead);
+      /* The whole window, edge to edge on the business's own clock. */
+      const rangeStart = businessInstant(from, '00:00', timezone).toISOString();
+      const rangeEnd = businessInstant(shiftBusinessDateKey(to, 1), '00:00', timezone).toISOString();
+
+      const [meetings, externalEvents] = await Promise.all([
+        busyMeetings(supabaseServer, ownerId, rangeStart, rangeEnd),
+        externalBusy(ownerId, rangeStart, rangeEnd),
+      ]);
+      busy = [...meetings, ...externalEvents];
+    }
+
     if (hasAvailabilityConfigured && availabilitySettings) {
       if (date && serviceId) {
         // Fetch specific date slots
@@ -320,7 +367,9 @@ export async function GET(request: NextRequest) {
             selectedService.duration_minutes,
             availabilitySettings,
             timezone,
-            timeOff
+            timeOff,
+            busy,
+            selectedService.buffer_minutes ?? 0
           );
         }
       } else if (serviceId) {
@@ -342,7 +391,9 @@ export async function GET(request: NextRequest) {
               selectedService.duration_minutes,
               availabilitySettings,
               timezone,
-              timeOff
+              timeOff,
+              busy,
+              selectedService.buffer_minutes ?? 0
             );
             dayKey = shiftBusinessDateKey(dayKey, 1);
             slots.push(...daySlots);
@@ -351,58 +402,29 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Fetch existing bookings to mark unavailable slots
+    /*
+     * ── WHEN, AS WELL AS WHETHER ────────────────────────────────────────────
+     *
+     * WHETHER is already settled: `calculateDaySlots` placed these starts out
+     * of the FREE stretches of the day, so an hour the owner is busy in — an
+     * appointment here, or an event on their synced calendar — never came back
+     * marked available. That read used to happen down here, after a flat grid
+     * had been laid across the day, which is why the diary is now read before
+     * the slots are made.
+     *
+     * WHEN is this block's own business, and occupancy was once the only test
+     * this route applied. So on the subdomain booking page a client could pick:
+     *
+     *   · an hour that has already gone — 09:00 this morning, at two in the
+     *     afternoon, with nothing to say it had passed;
+     *   · an hour inside the notice the business asked for, which the portal's
+     *     reschedule route has always refused;
+     *   · an hour beyond `advance_booking_days`, which this route returns to
+     *     the client and then ignores itself.
+     *
+     * The business set all three. One of its two booking pages applied none.
+     */
     if (slots.length > 0 && serviceId) {
-      const startDate = slots[0].start;
-      const endDate = slots[slots.length - 1].end;
-
-      /*
-       * Appointments, not jobs. `busyMeetings` holds the single definition of
-       * what occupies time, and reads `scheduling_meetings` — see that file for
-       * why a job's cancellation needs no join to be visible here.
-       */
-      const meetings = await busyMeetings(supabaseServer, ownerId, startDate, endDate);
-
-      /*
-       * ── AND THE OWNER'S OWN CALENDAR ─────────────────────────────────────
-       *
-       * A synced Google or Outlook event holds the owner's time as surely as a
-       * meeting booked here does, and this endpoint was the one surface that
-       * never read them. The other three all do — `website/scheduling/
-       * availability`, the owner's `scheduling/free-slots`, and the portal's
-       * reschedule — so a client booking through `/site/{subdomain}/book` was
-       * offered hours the owner was already busy in, while the same hour on
-       * the same business's main booking flow was correctly withheld.
-       *
-       * `getBusySlots` uses overlap semantics (start < dayEnd AND end >
-       * dayStart), so an all-day or multi-hour event spanning into the window
-       * counts — the same call and the same reasoning as the sibling routes.
-       *
-       * Fails soft, like `busyMeetings`: a calendar that cannot be read must
-       * not take down the booking page, so an error leaves the meetings as the
-       * answer rather than returning none.
-       */
-      const externalEvents = await externalBusy(ownerId, startDate, endDate);
-
-      const busy = [...meetings, ...externalEvents];
-
-      /*
-       * ── WHEN, AS WELL AS WHETHER ──────────────────────────────────────────
-       *
-       * Occupancy was the ONLY test this route applied: every slot left
-       * `calculateDaySlots` as `available: true` and stayed that way unless
-       * something overlapped it. So on the subdomain booking page a client
-       * could pick:
-       *
-       *   · an hour that has already gone — 09:00 this morning, at two in the
-       *     afternoon, with nothing to say it had passed;
-       *   · an hour inside the notice the business asked for, which the portal's
-       *     reschedule route has always refused;
-       *   · an hour beyond `advance_booking_days`, which this route returns to
-       *     the client and then ignores itself.
-       *
-       * The business set all three. One of its two booking pages applied none.
-       */
       const selectedService = formattedServices.find(s => s.id === serviceId);
       const noticeHours = selectedService?.min_notice_hours ?? 24;
       const advanceDays = bookableDaysFor(selectedService?.advance_booking_days);
@@ -413,6 +435,13 @@ export async function GET(request: NextRequest) {
       slots = slots.map(slot => {
         const startsAt = new Date(slot.start).getTime();
         const withinWindow = startsAt >= earliest && startsAt <= latest;
+        /*
+         * Belt and braces, over the SAME list the starts were placed from.
+         * `offeredStarts` has already removed anything that clashes, gap
+         * included; this cannot withhold an hour that one offered, and it
+         * costs nothing to keep the occupancy test visible at the point the
+         * answer is assembled.
+         */
         const hasConflict = busy.length > 0 && overlapsBusy(slot.start, slot.end, busy);
 
         return {
@@ -501,7 +530,17 @@ async function calculateDaySlots(
    * a loop up to `daysAhead` long, and reading the table inside it would be one
    * request per day for an answer that does not change between them.
    */
-  timeOff: TimeOffEntry[]
+  timeOff: TimeOffEntry[],
+  /**
+   * Everything already in the diary across the whole window — appointments and
+   * synced calendar events together, read once by the caller.
+   *
+   * Here rather than fetched inside, for the same reason as `timeOff`: this is
+   * called once per day in a loop up to `daysAhead` long.
+   */
+  busy: Array<{ start_time: string; end_time: string }>,
+  /** The service's own gap, kept after each appointment. */
+  bufferMinutes: number
 ): Promise<TimeSlot[]> {
   const slots: TimeSlot[] = [];
   /*
@@ -539,42 +578,70 @@ async function calculateDaySlots(
    * The scalar walk below is per-window, so resuming after the midday gap is
    * the loop it already was, run again from the second window's opening time.
    */
+  /*
+   * ─────────────────────────────────────────────────────────────────────────
+   * THE SAME TIMES THE OTHER PUBLIC PAGES OFFER, FROM THE SAME ARITHMETIC.
+   *
+   * This walked a flat half-hour — `currentMin += 30` — which was the fourth
+   * copy of that literal in the product and the one on its busiest door. It
+   * had nothing to do with the service: a 50-minute appointment was offered at
+   * 09:00 AND 09:30, two times that cannot both be taken, and a 20-minute one
+   * got two starts an hour instead of three.
+   *
+   * `slotStepMinutes` spaces the starts by the appointment plus the gap kept
+   * after it, so a day of them tiles exactly, and `offeredStarts` packs each
+   * FREE stretch from its own beginning so an opening that holds the
+   * appointment is never left unoffered.
+   *
+   * THE FLAT GRID IS STILL WALKED ALONGSIDE, and both lists are returned: this
+   * endpoint answers with every candidate and an `available` flag so the widget
+   * can draw a taken hour greyed rather than silently missing. Only membership
+   * of the packed list makes one bookable.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const toMins = (clock: string) => {
+    const [h, m] = clock.split(':').map(Number);
+    return h * 60 + m;
+  };
+  const toClock = (at: number) =>
+    `${String(Math.floor(at / 60)).padStart(2, '0')}:${String(at % 60).padStart(2, '0')}`;
+
+  const step = slotStepMinutes(durationMinutes, bufferMinutes);
+  /* What is taken on THIS day, on the business's clock, widened by the gap —
+     the same conversion the sibling pages run. */
+  const busySpans = busySpansOn({ date: dateStr, timezone, rows: busy, bufferMinutes });
+
   for (const daySettings of windows) {
-    const [startHour, startMin] = daySettings.start.split(':').map(Number);
-    const [endHour, endMin] = daySettings.end.split(':').map(Number);
+    const windowStartMins = toMins(daySettings.start);
+    const windowEndMins = toMins(daySettings.end);
 
-    let currentHour = startHour;
-    let currentMin = startMin;
+    const packed = offeredStarts({
+      windowStart: windowStartMins,
+      windowEnd: windowEndMins,
+      durationMinutes,
+      stepMinutes: step,
+      busy: busySpans,
+    });
+    const bookable = new Set(packed);
 
-    while (currentHour < endHour || (currentHour === endHour && currentMin + durationMinutes <= endMin)) {
-      /* The wall clock the owner typed, as the instant the business means by it. */
-      const slotStart = businessInstant(
-        dateStr,
-        `${String(currentHour).padStart(2, '0')}:${String(currentMin).padStart(2, '0')}`,
-        timezone
-      );
+    const grid: number[] = [];
+    for (let at = windowStartMins; at + durationMinutes <= windowEndMins; at += step) {
+      grid.push(at);
+    }
+
+    for (const at of Array.from(new Set([...grid, ...packed])).sort((a, b) => a - b)) {
+      /* The wall clock the owner typed, as the instant the business means by
+         it. Never `setHours`, which would resolve in the server's zone. */
+      const slotStart = businessInstant(dateStr, toClock(at), timezone);
       const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60 * 1000);
 
-      /*
-       * Whether the slot ends after closing, compared as wall-clock minutes
-       * rather than by reading `slotEnd`'s hours — those would come back in the
-       * server's zone and let a slot run past closing time.
-       */
-      const endMins = currentHour * 60 + currentMin + durationMinutes;
-      if (endMins <= endHour * 60 + endMin) {
-        slots.push({
-          start: slotStart.toISOString(),
-          end: slotEnd.toISOString(),
-          available: true
-        });
-      }
-
-      // Move to next slot (30-minute intervals)
-      currentMin += 30;
-      if (currentMin >= 60) {
-        currentHour += 1;
-        currentMin -= 60;
-      }
+      slots.push({
+        start: slotStart.toISOString(),
+        end: slotEnd.toISOString(),
+        /* The caller then ANDs this with the notice and advance windows, which
+           are facts about when rather than about whether. */
+        available: bookable.has(at)
+      });
     }
   }
 
