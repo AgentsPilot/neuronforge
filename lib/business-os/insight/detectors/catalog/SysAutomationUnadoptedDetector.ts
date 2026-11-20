@@ -39,6 +39,33 @@ import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'SysAutomationUnadoptedDetector' });
 
+/**
+ * WHAT IS ACTUALLY WAITING, per gap.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The card reported `affectedEntityType: 'service'` whatever the work was,
+ * because that is what it was first written with, and the narrator builds the
+ * title from the entity type and the metric. So a client whose intake form had
+ * not come back was announced as "1 service waiting for automation action", and
+ * the recommendation read "activate the automation for the chase intake
+ * service" — three words of which are wrong and one of which is a noun this
+ * card never means.
+ *
+ * Read off the gap the automation clears, so a new automation cannot be added
+ * without answering the question. The default is deliberately the vague-but-
+ * true 'task' rather than a plausible guess.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const WAITING_ENTITY: Record<string, string> = {
+  enquiry_unanswered: 'contact',
+  invoice_unpaid: 'invoice',
+  /* The form belongs to a booking, and the booking is what the owner opens. */
+  intake_outstanding: 'booking',
+  meeting_upcoming: 'booking',
+  meeting_unmarked: 'booking',
+  quote_awaiting_client: 'proposal',
+};
+
 /** One automation the owner has never answered about, with work waiting. */
 interface Candidate {
   automationId: string;
@@ -209,7 +236,8 @@ export class SysAutomationUnadoptedDetector extends BaseDetector {
 
     return this.createDetectionResult({
       severity: this.definition.severityFn(totalWaiting, 0),
-      metricKey: 'operations.active_services',
+      /* Items in a queue, not a count of services. See `WAITING_ENTITY`. */
+      metricKey: 'operations.automation_backlog',
       currentValue: totalWaiting,
       currentValueUnit: 'count',
 
@@ -223,7 +251,11 @@ export class SysAutomationUnadoptedDetector extends BaseDetector {
       percentChange: 0,
       direction: 'above',
 
-      affectedEntityType: 'service',
+      /*
+       * The lead candidate's, because the count and the recommendation are
+       * both about it. Mixed queues are rare and the lead is the one named.
+       */
+      affectedEntityType: WAITING_ENTITY[lead.gapId] ?? 'task',
       affectedEntityIds: [],
       affectedCount: totalWaiting,
 
@@ -235,7 +267,13 @@ export class SysAutomationUnadoptedDetector extends BaseDetector {
       impactDirection: 'opportunity',
       impactPeriod: 'weekly',
 
-      narrationSubject: `${totalWaiting} ${totalWaiting === 1 ? 'thing is' : 'things are'} waiting that the platform could handle without being asked, the largest being ${lead.waiting} for ${lead.automationId}`,
+      /*
+       * Names the automation AS an automation. It used to end "... for
+       * chase_intake", and the narrator turned the bare id into "the chase
+       * intake service" — inventing a noun to hang it on. Saying what the thing
+       * is leaves nothing to infer.
+       */
+      narrationSubject: `${totalWaiting} ${totalWaiting === 1 ? 'thing is' : 'things are'} waiting that the platform could handle without being asked; the largest queue is ${lead.waiting} for the "${lead.automationId}" automation, which is switched off`,
 
       processParameters: {
         total_waiting: totalWaiting,
