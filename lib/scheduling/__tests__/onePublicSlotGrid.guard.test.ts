@@ -45,12 +45,32 @@ const WEBSITE_SLOTS = 'lib/scheduling/availableSlots.ts';
 const SMART_LINK = 'app/api/conversion/[userCode]/availability/route.ts';
 const SUBDOMAIN = 'app/api/website/scheduling/availability/route.ts';
 const PORTAL = 'app/api/book/manage/[token]/reschedule/route.ts';
+/* The busiest door of the lot: `/site/{subdomain}/book` and the widget block. */
+const BOOKING_PAGE = 'app/api/website/booking/availability/route.ts';
 const REPOSITORY = 'lib/repositories/SchedulingRepository.ts';
 
 describe('one rule decides how far apart the times are', () => {
   it('neither generator carries a step of its own any more', () => {
     expect(code(read(WEBSITE_SLOTS))).not.toMatch(/\+=\s*30\b/);
     expect(code(read(SMART_LINK))).not.toMatch(/slotInterval\s*=\s*30\b/);
+  });
+
+  it('the subdomain booking page carries no grid of its own either', () => {
+    /*
+     * It walked `currentMin += 30` — the FOURTH copy of that literal, on the
+     * endpoint behind `/site/{subdomain}/book` and the booking widget block.
+     * It was also the last one to read the diary AFTER laying its grid, which
+     * is why it could not pack: the read moves above the generation so
+     * `offeredStarts` knows what is taken while it places the starts.
+     */
+    const body = code(read(BOOKING_PAGE));
+
+    expect(body).not.toMatch(/currentMin \+= 30/);
+    expect(body).toContain('slotStepMinutes(durationMinutes, bufferMinutes)');
+    expect(body).toContain('offeredStarts');
+    expect(body).toContain('busySpansOn');
+    /* One read of the diary, before the slots are made, not one after. */
+    expect(body.match(/busyMeetings\(supabaseServer/g) ?? []).toHaveLength(1);
   });
 
   it.each([
@@ -239,6 +259,16 @@ describe('the gap between appointments reaches every public surface', () => {
     const call = code(read(PORTAL));
 
     expect(call).not.toContain('bookedBuffer()');
+  });
+
+  it('the subdomain booking page widens through it too', () => {
+    /* It had never applied the gap at all: it knew nothing about
+       `buffer_minutes`, so it offered an hour flush against an appointment
+       that both sibling pages withheld. */
+    const body = code(read(BOOKING_PAGE));
+
+    expect(body).toContain('busySpansOn({ date: dateStr, timezone, rows: busy, bufferMinutes })');
+    expect(body).toContain('buffer_minutes');
   });
 
   it('and the smart link widens through the SHARED conversion', () => {
