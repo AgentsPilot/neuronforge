@@ -152,7 +152,16 @@ export type OperationsMetricKey =
    * Repeatedly changing the same setting is not productive work, it is someone
    * failing to get the result they want.
    */
-  | 'operations.settings_churn';
+  | 'operations.settings_churn'
+  /**
+   * Work sitting in a queue an automation would clear, counted in items.
+   *
+   * Not a count of services, which is what it used to borrow
+   * (`operations.active_services`). The narrator reads the metric and the
+   * entity type to write the title, so borrowing one produced "1 service
+   * waiting for automation action" about a client's intake form.
+   */
+  | 'operations.automation_backlog';
 
 // Pricing metrics
 export type PricingMetricKey =
