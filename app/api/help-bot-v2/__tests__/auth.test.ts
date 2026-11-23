@@ -95,7 +95,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   fromCalls.length = 0;
   eqCalls.length = 0;
-  process.env.SUPABASE_URL = 'https://example.supabase.co';
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role';
   process.env.GROQ_API_KEY = 'test-groq-key';
   process.env.OPENAI_API_KEY = 'test-openai-key';

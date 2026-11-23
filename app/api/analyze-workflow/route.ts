@@ -48,7 +48,7 @@ const logger = createLogger({ module: 'API', route: '/api/analyze-workflow' });
 
 // Initialize Supabase service client for analytics
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 

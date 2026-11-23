@@ -229,7 +229,13 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   config('NEXT_PUBLIC_SUPABASE_URL', 'database', 'Address of the Supabase project; every database, auth and storage call goes here.', 'url', exp('R', 'R', 'R')),
   secret('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'database', 'The browser\'s key to Supabase; what it can reach is limited by row-level security.', exp('R', 'R', 'R')),
   secret('SUPABASE_SERVICE_ROLE_KEY', 'database', 'The server\'s full-access key, which bypasses row-level security; used only by server code that must act across users.', exp('R', 'R', 'R')),
-  config('SUPABASE_URL', 'database', 'A server-only setting for the Supabase address, read by older server clients; must name the same project as the public address.', 'url', exp('R', 'R', 'R')),
+  /* PROD-1a (D-5, C-1): retired. No code reads it any more, so it is optional
+     everywhere while it is being removed from each environment; the next
+     PROD-1 slice makes it forbidden ('X'). Kept so the page can still show it
+     and run the same-project check on it. */
+  config('SUPABASE_URL', 'database', 'Retired: a second Supabase address that no code reads any more; remove it. While it is still set it must name the same project as the public address.', 'url', OPTIONAL, {
+    consumedBy: { by: 'environment-page', note: 'Retired; read only by the admin Environment page, which reports it and checks it names the same project as the public address.' },
+  }),
   config('SUPABASE_MAX_CONCURRENCY', 'database', 'Caps how many database requests one server instance sends at once; unset uses the built-in limit.', 'integer'),
   config('SUPABASE_REQUEST_TIMEOUT_MS', 'database', 'How long a database request may take before it is abandoned, in milliseconds; unset uses the built-in timeout.', 'integer'),
 

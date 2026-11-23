@@ -57,7 +57,7 @@ export async function brokenConnections(userId: string): Promise<BrokenConnectio
      *
      * `PluginManagerV2` reads the plugin definitions and the environment at
      * import time, and a module-scope import of it has taken out a deploy
-     * before — `lib/pilot` throws without `SUPABASE_URL`, which is why the
+     * before — `lib/pilot` throws at import without the Supabase address, which is why the
      * scheduled-agents cron imports its runner lazily too. This module is
      * imported by the briefing, which is imported by a cron route.
      */

@@ -174,6 +174,9 @@ describe('environment catalogue', () => {
       ['VERCEL_GIT_COMMIT_REF', 'environment-page'],
       ['VERCEL_GIT_COMMIT_SHA', 'environment-page'],
       ['NODE_TLS_REJECT_UNAUTHORIZED', 'platform'],
+      // PROD-1a (C-1): the retired server-only Supabase address. No code reads
+      // it any more; the page still reports it and checks it names the same project.
+      ['SUPABASE_URL', 'environment-page'],
       ['QSTASH_CURRENT_SIGNING_KEY', 'sdk'],
       ['QSTASH_NEXT_SIGNING_KEY', 'sdk'],
     ]);

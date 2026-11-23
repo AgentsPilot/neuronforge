@@ -120,7 +120,7 @@ const { data } = await supabaseServer
 // Admin operations only
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 
-// Will throw if SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing
+// Will throw if NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing
 const { data } = await supabaseAdmin
   .from('system_config')
   .select('*')
@@ -167,7 +167,14 @@ Error: You're importing a component that needs next/headers
 
 | Variable | Used By | Exposure |
 |----------|---------|----------|
-| `NEXT_PUBLIC_SUPABASE_URL` | All clients | Public (safe) |
+| `NEXT_PUBLIC_SUPABASE_URL` | All clients, including Admin | Public (safe) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Client, ServerAuth | Public (safe) |
-| `SUPABASE_URL` | Admin | Server only |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server, Admin | Server only (secret!) |
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|---|---|---|
+| 2026-11-23 | One Supabase address variable (PROD-1a) | The admin client now reads `NEXT_PUBLIC_SUPABASE_URL` like every other client. The separate server-only address variable is retired: nothing reads it, and `lib/__tests__/envConfigHardening.guard.test.ts` (G-4) keeps it that way |
