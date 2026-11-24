@@ -132,6 +132,11 @@ jest.mock('@/lib/repositories/PaymentRepository', () => ({
 jest.mock('@/lib/stripe/StripeService', () => ({
   getStripeService: () => ({
     listPaidInvoices: async () => ({ invoices: [], hasMore: false }),
+    /* The settlement check asks a second question now ("is Stripe holding a
+       bill we cannot see"), so this listing has to be stubbed too. Absent, it
+       throws, the check flags `listingFailed`, and the run is recorded
+       `partial` -- which is right, and not what this test is measuring. */
+    listOpenInvoices: async () => ({ invoices: [], hasMore: false }),
     listBusinessOsPlanEvents: async () => ({ items: [], complete: true }),
     listBusinessOsSubscriptionsByPrice: async () => ({ items: [], complete: true }),
   }),

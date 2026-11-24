@@ -145,9 +145,29 @@ describe('the client route refuses only a settled session', () => {
       /settledStatus === 'no_show' &&\s*!session\?\.rebook_invited_at/
     );
 
-    /* And never unconditionally: a bare `no_show` in the settled test would be
-       the old blanket refusal wearing the new rule's clothes. */
-    expect(client).not.toMatch(/settledStatus === 'no_show'(?!\s*&&)/);
+    /*
+     * And never unconditionally: a bare `no_show` DECIDING the refusal would
+     * be the old blanket refusal wearing the new rule's clothes.
+     *
+     * "Deciding" is the operative word. This forbade any `no_show` not
+     * followed by `&&`, which also caught the ternary that picks the error
+     * WORDING — "That appointment was marked as missed. Ask us to arrange
+     * another time." instead of telling a client their appointment was
+     * cancelled. That is a message, not a decision, and refusing it pushed
+     * the code back towards the wrong sentence.
+     *
+     * So the shape allowed is: paired with the invitation (`&&`), or feeding a
+     * ternary (`?`) that chooses what to say. Anything else — a bare
+     * comparison ending the expression, as the blanket refusal did — still
+     * fails.
+     */
+    expect(client).not.toMatch(/settledStatus === 'no_show'(?!\s*(&&|\?))/);
+
+    /* The refusal itself is paired at BOTH sites, the read and the write, so
+       neither can drift to the blanket rule on its own. */
+    expect(
+      client.match(/settledStatus === 'no_show' &&\s*!session\?\.rebook_invited_at/g)
+    ).toHaveLength(2);
   });
 
   it('reads the invitation from the session row, or the guard is always true', () => {

@@ -91,8 +91,18 @@ describe('changing what an agent was told', () => {
     const handler = ROUTE.slice(ROUTE.indexOf("if (validated.action === 'configure')"));
     expect(handler).toMatch(/action: 'AUTOMATION_AGENT_RECONFIGURED'/);
     expect(handler).toMatch(/details: \{ fields: Object\.keys\(validated\.values \?\? \{\}\)\.sort\(\) \}/);
-    /* The values themselves must not reach the entry. */
-    expect(handler).not.toMatch(/details: \{[^}]*values/);
+    /*
+     * The values themselves must not reach the entry.
+     *
+     * Stated as "no `values:` property and no spread of them", NOT as "the
+     * word `values` does not appear after `details: {`". That first version
+     * contradicted the assertion above it: the required line reads
+     * `Object.keys(validated.values ?? {})`, so the word is necessarily there,
+     * and the pair could never both hold. What matters is whether the ANSWERS
+     * become a value in the entry, which is what these two forbid.
+     */
+    expect(handler).not.toMatch(/details: \{[^}]*\bvalues:/);
+    expect(handler).not.toMatch(/details: \{[^}]*\.\.\.validated\.values/);
   });
 
   it('bounds what can be sent, without pretending to know the questions', () => {
@@ -112,7 +122,10 @@ describe('the row that offers it', () => {
   });
 
   it('shows no control on an agent that asks nothing', () => {
-    expect(CARD).toMatch(/\{agent\.inputs\.length > 0 && onReconfigure && \(/);
+    /* `inputs` is declared `AgentInput[]` and arrives undefined, which threw
+       from the render and took the whole card down, so every read of it is
+       guarded. A missing list and an empty one mean the same thing here. */
+    expect(CARD).toMatch(/\{\(agent\.inputs\?\.length \?\? 0\) > 0 && onReconfigure && \(/);
   });
 
   it('sends the mail channel to its own editor instead', () => {
