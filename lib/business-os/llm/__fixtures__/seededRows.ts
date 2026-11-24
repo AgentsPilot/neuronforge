@@ -62,4 +62,7 @@ export const SEEDED_ROWS: Record<BosLlmArea, Record<string, unknown>> = {
   onboarding: { enabled: true, provider: 'openai', model: 'gpt-4o', temperature: null },
   // No temperature key at all: image generation does not take one.
   images: { enabled: true, provider: 'openai', model: 'gpt-image-1' },
+  /* The decline draft. Warmer than the reporting calls, for the reason given
+     where its policy lives: it is a person being told no about their money. */
+  payments: { enabled: true, provider: 'openai', model: 'gpt-4o-mini', temperature: 0.6 },
 };

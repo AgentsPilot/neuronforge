@@ -30,6 +30,12 @@ import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+/*
+ * The consultation is written through the REPOSITORY, not around it. See the
+ * note at each insert below: `syncMeeting` is private to it, and a booking born
+ * without its `scheduling_meetings` row holds an hour nothing can see.
+ */
+import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { sendQuoteReceivedEmail } from '@/lib/services/QuoteRequestEmailService';
@@ -419,25 +425,56 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const { data: booking, error: bookingError } = await supabaseServer
-        .from('scheduling_bookings')
-        .insert({
-          user_id: ownerId,
-          service_id: service.id,
-          contact_id: contactId,
-          start_time: start.toISOString(),
-          end_time: end.toISOString(),
-          timezone: data.timezone || 'UTC',
-          status: 'confirmed',
-          booking_source: 'quote_request',
-          // The client's own words about the job, where the owner will look
-          // for them when preparing the quote.
-          notes: data.note?.trim() || null,
-        })
-        .select('id')
-        .single();
+      /*
+       * ── THROUGH THE REPOSITORY, NOT AROUND IT ──────────────────────────────
+       *
+       * This inserted with `supabaseServer` directly, and `syncMeeting()` is
+       * private to `SchedulingRepository` — it runs only from its `create()`
+       * and `update()`. So every consultation booked by a quote request was
+       * born with NO `scheduling_meetings` row.
+       *
+       * `busyMeetings()` reads that table and nothing else, so the hour the
+       * client had just been promised was invisible to every availability
+       * surface: the booking page went on offering it, and the slot suggester
+       * recommended it. Only the database's exclusion constraint stood in the
+       * way, which the owner meets as a failed save rather than as a slot that
+       * was never offered.
+       *
+       * It also cost the journey its history. The meeting row is materialised
+       * lazily, so the FIRST reschedule created it at the new time with nothing
+       * to stamp `moved` — the original hour was never a row, and the card drew
+       * one time where there should have been "first time → current time".
+       * Observed on a live quote request moved from 10:00 to 11:00: one row,
+       * `moved_by: owner`, no superseded hour, no history on the card.
+       *
+       * This is the SAME fault and the SAME fix that
+       * `app/api/website/booking/create/route.ts` already carries — measured
+       * there on 2026-10-26 across 82 website bookings, 20 of them with no
+       * meeting at all. This route was its unconverted sibling.
+       *
+       * Safe to route through: `create()` is this insert plus `syncMeeting`,
+       * `booking.created` comes from a database trigger so nothing is emitted
+       * twice, and it satisfies CLAUDE.md rule 1.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const { data: booking, error: bookingError } = await schedulingBookingRepository.create({
+        user_id: ownerId,
+        service_id: service.id,
+        contact_id: contactId,
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        timezone: data.timezone || 'UTC',
+        status: 'confirmed',
+        booking_source: 'quote_request',
+        // The client's own words about the job, where the owner will look
+        // for them when preparing the quote.
+        notes: data.note?.trim() || null,
+      });
 
-      if (bookingError) {
+      /* No error AND no row is still a failure: `RepositoryResult` does not
+         promise one implies the other, and reading `booking.id` there would
+         throw where this branch is meant to log and carry on. */
+      if (bookingError || !booking) {
         /*
          * The lead is already saved, so the request is not lost — but the
          * meeting is, and that is worth shouting about: the client believes
@@ -479,23 +516,27 @@ export async function POST(request: NextRequest) {
        * journey for a quoted service has no date step to want one.
        * ─────────────────────────────────────────────────────────────────────
        */
-      const { data: booking, error: bookingError } = await supabaseServer
-        .from('scheduling_bookings')
-        .insert({
-          user_id: ownerId,
-          service_id: service.id,
-          contact_id: contactId,
-          start_time: null,
-          end_time: null,
-          timezone: data.timezone || null,
-          status: 'pending',
-          booking_source: 'quote_request',
-          notes: data.note?.trim() || null,
-        })
-        .select('id')
-        .single();
+      /*
+       * Through the repository for the same reason as the branch above, even
+       * though this one holds no hour: `syncMeeting` returns early when
+       * `start_time` is null, so a quote with no agreed time still gets no
+       * meeting — correctly — and the route keeps ONE way of writing a
+       * booking rather than two that must be remembered separately.
+       */
+      const { data: booking, error: bookingError } = await schedulingBookingRepository.create({
+        user_id: ownerId,
+        service_id: service.id,
+        contact_id: contactId,
+        start_time: null,
+        end_time: null,
+        timezone: data.timezone || undefined,
+        status: 'pending',
+        booking_source: 'quote_request',
+        notes: data.note?.trim() || null,
+      });
 
-      if (bookingError) {
+      /* As above: no error and no row is still no booking. */
+      if (bookingError || !booking) {
         /* The lead and the activity below still land, so the request is not
            lost — but the owner's list will not show it, which is the fault
            this branch exists to fix. Loud, and not fatal. */

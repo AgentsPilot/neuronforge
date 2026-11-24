@@ -43,6 +43,9 @@ export const BOS_LLM_AREAS = [
   'leads',
   'onboarding',
   'images',
+  /* Money the business is giving back or asking for. Today: the message a
+     client receives when their refund request is declined. */
+  'payments',
 ] as const;
 export type BosLlmArea = (typeof BOS_LLM_AREAS)[number];
 
@@ -69,6 +72,18 @@ export const BOS_LLM_CALLS = {
     'features_content',
   ],
   intake: ['form_generation', 'question_inference'],
+  payments: [
+    /*
+     * The note a client gets when the owner declines their refund request.
+     *
+     * Drafted rather than templated because this is the one message on the
+     * card that has to be specific: the client asked for their own money back
+     * and is being told no, and a form letter reads as contempt. The owner
+     * reviews and edits it before it goes — the model writes the first draft,
+     * never the final word.
+     */
+    'refund_decline_draft',
+  ],
   leads: [
     'reply_recommendation',
     /*
@@ -163,6 +178,8 @@ export const BOS_LEGACY_FEATURES = {
    */
   onboarding: [],
   images: [],
+  /* New in this change: nothing was ever written under another name. */
+  payments: [],
 } as const satisfies Record<BosLlmArea, readonly string[]>;
 
 /** Every legacy Business OS feature value, in area order. */

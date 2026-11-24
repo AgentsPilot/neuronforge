@@ -27,7 +27,7 @@ import {
 } from '../settlementGapCheck';
 
 const NOW = new Date('2026-10-05T12:00:00.000Z');
-/** With NOW above: ends 11:00 (one hour of grace), starts 48 hours before that. */
+/** With NOW above: ends 11:00 (one hour of grace), starts WINDOW_MS before that. */
 const WINDOW = settlementWindow(NOW);
 
 // A pino logger with only the four methods this module calls. `any` because the
@@ -101,7 +101,7 @@ describe('the window', () => {
     expect(NOW.getTime() - Date.parse(WINDOW.end)).toBeGreaterThanOrEqual(GAP_CHECK_LIMITS.RETRY_GRACE_MS);
   });
 
-  it('is 48 hours wide', () => {
+  it('is as wide as WINDOW_MS says, so widening the constant widens the sweep', () => {
     expect(Date.parse(WINDOW.end) - Date.parse(WINDOW.start)).toBe(GAP_CHECK_LIMITS.WINDOW_MS);
   });
 

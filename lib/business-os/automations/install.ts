@@ -259,6 +259,27 @@ export interface InstalledAutomation {
   stopAfter: ScheduleInterval | null;
   cadenceRange: IntervalRange;
   stopRange: IntervalRange;
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THIS AGENT ASKED, AND WHAT THE OWNER ANSWERED.
+   *
+   * The same pair the install dialog collected. Carried on the installed row
+   * so the answers can be CHANGED, which until now they could not: an owner
+   * whose leads moved to a different spreadsheet, or who wanted the
+   * receptionist to read a different mailbox, had one route — remove the agent
+   * and adopt it again — and that loses its history and its schedule.
+   *
+   * The same gap the schedule controls closed, for the other half of the
+   * dialog. See `controlSchema`'s note on `action: 'schedule'`.
+   *
+   * `inputs` is empty for an agent that asks nothing, and the surface shows no
+   * control in that case. `inputValues` is empty for an agent installed before
+   * its answers were saved, which is the state the dialog opens blank in —
+   * better than hiding the control and leaving them stuck.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  inputs: NonNullable<AutomationAgent['inputSchema']>;
+  inputValues: Record<string, unknown>;
 }
 
 /**
@@ -595,6 +616,34 @@ export async function ensureEssentialAutomations(userId: string): Promise<void> 
   }
 }
 
+/**
+ * What each of these agents was configured with.
+ *
+ * One read per agent, run together rather than in sequence — an owner has a
+ * handful of agents, and `agent_configurations` has no bulk accessor. A read
+ * that fails is an empty map rather than a thrown list: the row is still worth
+ * showing, and the dialog opening blank is a recoverable state while a missing
+ * list is not.
+ */
+async function answersFor(
+  userId: string,
+  agentIds: string[]
+): Promise<Map<string, Record<string, unknown>>> {
+  const pairs = await Promise.all(
+    agentIds.map(async agentId => {
+      try {
+        const { data } = await agentConfigurationRepository.getInputValues(agentId, userId);
+        return [agentId, (data?.input_values ?? {}) as Record<string, unknown>] as const;
+      } catch (error) {
+        logger.warn({ err: error, userId, agentId }, 'Could not read an agent\'s saved answers');
+        return [agentId, {} as Record<string, unknown>] as const;
+      }
+    })
+  );
+
+  return new Map(pairs);
+}
+
 export async function installedAutomations(userId: string): Promise<InstalledAutomation[]> {
   /*
    * BEFORE the read, so a business seeing this list for the first time sees
@@ -641,6 +690,9 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
 
   /* One read for the list, like the failures above — not per row. */
   const outcomeByAgent = await lastOutcomes((data || []).map(a => a.id));
+
+  /* And what each was configured with, for the same reason. */
+  const answersByAgent = await answersFor(userId, (data || []).map(a => a.id));
 
   /*
    * One connection read for the whole list, like the dictionary above. Per row
@@ -691,6 +743,12 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
 
       const base = {
         agentId: agent.id,
+        /*
+         * The questions and the answers travel together on every row, so a
+         * surface never has to know which branch below built it. An agent that
+         * asks nothing carries an empty list and shows no control.
+         */
+        inputValues: answersByAgent.get(agent.id) ?? {},
         plugins: ((agent as { plugins_required?: string[] | null }).plugins_required ?? []).filter(
           /* The runtime is granted what the plan calls; an empty entry is noise
              on a row, not information. */
@@ -917,6 +975,11 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
             (stopAfterDays ? { every: stopAfterDays, unit: 'days' as const } : null),
           cadenceRange: SCHEDULE_RANGE,
           stopRange: STOP_RANGE,
+          /* What it asked at install, so the same questions can be reopened.
+             From the CATALOGUE rather than the stored copy: a question added
+             or reworded since should be asked in its current form, and the
+             saved answers key by name so they still land. */
+          inputs: automation?.inputSchema ?? [],
         };
       }
 
@@ -975,6 +1038,21 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
             stopInterval ?? { every: INBOX_STOP_AFTER_DEFAULT, unit: 'days' as const },
           cadenceRange: SCHEDULE_RANGE,
           stopRange: STOP_RANGE,
+          /*
+           * NOTHING TO REOPEN HERE, and it is worth saying why rather than
+           * leaving an empty list looking like an oversight.
+           *
+           * This row is the mail CHANNEL, not a catalogue agent: it has no
+           * entry to take questions from — see the line above about its
+           * subject being measured from the owner's own mail — so there is no
+           * install dialog to reopen. What it watches is changed where it was
+           * decided, on the channel's own card, and which mailbox it reads
+           * follows the plugin connection.
+           *
+           * The catalogue's `draft_client_replies` is a different row and goes
+           * through the adopted branch above, which does carry its questions.
+           */
+          inputs: [],
         };
       }
 
@@ -983,6 +1061,10 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
         ...base,
         automationId: '',
         family: 'own',
+        /* Nothing to reopen: an agent the owner built themselves was never
+           asked a catalogue question, and its own inputs belong to the builder
+           that made it. */
+        inputs: [],
         name: agent.agent_name,
         /* Whatever they wrote when they built it, which may be nothing. */
         description: agent.description || '',
@@ -2456,6 +2538,88 @@ async function nextDueOnResume(userId: string, agentId: string): Promise<string 
  * still on the screen.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * Change what an installed agent was told, without reinstalling it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE SAME DOOR AS EVERY OTHER CONTROL. `isControllableAgent` is the gate
+ * pause, resume and run already use: this owner's own scheduled agent, or
+ * nothing happens. The id arrives from a browser and is never trusted for more
+ * than a scoped lookup.
+ *
+ * ONLY THE QUESTIONS THIS AGENT ASKS. The catalogue's `inputSchema` is the
+ * allow-list, so a key nobody asked for is dropped rather than stored — the
+ * row is read by the runner and handed to a plan as variables, and an
+ * arbitrary key from a request body is exactly how that becomes a place to
+ * park anything. Dropped quietly on purpose: the owner sent what the dialog
+ * drew, and the dialog draws the schema.
+ *
+ * A REQUIRED ANSWER MAY NOT BE ERASED. Blanking the spreadsheet id leaves an
+ * agent that runs on a schedule and fails at its first step, which is worse
+ * than refusing the change — the owner would have to work out from a failed
+ * run what the dialog could have told them at the time.
+ *
+ * MERGED, NOT REPLACED. An owner who opens the dialog to change one answer
+ * must not lose the others to a field the dialog did not draw this time.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function configureAutomation(
+  userId: string,
+  agentId: string,
+  values: Record<string, string>
+): Promise<{ ok: true } | { ok: false; reason: 'not_found' | 'incomplete' }> {
+  if (!(await isControllableAgent(userId, agentId))) {
+    logger.warn({ userId, agentId }, 'Refused to reconfigure: not one of this owner\'s scheduled agents');
+    return { ok: false, reason: 'not_found' };
+  }
+
+  const { data: agent } = await agentRepository.findById(agentId, userId);
+  if (!agent) return { ok: false, reason: 'not_found' };
+
+  const { automationById } = await import('./catalog');
+  const adoptedId = (
+    (agent as { agent_config?: Record<string, unknown> | null }).agent_config
+      ?.business_os_automation as { id?: string } | undefined
+  )?.id;
+  const schema = (adoptedId ? automationById(adoptedId)?.inputSchema : undefined) ?? [];
+
+  if (schema.length === 0) {
+    logger.info({ userId, agentId, adoptedId }, 'Refused to reconfigure: this agent asks nothing');
+    return { ok: false, reason: 'not_found' };
+  }
+
+  const asked = new Set(schema.map(field => field.name));
+  const accepted: Record<string, string> = {};
+  for (const [name, value] of Object.entries(values)) {
+    if (asked.has(name)) accepted[name] = value.trim();
+  }
+
+  const { data: existing } = await agentConfigurationRepository.getInputValues(agentId, userId);
+  const merged = { ...(existing?.input_values ?? {}), ...accepted };
+
+  const missing = schema
+    .filter(field => field.required)
+    .filter(field => String((merged as Record<string, unknown>)[field.name] ?? '').trim() === '')
+    .map(field => field.name);
+
+  if (missing.length > 0) {
+    logger.info({ userId, agentId, missing }, 'Refused to reconfigure: a required answer would be left blank');
+    return { ok: false, reason: 'incomplete' };
+  }
+
+  const { error } = await agentConfigurationRepository.saveInputValues(agentId, userId, merged, {
+    inputSchema: schema,
+  });
+
+  if (error) {
+    logger.error({ err: error, userId, agentId }, 'Could not save the agent\'s new answers');
+    return { ok: false, reason: 'not_found' };
+  }
+
+  logger.info({ userId, agentId, fields: Object.keys(accepted).sort() }, 'Agent reconfigured');
+  return { ok: true };
+}
+
 export async function updateAgentSchedule(
   userId: string,
   agentId: string,

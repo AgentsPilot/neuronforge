@@ -274,6 +274,12 @@ export const en = {
     'gaps.reply.discard': 'Discard draft',
     'gaps.reply.mark_handled': 'Mark as handled',
     'gaps.refund.decline': 'Decline',
+    /* The second tap. It names the consequence, because the first tap is the
+       one somebody presses by accident. */
+    'gaps.refund.decline_confirm': 'Yes, tell them no',
+    'gaps.refund.decline_message': 'What they will be told',
+    'gaps.refund.decline_drafting': 'Writing something you can edit…',
+    'gaps.refund.decline_message_empty': 'Leave this empty to tell them nothing.',
     'gaps.refund.mark_handled': 'I handled it',
     'gaps.refund.badge': 'Refund request',
     /* The client in one line, under the headline: is this a pattern, how
@@ -807,6 +813,11 @@ export const en = {
     'automation.switch_on': 'Switch it on',
     'automation.works_alongside': 'Works alongside your {name}',
     'automation.inputs_intro': 'A couple of things it needs to know first.',
+    /* The same dialog, reopened on an agent that already runs. */
+    'automation.inputs_intro_edit': 'Change what it works from. It uses this on its next run.',
+    'automation.change_inputs': 'Change what it works from',
+    /* The mail channel: a sender and a subject, not a dialog's questions. */
+    'automation.change_watch': 'Change what it watches',
     'automation.input_choose': 'Choose one',
     'automation.cancel': 'Cancel',
     'automation.connected_ok': '{plugin} is connected',
@@ -3301,6 +3312,9 @@ export const en = {
     'crm.booking.package.sessions_off': '{count} cancelled',
     'crm.booking.package.already_refunded': '{amount} refunded',
     'crm.booking.package.already_collected': '{amount} collected',
+    'crm.booking.package.foot_refunded': 'Refunded',
+    'crm.booking.package.foot_cancelled': 'Cancelled',
+    'crm.booking.package.foot_sessions': '{count} sessions',
     'crm.booking.package.meetings': 'The {count} meetings in this package',
     'crm.booking.quoted.meeting_held': 'Meeting held',
 
@@ -3764,6 +3778,10 @@ export const en = {
     'scheduling.unknown_service': 'Unknown Service',
     'scheduling.no_bookings': 'No bookings yet',
     'scheduling.no_bookings_desc': 'Create your first booking to get started',
+        'scheduling.loading_week': 'Loading this week…',
+    'scheduling.loading_week_desc': 'Fetching your appointments for these dates.',
+    'scheduling.all_filtered': 'Nothing shown for this week',
+    'scheduling.all_filtered_desc': '{count} appointments are hidden by your filters. Switch one back on above to see them.',
     'scheduling.no_services': 'No services yet',
     'scheduling.no_services_desc': 'Create your first service to start accepting bookings',
     'scheduling.day.mon': 'Mon',
@@ -4651,6 +4669,11 @@ export const en = {
     'payments.refund.amount_placeholder': '0.00',
     'payments.refund.max_info': 'Maximum: {amount}',
     'payments.refund.reason_label': 'Reason',
+    /* The partial case, where this box is the client's explanation and not
+       the ledger's. See the note at the field in `RefundModal`. */
+    'payments.refund.partial_reason_label': 'Why only part',
+    'payments.refund.partial_reason_needed': 'Say it in your own words — the client reads this, and a category on its own does not explain what the rest was for.',
+    'payments.refund.partial_reason_hint': 'The client reads this with the refund. Say what the rest was for.',
     'payments.refund.reason_placeholder': 'Reason for refund...',
     'payments.refund.notify_contact': 'Send notification to contact',
     'payments.refund.delete_booking_label': 'Cancel the booking as well',
@@ -4666,7 +4689,7 @@ export const en = {
     'payments.refund.stop_plan_label': 'Stop the payment plan',
     'payments.refund.stop_plan_on': 'The {count} remaining payments will be cancelled.',
     'payments.refund.stop_plan_off': 'The client will still be charged {count} more times.',
-    'payments.refund.fee_kept': 'Stripe keeps the {fee} processing fee on a refund, so this costs you {fee}.',
+    'payments.refund.fee_kept': 'The {fee} processing fee from the original payment is not returned, whether you refund all of it or part of it.',
     'payments.refund.cancel': 'Cancel',
     'payments.refund.processing': 'Processing...',
     'payments.refund.submit_button': 'Refund {amount}',
@@ -5016,6 +5039,11 @@ export const en = {
     'scheduling.calendar_sync.active_badge': 'in use for sync',
     'scheduling.calendar_sync.disconnect_stops_sync': 'Sync is using this calendar, so disconnecting also turns sync off and removes the busy times it imported.',
     'scheduling.busy': 'Busy',
+    'scheduling.busy_untitled': 'Untitled event',
+    'scheduling.busy_from_google': 'From your Google Calendar',
+    'scheduling.busy_from_outlook': 'From your Outlook calendar',
+    'scheduling.busy_hidden': 'Booked',
+    'scheduling.busy_hidden_hint': 'One of your appointments is at this hour. Your filters above are hiding it.',
     // A day or an hour the owner recorded as closed. Drawn on the calendar and
     // named in the booking dialog's warning.
     'scheduling.closed': 'Closed',
@@ -5640,6 +5668,10 @@ export const en = {
     'scheduling.cancel_meeting.outcome_quote_off': 'The client is told no quote will follow.',
     'scheduling.cancel_meeting.outcome_replaced': 'A replacement is booked for {date}, and named in the same email.',
     'scheduling.cancel_meeting.outcome_not_replaced': 'The package keeps its remaining sessions only.',
+    'scheduling.cancel_meeting.outcome_released': 'The {amount} owing for this session is cancelled.',
+    'scheduling.cancel_meeting.outcome_replacement_billed': 'The replacement is billed {amount}, like the sessions beside it.',
+    'scheduling.cancel_meeting.outcome_replacement_paid': 'The replacement is not billed again: the hour it stands in for is already paid for.',
+    'scheduling.cancel_meeting.outcome_replacement_free': 'The replacement is not billed: this block is paid for as a whole.',
     /* Shown where the replacement question will be, while the offer is
        still being looked up — so the held confirm button has a reason. */
     'scheduling.cancel_meeting.replace_checking': 'Checking whether a replacement can be booked…',

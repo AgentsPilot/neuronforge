@@ -312,6 +312,33 @@ export class RefundRequestRepository {
    * understand.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * One request, scoped to the owner.
+   *
+   * The id always arrives from a browser, so `user_id` is what proves it is
+   * theirs to read — never the id on its own. Returns `null` data with no
+   * error when nothing matches, because "not this business's request" and "no
+   * such request" are the same answer to the caller and neither is a fault.
+   */
+  async findById(
+    requestId: string,
+    userId: string
+  ): Promise<RefundRequestResult<RefundRequestRow | null>> {
+    const { data, error } = await this.client
+      .from('refund_requests')
+      .select('*')
+      .eq('id', requestId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) {
+      logger.error({ err: error, requestId, userId }, 'Could not read a refund request');
+      return { data: null, error: new Error(error.message) };
+    }
+
+    return { data: (data as RefundRequestRow) ?? null, error: null };
+  }
+
   async listForContact(
     contactId: string,
     userId: string,

@@ -15,6 +15,7 @@ import type {
   StepOutput,
   LoopStep,
   ScatterGatherStep,
+  StepEmitter,
 } from './types';
 import { ExecutionError } from './types';
 import { ExecutionContext } from './ExecutionContext';
@@ -30,11 +31,21 @@ const logger = createLogger({ module: 'ParallelExecutor', service: 'workflow-pil
  * Step lifecycle event emitter interface
  * Used to emit real-time progress events for inner loop/scatter steps
  */
-export interface StepEmitter {
-  onStepStarted?: (stepId: string, stepName?: string) => void;
-  onStepCompleted?: (stepId: string, stepName?: string) => void;
-  onStepFailed?: (stepId: string, stepName: string | undefined, error: string) => void;
-}
+/**
+ * ONE DEFINITION, RE-EXPORTED — not a second one that nearly matches.
+ *
+ * This declared its own `StepEmitter` whose callbacks took `stepName?: string`
+ * while `types.ts` declares the same name with `stepName: string`. A function
+ * that requires a name cannot stand in for one that may be called without it,
+ * so `WorkflowPilot` could not pass its own emitter here: two call sites were
+ * type errors, and the only reason the pilot ran at all is that
+ * `next.config.js` ignores them.
+ *
+ * Re-exported rather than deleted so the existing
+ * `import { StepEmitter } from './ParallelExecutor'` call sites keep working,
+ * and there is now one shape rather than two that drift.
+ */
+export type { StepEmitter } from './types';
 
 export class ParallelExecutor {
   private stepExecutor: StepExecutor;

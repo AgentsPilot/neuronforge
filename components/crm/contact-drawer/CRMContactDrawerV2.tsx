@@ -3535,6 +3535,29 @@ export function CRMContactDrawerV2({
     options: string[];
     /** Per-session blocks bill the replacement; upfront ones already paid. */
     billsPerSession: boolean;
+    /**
+     * WHAT THIS COSTS, so the dialog can say it before the owner commits.
+     *
+     * `billsPerSession` is the SALE's shape and not the answer: a replacement
+     * for an hour already paid up the chain carries no stage however the block
+     * is sold. The route decides that with `replacementStageOutlook` — the same
+     * function the write uses — and sends the result here, so the sentence and
+     * the write cannot disagree.
+     *
+     * Null where the route said nothing, which is the add-a-meeting offer: no
+     * session is being called off, so there is no money to describe.
+     */
+    money: {
+      /** The replacement will carry a stage of its own. */
+      replacementBills: boolean | null;
+      replacementAmount: number | null;
+      replacementCurrency: string | null;
+      /** Why not, for the words. `already_paid`, `upfront`, … */
+      replacementReason: string | null;
+      /** What the cancellation itself voids: this hour's own unbilled stage. */
+      releasedAmount: number | null;
+      releasedCurrency: string | null;
+    } | null;
   } | null>(null);
   /**
    * Book the replacement the owner just agreed to.
@@ -6234,6 +6257,17 @@ export function CRMContactDrawerV2({
                               ? offer.proposedStarts.map(String)
                               : [String(offer.proposedStart)],
                             billsPerSession: offer.billsPerSession === true,
+                            money: {
+                              replacementBills:
+                                typeof offer.replacementBills === 'boolean' ? offer.replacementBills : null,
+                              replacementAmount:
+                                typeof offer.replacementAmount === 'number' ? offer.replacementAmount : null,
+                              replacementCurrency: offer.replacementCurrency ?? null,
+                              replacementReason: offer.replacementReason ?? null,
+                              releasedAmount:
+                                typeof offer.releasedAmount === 'number' ? offer.releasedAmount : null,
+                              releasedCurrency: offer.releasedCurrency ?? null,
+                            },
                           });
                         }
                       } catch (err) {
@@ -6386,6 +6420,9 @@ export function CRMContactDrawerV2({
                             ? offer.proposedStarts.map(String)
                             : [String(offer.proposedStart)],
                           billsPerSession: offer.billsPerSession === true,
+                          /* No session was named, so the route described no
+                             money and there is none to show. */
+                          money: null,
                         });
                       }
                     } catch (err) {
@@ -7670,6 +7707,9 @@ export function CRMContactDrawerV2({
               }
             : null
         }
+        /* What it costs, as the offer reported it. See the prop's note: the
+           dialog says nothing when this is null, which is the old behaviour. */
+        money={replacementOffer?.money ?? null}
         onConfirm={async ({ proposalContinues, addReplacement, replacementStart }) => {
           const bookingId = pendingMeetingCancel?.bookingId;
           if (!bookingId) return;

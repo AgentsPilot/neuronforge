@@ -22,7 +22,7 @@
  */
 
 import { Fragment, useCallback, useEffect, useState } from 'react';
-import { Bot, Check, ChevronLeft, ChevronRight, FastForward, Loader2, Pause, Play, Trash2 } from 'lucide-react';
+import { Bot, Check, ChevronLeft, ChevronRight, FastForward, Loader2, Pause, Play, SlidersHorizontal, Trash2 } from 'lucide-react';
 
 import { PluginIcon } from '@/components/PluginIcon';
 import { AgentInputsDialog, type AgentInput } from './AgentInputsDialog';
@@ -51,6 +51,16 @@ import type { AutomationCadence } from '@/lib/business-os/automations/types';
 interface InstalledAgent {
   agentId: string;
   automationId: string;
+  /**
+   * The questions this agent asked at install, and the answers it holds.
+   *
+   * Mirrors `InstalledAutomation` on the server. Empty `inputs` means there is
+   * nothing to change and the row shows no control — true for an agent the
+   * owner built themselves, and for the mail channel, whose watch was measured
+   * from their own mail rather than asked for in a dialog.
+   */
+  inputs: AgentInput[];
+  inputValues: Record<string, unknown>;
   /**
    * Which doorway this agent came through.
    *
@@ -502,7 +512,30 @@ function friendlyPlugin(pluginKey: string): string {
   return named[pluginKey] ?? pluginKey;
 }
 
-export function RunningAgentsCard() {
+export function RunningAgentsCard({
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE OTHER EDITOR, FOR THE ONE ROW THAT HAS NO QUESTIONS.
+   *
+   * The mail channel's row carries an empty `inputs` list, because what it
+   * watches was MEASURED from the owner's own mail rather than asked for: a
+   * sender and the stable part of a subject, written by the setup wizard.
+   * There is no install dialog to reopen, and the wizard already takes the
+   * update path when a channel exists.
+   *
+   * So that row's control raises `connect_inbox_channel`, the action the
+   * dashboard already handles for exactly this — it scrolls to the channels
+   * card and opens the wizard there. Raised rather than opened here because
+   * the wizard is mounted by the page, which owns the channel status it needs.
+   *
+   * Absent — this card is also rendered without a handler — the channel row
+   * simply shows no control, which is what it did before.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  onAction,
+}: {
+  onAction?: (action: string) => void;
+} = {}) {
   const { t, isRTL, language } = useLanguage();
   const { user, refreshPlugins } = useAuth();
   /** The plugin whose OAuth popup is open. One at a time. */
@@ -516,6 +549,18 @@ export function RunningAgentsCard() {
   const [installing, setInstalling] = useState<string | null>(null);
   /* The agent whose questions are on screen. Null when none are. */
   const [asking, setAsking] = useState<AvailableAgent | null>(null);
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE SAME DIALOG, ON AN AGENT THAT ALREADY EXISTS.
+   *
+   * Held separately from `asking` rather than overloading it: that one means
+   * "about to install", and every branch reading it — the busy spinner keyed
+   * on `installing`, the variant choice, the confirm label — would have to ask
+   * which kind it was. Two names, each meaning one thing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [reconfiguring, setReconfiguring] = useState<InstalledAgent | null>(null);
+  const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState<Busy>({});
   /** The row being asked to confirm a removal. One at a time. */
   const [removing, setRemoving] = useState<string | null>(null);
@@ -742,6 +787,43 @@ export function RunningAgentsCard() {
       }
     },
     [load]
+  );
+
+  /**
+   * Save the owner's new answers on an agent that already exists.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * PATCH, like every other change to a living agent — pause, resume, run and
+   * the schedule all go through the same control route, which proves ownership
+   * one way for all of them. Install is a POST because it CREATES something;
+   * this one does not.
+   *
+   * The list is re-read rather than patched from the response: what an agent
+   * reads is on the row, and recomputing it is what keeps the row and the
+   * dialog from drifting apart.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const reconfigure = useCallback(
+    async (agentId: string, values: Record<string, string>) => {
+      setSaving(true);
+
+      try {
+        const response = await fetch('/api/business-os/automation-agents', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentId, action: 'configure', values }),
+        });
+
+        if (response.ok) {
+          setReconfiguring(null);
+          cancelEdit();
+          await load();
+        }
+      } finally {
+        setSaving(false);
+      }
+    },
+    [load, cancelEdit]
   );
 
   const control = useCallback(
@@ -1476,6 +1558,10 @@ export function RunningAgentsCard() {
                     onChange={setDraft}
                     onSave={() => saveSchedule(agent.agentId)}
                     onCancel={cancelEdit}
+                    onReconfigure={setReconfiguring}
+                    onEditChannel={
+                      onAction ? () => onAction('connect_inbox_channel') : undefined
+                    }
                     t={t}
                     language={language}
                   />
@@ -1599,6 +1685,43 @@ export function RunningAgentsCard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/*
+        ───────────────────────────────────────────────────────────────────────
+        THE SAME DIALOG, ASKING THE SAME QUESTIONS, ON A LIVING AGENT.
+
+        A second instance rather than one with a mode: the install flow carries
+        a variant choice, a plugin-connect path and a busy state keyed on the
+        automation being created, none of which mean anything here. Sharing the
+        element would mean every one of those branches asking which kind of
+        press it was looking at.
+
+        What it does NOT do is install: the confirm goes to `reconfigure`,
+        which PATCHes the agent that already exists.
+        ───────────────────────────────────────────────────────────────────────
+      */}
+      <AgentInputsDialog
+        open={!!reconfiguring}
+        agentName={reconfiguring?.name ?? ''}
+        inputs={reconfiguring?.inputs ?? []}
+        plugins={reconfiguring?.plugins ?? []}
+        /* What they answered last time, as strings — the dialog's controls all
+           produce one, and a number stored from an older install would
+           otherwise arrive as a value no dropdown matches. */
+        initialValues={Object.fromEntries(
+          Object.entries(reconfiguring?.inputValues ?? {}).map(([key, value]) => [
+            key,
+            value == null ? '' : String(value),
+          ])
+        )}
+        confirmLabel={t('common.save') || 'Save'}
+        busy={saving}
+        onCancel={() => setReconfiguring(null)}
+        onConfirm={values =>
+          reconfiguring && void reconfigure(reconfiguring.agentId, values)
+        }
+        t={t}
+      />
 
       <AgentInputsDialog
         open={!!asking}
@@ -1852,6 +1975,8 @@ function ScheduleEditorRow({
   onChange,
   onSave,
   onCancel,
+  onReconfigure,
+  onEditChannel,
   t,
   language,
 }: {
@@ -1861,6 +1986,10 @@ function ScheduleEditorRow({
   onChange: (next: { schedule: ScheduleInterval; stopAfter: ScheduleInterval | null }) => void;
   onSave: () => void;
   onCancel: () => void;
+  /** Reopen the install dialog on this agent, pre-filled. Absent: no control. */
+  onReconfigure?: (agent: InstalledAgent) => void;
+  /** The mail channel's editor, which lives on the page. See `onAction`. */
+  onEditChannel?: () => void;
   t: (key: string) => string;
   language: string;
 }) {
@@ -2141,6 +2270,51 @@ function ScheduleEditorRow({
           */}
 
           <div className="flex items-center gap-2">
+            {/*
+              ──────────────────────────────────────────────────────────────
+              AND WHAT IT WORKS FROM, which until now could not be changed.
+
+              The two questions above are the agent's RHYTHM. This one is its
+              SUBJECT — which spreadsheet, which tab, which column — answered
+              once on the dialog that installed it and then fixed for ever.
+              An owner whose leads moved to a new sheet had exactly one route:
+              remove the agent and adopt it again, losing its schedule, its
+              history and its outcome record to a changed file name.
+
+              Left of Cancel and Save, and quiet, because it LEAVES this
+              editor rather than completing it: it opens the install dialog
+              again, pre-filled. Rendered only where there is something to
+              ask — an agent the owner built themselves, and the mail channel
+              whose watch was measured rather than asked, both carry an empty
+              list and show nothing here.
+              ──────────────────────────────────────────────────────────────
+            */}
+            {agent.inputs.length === 0 && agent.family === 'mailbox' && onEditChannel && (
+              <button
+                type="button"
+                onClick={onEditChannel}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-colors disabled:opacity-50 me-auto"
+                style={{ border: '1px solid var(--v2-border)', background: 'transparent', cursor: 'pointer' }}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
+                {t('automation.change_watch') || 'Change what it watches'}
+              </button>
+            )}
+
+            {agent.inputs.length > 0 && onReconfigure && (
+              <button
+                type="button"
+                onClick={() => onReconfigure(agent)}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-colors disabled:opacity-50 me-auto"
+                style={{ border: '1px solid var(--v2-border)', background: 'transparent', cursor: 'pointer' }}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
+                {t('automation.change_inputs') || 'Change what it works from'}
+              </button>
+            )}
+
             <button
               type="button"
               onClick={onCancel}

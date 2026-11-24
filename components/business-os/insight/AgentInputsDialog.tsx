@@ -94,6 +94,8 @@ export function AgentInputsDialog({
   inputs,
   plugins,
   connectEither,
+  initialValues,
+  confirmLabel,
   busy,
   onCancel,
   onConfirm,
@@ -125,6 +127,28 @@ export function AgentInputsDialog({
    * ───────────────────────────────────────────────────────────────────────────
    */
   connectEither?: { plugin: string; automationId: string; connected: boolean }[];
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THE OWNER ANSWERED LAST TIME, when this dialog is REOPENED.
+   *
+   * The same questions, asked again on an agent that already exists: leads
+   * moved to a different spreadsheet, a tab was renamed, the column shifted.
+   * Until this prop the dialog could only be opened to install, so changing an
+   * answer meant removing the agent and adopting it again — which loses its
+   * schedule, its history and its outcome record.
+   *
+   * Absent on an install, where there is nothing to prefill and an empty
+   * dialog is the correct starting point.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  initialValues?: Record<string, string>;
+  /**
+   * What the confirming button says.
+   *
+   * "Switch it on" is a lie on a reopened dialog — it is already on, and the
+   * press changes an answer rather than starting anything.
+   */
+  confirmLabel?: string;
   busy: boolean;
   onCancel: () => void;
   /** The chosen variant, when the dialog asked. Absent means the row's own. */
@@ -296,6 +320,27 @@ export function AgentInputsDialog({
   );
 
   /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THEY ANSWERED LAST TIME, PUT BACK WHEN THE DIALOG OPENS.
+   *
+   * Keyed on `open` rather than on `initialValues`, and deliberately: the host
+   * builds that object inline, so a dependency on it would re-seed on every
+   * render of the page and overwrite what the owner is typing. The dialog
+   * opening is the one moment the previous answers are wanted.
+   *
+   * It also feeds the loader below. A dependent field — the tab list, which
+   * waits on a spreadsheet — sees its parent already satisfied and loads
+   * immediately, so a reopened dialog shows the current tab rather than an
+   * empty dropdown next to a spreadsheet that is plainly chosen.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    if (!open) return;
+    setValues(initialValues ? { ...initialValues } : {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  /*
    * Load every field whose dependencies are satisfied, and reload one the
    * moment they change. A field with no `dependsOn` loads as soon as the dialog
    * opens; a dependent one waits, then follows its parent.
@@ -348,7 +393,10 @@ export function AgentInputsDialog({
         <DialogHeader>
           <DialogTitle>{agentName}</DialogTitle>
           <DialogDescription>
-            {t('automation.inputs_intro') || 'A couple of things it needs to know first.'}
+            {initialValues
+              ? t('automation.inputs_intro_edit') ||
+                'Change what it works from. It uses this on its next run.'
+              : t('automation.inputs_intro') || 'A couple of things it needs to know first.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -643,7 +691,7 @@ export function AgentInputsDialog({
             {busy ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              t('automation.switch_on') || 'Switch it on'
+              confirmLabel || t('automation.switch_on') || 'Switch it on'
             )}
           </button>
         </DialogFooter>

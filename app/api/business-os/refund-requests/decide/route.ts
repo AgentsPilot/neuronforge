@@ -29,6 +29,10 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { refundRequestRepository } from '@/lib/repositories/RefundRequestRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { resolveEmailBranding } from '@/lib/email/branding';
+import { sendEmail } from '@/lib/notifications/emailTransport';
+import { generateRefundDeclinedEmail } from '@/lib/email/templates/refund-declined';
+import { resolveBusinessTimezone } from '@/lib/business-os/businessDay';
 
 const logger = createLogger({ module: 'RefundRequestDecideAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -49,6 +53,19 @@ const decideSchema = z.object({
    * claim money moved when none did.
    */
   decision: z.enum(['declined', 'handled']),
+  /*
+   * WHAT THE CLIENT IS TOLD, when the owner has approved a message to send.
+   *
+   * Drafted by `refund-requests/decline-draft`, edited by the owner, and
+   * posted back here with the decision so the two happen together: a decision
+   * recorded without its message leaves a client waiting, and a message sent
+   * without its decision leaves the request open.
+   *
+   * Optional, and absent means silence — exactly what this route did before
+   * the message existed. `handled` never carries one: the owner settled it
+   * their own way and has already spoken to the client.
+   */
+  message: z.string().trim().min(1).max(4000).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -62,7 +79,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { requestId, decision } = decideSchema.parse(body);
+    const { requestId, decision, message } = decideSchema.parse(body);
 
     const { data, error } = await refundRequestRepository.decide(requestId, user.id, decision);
 
@@ -85,6 +102,117 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'already_settled' },
         { status: 409 }
       );
+    }
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * AND THE CLIENT IS TOLD, WHEN THE OWNER APPROVED SOMETHING TO SAY.
+     *
+     * Declining used to end here. The request closed, the card cleared, and
+     * the client — who had asked for their own money back — heard nothing at
+     * all, indefinitely. Approving a refund has always emailed them; refusing
+     * one said nothing, which is the wrong way round: the "no" is the message
+     * that actually needs sending.
+     *
+     * AFTER the decision, deliberately. The decision is the thing that must
+     * not be lost; a transport that is down must not cost the owner a press
+     * they have already confirmed. So a failed send is logged loudly and the
+     * decision still stands — and because the request is now closed, the owner
+     * sees it in the client's record rather than as a card that never clears.
+     *
+     * The message is the owner's own text (drafted, then edited by them), so
+     * nothing here writes prose: `generateRefundDeclinedEmail` only puts it in
+     * the business's frame. Its length is logged, never its content.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (decision === 'declined' && message && data.contact_id) {
+      try {
+        const { data: contact } = await supabaseServer
+          .from('crm_contacts')
+          .select('email, first_name')
+          .eq('id', data.contact_id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        const clientEmail = (contact as { email?: string } | null)?.email?.trim();
+
+        if (!clientEmail) {
+          requestLogger.warn(
+            { userId: user.id, requestId },
+            'Declined with a message, but this client has no email address on file'
+          );
+        } else {
+          /*
+           * ─────────────────────────────────────────────────────────────────
+           * AND WHICH REQUEST IS BEING ANSWERED.
+           *
+           * The message alone made the client work that out. Somebody with
+           * two bookings and one request in the air got a paragraph saying
+           * no, with no amount, no date and nothing naming what it was about.
+           *
+           * `start_time` comes back with the service name — one more column
+           * on a query already being made — and the clock is read from
+           * `user_preferences`, the only authoritative timezone (CLAUDE.md
+           * § Currency & Timezone; `business_profiles.timezone` does not
+           * exist and naming it would fail the whole select).
+           * ─────────────────────────────────────────────────────────────────
+           */
+          const [branding, { data: booking }, { data: prefs }] = await Promise.all([
+            resolveEmailBranding(user.id),
+            data.booking_id
+              ? supabaseServer
+                  .from('scheduling_bookings')
+                  .select('start_time, service:scheduling_services(service_name)')
+                  .eq('id', data.booking_id)
+                  .eq('user_id', user.id)
+                  .maybeSingle()
+              : Promise.resolve({ data: null }),
+            supabaseServer
+              .from('user_preferences')
+              .select('timezone')
+              .eq('user_id', user.id)
+              .maybeSingle(),
+          ]);
+
+          const service = (booking as { service?: { service_name?: string } | null } | null)?.service;
+
+          const { timezone } = resolveBusinessTimezone({
+            preferencesTimezone: (prefs as { timezone?: string | null } | null)?.timezone,
+          });
+
+          const { subject, html } = generateRefundDeclinedEmail({
+            message,
+            serviceName: (Array.isArray(service) ? service[0] : service)?.service_name ?? null,
+            /* Facts from the record, under the owner's words. */
+            amountRequested: data.amount_requested,
+            currency: data.currency,
+            bookingAt: (booking as { start_time?: string | null } | null)?.start_time ?? null,
+            requestedAt: data.created_at,
+            timezone,
+            locale: branding.locale,
+            branding,
+          });
+
+          const result = await sendEmail({
+            kind: 'transactional',
+            to: [clientEmail],
+            subject,
+            html,
+            ownerUserId: user.id,
+          });
+
+          requestLogger.info(
+            { userId: user.id, requestId, sent: result.sent, provider: result.provider, length: message.length },
+            'Told the client their refund was declined'
+          );
+        }
+      } catch (sendError) {
+        /* Never into the response: the decision is recorded and must stand. */
+        requestLogger.error(
+          { errName: (sendError as Error)?.name, userId: user.id, requestId },
+          'Recorded the decline but could not tell the client'
+        );
+      }
     }
 
     /*

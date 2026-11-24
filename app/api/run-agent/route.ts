@@ -48,6 +48,47 @@ interface RunAgentRequest {
 /**
  * Enhanced POST handler supporting both immediate and queue-based execution
  */
+/**
+ * The answers, with the ones the owner never gave filled in from the schema.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * An input schema may declare a `default`, and until now nothing read it at
+ * run time: `input_values` was handed to the plan exactly as saved, so an
+ * OPTIONAL field the owner skipped arrived as nothing at all.
+ *
+ * Measured on a live import, 2026-11-23. The spreadsheet agent asks for a
+ * status column and the words to write in it; the words declare
+ * `default: 'Imported'`. The owner chose the column and left the words. The
+ * plan's write-back step ran, resolved `{{input.status_text}}` to nothing, and
+ * wrote an EMPTY cell into their spreadsheet — so the import looked like it
+ * had not marked anything, while having written over the column it was given.
+ *
+ * Only for keys that are absent or blank. A deliberate answer, including one
+ * the owner cleared, is theirs and is never replaced by ours.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function withSchemaDefaults(
+  values: Record<string, unknown>,
+  schema: unknown
+): Record<string, unknown> {
+  if (!Array.isArray(schema)) return values;
+
+  const filled = { ...values };
+
+  for (const field of schema) {
+    const name = (field as { name?: unknown })?.name;
+    const fallback = (field as { default?: unknown })?.default;
+    if (typeof name !== 'string' || fallback === undefined) continue;
+
+    const given = filled[name];
+    if (given === undefined || given === null || String(given).trim() === '') {
+      filled[name] = fallback;
+    }
+  }
+
+  return filled;
+}
+
 export async function POST(req: Request) {
   const body: RunAgentRequest = await req.json()
   const {
@@ -187,8 +228,12 @@ export async function POST(req: Request) {
           // RUN MODE: Fetch saved configuration using repository
           const { data: agentConfig } = await agentConfigurationRepository.getInputValues(agent_id, user.id);
 
-          inputValues = (agentConfig?.input_values || {}) as Record<string, any>;
           inputSchema = agent.input_schema || agentConfig?.input_schema;
+          /* Defaults the owner never overrode. See `withSchemaDefaults`. */
+          inputValues = withSchemaDefaults(
+            (agentConfig?.input_values || {}) as Record<string, any>,
+            inputSchema
+          ) as Record<string, any>;
           logger.debug({ inputCount: Object.keys(inputValues).length, mode: 'run' }, 'Pilot using saved configuration');
         }
 
@@ -309,8 +354,12 @@ export async function POST(req: Request) {
         // RUN MODE (AgentSandbox Run / AgentList / Scheduled): Fetch saved configuration using repository
         const { data: agentConfig } = await agentConfigurationRepository.getInputValues(agent_id, user.id)
 
-        inputValues = (agentConfig?.input_values || {}) as Record<string, any>
         inputSchema = agent.input_schema || agentConfig?.input_schema
+        /* Defaults the owner never overrode. See `withSchemaDefaults`. */
+        inputValues = withSchemaDefaults(
+          (agentConfig?.input_values || {}) as Record<string, any>,
+          inputSchema
+        ) as Record<string, any>
         logger.debug({ inputCount: Object.keys(inputValues).length, mode: execution_type || 'scheduled' }, 'AgentKit using saved configuration')
       }
 

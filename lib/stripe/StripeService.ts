@@ -1425,6 +1425,53 @@ export class StripeService {
   }
 
   /**
+   * Every invoice an account is still waiting to be paid.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE OTHER HALF OF THE AUDIT.
+   *
+   * `listPaidInvoices` answers "did Stripe take money we did not record". This
+   * answers the question that costs an owner more: "is Stripe holding a bill we
+   * cannot see".
+   *
+   * A payment plan's later periods are invoiced by STRIPE, on the
+   * subscription's own cycle, not by us. We never raise a row for them, so if
+   * the `invoice.finalized` delivery is lost the bill exists only here. Nothing
+   * on the owner's money page shows it, and the chaser cannot chase it, having
+   * nothing but our own tables to read. Measured 2026-11-23: five such invoices
+   * worth 2,000 ILS, each `open` at Stripe with no local row at all, on plans
+   * due to close with the money uncollected.
+   *
+   * `status: 'open'` means finalized and unpaid — a real debt. It excludes
+   * `draft` (not yet a bill and still mutable), `void` and `uncollectible`
+   * (written off), and `paid`, which the other listing owns.
+   *
+   * Filters on `created` for the same reason as `listPaidInvoices`: it is the
+   * only time filter Stripe offers here. For this listing that is no handicap,
+   * since an open invoice's age is not what makes it a finding — its absence
+   * from our tables is.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async listOpenInvoices(params: {
+    accountId: string | null;
+    createdSince: Date;
+    limit?: number;
+    startingAfter?: string;
+  }): Promise<{ invoices: Stripe.Invoice[]; hasMore: boolean }> {
+    const page = await this.stripe.invoices.list(
+      {
+        status: 'open',
+        created: { gte: Math.floor(params.createdSince.getTime() / 1000) },
+        limit: params.limit ?? 100,
+        ...(params.startingAfter ? { starting_after: params.startingAfter } : {}),
+      },
+      params.accountId ? { stripeAccount: params.accountId } : undefined
+    );
+
+    return { invoices: page.data, hasMore: page.has_more };
+  }
+
+  /**
    * Construct webhook event from raw body
    */
   constructWebhookEvent(

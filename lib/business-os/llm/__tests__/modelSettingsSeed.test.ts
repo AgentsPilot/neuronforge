@@ -65,8 +65,20 @@ jest.mock('@/lib/ai/imagePricing', () => ({
 }));
 
 const ROOT = path.resolve(__dirname, '../../../..');
-const MIGRATION = path.join(ROOT, 'supabase/migrations/20261003_seed_bos_llm_area_settings.sql');
-const sql = fs.readFileSync(MIGRATION, 'utf8');
+/*
+ * BOTH seed files, read as one.
+ *
+ * 20261003 seeded the eight areas that existed when Layer 2 shipped. An
+ * applied migration is never edited, so a later area arrives in its own file —
+ * and this suite's claim is about the rows an operator ends up with, not about
+ * which file wrote them. Reading them together keeps that claim true as areas
+ * are added, and still fails loudly when an area has no row anywhere.
+ */
+const MIGRATIONS = [
+  'supabase/migrations/20261003_seed_bos_llm_area_settings.sql',
+  'supabase/migrations/20261124_seed_bos_llm_payments_area_settings.sql',
+].map((relative) => path.join(ROOT, relative));
+const sql = MIGRATIONS.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 /** The statements only: the header carries the same phrases as instructions. */
 const statements = sql
   .split(/\r?\n/)
@@ -200,7 +212,8 @@ describe('the migration file (T1-9, FR-16)', () => {
       expect(sql).toContain(`'${bosLlmAreaKey(area)}'`);
     }
     expect(sql).toContain("'business_os_llm'");
-    expect(statements.match(/ON CONFLICT \(key\) DO NOTHING/g)).toHaveLength(1);
+    /* One per seed file: each inserts its own areas and overwrites none. */
+    expect(statements.match(/ON CONFLICT \(key\) DO NOTHING/g)).toHaveLength(MIGRATIONS.length);
     expect(statements).not.toMatch(/DO UPDATE/i);
     // The rollback DELETE lives in the header, as an instruction, never as a statement.
     expect(statements).not.toMatch(/DELETE\s+FROM/i);

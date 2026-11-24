@@ -227,6 +227,11 @@ const TODAY: { [A in BosLlmArea]: Record<string, CallRecord> } = {
     // price key follows the model that RAN (RC-W4).
     image_generation: wired(IMAGE_GENERATION_CONFIG_DEFAULTS.model, null),
   },
+  payments: {
+    // Resolved from the `payments` area row and sent inside the fallback, so
+    // a retry carries the model that ran.
+    refund_decline_draft: wired('gpt-4o-mini', 0.6),
+  },
 };
 
 function seededRows() {

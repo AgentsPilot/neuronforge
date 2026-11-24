@@ -2,27 +2,42 @@
  * Stripe settlement gap check — the nightly door.
  *
  * Daily at 05:17 UTC (`vercel.json`), it asks the platform account and every
- * connected account for invoices Stripe considers paid, and reports the ones
- * our tables do not record as settled. The reasoning, and the outage that
- * caused it to exist, are in `lib/payments/settlementGapCheck`.
+ * connected account two questions:
+ *
+ *   1. did Stripe COLLECT money our tables do not record as settled?
+ *   2. is Stripe HOLDING a bill our tables cannot see at all?
+ *
+ * and repairs what it finds rather than only naming it. The reasoning, and the
+ * outage that caused it to exist, are in `lib/payments/settlementGapCheck`.
  *
  * Why 05:17: after the credit leak check at 04:45 so two sweeps never overlap,
  * and on a minute divisible by neither 5 nor 15, which keeps it clear of the
  * every-five-minute and every-fifteen-minute jobs and of the hourly ones at
  * `:00`, `:15`, `:30` and `:40`.
  *
- * The window is 48 hours wide and ends an hour before the run, so a daily
- * schedule examines each payment about twice. That overlap is deliberate: an
- * unfixed gap is reported again the next morning, and a run that was cut short
- * by its deadline gets a second chance at what it did not reach.
+ * The payment window is fourteen days and ends an hour before the run, so a
+ * daily schedule examines each payment about fourteen times. That overlap is
+ * deliberate: 48 hours meant a gap got two chances to be noticed and then aged
+ * out of every run for ever, which is how ten renewals worth 4,565.82 stayed
+ * invisible while this job reported `gapsFound: 0` thirty nights running. The
+ * debt question has no window at all — an unseen bill is a STATE, not an
+ * event, and the oldest one is the worst one.
  *
- * READ-ONLY and NOT A QUEUE DRAIN (skill `durable-queue-drain` does not
- * apply): nothing is claimed, nothing is written, and two overlapping runs are
- * harmless. There is no results table. The durable trace is the run record
+ * IT WRITES, and that is the change that made it worth running. It records
+ * money Stripe already took and bills Stripe is holding, both through the
+ * single writers in `lib/payments/` that the webhook also calls — never a copy
+ * of them. Both are idempotent, so two overlapping runs remain harmless and
+ * the `durable-queue-drain` skill still does not apply: nothing is claimed,
+ * and a second pass over the same invoice writes nothing twice.
+ *
+ * There is no results table. The durable trace is the run record
  * (`withCronRunRecord` → `bos_cron_runs`, counts only, NO MONEY) plus the
- * check's own logs: one `error` carrying `stripe_settlement_gap_found` per
- * unrecorded payment. A gap is a FINDING about the data, not a fault in the
- * job, following the credit leak check's precedent.
+ * check's own logs: `stripe_settlement_gap_found` (error) for money still
+ * missing, `stripe_settlement_gap_repaired` (info) for money now written,
+ * `stripe_invisible_bill_found` (warn) for a debt still unseen, and
+ * `stripe_invisible_bill_mirrored` (info) for one now visible. A finding is
+ * about the DATA, not a fault in the job, following the credit leak check's
+ * precedent.
  *
  * FAIL-CLOSED: without `CRON_SECRET` in production every call is refused with
  * a 401 and an `error` log (copied from `credit-leak-check`).
@@ -98,8 +113,19 @@ async function runJob(request: NextRequest) {
         targetsIncomplete: result.targetsIncomplete,
         invoicesChecked: result.invoicesChecked,
         gapsFound: result.gaps.length,
+        /* What the run actually DID about them. `gapsFound` alone read as a
+           health metric for thirty nights while money went unrecorded. */
+        gapsRepaired: result.gapsRepaired,
+        gapsUnrepairable: result.gapsUnrepairable,
+        repairFailed: result.repairFailed,
         gapsWithNoLocalInvoice: result.gaps.filter((gap) => gap.reason === 'no_local_invoice').length,
         gapsUnsettledLocally: result.gaps.filter((gap) => gap.reason === 'local_invoice_unsettled').length,
+        /* The debt half: bills Stripe holds that nothing of ours could see.
+           `billsMirrored` is how many an owner can now chase. */
+        billsChecked: result.billsChecked,
+        invisibleBillsFound: result.invisibleBills.length,
+        billsMirrored: result.billsMirrored,
+        billMirrorFailed: result.billMirrorFailed,
         listingFailed: result.listingFailed,
         lookupFailed: result.lookupFailed,
         accountListingFailed: result.accountListingFailed,

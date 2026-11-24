@@ -681,30 +681,54 @@ export const emailTranslations = {
    * rules and must not ride on this one.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * IT ASKS FOR ANOTHER TIME. IT DOES NOT SAY WHOSE FAULT IT WAS.
+   *
+   * This read "We missed you" in the subject AND the greeting, over "we had you
+   * down for the appointment below and did not get to see you". Two problems,
+   * and the first is that the product already disagreed with itself about it:
+   * the owner's no-show dialog describes this very toggle as sending "a short
+   * email with a link to pick another time. It does not mention a missed
+   * appointment or assign blame." An owner ticked a box promising neutrality
+   * and the client received the opposite.
+   *
+   * The second is that it has to survive being WRONG. Marking a no-show and
+   * then correcting it to held is the ordinary correction — the dialog exists
+   * for it, and it happened on a live booking twenty minutes after the mail
+   * went out. "Shall we find another time" is merely redundant once the hour
+   * turns out to have happened; "We missed you" is an accusation that then has
+   * to be walked back.
+   *
+   * Every fact is kept: which service, which hour, the way to rebook, and the
+   * line inviting a reply if it reached them by mistake — which now reads as a
+   * genuine escape hatch rather than an apology for an accusation.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   missedAppointment: {
     subject: {
-      en: (serviceName: string) => `We missed you - ${serviceName}`,
-      es: (serviceName: string) => `Te echamos de menos - ${serviceName}`,
-      he: (serviceName: string) => `התגעגענו אליך - ${serviceName}`
+      en: (serviceName: string) => `Shall we find another time? - ${serviceName}`,
+      es: (serviceName: string) => `¿Buscamos otro horario? - ${serviceName}`,
+      he: (serviceName: string) => `נמצא מועד אחר? - ${serviceName}`
     },
     greeting: {
-      en: 'We missed you',
-      es: 'Te echamos de menos',
-      he: 'התגעגענו אליך'
+      en: 'Shall we find another time?',
+      es: '¿Buscamos otro horario?',
+      he: 'נמצא מועד אחר?'
     },
     intro: {
       en: (clientName: string) =>
-        `Hi ${clientName}, we had you down for the appointment below and did not get to see you.`,
+        `Hi ${clientName}, we had you down for the appointment below. If something came up, no problem.`,
       es: (clientName: string) =>
-        `Hola ${clientName}, te esperábamos en la cita de abajo y no pudimos verte.`,
+        `Hola ${clientName}, te esperábamos en la cita de abajo. Si surgió algo, no pasa nada.`,
       he: (clientName: string) =>
-        `שלום ${clientName}, חיכינו לכם לפגישה שלהלן ולא הספקנו להיפגש.`
+        `שלום ${clientName}, הפגישה שלהלן הייתה רשומה אצלנו. אם צץ משהו, אין בעיה.`
     },
     /** Deliberately warm, and deliberately not a question about what happened. */
     bookAgainPrompt: {
-      en: 'If you would still like to come in, you can pick a new time here.',
-      es: 'Si aún quieres venir, puedes elegir un nuevo horario aquí.',
-      he: 'אם עדיין תרצו להגיע, אפשר לבחור מועד חדש כאן.'
+      en: 'Whenever suits you, you can pick a new time here.',
+      es: 'Cuando te venga bien, puedes elegir un nuevo horario aquí.',
+      he: 'מתי שנוח לכם, אפשר לבחור מועד חדש כאן.'
     },
     bookAgain: {
       en: 'Find another time',
@@ -2004,6 +2028,40 @@ export const emailTranslations = {
   // ==========================================
   // REFUND CONFIRMATION EMAIL
   // ==========================================
+  /*
+   * The decline's own labels.
+   *
+   * Deliberately few: this email's body is the owner's sentence, and these
+   * name the facts under it so the client knows WHICH request was answered.
+   * No "reason", no "policy" — the message above them is the reason.
+   */
+  refundDeclined: {
+    detailsTitle: {
+      en: 'The request',
+      es: 'La solicitud',
+      he: 'הבקשה'
+    },
+    serviceLabel: {
+      en: 'Service',
+      es: 'Servicio',
+      he: 'שירות'
+    },
+    bookingAtLabel: {
+      en: 'Appointment',
+      es: 'Cita',
+      he: 'הפגישה'
+    },
+    amountLabel: {
+      en: 'Amount you asked for',
+      es: 'Importe solicitado',
+      he: 'הסכום שביקשתם'
+    },
+    requestedAtLabel: {
+      en: 'You asked on',
+      es: 'Solicitado el',
+      he: 'תאריך הבקשה'
+    }
+  },
   refundConfirmation: {
     /*
      * The AMOUNT is in the subject, and that is not decoration.
@@ -2095,6 +2153,18 @@ export const emailTranslations = {
      * is what a CLIENT reads, not the business: the wording is addressed to the
      * person who was refunded, and the two can differ.
      */
+    /*
+     * The line that accounts for the money NOT returned.
+     *
+     * Labelled as its own question rather than "Reason", because on a partial
+     * refund the reader's question is not "why did I get money back" — they
+     * can see that they did — but "what happened to the rest".
+     */
+    partialReasonLabel: {
+      en: 'Why part of it',
+      es: 'Por qué solo una parte',
+      he: 'למה רק חלק'
+    },
     reasonValues: {
       en: {
         no_show: 'You did not attend the appointment',

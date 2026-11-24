@@ -24,6 +24,26 @@ export interface RefundConfirmationData {
   refundDate: Date;
   serviceName?: string;
   reason?: string;
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY ONLY PART OF IT CAME BACK.
+   *
+   * A partial refund is the one case where the figures alone mislead. The
+   * client sees what they paid beside a smaller number and no account of the
+   * difference — and the `reason` line directly above is worse than silence,
+   * because it is THEIR stated reason for asking, written for a FULL refund:
+   * "The service was not provided · $20 refunded of $40" contradicts itself,
+   * and "You were charged twice" cannot be a partial at all.
+   *
+   * So on a partial this replaces that line. It is the owner's own sentence —
+   * the dialog has always required one — and nothing here writes prose around
+   * it: no policy, no apology, no terms the business never agreed to.
+   *
+   * Full refunds are untouched. They need no account of a difference, because
+   * there is none.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  partialExplanation?: string | null;
   isManualRefund?: boolean;  // true if no actual Stripe refund was processed
   bookAgainUrl?: string;
   branding: BrandingData;
@@ -94,7 +114,26 @@ export function generateRefundConfirmationEmail(data: RefundConfirmationData): {
     detailRows.push(emailDetailRow(t.serviceLabel[locale], data.serviceName, brandingWithLocale));
   }
 
-  if (data.reason) {
+  /*
+   * The partial case answers the question the figures raise, and answers it
+   * INSTEAD of the stored reason rather than beside it. Two lines claiming to
+   * be the reason, one of them written for a refund that did not happen, is
+   * how a client ends up reading a contradiction about their own money.
+   */
+  const explainsThePart =
+    data.refundType === 'partial' && Boolean(data.partialExplanation?.trim());
+
+  if (explainsThePart) {
+    detailRows.push(
+      emailDetailRow(
+        t.partialReasonLabel[locale],
+        data.partialExplanation!.trim(),
+        brandingWithLocale
+      )
+    );
+  }
+
+  if (!explainsThePart && data.reason) {
     /*
      * Translated, not printed.
      *

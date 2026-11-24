@@ -4130,7 +4130,9 @@ export function LiveDashboard({
         Renders nothing until something is installed, so an account with no
         agents sees no change.
       */}
-      <RunningAgentsCard />
+      {/* `onAction` so the mail channel's row can raise `connect_inbox_channel`
+          — the wizard that edits what it watches is mounted by the page. */}
+      <RunningAgentsCard onAction={onAction} />
 
       {/* One vectors strip, from the server's own reading.
           There used to be two: this one, hand-rolled from dashboard stats, and

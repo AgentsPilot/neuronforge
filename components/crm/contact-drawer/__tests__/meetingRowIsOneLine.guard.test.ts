@@ -384,7 +384,28 @@ describe('the table totals what is left to collect', () => {
      */
     const block = tab.slice(0, tab.indexOf('left_to_collect'));
     expect(block.lastIndexOf('<tr')).toBeGreaterThan(block.lastIndexOf('</table>'));
-    expect(tab).toContain('colSpan={2}');
+    /*
+     * ALL FOUR COLUMNS NOW, and the change is the point rather than a detail.
+     *
+     * The foot used to be one line — a label spanning two columns, a bold
+     * figure in the payment column, a smaller figure beneath it — and it
+     * carried three different quantities that way: what is still owed, what
+     * was collected, and how many sessions were called off. Which sum the bold
+     * figure meant depended on whether anything was still owing, a state the
+     * reader could not see, and "4 cancelled" sat in a money column reading
+     * like money. Reported as "too complicated to understand what is what".
+     *
+     * It is a band of segments now, one per figure, each with its own words —
+     * so none of them belongs to a column above it and the cell spans the lot.
+     * What this case actually protects is unchanged: the foot is a ROW OF THIS
+     * TABLE and not a line underneath, which is the assertion above.
+     *
+     * FIVE and not four: the table has five columns — a marker, when, state,
+     * payment, actions — and a foot one column short drew its rule to within
+     * 64px of the frame, so the table read as cut off. Pinned by number for
+     * that reason.
+     */
+    expect(tab).toContain('colSpan={5}');
   });
 
   it('counts only what can still bill', () => {
@@ -394,7 +415,14 @@ describe('the table totals what is left to collect', () => {
   });
 
   it('says how many were called off, when any were', () => {
-    expect(tab).toContain('sessions_off');
+    /*
+     * In its own segment now — a label and a count, rather than
+     * `{count} cancelled` appended to the money label with a dot. The old key
+     * said both at once and could only live in a sentence; these two say the
+     * same thing in a cell of their own.
+     */
+    expect(tab).toContain('foot_cancelled');
+    expect(tab).toContain('foot_sessions');
     /*
      * Counted from the sessions actually CALLED OFF, not by subtracting the
      * billable ones from the total. The subtraction counted every session with
@@ -416,7 +444,10 @@ describe('the table totals what is left to collect', () => {
     for (const file of ['en', 'he', 'es']) {
       const dict = read(`lib/business-os/translations/${file}.ts`);
       expect(dict).toContain('crm.booking.package.left_to_collect');
-      expect(dict).toContain('crm.booking.package.sessions_off');
+      /* The foot's own words, one segment each. */
+      expect(dict).toContain('crm.booking.package.foot_cancelled');
+      expect(dict).toContain('crm.booking.package.foot_sessions');
+      expect(dict).toContain('crm.booking.package.foot_refunded');
     }
   });
 });
