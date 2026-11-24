@@ -563,6 +563,19 @@ lines AS (
          format('statistics | %s.%s | %s', sch.nspname, stx.stxname, pg_get_statisticsobjdef(stx.oid))
   FROM pg_statistic_ext AS stx
   JOIN our_schemas AS sch ON sch.nsp_oid = stx.stxnamespace
+  -- Event triggers owned by postgres (SA R-7). They belong to no schema, so
+  -- the census cannot see them, yet one can change our DDL. Event triggers of
+  -- other owners are platform ones and stay in I5, info only. evtenabled is
+  -- "char", so it is printed through format() only. Tags are sorted.
+  UNION ALL
+  SELECT 'P26',
+         format('event trigger | %s | event=%s | tags=%s | enabled=%s | function=%s', evt.evtname,
+                evt.evtevent,
+                array(SELECT evt_tag.tag_name FROM unnest(evt.evttags) AS evt_tag (tag_name)
+                      ORDER BY evt_tag.tag_name COLLATE "C"),
+                evt.evtenabled, evt.evtfoid::regproc)
+  FROM pg_event_trigger AS evt
+  WHERE evt.evtowner = (SELECT rol.oid FROM pg_roles AS rol WHERE rol.rolname = 'postgres')
 ),
 info_lines AS (
   -- [block I1]
