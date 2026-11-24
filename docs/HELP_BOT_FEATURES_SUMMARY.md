@@ -237,7 +237,7 @@ GROQ_API_KEY=gsk_your_groq_api_key
 USE_GROQ_HELP_BOT=true
 
 # Database (for agent search)
-SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_key
 ```
 

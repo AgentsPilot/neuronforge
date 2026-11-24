@@ -71,7 +71,7 @@ beforeEach(() => {
   fromCalls.length = 0;
   updates.length = 0;
   currentRow = { thumbs_up: 3, thumbs_down: 1 };
-  process.env.SUPABASE_URL = 'https://example.supabase.co';
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role';
 });
 

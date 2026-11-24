@@ -8,6 +8,8 @@
 
 import { NextRequest } from 'next/server';
 
+import { cookieHeader, sessionCookies, sessionWith } from '@/tests/helpers/supabaseSessionCookie';
+
 const createClient = jest.fn(() => {
   throw new Error('the invite page must not reach the onboarding check');
 });
@@ -16,10 +18,13 @@ jest.mock('@supabase/supabase-js', () => ({ createClient: (...args: unknown[]) =
 import { isPublicSurfacePath } from '@/components/PlatformChrome';
 import { middleware } from '@/middleware';
 
-/** A plausible auth cookie, so the onboarding check WOULD run if reached. */
+/**
+ * A real auth cookie, so the onboarding check WOULD run if reached: written by
+ * the library's own writer under the name the middleware derives (PROD-1a,
+ * SA C-7). The positive control below proves it is read on a protected path.
+ */
 function authCookie(): string {
-  const token = Buffer.from(JSON.stringify({ access_token: 'eyJfake' })).toString('base64');
-  return `sb-jgccgkyhpwirgknnceoh-auth-token.0=base64-${token}`;
+  return cookieHeader(sessionCookies(sessionWith('eyJfake')));
 }
 
 const originalSiteHost = process.env.NEXT_PUBLIC_PUBLIC_SITE_HOST;
@@ -40,6 +45,17 @@ describe('/invite on the platform', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('x-middleware-next')).toBe('1');
     expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it('positive control: the same cookie on a protected path does reach the onboarding check', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      // The mock throws and the middleware's catch lets the request through; what matters is that it was reached.
+      await middleware(new NextRequest('http://localhost:3000/v2/dashboard', { headers: { cookie: authCookie(), host: 'localhost:3000' } }));
+      expect(createClient).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('a lookalike path such as /invitation is not on the allow-list', async () => {

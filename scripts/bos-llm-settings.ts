@@ -157,7 +157,7 @@ function isArea(value: string): value is BosLlmArea {
  * project an exit code refers to before acting on it. Host only — never a key.
  */
 function logTarget(command: string): void {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   let host = 'unknown';
   try {
     host = url ? new URL(url).host : 'unset';

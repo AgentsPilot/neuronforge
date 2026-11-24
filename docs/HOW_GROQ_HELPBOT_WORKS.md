@@ -588,7 +588,7 @@ MISTRAL_API_KEY=your_key_here
 USE_MISTRAL_HELP_BOT=false  # Set to true to use Mistral instead
 
 # Supabase (Required for analytics)
-SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 

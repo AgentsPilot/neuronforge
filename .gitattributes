@@ -21,3 +21,9 @@ supabase/migrations/20261100_business_os_plan_cancel_reminders.sql text eol=lf
 supabase/SQL[[:space:]]Scripts/20261100_business_os_plan_cancel_reminders_rollback.sql text eol=lf
 scripts/precheck-plan-cancel-reminders.sql text eol=lf
 scripts/check-plan-cancel-reminders-migration.sql text eol=lf
+
+# PROD-2 schema parity (DV-1): the checker is pasted in the SQL editor, and the deliberate-difference
+# proof and its step file are run by psql. Their text test pins LF through these lines.
+scripts/check-schema-parity.sql text eol=lf
+supabase/baseline/prove-checker-can-fail.psql text eol=lf
+supabase/baseline/prove-checker-step.psql text eol=lf

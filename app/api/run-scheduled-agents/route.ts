@@ -120,8 +120,10 @@ export async function GET(request: NextRequest) {
      *
      * The runner reaches `@/lib/pilot`, whose import chain ends at
      * `lib/supabaseAdmin` and throws "Missing Supabase environment variables"
-     * AT IMPORT TIME unless `SUPABASE_URL` is set — a different variable from
-     * `NEXT_PUBLIC_SUPABASE_URL`. A top-level import therefore takes down the
+     * AT IMPORT TIME unless the Supabase address and service-role key are set.
+     * (It used to read a separate server-only address variable, which is how
+     * this bit; since PROD-1a it reads `NEXT_PUBLIC_SUPABASE_URL`, but the
+     * import-time throw remains.) A top-level import therefore takes down the
      * whole route, and a build, before any code runs. That cost a deployment on
      * 2026-10-25; `/api/cron/inbox-enquiries` carries the same note.
      */
