@@ -47,6 +47,7 @@ import type {
 /* The one predicate for "is this job off?". Aliased because this file already
    computes a local `jobCalledOff` per card inside the render. */
 import { jobCalledOff as jobCalledOffFacts } from '@/lib/business-os/bookingStatus';
+import type { MeetingStatus } from '@/lib/business-os/bookingStatus';
 
 /**
  * The states an owner hunts for in a long history.
@@ -3803,10 +3804,82 @@ export function BookingsTab({
                                    * again" for a resend — which is what the owner could not
                                    * tell when both rows ended in the same word.
                                    */
+                                  /*
+                                   * ───────────────────────────────────────────────────────────
+                                   * A MAIL THAT MAKES A CLAIM MAY ONLY BE RESENT WHILE IT IS
+                                   * STILL TRUE.
+                                   *
+                                   * Most of what this rail holds is DETAIL — your appointment is
+                                   * confirmed, here is the new time, here is the intake form —
+                                   * and a client who lost one can always be sent it again. That
+                                   * is why the old gate, which closed the resend the moment any
+                                   * outcome was recorded, was removed.
+                                   *
+                                   * Two of them are not details. "We missed you" and "the meeting
+                                   * is off" each assert what HAPPENED, and the owner can change
+                                   * that answer afterwards — marking a no-show as held is the
+                                   * ordinary correction, and the dialog exists for it.
+                                   *
+                                   * Measured on a live booking: the meeting was marked no-show at
+                                   * 21:28, corrected to HELD at 21:34, and the owner then pressed
+                                   * "Send again" twice. At 22:16 the client received "We missed
+                                   * you — CleanUp office quotation" for an appointment the
+                                   * product's own journey says they attended. Nothing refused it,
+                                   * because the resend only asked what KIND of mail it was.
+                                   *
+                                   * So these two ask the hour's current outcome as well. The
+                                   * control disappears rather than erroring: there is no version
+                                   * of this message that is true any more, and the owner who
+                                   * wants to tell the client something else has the journey's
+                                   * own actions for it.
+                                   * ───────────────────────────────────────────────────────────
+                                   */
+                                  const mailStillTrue = (
+                                    kind: string | null | undefined,
+                                    outcome: MeetingStatus | null | undefined
+                                  ) => {
+                                    switch (kind) {
+                                      /* These assert what HAPPENED. */
+                                      case 'missed_appointment':
+                                        return outcome === 'no_show';
+                                      case 'meeting_cancelled':
+                                      case 'booking_cancelled':
+                                        return outcome === 'cancelled';
+
+                                      /*
+                                       * And these assert an appointment that is STILL COMING —
+                                       * "your appointment is confirmed", "here is the new time",
+                                       * "please fill this in before we meet". Every one of them
+                                       * is about an hour in the future, so none survives that
+                                       * hour being settled.
+                                       *
+                                       * Reported on a live booking: a meeting was moved, marked
+                                       * no-show, and the rail still offered "Send again" on the
+                                       * new-time notice. Pressing it would have told the client
+                                       * their appointment was at 11:00 on a morning the product
+                                       * had already recorded them as missing.
+                                       *
+                                       * `!outcome` and not a list of statuses: held, missed,
+                                       * called off and superseded are all settled, and a new
+                                       * outcome added later must not quietly become resendable.
+                                       */
+                                      case 'booking_confirmed':
+                                      case 'booking_rescheduled':
+                                      case 'intake_requested':
+                                        return !outcome;
+
+                                      default:
+                                        return true;
+                                    }
+                                  };
+
                                   const renderMailRow = (
                                     mail: NonNullable<MeetingAttempt['emails']>[number],
                                     isLatest: boolean,
-                                    stamp: (at: string | null | undefined) => string | null
+                                    stamp: (at: string | null | undefined) => string | null,
+                                    /* The hour this mail belongs to, as it stands NOW — not as it
+                                       stood when the mail went out. See `mailStillTrue`. */
+                                    outcome?: MeetingStatus | null
                                   ) => {
                                     const failed =
                                       mail.status === 'bounced' ||
@@ -3927,7 +4000,9 @@ export function BookingsTab({
                                           {isLatest &&
                                             onResendMail &&
                                             !jobCalledOff &&
-                                            RESENDABLE_KINDS.has(mail.kind ?? '') && (
+                                            RESENDABLE_KINDS.has(mail.kind ?? '') &&
+                                            /* And still true of this hour. See `mailStillTrue`. */
+                                            mailStillTrue(mail.kind, outcome) && (
                                             <>
                                               <span aria-hidden="true"> · </span>
                                               <button
@@ -7057,7 +7132,7 @@ export function BookingsTab({
                                                                     new Date(attempt.outcome_at).getTime()
                                                               )
                                                               .map(mail =>
-                                                                renderMailRow(mail, mail.at === lastMailAt && isCurrentAttempt, stamp)
+                                                                renderMailRow(mail, mail.at === lastMailAt && isCurrentAttempt, stamp, attempt.meeting_status)
                                                               )}
 
                                                             {/* The outcome, in its place. */}
@@ -7104,7 +7179,7 @@ export function BookingsTab({
                                                                     new Date(attempt.outcome_at as string).getTime()
                                                                 )
                                                                 .map(mail =>
-                                                                  renderMailRow(mail, mail.at === lastMailAt && isCurrentAttempt, stamp)
+                                                                  renderMailRow(mail, mail.at === lastMailAt && isCurrentAttempt, stamp, attempt.meeting_status)
                                                                 )}
                                                           </div>
                                                         </div>
@@ -8580,133 +8655,176 @@ export function BookingsTab({
                                                   maximumFractionDigits: value % 1 === 0 ? 0 : 2,
                                                 }).format(value);
 
+                                              /*
+                                               * ── ONE LINE PER FACT ────────────────────────────
+                                               *
+                                               * The foot was a single row carrying three different
+                                               * quantities and asking typography to separate them:
+                                               *
+                                               *   Left to collect · 4 cancelled   $111.02
+                                               *                                   $222.01 collected
+                                               *
+                                               * Four problems in two lines. The label named one
+                                               * figure and a session COUNT in the same breath, so
+                                               * "4 cancelled" sat in a money column reading like
+                                               * money. The two sums were told apart only by weight
+                                               * — bold meant outstanding unless everything was
+                                               * settled, in which case bold meant collected — so
+                                               * which number was which depended on a state the
+                                               * reader could not see. And a refund joined the small
+                                               * line as a third figure.
+                                               *
+                                               * Reported as "too complicated to understand what is
+                                               * what", which is exactly right.
+                                               *
+                                               * So each fact gets its own line, its own words and
+                                               * its own figure, in the columns the table already
+                                               * has. Nothing is inferred from size or position: a
+                                               * line appears only when it has something to say, and
+                                               * says it.
+                                               *
+                                               * The cancelled count keeps the money column's
+                                               * alignment and loses its money STYLING — not
+                                               * `tabular-nums`, not semibold, muted — because it is
+                                               * the one value here that is not an amount.
+                                               */
+                                              const footRows: Array<{
+                                                key: string;
+                                                label: string;
+                                                value: string;
+                                                tone?: string;
+                                                /** Sessions, not money: plainer, so it cannot be misread as an amount. */
+                                                plain?: boolean;
+                                              }> = [];
+
+                                              if (collected > 0) {
+                                                footRows.push({
+                                                  key: 'collected',
+                                                  label: t('payments.collected') || 'Collected',
+                                                  value: asMoney(collected),
+                                                });
+                                              }
+
+                                              if (refunded > 0) {
+                                                footRows.push({
+                                                  key: 'refunded',
+                                                  /* The refund's own tone, as the rows above use:
+                                                     it is a deliberate act, not a failure. */
+                                                  label: t('crm.booking.package.foot_refunded') || 'Refunded',
+                                                  value: asMoney(refunded),
+                                                  tone: STATUS_TONE.refunded,
+                                                });
+                                              }
+
+                                              /* Shown even at zero when nothing else is: a foot that
+                                                 vanishes leaves the table without a close, and "nothing
+                                                 left to collect" is a real answer. */
+                                              if (outstanding > 0 || footRows.length === 0) {
+                                                footRows.push({
+                                                  key: 'outstanding',
+                                                  label: t('crm.booking.package.left_to_collect') || 'Left to collect',
+                                                  value: asMoney(outstanding),
+                                                });
+                                              }
+
+                                              if (dropped > 0) {
+                                                footRows.push({
+                                                  key: 'cancelled',
+                                                  label: t('crm.booking.package.foot_cancelled') || 'Cancelled',
+                                                  value: (t('crm.booking.package.foot_sessions') || '{count} sessions')
+                                                    .replace('{count}', String(dropped)),
+                                                  plain: true,
+                                                });
+                                              }
+
                                               return (
-                                                <tr
-                                                  style={{
-                                                    /* Heavier than a row seam: this is the
-                                                       table's foot, not another meeting. */
-                                                    borderTop: '1px solid var(--v2-border)',
-                                                    background: 'var(--v2-surface)',
-                                                  }}
-                                                >
-                                                  <td className="w-9 px-2 py-2.5 sm:px-3" />
+                                                <tr style={{ background: 'var(--v2-surface)' }}>
+                                                  {/* ── THE FOOT IS ONE ROW IN SEGMENTS ────────────
+                                                      One cell across the whole table, because none
+                                                      of these figures belongs to a column above it:
+                                                      "4 cancelled" is not a payment and "Collected"
+                                                      is not a date. Spanning the lot also lets each
+                                                      segment size to its own content under
+                                                      `tableLayout: fixed`, which no single column
+                                                      can do.
 
-                                                  {/* The label starts where the dates do and
-                                                      runs to the figure, so nothing in the
-                                                      foot pretends to be a column it is not. */}
+                                                      What it replaced was a single line carrying
+                                                      three quantities and asking typography to
+                                                      separate them — "Left to collect · 4 cancelled"
+                                                      beside a bold figure and a smaller one beneath,
+                                                      where which sum was which depended on a state
+                                                      the reader could not see. Reported as "too
+                                                      complicated to understand what is what". */}
                                                   <td
-                                                    colSpan={2}
-                                                    /* Wraps rather than truncates: this is the
-                                                       table's foot and has vertical room, while
-                                                       "Left to collect · 5 cancelled" clipped to
-                                                       "Left to collect · 5 canc…" on a narrow
-                                                       drawer — losing the count, which is the
-                                                       only part carrying information. */
-                                                    className="px-1 py-2.5 text-[11.5px] leading-snug text-[var(--v2-text-muted)]"
+                                                    /*
+                                                     * FIVE, because the table has five columns.
+                                                     *
+                                                     * At four the foot was one column short and the
+                                                     * rule above it stopped before the frame — the
+                                                     * table looked cut. The header is the count that
+                                                     * matters: a marker, when, state, payment, and
+                                                     * the actions column at the end.
+                                                     */
+                                                    colSpan={5}
+                                                    /* No horizontal padding on the CELL: the band
+                                                       runs the table's full width, and each segment
+                                                       carries the padding instead, so the dividers
+                                                       reach the frame and the figures line up with
+                                                       the columns above. */
+                                                    className="py-2.5"
+                                                    style={{ borderTop: '1px solid var(--v2-border)' }}
                                                   >
-                                                    {/*
-                                                      ── NAME THE FIGURE BESIDE IT ───────────
-                                                      "Left to collect" over a bold $0 states the
-                                                      one thing that is not worth saying: a job
-                                                      that is finished or called off has nothing
-                                                      left by definition, and the figure that
-                                                      matters — what actually came in — was
-                                                      demoted to a note underneath.
+                                                    <div className="flex items-stretch">
+                                                      {footRows.map((row, index) => (
+                                                        <div
+                                                          key={row.key}
+                                                          /* Segments of one row, divided by a rule —
+                                                             not cards. A border round each made four
+                                                             boxes inside a bordered table, which is
+                                                             three frames deep and reads as a second
+                                                             list rather than the foot of this one.
 
-                                                      So the label follows the money: while
-                                                      something is still owed it names that;
-                                                      once nothing is, it names what was taken.
-                                                      Either way the label and the big figure
-                                                      beside it describe the SAME number, which
-                                                      is what was wrong with the pair before.
-                                                    */}
-                                                    {footIsCollected
-                                                      ? t('payments.collected') || 'Collected'
-                                                      : t('crm.booking.package.left_to_collect') || 'Left to collect'}
-                                                    {dropped > 0 && (
-                                                      <>
-                                                        {' · '}
-                                                        {(t('crm.booking.package.sessions_off') || '{count} cancelled')
-                                                          .replace('{count}', String(dropped))}
-                                                      </>
-                                                    )}
-                                                  </td>
-
-                                                  {/* ── THE FOOT STAYS INSIDE THE FRAME ──────
-                                                      This cell was `whitespace-nowrap` with up
-                                                      to three figures on one line, and the
-                                                      table is `tableLayout: fixed`: a column
-                                                      cannot grow to fit its content there, so
-                                                      the text simply ran out of the cell and
-                                                      past the table's own border. A package
-                                                      with a refund showed its totals floating
-                                                      outside the bordered list.
-
-                                                      The headline figure keeps its own line,
-                                                      because a sum broken across two lines is
-                                                      unreadable. The notes beside it move
-                                                      underneath, where there is as much room
-                                                      as they need. */}
-                                                  <td className="px-1 py-2.5 text-end text-[12.5px] font-semibold tabular-nums text-[var(--v2-text-primary)]">
-                                                    <span className="block whitespace-nowrap">
-                                                      {asMoney(footIsCollected ? collected : outstanding)}
-                                                    </span>
-
-                                                    {((!footIsCollected && collected > 0) || refunded > 0) && (
-                                                      <span className="mt-0.5 block text-[11px] font-normal leading-snug">
-                                                        {/* ── THE NOTES MAY WRAP. THE FIGURES MAY NOT. ──
-                                                            `whitespace-nowrap` here is what let a
-                                                            note leave the table: in a fixed layout
-                                                            a column cannot grow, so a note wider
-                                                            than its column simply overflowed.
-
-                                                            Wrapping is safe because the figure is
-                                                            already unbreakable without help —
-                                                            `Intl.NumberFormat` joins the number to
-                                                            its currency with U+00A0, a NON-BREAKING
-                                                            space. So "133.33 ₪" survives as one
-                                                            unit and only the word beside it moves
-                                                            to the next line.
-
-                                                            Belt and braces with the widths above:
-                                                            those give the column enough room at
-                                                            the sizes we know about, this keeps the
-                                                            note inside the frame at any other. */}
-                                                        {/* Only while it is NOT the headline —
-                                                            otherwise the same figure was printed
-                                                            twice, once bold and once beneath. */}
-                                                        {!footIsCollected && collected > 0 && (
-                                                          <span className="text-[var(--v2-text-muted)]">
-                                                            {(t('crm.booking.package.already_collected') || '{amount} collected')
-                                                              .replace('{amount}', asMoney(collected))}
+                                                             `borderInlineStart` and not `-left`: the
+                                                             drawer runs right to left in Hebrew, and
+                                                             a physical side would put every divider
+                                                             on the wrong edge there. */
+                                                          /* The first segment sits flush with the
+                                                             cell edge; only the ones after it are
+                                                             pushed off their divider. */
+                                                          className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 sm:px-3"
+                                                          style={
+                                                            index === 0
+                                                              ? undefined
+                                                              : { borderInlineStart: '1px solid var(--v2-border)' }
+                                                          }
+                                                        >
+                                                          {/* The label WRAPS and the figure does
+                                                              not. Truncated, "Left to collect"
+                                                              becomes "Left to col…" on a narrow
+                                                              drawer — losing the half that says
+                                                              which figure it is — while a sum broken
+                                                              across two lines is unreadable. */}
+                                                          <span className="text-[10.5px] uppercase leading-snug tracking-wide text-[var(--v2-text-muted)]">
+                                                            {row.label}
                                                           </span>
-                                                        )}
-                                                        {!footIsCollected && collected > 0 && refunded > 0 && (
-                                                          <span className="text-[var(--v2-text-muted)]">{' · '}</span>
-                                                        )}
-                                                        {refunded > 0 && (
-                                                          /* Named, in the refund's own colour —
-                                                             the same orange the row uses, because
-                                                             a refund is a deliberate act and not
-                                                             a failure. */
-                                                          /* The canonical refunded tone, not a
-                                                             literal. `#B54708` was `LOST` until
-                                                             the palette was corrected against the
-                                                             approved mockup — where that value is
-                                                             the ink for money OUTSTANDING, not
-                                                             returned. A hardcoded hex cannot
-                                                             follow a palette; `moneyStatusTone`
-                                                             exists so every surface does. */
-                                                          <span style={{ color: STATUS_TONE.refunded }}>
-                                                            {(t('crm.booking.package.already_refunded') || '{amount} refunded')
-                                                              .replace('{amount}', asMoney(refunded))}
+                                                          {/* The figure wears a TEXT token, never a
+                                                              series colour — the one exception is a
+                                                              refund, which is a state and carries the
+                                                              canonical tone the rows above use. */}
+                                                          <span
+                                                            className={
+                                                              row.plain
+                                                                ? 'whitespace-nowrap text-[13px] leading-snug text-[var(--v2-text-secondary)]'
+                                                                : 'whitespace-nowrap text-[13px] font-semibold leading-snug tabular-nums text-[var(--v2-text-primary)]'
+                                                            }
+                                                            style={row.tone ? { color: row.tone } : undefined}
+                                                          >
+                                                            {row.value}
                                                           </span>
-                                                        )}
-                                                      </span>
-                                                    )}
+                                                        </div>
+                                                      ))}
+                                                    </div>
                                                   </td>
-
-                                                  <td className="w-14 px-2 py-2.5 sm:px-3" />
                                                 </tr>
                                               );
                                             })()}

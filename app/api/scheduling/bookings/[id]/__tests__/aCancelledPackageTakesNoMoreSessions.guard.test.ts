@@ -77,18 +77,62 @@ describe('the write', () => {
 });
 
 describe('one payment per hour the client actually gets', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE RULE MOVED; THE GUARANTEE DID NOT.
+   *
+   * These three used to read the decision inline in POST:
+   * `replacedHourAlreadyPaid({...})`, a `chargeRefusedAsAlreadyPaid` flag, and
+   * a four-term `if` gating the stage write on it.
+   *
+   * It now lives in `lib/scheduling/replacementStage.ts`, because the GET the
+   * cancel dialog opens with has to STATE this answer before the owner
+   * commits. Two copies of the rule would eventually promise one thing and
+   * write another — which is the same class of defect as the incident that
+   * caused the rule: package 83e8460c, where a replacement billed 400.02 for
+   * an hour already paid at 399.99.
+   *
+   * So the assertions follow it, and are stronger for it: the refusal is
+   * pinned in the module (one rule) AND the route is pinned to obey it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const OUTLOOK = readFileSync(
+    join(process.cwd(), 'lib/scheduling/replacementStage.ts'),
+    'utf8'
+  ).replace(/\r\n/g, '\n');
+
   it('asks the chain, not the caller, before a replacement carries a stage', () => {
-    expect(POST).toContain('replacedHourAlreadyPaid({');
-    expect(POST).toContain('chargeRefusedAsAlreadyPaid');
+    /* The chain is walked inside the module, and the route asks the module. */
+    expect(OUTLOOK).toContain('replacedHourAlreadyPaid({');
+    expect(POST).toContain('replacementStageOutlook({');
+  });
+
+  it('refuses to bill an hour already paid for, before the plan is consulted', () => {
+    /*
+     * `bills: false` is the whole protection. Ordering matters as much: an
+     * already-paid hour must be answered BEFORE the plan is looked at, or a
+     * plan with an amount would bill it anyway.
+     */
+    expect(OUTLOOK).toMatch(/if \(verdict\.alreadyPaid\) return none\('already_paid'/);
+    /* Anchored on the plan QUERY, not the words `created_plan_id`, which also
+       appear in a doc comment near the top and made this compare positions of
+       a comment rather than of the read. */
+    const refusal = OUTLOOK.indexOf("return none('already_paid'");
+    const planQuery = OUTLOOK.indexOf(".from('payment_plan_installments')");
+    expect(refusal).toBeGreaterThan(-1);
+    expect(planQuery).toBeGreaterThan(-1);
+    expect(refusal).toBeLessThan(planQuery);
   });
 
   it('gates the stage creation on that answer', () => {
-    expect(POST).toMatch(
-      /if \(input\.charge && perSession && proposal\?\.created_plan_id && !chargeRefusedAsAlreadyPaid\)/
-    );
+    /* The route writes a stage only when the module says it bills. */
+    expect(POST).toMatch(/if \(outlook\?\.bills && proposal\?\.created_plan_id\)/);
+    expect(POST).not.toMatch(/if \(input\.charge && perSession && proposal\?\.created_plan_id\)/);
   });
 
   it('asks only when this session replaces another, so a plain add is untouched', () => {
-    expect(POST).toMatch(/if \(input\.charge && perSession && replacedId\)/);
+    /* `replacedMeetingId: replacedId ?? null` — a plain add passes null and the
+       module answers without walking any chain. */
+    expect(POST).toMatch(/replacedMeetingId: replacedId \?\? null/);
   });
 });

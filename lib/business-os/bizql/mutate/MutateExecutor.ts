@@ -2249,6 +2249,33 @@ function resolveWriteValue(
     return usablePhoneOrNull(value);
   }
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN ADDRESS IS STORED WITHOUT THE SPACE SOMEBODY LEFT ROUND IT.
+   *
+   * Same shape of fault as the phone rule above, from the same source — a
+   * spreadsheet cell. Measured on a live import, 2026-11-23: a cell held
+   * `eomer3@walla.co.il ` with a trailing space. It was written down exactly
+   * like that, and the importer's own dedupe then asked for
+   * `email eq "eomer3@walla.co.il "`, found nothing, and filed a SECOND
+   * contact for a client who was already there. The lookup could never match,
+   * so every later run would have filed another.
+   *
+   * Trim only. `CRMContactRepository` lowercases when it MATCHES addresses and
+   * that is right for a comparison, but this value is the one shown to the
+   * owner and used to write to the client — rewriting its case in the name of
+   * matching it would be a bigger fault than the one being fixed.
+   *
+   * The reading half of this rule lives in `resolveValue` in `../compiler.ts`.
+   * Both seams or neither: trimming only what is written leaves the lookup
+   * asking for a value that is no longer stored anywhere.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (field.column === 'email' && typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed === '' ? null : trimmed;
+  }
+
   if (value === null || typeof value !== 'object') return value;
 
   if (isDateExpr(value)) {

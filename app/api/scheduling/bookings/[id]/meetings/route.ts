@@ -51,7 +51,7 @@ import { isSlotTakenError } from '@/lib/business-os/bookingStatus';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { busyMeetings } from '@/lib/scheduling/busyMeetings';
 import { nextSessionSlots } from '@/lib/scheduling/nextSessionSlot';
-import { replacedHourAlreadyPaid } from '@/lib/scheduling/replacementCharge';
+import { replacementStageOutlook } from '@/lib/scheduling/replacementStage';
 
 /**
  * What to call the stage a newly added session bills.
@@ -277,7 +277,9 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
     const { data: proposal } = await supabaseServer
       .from('proposals')
-      .select('sessions')
+      /* `created_plan_id` and `currency` for the money the dialog has to state;
+         see the outlook below. */
+      .select('sessions, created_plan_id, currency')
       .eq('package_booking_id', containerId)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -404,10 +406,69 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
     const proposedStart = proposedStarts[0] ?? null;
 
+    /*
+     * ── WHAT THIS COSTS, SO THE DIALOG CAN SAY IT BEFORE THE OWNER COMMITS ──
+     *
+     * The cancel dialog listed three consequences and no money, so an owner
+     * calling off a session could not tell whether its replacement would be
+     * charged for, given away, or whether a fee already collected simply moved
+     * across. Asked plainly: "when cancelling it doesn't add the session with
+     * payment?"
+     *
+     * Both answers come from the same places the POST uses, so the sentence and
+     * the write cannot disagree: `replacementStageOutlook` for the replacement,
+     * and the cancelled hour's own unbilled stage for what is about to be
+     * voided — which is exactly what `setMeetingOutcome` voids, matched on the
+     * same two conditions.
+     *
+     * Only when a session was named. Without `excluding` this is the
+     * add-a-meeting offer, where nothing is being called off and there is no
+     * hour whose money to describe.
+     */
+    const outlook = excluding
+      ? await replacementStageOutlook({
+          userId: user.id,
+          perSession,
+          planId: proposal?.created_plan_id as string | null | undefined,
+          replacedMeetingId: excluding,
+          fallbackCurrency: (proposal?.currency as string | null) ?? null,
+        })
+      : null;
+
+    /* Every stage the void would take, not one: `setMeetingOutcome` updates by
+       these same four conditions and has no limit, so reading a single row
+       would understate a session that carries two — and `maybeSingle` would
+       error on it rather than answer. */
+    const { data: releasing } = excluding
+      ? await supabaseServer
+          .from('payment_plan_installments')
+          .select('amount, currency')
+          .eq('meeting_id', excluding)
+          .eq('user_id', user.id)
+          .eq('status', 'pending')
+          .is('invoice_id', null)
+      : { data: null as { amount: number | null; currency: string | null }[] | null };
+
+    const released = (releasing ?? []).reduce(
+      (sum, stage) => sum + (Number(stage.amount) || 0),
+      0
+    );
+
     return NextResponse.json({
       success: true,
       canAdd: Boolean(proposedStart),
       proposedStart,
+      /*
+       * The money, for the dialog's own words. `null` throughout where there is
+       * nothing to say, so a caller that does not read these is unaffected.
+       */
+      replacementBills: outlook ? outlook.bills : null,
+      replacementReason: outlook ? outlook.reason : null,
+      replacementAmount: outlook?.amount ?? null,
+      replacementCurrency: outlook?.currency ?? null,
+      /** What the cancellation itself voids: this hour's own unbilled stage. */
+      releasedAmount: released > 0 ? released : null,
+      releasedCurrency: ((releasing ?? [])[0]?.currency as string | null) ?? null,
       /** The alternatives, proposal first. Empty when there is nothing free. */
       proposedStarts,
       durationMinutes: minutes,
@@ -929,43 +990,50 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
      * which is the documented behaviour and the dialog's promise.
      * ───────────────────────────────────────────────────────────────────────────
      */
-    let chargeRefusedAsAlreadyPaid = false;
+    /*
+     * THE DECISION, ASKED OF THE ONE PLACE THAT ANSWERS IT.
+     *
+     * `replacementStageOutlook` applies the same rules in the same order this
+     * block used to apply inline — upfront, then the chain, then the plan, then
+     * the amount. It is a module because the GET the cancel dialog opens with
+     * has to STATE this answer before the owner commits, and a second copy of
+     * the rule would eventually promise one thing while this wrote another.
+     *
+     * The stage is still created below. Only the deciding moved.
+     */
+    const outlook = input.charge
+      ? await replacementStageOutlook({
+          userId: user.id,
+          perSession,
+          planId: proposal?.created_plan_id as string | null | undefined,
+          replacedMeetingId: replacedId ?? null,
+          fallbackCurrency: (proposal?.currency as string | null) ?? null,
+        })
+      : null;
 
-    if (input.charge && perSession && replacedId) {
-      const verdict = await replacedHourAlreadyPaid({
-        userId: user.id,
-        replacedMeetingId: replacedId,
-      });
-
-      if (verdict.alreadyPaid) {
-        chargeRefusedAsAlreadyPaid = true;
-        requestLogger.info(
-          {
-            containerId,
-            meetingId: addedId,
-            replacedId,
-            paidMeetingId: verdict.paidMeetingId,
-            hops: verdict.hops,
-            uncertain: verdict.uncertain,
-          },
-          'No stage for this replacement: the hour it stands in for is already paid'
-        );
-      }
+    if (outlook?.reason === 'already_paid') {
+      /* Logged and nothing more: `outlook.bills` is already false, so the write
+         below does not run. The flag this used to set was read nowhere else. */
+      requestLogger.info(
+        {
+          containerId,
+          meetingId: addedId,
+          replacedId,
+          paidMeetingId: outlook.alreadyPaid?.paidMeetingId ?? null,
+          hops: outlook.alreadyPaid?.hops ?? 0,
+          uncertain: outlook.alreadyPaid?.uncertain ?? false,
+        },
+        'No stage for this replacement: the hour it stands in for is already paid'
+      );
     }
 
-    if (input.charge && perSession && proposal?.created_plan_id && !chargeRefusedAsAlreadyPaid) {
-      const { data: existing } = await supabaseServer
-        .from('payment_plan_installments')
-        .select('amount, currency, installment_number, label')
-        .eq('payment_plan_id', proposal.created_plan_id)
-        .eq('user_id', user.id)
-        .order('installment_number', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+    if (outlook?.bills && proposal?.created_plan_id) {
+      /* The stage the new one is modelled on, read by the decision above so
+         this does not read it twice. */
+      const existing = outlook.lastStage;
+      const amount = Number(outlook.amount ?? 0);
 
-      const amount = Number(existing?.amount ?? 0);
-
-      if (amount > 0) {
+      {
         const { data: rows, error: stageError } = await paymentPlanRepository.createInstallments([
           {
             user_id: user.id,

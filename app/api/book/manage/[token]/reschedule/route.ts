@@ -284,6 +284,53 @@ async function sessionOf(
   return { session: data as Record<string, unknown>, notMine: false };
 }
 
+/**
+ * The hour a link MEANS when it does not name one.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE BUG THIS EXISTS FOR, AND WHY IT HID SO LONG.
+ *
+ * `manageUrlFor` builds every mailed link as `/book/manage/<token>/reschedule`
+ * with no `meeting_id`. So `sessionOf` was handed `undefined` on every arrival
+ * from an email, returned null, and the settled test below then read
+ * `!session?.rebook_invited_at` — which is TRUE whenever there is no session,
+ * whatever the owner chose.
+ *
+ * The consequence is total rather than occasional: a missed hour could never be
+ * rebooked from the mail inviting the client to rebook it. Measured across the
+ * platform — of 13 "We missed you" emails ever sent, 13 refused with
+ * `already_settled`, including four whose sessions WERE correctly stamped.
+ * The stamp was unreachable by construction.
+ *
+ * So when a link names no meeting, the booking's CURRENT hour is what it means.
+ * That is the row the mail was about: `moved` attempts are superseded and
+ * `sessionOf` already refuses them, so the newest non-superseded row is the one
+ * the client is holding a link to.
+ *
+ * Returns null when the booking has no meeting row at all — an older booking
+ * written before rows were materialised — and the caller then falls back to the
+ * booking's own columns exactly as it did before.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function currentHourOf(
+  bookingId: string,
+  userId: string
+): Promise<Record<string, unknown> | null> {
+  const { data } = await supabaseServer
+    .from('scheduling_meetings')
+    .select(
+      'id, booking_id, start_time, end_time, timezone, meeting_status, session_number, rebook_invited_at'
+    )
+    .eq('booking_id', bookingId)
+    .eq('user_id', userId)
+    /* Superseded attempts are not what any link means. */
+    .not('meeting_status', 'eq', 'moved')
+    .order('occurrence_number', { ascending: false })
+    .limit(1);
+
+  return (data?.[0] as Record<string, unknown> | undefined) ?? null;
+}
+
 // GET /api/book/manage/[token]/reschedule
 // Returns available slots for rescheduling
 export async function GET(
@@ -376,11 +423,15 @@ export async function GET(
      * The SESSION, when the page named one. Checked to belong to the booking
      * the token names — see `sessionOf`.
      */
-    const { session, notMine } = await sessionOf(
+    const named = await sessionOf(
       new URL(request.url).searchParams.get('meeting_id') ?? undefined,
       bookingId,
       booking.user_id as string
     );
+    const { notMine } = named;
+    /* A mailed link names no meeting. See `currentHourOf`. */
+    const session =
+      named.session ?? (named.notMine ? null : await currentHourOf(bookingId, booking.user_id as string));
 
     if (notMine) {
       /*
@@ -499,10 +550,15 @@ export async function GET(
         {
           success: false,
           code: 'already_settled',
+          /* Each status in its own words. This said "already been cancelled"
+             for a no-show too, so a client refused on a MISSED hour was told
+             their appointment had been called off. */
           error:
             settledStatus === 'held'
               ? 'That meeting has already taken place.'
-              : 'That meeting has already been cancelled.',
+              : settledStatus === 'no_show'
+                ? 'That appointment was marked as missed. Ask us to arrange another time.'
+                : 'That meeting has already been cancelled.',
           /* Which of the two, so the client's page can say the right one
              rather than mapping on the code alone. */
           meetingStatus: settledStatus ?? null,
@@ -966,11 +1022,16 @@ export async function POST(
      * The SESSION, when the client named one. Checked to belong to the booking
      * the token names, so a link to one package cannot reach another's hours.
      */
-    const { session, notMine } = await sessionOf(
+    const named = await sessionOf(
       validated.meetingId,
       bookingId,
       booking.user_id as string
     );
+    const { notMine } = named;
+    /* Same fallback as the GET, so the panel and the write agree about which
+       hour is being moved. */
+    const session =
+      named.session ?? (named.notMine ? null : await currentHourOf(bookingId, booking.user_id as string));
 
     if (notMine) {
       /*
@@ -1069,10 +1130,15 @@ export async function POST(
         {
           success: false,
           code: 'already_settled',
+          /* Each status in its own words. This said "already been cancelled"
+             for a no-show too, so a client refused on a MISSED hour was told
+             their appointment had been called off. */
           error:
             settledStatus === 'held'
               ? 'That meeting has already taken place.'
-              : 'That meeting has already been cancelled.',
+              : settledStatus === 'no_show'
+                ? 'That appointment was marked as missed. Ask us to arrange another time.'
+                : 'That meeting has already been cancelled.',
           /* Which of the two, so the client's page can say the right one
              rather than mapping on the code alone. */
           meetingStatus: settledStatus ?? null,

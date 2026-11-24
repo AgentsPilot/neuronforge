@@ -2692,7 +2692,9 @@ export async function GET(request: NextRequest) {
      */
     const { data: bookedRows, error: bookedError } = await supabaseServer
       .from('scheduling_bookings')
-      .select('service_id, status')
+      /* Neither `start_time` nor `booking_source` is displayed; together they
+         are how a package's purchase row is told from an order. See the loop. */
+      .select('service_id, status, start_time, booking_source')
       .eq('user_id', user.id)
       .gte('created_at', periodStart);
 
@@ -2705,6 +2707,49 @@ export async function GET(request: NextRequest) {
     const bookedByService = new Map<string, number>();
     for (const booking of bookedRows || []) {
       if (booking.status === 'cancelled') continue;
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A PACKAGE'S PURCHASE ROW IS NOT A SECOND ORDER.
+       *
+       * Accepting a quote for a package writes a `scheduling_bookings` row with
+       * NO TIME — `ProposalAcceptanceService.createPackageMeetings` says so
+       * outright: "this row is the purchase, not a meeting" — and hangs the
+       * agreed sessions off it as `scheduling_meetings`.
+       *
+       * Nothing draws that row. The contact drawer deliberately reparents its
+       * meetings onto the journey the quote came out of, because flat it showed
+       * a second card reading "Waiting for a quote" on the very thing a quote
+       * had just created. The diary has nothing to draw either, there being no
+       * hour to draw it at.
+       *
+       * This count simply counted rows, so a client who booked one consultation
+       * and bought one package read as 2 under a column headed Bookings — while
+       * the owner, looking at that same client in the drawer, could see only
+       * one. Reported exactly that way.
+       *
+       * ── WHY THE TEST IS THE SOURCE AND NOT MERELY THE MISSING TIME ─────────
+       *
+       * Because a timeless booking is usually a perfectly real order. A service
+       * with `is_scheduled: false` — a product, a job the owner schedules
+       * themselves — is sold without an hour, and on the reporting account six
+       * of the eight rows in this column were exactly that. Skipping every
+       * timeless row took the total from 8 to 2 and deleted a working business's
+       * orders from its own report. Measured before this was written.
+       *
+       * `booking_source: 'proposal'` is the narrow thing that is true of a
+       * package container and of nothing else: it is written at one place in the
+       * codebase, inside `createPackageMeetings`, and always with a null time.
+       *
+       * WHAT THIS COSTS, so it is not rediscovered as a bug: a package sold COLD
+       * — quoted with no booking behind it — has only its container, and that
+       * container stops being counted here. Its money is unaffected and its
+       * meetings were never in this column to begin with. The alternative is to
+       * count the container's meetings, which is a better number and a larger
+       * change: it would make this column disagree with band 4, which counts
+       * appointments the same way this one now does.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (booking.booking_source === 'proposal' && !booking.start_time) continue;
       const key = booking.service_id || UNATTRIBUTED_SERVICE_ID;
       bookedByService.set(key, (bookedByService.get(key) ?? 0) + 1);
     }

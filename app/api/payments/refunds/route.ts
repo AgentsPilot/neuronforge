@@ -426,6 +426,22 @@ export async function POST(request: NextRequest) {
       refundAmount: result.amount,
       currency: result.currency,
       reason: body.reason,
+      /*
+       * ───────────────────────────────────────────────────────────────────
+       * THE ONE CASE WHERE THE OWNER'S SENTENCE GOES TO THE CLIENT.
+       *
+       * `reason_note` is internal everywhere else, and the line above says
+       * why: it is the owner's own justification, not something to forward
+       * to the person it is about.
+       *
+       * A partial refund is the exception, because it is the only one that
+       * leaves a difference the client can see and nothing can account for.
+       * `body.amount` is set only when the owner asked to return PART of a
+       * payment, so this never fires on a full refund — and the template
+       * ignores it unless the figures agree it was partial.
+       * ───────────────────────────────────────────────────────────────────
+       */
+      partialExplanation: body.amount ? body.reason_note : undefined,
       notifyContact: body.notify_contact,
       refundId: result.refundId,
     });

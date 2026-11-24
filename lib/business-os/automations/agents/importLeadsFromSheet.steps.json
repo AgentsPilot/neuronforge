@@ -90,13 +90,13 @@
           "step_id": "step5",
           "id": "step5",
           "type": "conditional",
-          "name": "Skip a row with no address",
-          "description": "A blank row, a totals line, a note in the margin: a sheet an owner keeps by hand is full of them, and the one thing every real person has is an address. Checked BEFORE the CRM is asked, so fifty blank rows below the data cost fifty comparisons rather than fifty queries. It also prevents the worse outcome — a lookup for an empty address matches nothing, so without this the next step would cheerfully create a contact with no email at all.",
+          "name": "Skip a row without a real address",
+          "description": "A blank row, a totals line, a note in the margin, and — the one this was widened for — A NAME WHERE THE ADDRESS SHOULD BE. The check was `email != \"\"`, which asks only whether the cell holds something; a sheet kept by hand has cells holding \"David\", \"call him\", \"-\" and \"n/a\", and each of those became a CRM contact whose email address is a word. Nothing downstream can fix that: the client cannot be written to, the dedupe in step6 matches nothing on the next run, and every later import files the same person again. So the test is the SHAPE of an address rather than the presence of text: something, an @, something, a dot, and at least two letters of a domain. Deliberately loose — it is not an RFC check and must not become one, because the cost of refusing a real customer's unusual address is a lost lead, while the cost of letting a near-miss through is one contact the owner can see and correct. Commas and semicolons are excluded so a cell holding two addresses is skipped rather than filed under a string that is neither of them. Surrounding whitespace is tolerated: a trailing space is a typing accident, not a reason to drop somebody. Checked BEFORE the CRM is asked, so fifty blank rows below the data cost fifty comparisons rather than fifty queries.",
           "condition": {
             "conditionType": "simple",
             "field": "person.email",
-            "operator": "not_equals",
-            "value": ""
+            "operator": "matches",
+            "value": "^\\s*[^@\\s,;]+@[^@\\s,;]+\\.[A-Za-z]{2,}\\s*$"
           },
           "steps": [
             {

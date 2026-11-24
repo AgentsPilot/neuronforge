@@ -166,7 +166,34 @@ const attemptOnce: typeof fetch = async (input, init) => {
   callerSignal?.addEventListener('abort', onCallerAbort);
 
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * NEVER FROM NEXT'S DATA CACHE. THIS IS A DATABASE, NOT A CDN.
+     *
+     * Next's App Router replaces the global `fetch` and caches GET responses
+     * by default. Every PostgREST read is a GET, so each distinct query URL
+     * was answered ONCE and replayed from then on — for the life of the
+     * process locally, and across invocations and deployments on Vercel,
+     * because the data cache is durable.
+     *
+     * What that looked like in production, measured on 2026-11-23: the refund
+     * agent's first step asked for refund requests with `status = submitted`.
+     * It returned a row that had been `awaiting_owner` since 19 November — the
+     * answer from the first time that query ever ran. Every later run replayed
+     * it, so the agent assessed a four-day-old request, wrote its conclusion
+     * onto that row, and never touched the request the client had actually
+     * submitted. On two other accounts the first answer was EMPTY, so their
+     * agents reported "nothing to do" every day for a week while requests sat
+     * waiting.
+     *
+     * It is invisible from outside the app: the same query from a plain node
+     * script is always correct, because only Next patches `fetch`.
+     *
+     * Set AFTER the spread so a caller cannot reinstate caching by accident.
+     * Outside Next this option is simply ignored.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    return await fetch(input, { ...init, signal: controller.signal, cache: 'no-store' });
   } finally {
     clearTimeout(timer);
     callerSignal?.removeEventListener('abort', onCallerAbort);

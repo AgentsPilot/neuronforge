@@ -328,11 +328,13 @@ describe('a deferred booking is not called paid before any money moves', () => {
   it('the webhook flips it to paid when the money actually arrives', () => {
     // Without this the deferred booking reads `pending` for ever, through
     // every period — the regression the `pending` change would have caused.
-    const record = functionText('app/api/stripe/webhook/route.ts', 'recordPlanPeriodPaid');
+    const record = functionText('lib/payments/recordPlanPeriod.ts', 'recordPlanPeriodPaid');
 
-    // CF-5 PR 4: the update moved into the booking repository. The route still
+    // CF-5 PR 4: the update moved into the booking repository. The WRITER still
     // makes it, for the plan's booking and scoped to the plan's owner, only
-    // when the plan has a booking...
+    // when the plan has a booking. It left the webhook route for
+    // `lib/payments/recordPlanPeriod.ts` so the settlement sweep could call the
+    // same writer; this guard followed it rather than being relaxed.
     expect(record).toMatch(
       /if \(plan\.data\.booking_id\) \{\s*const \{ error: bookingError \} = await schedulingBookingRepository\.markPaidForOwner\(plan\.data\.booking_id, plan\.data\.user_id\)/
     );
@@ -347,7 +349,7 @@ describe('a deferred booking is not called paid before any money moves', () => {
 
   it('does not fail the webhook if only the booking update fails', () => {
     // The money is the part that must not be lost.
-    const record = functionText('app/api/stripe/webhook/route.ts', 'recordPlanPeriodPaid');
+    const record = functionText('lib/payments/recordPlanPeriod.ts', 'recordPlanPeriodPaid');
     expect(record.indexOf('if (bookingError)')).toBeGreaterThan(-1);
     const branch = record.slice(record.indexOf('if (bookingError)'));
 

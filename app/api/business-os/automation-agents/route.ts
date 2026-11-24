@@ -43,6 +43,7 @@ import {
   removeAutomation,
   resumeAutomation,
   runAutomationNow,
+  configureAutomation,
   updateAgentSchedule,
 } from '@/lib/business-os/automations/install';
 
@@ -146,7 +147,29 @@ const installSchema = z.object({
 
 const controlSchema = z.object({
   agentId: z.string().uuid(),
-  action: z.enum(['pause', 'resume', 'schedule', 'run']),
+  action: z.enum(['pause', 'resume', 'schedule', 'run', 'configure']),
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE ANSWERS AGAIN, FOR `action: 'configure'`.
+   *
+   * The same gap the schedule fields above close, for the other half of the
+   * install dialog. An owner answered "which spreadsheet, which tab, which
+   * column" once and then had no way back: leads moving to a new sheet meant
+   * removing the agent and adopting it again, which loses its history, its
+   * schedule and its outcome record.
+   *
+   * A SHAPE here and the meaning elsewhere, like `schedule`. This cannot know
+   * which keys an agent asks for — the catalogue does — so it bounds what can
+   * be sent and `configureAutomation` decides what is accepted. Values are
+   * strings because every control on that dialog produces one: a dropdown of
+   * spreadsheets, a tab name, a column letter.
+   *
+   * Bounded rather than open: an unbounded record on a route that writes to a
+   * row the runner reads is a place to park anything.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  values: z.record(z.string(), z.string().trim().max(500)).optional(),
 
 
   /*
@@ -534,6 +557,60 @@ export async function PATCH(request: NextRequest) {
      * watch for something that already happened.
      * ───────────────────────────────────────────────────────────────────────
      */
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * CHANGING THE ANSWERS, WITHOUT LOSING THE AGENT.
+     *
+     * Ownership is proved exactly as every other control here proves it —
+     * `configureAutomation` gates on `isControllableAgent`, the same check
+     * behind pause, resume and run. The agent id arrives from the browser and
+     * is never trusted for anything but a lookup scoped to this session.
+     *
+     * The write takes effect on the NEXT run. Nothing cancels a run in flight
+     * and nothing re-runs on save: an owner correcting a spreadsheet id does
+     * not expect the correction to fire an import, and a run already reading
+     * the old sheet will finish reading it.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (validated.action === 'configure') {
+      const outcome = await configureAutomation(
+        user.id,
+        validated.agentId,
+        validated.values ?? {}
+      );
+
+      if (!outcome.ok) {
+        requestLogger.warn(
+          { userId: user.id, agentId: validated.agentId, reason: outcome.reason },
+          'Could not change what this agent was told'
+        );
+        return NextResponse.json(
+          { success: false, error: 'Could not change this agent' },
+          { status: outcome.reason === 'not_found' ? 404 : 400 }
+        );
+      }
+
+      auditTrail
+        .log({
+          action: 'AUTOMATION_AGENT_RECONFIGURED',
+          entityType: 'agent',
+          entityId: validated.agentId,
+          userId: user.id,
+          /*
+           * WHICH questions were answered again, never the answers.
+           *
+           * A spreadsheet id names a document, and a tab names what the
+           * business keeps in it. The keys say what changed and that is what
+           * an audit of this action is for.
+           */
+          details: { fields: Object.keys(validated.values ?? {}).sort() },
+          request,
+        })
+        .catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
+
+      return NextResponse.json({ success: true });
+    }
+
     if (validated.action === 'run') {
       const brought = await runAutomationNow(user.id, validated.agentId);
 

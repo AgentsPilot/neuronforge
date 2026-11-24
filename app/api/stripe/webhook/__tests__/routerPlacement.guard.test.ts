@@ -348,7 +348,24 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     /*
      * A READ, AND DELIBERATELY NO WRITE.
      *
-     * `recordPlanPeriodPaid` resolves which of our bills a Stripe invoice is,
+     * NOTE: `recordPlanPeriodPaid` and `mirrorPlanBill` are no longer functions in
+ * this route. They moved to `lib/payments/` so the nightly settlement sweep
+ * could call the SAME writers the webhook does — a library may not import a
+ * route, which is why a renewal Stripe had already collected could be recorded
+ * by nothing at all.
+ *
+ * They are deliberately NOT folded into the tables below. This file guards the
+ * ROUTE's placement of calls, and it identifies an ownership check by finding a
+ * literal `accountOwns(...)` before each write. The writers prove the same fact
+ * through an injected `deps.ownsAccount`, which a check keyed on that name
+ * cannot see — so extending this file would have reported `check: undefined`
+ * for a write that is in fact guarded.
+ *
+ * Their equivalent invariants (repository-only access, ownership proved before
+ * any write, the proved owner carried onto the row) are asserted in
+ * `lib/payments/__tests__/oneWriterPerMoneyFact.guard.test.ts`.
+ *
+ * `recordPlanPeriodPaid` resolves which of our bills a Stripe invoice is,
      * for ONE purpose: to write `invoice_id` on the payment it is inserting.
      * Without it that column stayed null for every plan payment ever taken —
      * measured at 5 unlinked payments on one account — so a bill and the money
@@ -361,7 +378,6 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
      * pair above is two and not one. A second settle here would be a second
      * writer of the same fact, with a weaker ownership check.
      */
-    recordPlanPeriodPaid: { findByStripeInvoiceId: 1 },
   };
   const INVOICE_WRITES = ['recordStripeInvoiceId', 'markPaidFromStripeInvoice', 'markPaidFromCheckout', 'setStatusFromStripe', 'recordStripeDocuments'];
 
@@ -475,7 +491,6 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
       handleDispute: { findFirstByStripeReference: 1, recordDisputeState: 1 },
       handleConnectRefund: { findFirstByStripeReference: 1 },
       handleConnectPaymentIntentSucceeded: { findByPaymentIntentId: 1, insertFromWebhook: 1 },
-      recordPlanPeriodPaid: { insertFromWebhookReturningId: 1 },
       handleConnectInvoicePaid: {
         findSettledIdForInvoice: 1,
         findByPaymentIntentId: 1,
@@ -528,7 +543,6 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     // are checked in the refund branch below (STRIPE_CONNECT_REFUND_WEBHOOK A-5).
     const OWNER_PROVED: Record<string, string> = {
       handleConnectPaymentIntentSucceeded: 'ownerId',
-      recordPlanPeriodPaid: 'plan.data.user_id',
       handleConnectInvoicePaid: 'platformInvoice.user_id',
       handleConnectCheckoutCompleted: 'platformInvoice.user_id',
     };
@@ -609,17 +623,14 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
   // per function, including the ones that were already repository calls.
   const PLAN_BOOKING_CALLS: Record<string, Record<string, Record<string, number>>> = {
     paymentPlanRepository: {
-      recordPlanPeriodPaid: { findInstallmentIdByStripeInvoiceId: 1, markPeriodPaidFromStripe: 1, findNextPendingPeriod: 1 },
       handlePlanSubscriptionEnded: { cancelOpenPeriodsForEndedPlan: 1 },
     },
     paymentPlanSubscriptionRepository: {
-      recordPlanPeriodPaid: { findBySubscriptionId: 1, recordPeriodPaid: 1, close: 1 },
       handleConnectInvoicePaymentFailed: { findBySubscriptionId: 1, recordFailure: 1 },
       handlePlanSubscriptionEnded: { findEndStateBySubscriptionId: 1, endFromStripe: 1 },
     },
     schedulingBookingRepository: {
       handleConnectPaymentIntentSucceeded: { findOwnedId: 1 },
-      recordPlanPeriodPaid: { markPaidForOwner: 1 },
       handleConnectInvoicePaid: { markPaidUnscoped: 1 },
       handleConnectCheckoutCompleted: { markPaidAndConfirmIfPending: 1, markPaidForOwnerCounted: 1 },
     },
@@ -673,8 +684,6 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
      * on purpose (SA C-9). Fix-2 changes it, and this line with it.
      */
     const EXPECTED: Array<{ fn: string; receiver: string; method: string; args: string[]; check: string | null }> = [
-      { fn: 'recordPlanPeriodPaid', receiver: 'paymentPlanRepository', method: 'markPeriodPaidFromStripe', args: ['plan.data.id', 'periodsPaid', expect.any(String) as unknown as string], check: 'plan.data.user_id' },
-      { fn: 'recordPlanPeriodPaid', receiver: 'schedulingBookingRepository', method: 'markPaidForOwner', args: ['plan.data.booking_id', 'plan.data.user_id'], check: 'plan.data.user_id' },
       { fn: 'handleConnectInvoicePaid', receiver: 'schedulingBookingRepository', method: 'markPaidUnscoped', args: ['platformInvoice.booking_id'], check: 'platformInvoice.user_id' },
       { fn: 'handleConnectCheckoutCompleted', receiver: 'schedulingBookingRepository', method: 'markPaidAndConfirmIfPending', args: ['platformInvoice.booking_id'], check: 'platformInvoice.user_id' },
       { fn: 'handleConnectCheckoutCompleted', receiver: 'schedulingBookingRepository', method: 'markPaidForOwnerCounted', args: ['bookingId', 'owner'], check: null },

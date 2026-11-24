@@ -233,6 +233,14 @@ export function SchedulingDialog({
    * own and must be fetched as one.
    */
   const [calendarBookings, setCalendarBookings] = useState<SchedulingBooking[]>([]);
+  /**
+   * Is the week on screen the week we hold data for?
+   *
+   * False from the moment a different week is asked for until its answer is in.
+   * The grid used to draw "No bookings yet" over that gap, which reads as "you
+   * have nothing this week" when the truth is "we have not been told yet".
+   */
+  const [calendarSettled, setCalendarSettled] = useState(false);
   const [availability, setAvailability] = useState<WeeklyAvailability>(DEFAULT_AVAILABILITY);
   /*
    * The zone the business works in — not the one the reader is sitting in.
@@ -413,13 +421,48 @@ export function SchedulingDialog({
 
     const response = await fetch(`/api/scheduling/bookings?${params.toString()}`);
     const data = await response.json();
+
+    /*
+     * ── THE ANSWER TO THE WEEK ON SCREEN, NOT WHICHEVER LANDS LAST ──────────
+     *
+     * Two of these are in flight whenever the owner pages — and in development
+     * every effect fires twice, so two are in flight on the first paint too.
+     * Nothing sequenced them: `setCalendarBookings` ran for whichever response
+     * the network returned last.
+     *
+     * When that was the PREVIOUS week's, the symptom was exact and maddening:
+     * the right appointments appeared and vanished a moment later. The stale
+     * payload is trimmed to its own week, so for the week now on screen it
+     * holds nothing, and the list empties itself.
+     *
+     * Reported as "they show and disappear in a sec" on a week whose only
+     * entries were a package's sessions — a package shows up here as ONE
+     * booking carrying its meetings, so losing that row loses the whole week.
+     *
+     * `calendarWeek.current` is set synchronously by `handleWeekChange` before
+     * this is called, so comparing against it is comparing against the week the
+     * owner is actually looking at.
+     */
+    const stillWanted =
+      calendarWeek.current?.from === week.from && calendarWeek.current?.to === week.to;
+    if (!stillWanted) return;
+
     if (data.success) setCalendarBookings(data.bookings);
+
+    /* The week is in hand, whatever it holds. Only now may the grid say a week
+       is empty — see `calendarSettled`. */
+    setCalendarSettled(true);
   }, []);
 
   const handleWeekChange = useCallback(
     (start: Date, endExclusive: Date) => {
       const week = { from: start.toISOString(), to: endExclusive.toISOString() };
+      if (calendarWeek.current?.from === week.from && calendarWeek.current?.to === week.to) return;
+
       calendarWeek.current = week;
+      /* A different week than the one on screen: nothing in hand for it yet, so
+         the grid must not claim it is empty until the answer lands. */
+      setCalendarSettled(false);
       void fetchCalendarWeek(week).catch(error =>
         logger.error({ err: error }, 'Failed to load the calendar week')
       );
@@ -861,6 +904,7 @@ export function SchedulingDialog({
                 onSlotClick={handleSlotClick}
                 availability={availability}
                 onWeekChange={handleWeekChange}
+                weekSettled={calendarSettled}
               />
             )}
           </div>

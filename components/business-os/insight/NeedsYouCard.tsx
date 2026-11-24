@@ -31,7 +31,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Send, Check, Clock, AlertCircle, FileText, Bell, Receipt, Undo2, CalendarX, CalendarSearch, UserRound, Bot, Mail } from 'lucide-react';
+import { Send, Check, Clock, AlertCircle, FileText, Bell, Receipt, Undo2, CalendarX, CalendarSearch, UserRound, Bot, Mail, Loader2 } from 'lucide-react';
 import { ClientStandingPill } from '@/components/business-os/clients/ClientStandingPill';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CurrencyCode } from '@/lib/business-os/LanguageContext';
@@ -318,7 +318,20 @@ type RowState =
    * says what is about to leave and offers to go ahead.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  | { kind: 'confirming' }
+  /**
+   * Confirming, and — on a refund decline — holding the message that will go
+   * with it.
+   *
+   * The draft is fetched on the first tap and lives here rather than in a
+   * state of its own, because it belongs to this row's confirmation and must
+   * disappear with it: backing out has to leave nothing behind that a later
+   * press could send.
+   *
+   * `drafting` is the wait. An empty box that fills a second later reads as a
+   * bug, and an owner who presses through before it arrives would send
+   * silence.
+   */
+  | { kind: 'confirming'; draft?: string; drafting?: boolean }
   | { kind: 'working' }
   | { kind: 'done' }
   | { kind: 'refused'; message: string };
@@ -1106,12 +1119,81 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
       setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
       return;
     }
+
+    /*
+     * ── ASK ONCE BEFORE SAYING NO TO SOMEBODY'S MONEY ──────────────────────
+     *
+     * `act()` has had this since the sends did: one tap sets the row to
+     * `confirming`, the second goes through. Declining never used `act()`, so
+     * it never inherited the question — a single stray tap closed a client's
+     * refund request for good, with no way back and nothing on screen asking
+     * whether that was meant.
+     *
+     * Only the decline. `handled` records something the owner has already
+     * done outside the platform, so it describes the past rather than deciding
+     * anything, and a confirmation there would be ceremony.
+     *
+     * The check reads the ROW, for the reason the note in `act()` gives: a
+     * second entry point that forgot a flag would skip the question silently.
+     */
+    if (decision === 'declined' && rows[key]?.kind !== 'confirming') {
+      setRow(key, { kind: 'confirming', drafting: true });
+
+      /*
+       * And while they decide, draft what the client will be told.
+       *
+       * Asked for here rather than after the decision because a declined
+       * request leaves the card the instant it is recorded — a draft produced
+       * then would have nowhere to be read. This way the confirmation is not
+       * a yes/no prompt but the message itself, which is the thing actually
+       * worth confirming.
+       *
+       * It writes nothing and decides nothing, so backing out costs only the
+       * draft. A failure leaves an empty box: the owner can still write it, or
+       * send nothing, exactly as before.
+       */
+      void (async () => {
+        try {
+          const response = await fetch('/api/business-os/refund-requests/decline-draft', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ requestId: item.requestId }),
+          });
+          const payload = await response.json();
+          setRows(prev =>
+            /* Only if they are still on this confirmation. A draft that
+               arrives after they backed out must not reopen it. */
+            prev[key]?.kind === 'confirming'
+              ? { ...prev, [key]: { kind: 'confirming', draft: payload?.data?.draft ?? '', drafting: false } }
+              : prev
+          );
+        } catch {
+          setRows(prev =>
+            prev[key]?.kind === 'confirming'
+              ? { ...prev, [key]: { kind: 'confirming', draft: '', drafting: false } }
+              : prev
+          );
+        }
+      })();
+
+      return;
+    }
+
+    /* What they approved, if anything. An empty box sends nothing, which is
+       what declining did before this existed. */
+    const approved =
+      rows[key]?.kind === 'confirming' ? (rows[key] as { draft?: string }).draft?.trim() : undefined;
+
     setRow(key, { kind: 'working' });
     try {
       const response = await fetch('/api/business-os/refund-requests/decide', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: item.requestId, decision }),
+        body: JSON.stringify({
+          requestId: item.requestId,
+          decision,
+          ...(decision === 'declined' && approved ? { message: approved } : {}),
+        }),
       });
       const payload = await response.json();
       if (!response.ok || !payload.success) {
@@ -1595,6 +1677,20 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
   }));
   const lead = mostUrgent(tasksOf(leadCandidates));
   const leadGap = lead ? visibleGaps.find(g => g.id === lead.gapId) ?? null : null;
+
+  /*
+   * The promoted row's decline, resolved once.
+   *
+   * The reply box, the controls under it and the row above it all have to
+   * agree on whether a decline is being written. Deriving that three times
+   * from `rows` is how the two halves of a confirmation came to disagree
+   * before — one showing a second tap, the other showing the first.
+   */
+  const leadDeclineKey =
+    leadGap && lead ? rowKey(leadGap, lead.item as GapItemView) : '';
+  const leadDeclineState = leadDeclineKey ? rows[leadDeclineKey] : undefined;
+  const leadDeclining =
+    leadGap?.id === 'refund_requested' && leadDeclineState?.kind === 'confirming';
   /* Amber for the one thing that is worse tomorrow than today. */
   const leadUrgent = Boolean(lead?.item.planLive);
 
@@ -1618,13 +1714,75 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
    * on one surface being offered something the other refuses.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * The message that goes to the client, as its own full-width block.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Lifted out of `refundDecisions` when the promoted row's controls moved up
+   * beside the headline. Up there the row holds BUTTONS and nothing else: a
+   * four-row textarea in a flex row next to a sentence takes its width from
+   * its own content, so the headline would have been squeezed into a narrow
+   * column by the very box the owner is meant to read and edit.
+   *
+   * So the buttons sit with the headline and this renders underneath them, at
+   * the full width of the card. The list rows, whose controls were already on
+   * the row itself, keep it exactly where it was — hence a flag rather than a
+   * second copy of the markup, which is how the buttons themselves came to be
+   * missing from the promoted row in the first place.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const declineMessageBox = (gap: GapView, item: GapItemView, state: RowState) => (
+    <>
+        {gap.id === 'refund_requested' && item.requestId && state.kind === 'confirming' && (
+          <div className="w-full mt-2">
+            <p className="text-[10.5px] font-bold uppercase mb-1 text-[var(--v2-text-muted)]" style={{ letterSpacing: '0.06em' }}>
+              {t('gaps.refund.decline_message')}
+            </p>
+            {state.drafting ? (
+              <p className="inline-flex items-center gap-1.5 text-[12px] text-[var(--v2-text-muted)] italic px-1 py-2">
+                <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
+                {t('gaps.refund.decline_drafting')}
+              </p>
+            ) : (
+              <textarea
+                value={state.draft ?? ''}
+                onChange={event =>
+                  setRow(rowKey(gap, item), {
+                    kind: 'confirming',
+                    draft: event.target.value,
+                    drafting: false,
+                  })
+                }
+                rows={4}
+                placeholder={t('gaps.refund.decline_message_empty')}
+                className="w-full rounded-lg border px-2.5 py-2 text-[12.5px] leading-relaxed bg-[var(--v2-bg)] text-[var(--v2-text-primary)]"
+                style={{ borderColor: 'var(--v2-border)', unicodeBidi: 'plaintext' }}
+              />
+            )}
+          </div>
+        )}
+    </>
+  );
+
   const refundDecisions = (
     gap: GapView,
     item: GapItemView,
-    state: RowState
+    state: RowState,
+    /*
+     * The promoted row borrows the reply box for both: the message renders
+     * inside it, and the pair that confirms the decline renders under it. So
+     * the row beside the headline keeps the three ANSWERS and nothing that
+     * belongs to a message being written.
+     */
+    {
+      withMessageBox = true,
+      withDecline = true,
+      withApprove = true,
+    }: { withMessageBox?: boolean; withDecline?: boolean; withApprove?: boolean } = {}
   ) => (
     <>
-        {gap.id === 'refund_requested' &&
+        {withApprove &&
+          gap.id === 'refund_requested' &&
           item.requestId &&
           canApproveInOneClick(item) && (
             <button
@@ -1666,7 +1824,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
           second way to move money: the same dialog every other
           surface uses, reached one step further along.
         */}
-        {gap.id === 'refund_requested' && item.requestId && item.entityId && (
+        {withApprove && gap.id === 'refund_requested' && item.requestId && item.entityId && (
           <button
             type="button"
             onClick={() =>
@@ -1692,7 +1850,29 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                    says so instead of failing a check the build ignores. */
                 prefillAmount: item.refundRecommendedAmount ?? undefined,
                 reasonKey: item.noteKey?.replace('payments.refund.reason.', ''),
-                reasonNote: item.quote?.trim() || item.refundReasoning?.trim(),
+                /*
+                 * ───────────────────────────────────────────────────────────
+                 * NOT THE CLIENT'S OWN WORDS. This box is now what they READ.
+                 *
+                 * It used to arrive holding their message — "I can not attend
+                 * the meeting, please refund" — which was sensible while
+                 * `reason_note` stayed in the ledger: the owner kept a record
+                 * without retyping it.
+                 *
+                 * On a partial refund that same box is sent to them, so the
+                 * prefill became a quotation of the client's request offered
+                 * back as the business's account of why it kept part of the
+                 * money. Their words are on the card above, where the owner
+                 * is reading them anyway.
+                 *
+                 * The agent's `refundReasoning` is no better here: it is
+                 * advice written TO THE OWNER — "we do not have a diary mark"
+                 * — and reads as an internal note if it reaches a client.
+                 *
+                 * So the sentence is the owner's to write. The chip still
+                 * arrives chosen, which is the part that saves real typing.
+                 * ───────────────────────────────────────────────────────────
+                 */
               })
             }
             disabled={state.kind === 'working' || state.kind === 'done'}
@@ -1707,11 +1887,32 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
           </button>
         )}
 
-        {gap.id === 'refund_requested' && item.requestId && (
+        {/*
+          ── WHAT THEY WILL BE TOLD, BEFORE IT IS SENT ──────────────────────
+          Editable, because the draft is a starting point and the owner knows
+          things the model does not. Emptying it is a real choice: an empty box
+          sends nothing, which is what declining did before this existed.
+        */}
+        {withMessageBox && declineMessageBox(gap, item, state)}
+
+        {withDecline && gap.id === 'refund_requested' && item.requestId && (
           <button
             type="button"
             onClick={() => void answerRefund(gap, item, 'declined')}
-            disabled={state.kind === 'working' || state.kind === 'done'}
+            /*
+             * NOT WHILE THE DRAFT IS STILL COMING.
+             *
+             * The second tap sends whatever is in `state.draft`, and during
+             * those few seconds there is nothing there — so an owner who
+             * tapped twice quickly recorded the decline and told the client
+             * NOTHING, silently, which is the exact outcome this whole flow
+             * exists to prevent.
+             */
+            disabled={
+              state.kind === 'working' ||
+              state.kind === 'done' ||
+              (state.kind === 'confirming' && Boolean(state.drafting))
+            }
             className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50"
             style={{
               borderColor: 'var(--v2-border)',
@@ -1722,9 +1923,33 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
             {state.kind === 'done' ? (
               <Check className="w-3.5 h-3.5" aria-hidden="true" />
             ) : null}
+            {/* The second tap says what it does. "Decline" twice would look
+                like the first one had not registered. */}
+            {state.kind === 'confirming' && state.drafting && (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+            )}
             {state.kind === 'done'
               ? t('gaps.refund.declined')
-              : t('gaps.refund.decline')}
+              : state.kind === 'confirming'
+                ? state.drafting
+                  ? t('gaps.refund.decline_drafting')
+                  : t('gaps.refund.decline_confirm')
+                : t('gaps.refund.decline')}
+          </button>
+        )}
+
+        {/* The way out, beside the second tap. Quiet, because backing out of
+            something irreversible should not mean choosing between two loud
+            buttons — the same shape `act()`'s confirmation uses. */}
+        {withDecline && gap.id === 'refund_requested' && item.requestId && state.kind === 'confirming' && (
+          <button
+            type="button"
+            onClick={() => setRow(rowKey(gap, item), { kind: 'idle' })}
+            aria-label={t('common.cancel') || 'Cancel'}
+            title={t('common.cancel') || 'Cancel'}
+            className="shrink-0 self-start px-2 py-1.5 text-xs rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+          >
+            ✕
           </button>
         )}
     </>
@@ -1794,9 +2019,210 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
             {leadUrgent ? t('gaps.lead.urgent') : t('gaps.lead.next')}
           </p>
 
-          <p className="text-[15px] leading-relaxed font-medium text-[var(--v2-text-primary)] mb-1">
-            {leadSentence(lead.gapId, lead.item, t, money)}
-          </p>
+          {/*
+            ─────────────────────────────────────────────────────────────────
+            THE CONTROLS SIT BESIDE THE HEADLINE, NOT UNDER THE CARD.
+
+            They were at the foot of the block, below the reply box, because
+            the promoted row grew downwards: headline, facts, assessment,
+            reply, and whatever was left went last. That put the calendar and
+            mail icons — the two things an owner reaches for BEFORE deciding
+            anything — under everything they would have to scroll past, while
+            the list rows underneath kept theirs on the row itself.
+
+            Moved on the owner's instruction, the whole row together, for
+            every gap rather than for refunds alone: one place where this
+            card's controls live, in the same relative spot the folded rows
+            keep theirs.
+
+            The decisions move with them, and that is the deliberate cost: a
+            refund can now be answered above the reasoning that justifies it.
+            The facts sit directly underneath, and declining still asks a
+            second time before anything is sent.
+
+            `flex-wrap` with `justify-between` rather than a fixed split: on a
+            phone the controls take their own line under the sentence instead
+            of squeezing it into a column two words wide. `min-w-0` lets the
+            headline shrink rather than push them off the card.
+            ─────────────────────────────────────────────────────────────────
+          */}
+          <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+            <p className="text-[15px] leading-relaxed font-medium text-[var(--v2-text-primary)] flex-1 min-w-0">
+              {leadSentence(lead.gapId, lead.item, t, money)}
+            </p>
+            <div className="flex gap-2 flex-wrap shrink-0">
+              {/*
+                THE PROMOTED ROW CONFIRMS TOO, AND HAD TO BE SAID SEPARATELY.
+
+                This button has its own render and reads none of the row state
+                the list below tracks — no working, no done. So the moment the
+                irreversible actions started asking first, its first tap set the
+                row to `confirming` and NOTHING on screen changed: the label
+                stayed put, and a reader who assumed nothing had happened tapped
+                again and sent it. A confirmation that is invisible is worse than
+                none, because it trains the second tap.
+              */}
+              {(() => {
+                const leadKey = rowKey(leadGap!, lead.item as GapItemView);
+                const leadAction = actionFor(leadGap!, lead.item as GapItemView);
+                const asking = rows[leadKey]?.kind === 'confirming';
+                /* The same door the list rows get. The promoted row is the one most
+                   owners ever see — the rest stay folded — so an affordance only on
+                   the list is an affordance most people never find. See
+                   `ENTITY_IS_A_BOOKING`. */
+                const leadBooking =
+                  lead.item.bookingId ??
+                  (ENTITY_IS_A_BOOKING.has(lead.gapId) ? lead.item.entityId : null);
+                return (
+                  <>
+                    {/*
+                      ─────────────────────────────────────────────────────────
+                      AND THE THREE ANSWERS TO A REFUND, ON THE ROW THAT ASKS.
+
+                      `refundDecisions` was extracted precisely so this row could
+                      call it — its own comment says the lead row "rendered the
+                      generic action instead" — but the second call site was
+                      never added, so the extraction fixed nothing where it was
+                      aimed. The promoted row is the one most owners ever see,
+                      the rest stay folded, and on it a refund request offered no
+                      way to refund, return a different amount, or decline. The
+                      only way to reach the buttons was to expand "and 2 more
+                      waiting" and answer it from the list. Reported from a live
+                      account with exactly that card on screen, twice.
+
+                      Beside the record and mail buttons, in the same row, for
+                      the reason the list's copy gives: the facts, the timeline
+                      and the recommendation are all above this point, so what
+                      moves is where the buttons sit, not what has been read by
+                      the time they are reached.
+                      ─────────────────────────────────────────────────────────
+                    */}
+                    {leadGap &&
+                      refundDecisions(
+                        leadGap,
+                        lead.item as GapItemView,
+                        rows[leadKey] ?? { kind: 'idle' },
+                        /*
+                         * Buttons only up here. Once the owner has asked to
+                         * decline, the message and the pair that confirms it
+                         * both belong to the reply box below — otherwise the
+                         * card asks the question in one place and takes the
+                         * answer in another.
+                         */
+                        { withMessageBox: false, withDecline: !asking }
+                      )}
+                    {/* Not where the reply box already offers it. See
+                        `THE_REPLY_BOX_DOES_THIS`. */}
+                    {!Boolean(leadAction) && THE_REPLY_BOX_DOES_THIS.has(leadAction as string) && (
+                    <button
+                      type="button"
+                      onClick={() => act(leadGap!, lead.item as GapItemView)}
+                      /*
+                       * ─────────────────────────────────────────────────────────
+                       * THE SAME BUTTON AS EVERY ROW IN THE LIST BELOW.
+                       *
+                       * The lead row was built first and kept its own metrics —
+                       * 13px text in `px-4 py-2`, no lift, no hover, no press —
+                       * while the rows underneath are `text-xs` in `px-3 py-1.5`
+                       * with `ap-primary-lift`, a brightness hover and a scale on
+                       * press. One card, two buttons, and the bigger flatter one
+                       * sat directly above the smaller lively ones.
+                       *
+                       * `ap-primary-lift` is a class rather than an inline
+                       * shadow for the reason `globals.css` records: the shadow
+                       * is a colour-mix of the primary and cannot be expressed
+                       * inline without losing its dark-mode form.
+                       * ─────────────────────────────────────────────────────────
+                       */
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
+                      style={{ background: 'var(--v2-primary)', color: '#fff' }}
+                    >
+                      {asking
+                        ? (leadAction === 'cancel_booking'
+                            ? t('gaps.confirm.cancel_booking') || 'Cancel and tell {name}'
+                            : t('gaps.confirm.email') || 'Email {name} now'
+                          ).replace('{name}', lead.item.name)
+                        : t(`gaps.action.${leadAction}`)}
+                    </button>
+                    )}
+                    {/*
+                      Not while the decline owns the row. Its own way out sits
+                      under the box with the button it belongs to, and this one
+                      stayed up here beside a headline doing the same thing —
+                      two cancels for one question, in two places.
+                    */}
+                    {asking && !leadDeclining && (
+                      <button
+                        type="button"
+                        onClick={() => setRow(leadKey, { kind: 'idle' })}
+                        /* Sized to the button it sits beside, like the list's.
+                           It said exactly that and used px-2.5 against a px-3 neighbour, so the
+                           pair sat a hair out of line on every promoted row. */
+                        className="px-3 py-1.5 text-xs font-semibold rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                      >
+                        {t('common.cancel') || 'Cancel'}
+                      </button>
+                    )}
+                    {/*
+                      THE TWO DOORS, LAST IN THE ROW, BESIDE "OPEN THE CLIENT".
+
+                      They opened the row: an icon for the mail it arrived in
+                      and one for the booking or the contact. That put two
+                      small grey glyphs between the headline and the answers,
+                      so the eye crossed navigation to reach the decision.
+
+                      They are navigation, and "open the client" beside them
+                      is the third of the same kind, so the three sit together
+                      at the end of the row on the owner's instruction.
+                    */}
+                    {/* The mail it came in, in the same slot the list rows keep
+                        it. See the note at the list row's copy. */}
+                    {lead.item.sourceThreadId && (
+                      <a
+                        href={mailThreadUrl(lead.item.sourceThreadId, lead.item.sourceThreadProvider)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={t('gaps.refund.open_email')}
+                        title={t('gaps.refund.open_email')}
+                        className="inline-flex items-center justify-center p-1.5 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-colors"
+                      >
+                        <Mail className="w-4 h-4" aria-hidden="true" />
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => openRecord(lead.gapId, lead.item)}
+                      aria-label={t(leadBooking ? 'gaps.open_booking' : 'gaps.open_contact')}
+                      title={t(leadBooking ? 'gaps.open_booking' : 'gaps.open_contact')}
+                      className="inline-flex items-center justify-center p-1.5 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-colors"
+                    >
+                      {leadBooking ? (
+                        <CalendarSearch className="w-4 h-4" aria-hidden="true" />
+                      ) : (
+                        <UserRound className="w-4 h-4" aria-hidden="true" />
+                      )}
+                    </button>
+                  </>
+                );
+              })()}
+              <button
+                type="button"
+                onClick={() => openContact(lead.item.contactId)}
+                /* Sized to the row button it stands beside. It kept the lead
+                   row's original `text-[13px] px-4 py-2`, so once the primary
+                   next to it became the list's button this one was visibly
+                   taller than the thing it is paired with. */
+                className="inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors hover:border-[var(--v2-text-muted)]"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--v2-text-secondary)',
+                  border: '1px solid var(--v2-border)',
+                }}
+              >
+                {t('gaps.lead.open_contact')}
+              </button>
+            </div>
+          </div>
 
           {/* Who you are answering, in one line. See `ClientLine`. */}
           <ClientLine
@@ -1806,6 +2232,7 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
             t={t}
             language={language}
           />
+
 
           {/*
             ONE BLOCK, BOTH POSITIONS. See `MailGapBlock` — this markup existed
@@ -1883,14 +2310,115 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
                  honest label for both — nothing was filed at a mailbox, and
                  the owner is expected to finish it.
               */
-              draftBody={lead.item.draftBody ?? lead.item.refundClientDraft}
+              draftBody={
+                leadDeclining ? (leadDeclineState?.draft ?? '') : (lead.item.draftBody ?? lead.item.refundClientDraft)
+              }
               subject={lead.item.subject}
               provider={lead.item.viaProvider}
               answeredAt={lead.item.answeredAt}
               language={language}
               onDone={onChanged}
+              /*
+                ─────────────────────────────────────────────────────────────
+                DECLINING WRITES IN THIS BOX, NOT IN A SECOND ONE.
+
+                It used to open its own editor above this one, so a card
+                answering one client carried two boxes addressed to them —
+                and only one could send. Reported as "I do not like that it
+                opens another reply".
+
+                While declining, the box is the decline: it is seeded with
+                the drafted refusal, reports every edit back so what is sent
+                is what the owner actually wrote, and its own send is
+                replaced by the pair that records the decision. Nothing else
+                about it changes, and the moment the owner backs out it is an
+                ordinary reply box again.
+                ─────────────────────────────────────────────────────────────
+              */
+              /*
+                The model takes a few seconds, and an unchanged label over an
+                emptied box reads as a card that has stopped working. The
+                spinner says the sentence is being written, which is also why
+                the confirm button below refuses to be pressed yet.
+              */
+              label={
+                leadDeclining ? (
+                  leadDeclineState?.drafting ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
+                      {t('gaps.refund.decline_drafting')}
+                    </span>
+                  ) : (
+                    t('gaps.refund.decline_message')
+                  )
+                ) : undefined
+              }
+              /* The agent drafted this to REFUSE, so the suggestion note —
+                 which describes a reply it wrote for the thread — would be
+                 describing something else entirely. */
+              note={leadDeclining ? null : undefined}
+              /*
+                The two handovers: into the decline once its draft has
+                arrived, and back out again. Keyed on whether the draft is
+                here rather than on its text, so a keystroke never re-seeds.
+              */
+              seedKey={
+                leadDeclining
+                  ? leadDeclineState?.draft
+                    ? 'decline-drafted'
+                    : 'decline-drafting'
+                  : 'reply'
+              }
+              onTextChange={
+                leadDeclining
+                  ? text => setRow(leadDeclineKey, { kind: 'confirming', draft: text, drafting: false })
+                  : undefined
+              }
+              answering={
+                leadDeclining && leadGap
+                  ? refundDecisions(
+                      leadGap,
+                      lead.item as GapItemView,
+                      leadDeclineState ?? { kind: 'idle' },
+                      { withMessageBox: false, withApprove: false }
+                    )
+                  : undefined
+              }
               t={t}
             />
+          )}
+
+          {/*
+            ─────────────────────────────────────────────────────────────────
+            AND WHERE THERE IS NO REPLY BOX TO BORROW.
+
+            The box above renders only for a row with a `subject` — a request
+            that arrived as mail. A refund asked for through the portal form
+            has none, so on those rows the decline would have nowhere to be
+            written at all, which is worse than the second box it replaced.
+
+            So those keep their own editor, exactly as before, with the
+            controls under it in the same place the borrowed ones sit. One of
+            the two always renders and never both: the same `leadDeclining`
+            flag decides, and these are the two halves of one condition.
+            ─────────────────────────────────────────────────────────────────
+          */}
+          {leadDeclining && leadGap && !lead.item.subject && (
+            <div className="mt-2">
+              {declineMessageBox(
+                leadGap,
+                lead.item as GapItemView,
+                leadDeclineState ?? { kind: 'idle' }
+              )}
+              <div className="flex gap-2 flex-wrap mt-2">
+                {refundDecisions(
+                  leadGap,
+                  lead.item as GapItemView,
+                  leadDeclineState ?? { kind: 'idle' },
+                  { withMessageBox: false, withApprove: false }
+                )}
+              </div>
+            </div>
           )}
 
           {/* Every other gap keeps the bare line it had: a service name, a
@@ -1910,124 +2438,6 @@ export function NeedsYouCard({ gaps, onChanged, fill = false }: NeedsYouCardProp
             </p>
           )}
 
-          <div className="flex gap-2 flex-wrap">
-            {/*
-              THE PROMOTED ROW CONFIRMS TOO, AND HAD TO BE SAID SEPARATELY.
-
-              This button has its own render and reads none of the row state
-              the list below tracks — no working, no done. So the moment the
-              irreversible actions started asking first, its first tap set the
-              row to `confirming` and NOTHING on screen changed: the label
-              stayed put, and a reader who assumed nothing had happened tapped
-              again and sent it. A confirmation that is invisible is worse than
-              none, because it trains the second tap.
-            */}
-            {(() => {
-              const leadKey = rowKey(leadGap!, lead.item as GapItemView);
-              const leadAction = actionFor(leadGap!, lead.item as GapItemView);
-              const asking = rows[leadKey]?.kind === 'confirming';
-              /* The same door the list rows get. The promoted row is the one most
-                 owners ever see — the rest stay folded — so an affordance only on
-                 the list is an affordance most people never find. See
-                 `ENTITY_IS_A_BOOKING`. */
-              const leadBooking =
-                lead.item.bookingId ??
-                (ENTITY_IS_A_BOOKING.has(lead.gapId) ? lead.item.entityId : null);
-              return (
-                <>
-                  {/* The mail it came in, in the same slot the list rows keep
-                      it. See the note at the list row's copy. */}
-                  {lead.item.sourceThreadId && (
-                    <a
-                      href={mailThreadUrl(lead.item.sourceThreadId, lead.item.sourceThreadProvider)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label={t('gaps.refund.open_email')}
-                      title={t('gaps.refund.open_email')}
-                      className="inline-flex items-center justify-center p-1.5 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-colors"
-                    >
-                      <Mail className="w-4 h-4" aria-hidden="true" />
-                    </a>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => openRecord(lead.gapId, lead.item)}
-                    aria-label={t(leadBooking ? 'gaps.open_booking' : 'gaps.open_contact')}
-                    title={t(leadBooking ? 'gaps.open_booking' : 'gaps.open_contact')}
-                    className="inline-flex items-center justify-center p-1.5 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-colors"
-                  >
-                    {leadBooking ? (
-                      <CalendarSearch className="w-4 h-4" aria-hidden="true" />
-                    ) : (
-                      <UserRound className="w-4 h-4" aria-hidden="true" />
-                    )}
-                  </button>
-                  {/* Not where the reply box already offers it. See
-                      `THE_REPLY_BOX_DOES_THIS`. */}
-                  {!Boolean(leadAction) && THE_REPLY_BOX_DOES_THIS.has(leadAction as string) && (
-                  <button
-                    type="button"
-                    onClick={() => act(leadGap!, lead.item as GapItemView)}
-                    /*
-                     * ─────────────────────────────────────────────────────────
-                     * THE SAME BUTTON AS EVERY ROW IN THE LIST BELOW.
-                     *
-                     * The lead row was built first and kept its own metrics —
-                     * 13px text in `px-4 py-2`, no lift, no hover, no press —
-                     * while the rows underneath are `text-xs` in `px-3 py-1.5`
-                     * with `ap-primary-lift`, a brightness hover and a scale on
-                     * press. One card, two buttons, and the bigger flatter one
-                     * sat directly above the smaller lively ones.
-                     *
-                     * `ap-primary-lift` is a class rather than an inline
-                     * shadow for the reason `globals.css` records: the shadow
-                     * is a colour-mix of the primary and cannot be expressed
-                     * inline without losing its dark-mode form.
-                     * ─────────────────────────────────────────────────────────
-                     */
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
-                    style={{ background: 'var(--v2-primary)', color: '#fff' }}
-                  >
-                    {asking
-                      ? (leadAction === 'cancel_booking'
-                          ? t('gaps.confirm.cancel_booking') || 'Cancel and tell {name}'
-                          : t('gaps.confirm.email') || 'Email {name} now'
-                        ).replace('{name}', lead.item.name)
-                      : t(`gaps.action.${leadAction}`)}
-                  </button>
-                  )}
-                  {asking && (
-                    <button
-                      type="button"
-                      onClick={() => setRow(leadKey, { kind: 'idle' })}
-                      /* Sized to the button it sits beside, like the list's.
-                         It said exactly that and used px-2.5 against a px-3 neighbour, so the
-                         pair sat a hair out of line on every promoted row. */
-                      className="px-3 py-1.5 text-xs font-semibold rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
-                    >
-                      {t('common.cancel') || 'Cancel'}
-                    </button>
-                  )}
-                </>
-              );
-            })()}
-            <button
-              type="button"
-              onClick={() => openContact(lead.item.contactId)}
-              /* Sized to the row button it stands beside. It kept the lead
-                 row's original `text-[13px] px-4 py-2`, so once the primary
-                 next to it became the list's button this one was visibly
-                 taller than the thing it is paired with. */
-              className="inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors hover:border-[var(--v2-text-muted)]"
-              style={{
-                background: 'transparent',
-                color: 'var(--v2-text-secondary)',
-                border: '1px solid var(--v2-border)',
-              }}
-            >
-              {t('gaps.lead.open_contact')}
-            </button>
-          </div>
         </div>
       )}
 

@@ -48,6 +48,12 @@ import type { ReplyBlock, ReplyRun } from '@/lib/business-os/mail/replyBody';
 export interface MailReplyEditorProps {
   /** Seeds the editor once, on mount. Plain text; newlines become paragraphs. */
   initialText?: string | null;
+  /**
+   * Changes when the box must be re-seeded from `initialText`.
+   *
+   * Left undefined the box seeds once, as it always did. See the effect.
+   */
+  seedKey?: string;
   placeholder: string;
   disabled?: boolean;
   /** Fires on every edit, so the caller can enable or disable its send button. */
@@ -175,6 +181,7 @@ export function blocksFromPlainText(text: string): ReplyBlock[] {
 
 export function MailReplyEditor({
   initialText,
+  seedKey,
   placeholder,
   disabled,
   onInput,
@@ -182,7 +189,8 @@ export function MailReplyEditor({
   linkControl,
   t,
 }: MailReplyEditorProps) {
-  const seeded = useRef(false);
+  /* Which seed is currently in the box; `false` until the first one. */
+  const seeded = useRef<string | false>(false);
 
   /*
    * Seeded ONCE, imperatively.
@@ -194,8 +202,25 @@ export function MailReplyEditor({
    */
   useEffect(() => {
     const node = editorRef.current;
-    if (!node || seeded.current) return;
-    seeded.current = true;
+    /*
+     * Seeded once per `seedKey`, not once per mount.
+     *
+     * The rule above still holds — writing `innerHTML` on every render
+     * destroys the caret — so this does not make the box controlled. It makes
+     * it re-seedable at the two moments another flow TAKES it over and hands
+     * it back: declining a refund replaces the agent's suggested reply with
+     * the drafted refusal, and backing out of the decline restores it.
+     *
+     * Without this the box kept whatever it was seeded with at mount, so the
+     * decline draft arrived in state, changed the label above the box, and
+     * left the text underneath saying the opposite. Reported as "the decline
+     * reason wasn't added to the reply".
+     *
+     * Edits between seeds are safe: the key changes only on those handovers,
+     * never on a keystroke.
+     */
+    if (!node || seeded.current === (seedKey ?? '')) return;
+    seeded.current = seedKey ?? '';
 
     if (initialText) {
       node.innerHTML = initialText
@@ -205,7 +230,7 @@ export function MailReplyEditor({
     } else {
       node.innerHTML = '<p><br></p>';
     }
-  }, [initialText, editorRef]);
+  }, [initialText, seedKey, editorRef]);
 
   /*
    * `execCommand` returns focus to the editor itself, so the toolbar buttons

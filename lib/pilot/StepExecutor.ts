@@ -222,12 +222,31 @@ export class StepExecutor {
           { stepId: step.id, stepName: step.name },
           'Skipping step — its executeIf condition was not met'
         );
+        /*
+         * A REAL `StepOutput`, not a cast over a different shape.
+         *
+         * This returned `{stepId, success, data, executionTime}` and forced it
+         * through with `as StepOutput` — a shape that type has never had, so
+         * the cast was the compiler telling the truth and being overruled.
+         * Everything downstream reads `metadata.success` (the step row writer,
+         * the trace, the scatter's gather), and on a skipped step every one of
+         * them found `undefined`: the skip recorded as neither success nor
+         * failure. The skip is deliberate and successful, and now says so in
+         * the fields the rest of the pilot actually reads.
+         */
         return {
           stepId: step.id,
-          success: true,
+          plugin: (step as { plugin?: string }).plugin || 'system',
+          action: (step as { action?: string }).action || step.type,
           data: { skipped: true, reason: 'executeIf condition not met' },
-          executionTime: Date.now() - startTime,
-        } as StepOutput;
+          metadata: {
+            success: true,
+            executedAt: new Date().toISOString(),
+            executionTime: Date.now() - startTime,
+            skipped: true,
+            reason: 'executeIf condition not met',
+          },
+        };
       }
     }
 
@@ -418,6 +437,29 @@ export class StepExecutor {
         const stepAny = step as any;
 
         if ('operation' in stepAny) fieldsToResolve.operation = stepAny.operation;
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * `prompt`, WHICH THIS LIST FORGOT.
+         *
+         * An `ai_processing` step carries its instructions in `prompt`, and it
+         * was the one field never resolved — so every `{{…}}` in it reached
+         * the model verbatim. Captured from a live run of the refund agent:
+         *
+         *     a payment was found: {{money.row.found}}
+         *     {{money.row.bookings}}
+         *
+         * The same prompt then tells the model "if `a payment was found` is
+         * false, there is no payment recorded" — so it dutifully reported no
+         * payment on a booking with $40 collected and $40 refundable, and the
+         * owner got "we cannot decide this" instead of an answer. The step
+         * reported SUCCESS every time, because a model given a template
+         * answers it rather than refusing.
+         *
+         * Every `ai_processing` step in all six shipped automations uses this
+         * field, so none of their prompts has ever been resolved.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        if ('prompt' in stepAny) fieldsToResolve.prompt = stepAny.prompt;
         if ('input' in stepAny) fieldsToResolve.input = stepAny.input;
         if ('config' in stepAny) fieldsToResolve.config = stepAny.config;
         if ('expression' in stepAny) fieldsToResolve.expression = stepAny.expression;
@@ -1641,8 +1683,16 @@ export class StepExecutor {
       // Continue with agent default model
     }
 
-    // Build prompt with context
-    const prompt = step.prompt || step.description || step.name;
+    /*
+     * THE RESOLVED PROMPT, NOT THE TEMPLATE.
+     *
+     * This read `step.prompt` — the raw step as written in the plan — so every
+     * `{{…}}` in it reached the model as literal text. `params` is what
+     * `resolveAllVariables` produced for this step, so it carries the same
+     * prompt with its references filled in. The raw step stays as the
+     * fallback for a step whose prompt was never resolvable.
+     */
+    const prompt = params?.prompt || step.prompt || step.description || step.name;
 
     // FIX: Extract variable references from prompt and resolve them into params
     // This handles cases where Smart Agent Builder creates prompts like:

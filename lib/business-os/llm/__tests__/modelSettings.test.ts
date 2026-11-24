@@ -183,11 +183,13 @@ describe('precedence: call override → area → code default (T1-4, AC-3)', () 
     expect(warned).toContain('unknown_call_name');
   });
 
-  it('reads the eight rows by fixed key and never by category (RC-3)', async () => {
+  it('reads one row per area by fixed key and never by category (RC-3)', async () => {
     await resolveBosLlmSettings('leads', 'reply_recommendation');
     expect(mockGetByKeys).toHaveBeenCalledTimes(1);
     expect(mockGetByKeys).toHaveBeenCalledWith([...BOS_LLM_AREA_KEYS]);
-    expect(mockGetByKeys.mock.calls[0][0]).toHaveLength(8);
+    /* One per catalogued area, counted from the catalog: the point of this
+       assertion is that the read is BY KEY, not that there are eight of them. */
+    expect(mockGetByKeys.mock.calls[0][0]).toHaveLength(BOS_LLM_AREA_KEYS.length);
     expect(mockGetByCategory).not.toHaveBeenCalled();
   });
 });

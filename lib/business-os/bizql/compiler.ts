@@ -632,6 +632,29 @@ function resolveValue(
   if (isSemanticValue(value)) return resolveSemantic(entity, field, value, ctx);
   if (isDateExpr(value)) return resolveDateExpr(value, ctx.timezone, field.type);
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN ADDRESS IS MATCHED WITHOUT THE SPACE SOMEBODY LEFT ROUND IT.
+   *
+   * The reading half of the rule in `resolveWriteValue`
+   * (`mutate/MutateExecutor.ts`), and useless without it. A spreadsheet cell
+   * holding `eomer3@walla.co.il ` asked this compiler for exactly that, the
+   * CRM held the trimmed address, and the importer filed a duplicate of a
+   * client it already had — on 2026-11-23, with the write seam alone fixed
+   * the same miss would still happen, because the question would still carry
+   * the space the answer no longer does.
+   *
+   * KNOWN AND NOT FIXED HERE: this stays case-SENSITIVE, while
+   * `CRMContactRepository.findMany` matches addresses with `ilike`. So a
+   * lookup through that repository finds `Tal@example.com` for
+   * `tal@example.com` and a lookup through BizQL does not. That is a real
+   * inconsistency and a separate change — turning `eq` into `ilike` for one
+   * column alters every query that filters on it, and is not something to do
+   * inside a fix for whitespace.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (field.column === 'email' && typeof value === 'string') return value.trim();
+
   if (Array.isArray(value)) {
     // Semantic values may appear INSIDE an array, e.g.
     //   status in [{$semantic:'unpaid'}, {$semantic:'overdue'}]
@@ -735,6 +758,44 @@ function applyFieldPredicate(
   }
   if (Array.isArray(value) && (op === 'neq' || op === 'not_in')) {
     return builder.not(column, 'in', `(${(value as string[]).join(',')})`);
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN ADDRESS IS MATCHED WITHOUT REGARD TO CASE — AND WITHOUT WILDCARDS.
+   *
+   * `eq` is case-SENSITIVE. Measured on production, 2026-11-24:
+   * `email=eq.EOMER3@walla.co.il` returns nothing against a stored
+   * `eomer3@walla.co.il`. So a spreadsheet holding `Person3@company.net`
+   * against a CRM holding `person3@company.net` is a miss, the importer's
+   * dedupe concludes it has never seen them, and the same client is filed
+   * again — the identical fault whitespace caused, from a different cause.
+   *
+   * `CRMContactRepository.findMany` has always matched addresses with `ilike`
+   * for this reason, so the same question asked through the two paths gave two
+   * answers. This closes that.
+   *
+   * THE WILDCARDS ARE THE TRAP. `ilike` treats `_` as "any one character", and
+   * `_` is both legal and common in an address. Measured the same day:
+   * `email=ilike.eomer3@walla.co.i_` MATCHES `eomer3@walla.co.il`. Left
+   * unescaped, a lookup for `tal_omer@x.com` would find `talXomer@x.com` —
+   * somebody else's contact, returned as if it were theirs. `%` and `*` are
+   * wildcards too (PostgREST maps `*` onto `%`).
+   *
+   * Backslash escaping is honoured end to end — `co.i\_` correctly matches
+   * nothing — so the pattern is the address with every wildcard escaped, which
+   * makes `ilike` an exact comparison that happens to ignore case.
+   *
+   * Only `eq` and `neq`, and only for a string. `in` carries a list and
+   * `ilike` takes one pattern; an address list is rare enough that leaving it
+   * case-sensitive is better than expanding it into an `or` of patterns here.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (field.column === 'email' && typeof value === 'string' && (op === 'eq' || op === 'neq')) {
+    const literal = value.replace(/[\\%_*]/g, match => `\\${match}`);
+    return op === 'eq'
+      ? builder.ilike(column, literal)
+      : builder.not(column, 'ilike', literal);
   }
 
   switch (op) {

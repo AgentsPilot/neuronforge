@@ -3315,6 +3315,17 @@ export class BookingEmailService {
       currency: string;
       refundType: 'full' | 'partial';
       reason?: string;
+      /**
+       * The owner's account of the part that did NOT come back.
+       *
+       * Declared here or it goes nowhere: `notifyRefund` passes it in this
+       * object, and an undeclared key on a typed parameter is dropped in
+       * silence — which is exactly what happened. The refund sent, the email
+       * sent, the sentence was stored on `payment_refunds.reason_note`, and
+       * the client read the old "Reason" line showing their own complaint
+       * back at them.
+       */
+      partialExplanation?: string;
       isManualRefund?: boolean;
     }
   ): Promise<EmailResult> {
@@ -3386,6 +3397,8 @@ export class BookingEmailService {
         timezone: await getBusinessTimezone(userId, booking.timezone),
         serviceName: service?.service_name,
         reason: refundData.reason,
+        /* Replaces the reason line on a partial. See the template. */
+        partialExplanation: refundData.partialExplanation,
         isManualRefund: refundData.isManualRefund,
         bookAgainUrl,
         branding,

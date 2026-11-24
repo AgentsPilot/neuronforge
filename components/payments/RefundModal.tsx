@@ -187,7 +187,39 @@ export function RefundModal({
     startPartial ? 'partial' : 'full'
   );
   const [partialAmount, setPartialAmount] = useState(
-    typeof prefillAmount === 'number' && prefillAmount > 0 ? String(prefillAmount) : ''
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * NOT THE WHOLE AMOUNT. A PARTIAL REFUND OF EVERYTHING IS A FULL REFUND.
+     *
+     * The card's "a different amount" opens this dialog already on Partial
+     * and seeds the box with the agent's recommended figure — which, when the
+     * agent recommends returning everything, is the entire paid amount. The
+     * owner pressed "a different amount" and met a partial refund for the
+     * full sum, with the button live and nothing saying it was the same thing
+     * the other button does in one press.
+     *
+     * A prefill below the maximum is still a help: it is a figure somebody
+     * worked out. At the maximum it is not a different amount at all, so the
+     * box opens empty and the placeholder asks for one.
+     *
+     * `maxRefundable` here is the dialog's opening value; the server's answer
+     * can lower it later, and a prefill above a lowered ceiling is caught by
+     * the submit check like any other over-refund.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    typeof prefillAmount === 'number' &&
+    prefillAmount > 0 &&
+    /*
+     * The ceiling as it stands AT OPENING, worked out here from the props
+     * rather than read from `maxRefundable` — that is declared hundreds of
+     * lines below and `useState` evaluates its argument eagerly, so reaching
+     * for it threw `Cannot access 'maxRefundable' before initialization` and
+     * took the whole dialog down on open. It is the same figure: the server's
+     * answer has not arrived yet when this runs.
+     */
+    prefillAmount < originalAmount - alreadyRefunded
+      ? String(prefillAmount)
+      : ''
   );
   /*
    * The chip and the free text are two different things.
@@ -223,6 +255,24 @@ export function RefundModal({
    */
   const reason = reasonKey ?? '';
   const reasonNote = reasonText.trim();
+  /*
+   * The sentence is still exactly what the chip filled in, so nobody has
+   * written anything yet. Compared against the chip's own wording rather than
+   * tracked with a flag: re-typing it by hand is the same non-explanation.
+   */
+  const chipWordingUnchanged =
+    reasonKey !== null && reasonNote === t(`payments.refund.reason.${reasonKey}`).trim();
+  /*
+   * And the same rule for whatever the dialog was OPENED with.
+   *
+   * A caller may prefill this box — the needs-you card did, with the client's
+   * own message — and text the owner has not touched is not their account of
+   * anything, whichever direction it arrived from. Held in a ref so it is the
+   * value this opening started with and not whatever the box holds now.
+   */
+  const openedWith = useRef((prefillReasonNote ?? '').trim());
+  const nothingWritten =
+    chipWordingUnchanged || (openedWith.current !== '' && reasonNote === openedWith.current);
   const [notifyContact, setNotifyContact] = useState(true);
   const [deleteBooking, setDeleteBooking] = useState(false);
 
@@ -975,12 +1025,36 @@ export function RefundModal({
                   {currency}
                 </span>
                 <Input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  max={maxRefundable}
+                  /*
+                   * ─────────────────────────────────────────────────────────
+                   * TEXT, NOT A NUMBER SPINNER.
+                   *
+                   * `type="number"` gave this field two faults an owner meets
+                   * immediately. Its arrows step by `0.01`, so holding one
+                   * walks the refund up a cent at a time — forty presses to
+                   * move a dollar, on the one field in this dialog where the
+                   * figure is the decision. And the browser draws the value
+                   * in the DOCUMENT's locale, so a business running in Hebrew
+                   * or Spanish saw "20,00" in a box whose value is "20.00",
+                   * which reads as a typo in a money field.
+                   *
+                   * `inputMode="decimal"` still brings up the numeric keypad
+                   * on a phone. A comma typed by someone used to writing them
+                   * is normalised below rather than refused.
+                   *
+                   * The ceiling moves to the submit check, where it already
+                   * lived: `refundAmount > maxRefundable` is refused there,
+                   * and the server refuses it again.
+                   * ─────────────────────────────────────────────────────────
+                   */
+                  type="text"
+                  inputMode="decimal"
                   value={partialAmount}
-                  onChange={e => setPartialAmount(e.target.value)}
+                  onChange={e =>
+                    setPartialAmount(
+                      e.target.value.replace(',', '.').replace(/[^0-9.]/g, '')
+                    )
+                  }
                   placeholder={t('payments.refund.amount_placeholder')}
                   className="ps-12 tabular-nums"
                   required
@@ -1009,10 +1083,37 @@ export function RefundModal({
               Worth asking properly: this reaches the ledger, the transaction,
               the refund-pattern detector and the CSV export. */}
           <div>
+            {/*
+              ON A PARTIAL, THIS BOX IS WHAT THE CLIENT READS.
+
+              The same field either way — the dialog has always required it —
+              but a sentence the client will see and one kept for the ledger
+              are not written the same way, and an owner who is not told which
+              one they are writing will write the wrong one.
+            */}
             <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
-              {t('payments.refund.reason_label')}
+              {effectiveType === 'partial'
+                ? t('payments.refund.partial_reason_label')
+                : t('payments.refund.reason_label')}
               <span className="text-[#B42318]"> *</span>
             </label>
+            {effectiveType === 'partial' && (
+              /*
+                Amber once a chip has been picked and nothing written: that is
+                the one state where the button is disabled for a reason the
+                owner cannot otherwise see.
+              */
+              <p
+                className="mb-1.5 text-[11px]"
+                style={{
+                  color: nothingWritten ? 'var(--v2-warning)' : 'var(--v2-text-muted)',
+                }}
+              >
+                {nothingWritten
+                  ? t('payments.refund.partial_reason_needed')
+                  : t('payments.refund.partial_reason_hint')}
+              </p>
+            )}
             {/* The usual reasons, as choices.
                 Typed free-hand, the same reason arrives as "no show", "noshow"
                 and "didn't turn up" — untranslatable in the drawer and useless
@@ -1066,14 +1167,60 @@ export function RefundModal({
                  * chip filled it, the key still stands — which is what keeps a
                  * reason chosen and not retyped translatable for every reader.
                  */
-                if (reasonKey && next !== t(`payments.refund.reason.${reasonKey}`)) {
-                  setReasonKey(null);
-                }
+                /*
+                 * ───────────────────────────────────────────────────────────
+                 * THE CHIP STAYS. It is the CATEGORY, not a draft of the
+                 * sentence.
+                 *
+                 * This used to clear it the moment the text differed, with a
+                 * sound-sounding reason: edited away, the key no longer
+                 * describes what was written. But `reason` is derived from
+                 * the key alone and submit is disabled without it — so adding
+                 * a single word to the sentence greyed out the refund button
+                 * with nothing on screen saying why, and free text could
+                 * never be submitted at all.
+                 *
+                 * The note two fields up says what was intended: BOTH, always
+                 * — countable and explained. A row reading `no_show` that can
+                 * also say the client rang ahead is the whole point, and it
+                 * needs the key to survive the sentence being written.
+                 * ───────────────────────────────────────────────────────────
+                 */
               }}
               placeholder={t('payments.refund.reason_placeholder')}
               rows={2}
               className="w-full resize-none border border-[var(--v2-border)] bg-transparent px-3 py-2 text-[13px] text-[var(--v2-text-primary)] outline-none transition-colors placeholder:text-[var(--v2-text-muted)] focus:border-[var(--v2-text-muted)]"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
+              /*
+                ─────────────────────────────────────────────────────────────
+                TINTED ON A PARTIAL, BECAUSE THIS BOX LEAVES THE BUILDING.
+
+                Every other field in this dialog is for the business: the
+                amount, the category, the switches. This one, on a partial
+                refund, is the sentence the CLIENT reads — and it looked
+                exactly like the rest, which is how an owner types a note to
+                themselves into it without a second thought.
+
+                The amber is the hint's own colour two lines above, so the
+                warning and the thing it warns about cannot drift apart, and
+                it is the same `--v2-warning` in both themes.
+
+                INLINE rather than a Tailwind arbitrary class, per the note in
+                `NeedsYouCard`: compiled as a class, `color-mix` emits a bare
+                `background-color: var(--v2-warning)` fallback and paints the
+                box solid amber where it is unsupported. An unsupported inline
+                declaration is simply dropped, and the field falls back to the
+                plain one it was.
+                ─────────────────────────────────────────────────────────────
+              */
+              style={{
+                borderRadius: 'var(--v2-radius-button)',
+                ...(effectiveType === 'partial'
+                  ? {
+                      background: 'color-mix(in srgb, var(--v2-warning) 10%, transparent)',
+                      borderColor: 'color-mix(in srgb, var(--v2-warning) 40%, transparent)',
+                    }
+                  : {}),
+              }}
             />
           </div>
 
@@ -1185,6 +1332,17 @@ export function RefundModal({
                     formatCurrency(refundAmount)
                   )}
                 </p>
+                {/*
+                  THE FEE IS THE ORIGINAL PAYMENT'S, NOT THIS REFUND'S.
+
+                  It read "Stripe keeps the $1.46 processing fee on a refund,
+                  so this costs you $1.46" — the figure twice, and beside a
+                  $20 partial refund of a $40 payment it reads as a charge on
+                  the $20. It is not: it is what was already taken when the
+                  $40 arrived, and none of it comes back whether the owner
+                  returns all of the payment or part of it. Saying which
+                  payment it belongs to is the whole fix.
+                */}
                 {processorFee && (
                   <p>
                     {t('payments.refund.fee_kept').replaceAll(
@@ -1245,6 +1403,17 @@ export function RefundModal({
             (effectiveType === 'partial' && refundAmount <= 0) ||
             !reason ||
             !reasonNote ||
+            /*
+             * A partial refund leaves a difference the client can see, and
+             * this box is what accounts for it to them. The five chips are
+             * written for a FULL refund — "Cancelled by the client" explains
+             * why money came back, never why some was kept — so sending one
+             * of them verbatim answers a question nobody asked.
+             *
+             * Unreachable rather than refused: the hint under the box says
+             * what is wanted before the button is pressed.
+             */
+            (effectiveType === 'partial' && nothingWritten) ||
             ((stopPlan || deleteBooking) && !cancelReason)
           }
           className="bg-orange-600 hover:bg-orange-700"

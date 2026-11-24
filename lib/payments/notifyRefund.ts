@@ -42,6 +42,18 @@ export interface NotifyRefundInput {
   currency: string;
   reason?: string | null;
   /**
+   * The owner's sentence accounting for the part that did NOT come back.
+   *
+   * Passed only for a partial refund, and only by a caller that has one. The
+   * refund dialog has always required it (`reason_note`, min 1 char) and has
+   * always kept it internal — rightly, for a FULL refund, where there is no
+   * difference to explain and the note is the owner's own justification.
+   *
+   * On a partial there is a difference, the client can see it, and nothing
+   * anywhere accounted for it. So this one case forwards it.
+   */
+  partialExplanation?: string | null;
+  /**
    * The owner asked for the client to be told.
    *
    * Defaults to false rather than true: a refund the client has not been
@@ -151,6 +163,7 @@ export async function notifyRefund(input: NotifyRefundInput): Promise<boolean> {
       // A partial refund must not tell the client their money is fully returned.
       refundType: refunded >= original ? 'full' : 'partial',
       reason: input.reason ?? undefined,
+      partialExplanation: input.partialExplanation ?? undefined,
       // Honest about where the money goes back to. This was hardcoded false, so
       // a refund against a manually-recorded payment told the client to expect
       // it on a card that was never charged.
@@ -232,6 +245,7 @@ async function notifyInvoiceRefund(
     // A client with several invoices needs to know which one this is about.
     serviceName: invoice.invoice_number ? `${invoice.invoice_number}` : undefined,
     reason: input.reason ?? undefined,
+    partialExplanation: input.partialExplanation ?? undefined,
     // Money returned by hand does not arrive on a card, and telling the client
     // it will is how they end up watching a statement that never changes.
     isManualRefund: transaction.processor_type === 'manual',

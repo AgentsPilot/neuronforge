@@ -3612,6 +3612,61 @@ export class SchedulingBookingRepository {
   /**
    * Get bookings with calendar events (for sync all / re-sync)
    */
+  /**
+   * Every external calendar event id this product put there itself.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY ANYTHING NEEDS THIS
+   *
+   * The sync runs both ways. A booking made here is PUSHED to the owner's
+   * Google or Outlook calendar, and the id it comes back with is kept on the
+   * booking — or, for a package, on each session in `scheduling_meetings`.
+   *
+   * The PULL then imports every blocking event in that calendar into
+   * `external_calendar_events`, which the diary draws as grey "busy" bands and
+   * availability treats as taken. Nothing excluded the events we had just
+   * written there, so an appointment came home as somebody else's event and
+   * was drawn a second time, as a grey band over the very card that created
+   * it. Reported on a live account: "Clean office multi payment based invoice
+   * - Tal Omer" existed once as a booking and once as an external busy row.
+   *
+   * Both tables, because a package keeps its hours on its sessions and only a
+   * single-session booking carries one of its own.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async getOwnCalendarEventIds(
+    userId: string
+  ): Promise<SchedulingRepositoryResult<Set<string>>> {
+    try {
+      const [bookings, meetings] = await Promise.all([
+        this.supabase
+          .from('scheduling_bookings')
+          .select('external_calendar_event_id')
+          .eq('user_id', userId)
+          .not('external_calendar_event_id', 'is', null),
+        this.supabase
+          .from('scheduling_meetings')
+          .select('external_calendar_event_id')
+          .eq('user_id', userId)
+          .not('external_calendar_event_id', 'is', null),
+      ]);
+
+      if (bookings.error) throw bookings.error;
+      if (meetings.error) throw meetings.error;
+
+      const ids = new Set<string>();
+      for (const row of [...(bookings.data ?? []), ...(meetings.data ?? [])]) {
+        const id = (row as { external_calendar_event_id: string | null }).external_calendar_event_id;
+        if (id) ids.add(id);
+      }
+
+      return { data: ids, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read our own calendar event ids');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async getBookingsWithCalendarEvents(
     userId: string,
     provider?: CalendarSyncProvider

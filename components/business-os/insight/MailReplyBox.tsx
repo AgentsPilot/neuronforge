@@ -67,6 +67,43 @@ export interface MailReplyBoxProps {
   language?: string;
   /** Refetch, so a settled row leaves the card. */
   onDone?: () => void;
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHEN ANOTHER FLOW OWNS THE TEXT IN THIS BOX.
+   *
+   * Declining a refund needs a message to the client, and it used to open a
+   * second editor directly above this one: two boxes on one card, both
+   * addressed to the same person, one of which could send and one of which
+   * could not. Reported as "I do not like that it opens another reply", and
+   * fairly — nobody should have to work out which box is the real one.
+   *
+   * So the decline borrows THIS box. `answering` replaces the box's own
+   * send / cancel / discard row with the controls of whatever flow is
+   * borrowing it, which is what stops there being two ways to send; and
+   * `onTextChange` reports the text out as it is typed, so the borrower can
+   * send what the owner actually wrote rather than the draft it started from.
+   *
+   * `label` and `note` override the two lines around the editor, because
+   * "A suggested start · check it before sending" and the note under it
+   * describe a REPLY the agent drafted — not a refusal the owner is about to
+   * approve, which the agent was never asked to write for this thread.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  answering?: React.ReactNode;
+  /** The box's text, in plain form, on every edit. */
+  onTextChange?: (text: string) => void;
+  /** Re-seeds the editor from `draftBody` when it changes. See the editor. */
+  seedKey?: string;
+  /**
+   * Replaces the label above the editor while another flow owns it.
+   *
+   * A node, not a string: the decline spends a few seconds writing its
+   * sentence, and this line is where it says so — text alone over a box that
+   * has just been emptied reads as a card that has stopped working.
+   */
+  label?: React.ReactNode;
+  /** Replaces the note under it, or removes it when null is passed. */
+  note?: string | null;
   t: (key: string) => string;
 }
 
@@ -111,6 +148,11 @@ export function MailReplyBox({
   answeredAt,
   language,
   onDone,
+  answering,
+  onTextChange,
+  seedKey,
+  label,
+  note,
   t,
 }: MailReplyBoxProps) {
   /*
@@ -142,6 +184,8 @@ export function MailReplyBox({
   const noteEdit = () => {
     setHasText(!blocksAreEmpty(readEditor()));
     if (phase.kind === 'confirming' || phase.kind === 'failed') setPhase({ kind: 'idle' });
+    /* Plain text, which is what every borrower of this box sends. */
+    onTextChange?.(renderText(readEditor()));
   };
 
   /*
@@ -492,15 +536,17 @@ export function MailReplyBox({
           style={{ color: 'var(--v2-text-muted)' }}
         >
           <PenLine className="w-3 h-3" aria-hidden="true" />
-          {isSuggestion
-            ? t('gaps.reply.suggested_label')
-            : hasDraft
-              ? t('gaps.reply.draft_label')
-              : t('gaps.reply.label')}
+          {label
+            ?? (isSuggestion
+              ? t('gaps.reply.suggested_label')
+              : hasDraft
+                ? t('gaps.reply.draft_label')
+                : t('gaps.reply.label'))}
         </p>
 
         <MailReplyEditor
           initialText={draftBody}
+          seedKey={seedKey}
           placeholder={t('gaps.reply.placeholder')}
           disabled={busy}
           onInput={noteEdit}
@@ -509,7 +555,13 @@ export function MailReplyBox({
           t={t}
         />
 
-        {hasDraft && (
+        {note !== undefined ? (
+          note === null ? null : (
+            <p className="text-[11px] mt-1" style={{ color: 'var(--v2-text-muted)' }}>
+              {note}
+            </p>
+          )
+        ) : hasDraft ? (
           /*
             WHAT THE DRAFT IS BASED ON, so the owner can approve it without
             re-reading the thread. The agent is given the services list and
@@ -519,7 +571,7 @@ export function MailReplyBox({
           <p className="text-[11px] mt-1" style={{ color: 'var(--v2-text-muted)' }}>
             {isSuggestion ? t('gaps.reply.suggested_note') : t('gaps.reply.draft_note')}
           </p>
-        )}
+        ) : null}
       </div>
 
       {phase.kind === 'failed' && (
@@ -529,7 +581,9 @@ export function MailReplyBox({
       )}
 
       <div className="flex gap-2 flex-wrap mt-2">
-        {canSend && (
+        {/* Borrowed: one box, one set of controls. See `answering`. */}
+        {answering}
+        {!answering && canSend && (
           <button
             type="button"
             onClick={send}
@@ -546,7 +600,7 @@ export function MailReplyBox({
           </button>
         )}
 
-        {phase.kind === 'confirming' && (
+        {!answering && phase.kind === 'confirming' && (
           <button
             type="button"
             onClick={() => setPhase({ kind: 'idle' })}
@@ -561,7 +615,7 @@ export function MailReplyBox({
           handled" is about the ROW, and lives on the row — see the note on the
           sent state above.
         */}
-        {hasDraft && !isSuggestion && phase.kind !== 'confirming' && (
+        {!answering && hasDraft && !isSuggestion && phase.kind !== 'confirming' && (
           <button
             type="button"
             onClick={() => void post('discard')}

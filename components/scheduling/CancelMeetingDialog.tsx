@@ -30,7 +30,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { CalendarPlus, CalendarX, FileText, Loader2, Mail } from 'lucide-react';
+import { CalendarPlus, CalendarX, FileText, Loader2, Mail, Wallet } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -100,6 +100,34 @@ interface CancelMeetingDialogProps {
      */
     options?: string[];
   } | null;
+  /**
+   * What this cancellation does to the money, as the OFFER reported it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This dialog used to be deliberately silent about money, and said so: it had
+   * no way to know whether the session carried a stage, so a line claiming the
+   * charge was voided would have asserted something it could not see.
+   *
+   * It can see now. `/api/scheduling/bookings/[id]/meetings?excluding=` answers
+   * with the stage this hour is about to lose and whether a replacement would
+   * carry one — both from `replacementStageOutlook`, the same function the
+   * write uses, so these sentences cannot promise what the write will not do.
+   *
+   * Absent or null keeps the old silence exactly, which is the right answer for
+   * an ordinary booking and for a package with nothing owing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  money?: {
+    /** The replacement will carry a stage of its own. Null means not asked. */
+    replacementBills: boolean | null;
+    replacementAmount: number | null;
+    replacementCurrency: string | null;
+    /** `already_paid` is the one worth explaining; the others just mean "no". */
+    replacementReason: string | null;
+    /** What the cancellation voids: this hour's own unbilled stage. */
+    releasedAmount: number | null;
+    releasedCurrency: string | null;
+  } | null;
   /** Receives the owner's answer. Resolves when the change has been applied. */
   onConfirm: (options: {
     proposalContinues: boolean;
@@ -133,10 +161,31 @@ export function CancelMeetingDialog({
   clientName,
   isQuoted,
   replacement,
+  money = null,
   replacementLoading = false,
   onConfirm,
 }: CancelMeetingDialogProps) {
   const { t, isRTL } = useLanguage();
+
+  /*
+   * The amount, in the currency the STAGE names.
+   *
+   * Not the owner's display currency and not the business default: these
+   * figures are the plan's own, and a package priced in one currency must not
+   * be read back in another. An unreadable code falls through to the number
+   * alone rather than labelling it wrongly — `Intl` throws on a bad currency,
+   * and a dialog that cannot open is worse than one that omits a symbol.
+   */
+  const asMoney = (amount: number, currency: string | null) => {
+    try {
+      return new Intl.NumberFormat(isRTL ? 'he-IL' : 'en-GB', {
+        style: 'currency',
+        currency: currency || 'USD',
+      }).format(amount);
+    } catch {
+      return String(amount);
+    }
+  };
   /* ON by default: see the note above. */
   const [proposalContinues, setProposalContinues] = useState(true);
   /*
@@ -455,10 +504,21 @@ export function CancelMeetingDialog({
             booked. Three of those four are decisions taken on this screen,
             and nothing previously gathered them into one reading.
 
-            Deliberately silent about money. This dialog is not told whether
-            the session carries a stage — it has no `chargeable` prop — and a
-            line claiming the charge is voided would be asserting something it
-            cannot see. The no-show dialog says it because it IS told.
+            IT USED TO BE SILENT ABOUT MONEY, and said so here: it was not told
+            whether the session carried a stage, so a line claiming the charge
+            was voided would have asserted something it could not see.
+
+            It is told now. The offer reports what this hour is about to lose
+            and whether a replacement would carry a stage, both out of
+            `replacementStageOutlook` — the same function the write asks — so
+            these two lines cannot promise what the write will not do. An owner
+            cancelling a paid-for session could not otherwise tell whether its
+            replacement would be charged for or given away, which is exactly
+            what was asked of it.
+
+            Still silent where there is nothing true to say: an ordinary booking
+            sends no money at all, and a package with nothing owing on the hour
+            reports a released amount of null rather than a zero.
             ──────────────────────────────────────────────────────────────────
           */}
           <OutcomePanel title={t('scheduling.cancel_meeting.outcome_title')}>
@@ -473,6 +533,18 @@ export function CancelMeetingDialog({
                   {proposalContinues
                     ? t('scheduling.cancel_meeting.outcome_quote_on')
                     : t('scheduling.cancel_meeting.outcome_quote_off')}
+                </OutcomeLine>
+              )}
+
+              {/* What the hour gives back. Only where a stage is really going
+                  to be voided — `null` means there was nothing owing on it. */}
+              {money?.releasedAmount != null && (
+                <OutcomeLine icon={Wallet}>
+                  {(t('scheduling.cancel_meeting.outcome_released') ||
+                    'The {amount} owing for this session is cancelled.').replace(
+                    '{amount}',
+                    asMoney(money.releasedAmount, money.releasedCurrency)
+                  )}
                 </OutcomeLine>
               )}
 
@@ -493,6 +565,26 @@ export function CancelMeetingDialog({
                         )
                       )
                     : t('scheduling.cancel_meeting.outcome_not_replaced')}
+                </OutcomeLine>
+              )}
+
+              {/* And what the replacement costs, once there is one to cost.
+                  `already_paid` is the only reason worth a sentence of its
+                  own: the others — an upfront block, a package with no plan —
+                  mean the client was never going to be billed again anyway. */}
+              {replacement && addReplacement && money?.replacementBills != null && (
+                <OutcomeLine icon={Wallet}>
+                  {money.replacementBills && money.replacementAmount != null
+                    ? (t('scheduling.cancel_meeting.outcome_replacement_billed') ||
+                        'The replacement is billed {amount}, like the sessions beside it.').replace(
+                        '{amount}',
+                        asMoney(money.replacementAmount, money.replacementCurrency)
+                      )
+                    : money.replacementReason === 'already_paid'
+                      ? t('scheduling.cancel_meeting.outcome_replacement_paid') ||
+                        'The replacement is not billed again: the hour it stands in for is already paid for.'
+                      : t('scheduling.cancel_meeting.outcome_replacement_free') ||
+                        'The replacement is not billed: this block is paid for as a whole.'}
                 </OutcomeLine>
               )}
           </OutcomePanel>

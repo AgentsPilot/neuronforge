@@ -913,9 +913,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X7. the
       "type": "resolveInvoicePaymentIntent",
     },
     {
-      "type": "stripe.client",
-    },
-    {
       "args": [
         {
           "account": "acct_owner_a",
@@ -3786,9 +3783,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X30. pl
       "type": "resolveInvoicePaymentIntent",
     },
     {
-      "type": "stripe.client",
-    },
-    {
       "args": [
         {
           "account": "acct_owner_a",
@@ -4521,9 +4515,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X34. pl
         "acct_owner_a",
       ],
       "type": "resolveInvoicePaymentIntent",
-    },
-    {
-      "type": "stripe.client",
     },
     {
       "args": [
@@ -9423,9 +9414,6 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 3. invoice
         "acct_owner_a",
       ],
       "type": "resolveInvoicePaymentIntent",
-    },
-    {
-      "type": "stripe.client",
     },
     {
       "args": [
