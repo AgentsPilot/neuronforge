@@ -333,6 +333,20 @@ export function auditChecker(raw: string): string[] {
     if (!(codeBlocks.get(c) ?? '').includes("'anchor | ")) problems.push(`anchor: section ${c} has no anchor line`);
   }
 
+  // P26 carries the postgres-owned event triggers, tags sorted (SA R-7).
+  const p26 = codeBlocks.get('P26') ?? '';
+  const evtBranch = /SELECT 'P26',\s*format\('event trigger \|[\s\S]*?FROM pg_event_trigger AS evt\s*WHERE ([^\n]*)/.exec(p26);
+  if (!evtBranch) {
+    problems.push('P26: no pg_event_trigger branch');
+  } else {
+    if (evtBranch[1].trim() !== "evt.evtowner = (SELECT rol.oid FROM pg_roles AS rol WHERE rol.rolname = 'postgres')") {
+      problems.push('P26: the event trigger branch is not filtered to owner postgres');
+    }
+    if (!/array\(SELECT evt_tag\.tag_name FROM unnest\(evt\.evttags\) AS evt_tag \(tag_name\)\s+ORDER BY evt_tag\.tag_name COLLATE "C"\)/.test(evtBranch[0])) {
+      problems.push('P26: event trigger tags are not sorted with COLLATE "C"');
+    }
+  }
+
   // P00 and the keys (SA B-3).
   const p00 = codeBlocks.get('P00') ?? '';
   for (const s of P00_SETTINGS) {
@@ -502,6 +516,23 @@ describe('scripts/check-schema-parity.sql', () => {
   it('states 39 rows: VERDICT, P00 to P26, G1, the two keys and I1 to I8', () => {
     expect(checkerRows).toBe(1 + 27 + 1 + 2 + 8);
   });
+
+  // SA R-7: postgres-owned event triggers move P26 (and so the PARITY KEY),
+  // with no new section row. Platform event triggers stay in I5, info only.
+  it('P26 has a pg_event_trigger branch for postgres-owned event triggers only (SA R-7)', () => {
+    const text = checker.replace(/\r\n?/g, '\n');
+    const { code } = scrubSql(text);
+    const p26 = blocksOf(text, code).get('P26') ?? '';
+    const branch = /SELECT 'P26',\s*format\('event trigger \|[\s\S]*?FROM pg_event_trigger AS evt\s*WHERE ([^\n]*)/.exec(p26);
+    expect(branch).not.toBeNull();
+    expect(branch?.[1].trim()).toBe("evt.evtowner = (SELECT rol.oid FROM pg_roles AS rol WHERE rol.rolname = 'postgres')");
+    // The "char" column goes through format(), never ||.
+    expect(branch?.[0]).toMatch(/evt\.evtenabled/);
+    expect(branch?.[0]).not.toMatch(/\|\|/);
+    // No new row: the sections and the 39-row count are unchanged.
+    expect(sectionRows(code).map((r) => r.code)).toEqual(SECTION_CODES);
+    expect(checkerRows).toBe(39);
+  });
 });
 
 describe('supabase/baseline/prove-checker-can-fail.psql', () => {
@@ -549,6 +580,12 @@ describe('the audits can fail', () => {
     ['P15: defaclobjtype joined without ::text', (s) => s.replace('dacl.defaclobjtype::text,', 'dacl.defaclobjtype,'), /planner: .*defaclobjtype/],
     ['P13: deptype joined without ::text', (s) => s.replace("' dep=' || own_dep.deptype::text", "' dep=' || own_dep.deptype"), /planner: .*deptype/],
     ['a "char" column on the left of ||', (s) => s.replace("rel.nspname || '.' || rel.relname, rel.relowner,", "rel.relkind || '.' || rel.relname, rel.relowner,"), /planner: .*relkind \|\|/],
+    // SA R-7: the P26 event trigger branch.
+    ['P26: the event trigger branch removed', (s) => s.replace("format('event trigger | ", "format('evt | "), /P26: no pg_event_trigger branch/],
+    ['P26: event triggers of every owner', (s) => s.replace("WHERE evt.evtowner = (SELECT rol.oid FROM pg_roles AS rol WHERE rol.rolname = 'postgres')", 'WHERE true'), /P26: the event trigger branch is not filtered to owner postgres/],
+    ['P26: tags unsorted', (s) => s.replace(/array\(SELECT evt_tag\.tag_name FROM unnest\(evt\.evttags\) AS evt_tag \(tag_name\)\s+ORDER BY evt_tag\.tag_name COLLATE "C"\)/, 'evt.evttags'), /P26: event trigger tags are not sorted/],
+    ['P26: tags sorted without COLLATE "C"', (s) => s.replace('ORDER BY evt_tag.tag_name COLLATE "C")', 'ORDER BY evt_tag.tag_name)'), /P26: event trigger tags are not sorted with COLLATE "C"/],
+    ['P26: evtenabled joined without ::text', (s) => s.replace("evt.evtenabled, evt.evtfoid::regproc)", "'x' || evt.evtenabled, evt.evtfoid::regproc)"), /planner: .*evtenabled/],
   ];
 
   it.each(checkerBreaks)('checker: %s', (_name, mutate, complaint) => {
