@@ -40,6 +40,9 @@ describe('credits.area.* names', () => {
       'Enquiries',
       'Setup',
       'Images',
+      /* Money the business is giving back or asking for. Added with the
+         declined-refund explanation, the first AI call in this area. */
+      'Payments',
     ]);
   });
 });

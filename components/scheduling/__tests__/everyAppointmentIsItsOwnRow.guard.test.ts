@@ -101,10 +101,21 @@ describe('the week filter and the counts stay honest', () => {
     expect(calendar).toMatch(/const weekBookings = getWeekBookings\(\);/);
   });
 
-  it('and the counts are taken from the same week', () => {
-    /* The chips read 0 over four cards. The counts were right; this keeps
-       them derived from the week rather than from the fetch. */
-    expect(calendar).toMatch(/const inWeek =[\s\S]{0,200}weekDates\[0\]/);
+  it('and the counts are taken from the same week, by the same key', () => {
+    /*
+     * The chips read 0 over four visible cards. The counts themselves were
+     * right; what was wrong was the bound they were taken within.
+     *
+     * This pins the bound to the one the GRID uses: the appointment's business
+     * day key, compared against the first and last column. The earlier version
+     * of this guard looked for `const inWeek`, a name that never existed in
+     * the component, so it asserted nothing about the real filter and would
+     * have passed over a chip bounded by browser midnights -- which is the
+     * defect itself.
+     */
+    expect(calendar).toMatch(
+      /const key = businessDateKey\(new Date\(entry\.start_time\), timezone\);\s*if \(key < dateKeyOfColumn\(weekDates\[0\]\) \|\| key > dateKeyOfColumn\(weekDates\[6\]\)\) return counts;/
+    );
   });
 });
 

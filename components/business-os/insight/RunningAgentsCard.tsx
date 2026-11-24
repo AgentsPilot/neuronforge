@@ -192,6 +192,20 @@ const STATE_COLOUR: Record<AgentState, { fg: string; bg: string }> = {
  * ─────────────────────────────────────────────────────────────────────────────
  */
 /*
+ * `agent.inputs` IS DECLARED REQUIRED AND ARRIVES UNDEFINED.
+ *
+ * The type says `AgentInput[]`, and two call sites in this file already pass
+ * `?? []` because the real records do not always carry it — an agent row read
+ * before its inputs were resolved, or a family that has none. Three places
+ * read `.length` off it directly, and each threw
+ * `Cannot read properties of undefined (reading 'length')` from the render,
+ * which takes the whole Running Agents card down rather than one row.
+ *
+ * Guarded at the read rather than by widening the type: a missing list and an
+ * empty list mean the same thing here ("nothing to ask"), so `?? 0` is the
+ * honest reading and every branch below already handles zero.
+ */
+/*
  * ─────────────────────────────────────────────────────────────────────────────
  * THERE IS NO FROZEN COLUMN ANY MORE, AND THAT IS THE DECISION.
  *
@@ -1907,7 +1921,7 @@ export function RunningAgentsCard({
                   <button
                     type="button"
                     onClick={() =>
-                      agent.inputs.length > 0 || needsConnecting || hasAChoice
+                      (agent.inputs?.length ?? 0) > 0 || needsConnecting || hasAChoice
                         ? setAsking(agent)
                         : install(agent.automationId)
                     }
@@ -2289,7 +2303,7 @@ function ScheduleEditorRow({
               list and show nothing here.
               ──────────────────────────────────────────────────────────────
             */}
-            {agent.inputs.length === 0 && agent.family === 'mailbox' && onEditChannel && (
+            {(agent.inputs?.length ?? 0) === 0 && agent.family === 'mailbox' && onEditChannel && (
               <button
                 type="button"
                 onClick={onEditChannel}
@@ -2302,7 +2316,7 @@ function ScheduleEditorRow({
               </button>
             )}
 
-            {agent.inputs.length > 0 && onReconfigure && (
+            {(agent.inputs?.length ?? 0) > 0 && onReconfigure && (
               <button
                 type="button"
                 onClick={() => onReconfigure(agent)}

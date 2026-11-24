@@ -2235,6 +2235,14 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
      * nothing. If `finalized` did arrive, the lookup above finds the row and
      * this is never reached.
      */
+    /* Said before the mirror runs, and kept when the mirror was added rather
+       than replaced by it: "Stripe named an invoice we do not hold" is a fact
+       about our tables, true whether or not anything is done about it, and it
+       is the line somebody greps for when a client says they were never
+       billed. Dropping it in favour of the mirror's own logging cost this
+       route its only record of the lookup missing. */
+    log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
+
     await mirrorPlanBill(invoice, connectAccountId, {
       ownsAccount: (account, owner) => accountOwns(account, owner, log),
       log,
@@ -2343,6 +2351,14 @@ async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAcc
      * charge, so nothing ever fails, so that event never fires. Those five
      * were exactly that kind.
      */
+    /* Said before the mirror runs, and kept when the mirror was added rather
+       than replaced by it: "Stripe named an invoice we do not hold" is a fact
+       about our tables, true whether or not anything is done about it, and it
+       is the line somebody greps for when a client says they were never
+       billed. Dropping it in favour of the mirror's own logging cost this
+       route its only record of the lookup missing. */
+    log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
+
     await mirrorPlanBill(invoice, connectAccountId, {
       ownsAccount: (account, owner) => accountOwns(account, owner, log),
       log,

@@ -76,7 +76,7 @@ const ROOT = path.resolve(__dirname, '../../../..');
  */
 const MIGRATIONS = [
   'supabase/migrations/20261003_seed_bos_llm_area_settings.sql',
-  'supabase/migrations/20261124_seed_bos_llm_payments_area_settings.sql',
+  'supabase/migrations/20261132_seed_bos_llm_payments_area_settings.sql',
 ].map((relative) => path.join(ROOT, relative));
 const sql = MIGRATIONS.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 /** The statements only: the header carries the same phrases as instructions. */

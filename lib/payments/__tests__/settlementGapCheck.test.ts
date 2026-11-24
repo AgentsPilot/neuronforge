@@ -176,7 +176,18 @@ describe('the retry grace', () => {
   });
 
   it('ignores a payment older than the window, so a known gap is not re-reported forever', async () => {
-    const { deps } = makeDeps({ invoices: [paid('in_old', '2026-09-25T09:00:00.000Z')], local: () => MISSING });
+    /*
+     * Derived from the window rather than written as a date. This was
+     * `2026-09-25`, ten days before NOW, which sat outside the window only
+     * while the window was 48 hours. Widening it to fourteen days (so a gap
+     * gets more than two chances to be noticed) silently turned this into a
+     * payment INSIDE the window, and the test then failed for being right.
+     * A day before the start keeps it testing the boundary it names.
+     */
+    const beforeWindow = new Date(
+      Date.parse(WINDOW.start) - 24 * 60 * 60_000
+    ).toISOString();
+    const { deps } = makeDeps({ invoices: [paid('in_old', beforeWindow)], local: () => MISSING });
     const { logger } = stubLogger();
 
     const result = await runSettlementGapCheck(input(), deps, logger);

@@ -2176,6 +2176,7 @@ export const en = {
     'credits.area.leads': 'Enquiries',
     'credits.area.onboarding': 'Setup',
     'credits.area.images': 'Images',
+    'credits.area.payments': 'Payments',
     'chat.budget.spent': "That's all your questions for today — you've used {limit}. They reset at midnight UTC.",
     'chat.which_one_many': 'More than one matches. Which did you mean?',
     'chat.no_match': "I couldn't find one matching that.",

@@ -2000,6 +2000,7 @@ export const es = {
     'credits.area.leads': 'Consultas',
     'credits.area.onboarding': 'Configuración',
     'credits.area.images': 'Imágenes',
+    'credits.area.payments': 'Pagos',
     'chat.budget.spent': 'Has usado tus {limit} preguntas de hoy. Se renuevan a medianoche UTC.',
     'chat.which_one_many': 'Coincide más de uno. ¿A cuál te referías?',
     'chat.no_match': 'No encontré ninguno que coincida.',

@@ -5100,6 +5100,7 @@ export const he = {
     'credits.area.leads': 'פניות',
     'credits.area.onboarding': 'הקמה',
     'credits.area.images': 'תמונות',
+    'credits.area.payments': 'תשלומים',
     'chat.budget.spent': 'ניצלת את {limit} השאלות שלך להיום. הן מתחדשות בחצות UTC.',
     'chat.which_one_many': 'יותר מאחד מתאים. לאיזה התכוונת?',
     'chat.no_match': 'לא מצאתי כזה.',

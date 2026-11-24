@@ -275,10 +275,7 @@ export async function recordPlanPeriodPaid(
    * wrote `paid`: this writes the same value again.
    */
   if (plan.data.booking_id) {
-    const { error: bookingError } = await schedulingBookingRepository.markPaidForOwner(
-      plan.data.booking_id,
-      plan.data.user_id
-    );
+    const { error: bookingError } = await schedulingBookingRepository.markPaidForOwner(plan.data.booking_id, plan.data.user_id);
 
     if (bookingError) {
       // Not fatal: the money is recorded, which is the part that must not be

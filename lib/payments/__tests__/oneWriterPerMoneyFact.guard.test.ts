@@ -157,6 +157,69 @@ describe('there is exactly one writer of a plan bill, by the same reasoning', ()
   });
 });
 
+describe('what the route guard used to cover for these, now that they have moved', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THESE ASSERTIONS LIVE HERE
+   *
+   * `app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts` held these
+   * invariants while both writers were functions in the route. It identifies an
+   * ownership check by finding a literal `accountOwns(...)` before each write,
+   * and these writers prove the same fact through an INJECTED
+   * `deps.ownsAccount` — so that guard would have reported `check: undefined`
+   * for a write that is in fact guarded, and extending it to understand
+   * dependency injection would have made a route guard answer for libraries.
+   *
+   * So the invariants came with the code. Dropping them was not an option: they
+   * are the reason one connected account cannot write another's money.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const writers = [
+    ['the period writer', writer],
+    ['the bill mirror', mirror],
+  ] as const;
+
+  it('reach the database only through repositories (CLAUDE.md rule 1)', () => {
+    for (const [name, source] of writers) {
+      /* No query of their own and no client of their own. A `.from(` here would
+         be a table reached outside the repository layer, and a supabase import
+         would be the client that made it possible. */
+      expect(`${name} queries directly: ${/\.from\(/.test(source)}`).toBe(`${name} queries directly: false`);
+      expect(`${name} imports supabase: ${/supabase/.test(source)}`).toBe(`${name} imports supabase: false`);
+    }
+  });
+
+  it('prove the owner BEFORE the first write, not after it', () => {
+    /* Ordering is the whole guarantee. A check that runs after the insert has
+       already let the wrong account write a row. */
+    for (const [name, source] of writers) {
+      const check = source.indexOf('ownsAccount');
+      const firstWrite = Math.min(
+        ...['insertFromWebhookReturningId(', 'paymentInvoiceRepository.create(', 'markPeriodPaidFromStripe(']
+          .map(call => source.indexOf(call))
+          .filter(i => i > -1)
+      );
+      expect(check).toBeGreaterThan(-1);
+      expect(firstWrite).toBeGreaterThan(-1);
+      expect(`${name}: check before write`).toBe(
+        `${name}: ${check < firstWrite ? 'check before write' : 'WRITE BEFORE CHECK'}`
+      );
+    }
+  });
+
+  it('write the owner they proved, and no other', () => {
+    /*
+     * `plan.data.user_id` is the id `ownsAccount` was given, so the row carries
+     * the owner that was actually proved rather than anything taken from the
+     * Stripe payload. A connected account naming someone else's plan is refused
+     * above; this is what stops it writing under its own id instead.
+     */
+    for (const [name, source] of writers) {
+      expect(`${name}: ${source.includes('user_id: plan.data.user_id')}`).toBe(`${name}: true`);
+    }
+  });
+});
+
 describe('the sweep asks about debts as well as payments', () => {
   it('has a listing for what Stripe is still owed', () => {
     expect(check).toContain('listOpenInvoices?(');
