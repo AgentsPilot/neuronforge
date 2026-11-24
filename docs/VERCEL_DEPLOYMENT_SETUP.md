@@ -19,10 +19,9 @@ NEXTAUTH_URL=https://neuronforge-kohl.vercel.app
 NEXT_PUBLIC_APP_URL=https://neuronforge-kohl.vercel.app
 
 # Supabase (copy from .env.local)
-NEXT_PUBLIC_SUPABASE_URL=https://jgccgkyhpwirgknnceoh.supabase.co
+NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=[your-key]
 SUPABASE_SERVICE_ROLE_KEY=[your-key]
-SUPABASE_URL=https://jgccgkyhpwirgknnceoh.supabase.co
 
 # OpenAI
 OPENAI_API_KEY=[your-key]
@@ -228,3 +227,11 @@ If you encounter issues after following this guide:
 5. Verify all redirect URLs are configured in OAuth providers
 
 For urgent issues, contact: support@neuronforge.com
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|---|---|---|
+| 2026-11-23 | One Supabase address variable (PROD-1a) | Dropped the separate server-only Supabase address line: every client reads `NEXT_PUBLIC_SUPABASE_URL`. The concrete project address is replaced by a `<project-ref>` placeholder |

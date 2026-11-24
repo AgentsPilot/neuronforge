@@ -120,10 +120,9 @@ jest.mock('@supabase/supabase-js', () => ({ createClient: () => fakeClient() }))
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: fakeClient() }));
 
 /*
- * `lib/supabaseAdmin` THROWS at module load when `SUPABASE_URL` is unset, and
- * six admin routes import it at module scope (boost-packs, execution-tiers,
- * storage-tiers among them). The repo's Jest setup stubs
- * `NEXT_PUBLIC_SUPABASE_URL` but not `SUPABASE_URL`.
+ * `lib/supabaseAdmin` THROWS at module load when the Supabase address or the
+ * service-role key is unset, and admin routes import it at module scope
+ * (execution-tiers, storage-tiers among them).
  *
  * Mocked rather than papered over with an env stub, because this test's whole
  * claim is "no data access happened" — a real client here could not make that

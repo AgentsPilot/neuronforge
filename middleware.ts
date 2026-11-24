@@ -10,6 +10,7 @@ import { createEdgeLogger } from '@/lib/logger/edge'
 import { isReservedPrefix } from '@/lib/business-os/reservedPrefixes'
 import { publicSiteHost, publicSitePath } from '@/lib/utils/origins'
 import { onboardingVerdict } from '@/lib/security/onboardingVerdict'
+import { readSessionAccessToken, supabaseAuthStorageKey } from '@/lib/supabaseAuthCookie'
 
 /*
  * Middleware runs in the Edge Runtime, where Pino cannot initialise — no
@@ -268,36 +269,33 @@ export async function middleware(request: NextRequest) {
 
   // === ONBOARDING CHECK (runs for protected routes) ===
   try {
-    // Extract access token from cookies
-    const cookies = request.headers.get('cookie') || ''
-
     requestLogger.debug('Checking onboarding status')
 
-    // Supabase auth cookies are chunked into multiple parts (.0, .1, .2, etc)
-    // We need to find all chunks and combine them
-    const cookieName = 'sb-jgccgkyhpwirgknnceoh-auth-token'
-    const chunks: string[] = []
-    let chunkIndex = 0
+    /*
+     * The session cookie's name, derived per request from the same build-time
+     * address the browser client uses (PROD-1a, A2). It was a hardcoded
+     * literal naming one project, so against any other project no session was
+     * ever found and the gate passed everyone through, silently.
+     *
+     * Derived HERE, never at module scope: this file runs on every path, so a
+     * throw at import would be a site-wide outage.
+     *
+     * Null means the address is missing or not a valid http(s) URL. Then no
+     * Supabase client can be built anywhere, so nobody can be signed in for
+     * this gate to act on (SA D-1, F1): log at error, which survives the
+     * production threshold, and let the request through.
+     */
+    const storageKey = supabaseAuthStorageKey()
 
-    while (true) {
-      const chunkRegex = new RegExp(`${cookieName}\\.${chunkIndex}=([^;]+)`)
-      const match = cookies.match(chunkRegex)
-      if (!match) break
-
-      // Remove 'base64-' prefix if present
-      const chunkValue = match[1].replace(/^base64-/, '')
-      chunks.push(chunkValue)
-      chunkIndex++
-    }
-
-    requestLogger.debug({ chunks: chunks.length }, 'Auth cookie chunks found')
-
-    if (chunks.length > 0) {
-      // Combine all chunks and decode
-      const combined = chunks.join('')
-      const decoded = Buffer.from(combined, 'base64').toString('utf-8')
-      const tokenData = JSON.parse(decoded)
-      const accessToken = tokenData.access_token
+    if (storageKey === null) {
+      requestLogger.error(
+        'Session cookie name cannot be derived: the public Supabase address is missing or invalid; skipping the onboarding check'
+      )
+    } else {
+      /* Read the way `@supabase/ssr` writes it: the unchunked name first, then
+         `.0`, `.1`, ... The old loop read only the chunked form, so every
+         session small enough to fit one cookie skipped the gate (D-3). */
+      const accessToken = await readSessionAccessToken((name) => request.cookies.get(name)?.value, storageKey)
 
       requestLogger.debug({ hasAccessToken: !!accessToken }, 'Access token extracted')
 

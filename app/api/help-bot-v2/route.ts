@@ -17,7 +17,7 @@ import { createLogger, type Logger } from '@/lib/logger'
 const logger = createLogger({ module: 'HelpBotV2API' })
 
 const supabase = createClient(
-  process.env.SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
