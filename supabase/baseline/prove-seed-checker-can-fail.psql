@@ -1,0 +1,364 @@
+-- Proof that scripts/check-baseline-seed.sql can fail (PROD-2 workplan
+-- section 7.4, F6, the seed half of DV-5).
+--
+-- WHERE AND WHEN. The production project after the baseline apply (U5) and
+-- before PROD-3 sends it any traffic, in the same sitting as the parity proof
+-- (U6). Run by the user, in psql, under the D7 exception, BEFORE the first
+-- production login: the opening guard refuses any project that has a row in
+-- auth.users, which is what stops a run against staging. Never through
+-- execute_sql.
+--
+-- PSQL ONLY. Never paste this file in the Supabase SQL editor: it needs psql
+-- for its scratch file and its variables, and the editor misparses the
+-- standalone word "into".
+--
+-- NEVER PART OF U5r OR U5. This file is never in the file list of the
+-- rehearsal or the apply: it carries its own BEGIN and ROLLBACK, and inside
+-- their transaction its ROLLBACK would end the apply. It runs on its own, at U6.
+--
+-- WHAT IT DOES. One transaction that always ends in ROLLBACK, so nothing is
+-- ever committed. It runs the seed checker once (BASE), then for each step
+-- makes ONE deliberate change inside a savepoint, runs the checker again,
+-- compares every row with BASE, and rolls the savepoint back. Then POST checks
+-- that the savepoint rollbacks left nothing behind, the transaction is rolled
+-- back, and AFTER checks the same in a fresh transaction.
+--
+--   E00  S00   the session TimeZone is changed: the context must move
+--   E01  S19   one website_archetypes row has text appended (F6, the workplan D5)
+--   E02  S16   one help_articles row is removed
+--   E03  S20   the bos_cron_run_recording row is removed: VERDICT must fail
+--   E04  S21   the highest help_articles id is moved above its sequence:
+--              the sequence gate and VERDICT must fail
+--
+-- The steps name seed tables, which the workplan lists in section 6.1, and
+-- never a role. E01 picks its column from the catalog at run time: the first
+-- text column with no constraint and no index on it.
+--
+-- HOW TO RUN (PowerShell, from the private baseline folder, which receives the
+-- scratch file seed-proof-run.csv):
+--   Set-Location $B
+--   psql -X -h <PROD_HOST> -p 5432 -U <PROD_USER> -d "dbname=postgres sslmode=require" -W -v ON_ERROR_STOP=1 -f "<REPO>/supabase/baseline/prove-seed-checker-can-fail.psql" 2>&1 | Tee-Object "$B/seed-proof.log"
+--
+-- READING THE RESULT. Each step prints one row: e_code, target section,
+-- e_result, the rows that changed (codes only) and the step state.
+--   PROVEN        every row the step must change changed, and nothing else did
+--   FAIL          a must-change row stayed equal, or another row moved
+--   NOT RUN       no candidate (no usable column or row). SA rules on it
+--   SCRIPT ERROR  any error inside the step. postgres owns every seed table,
+--                 so a refusal means the script is wrong: fix it and re-run
+-- The last row is PROOF: PASS, PASS with NOT RUN steps for SA, or FAIL.
+--
+-- The log carries check codes, counts, hashes and step states only, so it can
+-- be shared. The steps take short row locks on production tables, which is
+-- why this runs before any traffic.
+--
+-- Running it with --single-transaction is harmless: the explicit ROLLBACK
+-- below ends the transaction before psql would commit.
+
+\set ON_ERROR_STOP on
+\set QUIET on
+\set ECHO none
+\pset pager off
+\set expected_rows 25
+
+BEGIN READ WRITE;
+
+-- Server notices could name objects. No step expects one, and this makes sure
+-- none prints.
+SET client_min_messages = error;
+
+-- Staging guard. The new production project has no user until its first
+-- login, and staging always has some. No exception handler, so a refusal stops
+-- the run before any lock is taken.
+DO $guard$
+BEGIN
+  IF EXISTS (SELECT 1 FROM auth.users) THEN
+    RAISE EXCEPTION 'refused: this project already has sign-ins. The proof runs only on the new production project before its first login';
+  END IF;
+END
+$guard$;
+
+-- No step may wait behind a long query while holding a lock.
+SET LOCAL lock_timeout = '3s';
+
+CREATE TEMP TABLE seed_proof_rows (
+  run_label text NOT NULL DEFAULT current_setting('seed_proof.run'),
+  check_name text NOT NULL,
+  result text NOT NULL,
+  detail text
+);
+
+-- must_change: rows that have to differ from BASE. may_change: rows allowed to
+-- differ as a side effect. ANY allows every row (the context step: every
+-- timestamp is written in the new zone).
+CREATE TEMP TABLE seed_proof_expect (e_code, target, must_change, may_change) AS
+VALUES
+  ('BASE', 'baseline run', ARRAY[]::text[], ARRAY[]::text[]),
+  ('E00', 'S00 context', ARRAY['S00', 'CONTEXT KEY'], ARRAY['ANY']),
+  ('E01', 'S19 a row edited (F6)', ARRAY['S19', 'SEED KEY'], ARRAY[]::text[]),
+  ('E02', 'S16 a row removed', ARRAY['S16', 'SEED KEY'], ARRAY[]::text[]),
+  ('E03', 'S20 the initialisation row removed', ARRAY['S20', 'VERDICT'], ARRAY[]::text[]),
+  ('E04', 'S21 an id above its sequence', ARRAY['S16', 'S21', 'SEED KEY', 'VERDICT'], ARRAY[]::text[]),
+  ('POST', 'all savepoints rolled back', ARRAY[]::text[], ARRAY[]::text[]);
+
+CREATE TEMP VIEW seed_proof_compare AS
+WITH cur AS (
+  SELECT current_setting('seed_proof.run') AS label,
+         coalesce(nullif(current_setting('seed_proof.state', true), ''), 'not set') AS state
+),
+base AS (
+  SELECT seed_proof_rows.check_name, seed_proof_rows.result, seed_proof_rows.detail
+  FROM pg_temp.seed_proof_rows
+  WHERE seed_proof_rows.run_label = 'BASE'
+),
+run AS (
+  SELECT seed_proof_rows.check_name, seed_proof_rows.result, seed_proof_rows.detail
+  FROM pg_temp.seed_proof_rows
+  JOIN cur ON seed_proof_rows.run_label = cur.label
+),
+diff AS (
+  SELECT DISTINCT
+         CASE WHEN coalesce(base.check_name, run.check_name) IN ('SEED KEY', 'CONTEXT KEY')
+              THEN coalesce(base.check_name, run.check_name)
+              ELSE split_part(coalesce(base.check_name, run.check_name), ' ', 1) END AS code
+  FROM base
+  FULL JOIN run ON run.check_name = base.check_name
+  WHERE base.result IS DISTINCT FROM run.result
+     OR base.detail IS DISTINCT FROM run.detail
+),
+expect AS (
+  SELECT seed_proof_expect.e_code, seed_proof_expect.target, seed_proof_expect.must_change,
+         seed_proof_expect.may_change
+  FROM pg_temp.seed_proof_expect
+  JOIN cur ON seed_proof_expect.e_code = cur.label
+)
+SELECT expect.e_code, expect.target,
+       CASE WHEN cur.state LIKE 'no candidate%' THEN 'NOT RUN'
+            WHEN cur.state <> 'applied' THEN 'SCRIPT ERROR'
+            WHEN (SELECT count(*) FROM run) <> (SELECT count(*) FROM base) THEN 'FAIL'
+            WHEN EXISTS (SELECT 1 FROM unnest(expect.must_change) AS want (code)
+                         WHERE want.code NOT IN (SELECT diff.code FROM diff)) THEN 'FAIL'
+            WHEN EXISTS (SELECT 1 FROM diff
+                         WHERE diff.code <> ALL (expect.must_change)
+                           AND diff.code <> ALL (expect.may_change)
+                           AND NOT ('ANY' = ANY (expect.may_change))) THEN 'FAIL'
+            ELSE 'PROVEN' END AS e_result,
+       coalesce((SELECT string_agg(diff.code, ',' ORDER BY diff.code) FROM diff), 'nothing') AS changed,
+       cur.state
+FROM expect
+CROSS JOIN cur;
+
+-- BASE ----------------------------------------------------------------------
+SET seed_proof.run = 'BASE';
+SET seed_proof.state = 'applied';
+\ir prove-seed-checker-step.psql
+SELECT CASE WHEN count(*) = :expected_rows
+             AND bool_or(seed_proof_rows.check_name = 'VERDICT' AND seed_proof_rows.result = 'PASS')
+            THEN 'PROVEN' ELSE 'FAIL' END AS res_base
+FROM pg_temp.seed_proof_rows
+WHERE seed_proof_rows.run_label = 'BASE' \gset
+SELECT seed_proof_rows.check_name, seed_proof_rows.result, seed_proof_rows.detail
+FROM pg_temp.seed_proof_rows
+WHERE seed_proof_rows.run_label = 'BASE'
+  AND seed_proof_rows.check_name IN ('VERDICT', 'CONTEXT KEY', 'SEED KEY');
+
+-- E00 S00: change the session TimeZone ----------------------------------------
+SAVEPOINT seed_proof_step;
+SET seed_proof.run = 'E00';
+SET seed_proof.state = 'not set';
+DO $proof$
+BEGIN
+  PERFORM set_config('TimeZone',
+                     CASE WHEN current_setting('TimeZone') = 'Asia/Kathmandu'
+                          THEN 'Pacific/Chatham' ELSE 'Asia/Kathmandu' END,
+                     true);
+  PERFORM set_config('seed_proof.state', 'applied', true);
+END
+$proof$;
+\ir prove-seed-checker-step.psql
+\set res_e00 :step_result
+ROLLBACK TO SAVEPOINT seed_proof_step;
+RELEASE SAVEPOINT seed_proof_step;
+
+-- E01 S19: append text to one website_archetypes row (F6) ----------------------
+SAVEPOINT seed_proof_step;
+SET seed_proof.run = 'E01';
+SET seed_proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+  touched bigint;
+BEGIN
+  stmt := (SELECT format('UPDATE public.website_archetypes SET %1$I = %1$I || %2$L '
+                         'WHERE ctid = (SELECT src.ctid FROM public.website_archetypes AS src '
+                         'WHERE src.%1$I IS NOT NULL ORDER BY src.%1$I COLLATE "C" LIMIT 1)',
+                         att.attname, ' (seed proof)')
+           FROM pg_attribute AS att
+           WHERE att.attrelid = 'public.website_archetypes'::regclass
+             AND att.attnum > 0
+             AND NOT att.attisdropped
+             AND att.atttypid = 'text'::regtype
+             AND att.attgenerated = ''
+             AND NOT EXISTS (SELECT 1 FROM pg_constraint AS con
+                             WHERE con.conrelid = att.attrelid AND att.attnum = ANY (con.conkey))
+             AND NOT EXISTS (SELECT 1 FROM pg_index AS idx
+                             WHERE idx.indrelid = att.attrelid AND att.attnum = ANY (idx.indkey::int2[]))
+           ORDER BY att.attnum
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('seed_proof.state', 'no candidate: no text column without a constraint or an index', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  GET DIAGNOSTICS touched = ROW_COUNT;
+  IF touched <> 1 THEN
+    PERFORM set_config('seed_proof.state', 'no candidate: no row with a value in that column', true);
+    RETURN;
+  END IF;
+  PERFORM set_config('seed_proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('seed_proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-seed-checker-step.psql
+\set res_e01 :step_result
+ROLLBACK TO SAVEPOINT seed_proof_step;
+RELEASE SAVEPOINT seed_proof_step;
+
+-- E02 S16: remove one help_articles row (the lowest id) -------------------------
+SAVEPOINT seed_proof_step;
+SET seed_proof.run = 'E02';
+SET seed_proof.state = 'not set';
+DO $proof$
+DECLARE
+  touched bigint;
+BEGIN
+  DELETE FROM public.help_articles
+  WHERE ctid = (SELECT src.ctid FROM public.help_articles AS src ORDER BY src.id LIMIT 1);
+  GET DIAGNOSTICS touched = ROW_COUNT;
+  IF touched <> 1 THEN
+    PERFORM set_config('seed_proof.state', 'no candidate: help_articles is empty', true);
+    RETURN;
+  END IF;
+  PERFORM set_config('seed_proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('seed_proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-seed-checker-step.psql
+\set res_e02 :step_result
+ROLLBACK TO SAVEPOINT seed_proof_step;
+RELEASE SAVEPOINT seed_proof_step;
+
+-- E03 S20: remove the bos_cron_run_recording row ------------------------------
+SAVEPOINT seed_proof_step;
+SET seed_proof.run = 'E03';
+SET seed_proof.state = 'not set';
+DO $proof$
+DECLARE
+  touched bigint;
+BEGIN
+  DELETE FROM public.bos_cron_run_recording;
+  GET DIAGNOSTICS touched = ROW_COUNT;
+  IF touched <> 1 THEN
+    PERFORM set_config('seed_proof.state', 'no candidate: bos_cron_run_recording does not hold exactly one row', true);
+    RETURN;
+  END IF;
+  PERFORM set_config('seed_proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('seed_proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-seed-checker-step.psql
+\set res_e03 :step_result
+ROLLBACK TO SAVEPOINT seed_proof_step;
+RELEASE SAVEPOINT seed_proof_step;
+
+-- E04 S21: move the highest help_articles id above its sequence ----------------
+-- An UPDATE, not setval: a sequence change is never rolled back, a row change is.
+SAVEPOINT seed_proof_step;
+SET seed_proof.run = 'E04';
+SET seed_proof.state = 'not set';
+DO $proof$
+DECLARE
+  touched bigint;
+BEGIN
+  UPDATE public.help_articles
+  SET id = coalesce(pg_sequence_last_value(pg_get_serial_sequence('public.help_articles', 'id')::regclass), 0) + 1000
+  WHERE id = (SELECT max(src.id) FROM public.help_articles AS src);
+  GET DIAGNOSTICS touched = ROW_COUNT;
+  IF touched <> 1 THEN
+    PERFORM set_config('seed_proof.state', 'no candidate: help_articles is empty', true);
+    RETURN;
+  END IF;
+  PERFORM set_config('seed_proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('seed_proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-seed-checker-step.psql
+\set res_e04 :step_result
+ROLLBACK TO SAVEPOINT seed_proof_step;
+RELEASE SAVEPOINT seed_proof_step;
+
+-- POST: every savepoint rollback left nothing behind -----------------------------
+SET seed_proof.run = 'POST';
+SET seed_proof.state = 'applied';
+\ir prove-seed-checker-step.psql
+\set res_post :step_result
+
+SELECT max(seed_proof_rows.detail) FILTER (WHERE seed_proof_rows.check_name = 'SEED KEY') AS base_seed,
+       max(seed_proof_rows.detail) FILTER (WHERE seed_proof_rows.check_name = 'CONTEXT KEY') AS base_context
+FROM pg_temp.seed_proof_rows
+WHERE seed_proof_rows.run_label = 'BASE' \gset
+
+ROLLBACK;
+
+-- AFTER: a fresh transaction sees the BASE keys again ----------------------------
+BEGIN READ WRITE;
+SET client_min_messages = error;
+CREATE TEMP TABLE seed_proof_rows (
+  run_label text NOT NULL DEFAULT current_setting('seed_proof.run'),
+  check_name text NOT NULL,
+  result text NOT NULL,
+  detail text
+);
+SET seed_proof.run = 'AFTER';
+\pset format csv
+\pset tuples_only on
+\o seed-proof-run.csv
+\ir ../../scripts/check-baseline-seed.sql
+\o
+\pset format aligned
+\pset tuples_only off
+\copy pg_temp.seed_proof_rows (check_name, result, detail) FROM 'seed-proof-run.csv' WITH (FORMAT csv)
+SELECT CASE WHEN count(*) = :expected_rows
+             AND bool_or(seed_proof_rows.check_name = 'VERDICT' AND seed_proof_rows.result = 'PASS')
+             AND max(seed_proof_rows.detail) FILTER (WHERE seed_proof_rows.check_name = 'SEED KEY') = :'base_seed'
+             AND max(seed_proof_rows.detail) FILTER (WHERE seed_proof_rows.check_name = 'CONTEXT KEY') = :'base_context'
+            THEN 'PROVEN' ELSE 'FAIL' END AS res_after
+FROM pg_temp.seed_proof_rows \gset
+ROLLBACK;
+
+-- Summary -------------------------------------------------------------------------
+WITH summary (seq, step, result) AS (
+  VALUES
+    (1, 'BASE', :'res_base'),
+    (2, 'E00', :'res_e00'),
+    (3, 'E01', :'res_e01'),
+    (4, 'E02', :'res_e02'),
+    (5, 'E03', :'res_e03'),
+    (6, 'E04', :'res_e04'),
+    (7, 'POST', :'res_post'),
+    (8, 'AFTER', :'res_after')
+)
+SELECT summary.seq, summary.step, summary.result
+FROM summary
+UNION ALL
+SELECT 99, 'PROOF',
+       CASE WHEN EXISTS (SELECT 1 FROM summary WHERE summary.result NOT IN ('PROVEN', 'NOT RUN')) THEN 'FAIL'
+            WHEN EXISTS (SELECT 1 FROM summary
+                         WHERE summary.step IN ('BASE', 'POST', 'AFTER') AND summary.result <> 'PROVEN') THEN 'FAIL'
+            WHEN EXISTS (SELECT 1 FROM summary WHERE summary.result = 'NOT RUN') THEN 'PASS, NOT RUN steps go to SA'
+            ELSE 'PASS' END
+ORDER BY 1;
