@@ -53,7 +53,20 @@ BEGIN
   GET DIAGNOSTICS updated_count = ROW_COUNT;
   RETURN updated_count;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+/*
+ * The `search_path` pin is R-c of the SECURITY DEFINER surface guard, and it
+ * is not paperwork. A SECURITY DEFINER function runs as its owner, so an
+ * unpinned one resolves `payment_plan_installments` through whatever path the
+ * CALLER happens to have set — which is how a definer function is made to
+ * write somebody else's table.
+ *
+ * This file restores a function that is being dropped precisely because it
+ * was dangerous; restoring it unpinned would hand back the defect with a
+ * second one attached. Pinned here even though the rollback is expected never
+ * to run.
+ */
 
 /* The lockdown from 20261004, reapplied. A new function carries the default
    EXECUTE TO PUBLIC, so without these three lines this rollback would restore

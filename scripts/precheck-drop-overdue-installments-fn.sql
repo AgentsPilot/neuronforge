@@ -25,6 +25,18 @@
  *   P-5  who can still execute it, for the record.
  */
 
+/*
+ * READ ONLY, DECLARED RATHER THAN MERELY INTENDED.
+ *
+ * Everything below is a SELECT, and the labels it prints name the thing it is
+ * checking for — 'zero-argument and SECURITY DEFINER, as described'. The
+ * SECURITY DEFINER surface guard's O-1 tripwire cannot tell a report LABEL
+ * from a definition inside a string, so it exempts scripts that open by
+ * putting the session beyond DDL. It is the right statement for this file on
+ * its own merits: a precheck that could alter the database is not a precheck.
+ */
+SET default_transaction_read_only = on;
+
 WITH
 p1 AS (
   SELECT
