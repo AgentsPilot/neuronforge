@@ -7,6 +7,8 @@
  *   - in Hebrew (through the language context), the ready state reads
  *     "מחיקת החשבון שלי" and the warning shows exactly once, in the dialog and
  *     in the boxed panel; off reads today's Hebrew text.
+ *   - DL-2a: an open request in Hebrew → the pending view right to left, the
+ *     Hebrew heading, dates in Hebrew on the closure's zone, Keep in Hebrew.
  */
 
 import '@testing-library/jest-dom';
@@ -18,6 +20,9 @@ jest.mock('@/components/business-os/data-export/DownloadMyDataButton', () => ({
   DownloadMyDataButton: () => <button type="button" data-testid="download-my-data">Download my data</button>,
 }));
 jest.mock('@/lib/client/auth-actions', () => ({ signOutUser: jest.fn() }));
+// SA CR-1: the hosts refresh through `useRouter()` from next/navigation.
+const mockRefresh = jest.fn();
+jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mockRefresh, push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }) }));
 
 let mockLanguage: { t: (key: string, vars?: Record<string, string | number>) => string; isRTL: boolean; language: string } | null = null;
 jest.mock('@/lib/business-os/LanguageContext', () => ({ useOptionalLanguage: () => mockLanguage }));
@@ -158,5 +163,35 @@ describe('Hebrew', () => {
     await user.click(toggle);
     expect(screen.queryByRole('region')).toBeNull();
     expect(count(container, HE['settings.security.delete_warning'])).toBe(1);
+  });
+
+  it('DL-2a: an open request → the Hebrew pending view, right to left, dates on the closure zone, Keep in Hebrew', async () => {
+    mockLanguage = dictionaryLanguage(HE, 'he', true);
+    const closure = {
+      status: 'pending',
+      planEndsAt: '2026-11-26T10:00:00.000Z',
+      lockAt: '2026-12-09T22:00:00.000Z',
+      lockAtIsProjected: true,
+      timezone: 'Asia/Jerusalem',
+      renewalWasOn: true,
+      graceDays: 14,
+    };
+    fetchMock.mockImplementation(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: url === '/api/business-os/account/closure' ? { closure } : READY }),
+    }));
+    const user = userEvent.setup({ delay: null });
+    render(<SettingsDialog />);
+    await user.click(screen.getByRole('button', { name: 'Open delete' }));
+    const dialog = await screen.findByRole('dialog');
+    const panel = await within(dialog).findByTestId('closure-pending-panel');
+    expect(panel).toHaveAttribute('dir', 'rtl');
+    expect(dialog).toHaveAccessibleDescription('החשבון מתוכנן להיסגר');
+    const lockDay = new Date(closure.lockAt).toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jerusalem' });
+    expect(panel.textContent).toContain(lockDay);
+    expect(panel.textContent).toContain('ימים להתחבר ולייצא');
+    expect(within(panel).getByRole('button', { name: 'להשאיר את החשבון' })).toBeInTheDocument();
+    expect(checkCalls()).toBe(0);
   });
 });

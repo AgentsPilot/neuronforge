@@ -83,9 +83,12 @@ function filesNamingAddress(sources: Source[], address: string): string[] {
 function parsePairs(source: string, keys: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of keys) {
-    const re = new RegExp(`'${key.replace(/\./g, '\\.')}':\\s*\\n?\\s*'((?:[^'\\\\]|\\\\.)*)'`);
+    // DL-2a: a value holding an apostrophe is written "double-quoted" in both files, so both quotes are read.
+    const re = new RegExp(
+      `'${key.replace(/\./g, '\\.')}':\\s*\\r?\\n?\\s*(?:'((?:[^'\\\\]|\\\\.)*)'|"((?:[^"\\\\]|\\\\.)*)")`
+    );
     const m = source.match(re);
-    if (m) out[key] = m[1];
+    if (m) out[key] = m[1] ?? m[2];
   }
   return out;
 }

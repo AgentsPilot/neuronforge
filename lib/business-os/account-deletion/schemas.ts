@@ -5,6 +5,7 @@
  *   GET  /api/business-os/account/deletion-check  → `deletionCheckResponseSchema`
  *   POST /api/business-os/account/delete           ← `accountDeleteBodySchema`
  *   POST /api/business-os/account/keep             ← `accountKeepBodySchema` (DL-1b)
+ *   GET  /api/business-os/account/closure          → `closureStatusResponseSchema` (DL-2a)
  *
  * The body is `.strict()` and holds the typed statement, the UI language and,
  * from DL-1b, the REQUIRED reason code (SA W-13; user BQ-32: the same list as
@@ -26,6 +27,7 @@ import { z } from 'zod';
 import { PLAN_LEAVE_REASON_CODES } from '@/lib/business-os/billing/planLeaveReasons';
 import { MAX_STATEMENT_LENGTH, STATEMENT_LANGUAGES } from './acknowledgement';
 import { BLOCKER_CODES } from './blockerCopy';
+import { OPEN_CLOSURE_STATUSES } from './closureLifecycle';
 
 export const accountDeleteBodySchema = z
   .object({
@@ -91,6 +93,42 @@ export type DeletionCheckData = z.infer<typeof deletionCheckDataSchema>;
 export const deletionCheckResponseSchema = z.object({
   success: z.literal(true),
   data: deletionCheckDataSchema,
+});
+
+/**
+ * DL-2a (workplan BUSINESS_OS_DELETION_DL2_WORKPLAN.md §5.1; SA W-4): the open
+ * closure of the SESSION user, as the Danger Zone shows it. Never the reason
+ * code, the statement language, an email or a database message.
+ *
+ *   lockAt      the stored `lock_at` (grace, locked) or the projected one
+ *               (pending, D-7); null for `requesting`, or when the timezone
+ *               could not be read (then `timezone` is 'UTC' and the panel
+ *               uses its `_nodate` lines, W-4 d)
+ *   planEndsAt  the row's `plan_ends_at`; ALSO null for a pending row when
+ *               the timezone could not be read, so no date of any kind is
+ *               formatted on a guessed zone (IN-3, SA CR-7)
+ *   timezone    the zone every date here was worked out in
+ *   graceDays   GRACE_DAYS, so no copy writes "14" as a literal
+ */
+export const closureStatusViewSchema = z
+  .object({
+    status: z.enum(OPEN_CLOSURE_STATUSES),
+    planEndsAt: isoOrNull,
+    lockAt: isoOrNull,
+    lockAtIsProjected: z.boolean(),
+    timezone: z.string().min(1),
+    renewalWasOn: z.boolean(),
+    graceDays: z.number().int().positive(),
+  })
+  .strict();
+export type ClosureStatusView = z.infer<typeof closureStatusViewSchema>;
+
+export const closureStatusDataSchema = z.object({ closure: closureStatusViewSchema.nullable() }).strict();
+export type ClosureStatusData = z.infer<typeof closureStatusDataSchema>;
+
+export const closureStatusResponseSchema = z.object({
+  success: z.literal(true),
+  data: closureStatusDataSchema,
 });
 
 /** The only place the client may go after a delete (SA V-4). */

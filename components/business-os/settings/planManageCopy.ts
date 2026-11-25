@@ -32,9 +32,9 @@ export const PLAN_MANAGE_REFUSAL_KEYS: Readonly<Record<PlanManageRefusalCode | '
   // D2 / SX-1 (SA F-1): an existing line, so no new wording; D3 may give it its own.
   change_pending: 'plan.manage.refusal.unavailable',
   stripe_error: 'plan.manage.refusal.stripe_error',
-  // D6 / DL-1b: existing lines, so no new wording here; DL-2 gives `deletion_pending` its own
-  // ("Keep your account first"). `custom_end_date` reaches only the deletion request route.
-  deletion_pending: 'plan.manage.refusal.unavailable',
+  // D6 / DL-1b: `custom_end_date` reaches only the deletion request route (an existing line).
+  // DL-2a (DELETE claim, PLAN PAYMENTS sign-off): `deletion_pending` has its own line now.
+  deletion_pending: 'plan.manage.refusal.deletion_pending',
   custom_end_date: 'plan.manage.refusal.support',
 };
 

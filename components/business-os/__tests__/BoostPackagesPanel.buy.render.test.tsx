@@ -187,6 +187,8 @@ describe('every checkout refusal has its own line, never the raw code', () => {
       "You've reached the top-up limit for now. Contact support if you need more."],
     ['409 awaiting_payment', { status: 409, body: { success: false, error: 'awaiting_payment' } }, 'Finish setting up your plan payment first.'],
     ['403 not_eligible', { status: 403, body: { success: false, error: 'not_eligible' } }, "Top-ups aren't available for this account yet."],
+    // DL-2a (DELETE claim; SA W-2): an open deletion request has its own line.
+    ['409 deletion_pending', { status: 409, body: { success: false, error: 'deletion_pending' } }, "You asked us to delete your account, so you can't buy credits now. Choose Keep my account first."],
     ['404 (switch turned off)', { status: 404, body: { success: false, error: 'Not found' } }, "This package isn't available right now. Please reopen Top up."],
     ['404 unknown_package', { status: 404, body: { success: false, error: 'unknown_package' } }, "This package isn't available right now. Please reopen Top up."],
     ['503 catalogue_unavailable', { status: 503, body: { success: false, error: 'catalogue_unavailable' } }, "We couldn't start the payment. Please try again in a moment."],

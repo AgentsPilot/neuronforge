@@ -386,6 +386,8 @@ export const en = {
     'plan.refusal.support': 'We could not set up billing for your account. Please contact support.',
     'plan.refusal.signed_out': 'Your session has ended. Please sign in again.',
     'plan.refusal.not_ready': 'Your account is not ready for a plan yet. Please contact support.',
+    // DL-2a: a DELETE claim; PLAN PAYMENTS' SA signs off the hunk.
+    'plan.refusal.deletion_pending': "You asked us to delete your account, so you can't buy a plan now. Choose Keep my account first, then you can choose a plan.",
     // Plan payments P-7b.1b: upgrading a paid plan in Settings > Plan, and the Q-7
     // label for an admin-assigned plan. {plan}, {amount}, {date}, {price} and {time}
     // are filled by the component; refusals are keyed by the upgrade routes' code.
@@ -447,6 +449,8 @@ export const en = {
     'plan.manage.refusal.stripe_error': 'The payment provider did not respond. Please try again.',
     'plan.manage.refusal.unknown': 'We could not confirm the change. Please check again in a moment.',
     'plan.manage.refusal.generic': 'Something went wrong. Please try again.',
+    // DL-2a: a DELETE claim; PLAN PAYMENTS' SA signs off the hunk.
+    'plan.manage.refusal.deletion_pending': "You asked us to delete your account, so this plan can't be reactivated. Choose Keep my account first, then you can reactivate your plan.",
     // Plan payments P-7a.2: Update card (Stripe's portal) and the invoice list in Settings → Plan.
     'plan.manage.update_card': 'Update card',
     'plan.manage.opening_stripe': 'Opening Stripe…',
@@ -1716,6 +1720,8 @@ export const en = {
     'usage.boost.error.generic': "We couldn't start the payment. Please try again in a moment.",
     'usage.boost.error.signed_out': 'Please sign in again.',
     'usage.boost.error.payments_unavailable': 'Payments are not available right now.',
+    // DL-2a: a DELETE claim; PLAN PAYMENTS' SA signs off the hunk.
+    'usage.boost.error.deletion_pending': "You asked us to delete your account, so you can't buy credits now. Choose Keep my account first.",
     'usage.boost.return.received': 'Payment received — your credits will appear shortly.',
     'usage.boost.return.credited': 'Credits added.',
     'usage.boost.return.still_confirming': 'Your payment is still being confirmed. Your credits will appear here once it completes.',
@@ -4812,7 +4818,6 @@ export const en = {
     // DE-10b.2 self-delete (data export). Hebrew and Spanish need a native check.
     'settings.account_delete.title': 'Delete my account',
     'settings.account_delete.warning': 'Before you delete, export your data from Settings → Export data. Deleting erases your account, your business, your client records, your invoices to clients, your website, your booking pages and your files. It cannot be undone and we cannot recover anything.',
-    'settings.account_delete.what_next': 'Your account will be deleted now.',
     'settings.account_delete.billing_kept': 'We keep your payment history with us, with your personal details removed.',
     'settings.account_delete.what_we_keep': 'What we keep: our billing records without your personal details, a short deletion receipt, and the marketing consent records of your clients.',
     'settings.account_delete.not_available': 'Deleting your account is not available right now. Contact us at {support}.',
@@ -4830,12 +4835,37 @@ export const en = {
     'settings.account_delete.blocker.contact_support': 'We need to finish something on our side first. Contact us at {support}.',
     'settings.account_delete.statement_intro': 'To confirm, type this statement:',
     'settings.account_delete.statement_label': 'Type the statement to confirm',
-    'settings.account_delete.delete_button': 'Delete my account forever',
-    'settings.account_delete.deleting': 'Deleting your account…',
     'settings.account_delete.mismatch': 'The statement does not match. Type it exactly as shown.',
     'settings.account_delete.too_many': 'Too many attempts. Wait a few minutes and try again.',
-    'settings.account_delete.delete_failed': 'Your account was not deleted. Try again, or contact us at {support}.',
-    'settings.account_delete.files_removed_kept': 'Your files were removed but your account was kept. Contact us at {support}.',
+    // DL-2a (account deletion lifecycle; DL-2 workplan §9.1): the deletion REQUEST, Keep my account and the pending view. he / es: native check owed (Q-13).
+    'account_closure.heading': 'Your account is set to close',
+    'account_closure.pending_body': 'Your plan runs until {planEnd}. Then you have {days} days to sign in and export your data. Your account closes on {lockDate}.',
+    'account_closure.pending_body_nodate': 'Your plan runs until the end of the period you paid for. Then you have {days} days to sign in and export your data before your account closes.',
+    'account_closure.grace_body': 'You can still sign in and export your data. Your account closes on {lockDate}.',
+    'account_closure.grace_body_nodate': 'You can still sign in and export your data until your account closes.',
+    'account_closure.requesting_body': "We're still setting up your request. Check back here in a few minutes. If this is still here tomorrow, contact us at {support}.",
+    'account_closure.locked_body': 'Your account is closed. Contact us at {support}.',
+    'account_closure.keep_button': 'Keep my account',
+    'account_closure.keeping': 'Keeping your account…',
+    'account_closure.kept.restored': 'Your account is kept, and your plan will renew as before.',
+    'account_closure.kept.not_restored_by_choice': 'Your account is kept. Your plan still ends on {planEnd}, as you chose before.',
+    'account_closure.kept.not_restored_by_choice_nodate': 'Your account is kept. Your plan still ends at the end of this period, as you chose before.',
+    'account_closure.kept.not_needed': 'Your account is kept. You can choose a plan in Settings → Plan.',
+    'account_closure.kept.failed': "Your account is kept, but we couldn't turn your plan's renewal back on. Use Keep my plan in Settings → Plan.",
+    'account_closure.kept.unknown': "Your account is kept. We couldn't confirm your plan's renewal yet. Check Settings → Plan in a few minutes.",
+    'account_closure.kept.generic': 'Your account is kept.',
+    'account_closure.nothing_to_keep': 'There is no deletion request on this account.',
+    'account_closure.keep_failed': "We couldn't keep your account. Try again, or contact us at {support}.",
+    'settings.account_delete.export_first.heading': 'Export your data first',
+    'settings.account_delete.export_first.documents': "Client documents are not in the export. Download them one by one from each client's record.",
+    'settings.account_delete.request_button': 'Delete my account forever',
+    'settings.account_delete.requesting': 'Sending your request…',
+    'settings.account_delete.blocker.payment_failed': 'Your last plan payment failed. Update your card in Settings → Plan, or contact us at {support}.',
+    'settings.account_delete.plan_change_pending': 'A change to your plan is still in progress. Finish or cancel it in Settings → Plan, then try again.',
+    'settings.account_delete.plan_state_changed': 'Your plan changed while we were checking it. Wait a few minutes and try again.',
+    'settings.account_delete.try_again': 'We could not record your request, and nothing has changed. Try again, or contact us at {support}.',
+    'settings.account_delete.unconfirmed': "We couldn't confirm your request yet. Check back here in a few minutes before you try again.",
+    'settings.account_delete.already_requested': 'You have already asked us to delete your account.',
     // ── SX-2 (D3): the plan Cancel drawer (reason, what changes, review, confirm). he / es: Dev drafts for the user's review (G-5). ──
     'settings.plan_cancel.title': 'Cancel plan',
     'settings.plan_cancel.step_of': 'Step {n} of {total}',
