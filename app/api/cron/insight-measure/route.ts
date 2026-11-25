@@ -29,6 +29,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
 import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { measureDueInsights } from '@/lib/business-os/insight/outcome/MeasurementService';
@@ -38,31 +39,13 @@ const logger = createLogger({ module: 'InsightMeasureCron' });
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-/**
- * Fail closed.
- *
- * A public URL where the bearer token is the only thing separating a Vercel
- * invocation from an arbitrary caller. The three older insight crons each
- * shipped with a missing secret meaning "allow" and had to be corrected
- * (hazard H4); this one starts correct.
- */
-function verifyCronSecret(request: NextRequest): boolean {
-  if (process.env.NODE_ENV === 'development') return true;
-
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
-    return false;
-  }
-
-  return request.headers.get('authorization') === `Bearer ${cronSecret}`;
-}
+// Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5).
 
 async function runJob(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
-  if (!verifyCronSecret(request)) {
+  if (!isAuthorizedCronRequest(request, logger)) {
     requestLogger.warn('Unauthorized cron request');
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }

@@ -80,6 +80,9 @@ const FORBIDDEN_NAMES = [
   'cronRunRecorder',
   'bos_cron_runs',
   'verifyCronSecret',
+  // PROD-1b (A5): the shared cron auth check that replaced it.
+  'isAuthorizedCronRequest',
+  'cronAuth',
   '/api/cron',
 ];
 
@@ -183,7 +186,8 @@ describe('Drain now source guard', () => {
 
   it.each(CRON_ROUTES)('S-8 %s keeps its secret, run record and time limit, with no admin bypass', (file, jobId) => {
     const code = read(file);
-    expect(code).toContain('verifyCronSecret');
+    // PROD-1b (A5): the inline check became the shared fail-closed helper.
+    expect(code).toContain('isAuthorizedCronRequest(request, logger)');
     expect(code).toContain(`withCronRunRecord('${jobId}'`);
     expect(code).toMatch(/export const maxDuration = 60;/);
     expect(code).not.toContain('requireAdmin');

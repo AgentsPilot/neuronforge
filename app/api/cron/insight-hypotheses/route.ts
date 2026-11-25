@@ -27,6 +27,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
 import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
@@ -55,28 +56,7 @@ const RUN_BUDGET_MS = 240_000;
 /** How many accounts one weekly run will touch. */
 const MAX_USERS = 200;
 
-/**
- * Fail CLOSED.
- *
- * Copied from `app/api/cron/payment-reminders/route.ts`, NOT from the insight
- * crons -- those treated a missing `CRON_SECRET` in production as authorised
- * until recently (hazard H4). This endpoint is a public URL and the bearer
- * secret is the only thing distinguishing Vercel's own call from anybody's.
- */
-function verifyCronSecret(request: NextRequest): boolean {
-  const authHeader = request.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET;
-
-  // Local manual triggering.
-  if (process.env.NODE_ENV === 'development') return true;
-
-  if (!cronSecret) {
-    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
-    return false;
-  }
-
-  return authHeader === `Bearer ${cronSecret}`;
-}
+// Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5).
 
 /**
  * Accounts with enough trading history to be worth asking about.
@@ -105,7 +85,7 @@ async function runJob(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
-  if (!verifyCronSecret(request)) {
+  if (!isAuthorizedCronRequest(request, logger)) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 

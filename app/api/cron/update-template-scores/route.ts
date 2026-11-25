@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createLogger } from '@/lib/logger'
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth'
+
+const logger = createLogger({ module: 'UpdateTemplateScoresCron' })
 
 // Force dynamic rendering since this route uses request.headers
 export const dynamic = 'force-dynamic'
@@ -13,9 +17,11 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(request: NextRequest) {
   try {
-    // Verify cron secret (for Vercel Cron Jobs)
-    const authHeader = request.headers.get('authorization')
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    // Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5). The check used
+    // to compare against a template of the secret without testing it existed, so
+    // with the secret unset the header "Bearer undefined" was accepted.
+    if (!isAuthorizedCronRequest(request, logger)) {
+      logger.warn('Unauthorized cron request')
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -40,7 +46,7 @@ export async function GET(request: NextRequest) {
       .select('id, import_count, shared_at, quality_score, reliability_score, efficiency_score, complexity_score')
 
     if (fetchError) {
-      console.error('Error fetching shared agents:', fetchError)
+      logger.error({ err: fetchError }, 'Error fetching shared agents')
       return NextResponse.json(
         { error: 'Failed to fetch shared agents' },
         { status: 500 }
@@ -92,13 +98,13 @@ export async function GET(request: NextRequest) {
           .eq('id', agent.id)
 
         if (updateError) {
-          console.error(`Error updating agent ${agent.id}:`, updateError)
+          logger.error({ err: updateError, agentId: agent.id }, 'Error updating agent score')
           errors.push(`${agent.id}: ${updateError.message}`)
         } else {
           updatedCount++
         }
       } catch (error) {
-        console.error(`Error processing agent ${agent.id}:`, error)
+        logger.error({ err: error, agentId: agent.id }, 'Error processing agent score')
         errors.push(`${agent.id}: ${error instanceof Error ? error.message : 'Unknown error'}`)
       }
     }
@@ -111,7 +117,7 @@ export async function GET(request: NextRequest) {
       errors: errors.length > 0 ? errors : undefined
     })
   } catch (error) {
-    console.error('Error in update-template-scores cron:', error)
+    logger.error({ err: error }, 'update-template-scores cron failed')
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

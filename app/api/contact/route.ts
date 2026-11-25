@@ -5,6 +5,12 @@ import nodemailer from 'nodemailer';
 import { createLogger } from '@/lib/logger';
 import { htmlToText } from '@/lib/email/htmlToText';
 import { escapeHtml } from '@/lib/email/escapeHtml';
+import {
+  checkOutboundRecipients,
+  refusalLogFields,
+  RECIPIENT_REFUSED_MESSAGE,
+  type OutboundRecipientVerdict,
+} from '@/lib/email/recipientAllowList';
 
 const logger = createLogger({ module: 'ContactAPI' });
 
@@ -52,6 +58,20 @@ export async function POST(request: NextRequest) {
 
     // Send emails using OAuth2
     let emailSent = false;
+    /*
+     * PROD-1b (A7): this route has its own transport, so it applies the
+     * recipient guard itself, once per send. While the guard is on (outside
+     * production, or while EMAIL_RECIPIENT_ALLOWLIST is set) a recipient not on
+     * the list is skipped, never retried, and logged with counts only. The
+     * message is saved either way.
+     */
+    // The check is called inline at each send (below), so the G-7 guard counts one per send.
+    const mayEmail = (verdict: OutboundRecipientVerdict, send: 'confirmation' | 'notification'): boolean => {
+      if (verdict.allowed) return true;
+      logger.info({ ...refusalLogFields(verdict), messageId: savedMessage.id, send }, RECIPIENT_REFUSED_MESSAGE);
+      return false;
+    };
+    const TEAM_INBOX = 'hello@agentpilot.ai';
     try {
       const transporter = nodemailer.createTransport({
         service: 'gmail',
@@ -65,7 +85,8 @@ export async function POST(request: NextRequest) {
       });
 
       // Send confirmation email to user
-      await transporter.sendMail({
+      const confirmationSent = mayEmail(checkOutboundRecipients([email]), 'confirmation');
+      if (confirmationSent) await transporter.sendMail({
         from: `"AgentPilot" <${process.env.GMAIL_USER}>`,
         to: email,
         subject: 'Thanks for reaching out to AgentPilot!',
@@ -170,22 +191,27 @@ agentpilot.ai
             </div>
           </div>
         `;
-      await transporter.sendMail({
+      const notificationSent = mayEmail(checkOutboundRecipients([TEAM_INBOX]), 'notification');
+      if (notificationSent) await transporter.sendMail({
         from: `"AgentPilot Contact" <${process.env.GMAIL_USER}>`,
-        to: 'hello@agentpilot.ai',
+        to: TEAM_INBOX,
         subject: `New Contact: ${name}`,
         replyTo: email,
         html: notificationHtml,
         text: htmlToText(notificationHtml),
       });
 
-      emailSent = true;
-      logger.info({ messageId: savedMessage.id }, 'Contact emails sent successfully');
+      // Today's meaning: both sends happened.
+      emailSent = confirmationSent && notificationSent;
 
-      await supabase
-        .from('contact_messages')
-        .update({ email_sent: true })
-        .eq('id', savedMessage.id);
+      if (emailSent) {
+        logger.info({ messageId: savedMessage.id }, 'Contact emails sent successfully');
+
+        await supabase
+          .from('contact_messages')
+          .update({ email_sent: true })
+          .eq('id', savedMessage.id);
+      }
 
     } catch (emailError) {
       logger.error({ err: emailError, messageId: savedMessage.id }, 'Email sending failed (but message was saved)');

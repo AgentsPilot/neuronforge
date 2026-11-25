@@ -4,6 +4,13 @@ import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { GoogleBasePluginExecutor } from './google-base-plugin-executor';
 import { htmlToText } from '@/lib/email/htmlToText';
+import {
+  checkOutboundRecipients,
+  isRecipientGuardOn,
+  recipientsOf,
+  refusalLogFields,
+  RECIPIENT_REFUSED_MESSAGE,
+} from '@/lib/email/recipientAllowList';
 
 const pluginName = 'google-mail'; // Current plugin key
 
@@ -164,6 +171,13 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       this.applyCalibrationModeToEmail(parameters, calibration);
     }
 
+    // PROD-1b (A7): after the calibration redirect, so a redirected test send is
+    // judged on the owner's address. to, cc and bcc all count.
+    const sendVerdict = checkOutboundRecipients(
+      recipientsOf(parameters.recipients?.to, parameters.recipients?.cc, parameters.recipients?.bcc)
+    );
+    if (!sendVerdict.allowed) return this.allowlistSuppressed('send_email', refusalLogFields(sendVerdict));
+
     // Build email message
     const message = this.buildEmailMessage(parameters);
 
@@ -245,6 +259,27 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     } catch (err) {
       this.logger.warn({ err }, 'Failed to apply calibration mode to email (non-blocking)');
     }
+  }
+
+  /**
+   * The result of a send the recipient guard refused (PROD-1b, A7; SA D-5).
+   *
+   * Success-shaped on purpose, like the calibration suppress path above: a
+   * thrown error fails an agent run, and a failed scheduled run is re-run,
+   * repeating the earlier steps' work only to hit the same refusal. Callers
+   * that act on a send (the dashboard reply route) must check
+   * `allowlist_suppressed`. Logged with counts only, never an address.
+   */
+  private allowlistSuppressed(action: string, fields: Record<string, unknown>): Record<string, unknown> {
+    this.logger.warn({ action, ...fields }, RECIPIENT_REFUSED_MESSAGE);
+    return {
+      message_id: null,
+      thread_id: null,
+      sent_at: null,
+      recipient_count: 0,
+      allowlist_suppressed: true,
+      note: 'Not sent: this environment only sends email to addresses on its allow-list.',
+    };
   }
 
   // Search emails via Gmail API
@@ -1008,6 +1043,10 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     const { raw, threadId, inReplyTo, recipients, subject } =
       await this.threadedReplyParts(connection, messageId, parameters);
 
+    // PROD-1b (A7): the FINAL recipients, after `reply_all` has widened them.
+    const replyVerdict = checkOutboundRecipients(recipientsOf(recipients?.to, recipients?.cc, recipients?.bcc));
+    if (!replyVerdict.allowed) return this.allowlistSuppressed('reply_to_email', refusalLogFields(replyVerdict));
+
     // Send within the thread. threadId keeps the reply in the same conversation.
     const sendResponse = await fetch(`${this.gmailApisUrl}/users/me/messages/send`, {
       method: 'POST',
@@ -1088,6 +1127,16 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     const draftId: string = typeof parameters.draft_id === 'string' ? parameters.draft_id.trim() : '';
     if (!draftId) {
       throw new Error('draft_id is a required parameter');
+    }
+
+    /*
+     * PROD-1b (A7, SA condition 2): the draft's recipients are not in the step,
+     * so while the recipient guard is on every draft send is refused, with no
+     * Gmail call at all. Smaller and certainly fail-closed; no first-party
+     * caller sends drafts.
+     */
+    if (isRecipientGuardOn()) {
+      return this.allowlistSuppressed('send_draft', { reason: 'guard_on_draft_unchecked' });
     }
 
     this.logger.debug({ draftId }, 'send_draft: sending draft');

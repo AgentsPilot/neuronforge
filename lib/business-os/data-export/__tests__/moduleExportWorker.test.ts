@@ -1125,6 +1125,8 @@ describe('T-W23: no address, file name or cell value in any log line, the transp
   it('through the REAL transport with a mocked Resend', async () => {
     process.env = { ...ENV, RESEND_API_KEY: 're_test_key' };
     delete process.env.VERCEL_ENV;
+    // PROD-1b (A7): outside production the recipient guard is on; list the recipient so the send is real.
+    process.env.EMAIL_RECIPIENT_ALLOWLIST = EMAIL_A;
     (global as unknown as { fetch: unknown }).fetch = jest.fn(async () => ({
       ok: true,
       status: 200,

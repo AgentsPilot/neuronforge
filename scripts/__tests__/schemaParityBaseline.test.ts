@@ -1063,3 +1063,788 @@ describe('the fragment audits can fail', () => {
     expect(auditAfterSchema(broken).join('\n')).toMatch(complaint);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// DV-2, DV-4, DV-5 (seed half): the seed checker, the seed export and import,
+// and the seed checker's proof (T8, T18 to T21 in workplan section 15)
+// ───────────────────────────────────────────────────────────────────────────
+
+const SEED_CHECKER = 'scripts/check-baseline-seed.sql';
+const SEED_EXPORT = 'supabase/baseline/seed-export.psql';
+const SEED_IMPORT = 'supabase/baseline/seed-import.psql';
+const SEED_PROOF = 'supabase/baseline/prove-seed-checker-can-fail.psql';
+const SEED_STEP = 'supabase/baseline/prove-seed-checker-step.psql';
+
+interface SeedTable {
+  readonly name: string;
+  /** The primary key the export orders by (OQ-5, SA R-2). */
+  readonly pk: string;
+  /** Columns nulled at the source (SA R-2). A table with any goes through jsonb. */
+  readonly nulled: readonly string[];
+}
+
+/** The 19 seed tables in load order, parents before children (workplan section 6.1). */
+const SEED_TABLES: readonly SeedTable[] = [
+  { name: 'ai_model_pricing', pk: 'id', nulled: ['proposal_id', 'proposal_line_id'] },
+  { name: 'ais_system_config', pk: 'config_key', nulled: ['updated_by'] },
+  { name: 'ais_scoring_weights', pk: 'id', nulled: ['updated_by'] },
+  { name: 'ais_normalization_ranges', pk: 'id', nulled: [] },
+  { name: 'pricing_config', pk: 'id', nulled: [] },
+  { name: 'system_settings_config', pk: 'id', nulled: ['updated_by'] },
+  { name: 'memory_config', pk: 'id', nulled: [] },
+  { name: 'model_routing_config', pk: 'id', nulled: [] },
+  { name: 'boost_packs', pk: 'id', nulled: [] },
+  { name: 'storage_plans', pk: 'id', nulled: [] },
+  { name: 'reward_config', pk: 'id', nulled: [] },
+  { name: 'reward_settings', pk: 'id', nulled: [] },
+  { name: 'exchange_rates', pk: 'id', nulled: ['updated_by'] },
+  { name: 'capabilities', pk: 'id', nulled: [] },
+  { name: 'capability_building_blocks', pk: 'id', nulled: [] },
+  { name: 'help_articles', pk: 'id', nulled: [] },
+  { name: 'helpbot_page_contexts', pk: 'page_route', nulled: [] },
+  { name: 'plugin_semantic_ops', pk: 'id', nulled: [] },
+  { name: 'website_archetypes', pk: 'id', nulled: [] },
+];
+const SEED_NAMES = SEED_TABLES.map((t) => t.name);
+/** FK children and their parents (OQ-5): the parent must load first. */
+const SEED_PARENTS: ReadonlyArray<readonly [string, string]> = [
+  ['capabilities', 'capability_building_blocks'],
+  ['reward_config', 'reward_settings'],
+];
+const SEED_NULLED = SEED_TABLES.flatMap((t) => t.nulled.map((c) => `${t.name}.${c}`));
+const SEED_JSONB = SEED_TABLES.filter((t) => t.nulled.length > 0).map((t) => t.name);
+const SEED_SEQUENCES = 'ais_scoring_weights.id,help_articles.id';
+const SEED_CODES = Array.from({ length: 22 }, (_, i) => `S${pad(i)}`);
+const SEED_SETTINGS = ['TimeZone', 'DateStyle', 'IntervalStyle', 'extra_float_digits', 'bytea_output', 'server_encoding'];
+/** The settings both seed files pin, so a value reads back as it was written (SA B-9). */
+const SEED_CONTEXT_PINS = [
+  "SET LOCAL client_encoding = 'UTF8';",
+  "SET LOCAL TimeZone = 'UTC';",
+  "SET LOCAL DateStyle = 'ISO, MDY';",
+  "SET LOCAL IntervalStyle = 'postgres';",
+  'SET LOCAL extra_float_digits = 1;',
+  "SET LOCAL bytea_output = 'hex';",
+];
+/** The psql meta-commands the export and import may use, and the only \set lines. */
+const SEED_META = ['set', 'pset', 'o', 'ir', 'copy'];
+const SEED_SET_LINES = ['\\set ON_ERROR_STOP on', '\\set QUIET on', '\\set QUIET off'];
+const ADMIN_USERS_EMPTIED = "(CASE WHEN src.key = 'admin_users' THEN jsonb_set(to_jsonb(src), ARRAY['value'], '[]'::jsonb) ELSE to_jsonb(src) END)";
+const subtraction = (cols: readonly string[]) => `- ARRAY[${cols.map((c) => `'${c}'`).join(', ')}]::text[]`;
+const quotedList = (s: string) => [...s.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+const norm = (s: string) => s.replace(/\r\n?/g, '\n');
+/** Blank every psql meta-command line, so only SQL is left. Offsets never move. */
+const sqlOnly = (s: string) => s.replace(/^[ \t]*\\.*$/gm, (line) => ' '.repeat(line.length));
+
+/** Names after FROM, JOIN, INTO, UPDATE or ON that are not schema-qualified (SA C-4). */
+function unqualifiedNames(sql: string): string[] {
+  const refs = /\b(FROM|JOIN|INTO|UPDATE|ON|EXECUTE\s+FUNCTION|MATERIALIZED\s+VIEW)\s+(?:LATERAL\s+|ONLY\s+)?([A-Za-z_"][\w$"]*(?:\s*\.\s*[A-Za-z_"][\w$"]*)?)/gi;
+  const found: string[] = [];
+  for (const m of sql.matchAll(refs)) {
+    if (/^ARRAY$/i.test(m[2])) continue;
+    if (!m[2].includes('.')) found.push(`${squash(m[1])} ${m[2]}`);
+  }
+  return found;
+}
+
+/** Rules every seed psql file keeps: hygiene, the meta-command allow-list, no escape hatch. */
+function seedPsqlProblems(text: string, deep: Scrubbed, allowed: readonly string[], setLines: readonly string[] | null): string[] {
+  const problems: string[] = [];
+  if (/security\s+definer/i.test(text)) problems.push('SECURITY DEFINER guard: the phrase appears');
+  if (/\bcreate\s+(or\s+replace\s+)?(function|procedure)\b/i.test(text)) problems.push('defines a function');
+  if (!isAscii(text)) problems.push('a non-ASCII character');
+  if (!/^-- PSQL ONLY\. Never paste this file in the Supabase SQL editor/m.test(text) || !/standalone word "into"/.test(text)) {
+    problems.push('header: does not say psql only and name the editor word problem');
+  }
+  for (const m of deep.bare.matchAll(/\\([A-Za-z]+|[^A-Za-z\s])/g)) {
+    if (!allowed.includes(m[1])) problems.push(`psql meta-command \\${m[1]} is not on the allow-list`);
+  }
+  if (setLines) {
+    for (const m of deep.bare.matchAll(/^[ \t]*\\set\b.*$/gm)) {
+      if (!setLines.includes(m[0].trim())) problems.push(`psql: ${m[0].trim()} is not one of the allowed \\set lines`);
+    }
+  }
+  const remote = deep.code.match(/\b(dblink\w*|pg_background\w*)\b/gi);
+  if (remote) problems.push(`an autonomous-transaction escape ${[...new Set(remote)].join(', ')}`);
+  if (/\boperator_private\b/i.test(deep.code)) problems.push('names operator_private');
+  return problems;
+}
+
+// ── The seed checker (DV-2) ────────────────────────────────────────────────
+
+interface SeedSectionRow {
+  readonly sortOrder: number;
+  readonly code: string;
+  readonly title: string;
+  readonly kind: string;
+  readonly display: string;
+}
+
+function seedSectionRows(code: string): SeedSectionRow[] {
+  const start = code.indexOf('sections (sort_order, code, title, kind, display) AS (');
+  if (start === -1) return [];
+  const body = code.slice(start, closeParen(code, code.indexOf('(', code.indexOf('AS (', start))));
+  return [...body.matchAll(/\((\d+), '(S[0-9]+)', '([^']*)', '([a-z]+)', '([a-z]+)'\)/g)].map((m) => ({
+    sortOrder: Number(m[1]),
+    code: m[2],
+    title: m[3],
+    kind: m[4],
+    display: m[5],
+  }));
+}
+
+/** Every problem found in the seed checker text. The real file must return []. */
+export function auditSeedChecker(raw: string): string[] {
+  const text = norm(raw);
+  const problems: string[] = [];
+  const { code, bare } = scrubSql(text);
+  const blocks = blocksOf(text, code);
+
+  // Read-only, one statement, and no transaction control: the import runs it
+  // inside the apply transaction, and U5r inside an outer BEGIN ... ROLLBACK.
+  const firstLine = code.split('\n').map((l) => l.trim()).find((l) => l.length > 0);
+  if (firstLine !== 'SET default_transaction_read_only = on;') {
+    problems.push('read-only: the first statement is not SET default_transaction_read_only = on;');
+  }
+  const sets = bare.match(/\bSET\b/gi) ?? [];
+  if (sets.length !== 1) problems.push(`read-only: expected exactly 1 SET statement, found ${sets.length}`);
+  const writes = bare.match(
+    /\b(insert|update|delete|merge|create|alter|drop|grant|revoke|truncate|copy|comment|vacuum|analyze|reindex|cluster|lock|call|do|execute|prepare|refresh|reset|begin|commit|rollback|abort|savepoint|release|listen|notify|import|security)\b/gi,
+  );
+  if (writes) problems.push(`write or transaction keyword outside comments and strings: ${[...new Set(writes)].join(', ')}`);
+  if (/client_min_messages/i.test(code)) problems.push('warnings: client_min_messages is set (warnings must stay visible)');
+
+  // Paste safety and the SECURITY DEFINER tripwire (whole text, comments included).
+  if (/\binto\b/i.test(text)) problems.push('paste safety: the word into appears');
+  if (/security\s+definer/i.test(text)) problems.push('SECURITY DEFINER guard: the phrase appears');
+  if (/\bcreate\s+(or\s+replace\s+)?(function|procedure)\b/i.test(text)) problems.push('creates a function');
+  if (!isAscii(text)) problems.push('paste safety: a non-ASCII character');
+  if (/^[ \t]*\\/m.test(code)) problems.push('paste safety: a psql meta-command');
+  const oneLetter = bare.match(/\bAS\s+[A-Za-z](?![A-Za-z0-9_])/g);
+  if (oneLetter) problems.push(`paste safety: single-letter alias ${oneLetter.join(', ')}`);
+  for (const hit of uncastCharConcats(code)) problems.push(`planner: "char" column joined with || without ::text: ${hit}`);
+  if (/\boperator_private\b/i.test(code)) problems.push('names operator_private');
+
+  // Sections: S00 context, S01 to S19 the seed tables in load order, S20, S21.
+  const rows = seedSectionRows(code);
+  if (JSON.stringify(rows.map((r) => r.code)) !== JSON.stringify(SEED_CODES)) {
+    problems.push(`sections: expected ${SEED_CODES.join(',')} got ${rows.map((r) => r.code).join(',')}`);
+  }
+  rows.forEach((r, k) => {
+    if (r.sortOrder <= 0) problems.push(`sections: ${r.code} sorts at or before VERDICT`);
+    if (k > 0 && r.sortOrder <= rows[k - 1].sortOrder) problems.push(`sections: ${r.code} out of order`);
+  });
+  const want = (c: string, kind: string, display: string) => {
+    const row = rows.find((r) => r.code === c);
+    if (!row || row.kind !== kind || row.display !== display) problems.push(`sections: ${c} is not ${kind} / ${display}`);
+  };
+  want('S00', 'context', 'value');
+  want('S20', 'single', 'rows');
+  want('S21', 'sequence', 'value');
+  SEED_TABLES.forEach((t, k) => {
+    const c = `S${pad(k + 1)}`;
+    want(c, 'seed', 'count');
+    const title = rows.find((r) => r.code === c)?.title;
+    if (title !== t.name) problems.push(`sections: ${c} is titled ${title ?? 'nothing'}, the load order says ${t.name}`);
+
+    // T8 / SA R-2, R-3: the row as to_jsonb, minus exactly the nulled columns.
+    const block = blocks.get(c) ?? '';
+    if (!new RegExp(`FROM public\\.${t.name} AS src\\b`).test(block)) problems.push(`${c}: does not read public.${t.name}`);
+    if (!block.includes('to_jsonb(src)')) problems.push(`${c}: does not hash the row as to_jsonb`);
+    const minus = [...block.matchAll(/- ARRAY\[[^\]]*\]::text\[\]/g)].map((m) => m[0]);
+    const expected = t.nulled.length ? [subtraction(t.nulled)] : [];
+    if (JSON.stringify(minus) !== JSON.stringify(expected)) {
+      problems.push(`${c}: subtracts ${minus.join(' ') || 'nothing'}, expected ${expected.join(' ') || 'nothing'} (SA R-2)`);
+    }
+  });
+  if (!squash(blocks.get('S06') ?? '').includes(ADMIN_USERS_EMPTIED.replace(/^\(|\)$/g, ''))) {
+    problems.push('S06: the admin_users key is not emptied the way the export empties it (SA R-3)');
+  }
+
+  // S20: existence only, never the content (OQ-15 class b).
+  const s20 = blocks.get('S20') ?? '';
+  if (!/SELECT 'S20', 'initialisation row', true\s+FROM public\.bos_cron_run_recording AS src/.test(s20) || s20.includes('to_jsonb')) {
+    problems.push('S20: not a constant line per bos_cron_run_recording row');
+  }
+  if (!/WHEN summary\.kind = 'single' THEN CASE WHEN summary\.line_count = 1 THEN 'PASS' ELSE 'FAIL' END/.test(code)) {
+    problems.push('S20: the single row is not gated at exactly one');
+  }
+
+  // S21: both serial sequences clear, and no other owned sequence (SA R-2).
+  const s21 = squash(blocks.get('S21') ?? '');
+  for (const t of ['ais_scoring_weights', 'help_articles']) {
+    if (!s21.includes(`(SELECT max(src.id) FROM public.${t} AS src)::bigint, pg_sequence_last_value(pg_get_serial_sequence('public.${t}', 'id')::regclass)`)) {
+      problems.push(`S21: the ${t} sequence is not checked against its highest id`);
+    }
+  }
+  if (!s21.includes('coalesce(seq_check.last_used, 0) >= coalesce(seq_check.max_id, 0) FROM')) {
+    problems.push('S21: the collision gate is not the line gate');
+  }
+  if (!s21.includes(`coalesce(owned.column_list, 'none') = '${SEED_SEQUENCES}'`)) problems.push('S21: the owned-sequence list is not pinned');
+  const inList = /AND tbl\.relname IN \(([^)]*)\)/.exec(blocks.get('S21') ?? '');
+  if (JSON.stringify(quotedList(inList?.[1] ?? '')) !== JSON.stringify(SEED_NAMES)) problems.push('S21: the owned-sequence scan does not cover exactly the 19 seed tables');
+  if (!/WHEN summary\.line_count > 0 AND summary\.gates_ok THEN 'PASS'/.test(code)) problems.push('gates: a section passes without its line gates');
+
+  // Only the seed tables and the initialisation table are read.
+  const read = new Set([...code.matchAll(/\bpublic\.([A-Za-z_]+)\b/g)].map((m) => m[1]));
+  for (const name of read) {
+    if (!SEED_NAMES.includes(name) && name !== 'bos_cron_run_recording') problems.push(`reads public.${name}, which is not seed`);
+  }
+
+  // Context, determinism and the keys (SA B-9).
+  const s00 = blocks.get('S00') ?? '';
+  for (const s of SEED_SETTINGS) if (!s00.includes(`current_setting('${s}')`)) problems.push(`S00: ${s} is missing`);
+  if (!/string_agg\(seed_lines\.line, chr\(10\) ORDER BY seed_lines\.line COLLATE "C"\)/.test(code)) {
+    problems.push('determinism: seed lines are not sorted COLLATE "C" before hashing');
+  }
+  const report = blocks.get('report') ?? '';
+  if (!/SELECT 0 AS sort_order, 'VERDICT'::text AS check_name/.test(report)) problems.push('VERDICT is not the first report row at sort order 0');
+  if (!/'CONTEXT KEY'[\s\S]*?WHERE graded\.code = 'S00'\)/.test(report)) problems.push('CONTEXT KEY: not the S00 hash');
+  if (!/'SEED KEY'[\s\S]*?WHERE graded\.kind = 'seed'\)/.test(report)) problems.push('SEED KEY: not computed over the seed tables only');
+  if (!/ORDER BY report\.sort_order;\s*$/.test(code)) problems.push('report: not ordered by sort_order');
+
+  const stated = /Returns exactly (\d+) rows/.exec(text);
+  if (!stated || Number(stated[1]) !== 1 + rows.length + 2) {
+    problems.push(`row count: header states ${stated?.[1] ?? 'nothing'}, sections give ${1 + rows.length + 2}`);
+  }
+  return problems;
+}
+
+// ── The seed export (DV-4) ─────────────────────────────────────────────────
+
+export function auditSeedExport(raw: string): string[] {
+  const text = norm(raw);
+  const top = scrubSql(text);
+  const deep = deepScrub(text);
+  const problems = seedPsqlProblems(text, deep, SEED_META, SEED_SET_LINES);
+  const sql = sqlOnly(top.bare);
+
+  if (text.split('\n').find((l) => l.trim() && !l.startsWith('--')) !== '\\set ON_ERROR_STOP on') {
+    problems.push('psql: the first command is not \\set ON_ERROR_STOP on');
+  }
+  if (!/^-- NEVER PART OF U5r OR U5\./m.test(text)) problems.push('header: does not say it is never part of the U5r or U5 file list');
+  if (/client_min_messages/i.test(deep.code)) problems.push('warnings: client_min_messages is set (warnings must stay visible)');
+
+  // Its own read-only snapshot, and nothing that writes or commits.
+  const control = [...sql.matchAll(/^[ \t]*(BEGIN|COMMIT|END|ABORT|START TRANSACTION|ROLLBACK)\b([^;\n]*);/gim)].map((m) => squash(`${m[1]}${m[2]}`).toUpperCase());
+  if (JSON.stringify(control) !== JSON.stringify(['BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY', 'ROLLBACK'])) {
+    problems.push(`transaction: expected BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY then ROLLBACK, found ${control.join(', ') || 'none'}`);
+  }
+  const hatches = deep.bare.match(/\b(COMMIT|ABORT|PREPARE\s+TRANSACTION|SAVEPOINT|RELEASE)\b/gi);
+  if (hatches) problems.push(`transaction control ${[...new Set(hatches.map(squash))].join(', ')}`);
+  const writes = deep.bare.match(/\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE|COMMENT|REFRESH|LOCK|CALL|VACUUM)\b/gi);
+  if (writes) problems.push(`a write statement ${[...new Set(writes)].join(', ')}`);
+
+  // SA B-9: the same pins as the import, inside the transaction, before the guard.
+  const at = (s: string) => text.indexOf(s);
+  const begin = at('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;');
+  const guardAt = at('DO $guard$');
+  for (const pin of SEED_CONTEXT_PINS) {
+    const p = at(pin);
+    if (p === -1 || p < begin || p > guardAt) problems.push(`context: ${pin} is not pinned between BEGIN and the guard`);
+  }
+
+  // The guard: no handler, and every refusal.
+  const guard = doBlock(deep.code, 'guard');
+  if (!guard) problems.push('guard: no DO $guard$ block');
+  if (/\bEXCEPTION\s+WHEN\b/i.test(guard)) problems.push('guard: it has an exception handler');
+  const pkRows = [...(/FROM \(VALUES([\s\S]*?)\) AS want \(table_name, pk_column\)/.exec(guard)?.[1] ?? '').matchAll(/\('([a-z_]+)', '([a-z_]+)'\)/g)].map((m) => `${m[1]}:${m[2]}`);
+  if (JSON.stringify(pkRows) !== JSON.stringify(SEED_TABLES.map((t) => `${t.name}:${t.pk}`))) problems.push('guard: the primary-key list is not the 19 seed tables and their keys');
+  const arrayOf = (name: string) => quotedList(new RegExp(`${name} text\\[\\] := ARRAY\\[([^\\]]*)\\]::text\\[\\];`).exec(guard)?.[1] ?? '');
+  if (JSON.stringify(arrayOf('seed_tables')) !== JSON.stringify(SEED_NAMES)) problems.push('guard: seed_tables is not the 19 seed tables');
+  if (JSON.stringify(arrayOf('nulled_columns')) !== JSON.stringify(SEED_NULLED)) problems.push('guard: nulled_columns is not the six nulled columns (SA R-2)');
+  if (JSON.stringify(arrayOf('jsonb_copied')) !== JSON.stringify(SEED_JSONB)) problems.push('guard: jsonb_copied is not the tables with nulled columns');
+  const guardRules: ReadonlyArray<readonly [string, RegExp]> = [
+    ['its own read-only transaction', /current_setting\('transaction_read_only'\) <> 'on'\s+OR pg_catalog\.current_setting\('transaction_isolation'\) <> 'repeatable read' THEN/],
+    ['a missing table or another primary key', /WHERE pg_catalog\.to_regclass\('public\.' \|\| want\.table_name\) IS NULL\s+OR[\s\S]*?idx\.indisprimary\) IS DISTINCT FROM want\.pk_column/],
+    ['a nulled column that does not exist', /FROM pg_catalog\.unnest\(nulled_columns\) AS want \(qualified\)\s+WHERE NOT EXISTS/],
+    ['a foreign key out of the seed set', /WHERE con\.contype = 'f'[\s\S]*?<> ALL \(nulled_columns\)\)/],
+    ['a settings value that is not jsonb', /att\.attname = 'value'\s+AND att\.atttypid = 'pg_catalog\.jsonb'::pg_catalog\.regtype/],
+    ['a generated or identity column', /AND \(att\.attgenerated <> '' OR att\.attidentity <> ''\)/],
+    ['a json column copied through jsonb', /rel\.relname::text = ANY \(jsonb_copied\)[\s\S]*?'pg_catalog\.json'::pg_catalog\.regtype/],
+    ['the refusal raises', /IF pg_catalog\.cardinality\(refusals\) > 0 THEN\s+RAISE EXCEPTION/],
+  ];
+  for (const [name, rule] of guardRules) if (!rule.test(guard)) problems.push(`guard: does not refuse on ${name}`);
+
+  // T8: the 19 copies, in load order, each ordered by its key, the nulled
+  // columns nulled at the source and the admin_users key emptied.
+  const copyLines = text.split('\n').filter((l) => /^\\copy\b/.test(l));
+  const shape = /^\\copy \(SELECT (rec|src)\.\* FROM public\.(\w+) AS src(.*) ORDER BY src\.(\w+)::text COLLATE "C"\) TO 'seed-([\w]+)\.csv' WITH \(FORMAT csv, HEADER\)$/;
+  const parsed = copyLines.map((l) => shape.exec(l));
+  if (parsed.some((m) => !m)) problems.push('copy: a \\copy line is not a read of one seed table to its own file');
+  const order = parsed.map((m) => m?.[2] ?? '?');
+  if (JSON.stringify(order) !== JSON.stringify(SEED_NAMES)) problems.push(`copy: expected the 19 seed tables in load order, found ${order.join(',')}`);
+  for (const [parent, child] of SEED_PARENTS) {
+    if (order.indexOf(parent) > order.indexOf(child)) problems.push(`copy: ${child} comes before its parent ${parent}`);
+  }
+  parsed.forEach((m) => {
+    if (!m) return;
+    const t = SEED_TABLES.find((s) => s.name === m[2]);
+    if (!t) return;
+    if (m[5] !== t.name) problems.push(`copy: ${t.name} is written to seed-${m[5]}.csv`);
+    if (m[4] !== t.pk) problems.push(`copy: ${t.name} is ordered by ${m[4]}, not its primary key ${t.pk}`);
+    if (t.nulled.length === 0) {
+      if (m[1] !== 'src' || m[3] !== '') problems.push(`copy: ${t.name} is not copied as it is`);
+      return;
+    }
+    const source = t.name === 'system_settings_config' ? `${ADMIN_USERS_EMPTIED} ` : 'to_jsonb(src) ';
+    const lateral = ` CROSS JOIN LATERAL jsonb_populate_record(NULL::public.${t.name}, ${source}${subtraction(t.nulled)}) AS rec`;
+    if (m[1] !== 'rec' || m[3] !== lateral) problems.push(`copy: ${t.name} does not null exactly ${t.nulled.join(', ')} at the source${t.name === 'system_settings_config' ? ' and empty the admin_users key' : ''}`);
+  });
+
+  // The checker, in the same snapshot, after the last copy and before the ROLLBACK.
+  const run = /\\set QUIET on\n\\pset format csv\n\\pset tuples_only on\n\\o seed-check-export\.csv\n\\ir \.\.\/\.\.\/scripts\/check-baseline-seed\.sql\n\\o\n/.exec(text);
+  const lastCopy = text.lastIndexOf('\n\\copy ');
+  const rollback = text.search(/^ROLLBACK;$/m);
+  if (!run) problems.push('checker: the export does not write the seed checker rows to seed-check-export.csv');
+  else if (run.index < lastCopy || run.index > rollback) problems.push('checker: not run after the last copy and before the ROLLBACK');
+  if (begin === -1 || guardAt < begin || text.indexOf('\n\\copy ') < guardAt) problems.push('order: the guard does not run inside the transaction before the first copy');
+  return problems;
+}
+
+// ── The seed import (DV-4), a U5 fragment ──────────────────────────────────
+
+export function auditSeedImport(raw: string, checkerRows: number): string[] {
+  const text = norm(raw);
+  const top = scrubSql(text);
+  const deep = deepScrub(text);
+  const problems = seedPsqlProblems(text, deep, SEED_META, SEED_SET_LINES);
+  const sqlTop = sqlOnly(top.bare);
+  const sqlDeep = sqlOnly(deep.bare);
+
+  if (text.split('\n').find((l) => l.trim() && !l.startsWith('--')) !== '\\set ON_ERROR_STOP on') {
+    problems.push('psql: the first command is not \\set ON_ERROR_STOP on');
+  }
+  // SA C-2: the savepoint precondition, and no transaction control anywhere
+  // (U5r wraps the run in an outer BEGIN ... ROLLBACK).
+  const statements = sqlTop.split(';').map(squash).filter((s) => s.length > 0);
+  if (statements[0] !== 'SAVEPOINT baseline_seed_import') problems.push(`savepoint: the first statement is not SAVEPOINT baseline_seed_import (found ${statements[0] ?? 'nothing'})`);
+  if (statements[statements.length - 1] !== 'RELEASE SAVEPOINT baseline_seed_import') problems.push('release: the last statement is not RELEASE SAVEPOINT baseline_seed_import');
+  const opens = statements.filter((s) => /^SAVEPOINT\b/i.test(s)).length;
+  const releases = statements.filter((s) => /^RELEASE\b/i.test(s)).length;
+  if (opens !== 1 || releases !== 1) problems.push(`savepoint: ${opens} opened and ${releases} released, expected 1 and 1`);
+  const control = sqlDeep.match(/\b(COMMIT|ROLLBACK|ABORT|START\s+TRANSACTION|PREPARE\s+TRANSACTION)\b/gi);
+  if (control) problems.push(`transaction control ${[...new Set(control.map(squash))].join(', ')}`);
+  const blocks = sqlTop.match(/\b(BEGIN|END)\b/gi);
+  if (blocks) problems.push(`transaction control ${[...new Set(blocks)].join(', ')} at the top level`);
+  if (/client_min_messages/i.test(deep.code)) problems.push('warnings: client_min_messages is set (warnings must stay visible)');
+
+  // Nothing silent, nothing granted, nothing destroyed, no trigger disabled (SA C-1, A-1, R-2, R-4).
+  const silent = sqlTop.match(/\bIF\s+NOT\s+EXISTS\b|\bON\s+CONFLICT\b|\bOR\s+REPLACE\b/gi);
+  if (silent) problems.push(`silent no-op: ${[...new Set(silent.map(squash))].join(', ')}`);
+  if (/\bEXCEPTION\s+WHEN\b/i.test(deep.code)) problems.push('a DO block has an exception handler, so its refusal could be swallowed');
+  const grants = sqlDeep.match(/\b(GRANT|REVOKE|ALTER\s+DEFAULT\s+PRIVILEGES|ALTER\s+ROLE|ALTER\s+EXTENSION)\b/gi);
+  if (grants) problems.push(`a grant or role change: ${[...new Set(grants.map(squash))].join(', ')}`);
+  const destroys = sqlDeep.match(/\b(DELETE|TRUNCATE|DROP|INSERT|UPDATE)\b/gi);
+  if (destroys) problems.push(`a data statement other than \\copy: ${[...new Set(destroys)].join(', ')}`);
+  if (/\b(DISABLE|ENABLE)\s+TRIGGER\b/i.test(sqlDeep) || /session_replication_role/i.test(deep.code)) problems.push('a trigger is switched (SA R-2: none is disabled)');
+  for (const hit of unqualifiedNames(sqlDeep)) problems.push(`unqualified name after ${hit}`);
+
+  if (!/^SET LOCAL lock_timeout = '10s';$/m.test(text)) problems.push('lock timeout: SET LOCAL lock_timeout is not set');
+  const guardAt = text.indexOf('DO $guard$');
+  for (const pin of SEED_CONTEXT_PINS) {
+    const p = text.indexOf(pin);
+    if (p === -1 || p > guardAt) problems.push(`context: ${pin} is not pinned before the guard`);
+  }
+
+  // The guard.
+  const guard = doBlock(deep.code, 'guard');
+  if (!guard) problems.push('guard: no DO $guard$ block');
+  const seedArray = quotedList(/seed_tables text\[\] := ARRAY\[([^\]]*)\]::text\[\];/.exec(guard)?.[1] ?? '');
+  if (JSON.stringify(seedArray) !== JSON.stringify(SEED_NAMES)) problems.push('guard: seed_tables is not the 19 seed tables');
+  const guardRules: ReadonlyArray<readonly [string, RegExp]> = [
+    ['not connected as postgres', /IF current_user <> 'postgres' THEN/],
+    ['rows in auth.users', /IF EXISTS \(SELECT 1 FROM auth\.users\) THEN/],
+    ['an export that is not 25 passing rows', new RegExp(`FROM pg_temp\\.seed_check_export\\) <> ${checkerRows}\\s+OR NOT EXISTS[\\s\\S]*?exported\\.check_name = 'VERDICT' AND exported\\.result = 'PASS'\\) THEN`)],
+    ['a missing seed table', /rel\.relname::text = ANY \(seed_tables\)\) <> 19 THEN/],
+    ['a seed table that is not empty', /AND pg_catalog\.pg_relation_size\(rel\.oid\) > 0/],
+    ['a generated or identity column', /AND \(att\.attgenerated <> '' OR att\.attidentity <> ''\)/],
+    ['a user trigger firing on INSERT', /AND NOT trg\.tgisinternal\s+AND \(trg\.tgtype & 4\) <> 0/],
+    ['other owned sequences', new RegExp(`IF owned_list IS DISTINCT FROM '${SEED_SEQUENCES}' THEN`)],
+    ['the refusal raises', /IF pg_catalog\.cardinality\(refusals\) > 0 THEN\s+RAISE EXCEPTION/],
+  ];
+  for (const [name, rule] of guardRules) if (!rule.test(guard)) problems.push(`guard: does not refuse on ${name}`);
+
+  // T8: the 19 loads in order, each from its own file, header matched.
+  const loads = text.split('\n').filter((l) => /^\\copy public\./.test(l));
+  const parsed = loads.map((l) => /^\\copy public\.(\w+) FROM 'seed-(\w+)\.csv' WITH \(FORMAT csv, HEADER MATCH\)$/.exec(l));
+  if (parsed.some((m) => !m || m[1] !== m[2])) problems.push('load: a \\copy is not one seed table from its own file with HEADER MATCH');
+  const order = parsed.map((m) => m?.[1] ?? '?');
+  if (JSON.stringify(order) !== JSON.stringify(SEED_NAMES)) problems.push(`load: expected the 19 seed tables in load order, found ${order.join(',')}`);
+  for (const [parent, child] of SEED_PARENTS) {
+    if (order.indexOf(parent) > order.indexOf(child)) problems.push(`load: ${child} loads before its parent ${parent}`);
+  }
+
+  // Order: export rows, guard, loads, sequences, checker, comparison, REFRESH slot, release.
+  const exportLoad = text.indexOf("\\copy pg_temp.seed_check_export (check_name, result, detail) FROM 'seed-check-export.csv' WITH (FORMAT csv)");
+  const firstLoad = text.indexOf('\n\\copy public.');
+  const lastLoad = text.lastIndexOf('\n\\copy public.');
+  const sequences = doBlock(deep.code, 'sequences');
+  const sequencesAt = text.indexOf('DO $sequences$');
+  const checkerRun = /\\set QUIET on\n\\pset format csv\n\\pset tuples_only on\n\\o seed-check-import\.csv\n\\ir \.\.\/\.\.\/scripts\/check-baseline-seed\.sql\n\\o\n/.exec(text);
+  const importLoad = text.indexOf("\\copy pg_temp.seed_check_import (check_name, result, detail) FROM 'seed-check-import.csv' WITH (FORMAT csv)");
+  const proofAt = text.indexOf('DO $seed_proof$');
+  const refreshAt = text.search(/^-- REFRESH MATERIALIZED VIEW line here, after the seed rows and before the$/m);
+  const releaseAt = text.search(/^RELEASE SAVEPOINT baseline_seed_import;$/m);
+  const steps: ReadonlyArray<readonly [string, number]> = [
+    ['the export rows loaded', exportLoad],
+    ['the guard', guardAt],
+    ['the first load', firstLoad],
+    ['the last load', lastLoad],
+    ['the sequences set', sequencesAt],
+    ['the checker run', checkerRun?.index ?? -1],
+    ['this project\'s rows loaded', importLoad],
+    ['the comparison', proofAt],
+    ['the REFRESH slot (SA DV-3 ruling 7)', refreshAt],
+    ['the release', releaseAt],
+  ];
+  steps.forEach(([name, pos], k) => {
+    if (pos === -1) problems.push(`order: ${name} not found`);
+    else if (k > 0 && steps[k - 1][1] !== -1 && pos <= steps[k - 1][1]) problems.push(`order: ${name} runs before ${steps[k - 1][0]}`);
+  });
+
+  // SA R-2: the two serial sequences, set to the highest id loaded.
+  for (const t of ['ais_scoring_weights', 'help_articles']) {
+    if (!squash(sequences).includes(`PERFORM pg_catalog.setval(pg_catalog.pg_get_serial_sequence('public.${t}', 'id'), (SELECT pg_catalog.max(src.id) FROM public.${t} AS src));`)) {
+      problems.push(`sequences: ${t} is not set to its highest id`);
+    }
+  }
+
+  // The comparison with the export: the run of record.
+  const proof = doBlock(deep.code, 'seed_proof');
+  const proofRules: ReadonlyArray<readonly [string, RegExp]> = [
+    ['this project not 25 passing rows', new RegExp(`FROM pg_temp\\.seed_check_import\\) <> ${checkerRows}\\s+OR NOT EXISTS[\\s\\S]*?imported\\.result = 'PASS'\\) THEN\\s+RAISE EXCEPTION`)],
+    ['a different context (VOID)', /imported\.check_name = 'CONTEXT KEY'\)\s+IS DISTINCT FROM\s+\(SELECT exported\.detail FROM pg_temp\.seed_check_export AS exported WHERE exported\.check_name = 'CONTEXT KEY'\) THEN\s+RAISE EXCEPTION/],
+    ['any row that differs', /FULL JOIN pg_temp\.seed_check_export AS exported ON exported\.check_name = imported\.check_name\s+WHERE imported\.result IS DISTINCT FROM exported\.result\s+OR imported\.detail IS DISTINCT FROM exported\.detail\);\s+IF differing IS NOT NULL THEN\s+RAISE EXCEPTION/],
+  ];
+  if (!proof) problems.push('comparison: no DO $seed_proof$ block');
+  for (const [name, rule] of proofRules) if (!rule.test(proof)) problems.push(`comparison: does not refuse on ${name}`);
+  return problems;
+}
+
+// ── The seed checker's proof (DV-5, seed half: F6) ─────────────────────────
+
+export function auditSeedProof(raw: string, step: string, checkerRows: number): string[] {
+  const text = norm(raw);
+  const stepText = norm(step);
+  const problems: string[] = [];
+  const { code, bare } = scrubSql(text);
+  const stepScrub = scrubSql(stepText);
+
+  for (const [name, body] of [['proof', text], ['step', stepText]] as const) {
+    if (/security\s+definer/i.test(body)) problems.push(`${name}: the SECURITY DEFINER phrase appears`);
+    if (/\bcreate\s+(or\s+replace\s+)?(function|procedure)\b/i.test(body)) problems.push(`${name}: defines a function`);
+    if (!isAscii(body)) problems.push(`${name}: a non-ASCII character`);
+  }
+  if (!/^-- PSQL ONLY\. Never paste this file in the Supabase SQL editor/m.test(text)) problems.push('proof: the header does not say psql only');
+  // SA S-3: its ROLLBACK would end the apply transaction.
+  if (!/^-- NEVER PART OF U5r OR U5\. This file is never in the file list of the$/m.test(text)) {
+    problems.push('proof: the header does not say it is never part of the U5r or U5 file list');
+  }
+
+  // One transaction at a time, always rolled back, never committed.
+  const control = [...bare.matchAll(/^[ \t]*(BEGIN|COMMIT|END|ABORT|START TRANSACTION|ROLLBACK)\b([^;\n]*);/gim)]
+    .map((m) => `${m[1].toUpperCase()}${m[2]}`.trim())
+    .filter((t) => !/^ROLLBACK TO SAVEPOINT/i.test(t))
+    .map((t) => t.split(' ')[0]);
+  if (JSON.stringify(control) !== JSON.stringify(['BEGIN', 'ROLLBACK', 'BEGIN', 'ROLLBACK'])) {
+    problems.push(`transaction: expected BEGIN, ROLLBACK, BEGIN, ROLLBACK and found ${control.join(', ')}`);
+  }
+  for (const [name, live, withStrings] of [['proof', bare, code], ['step', stepScrub.bare, stepScrub.code]] as const) {
+    const ends = (live.match(/\bEND\b/gi) ?? []).length;
+    const cases = (live.match(/\bCASE\b/gi) ?? []).length;
+    const hatch = live.match(/\b(COMMIT|ABORT|PREPARE\s+TRANSACTION|COMMIT\s+PREPARED)\b/gi);
+    if (hatch) problems.push(`${name}: transaction control ${[...new Set(hatch)].join(', ')}`);
+    if (ends > cases) problems.push(`${name}: an END that closes no CASE (${ends} END, ${cases} CASE)`);
+    const remote = withStrings.match(/\b(dblink\w*|pg_background\w*)\b/gi);
+    if (remote) problems.push(`${name}: an autonomous-transaction escape ${[...new Set(remote)].join(', ')}`);
+    for (const m of live.matchAll(/\\([A-Za-z]+|[^A-Za-z\s])/g)) {
+      if (!ALLOWED_META.includes(m[1])) problems.push(`${name}: psql meta-command \\${m[1]} is not on the allow-list`);
+    }
+    if (/\b(GRANT|REVOKE|ALTER\s+ROLE)\b/i.test(withStrings)) problems.push(`${name}: grants or names a role`);
+  }
+
+  // The staging guard and the lock timeout come before the first savepoint.
+  const firstBegin = code.indexOf('BEGIN READ WRITE;');
+  const firstSavepoint = code.search(/^SAVEPOINT seed_proof_step;$/m);
+  const opening = firstBegin === -1 || firstSavepoint === -1 ? '' : code.slice(firstBegin, firstSavepoint);
+  const guard = /DO \$guard\$([\s\S]*?)\$guard\$;/.exec(opening)?.[1] ?? '';
+  if (!/IF EXISTS \(SELECT 1 FROM auth\.users\) THEN\s+RAISE EXCEPTION/.test(guard)) {
+    problems.push('staging guard: no DO block refusing a project with rows in auth.users before the first step');
+  }
+  if (/\bEXCEPTION\s+WHEN\b/i.test(guard)) problems.push('staging guard: it has an exception handler, so it could not stop the run');
+  if (!/^SET LOCAL lock_timeout = '3s';$/m.test(opening)) problems.push('lock timeout: SET LOCAL lock_timeout is not set before the first step');
+  const quietOpens = (code.match(/^BEGIN READ WRITE;\n(?:[ \t]*\n)*(?:--[^\n]*\n)*SET client_min_messages = error;$/gm) ?? []).length;
+  if (quietOpens !== 2) problems.push(`notices: ${quietOpens} of 2 transactions set client_min_messages = error`);
+
+  const opened = (code.match(/^SAVEPOINT seed_proof_step;$/gm) ?? []).length;
+  const undone = (code.match(/^ROLLBACK TO SAVEPOINT seed_proof_step;$/gm) ?? []).length;
+  const released = (code.match(/^RELEASE SAVEPOINT seed_proof_step;$/gm) ?? []).length;
+  if (opened === 0 || opened !== undone || opened !== released) problems.push(`savepoints: ${opened} opened, ${undone} rolled back, ${released} released`);
+
+  // Every step is expected, run and summarised.
+  const runs = [...code.matchAll(/^SET seed_proof\.run = '(\w+)';$/gm)].map((m) => m[1]);
+  const expected = [...code.matchAll(/^\s+\('(\w+)', '([^']*)', ARRAY/gm)].map((m) => ({ e: m[1], target: m[2] }));
+  const summarised = [...code.matchAll(/\(\d+, '(\w+)', :'res_(\w+)'\)/g)].map((m) => ({ e: m[1], v: m[2] }));
+  const wanted = [...expected.map((x) => x.e), 'AFTER'];
+  if (JSON.stringify([...runs].sort()) !== JSON.stringify([...wanted].sort())) problems.push(`steps: run labels ${runs.join(',')} do not match the expectations plus AFTER`);
+  if (new Set(runs).size !== runs.length) problems.push('steps: a run label is used twice');
+  if (JSON.stringify(summarised.map((s) => s.e)) !== JSON.stringify(runs)) problems.push(`summary: lists ${summarised.map((s) => s.e).join(',')} but the run is ${runs.join(',')}`);
+  for (const s of summarised) {
+    if (s.v !== s.e.toLowerCase()) problems.push(`summary: ${s.e} reads res_${s.v}`);
+    if (!new RegExp(`(\\\\set res_${s.v} :step_result|AS res_${s.v}\\b)`).test(code)) problems.push(`summary: res_${s.v} is never set`);
+  }
+
+  // Coverage: the context, a content change (F6), a removed row, and both gates.
+  const targets = new Set(expected.map((x) => x.target.split(' ')[0]));
+  for (const c of ['S00', 'S16', 'S19', 'S20', 'S21']) if (!targets.has(c)) problems.push(`coverage: no deliberate change targets ${c}`);
+  const f6 = expected.find((x) => /\(F6\)/.test(x.target));
+  if (!f6 || !f6.target.startsWith('S19') || !/SET seed_proof\.run = 'E01';[\s\S]*?UPDATE public\.website_archetypes SET/.test(text)) {
+    problems.push('F6: no step edits one website_archetypes row and expects S19 to move');
+  }
+  if (/\bsetval\s*\(/i.test(code)) problems.push('a sequence is moved with setval, which a rollback does not undo');
+
+  if (!/^\\set ON_ERROR_STOP on$/m.test(code)) problems.push('psql: ON_ERROR_STOP is not set');
+  if (!/^\\set QUIET on$/m.test(code)) problems.push('psql: QUIET is not set, command tags would reach the CSV');
+  const rowsVar = /^\\set expected_rows (\d+)$/m.exec(code);
+  if (!rowsVar || Number(rowsVar[1]) !== checkerRows) problems.push(`row count: expected_rows is ${rowsVar?.[1] ?? 'unset'}, the seed checker states ${checkerRows}`);
+  for (const [name, body] of [['proof', code], ['step', stepText]] as const) {
+    if (!body.includes('\\ir ../../scripts/check-baseline-seed.sql')) problems.push(`${name}: does not run the seed checker`);
+  }
+  if (!stepText.includes('\\pset tuples_only on') || !stepText.includes('\\gset')) problems.push('step: does not load and record its result');
+  return problems;
+}
+
+const seedChecker = readRepoFile(SEED_CHECKER);
+const seedExport = readRepoFile(SEED_EXPORT);
+const seedImport = readRepoFile(SEED_IMPORT);
+const seedProof = readRepoFile(SEED_PROOF);
+const seedStep = readRepoFile(SEED_STEP);
+const seedCheckerRows = Number(/Returns exactly (\d+) rows/.exec(seedChecker)?.[1] ?? NaN);
+
+describe('scripts/check-baseline-seed.sql (T1, T2, T18)', () => {
+  it('passes every rule: read-only, the 19 tables in load order, the R-2 and R-3 transforms, the gates and keys', () => {
+    expect(auditSeedChecker(seedChecker)).toEqual([]);
+  });
+
+  it('states 25 rows: VERDICT, S00 to S21 and the two keys', () => {
+    expect(seedCheckerRows).toBe(1 + 22 + 2);
+  });
+});
+
+describe('supabase/baseline/seed-export.psql (T8, T19)', () => {
+  it('passes every rule: one read-only snapshot, the guard, the 19 copies, the checker', () => {
+    expect(auditSeedExport(seedExport)).toEqual([]);
+  });
+});
+
+describe('supabase/baseline/seed-import.psql (T8, T15, T17, T20)', () => {
+  it('passes every rule: atomicity, the guard, the 19 loads, the sequences, the comparison with the export', () => {
+    expect(auditSeedImport(seedImport, seedCheckerRows)).toEqual([]);
+  });
+});
+
+describe('supabase/baseline/prove-seed-checker-can-fail.psql (T21, F6)', () => {
+  it('passes every rule', () => {
+    expect(auditSeedProof(seedProof, seedStep, seedCheckerRows)).toEqual([]);
+  });
+});
+
+describe('the seed files: LF, and no artefact left in the repo', () => {
+  const attributes = readRepoFile('.gitattributes').split('\n');
+  it.each([[SEED_CHECKER], [SEED_EXPORT], [SEED_IMPORT], [SEED_PROOF], [SEED_STEP]])('%s is pinned eol=lf', (file) => {
+    expect(attributes).toContain(`${file} text eol=lf`);
+  });
+
+  // The export, the import and both proofs write their files to the current
+  // folder, which must be the private baseline folder. One run from the repo by
+  // mistake would leave staging reference data where it can be committed.
+  it('holds no seed, proof or dump artefact in the repo root or supabase/baseline', () => {
+    const artefact = /^(seed-[\w-]+\.csv|parity-proof-run\.csv|seed-proof-run\.csv|schema\.(sql|dump|list|filtered\.list)|.*\.dump)$/;
+    const found = ['.', 'supabase/baseline']
+      .flatMap((dir) => fs.readdirSync(path.join(ROOT, dir)).map((f) => `${dir}/${f}`))
+      .filter((f) => artefact.test(path.basename(f)));
+    expect(found).toEqual([]);
+  });
+});
+
+describe('the seed audits can fail', () => {
+  type Mutation = readonly [string, (s: string) => string, RegExp];
+
+  const checkerBreaks: Mutation[] = [
+    ['the read-only SET removed', (s) => s.replace('SET default_transaction_read_only = on;\n', ''), /read-only/],
+    ['a COMMIT added (SA: no transaction control)', (s) => `${s}COMMIT;\n`, /write or transaction keyword.*commit/i],
+    ['a ROLLBACK added', (s) => `${s}ROLLBACK;\n`, /write or transaction keyword.*rollback/i],
+    ['client_min_messages raised (SA: warnings stay visible)', (s) => s.replace('WITH seed_lines AS (', "SELECT set_config('client_min_messages', 'error', false)\nWITH seed_lines AS ("), /client_min_messages/],
+    ['the word into in a comment', (s) => s.replace('-- HOW TO READ IT', '-- HOW TO READ IT, read into it'), /into/],
+    ['a table dropped from the sections', (s) => s.replace("    (109, 'S09', 'boost_packs', 'seed', 'count'),\n", ''), /sections: expected/],
+    ['two tables swapped in the load order', (s) => s.replace("'S14', 'capabilities'", "'S14', 'capability_building_blocks'"), /S14 is titled capability_building_blocks/],
+    ['a nulled column no longer subtracted', (s) => s.replace("SELECT 'S13', (to_jsonb(src) - ARRAY['updated_by']::text[])::text, true", "SELECT 'S13', to_jsonb(src)::text, true"), /S13: subtracts nothing, expected - ARRAY\['updated_by'\]/],
+    ['one proposal column no longer subtracted', (s) => s.replace("ARRAY['proposal_id', 'proposal_line_id']::text[]", "ARRAY['proposal_id']::text[]"), /S01: subtracts/],
+    ['a column subtracted from a table that nulls none', (s) => s.replace("SELECT 'S16', to_jsonb(src)::text, true", "SELECT 'S16', (to_jsonb(src) - ARRAY['body']::text[])::text, true"), /S16: subtracts/],
+    ['the admin_users key not emptied', (s) => s.replace("CASE WHEN src.key = 'admin_users' THEN jsonb_set(to_jsonb(src), ARRAY['value'], '[]'::jsonb)", "CASE WHEN src.key = 'none' THEN jsonb_set(to_jsonb(src), ARRAY['value'], '[]'::jsonb)"), /S06: the admin_users key/],
+    ['S20 hashes the row content', (s) => s.replace("SELECT 'S20', 'initialisation row', true", "SELECT 'S20', to_jsonb(src)::text, true"), /S20: not a constant line/],
+    ['S20 gated at one or more', (s) => s.replace("CASE WHEN summary.line_count = 1 THEN 'PASS'", "CASE WHEN summary.line_count >= 1 THEN 'PASS'"), /S20: the single row is not gated/],
+    ['a sequence check dropped', (s) => s.replace("pg_sequence_last_value(pg_get_serial_sequence('public.help_articles', 'id')::regclass))", "NULL::bigint)"), /S21: the help_articles sequence/],
+    ['the owned-sequence list unpinned', (s) => s.replace("= 'ais_scoring_weights.id,help_articles.id'", '<> \'\''), /S21: the owned-sequence list is not pinned/],
+    ['the line gates ignored', (s) => s.replace("WHEN summary.line_count > 0 AND summary.gates_ok THEN 'PASS'", "WHEN summary.line_count > 0 THEN 'PASS'"), /gates: a section passes without its line gates/],
+    ['a non-seed table read', (s) => s.replace("FROM public.memory_config AS src", 'FROM public.profiles AS src'), /reads public\.profiles/],
+    ['operator_private read', (s) => s.replace("FROM public.memory_config AS src", 'FROM operator_private.secrets AS src'), /names operator_private/],
+    ['S00 loses IntervalStyle', (s) => s.replace("current_setting('IntervalStyle'),", "'x',"), /S00: IntervalStyle/],
+    ['lines hashed unsorted', (s) => s.replace('string_agg(seed_lines.line, chr(10) ORDER BY seed_lines.line COLLATE "C")', 'string_agg(seed_lines.line, chr(10))'), /determinism/],
+    ['the context folded in the SEED KEY', (s) => s.replace("FROM graded WHERE graded.kind = 'seed')", "FROM graded WHERE graded.kind IN ('seed', 'context'))"), /SEED KEY: not computed over the seed tables only/],
+    ['the stated row count drifts', (s) => s.replace('Returns exactly 25 rows', 'Returns exactly 24 rows'), /row count/],
+    ['a single-letter alias', (s) => s.replace('FROM public.boost_packs AS src', 'FROM public.boost_packs AS b'), /single-letter alias/],
+  ];
+
+  it.each(checkerBreaks)('seed checker: %s', (_name, mutate, complaint) => {
+    const broken = mutate(seedChecker);
+    expect(broken).not.toBe(seedChecker);
+    expect(auditSeedChecker(broken).join('\n')).toMatch(complaint);
+  });
+
+  const exportBreaks: Mutation[] = [
+    ['the snapshot is not repeatable read', (s) => s.replace('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;', 'BEGIN READ ONLY;'), /transaction: expected BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY/],
+    ['the snapshot is read-write', (s) => s.replace('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;', 'BEGIN ISOLATION LEVEL REPEATABLE READ;'), /transaction: expected/],
+    ['the ROLLBACK becomes COMMIT', (s) => s.replace(/^ROLLBACK;$/m, 'COMMIT;'), /transaction/],
+    ['a write added', (s) => s.replace('-- 6. Read only', 'UPDATE public.pricing_config SET id = id;\n-- 6. Read only'), /a write statement UPDATE/],
+    ['client_min_messages raised', (s) => s.replace("SET LOCAL bytea_output = 'hex';", "SET LOCAL bytea_output = 'hex';\nSET LOCAL client_min_messages = error;"), /client_min_messages/],
+    ['the never-in-U5 header removed (SA c)', (s) => s.replace('-- NEVER PART OF U5r OR U5.', '-- Not part of the apply.'), /never part of the U5r or U5 file list/],
+    ['a context pin removed', (s) => s.replace("SET LOCAL DateStyle = 'ISO, MDY';\n", ''), /context: SET LOCAL DateStyle/],
+    ['the guard given an exception handler', (s) => s.replace("|| pg_catalog.array_to_string(refusals, '; ');\n  END IF;\nEND\n$guard$;", "|| pg_catalog.array_to_string(refusals, '; ');\n  END IF;\nEXCEPTION WHEN OTHERS THEN\n  NULL;\nEND\n$guard$;"), /guard: it has an exception handler/],
+    ['the read-only check removed', (s) => s.replace("<> 'repeatable read' THEN", "<> 'x' THEN"), /guard: does not refuse on its own read-only transaction/],
+    ['a primary key changed', (s) => s.replace("('helpbot_page_contexts', 'page_route')", "('helpbot_page_contexts', 'id')"), /guard: the primary-key list/],
+    ['a nulled column dropped from the guard', (s) => s.replace("'exchange_rates.updated_by']::text[];", "'exchange_rates.created_by']::text[];"), /guard: nulled_columns/],
+    ['the foreign-key check removed', (s) => s.replace("WHERE con.contype = 'f'", 'WHERE false'), /guard: does not refuse on a foreign key out of the seed set/],
+    ['the identity check removed', (s) => s.replace("AND (att.attgenerated <> '' OR att.attidentity <> '')", 'AND false'), /guard: does not refuse on a generated or identity column/],
+    ['the json check removed', (s) => s.replace("'pg_catalog.json'::pg_catalog.regtype, ", ''), /guard: does not refuse on a json column/],
+    ['the refusal downgraded', (s) => s.replace('IF pg_catalog.cardinality(refusals) > 0 THEN\n    RAISE EXCEPTION', 'IF pg_catalog.cardinality(refusals) > 0 THEN\n    RAISE NOTICE'), /guard: does not refuse on the refusal raises/],
+    ['updated_by copied as it is (a staging user id reaches the file)', (s) => s.replace("\\copy (SELECT rec.* FROM public.exchange_rates AS src CROSS JOIN LATERAL jsonb_populate_record(NULL::public.exchange_rates, to_jsonb(src) - ARRAY['updated_by']::text[]) AS rec ORDER BY", '\\copy (SELECT src.* FROM public.exchange_rates AS src ORDER BY'), /copy: exchange_rates does not null exactly updated_by/],
+    ['the admin_users key exported as it is', (s) => s.replace("jsonb_populate_record(NULL::public.system_settings_config, (CASE WHEN src.key = 'admin_users' THEN jsonb_set(to_jsonb(src), ARRAY['value'], '[]'::jsonb) ELSE to_jsonb(src) END) - ARRAY", 'jsonb_populate_record(NULL::public.system_settings_config, to_jsonb(src) - ARRAY'), /copy: system_settings_config does not null exactly updated_by at the source and empty the admin_users key/],
+    ['a table dropped', (s) => s.replace(/^\\copy \(SELECT src\.\* FROM public\.storage_plans .*\n/m, ''), /copy: expected the 19 seed tables in load order/],
+    ['a child copied before its parent', (s) => {
+      const parent = /^\\copy \(SELECT src\.\* FROM public\.capabilities .*\n/m.exec(s)?.[0] ?? '';
+      return s.replace(parent, '').replace(/^(\\copy \(SELECT src\.\* FROM public\.capability_building_blocks .*\n)/m, `$1${parent}`);
+    }, /capability_building_blocks comes before its parent capabilities/],
+    ['a table written to another file', (s) => s.replace("TO 'seed-boost_packs.csv'", "TO 'seed-boost.csv'"), /copy: boost_packs is written to seed-boost\.csv/],
+    ['a copy ordered by another column', (s) => s.replace('FROM public.website_archetypes AS src ORDER BY src.id::text', 'FROM public.website_archetypes AS src ORDER BY src.name::text'), /copy: website_archetypes is ordered by name/],
+    ['a \\copy FROM sneaks in', (s) => s.replace('-- 5. The seed checker', "\\copy public.pricing_config FROM 'x.csv' WITH (FORMAT csv)\n-- 5. The seed checker"), /copy: a \\copy line is not a read/],
+    ['the checker run removed', (s) => s.replace('\\o seed-check-export.csv\n', ''), /checker: the export does not write/],
+    ['a shell escape', (s) => s.replace('-- 6. Read only', '\\! echo x\n-- 6. Read only'), /meta-command \\! is not on the allow-list/],
+    ['ON_ERROR_STOP switched off', (s) => s.replace('\\set QUIET off', '\\set ON_ERROR_STOP off'), /\\set ON_ERROR_STOP off is not one of the allowed/],
+    ['operator_private read', (s) => s.replace('-- 6. Read only', "\\copy (SELECT src.* FROM operator_private.secrets AS src) TO 'x.csv'\n-- 6. Read only"), /names operator_private/],
+    // SA code review S-1: every export guard refusal can fail.
+    ['the jsonb settings-value check removed', (s) => s.replace("\n      AND att.atttypid = 'pg_catalog.jsonb'::pg_catalog.regtype", ''), /guard: does not refuse on a settings value that is not jsonb/],
+    ['the missing-table half of the table check removed', (s) => s.replace("WHERE pg_catalog.to_regclass('public.' || want.table_name) IS NULL\n       OR", 'WHERE false\n       OR'), /guard: does not refuse on a missing table or another primary key/],
+  ];
+
+  it.each(exportBreaks)('seed export: %s', (_name, mutate, complaint) => {
+    const broken = mutate(seedExport);
+    expect(broken).not.toBe(seedExport);
+    expect(auditSeedExport(broken).join('\n')).toMatch(complaint);
+  });
+
+  const importBreaks: Mutation[] = [
+    // SA C-2 and the runbook constraint (b): no transaction control.
+    ['the opening SAVEPOINT removed', (s) => s.replace('SAVEPOINT baseline_seed_import;\n', ''), /savepoint: the first statement/],
+    ['the RELEASE removed', (s) => s.replace('RELEASE SAVEPOINT baseline_seed_import;\n', ''), /release: the last statement/],
+    ['a COMMIT before the release', (s) => s.replace('RELEASE SAVEPOINT baseline_seed_import;', 'COMMIT;\nRELEASE SAVEPOINT baseline_seed_import;'), /transaction control COMMIT/],
+    ['a ROLLBACK at the end', (s) => `${s}ROLLBACK;\n`, /transaction control ROLLBACK/],
+    ['a BEGIN at the top', (s) => s.replace('SAVEPOINT baseline_seed_import;', 'BEGIN;\nSAVEPOINT baseline_seed_import;'), /transaction control BEGIN at the top level/],
+    ['END on its own', (s) => `${s}END;\n`, /transaction control END at the top level/],
+    // The runbook constraint (a): warnings stay visible.
+    ['client_min_messages raised', (s) => s.replace("SET LOCAL bytea_output = 'hex';", "SET LOCAL bytea_output = 'hex';\nSET LOCAL client_min_messages = error;"), /client_min_messages/],
+    ['a \\set AUTOCOMMIT', (s) => s.replace('\\set QUIET off', '\\set AUTOCOMMIT on'), /\\set AUTOCOMMIT on is not one of the allowed/],
+    ['a \\c reconnect', (s) => s.replace('-- 5. The 19 tables', '\\c postgres\n-- 5. The 19 tables'), /meta-command \\c is not on the allow-list/],
+    ['the lock timeout removed', (s) => s.replace("SET LOCAL lock_timeout = '10s';\n", ''), /lock timeout/],
+    ['a context pin removed', (s) => s.replace("SET LOCAL TimeZone = 'UTC';\n", ''), /context: SET LOCAL TimeZone/],
+    // SA R-2: no trigger is disabled.
+    ['triggers disabled for the load', (s) => s.replace('-- 5. The 19 tables', 'ALTER TABLE public.exchange_rates DISABLE TRIGGER USER;\n-- 5. The 19 tables'), /a trigger is switched/],
+    ['session_replication_role used', (s) => s.replace("SET LOCAL bytea_output = 'hex';", "SET LOCAL bytea_output = 'hex';\nSET LOCAL session_replication_role = replica;"), /a trigger is switched/],
+    // The guard.
+    ['the guard given an exception handler', (s) => s.replace("|| pg_catalog.array_to_string(refusals, '; ');\n  END IF;\nEND\n$guard$;", "|| pg_catalog.array_to_string(refusals, '; ');\n  END IF;\nEXCEPTION WHEN OTHERS THEN\n  NULL;\nEND\n$guard$;"), /exception handler/],
+    ['the auth.users check removed', (s) => s.replace('IF EXISTS (SELECT 1 FROM auth.users) THEN', 'IF false THEN'), /guard: does not refuse on rows in auth\.users/],
+    ['the export rows not checked', (s) => s.replace("FROM pg_temp.seed_check_export) <> 25", 'FROM pg_temp.seed_check_export) < 0'), /guard: does not refuse on an export that is not 25 passing rows/],
+    ['the emptiness check removed', (s) => s.replace('AND pg_catalog.pg_relation_size(rel.oid) > 0', 'AND false'), /guard: does not refuse on a seed table that is not empty/],
+    ['the INSERT trigger check removed', (s) => s.replace('AND (trg.tgtype & 4) <> 0', 'AND false'), /guard: does not refuse on a user trigger firing on INSERT/],
+    ['the owned-sequence check loosened', (s) => s.replace("IF owned_list IS DISTINCT FROM 'ais_scoring_weights.id,help_articles.id' THEN", 'IF false THEN'), /guard: does not refuse on other owned sequences/],
+    ['a seed table missing from the guard', (s) => s.replace("'plugin_semantic_ops', 'website_archetypes']::text[];\n  owned_list", "'plugin_semantic_ops']::text[];\n  owned_list"), /guard: seed_tables is not the 19/],
+    // T8: the loads.
+    ['a load dropped', (s) => s.replace(/^\\copy public\.memory_config .*\n/m, ''), /load: expected the 19 seed tables in load order/],
+    ['a child loaded before its parent', (s) => {
+      const parent = /^\\copy public\.reward_config .*\n/m.exec(s)?.[0] ?? '';
+      return s.replace(parent, '').replace(/^(\\copy public\.reward_settings .*\n)/m, `$1${parent}`);
+    }, /reward_settings loads before its parent reward_config/],
+    ['HEADER MATCH dropped', (s) => s.replace("FROM 'seed-help_articles.csv' WITH (FORMAT csv, HEADER MATCH)", "FROM 'seed-help_articles.csv' WITH (FORMAT csv, HEADER)"), /load: a \\copy is not one seed table from its own file with HEADER MATCH/],
+    ['a load from another table file', (s) => s.replace("\\copy public.boost_packs FROM 'seed-boost_packs.csv'", "\\copy public.boost_packs FROM 'seed-storage_plans.csv'"), /load: a \\copy is not one seed table from its own file/],
+    ['an INSERT added', (s) => s.replace('-- 6. The two serial', "INSERT INTO public.boost_packs SELECT * FROM public.boost_packs;\n-- 6. The two serial"), /a data statement other than \\copy: INSERT/],
+    ['ON CONFLICT added', (s) => s.replace('-- 6. The two serial', "INSERT INTO public.boost_packs DEFAULT VALUES ON CONFLICT DO NOTHING;\n-- 6. The two serial"), /silent no-op: ON CONFLICT/],
+    ['an unqualified table', (s) => s.replace('FROM public.help_articles AS src));', 'FROM help_articles AS src));'), /unqualified name after FROM help_articles/],
+    // SA R-2: the sequences.
+    ['a sequence not set', (s) => s.replace(/  PERFORM pg_catalog\.setval\(pg_catalog\.pg_get_serial_sequence\('public\.help_articles'[\s\S]*?AS src\)\);\n/, ''), /sequences: help_articles is not set/],
+    ['the sequences set before the loads', (s) => {
+      const block = /-- 6\. The two serial[\s\S]*?\$sequences\$;\n/.exec(s)?.[0] ?? '';
+      return s.replace(block, '').replace('-- 5. The 19 tables', `${block}-- 5. The 19 tables`);
+    }, /order: (the first load runs before the sequences set|the sequences set runs before the last load)/],
+    // The comparison with the export.
+    ['the comparison removed', (s) => s.replace(/DO \$seed_proof\$[\s\S]*?\$seed_proof\$;\n/, ''), /comparison: no DO \$seed_proof\$ block/],
+    ['the context compare dropped', (s) => s.replace("IS DISTINCT FROM\n     (SELECT exported.detail FROM pg_temp.seed_check_export AS exported WHERE exported.check_name = 'CONTEXT KEY') THEN", "IS NULL THEN"), /comparison: does not refuse on a different context/],
+    ['differences only reported', (s) => s.replace("IF differing IS NOT NULL THEN\n    RAISE EXCEPTION", "IF differing IS NOT NULL THEN\n    RAISE NOTICE"), /comparison: does not refuse on any row that differs/],
+    ['the checker not run on this project', (s) => s.replace('\\o seed-check-import.csv\n', ''), /order: the checker run not found/],
+    ['the REFRESH slot moved after the release (SA DV-3 ruling 7)', (s) => {
+      const slot = /-- 8\. Materialized views[\s\S]*?\(SA DV-3 ruling 7\)\.\n/.exec(s)?.[0] ?? '';
+      return `${s.replace(slot, '')}${slot}`;
+    }, /order: the release runs before the REFRESH slot/],
+    ['operator_private written', (s) => s.replace('-- 6. The two serial', "\\copy operator_private.secrets FROM 'x.csv'\n-- 6. The two serial"), /names operator_private/],
+    // SA code review S-1: every import guard and comparison refusal can fail.
+    ['the guard refusal downgraded to a notice', (s) => s.replace('IF pg_catalog.cardinality(refusals) > 0 THEN\n    RAISE EXCEPTION', 'IF pg_catalog.cardinality(refusals) > 0 THEN\n    RAISE NOTICE'), /guard: does not refuse on the refusal raises/],
+    ['the not-postgres check removed', (s) => s.replace("IF current_user <> 'postgres' THEN", 'IF false THEN'), /guard: does not refuse on not connected as postgres/],
+    ['the 19-table count removed', (s) => s.replace('rel.relname::text = ANY (seed_tables)) <> 19 THEN', 'rel.relname::text = ANY (seed_tables)) < 0 THEN'), /guard: does not refuse on a missing seed table/],
+    ['the generated-or-identity check removed', (s) => s.replace("AND (att.attgenerated <> '' OR att.attidentity <> '')", 'AND false'), /guard: does not refuse on a generated or identity column/],
+    ['the export VERDICT PASS half dropped', (s) => s.replace("WHERE exported.check_name = 'VERDICT' AND exported.result = 'PASS') THEN", "WHERE exported.check_name = 'VERDICT') THEN"), /guard: does not refuse on an export that is not 25 passing rows/],
+    ['the comparison row count dropped', (s) => s.replace('FROM pg_temp.seed_check_import) <> 25', 'FROM pg_temp.seed_check_import) < 0'), /comparison: does not refuse on this project not 25 passing rows/],
+    ['the comparison VERDICT PASS half dropped', (s) => s.replace("WHERE imported.check_name = 'VERDICT' AND imported.result = 'PASS') THEN", "WHERE imported.check_name = 'VERDICT') THEN"), /comparison: does not refuse on this project not 25 passing rows/],
+  ];
+
+  it.each(importBreaks)('seed import: %s', (_name, mutate, complaint) => {
+    const broken = mutate(seedImport);
+    expect(broken).not.toBe(seedImport);
+    expect(auditSeedImport(broken, seedCheckerRows).join('\n')).toMatch(complaint);
+  });
+
+  const proofBreaks: Mutation[] = [
+    ['the final ROLLBACK becomes COMMIT', (s) => s.replace(/ROLLBACK;\n\n-- Summary/, 'COMMIT;\n\n-- Summary'), /transaction/],
+    ['a savepoint left open', (s) => s.replace('ROLLBACK TO SAVEPOINT seed_proof_step;\n', ''), /savepoints/],
+    ['a step missing from the summary', (s) => s.replace("    (4, 'E02', :'res_e02'),\n", ''), /summary: lists/],
+    ['the F6 step retargeted', (s) => s.replace("('E01', 'S19 a row edited (F6)'", "('E01', 'S18 a row edited (F6)'"), /(coverage: no deliberate change targets S19|F6: no step edits)/],
+    ['the F6 step edits another table', (s) => s.replace("format('UPDATE public.website_archetypes SET", "format('UPDATE public.help_articles SET"), /F6: no step edits one website_archetypes row/],
+    ['the sequence step uses setval', (s) => s.replace('  UPDATE public.help_articles\n  SET id =', "  PERFORM setval('x', 1);\n  UPDATE public.help_articles\n  SET id ="), /setval/],
+    ['the staging guard removed', (s) => s.replace(/DO \$guard\$[\s\S]*?\$guard\$;\n/, ''), /staging guard: no DO block/],
+    ['the staging guard given an exception handler', (s) => s.replace(/  END IF;\nEND\n\$guard\$;/, '  END IF;\nEXCEPTION WHEN OTHERS THEN\n  NULL;\nEND\n$guard$;'), /staging guard: it has an exception handler/],
+    ['the lock timeout removed', (s) => s.replace("SET LOCAL lock_timeout = '3s';\n", ''), /lock timeout/],
+    ['the row count drifts from the checker', (s) => s.replace('\\set expected_rows 25', '\\set expected_rows 24'), /row count/],
+    ['a \\gexec in the proof', (s) => s.replace("WHERE seed_proof_rows.run_label = 'BASE' \\gset\n\nROLLBACK;", "WHERE seed_proof_rows.run_label = 'BASE' \\gexec\n\nROLLBACK;"), /meta-command \\gexec is not on the allow-list/],
+    ['COMMIT mid-line', (s) => s.replace("SET seed_proof.run = 'POST';", "SET seed_proof.run = 'POST'; COMMIT;"), /proof: transaction control COMMIT/],
+    ['a grant added', (s) => s.replace('-- POST: every', 'GRANT SELECT ON public.help_articles TO anon;\n-- POST: every'), /proof: grants or names a role/],
+    // SA code review S-1 and S-3.
+    ['the staging guard downgraded to a notice', (s) => s.replace('IF EXISTS (SELECT 1 FROM auth.users) THEN\n    RAISE EXCEPTION', 'IF EXISTS (SELECT 1 FROM auth.users) THEN\n    RAISE NOTICE'), /staging guard: no DO block refusing/],
+    ['the never-in-U5 header removed', (s) => s.replace('-- NEVER PART OF U5r OR U5. This file is never in the file list of the', '-- This file is never in the file list of the'), /never part of the U5r or U5 file list/],
+  ];
+
+  it.each(proofBreaks)('seed proof: %s', (_name, mutate, complaint) => {
+    const broken = mutate(seedProof);
+    expect(broken).not.toBe(seedProof);
+    expect(auditSeedProof(broken, seedStep, seedCheckerRows).join('\n')).toMatch(complaint);
+  });
+
+  const stepBreaks: Mutation[] = [
+    ['COMMIT in the step file', (s) => `${s}COMMIT;\n`, /step: transaction control COMMIT/],
+    ['a \\! shell escape in the step file', (s) => s.replace('\\o\n', '\\o\n\\! echo x\n'), /step: psql meta-command \\! is not on the allow-list/],
+    ['the step runs the parity checker instead', (s) => s.replace('\\ir ../../scripts/check-baseline-seed.sql', '\\ir ../../scripts/check-schema-parity.sql'), /step: does not run the seed checker/],
+  ];
+
+  it.each(stepBreaks)('seed step: %s', (_name, mutate, complaint) => {
+    const broken = mutate(seedStep);
+    expect(broken).not.toBe(seedStep);
+    expect(auditSeedProof(seedProof, broken, seedCheckerRows).join('\n')).toMatch(complaint);
+  });
+});

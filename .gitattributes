@@ -32,3 +32,11 @@ supabase/baseline/prove-checker-step.psql text eol=lf
 # dump, in one transaction. Their text test pins LF through these lines.
 supabase/baseline/before-schema.sql text eol=lf
 supabase/baseline/after-schema.sql text eol=lf
+
+# PROD-2 seed (DV-2, DV-4, DV-5): the seed checker, the seed export and import, and the seed
+# checker's proof and its step file. Their text test pins LF through these lines.
+scripts/check-baseline-seed.sql text eol=lf
+supabase/baseline/seed-export.psql text eol=lf
+supabase/baseline/seed-import.psql text eol=lf
+supabase/baseline/prove-seed-checker-can-fail.psql text eol=lf
+supabase/baseline/prove-seed-checker-step.psql text eol=lf

@@ -10,6 +10,20 @@ import { runStandardErrorScenarios } from '../common/error-scenarios';
 const PLUGIN_KEY = 'google-calendar';
 const USER_ID = 'test-user-id';
 
+/*
+ * PROD-1b (A7): the recipient guard is on under Jest (no VERCEL_ENV). Every
+ * test below lists its fixture domains, so the pre-existing cases exercise the
+ * same paths as before; the guard's own cases are in the PROD-1b describe.
+ */
+const ENV_BEFORE_GUARD = { ...process.env };
+const FIXTURE_ALLOWLIST = '@example.com @b.com';
+beforeEach(() => {
+  process.env.EMAIL_RECIPIENT_ALLOWLIST = FIXTURE_ALLOWLIST;
+});
+afterEach(() => {
+  process.env = { ...ENV_BEFORE_GUARD };
+});
+
 describe('GoogleCalendarPluginExecutor', () => {
   let executor: any;
 
@@ -507,5 +521,92 @@ describe('GoogleCalendarPluginExecutor', () => {
         expectErrorResult(result);
       });
     });
+  });
+});
+
+// ─── PROD-1b (A7): invitations and the recipient guard, workplan 11.4 ──────
+describe('GoogleCalendarPluginExecutor — PROD-1b recipient guard (SA condition 3)', () => {
+  let executor: any;
+
+  beforeAll(async () => {
+    const ctx = await createTestExecutor(GoogleCalendarPluginExecutor, PLUGIN_KEY);
+    executor = ctx.executor;
+  });
+
+  afterEach(() => {
+    restoreFetch();
+  });
+
+  const sendUpdatesOf = (method: string): string | null => {
+    const call = getAllFetchCalls().find((c) => (c.options?.method ?? 'GET') === method);
+    return call ? new URL(call.url).searchParams.get('sendUpdates') : 'no call';
+  };
+
+  const created = { id: 'evt-1', summary: 'S', start: { dateTime: '2026-12-01T10:00:00Z' }, end: { dateTime: '2026-12-01T11:00:00Z' } };
+
+  it('create_event with a refused attendee: the event is written with sendUpdates=none', async () => {
+    mockFetchSuccess(created);
+    const result = await executor.executeAction(USER_ID, 'create_event', {
+      summary: 'S',
+      start_time: '2026-12-01T10:00:00Z',
+      end_time: '2026-12-01T11:00:00Z',
+      attendees: ['client@customer.example'],
+      send_notifications: true,
+    });
+    expectSuccessResult(result);
+    expect(sendUpdatesOf('POST')).toBe('none');
+  });
+
+  it('create_event with every attendee listed: sendUpdates=all, as today', async () => {
+    mockFetchSuccess(created);
+    await executor.executeAction(USER_ID, 'create_event', {
+      summary: 'S',
+      start_time: '2026-12-01T10:00:00Z',
+      end_time: '2026-12-01T11:00:00Z',
+      attendees: ['a@example.com'],
+      send_notifications: true,
+    });
+    expect(sendUpdatesOf('POST')).toBe('all');
+  });
+
+  it('update_event whose existing attendees include a refused one: sendUpdates=none', async () => {
+    mockFetchSequence([
+      { body: { ...created, attendees: [{ email: 'client@customer.example' }] } },
+      { body: created },
+    ]);
+    await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', summary: 'New', send_notifications: true });
+    expect(sendUpdatesOf('PUT')).toBe('none');
+  });
+
+  it('update_event that REMOVES a refused attendee (attendees: []): sendUpdates=none (SA CR-1)', async () => {
+    mockFetchSequence([
+      { body: { ...created, attendees: [{ email: 'client@customer.example' }] } },
+      { body: created },
+    ]);
+    await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', attendees: [] });
+    expect(sendUpdatesOf('PUT')).toBe('none');
+  });
+
+  it('update_event whose existing and new attendees are all listed: no suppression', async () => {
+    mockFetchSequence([
+      { body: { ...created, attendees: [{ email: 'a@example.com' }] } },
+      { body: created },
+    ]);
+    await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', attendees: ['b@example.com'], send_notifications: true });
+    expect(sendUpdatesOf('PUT')).toBe('all');
+  });
+
+  it('delete_event while the guard is on: sendUpdates=none even when notifications were asked for', async () => {
+    mockFetchSuccess({}, 204);
+    await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1', send_notifications: true });
+    expect(sendUpdatesOf('DELETE')).toBe('none');
+  });
+
+  it('production with the list absent: delete with notifications keeps sendUpdates=all', async () => {
+    process.env.VERCEL_ENV = 'production';
+    delete process.env.EMAIL_RECIPIENT_ALLOWLIST;
+    mockFetchSuccess({}, 204);
+    await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1', send_notifications: true });
+    expect(sendUpdatesOf('DELETE')).toBe('all');
   });
 });

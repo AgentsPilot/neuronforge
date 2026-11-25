@@ -117,7 +117,8 @@ describe('environment catalogue', () => {
         if (entry.flagParser === 'strict-true') expect({ name: entry.name, flagDefault: entry.flagDefault }).toEqual({ name: entry.name, flagDefault: false });
       }
       if (entry.sensitivity === 'personal') {
-        expect(['single', 'list-admin-emails', 'list-boost-accounts']).toContain(entry.personalKind);
+        // PROD-1b (SA D-11) added list-email-allowlist, counted by the recipient guard's parser.
+        expect(['single', 'list-admin-emails', 'list-boost-accounts', 'list-email-allowlist']).toContain(entry.personalKind);
       }
       for (const where of ['production', 'preview', 'local'] as const) {
         expect(['required', 'optional', 'forbidden']).toContain(entry.expectedIn[where]);

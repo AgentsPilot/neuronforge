@@ -1,0 +1,22 @@
+-- One step of supabase/baseline/prove-seed-checker-can-fail.psql. Never run on its own.
+--
+-- Runs scripts/check-baseline-seed.sql, writes its rows to seed-proof-run.csv
+-- in the current folder (the private baseline folder), loads them back under
+-- the current step label, prints the comparison with the BASE run and sets the
+-- psql variable step_result.
+--
+-- The CSV holds the checker's summary rows only: row counts, md5 hashes and
+-- the session settings. No seed row is ever in it.
+
+\pset format csv
+\pset tuples_only on
+\o seed-proof-run.csv
+\ir ../../scripts/check-baseline-seed.sql
+\o
+\pset format aligned
+\pset tuples_only off
+\copy pg_temp.seed_proof_rows (check_name, result, detail) FROM 'seed-proof-run.csv' WITH (FORMAT csv)
+SELECT seed_proof_compare.e_code, seed_proof_compare.target, seed_proof_compare.e_result,
+       seed_proof_compare.changed, seed_proof_compare.state
+FROM pg_temp.seed_proof_compare;
+SELECT seed_proof_compare.e_result AS step_result FROM pg_temp.seed_proof_compare \gset
